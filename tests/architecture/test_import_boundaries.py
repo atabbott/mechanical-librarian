@@ -12,13 +12,16 @@ PRODUCTION_LAYERS = {
     "adapters",
     "infrastructure",
     "interfaces",
+    "bootstrap",
 }
+ROOT_MODULES = {"__init__", "__main__", "_version"}
 ALLOWED_LAYER_IMPORTS = {
     "domain": {"domain"},
     "application": {"application", "domain"},
     "adapters": {"adapters", "application", "domain"},
     "infrastructure": {"infrastructure", "application", "domain"},
     "interfaces": {"interfaces", "application", "domain"},
+    "bootstrap": PRODUCTION_LAYERS,
 }
 
 
@@ -105,6 +108,23 @@ class ImportBoundaryTests(unittest.TestCase):
 
         self.assertEqual(violations, [])
 
+    def test_every_top_level_package_is_classified(self) -> None:
+        unclassified = sorted(
+            path.name
+            for path in PACKAGE_ROOT.iterdir()
+            if path.is_dir()
+            and (path / "__init__.py").exists()
+            and path.name not in PRODUCTION_LAYERS
+        )
+        root_modules = sorted(
+            path.stem
+            for path in PACKAGE_ROOT.glob("*.py")
+            if path.stem not in ROOT_MODULES
+        )
+
+        self.assertEqual(unclassified, [])
+        self.assertEqual(root_modules, [])
+
     def test_domain_cannot_import_application(self) -> None:
         self.assertTrue(
             violates_boundary(
@@ -117,7 +137,7 @@ class ImportBoundaryTests(unittest.TestCase):
         self.assertTrue(
             violates_boundary(
                 "mechanical_librarian.application.service",
-                "mechanical_librarian.infrastructure.persistence.repository",
+                "mechanical_librarian.infrastructure.runtime",
             )
         )
 
@@ -129,11 +149,35 @@ class ImportBoundaryTests(unittest.TestCase):
             )
         )
 
+    def test_adapter_cannot_import_infrastructure(self) -> None:
+        self.assertTrue(
+            violates_boundary(
+                "mechanical_librarian.adapters.persistence.sqlite",
+                "mechanical_librarian.infrastructure.configuration",
+            )
+        )
+
     def test_interface_cannot_import_concrete_persistence(self) -> None:
         self.assertTrue(
             violates_boundary(
                 "mechanical_librarian.interfaces.http.routes",
-                "mechanical_librarian.infrastructure.persistence.repository",
+                "mechanical_librarian.adapters.persistence.sqlite",
+            )
+        )
+
+    def test_ordinary_layer_cannot_import_bootstrap(self) -> None:
+        self.assertTrue(
+            violates_boundary(
+                "mechanical_librarian.interfaces.cli",
+                "mechanical_librarian.bootstrap",
+            )
+        )
+
+    def test_bootstrap_can_import_concrete_layers(self) -> None:
+        self.assertFalse(
+            violates_boundary(
+                "mechanical_librarian.bootstrap",
+                "mechanical_librarian.adapters.persistence.sqlite",
             )
         )
 
