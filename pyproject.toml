@@ -22,7 +22,7 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-mechanical-librarian = "mechanical_librarian.interfaces.cli:main"
+mechanical-librarian = "mechanical_librarian.bootstrap:main"
 
 [project.urls]
 Documentation = "https://github.com/atabbott/mechanical-librarian/tree/main/docs"
