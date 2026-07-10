@@ -9,6 +9,8 @@ versioning after the first public release.
 
 ### Added
 
+- Immutable library connection, item, snapshot, normalized metadata, and
+  target-capability domain models.
 - Typed, deterministic, secret-safe domain identifiers, version markers,
   fingerprints, and idempotency keys.
 - Installable typed Python package, empty CLI entrypoint, locked dependency
