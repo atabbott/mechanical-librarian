@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Added
 
+- `AGPL-3.0-or-later` project licensing, including the canonical licence text,
+  accepted architecture decision, contribution terms, compatibility policy,
+  and publication gate.
 - Initial product, architecture, security, quality, operations, and governance
   documentation scaffold.
 - DUX-derived review-experience and prototype-extraction contracts, including

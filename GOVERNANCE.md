@@ -24,6 +24,10 @@ Maintainers are responsible for:
 - recording durable decisions rather than relying on private context;
 - avoiding vendor capture in domain contracts.
 
+Maintainers do not gain ownership of contributor copyright. Relicensing
+requires a recorded governance decision and every permission legally required
+at that time.
+
 ## Becoming a maintainer
 
 Future maintainers should demonstrate sustained, constructive contributions,

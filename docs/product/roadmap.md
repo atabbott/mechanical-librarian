@@ -5,7 +5,7 @@ milestone has met its exit criteria.
 
 ## M0: Foundation
 
-- Select and record the project licence.
+- Enforce the recorded `AGPL-3.0-or-later` licence and notice policy.
 - Publish architecture, security, quality, and contribution contracts.
 - Establish repository layout, CI, packaging, migrations, and release tooling.
 - Create synthetic service, media, metadata-chaos, and reliability fixtures.

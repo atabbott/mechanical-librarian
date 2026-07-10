@@ -29,6 +29,8 @@ changes.
 - Sign images and release artifacts.
 - Publish checksums, SBOM, provenance, changelog, migration notes, and known
   issues.
+- Publish the `AGPL-3.0-or-later` licence and all required third-party notices
+  with every source, package, container, and release distribution.
 - Treat `latest` as a convenience pointer, never a reproducibility mechanism.
 
 ## Upgrade contract

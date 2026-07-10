@@ -1,6 +1,7 @@
 # Mechanical Librarian
 
-> The licence must be selected before the repository is published.
+> The project is pre-release and the repository remains private during initial
+> development.
 
 Mechanical Librarian is a self-hosted service that keeps ebook and audiobook
 metadata, covers, series information, and identifiers correct with minimal
@@ -58,9 +59,9 @@ Start with the [documentation index](docs/README.md).
 
 ## Contributing
 
-The project is not ready for external contributions until its licence is
-finalized. The intended contribution and review model is documented in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+The project is not ready for external contributions until its publication
+readiness gates pass. The intended contribution and review model is documented
+in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Questions and diagnostic reports will follow the public [support policy](SUPPORT.md).
 
@@ -69,5 +70,6 @@ tokens, or unredacted production reports in issues, tests, or pull requests.
 
 ## Licence
 
-Licence selection is a blocking pre-publication decision. See
+Mechanical Librarian is licensed under
+[AGPL-3.0-or-later](LICENSE). The rationale and project-material policy are in
 [the licence decision record](docs/product/license-decision.md).
