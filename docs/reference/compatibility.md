@@ -78,6 +78,16 @@ Unknown configuration keys should produce actionable diagnostics. Renamed or rem
 
 Database compatibility follows [Upgrades and migrations](../operations/upgrades.md). The project supports documented upgrade paths, not arbitrary downgrades or skipped major versions.
 
+## Durable domain representations
+
+Persisted identifiers, versions, fingerprints, and idempotency keys are stable
+only within their declared namespace and schema version. New fields may be
+added to a versioned canonical fingerprint input only by introducing a new
+`SchemaVersion`; existing canonical serialization, digest algorithms, and
+identifier scopes must not change silently. A future migration must retain the
+source representation and record the exact compatibility path before replacing
+or interpreting a durable value.
+
 ## Deprecation
 
 Each deprecation notice states:

@@ -9,6 +9,8 @@ versioning after the first public release.
 
 ### Added
 
+- Typed, deterministic, secret-safe domain identifiers, version markers,
+  fingerprints, and idempotency keys.
 - Installable typed Python package, empty CLI entrypoint, locked dependency
   metadata, layered package scaffold, smoke tests, and executable architecture
   boundary checks.
