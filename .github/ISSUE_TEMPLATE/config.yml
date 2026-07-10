@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions and support
-    url: https://github.com/mechanical-librarian/mechanical-librarian/discussions
+    url: https://github.com/atabbott/mechanical-librarian/discussions
     about: Ask questions and discuss usage without creating a work item.
   - name: Report a security vulnerability
-    url: https://github.com/mechanical-librarian/mechanical-librarian/security/advisories/new
+    url: https://github.com/atabbott/mechanical-librarian/security/advisories/new
     about: Report suspected vulnerabilities privately; never disclose them in an issue.
