@@ -14,6 +14,17 @@ class ConfigurationError(ValueError):
 
 
 @dataclass(frozen=True)
+class ConfigurationImportPlan:
+    changed_sections: tuple[str, ...]
+    requires_restart: bool
+    reextract_evidence: bool
+
+    @property
+    def is_noop(self) -> bool:
+        return not self.changed_sections
+
+
+@dataclass(frozen=True)
 class ConnectionConfiguration:
     adapter: str
     endpoint: ServiceEndpoint
@@ -124,6 +135,23 @@ def load_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
         if isinstance(error, ConfigurationError):
             raise
         raise ConfigurationError("configuration is malformed") from error
+
+
+def plan_import(
+    current: ApplicationConfiguration, proposed_source: Mapping[str, Any]
+) -> ConfigurationImportPlan:
+    """Validate and compare a proposal without persisting or applying it."""
+
+    proposed = load_configuration(proposed_source)
+    changed: list[str] = []
+    for name in ("instance_name", "connections", "media_mounts", "limits", "providers", "reviewers", "notifications", "backups_enabled"):
+        if getattr(current, name) != getattr(proposed, name):
+            changed.append(name)
+    return ConfigurationImportPlan(
+        changed_sections=tuple(changed),
+        requires_restart=bool(changed),
+        reextract_evidence="media_mounts" in changed or "limits" in changed,
+    )
 
 
 def _connection(value: Mapping[str, Any]) -> ConnectionConfiguration:

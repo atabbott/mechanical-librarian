@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from mechanical_librarian.application.configuration import ConfigurationError, load_configuration
+from mechanical_librarian.application.configuration import ConfigurationError, load_configuration, plan_import
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -25,6 +25,16 @@ class ConfigurationTests(unittest.TestCase):
             with self.subTest(change=change):
                 with self.assertRaises(ConfigurationError):
                     load_configuration({**self.source, **change})
+
+    def test_import_plan_is_deterministic_and_secret_free(self) -> None:
+        current = load_configuration(self.source)
+        self.assertTrue(plan_import(current, self.source).is_noop)
+        proposed = {**self.source, "limits": {"parser_concurrency": 2}}
+        plan = plan_import(current, proposed)
+        self.assertEqual(plan.changed_sections, ("limits",))
+        self.assertTrue(plan.requires_restart)
+        self.assertTrue(plan.reextract_evidence)
+        self.assertNotIn("docker-secret", repr(plan))
 
 
 if __name__ == "__main__":
