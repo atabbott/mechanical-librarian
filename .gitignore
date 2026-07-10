@@ -1,0 +1,42 @@
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+auth.json
+secrets/
+
+# Runtime state
+/data/
+/artifacts/
+/backups/
+/cache/
+/reports/
+/state/
+*.sqlite
+*.sqlite3
+*.db
+
+# Language and build outputs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+node_modules/
+dist/
+build/
+coverage/

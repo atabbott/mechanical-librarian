@@ -1,0 +1,69 @@
+name: Feature request
+description: Propose a concrete user-facing capability within product scope.
+title: "feature: "
+labels:
+  - needs-triage
+type: Feature
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the user problem independently of a preferred implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What observable result would solve the problem?
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and examples
+      description: Provide synthetic examples, affected workflows, and frequency. Do not include private library data.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Likely product area
+      options:
+        - Domain and policy
+        - Audiobookshelf adapter
+        - Evidence extraction
+        - Metadata or cover provider
+        - AI review
+        - Apply, verification, or rollback
+        - API or operator interface
+        - Deployment and operations
+        - Documentation or contributor experience
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Risks and constraints
+      description: Consider privacy, security, compatibility, recovery, cost, and deployment complexity.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I checked the product scope and roadmap.
+          required: true
+        - label: I searched for an existing issue or discussion.
+          required: true
+        - label: This proposal contains no private data or credentials.
+          required: true

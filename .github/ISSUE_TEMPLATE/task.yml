@@ -1,0 +1,55 @@
+name: Implementation task
+description: Define a bounded implementation, testing, operations, or documentation task.
+title: "task: "
+labels:
+  - needs-triage
+type: Task
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Describe the completed, observable state rather than a list of coding actions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Governing context
+      description: Link the parent issue, specification, ADR, invariant, or threat addressed by this task.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Use verifiable statements covering success and relevant failure behavior.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Required verification
+      description: Identify unit, property, contract, integration, end-to-end, security, or operational tests.
+    validations:
+      required: true
+
+  - type: textarea
+    id: documentation
+    attributes:
+      label: Documentation impact
+      description: List documents and generated contracts that must change, or explain why none are affected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and blockers
+      description: Link blocking issues rather than describing an informal sequence.

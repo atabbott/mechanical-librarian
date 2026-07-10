@@ -1,0 +1,108 @@
+# Data Privacy
+
+Mechanical Librarian is designed for personal libraries, but library metadata and reading history can still reveal sensitive interests. Privacy is therefore an architectural property, not only a deployment preference.
+
+## Principles
+
+- Process locally by default.
+- Collect and retain only what is needed for an explainable workflow.
+- Make every external disclosure visible and configurable.
+- Keep secrets separate from ordinary application data.
+- Let users export and delete project-owned data without touching their media library.
+- Never make telemetry a condition of use.
+
+## Data classes
+
+### Secrets
+
+Examples include target-service tokens, reviewer credentials, session keys, and encryption material.
+
+Secrets must:
+
+- be redacted from logs, errors, audit events, exports, and support bundles;
+- never be included in AI prompts;
+- use the narrowest permissions available; and
+- be replaceable without rewriting historical records.
+
+### Private library data
+
+Examples include titles, authors, identifiers, filenames, folder structure, covers, descriptions, reading state, and target-service URLs.
+
+Private library data remains inside the deployment unless a configured provider or reviewer requires a disclosed subset. The product must document that subset before the integration is enabled.
+
+### Content evidence
+
+Examples include embedded metadata, table-of-contents text, audio tags, chapters, duration, and bounded excerpts used to identify a work or edition.
+
+Evidence extraction should prefer structured fields over prose. Whole books, whole audio files, and audiobook transcripts are outside the initial product scope and must not be sent to an external reviewer.
+
+### Operational data
+
+Examples include job timing, error codes, capability flags, resource use, and software versions. Operational data may be included in an opt-in support bundle after redaction and preview.
+
+## External processing
+
+For every metadata provider or AI backend, the product must disclose:
+
+- which fields leave the deployment;
+- the purpose of the transfer;
+- whether the provider requires an account or credential;
+- the provider's relevant retention controls, where known;
+- what functionality is lost when the integration is disabled; and
+- how to test the integration without sending full library data.
+
+The reviewer receives the smallest structured evidence packet that can answer the decision question. Candidate retrieval and target mutation remain separate capabilities.
+
+## Retention
+
+Default retention should preserve enough history to explain and reverse changes while avoiding indefinite storage of bulky artifacts.
+
+Retention classes must be configurable for:
+
+- immutable audit records;
+- evidence and candidate payloads;
+- downloaded cover candidates;
+- job logs;
+- backups and rollback material;
+- rejected review cases; and
+- generated support bundles.
+
+Deletion must be a planned, logged operation. Active apply plans, unresolved rollback records, legal notices, and configured minimum recovery points are protected from ordinary retention cleanup.
+
+## Export and deletion
+
+Users must be able to:
+
+- export configuration with secrets removed;
+- export review, audit, and decision history in documented formats;
+- delete cached provider data and generated artifacts;
+- delete a Mechanical Librarian connection without deleting target items or media; and
+- reset the application database through an explicit destructive workflow.
+
+Project-owned deletion must never imply deletion from Audiobookshelf, CWA, or the filesystem unless the user selects a separate, clearly scoped target operation.
+
+## Telemetry
+
+The initial product should ship with no outbound product analytics. If telemetry is introduced later, it must be:
+
+- opt-in;
+- documented field by field;
+- independent from update checks;
+- disabled without loss of core functionality; and
+- governed by a new ADR and privacy review.
+
+## Logs and diagnostics
+
+Logs should use stable item IDs and correlation IDs in preference to titles and paths. Diagnostic views may resolve those IDs locally for the authenticated user. See [Observability](../operations/observability.md) and [Security architecture](security.md).
+
+## Review checklist
+
+Any feature that adds a data source, external destination, persistent field, export, or log property must answer:
+
+1. What data is involved?
+2. Why is it required?
+3. Where is it processed and stored?
+4. How is it protected and redacted?
+5. How long is it retained?
+6. How can the user inspect, export, and delete it?
+7. What safe behavior remains when the feature is disabled or unavailable?

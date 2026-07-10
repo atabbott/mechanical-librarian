@@ -1,0 +1,94 @@
+name: Bug report
+description: Report reproducible incorrect or unsafe behavior.
+title: "bug: "
+labels:
+  - needs-triage
+type: Bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a defect. Do not include credentials, private URLs,
+        book contents, personal library exports, or unredacted logs.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and why is it a problem?
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Mechanical Librarian version
+      description: Use a release version, commit, or image digest.
+      placeholder: 0.1.0 or sha256:...
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Host architecture, container runtime, target service version, and relevant adapter capabilities.
+      placeholder: |
+        Host: Linux x86-64
+        Runtime: Docker 27
+        Target: Audiobookshelf x.y.z
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Give the smallest deterministic sequence that reproduces the defect with synthetic or sanitized data.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Cosmetic or documentation only
+        - Read-only workflow degraded
+        - Work blocked without data loss
+        - Incorrect metadata or cover applied
+        - Data loss, credential exposure, or security impact
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Add correlation IDs, job IDs, timestamps, and minimal redacted logs. Prefer a reviewed support bundle.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched for an existing issue describing this defect.
+          required: true
+        - label: I removed credentials, private paths, private URLs, and copyrighted content.
+          required: true
+        - label: This is not an undisclosed security vulnerability.
+          required: true

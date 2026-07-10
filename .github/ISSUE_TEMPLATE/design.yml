@@ -1,0 +1,64 @@
+name: Design proposal
+description: Propose a durable architecture, security, API, or compatibility decision.
+title: "design: "
+labels:
+  - needs-design
+type: Feature
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for decisions that may require an ADR. Exploratory ideas
+        should begin in Discussions.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and forces
+      description: What constraints, risks, or evidence make a durable decision necessary?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed decision
+      description: State the decision precisely, including boundaries and defaults.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Compare credible options and explain their consequences.
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Cover domain, API, persistence, security, privacy, compatibility, operations, and migration effects.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: How will tests or operational evidence prove the decision?
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I reviewed the existing ADRs and authoritative documentation.
+          required: true
+        - label: I identified whether this proposal supersedes an existing decision.
+          required: true
+        - label: I removed private deployment and library information.
+          required: true
