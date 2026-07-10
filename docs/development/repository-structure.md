@@ -1,6 +1,6 @@
 # Repository Structure
 
-## Planned layout
+## Current and planned layout
 
 ```text
 .
@@ -40,6 +40,24 @@
 
 The Python package is named `mechanical_librarian`. Layer meaning and dependency
 direction remain independent of packaging decisions.
+
+The tracked scaffold creates production packages only where they establish an
+import boundary or executable entrypoint. Empty frontend, migration, packaging,
+script, and later test-family directories are added by their owning work rather
+than retained with placeholder files.
+
+## Runtime baseline
+
+`pyproject.toml` is the authoritative machine-readable runtime declaration.
+The initial package supports CPython 3.13 and 3.14, has no runtime dependencies,
+and is typed through its `py.typed` marker. Development is expected on Linux
+and macOS; automated host qualification belongs to the CI foundation. The
+supported production target remains the self-contained Linux container. Native
+Windows development and deployment are not yet qualified.
+
+The pre-stable version is exposed by `mechanical_librarian.__version__` and the
+installed package metadata from the single `_version.py` source. Release
+versioning and build projections are expanded under WP0 issue #42.
 
 ## Package responsibilities
 
@@ -87,6 +105,11 @@ test should fail on:
 - adapter-to-adapter imports;
 - interface access to concrete persistence repositories;
 - production code importing test fixtures or scripts.
+
+The scaffold enforces these rules with a standard-library AST test in
+`tests/architecture`. Issue #37 owns the later lint, type, coverage, complexity,
+and full static-analysis toolchain; it must extend rather than weaken this
+first boundary gate.
 
 ## Scripts
 

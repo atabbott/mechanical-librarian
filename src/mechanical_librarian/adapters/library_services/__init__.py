@@ -1,0 +1,1 @@
+"""Library-service adapter implementations."""
