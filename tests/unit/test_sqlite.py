@@ -11,6 +11,7 @@ class SqliteFoundationTests(unittest.TestCase):
     def test_migration_is_idempotent_and_records_checksums(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
             self.assertEqual(migrate(connection), 1)
             self.assertEqual(migrate(connection), 1)
             self.assertEqual(connection.execute("SELECT checksum FROM schema_migrations").fetchone()[0], MIGRATIONS[0].checksum)
@@ -18,6 +19,7 @@ class SqliteFoundationTests(unittest.TestCase):
     def test_transaction_rolls_back(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
             migrate(connection)
             with self.assertRaises(RuntimeError):
                 with transaction(connection) as active:
@@ -28,6 +30,7 @@ class SqliteFoundationTests(unittest.TestCase):
     def test_tampered_checksum_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
             migrate(connection)
             connection.execute("UPDATE schema_migrations SET checksum = 'tampered'")
             with self.assertRaises(SchemaError):
