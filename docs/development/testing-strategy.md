@@ -110,6 +110,10 @@ Fixture families include:
 
 - valid and malformed EPUB packages;
 - bounded synthetic audio tags and chapter data;
+- generated opening-credit audio covering speech, silence, music, delayed
+  credits, spoken roles, multilingual cases, no-credit controls, and hostile
+  spoken instructions under the
+  [opening-audio evidence contract](../product/opening-audio-evidence.md);
 - ambiguous title/author/series cases;
 - omnibus, abridged, dramatized, summary, and alternate-edition conflicts;
 - missing and low-quality synthetic covers;
@@ -187,3 +191,9 @@ database lock, duplicate event, persistent failure redelivery, changing
 fingerprint, and verification mismatch. Recovery assertions prove that
 deduplication and backoff survive restart and bound both retries and external
 calls.
+
+Future opening-audio tests additionally inject decoder failure, unsupported
+codec, model-load failure, transcription timeout, temporary-space exhaustion,
+stale source fingerprints, hosted quota failure, cancellation, and orphaned
+temporary samples. They assert that ordinary non-transcription evidence work
+continues and no transcript outcome becomes direct write authority.

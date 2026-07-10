@@ -36,6 +36,14 @@ Examples include embedded metadata, table-of-contents text, audio tags, chapters
 
 Evidence extraction should prefer structured fields over prose. Whole books, whole audio files, and audiobook transcripts are outside the initial product scope and must not be sent to an external reviewer.
 
+A planned post-foundation capability may derive evidence from bounded audiobook
+opening windows under the
+[opening-audio evidence contract](../product/opening-audio-evidence.md). Raw
+audio samples are transient by default, complete bounded transcript retention
+is a separate local configuration choice, and reviewer packets contain only
+cited spans. Sending any audio to a hosted transcription service requires an
+explicit destination-specific opt-in and data-use disclosure.
+
 ### Operational data
 
 Examples include job timing, error codes, capability flags, resource use, and software versions. Operational data may be included in an opt-in support bundle after redaction and preview.

@@ -18,3 +18,7 @@ versioning after the first public release.
   source-correlation policy, restart-safe retry suppression, bounded audio
   health observations, typed operator diagnostics, and future extension
   isolation requirements.
+- Future bounded opening-audio transcription and spoken-credit evidence
+  contract, including staged sampling, local-first processing, privacy and
+  retention boundaries, resource controls, synthetic cohorts, and field-level
+  qualification gates.

@@ -237,8 +237,12 @@ After the first production-quality vertical slice:
 - define any future extension manifest around typed capabilities,
   configuration schema, compatibility, health, and automatic suspension before
   permitting third-party code loading;
+- implement bounded opening-audio transcription only after the sampling,
+  privacy, backend, resource, retention, and field-qualification decisions in
+  the [opening-audio evidence contract](opening-audio-evidence.md) are resolved;
 - add PostgreSQL only if measured scale or deployment requirements justify it; and
-- consider transcription only with an explicit cost, privacy, and resource model.
+- consider broader story-content transcription only through a separate scope,
+  cost, privacy, copyright, and resource decision.
 
 ## Planning rule
 

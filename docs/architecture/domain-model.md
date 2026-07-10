@@ -39,6 +39,7 @@ Immutable bounded evidence such as:
 - embedded ebook metadata;
 - front matter or TOC facts;
 - audio tags, chapters, or duration;
+- future bounded spoken-credit transcript spans and structured claims;
 - folder and filename facts;
 - service-current values;
 - provider results;

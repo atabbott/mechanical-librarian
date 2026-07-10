@@ -59,6 +59,8 @@ Preferred evidence includes:
 - embedded EPUB package metadata and bounded front matter;
 - valid identifiers mined from the file;
 - audio container tags, chapters, and duration;
+- qualified bounded spoken-credit claims when the optional
+  [opening-audio evidence](opening-audio-evidence.md) extension is enabled;
 - the target service's current state;
 - catalogue records that can be tied to the same work or edition; and
 - corroborating cross-format evidence for the same owned item.

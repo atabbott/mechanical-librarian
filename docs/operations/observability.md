@@ -31,6 +31,9 @@ Initial metrics include:
 - discovered, changed, skipped, and unresolved items;
 - job queue depth, age, retries, and terminal failures;
 - evidence outcomes and cache reuse;
+- opening-credit detection yield, transcription and claim outcomes, bounded
+  sample duration, local resource use, and optional hosted usage when that
+  future capability is enabled;
 - provider calls, latency, rate limits, and systemic failures;
 - AI decisions, schema failures, authentication failures, and usage when
   available;

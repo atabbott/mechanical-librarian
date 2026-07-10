@@ -82,5 +82,14 @@ Exit: occasional review is efficient, persistent, and server-authoritative.
 ## M7: Ecosystem
 
 - Add additional service and AI adapters.
-- Evaluate embedded-file updates and transcription independently.
+- Evaluate embedded-file updates independently.
+- Benchmark and shadow-test bounded opening-audio transcription and spoken-
+  credit extraction under the
+  [opening-audio evidence contract](opening-audio-evidence.md).
+- Qualify transcript-supported title, author, narrator, series, and performance
+  fields independently before any automatic-policy eligibility.
 - Formalize plugin compatibility and community governance.
+
+Exit: advanced evidence and adapter extensions remain optional, capability-
+declared, resource-bounded, and independently qualified without widening core
+write authority.

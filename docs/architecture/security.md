@@ -103,6 +103,9 @@ Mitigations:
 - Decode images with pixel and byte limits.
 - Run external parsers without shell interpolation, with time and resource
   limits, and with read-only input.
+- Bound audio decode, sample duration, temporary output, transcription time,
+  model resources, and concurrency; delete transient audio on every terminal
+  and recovery path.
 - Keep parser dependencies updated and covered by malformed-input tests.
 
 ### Stale or conflicting writes

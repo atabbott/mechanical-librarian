@@ -16,6 +16,7 @@ release standards as code.
 - [Vision](product/vision.md)
 - [Scope and non-goals](product/scope.md)
 - [Automation policy](product/automation-policy.md)
+- [Bounded opening-audio evidence](product/opening-audio-evidence.md)
 - [Review experience](product/review-experience.md)
 - [Roadmap](product/roadmap.md)
 - [Initial build plan](product/initial-build-plan.md)
