@@ -1,6 +1,6 @@
 """Module entrypoint for ``python -m mechanical_librarian``."""
 
-from .interfaces.cli import main
+from .bootstrap import main
 
 
 if __name__ == "__main__":
