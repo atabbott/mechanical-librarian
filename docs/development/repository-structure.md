@@ -72,8 +72,10 @@ internals or the database directly.
 
 ### `frontend`
 
-Bundled dashboard source. It consumes the public HTTP API and contains no
-authoritative decision or apply state.
+Bundled review and operator interface. It consumes the public HTTP API and
+contains no authoritative decision or apply state. Its queue, detail, evidence,
+bulk, responsive, accessibility, and performance behavior follows the
+[review-experience contract](../product/review-experience.md).
 
 ## Enforcement
 

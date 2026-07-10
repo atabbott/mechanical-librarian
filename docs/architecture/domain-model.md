@@ -20,9 +20,11 @@ in ordinary configuration or audit records.
 
 ### LibraryItem
 
-Stable internal identity for a service item. It contains the adapter ID,
-external target ID, library type, lifecycle status, and links to snapshots. It
-does not duplicate every current metadata field.
+Stable internal identity for a service item. It contains the connection ID,
+adapter ID, adapter-scoped library ID, external item ID, media type, lifecycle
+status, and links to snapshots. It does not duplicate every current metadata
+field. External IDs are never assumed globally unique across connections or
+libraries.
 
 ### ItemSnapshot
 
@@ -60,9 +62,26 @@ replaces a populated field, or represents no change.
 
 ### ReviewCase
 
-The current decision surface for one target. It groups applicable field
-proposals and cover choices while retaining independent field resolution. A
-newer item fingerprint supersedes, but does not delete, the previous case.
+Immutable decision surface for one target snapshot and proposal-set version. It
+groups applicable field proposals and typed cover/series choices while
+retaining independent field resolution. It references evidence and notices by
+ID, distinguishes disposition from any human decision, and exposes apply
+eligibility without owning an apply plan. A newer fingerprint or materially
+changed proposal set supersedes, but does not delete, the previous case.
+
+### ReviewGroup
+
+Display/query projection connecting confirmed instances of the same work, such
+as an ebook and audiobook. It contains link method, confidence, labels, and
+ordered sibling case IDs only. It cannot own or propagate selections, human
+decisions, readiness, or apply state.
+
+### ReviewNotice
+
+Reviewer-facing interpretation of a risk or diagnostic condition. Its class is
+`blocking`, `needs_attention`, `resolved`, or `rejected_alternative`; it records
+the affected choice, explanation, required action, and underlying diagnostic
+codes. Operational failures retain separate job or health states.
 
 ### AIDecision
 
@@ -73,14 +92,30 @@ policy version, schema version, and execution ID.
 ### HumanDecision
 
 Explicit user action on a field, item, or destructive proposal. It records the
-reviewed proposal version and becomes stale if its guarded fingerprint or
-proposal changes.
+reviewed case and proposal versions, field selections, action, notes, actor,
+mode, and time. It becomes stale if its guarded fingerprint or proposal set
+changes. Deferral creates no approval and does not resolve a case.
+
+### DecisionAuthorization
+
+Immutable record explaining why selected changes may enter an apply plan. It
+references either a qualified automatic policy disposition or a current human
+decision, plus the applicable policy, proposal, case, and fingerprint versions.
+AI recommendation alone can never be an authorization.
 
 ### ApplyPlan
 
 Validated, immutable set of field changes for one target and one expected item
-fingerprint. It records decision provenance, capability checks, validation
-version, idempotency key, and required backup class.
+fingerprint. It records decision authorization, field-level provenance,
+capability checks, validation version, idempotency key, and required backup
+class.
+
+### BulkDecisionBatch
+
+Auditable batch created from a bounded server-side preview. It records the
+filter scope, exact eligible case/proposal versions, exclusions, counts,
+idempotency key, actor, and the individual human decisions created at commit.
+It is not an apply plan and cannot include destructive work.
 
 ### ApplyAttempt
 
@@ -114,12 +149,14 @@ circuit-breaker transition.
 
 ## Value objects
 
-- `TargetId`: internal stable item identity.
+- `TargetId`: internal stable identity for one connection-, library-, and
+  adapter-scoped external item.
 - `ExternalItemId`: adapter-scoped service identity.
 - `Fingerprint`: versioned digest of canonical observed state.
 - `FieldName`: controlled vocabulary with adapter mappings.
 - `FieldValue`: typed normalized scalar or collection.
-- `EvidenceId`, `ProposalId`, `DecisionId`, `ApplyPlanId`: immutable IDs.
+- `EvidenceId`, `ProposalId`, `ReviewCaseId`, `DecisionId`, `ApplyPlanId`:
+  immutable IDs.
 - `PolicyVersion`, `SchemaVersion`, `ExtractorVersion`: reproducibility keys.
 - `Risk`: structured code, severity, blocking status, and evidence reference.
 - `Disposition`: `auto_apply`, `needs_review`, `closed_rejected`, or
@@ -133,7 +170,20 @@ circuit-breaker transition.
   set unless the policy explicitly supports a typed derived field.
 - A proposal cannot cite evidence from a different target unless the evidence
   relationship is explicit and policy-approved.
+- Evidence facts are stored once and referenced by ID; browser projections do
+  not become a second source of truth.
+- A ReviewGroup cannot propagate a selection, decision, disposition, or apply
+  state between siblings.
+- A human decision applies only to the exact reviewed case, proposal set, and
+  expected fingerprint.
+- An apply plan has exactly one current authorization source: a qualified
+  automatic policy disposition or an applicable human decision.
+- Provider, job, authentication, and other operational failures cannot be
+  represented as human metadata decisions.
 - Unsupported fields cannot enter an apply plan.
 - Destructive actions cannot receive `auto_apply` disposition.
 - Verification is mandatory before an apply attempt can become successful.
 - Rollback never overwrites state that changed after the failed apply attempt.
+
+The [review-experience contract](../product/review-experience.md) defines the
+authoritative user-facing projection of these entities.

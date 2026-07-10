@@ -27,11 +27,13 @@ open -> auto_resolved
      -> needs_review -> human_resolved
      -> unsupported
      -> superseded
+needs_review -> superseded
 ```
 
-A new target fingerprint supersedes an unresolved case. History remains
-immutable. Rejected automatic work is normally hidden from the active queue but
-remains queryable.
+A new target fingerprint or materially changed proposal set supersedes an
+unresolved case. History remains immutable. Rejected automatic work is normally
+hidden from the active queue but remains queryable. Operational failures do not
+move a case into `human_resolved`; they retain job, health, or capability state.
 
 ## Field proposal decision
 
@@ -50,6 +52,50 @@ auto_apply | needs_review | closed_rejected | unsupported
 ```
 
 AI approval alone does not guarantee `auto_apply`.
+
+## Human decision actions
+
+```text
+unresolved -> accept_selected
+           -> keep_current
+           -> reject_proposals
+           -> defer -> unresolved
+```
+
+The first three actions create immutable `HumanDecision` records and may move a
+`needs_review` case to `human_resolved` when every required field or action is
+resolved. `defer` records no approval and leaves the case unresolved. `blocked`
+is not a human action.
+
+A human decision becomes inapplicable when its case, proposal-set version, or
+expected item fingerprint changes. Reconsideration creates a new decision
+event; history is never rewritten.
+
+## Decision authorization
+
+An apply plan may reference exactly one applicable authorization path:
+
+```text
+qualified policy disposition: auto_apply
+current human decision:       needs_review -> human_resolved
+```
+
+Both paths retain field-level evidence and decision provenance. AI output alone
+cannot authorize an apply plan. Destructive work has no automatic path.
+
+## Bulk decision batch
+
+```text
+previewed -> committed
+          -> stale
+          -> expired
+          -> cancelled
+```
+
+Commit requires the exact previewed case and proposal versions. It creates
+individual human decisions plus a batch audit event. Reversing committed but
+unapplied decisions creates compensating decision events. It never rolls back a
+production write.
 
 ## Apply plan lifecycle
 
@@ -87,3 +133,6 @@ closed -> open -> half_open -> closed
   open the breaker.
 
 Every transition is an audit event with a reason and actor.
+
+The [review-experience contract](../product/review-experience.md) defines the
+user-facing behavior associated with these states.

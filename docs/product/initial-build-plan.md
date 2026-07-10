@@ -1,6 +1,9 @@
 # Initial Build Plan
 
-This plan turns the product and architecture documents into an implementation sequence. It deliberately postpones detailed dashboard UX work while preserving the backend contracts that the dashboard will need.
+This plan turns the product and architecture documents into an implementation
+sequence. The completed DUX prototype now supplies the review behavior and test
+scenarios that must shape the domain and API from the start. Detailed interface
+implementation remains in WP9, after those contracts are production-ready.
 
 Each work package must leave the repository releasable, documented, and testable. A later package may not compensate for missing safety or quality work in an earlier one.
 
@@ -12,7 +15,9 @@ Deliverables:
 - initialize the repository and protected default branch;
 - add formatter, linter, type checker, test runner, dependency review, secret scanning, and documentation checks;
 - define contribution, security, release, and code-ownership workflows;
-- create reproducible development and CI environments; and
+- create reproducible development and CI environments;
+- record the frozen DUX baseline and establish sanitized extraction fixtures;
+  and
 - publish an initial threat model and ADR set.
 
 Exit criteria:
@@ -20,6 +25,8 @@ Exit criteria:
 - a clean checkout can run all checks with one documented command;
 - CI enforces the same checks;
 - no production or prototype credentials exist in history; and
+- every DUX-derived fixture has provenance, sanitization, and licence evidence;
+  and
 - the public API and compatibility promises are explicitly marked pre-stable.
 
 ## WP1: domain kernel and configuration
@@ -29,12 +36,17 @@ Deliverables:
 - implement the domain entities and state machines;
 - define configuration schemas, validation, and secret references;
 - define adapter interfaces and capability declarations;
-- define stable identifiers, clocks, and idempotency keys; and
+- define stable target, snapshot, review-case, proposal, and decision
+  identifiers, clocks, and idempotency keys;
+- implement the snapshot-aware ReviewCase lifecycle, ReviewNotice classes,
+  HumanDecision and DecisionAuthorization contracts, and display-only
+  ReviewGroup projection; and
 - add property tests for domain invariants.
 
 Exit criteria:
 
 - the domain layer imports no framework, database, network, or vendor modules;
+- sibling groups cannot propagate decisions or apply state;
 - invalid transitions cannot be constructed through public interfaces; and
 - configuration errors fail before any job or network mutation starts.
 
@@ -62,6 +74,7 @@ Deliverables:
 - implement authentication and connection testing;
 - discover libraries and scan items incrementally;
 - normalize supported ebook and audiobook metadata;
+- preserve connection- and library-scoped external identity and media type;
 - capture optimistic-concurrency snapshots;
 - expose capability and version diagnostics; and
 - build contract fixtures from redacted API responses.
@@ -83,7 +96,10 @@ Deliverables:
 - extract audio tags, chapters, and duration without transcription;
 - isolate parsers and enforce resource limits;
 - fingerprint source files without copying whole libraries; and
-- attach provenance and confidence to every fact.
+- attach provenance and confidence to every fact;
+- store each bounded evidence fact once and reference it by stable ID from
+  proposals, notices, and review cases; and
+- expose compact evidence summaries separately from detailed bounded facts.
 
 Exit criteria:
 
@@ -97,15 +113,19 @@ Exit criteria:
 Deliverables:
 
 - generate field-level proposals from current values and local evidence;
+- collapse identical values while retaining source consensus and alternatives;
 - implement configurable risk and confidence policies;
 - distinguish no-op, safe automatic, AI-review, and human-review outcomes;
-- generate cover candidates without applying them; and
+- implement adapter/media applicability and reviewer-facing notice classes;
+- generate typed cover and series choices without applying them; and
 - retain complete reasons for accepted and rejected candidates.
 
 Exit criteria:
 
 - policy decisions are deterministic for identical inputs;
 - provenance is never lost during normalization or ranking;
+- unsafe, rejected, inapplicable, and no-op choices cannot contaminate a safe
+  field selection;
 - high-risk changes cannot enter the automatic apply path; and
 - golden fixtures cover ambiguous editions, series order, and conflicting identifiers.
 
@@ -130,7 +150,9 @@ Exit criteria:
 
 Deliverables:
 
-- build immutable apply plans from approved proposals;
+- build immutable apply plans from either qualified automatic policy
+  authorization or an applicable human decision;
+- preserve field-level evidence, proposal, policy, AI, and human provenance;
 - re-read target state immediately before mutation;
 - create rollback evidence before each change;
 - apply through supported Audiobookshelf APIs only;
@@ -140,6 +162,7 @@ Deliverables:
 Exit criteria:
 
 - stale targets stop safely;
+- AI recommendation alone cannot authorize a write;
 - retries cannot duplicate or widen a change;
 - every mutation has a principal, plan, before state, after state, and verification result; and
 - fault-injection tests cover timeouts before, during, and after mutation.
@@ -161,13 +184,18 @@ Exit criteria:
 - no internal component requires an exposed port; and
 - the image passes vulnerability and secret scans.
 
-## WP9: review API and minimal operator surface
+## WP9: review API and operator surface
 
 Deliverables:
 
-- expose versioned endpoints for queues, evidence, decisions, jobs, audit events, and rollback;
-- add a deliberately minimal interface for setup, status, and required review;
-- preserve backend pagination, filtering, bulk-decision, and accessibility contracts for later UX work; and
+- expose versioned, cursor-paginated endpoints for cases, confirmed sibling
+  groups, evidence, decisions, summaries, jobs, audit events, and rollback;
+- implement target-level queue, decision-first detail, progressive evidence,
+  sibling navigation, and global review-summary surfaces;
+- implement exact-version bulk preview and commit with stale rejection,
+  idempotency, individual decision records, and compensating reversal;
+- satisfy the responsive, keyboard, accessibility, privacy, and performance
+  contracts in the [review experience](review-experience.md); and
 - document all mutations and their concurrency guards.
 
 Exit criteria:
@@ -175,13 +203,17 @@ Exit criteria:
 - a user can leave the service unattended and return to a bounded review queue;
 - safe decisions can be applied without shell access;
 - rejected and historical work remains auditable; and
-- detailed dashboard design can proceed without changing core domain semantics.
+- acknowledged decisions survive refresh, restart, and device changes;
+- sibling decisions cannot leak across targets; and
+- real-browser accessibility, narrow-viewport, pagination, stale-decision, and
+  payload-budget gates pass.
 
 ## Post-foundation work
 
 After the first production-quality vertical slice:
 
-- improve dashboard UX using the separately developed DUX findings;
+- refine review ergonomics from measured production usage without changing the
+  DUX-derived server contracts silently;
 - expand metadata providers and cover comparison;
 - add optional application-level write-back to ebook files;
 - evaluate a CWA adapter only against supported mutation paths;

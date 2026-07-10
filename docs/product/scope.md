@@ -11,7 +11,8 @@
 - Replaceable AI reviewer adapters, beginning with Codex CLI.
 - SQLite-backed durable state, job recovery, audit history, and configuration.
 - Readiness, backup, validation, apply, verification, rollback, and alerting.
-- Private single-user dashboard and API after the review UX contract is ready.
+- Private single-user API and bundled interface implementing the
+  [review-experience contract](review-experience.md).
 
 ## Planned extensions
 

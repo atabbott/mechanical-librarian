@@ -11,3 +11,6 @@ versioning after the first public release.
 
 - Initial product, architecture, security, quality, operations, and governance
   documentation scaffold.
+- DUX-derived review-experience and prototype-extraction contracts, including
+  server-authoritative decisions, target-level cases, sibling isolation,
+  guarded bulk review, accessibility, and performance requirements.

@@ -37,7 +37,7 @@ tools:
 container
 ├── supervisor
 ├── curator process
-│   ├── HTTP API and static dashboard
+│   ├── HTTP API and bundled web interface
 │   ├── event listener and scheduler
 │   ├── persisted job executor
 │   ├── evidence and provider orchestration
