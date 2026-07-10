@@ -109,6 +109,11 @@ read-only media mounts, and preserves state across upgrade/restart tests.
 Fixture families include:
 
 - valid and malformed EPUB packages;
+- EPUB package and opening-matter variants covering title, copyright, imprint,
+  edition, contributor, identifier, series, translation, illustration,
+  omnibus, navigation, same-file contradiction, and edition applicability
+  under the
+  [opening-ebook evidence contract](../product/opening-ebook-evidence.md);
 - bounded synthetic audio tags and chapter data;
 - generated opening-credit audio covering speech, silence, music, delayed
   credits, spoken roles, multilingual cases, no-credit controls, and hostile
@@ -197,3 +202,10 @@ codec, model-load failure, transcription timeout, temporary-space exhaustion,
 stale source fingerprints, hosted quota failure, cancellation, and orphaned
 temporary samples. They assert that ordinary non-transcription evidence work
 continues and no transcript outcome becomes direct write authority.
+
+EPUB extraction tests additionally inject archive traversal, entity expansion,
+compression bombs, oversized and deeply nested documents, invalid encodings,
+duplicate identifiers, broken spines, missing semantics, image-only front
+matter, encrypted resources, unrelated previews, hostile instructions, and
+concurrent source changes. They assert bounded reads, exact provenance,
+same-file correlation, typed failure, and continued ingestion.

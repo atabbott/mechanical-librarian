@@ -100,6 +100,10 @@ Mitigations:
 
 - Never extract archives by trusting stored paths.
 - Bound entry count, compressed and expanded bytes, nesting, text, and time.
+- Disable external entities, DTD and network retrieval, script execution, and
+  remote resources while parsing EPUB package and XHTML content.
+- Allowlist local resource types and reject archive traversal, absolute paths,
+  compression bombs, oversized XML/XHTML trees, and unsupported encryption.
 - Decode images with pixel and byte limits.
 - Run external parsers without shell interpolation, with time and resource
   limits, and with read-only input.

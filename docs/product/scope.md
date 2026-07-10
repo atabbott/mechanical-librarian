@@ -6,7 +6,8 @@
 - Audiobookshelf ebook and audiobook libraries.
 - Event-driven incremental processing plus scheduled reconciliation.
 - Application-level metadata and cover updates through supported APIs.
-- EPUB evidence and read-only audio tags, chapters, and duration.
+- EPUB package, bounded opening-matter, navigation, and structural evidence plus
+  read-only audio tags, chapters, and duration.
 - Replaceable catalogue/provider adapters.
 - Replaceable AI reviewer adapters, beginning with Codex CLI.
 - SQLite-backed durable state, job recovery, audit history, and configuration.

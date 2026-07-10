@@ -44,6 +44,7 @@ Start with the [documentation index](docs/README.md).
 - [Product vision](docs/product/vision.md)
 - [Scope and non-goals](docs/product/scope.md)
 - [Automation policy](docs/product/automation-policy.md)
+- [Bounded EPUB package and opening-matter evidence](docs/product/opening-ebook-evidence.md)
 - [Bounded opening-audio evidence](docs/product/opening-audio-evidence.md)
 - [Review experience](docs/product/review-experience.md)
 - [Initial build plan](docs/product/initial-build-plan.md)

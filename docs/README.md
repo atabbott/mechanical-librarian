@@ -16,6 +16,7 @@ release standards as code.
 - [Vision](product/vision.md)
 - [Scope and non-goals](product/scope.md)
 - [Automation policy](product/automation-policy.md)
+- [Bounded EPUB package and opening-matter evidence](product/opening-ebook-evidence.md)
 - [Bounded opening-audio evidence](product/opening-audio-evidence.md)
 - [Review experience](product/review-experience.md)
 - [Roadmap](product/roadmap.md)

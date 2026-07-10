@@ -36,6 +36,13 @@ Examples include embedded metadata, table-of-contents text, audio tags, chapters
 
 Evidence extraction should prefer structured fields over prose. Whole books, whole audio files, and audiobook transcripts are outside the initial product scope and must not be sent to an external reviewer.
 
+Initial EPUB extraction follows the
+[opening-ebook evidence contract](../product/opening-ebook-evidence.md). It
+retains package facts and minimum cited spans from bounded opening resources;
+complete decoded documents, unrestricted XHTML, and unrelated body prose are
+transient and excluded from ordinary APIs, reviewer packets, exports, and
+support bundles.
+
 A planned post-foundation capability may derive evidence from bounded audiobook
 opening windows under the
 [opening-audio evidence contract](../product/opening-audio-evidence.md). Raw

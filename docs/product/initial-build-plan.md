@@ -94,7 +94,13 @@ Exit criteria:
 
 Deliverables:
 
-- extract metadata from EPUB;
+- extract raw and normalized EPUB package metadata under the
+  [opening-ebook evidence contract](opening-ebook-evidence.md);
+- select semantic title, copyright, imprint, edition, contributor, and other
+  opening-matter resources, with a bounded reading-order fallback;
+- extract typed identifiers, contributor roles, dates, publisher/imprint,
+  series, edition, translation, illustration, omnibus, and structural facts
+  with exact resource and text-span provenance;
 - define the format boundary so AZW3 and MOBI can follow without changing the
   evidence model;
 - extract audio tags, chapters, and duration without transcription;
@@ -112,6 +118,9 @@ Exit criteria:
 
 - malformed or hostile files cannot block the job system;
 - extraction is read-only and bounded;
+- package, opening-matter, navigation, and structural observations retain raw
+  values, normalized interpretations, same-file correlation, contradictions,
+  and edition-applicability warnings;
 - evidence is reproducible and content-addressed where practical; and
 - unsupported formats fail visibly without preventing ingestion; and
 - media-health diagnostics remain distinct from metadata evidence and never

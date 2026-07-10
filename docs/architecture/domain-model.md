@@ -36,8 +36,8 @@ service version, and observation provenance.
 
 Immutable bounded evidence such as:
 
-- embedded ebook metadata;
-- front matter or TOC facts;
+- embedded ebook package metadata;
+- bounded opening-matter, navigation, TOC, and structural facts;
 - audio tags, chapters, or duration;
 - future bounded spoken-credit transcript spans and structured claims;
 - folder and filename facts;

@@ -51,7 +51,12 @@ When an upstream release changes undocumented behavior, the project may mark tha
 
 Format support is capability-specific. A format may support identification and embedded metadata extraction without supporting safe metadata write-back.
 
-The matrix must list read, evidence-extraction, cover-extraction, and write-back support separately. Unknown or malformed files remain visible as unsupported evidence sources; they must not block the rest of a library scan.
+The matrix must list read, package-metadata extraction, opening-matter
+extraction, cover extraction, and write-back support separately. EPUB support
+also records tested package versions, navigation/guide behavior, encryption
+limits, and qualified producer-tool variants. Unknown or malformed files remain
+visible as unsupported evidence sources; they must not block the rest of a
+library scan.
 
 ## Public API compatibility
 

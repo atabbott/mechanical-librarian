@@ -27,7 +27,10 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
 
 ## M2: Evidence and candidates
 
-- Extract bounded EPUB and audio evidence.
+- Extract bounded EPUB package, opening-matter, navigation, structural, and
+  audio evidence.
+- Use applicable mined identifiers and edition facts to seed candidates and
+  distinguish work-level from edition-level matches.
 - Normalize provider candidates with provenance.
 - Produce field-level proposals without production writes.
 - Cache provider results and classify systemic provider failures.

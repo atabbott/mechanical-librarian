@@ -22,3 +22,7 @@ versioning after the first public release.
   contract, including staged sampling, local-first processing, privacy and
   retention boundaries, resource controls, synthetic cohorts, and field-level
   qualification gates.
+- Initial bounded EPUB package and opening-matter evidence contract, including
+  edition-aware field mining, semantic and reading-order selection, exact
+  provenance, identifier applicability, archive/parser security, synthetic
+  qualification, and first-class policy use.

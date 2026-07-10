@@ -35,6 +35,16 @@
 - enabled evidence types;
 - read-only requirement.
 
+### Evidence extraction
+
+- enabled format and evidence capabilities;
+- per-format document, byte, text, node, nesting, duration, and temporary-space
+  limits;
+- semantic selection and bounded fallback policy versions;
+- retained excerpt and diagnostic-artifact limits;
+- parser concurrency, timeout, retry, and circuit-breaker bounds; and
+- changes that require evidence invalidation and re-extraction.
+
 ### Providers
 
 - enabled providers and order;

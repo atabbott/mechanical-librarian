@@ -1,0 +1,330 @@
+# Bounded EPUB Package and Opening-Matter Evidence
+
+## Status and purpose
+
+This document defines an initial-scope capability for EPUB evidence extraction.
+It turns embedded package metadata and the opening matter of the owned file into
+first-class, edition-aware evidence before catalogue lookup or reviewer input.
+
+The goal is to identify the work and the edition actually present in the
+library. Package metadata, title pages, copyright pages, edition statements,
+and identifiers can be more applicable than a catalogue result selected only
+from a title search.
+
+Local evidence is strong but not infallible. Files may be repackaged, converted,
+combined, incorrectly tagged, or built from another edition. Mechanical
+Librarian therefore preserves raw observations, normalized interpretations,
+same-file correlation, contradictions, and edition-applicability warnings.
+
+## Product decision
+
+Treat the following as first-class local evidence:
+
+1. EPUB container and package metadata.
+2. Semantically identified title, copyright, imprint, edition, contributor,
+   series, and other front-matter resources.
+3. A bounded fallback over the earliest eligible documents in reading order
+   when semantic labels are absent or incomplete.
+4. The table of contents, navigation, landmarks, and package structure where
+   they clarify work composition or edition applicability.
+
+EPUB does not have stable rendered pages. "First few pages" therefore means a
+bounded set of opening resources from the package spine and landmarks, selected
+by semantic role and reading order under byte, text, document-count, nesting,
+and time limits.
+
+This evidence may seed exact catalogue queries, support field proposals, reject
+inapplicable candidates, or establish an edition without a catalogue match. It
+never bypasses policy, stale-state, capability, backup, apply, verification, or
+audit gates.
+
+## Standards baseline
+
+The extractor follows the package, manifest, spine, navigation, and metadata
+contracts in [EPUB 3.3](https://www.w3.org/TR/epub-33/) and the semantic terms in
+the [EPUB Structural Semantics Vocabulary](https://www.w3.org/TR/epub-ssv-11/).
+Supported EPUB versions and tolerated legacy behavior belong in the published
+compatibility matrix and contract fixtures.
+
+Vendor extensions are observations with explicit source identity. They cannot
+silently override standard metadata, but may supply useful candidates when
+their meaning is documented and tested.
+
+## Evidence sources
+
+### Container and package metadata
+
+Read the container to locate the package document, then preserve raw and
+normalized observations for applicable fields such as:
+
+- unique package identifier and every declared identifier;
+- title, subtitle, short title, collection title, and display sequence;
+- creator and contributor names plus declared roles and file-as values;
+- language;
+- publisher and imprint;
+- publication, copyright, creation, and modification dates with their distinct
+  semantics;
+- subject, description, rights, source, relation, and type;
+- collection or series membership and group position;
+- accessibility and rendition facts where operationally useful;
+- cover resource declarations; and
+- package version, prefix mappings, manifest, spine, guide, landmarks, and
+  navigation relationships.
+
+The package modification timestamp is not a publication date. A package unique
+identifier is not assumed to be an ISBN. Legacy or vendor-specific fields are
+normalized only through a versioned source adapter.
+
+### Opening matter
+
+Prefer resources explicitly identified as title page, half-title page,
+copyright page, imprint, contributors, front matter, or another applicable
+semantic role. Use landmarks and navigation before filename guesses.
+
+Opening matter may support:
+
+- displayed title and subtitle;
+- author, editor, translator, illustrator, adapter, and other contributor
+  roles;
+- publisher and imprint;
+- copyright and publication years;
+- explicit edition, revision, printing, translation, or regional statements;
+- ISBNs and other typed identifiers with nearby applicability labels;
+- original title and original language;
+- series, sequence, volume, part, or collection statements;
+- omnibus, anthology, or collected-work membership;
+- abridgement, illustration, commentary, or supplemental-content statements;
+  and
+- production notices that distinguish this file from another edition.
+
+Only the minimum supporting text is retained. Story prose adjacent to front
+matter is not automatically evidence of title, author, edition, or series.
+
+### Navigation and structure
+
+Navigation and the table of contents may identify an omnibus, anthology,
+multi-volume work, included novella, or supplemental material. Structural facts
+remain distinct from bibliographic claims. A chapter heading does not become a
+book title merely because it appears near the start.
+
+## Deterministic selection
+
+### Semantic pass
+
+Select applicable resources referenced by package metadata, landmarks,
+navigation, guide entries, or structural semantics. Record the selection rule
+and semantic terms that caused each resource to be inspected.
+
+### Reading-order fallback
+
+When semantic coverage is missing, inspect the earliest eligible linear spine
+resources in order. The initial implementation should target no more than five
+qualifying opening documents and enforce a separately configured hard document
+and decoded-text limit. Exact defaults are finalized through synthetic and
+representative fixture benchmarks.
+
+Skip or separately classify:
+
+- cover-only image resources;
+- navigation documents already parsed structurally;
+- blank, decorative, or script-only resources;
+- samples, previews, advertisements, and unrelated excerpts when detectable;
+- documents after an evidenced transition into body matter; and
+- encrypted, unsupported, or unreadable resources.
+
+Selection stops when the required opening roles have been inspected, the body
+transition is reached, or any hard resource budget is exhausted.
+
+## Extraction and normalization
+
+Package parsing, XHTML text extraction, claim recognition, normalization, and
+policy are separate stages.
+
+Each observation records:
+
+- source file fingerprint and format version;
+- package and resource identity;
+- manifest, spine, landmark, guide, navigation, or fallback selection path;
+- semantic role;
+- resource-relative element path and bounded text offsets;
+- exact supporting text or raw metadata value;
+- normalized field, value, type, and contributor role;
+- extractor, normalization, schema, and vocabulary versions;
+- language and encoding facts;
+- same-file lineage or correlation identity; and
+- ambiguity, malformed-input, edition-applicability, and contradiction
+  warnings.
+
+The extractor preserves raw values before normalization. It does not rewrite
+the EPUB, repair package metadata, fetch remote resources, execute scripts,
+apply stylesheets, or infer hidden browser layout.
+
+## Identifier and edition rules
+
+Identifiers are typed and validated independently.
+
+- Validate ISBN checksums and preserve ISBN-10 versus ISBN-13.
+- Preserve labels that distinguish ebook, print, hardcover, paperback, audio,
+  regional, or other applicability.
+- Do not assume every valid ISBN identifies the file's ebook edition.
+- Preserve multiple valid identifiers when the front matter legitimately lists
+  several formats.
+- Treat an unlabelled identifier near format lists as ambiguous until another
+  fact establishes applicability.
+- Never convert a UUID, DOI, ASIN, proprietary ID, or package identifier into an
+  ISBN-shaped field.
+
+Edition strength is based on the combination and applicability of facts, not a
+single universal score. An explicit edition statement plus matching title,
+contributors, publisher, date, and applicable identifier is stronger than a
+bare package title. Package metadata and front matter from the same file can
+corroborate internally, but remain one correlated local lineage rather than two
+independent sources.
+
+## Candidate and policy use
+
+Local file evidence is available before remote candidate retrieval. It may:
+
+- construct a typed identifier lookup;
+- narrow title and contributor searches;
+- distinguish work-level from edition-level candidates;
+- reject a candidate for another format, region, translation, omnibus, or
+  revision;
+- support a proposal without a remote catalogue result; or
+- create a contradiction that remains visible for policy or human review.
+
+Package and front-matter facts are not merely prompt hints. They are immutable
+evidence records referenced directly by candidates, proposals, decisions, and
+apply provenance.
+
+Strong applicable local evidence may qualify a non-destructive automatic field
+decision after shadow evaluation. Contradicted, malformed, ambiguous, or
+cross-edition facts cannot enter automatic apply merely because they came from
+the owned file.
+
+## Security boundaries
+
+EPUB input is an untrusted archive containing untrusted XML, XHTML, images,
+fonts, stylesheets, scripts, links, and metadata.
+
+The extractor must:
+
+- reject archive traversal and absolute paths;
+- bound archive entries, compressed bytes, expanded bytes, compression ratio,
+  nesting, XML nodes, attributes, text, and execution time;
+- disable external entities, DTD retrieval, network access, script execution,
+  and remote resource loading;
+- parse only allowlisted local package and content resource types;
+- avoid materializing the complete archive when streaming or bounded reads are
+  sufficient;
+- isolate parser failures from the durable job worker;
+- clean temporary artifacts on success, failure, cancellation, timeout, lease
+  recovery, and process restart; and
+- classify encrypted, DRM-protected, malformed, oversized, and unsupported
+  content without blocking ingestion or other evidence sources.
+
+Embedded prompt-like text is inert evidence. It cannot alter extraction rules,
+request secrets, invoke tools, or become reviewer instruction.
+
+## Privacy and retention
+
+Package metadata and opening matter are private library and content evidence
+under the [data-privacy policy](../architecture/data-privacy.md).
+
+- Retain normalized facts and the minimum cited spans required for explanation.
+- Keep complete decoded documents transient unless a separate bounded artifact
+  is required for diagnosis and covered by retention policy.
+- Never place whole opening documents, images, or unrestricted XHTML in logs,
+  ordinary API lists, reviewer packets, exports, or support bundles.
+- Stage only cited spans and explicit facts for a reviewer.
+- Use logical resource identifiers rather than personal filesystem paths.
+- Permit the owner to inspect and delete retained content artifacts without
+  changing the EPUB or target library item.
+
+## Availability and failure behavior
+
+Audiobookshelf availability does not wait for extraction. A missing mount,
+unstable file, malformed package, encrypted resource, unsupported version,
+parser timeout, or absent front matter produces typed evidence and operational
+outcomes. It does not imply that metadata is absent and does not quarantine the
+item.
+
+A changed file fingerprint supersedes prior extraction work. Cached evidence is
+reused only when the source fingerprint, extractor version, configuration, and
+selection contract remain applicable.
+
+## Qualification plan
+
+### Synthetic contract fixtures
+
+Cover at minimum:
+
+- EPUB 2 and EPUB 3 package and navigation variants;
+- standard and vendor-specific metadata;
+- title, half-title, copyright, imprint, contributor, and edition pages;
+- missing or incorrect package metadata corrected by front matter;
+- package and front-matter contradictions;
+- ebook and print ISBN lists with clear and ambiguous labels;
+- translations, illustrated editions, revised editions, regional editions,
+  omnibuses, anthologies, and collected works;
+- multiple contributors and role vocabularies;
+- series names and integer, decimal, labelled, and missing sequence values;
+- image-only title or copyright pages without OCR fallback;
+- misleading early chapter headings and unrelated previews;
+- malformed XML/XHTML, invalid encodings, duplicate IDs, and broken links;
+- archive traversal, entity expansion, compression bombs, oversized documents,
+  deep nesting, hidden text, and hostile embedded instructions; and
+- encrypted, unsupported, truncated, and concurrently changing files.
+
+Fixtures are generated or licence-safe and contain no real library facts.
+
+### Shadow qualification
+
+Measure:
+
+- extraction coverage by field and semantic source;
+- identifier validity and edition applicability;
+- package versus front-matter agreement and contradiction;
+- correct work, edition, contributor role, series, and omnibus classification;
+- candidate retrieval improvement;
+- false replacement, human correction, and unresolved rates;
+- parser failures and bounded-resource enforcement;
+- runtime, memory, temporary storage, and artifact retention; and
+- behavior across supported EPUB versions and producer toolchains.
+
+Field-specific policy eligibility is versioned. A parser, vocabulary,
+normalizer, selection, or material configuration change creates a new
+evaluation cohort.
+
+## Explicit exclusions
+
+The initial extractor does not perform:
+
+- OCR of image-only front matter;
+- broad PDF extraction;
+- full-book prose analysis;
+- JavaScript execution or rendered-browser interpretation;
+- network retrieval of linked resources;
+- DRM removal or decryption;
+- EPUB repair or metadata write-back; or
+- automatic deletion, conversion, or replacement of media files.
+
+AZW3 and MOBI support reuse the evidence contract only after separate format,
+parser, security, and compatibility qualification.
+
+## Decisions required before implementation
+
+- Select the archive, XML, and XHTML parser dependencies and record their
+  licences and security posture.
+- Finalize soft and hard document, byte, text, node, nesting, and time limits.
+- Define the stable resource and text-span provenance scheme.
+- Define supported EPUB 2, EPUB 3, legacy guide, navigation, and vendor metadata
+  behavior.
+- Select allowlisted vendor extensions and their precedence.
+- Define body-transition and unrelated-preview classification rules.
+- Define identifier applicability and field-specific automatic-policy
+  thresholds.
+- Decide whether bounded diagnostic XHTML artifacts are ever retained.
+
+These decisions are recorded in configuration contracts, compatibility data,
+and an ADR where they create a durable architectural commitment.

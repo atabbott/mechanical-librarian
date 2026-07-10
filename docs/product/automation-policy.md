@@ -65,6 +65,12 @@ Preferred evidence includes:
 - catalogue records that can be tied to the same work or edition; and
 - corroborating cross-format evidence for the same owned item.
 
+EPUB package and opening-matter facts are first-class evidence records, not
+merely hints supplied to a catalogue or reviewer. Applicable local facts may
+establish an edition or support a field proposal without a remote catalogue
+match. Package metadata and front matter from the same file can corroborate
+internally but retain one correlated file lineage.
+
 Ambiguity risk facts include generic or very short titles, initial-only or
 collapsed author names, narrator/author role confusion, swapped title and
 author fields, conflicting series orders, and release-name debris. These facts
