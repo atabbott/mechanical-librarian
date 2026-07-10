@@ -9,6 +9,7 @@ versioning after the first public release.
 
 ### Added
 
+- Snapshot-aware review cases, sibling projections, notices, and decision authorization records.
 - Immutable evidence, candidate, field-proposal, risk, notice, and disposition vocabulary.
 - Versioned, fail-fast, secret-free application configuration validation.
 - Pull-request workflow enforcing a real auto-closing implementation-issue link.
