@@ -49,6 +49,11 @@ The curator must not quarantine an otherwise usable item merely because metadata
 
 Evidence is evaluated for applicability, independence, and contradiction—not only by a single numerical confidence score.
 
+Agreement is meaningful only when the agreeing observations are materially
+independent. Several adapters repeating one upstream catalogue record count as
+correlated support, not several independent confirmations. Policy records this
+relationship before source agreement can increase automatic-write eligibility.
+
 Preferred evidence includes:
 
 - embedded EPUB package metadata and bounded front matter;
@@ -57,6 +62,13 @@ Preferred evidence includes:
 - the target service's current state;
 - catalogue records that can be tied to the same work or edition; and
 - corroborating cross-format evidence for the same owned item.
+
+Ambiguity risk facts include generic or very short titles, initial-only or
+collapsed author names, narrator/author role confusion, swapped title and
+author fields, conflicting series orders, and release-name debris. These facts
+raise the evidence required for replacement but do not turn a hard-coded list
+or fuzzy-match score into authority. Initial-aware name comparison may support
+identity while preserving the full observed and proposed names.
 
 An embedded value is not automatically true, and a catalogue value is not automatically edition-applicable. However, imperfect evidence can still support a non-destructive improvement when the competing explanation is materially less plausible.
 

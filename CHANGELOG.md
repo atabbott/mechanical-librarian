@@ -14,3 +14,7 @@ versioning after the first public release.
 - DUX-derived review-experience and prototype-extraction contracts, including
   server-authoritative decisions, target-level cases, sibling isolation,
   guarded bulk review, accessibility, and performance requirements.
+- Clean-room metadata-chaos and reliability fixture requirements, including
+  source-correlation policy, restart-safe retry suppression, bounded audio
+  health observations, typed operator diagnostics, and future extension
+  isolation requirements.

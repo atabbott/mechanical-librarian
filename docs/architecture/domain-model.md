@@ -45,14 +45,17 @@ Immutable bounded evidence such as:
 - cover dimensions and perceptual identity.
 
 Evidence includes source type, extraction version, item fingerprint, observed
-time, confidence facts, warnings, and an optional artifact reference. Evidence
-does not contain an approval decision.
+time, confidence facts, warnings, upstream lineage or correlation identity, and
+an optional artifact reference. Evidence does not contain an approval decision.
+Read-only media-health observations may use the same immutable storage pattern,
+but cannot imply that metadata is absent or create a review case by themselves.
 
 ### Candidate
 
 Normalized provider or derived proposal source. A candidate may support several
 field values but must retain its original source identity, provider response
-fingerprint, edition indicators, and risk facts.
+fingerprint, upstream lineage or correlation identity, edition indicators, and
+risk facts.
 
 ### FieldProposal
 
@@ -139,7 +142,8 @@ Locations exposed through user interfaces must be redacted or logical.
 
 Durable unit of background work. Jobs have explicit input references,
 deduplication keys, lease state, attempts, retry classification, and terminal
-outcomes.
+outcomes. Retry eligibility and suppression outcomes are persisted rather than
+inferred from process-local timers.
 
 ### AuditEvent
 

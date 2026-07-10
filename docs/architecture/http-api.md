@@ -134,6 +134,13 @@ HTTP connection through provider, AI, apply, or verification work. The API may
 offer server-sent events or WebSocket updates as a convenience, but polling the
 job resource remains supported.
 
+Job and detailed-health representations expose typed stage, active adapter,
+attempt count, next retry eligibility, last failure class, and applicable
+circuit-breaker or automatic-suspension reason. They never infer that a
+provider result is absent from an outage, timeout, authentication failure, or
+malformed response. Human-readable activity text is presentation data and
+cannot be the only durable representation of progress or failure.
+
 ## Authentication
 
 The first release supports a private owner account. Authentication design must

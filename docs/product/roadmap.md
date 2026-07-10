@@ -8,7 +8,7 @@ milestone has met its exit criteria.
 - Select and record the project licence.
 - Publish architecture, security, quality, and contribution contracts.
 - Establish repository layout, CI, packaging, migrations, and release tooling.
-- Create synthetic service and media fixtures.
+- Create synthetic service, media, metadata-chaos, and reliability fixtures.
 
 Exit: a contributor can build, test, and understand the empty product shell.
 
@@ -20,6 +20,8 @@ Exit: a contributor can build, test, and understand the empty product shell.
 - Reconcile with scheduled polling.
 - Persist canonical items, snapshots, fingerprints, and jobs.
 - Provide health and inventory CLI/API surfaces.
+- Prove persistent deduplication and bounded retry behavior under repeated
+  failed delivery, worker death, and restart.
 
 Exit: restarts and duplicate events cannot lose or duplicate inventory work.
 
@@ -29,6 +31,8 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
 - Normalize provider candidates with provenance.
 - Produce field-level proposals without production writes.
 - Cache provider results and classify systemic provider failures.
+- Qualify generic-title, initial-aware author, contributor-role, correlated-
+  source, and same-title/different-author behavior against synthetic cohorts.
 
 Exit: candidate generation is repeatable, bounded, and explainable.
 
@@ -56,6 +60,8 @@ Exit: production writes are recoverable, idempotent, and fully audited.
 - Enable event-driven unattended processing.
 - Add daily reconciliation and weekly summaries.
 - Add circuit breakers, authentication recovery, and support diagnostics.
+- Expose typed active stage, adapter, retry, and suspension state for unattended
+  operation.
 - Document upgrade and disaster-recovery drills.
 
 Exit: new items are normally corrected without human involvement.
