@@ -9,7 +9,7 @@ from importlib import metadata
 from pathlib import Path
 
 import mechanical_librarian
-from mechanical_librarian.interfaces.cli import main
+from mechanical_librarian.bootstrap import main
 
 
 class PackageSmokeTests(unittest.TestCase):
@@ -19,7 +19,7 @@ class PackageSmokeTests(unittest.TestCase):
             mechanical_librarian.__version__,
         )
 
-    def test_empty_cli_succeeds(self) -> None:
+    def test_empty_composed_cli_succeeds(self) -> None:
         self.assertEqual(main([]), 0)
 
     def test_all_modules_import_outside_checkout_without_creating_state(self) -> None:
