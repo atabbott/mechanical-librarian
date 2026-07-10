@@ -36,6 +36,11 @@ class RiskSeverity(StrEnum):
     CRITICAL = "critical"
 
 
+class EvidenceRelationship(StrEnum):
+    SAME_TARGET = "same_target"
+    EXPLICIT_CROSS_TARGET = "explicit_cross_target"
+
+
 @dataclass(frozen=True)
 class FieldValue:
     values: tuple[str, ...]
@@ -71,6 +76,41 @@ class EvidenceRecord:
     def __post_init__(self) -> None:
         if not self.source_type or any(not warning for warning in self.warnings):
             raise ValueError("evidence requires a source type and non-empty warnings")
+
+
+@dataclass(frozen=True)
+class EvidenceReference:
+    """A target-scoped attachment that never copies the underlying evidence."""
+
+    evidence: EvidenceId
+    source_target: TargetId
+    consuming_target: TargetId
+    relationship: EvidenceRelationship
+    policy_approved: bool = False
+
+    def __post_init__(self) -> None:
+        same_target = self.source_target == self.consuming_target
+        if same_target != (self.relationship is EvidenceRelationship.SAME_TARGET):
+            raise ValueError("evidence relationship does not match target scope")
+        if not same_target and not self.policy_approved:
+            raise ValueError("cross-target evidence requires explicit policy approval")
+
+
+@dataclass(frozen=True)
+class EvidenceSummary:
+    """A compact, bounded review projection; details load separately by ID."""
+
+    evidence: EvidenceId
+    source_type: str
+    fact_count: int
+    warning_count: int
+    excerpt: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.source_type or self.fact_count < 0 or self.warning_count < 0:
+            raise ValueError("evidence summary fields are invalid")
+        if self.excerpt is not None and (len(self.excerpt) > 280 or "\n" in self.excerpt):
+            raise ValueError("evidence excerpts must be single-line and at most 280 characters")
 
 
 @dataclass(frozen=True)

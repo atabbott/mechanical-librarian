@@ -9,6 +9,7 @@ versioning after the first public release.
 
 ### Added
 
+- Bounded evidence references and compact review-summary projections.
 - Snapshot-aware review cases, sibling projections, notices, and decision authorization records.
 - Immutable evidence, candidate, field-proposal, risk, notice, and disposition vocabulary.
 - Versioned, fail-fast, secret-free application configuration validation.
