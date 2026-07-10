@@ -16,6 +16,7 @@ release standards as code.
 - [Vision](product/vision.md)
 - [Scope and non-goals](product/scope.md)
 - [Automation policy](product/automation-policy.md)
+- [Review experience](product/review-experience.md)
 - [Roadmap](product/roadmap.md)
 - [Initial build plan](product/initial-build-plan.md)
 - [Licence decision](product/license-decision.md)
@@ -39,6 +40,7 @@ release standards as code.
 - [Release engineering](development/release-engineering.md)
 - [Repository structure](development/repository-structure.md)
 - [Prototype extraction policy](development/prototype-extraction.md)
+- [DUX prototype extraction record](development/dux-extraction.md)
 
 ## Operations
 

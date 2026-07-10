@@ -12,6 +12,12 @@ Do not copy a prototype module merely because it works in one environment.
 First identify the behavior worth preserving, encode that behavior in portable
 fixtures and tests, then decide whether to extract, adapt, or reimplement.
 
+The completed DUX dashboard work has a frozen source revision, verification
+evidence, inclusion matrix, and explicit exclusions in the
+[DUX extraction record](dux-extraction.md). The production
+[review-experience contract](../product/review-experience.md) is authoritative
+where it intentionally differs from the prototype.
+
 ## Extraction checklist
 
 A component may be extracted only when:
@@ -60,6 +66,10 @@ Each extracted component should have a short record in its pull request:
 - fixture sanitization statement;
 - licence and attribution conclusion;
 - tests proving parity and new safety behavior.
+
+DUX-derived pull requests also cite the frozen prototype commit and tag recorded
+in [the DUX extraction record](dux-extraction.md). Do not replace that revision
+with a filesystem path or an uncommitted workspace description.
 
 ## Runtime independence
 

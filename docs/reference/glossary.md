@@ -37,6 +37,11 @@ allowing safe read-only work to continue.
 AI, human, or deterministic conclusion about one proposal. A decision is not
 itself an apply authorization.
 
+## Decision authorization
+
+Immutable basis allowing selected changes to enter an apply plan: either a
+qualified automatic policy disposition or an applicable human decision.
+
 ## Disposition
 
 Policy result for current work: `auto_apply`, `needs_review`,
@@ -72,8 +77,19 @@ schema-constrained recommendations without production authority.
 
 ## Review case
 
-Current decision surface grouping field proposals for one target. Historical
-cases remain immutable when a new fingerprint supersedes them.
+Immutable decision surface grouping field proposals for one target snapshot and
+proposal-set version. Historical cases remain immutable when a new fingerprint
+or proposal set supersedes them.
+
+## Review group
+
+Display/query projection for confirmed sibling targets representing the same
+work. It cannot own or propagate decisions, selections, or apply state.
+
+## Review notice
+
+Human-facing interpretation of a risk or diagnostic condition classified as
+blocking, needing attention, resolved, or attached to a rejected alternative.
 
 ## Shadow mode
 

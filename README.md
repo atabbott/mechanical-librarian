@@ -31,10 +31,11 @@ changing the domain model.
 The project is in documentation and architecture design. No production image
 or supported release exists yet.
 
-The earlier Ebook Management workspace is a prototype and evidence source. It
-is not a runtime dependency of this project. Components may be extracted only
-after they are made portable, given narrow interfaces, and covered by isolated
-tests.
+The earlier Ebook Management workspace is a prototype and evidence source. Its
+completed DUX dashboard work is frozen as a traceable baseline and informs the
+production [review experience](docs/product/review-experience.md), but it is not
+a runtime dependency. Components may be extracted only after they are made
+portable, given narrow interfaces, and covered by isolated tests.
 
 ## Documentation
 
@@ -43,11 +44,13 @@ Start with the [documentation index](docs/README.md).
 - [Product vision](docs/product/vision.md)
 - [Scope and non-goals](docs/product/scope.md)
 - [Automation policy](docs/product/automation-policy.md)
+- [Review experience](docs/product/review-experience.md)
 - [Initial build plan](docs/product/initial-build-plan.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Security model](docs/architecture/security.md)
 - [Data privacy](docs/architecture/data-privacy.md)
 - [Quality strategy](docs/development/quality-strategy.md)
+- [DUX extraction record](docs/development/dux-extraction.md)
 - [Roadmap](docs/product/roadmap.md)
 - [Architecture decisions](docs/architecture/decisions/README.md)
 

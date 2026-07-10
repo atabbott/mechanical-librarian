@@ -45,6 +45,35 @@ Exercise SQLite transactions, migrations, durable job recovery, API handlers,
 event reconciliation, provider cache, artifact retention, authentication, and
 subprocess boundaries.
 
+Review integration tests prove server-authoritative decisions, case
+supersession, cursor pagination, exact-version bulk preview/commit, stale-batch
+rejection, compensating decisions, audit attribution, and cross-device/restart
+recovery.
+
+### Interface and accessibility tests
+
+Test the bundled review interface against the versioned API using synthetic
+cases. Required scenarios include:
+
+- one ordinary case per target snapshot;
+- independent field, cover, and series selections;
+- separate destructive cases;
+- confirmed sibling navigation without decision leakage;
+- queue filtering, empty results, stable routing, and Back/Forward behavior;
+- detail scroll reset with queue-position preservation;
+- individual and bulk decision preview, confirmation, stale rejection, and
+  reversal;
+- no document-level overflow at 390 pixels, plus representative 768-pixel and
+  desktop viewports;
+- keyboard-only use, visible focus, semantic controls, live announcements, and
+  automated accessibility checks; and
+- bounded initial DOM, API payload, asset, cover-decode, and interaction costs.
+
+Static markup assertions may guard a narrow contract but cannot be the only
+evidence for interaction, responsive, or accessibility acceptance. Run real
+browser tests and an automated accessibility scanner against representative
+metadata, cover, series, notice, sibling, and review-summary states.
+
 ### End-to-end tests
 
 Run the published container against synthetic services and media fixtures:
@@ -86,10 +115,22 @@ Fixture families include:
 - missing and low-quality synthetic covers;
 - duplicate provider results and redirects;
 - prompt injection embedded in every untrusted text field;
+- repeated direct and projected candidates for one target;
+- evidence-only observations that must not create queue cases;
+- agreeing sources, rejected alternatives, no-ops, unresolved replacements,
+  and incompatible media fields;
+- independent ebook/audiobook sibling cases plus same-title non-identity
+  controls;
+- explicit automatic, human, stale, unsupported, and destructive review paths;
 - service payloads from supported compatibility versions, irreversibly
   sanitized or generated from schema.
 
 Fixture licences and provenance must be documented.
+
+DUX-derived scenarios cite the frozen source revision and follow the fixture,
+licence, and rejection rules in the
+[DUX extraction record](dux-extraction.md). Golden files preserve behavior, not
+prototype HTML or browser formatting.
 
 ## Determinism
 

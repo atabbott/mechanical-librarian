@@ -6,23 +6,35 @@ system behavior; issues link to those contracts rather than copying them.
 
 ## Repository and project model
 
-- One organization-owned repository contains source, documentation, issues,
-  pull requests, releases, and security advisories.
-- One organization-level GitHub Project contains the implementation backlog
-  and roadmap.
+- One repository owned by the initial maintainer's GitHub account contains
+  source, documentation, issues, pull requests, releases, and security
+  advisories.
+- One account-owned GitHub Project contains the implementation backlog and
+  roadmap.
 - The repository and Project remain private during initial development and are
   made public only after the publication-readiness audit.
 - Discussions contain questions, support, and exploratory ideas. Accepted,
   bounded work is converted into an issue.
+- Ownership may move to an organization later if contributor governance or
+  project scale justifies it. The transfer must preserve issue, Project,
+  release, security, package, and automation behavior and update this document
+  in the same change.
 
 ## Work hierarchy
 
-Use four issue types:
+Use four work kinds:
 
 - **Epic**: an outcome spanning multiple independently deliverable issues;
 - **Feature**: a user-visible capability or coherent behavior change;
 - **Task**: bounded implementation, testing, operations, or documentation work;
 - **Bug**: behavior that violates an implemented contract.
+
+The initial personal repository uses ordinary GitHub issues because native
+organization issue types are unavailable. Issue forms, titles, parent
+relationships, and required content express the work kind. Do not create
+duplicate type labels solely to simulate native issue types. If the repository
+moves to an organization later, native issue types may be adopted through a
+reviewed migration.
 
 The WP0–WP9 packages in the
 [initial build plan](../product/initial-build-plan.md) are parent work-package
@@ -115,7 +127,8 @@ issue and recorded in an ADR before the implementation issue closes.
 
 Maintain these Project views:
 
-- **Triage**: `Inbox` and `Triaged`, grouped by issue type;
+- **Triage**: `Inbox` and `Triaged`, filterable by work package and ownership
+  area;
 - **Ready**: unblocked `Ready` work, sorted by priority and risk;
 - **Current**: `In progress`, `In review`, and `Blocked` as a board;
 - **Roadmap**: Epics and Features by work package and target release;
@@ -124,10 +137,11 @@ Maintain these Project views:
 
 ## Automation
 
-The Free-plan auto-add workflow adds all issues and pull requests from the
-repository to the Project. Built-in workflows set new items to `Inbox`, closed
-issues and merged pull requests to `Done`, and archive completed items after a
-retention window.
+Until a repository-scoped auto-add workflow is explicitly configured and
+verified, issue and pull-request creation must add the item to the Project in
+the same operation. Built-in workflows may set new items to `Inbox`, closed
+issues and merged pull requests to `Done`, and archive completed items only
+after their configured behavior has been tested against this Project.
 
 Additional automation may use GitHub Actions and the Projects API, but field
 changes must remain understandable and reversible. Automation never changes
@@ -164,7 +178,8 @@ Before publication, audit:
 - complete Git history, branches, tags, and release assets;
 - issues, pull requests, comments, attachments, and Projects;
 - Actions logs, artifacts, caches, variables, and secrets;
-- organization membership, teams, permissions, and contact details;
+- repository collaborators, account permissions, future organization transfer
+  settings, and contact details;
 - repository visibility, Project visibility, Discussions, and security
   reporting settings;
 - licence, attribution, support, governance, and security contacts; and

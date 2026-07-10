@@ -32,6 +32,56 @@ The expected API surface includes:
 - backup readiness and retention status;
 - authentication and reviewer connection status.
 
+## Review resources
+
+The API exposes server-authoritative review projections suitable for the
+bundled interface and automation clients:
+
+- a cursor-paginated active-case collection with review-state, library,
+  media-type, change-type, notice, and advanced source filters;
+- immutable historical cases and supersession links;
+- one case-detail resource containing field choices, typed cover/series
+  choices, applicable decision state, and bounded evidence summaries;
+- confirmed sibling-group projections whose member decisions remain
+  independent;
+- evidence-detail resources loaded separately from case collections;
+- aggregate review counts and adapter-separated planned-change summaries; and
+- automatic decision history suitable for audit and quality sampling.
+
+List responses never embed the complete evidence store, unrestricted source
+rows, full-size covers, or a whole-library review payload. Stable sort keys and
+cursor semantics keep confirmed siblings adjacent without treating title
+similarity as identity.
+
+Representations expose AI recommendation, deterministic disposition, human
+decision, stale state, and apply readiness as separate fields. An omitted
+human decision must not be inferred from an AI or source recommendation.
+
+## Review mutations
+
+An individual decision mutation supplies:
+
+- review-case and proposal-set versions;
+- expected item fingerprint;
+- explicit field, cover, and series selections;
+- action and optional bounded notes; and
+- an idempotency key.
+
+The server validates selections, target applicability, stale state, capability,
+and the permitted state transition. Clients post an action, not an arbitrary
+desired lifecycle state.
+
+Bulk review uses separate preview and commit operations. Preview returns an
+opaque preview identity, exact case/proposal versions, eligible counts, adapter
+and field totals, and every exclusion reason. Commit supplies that preview
+identity and an idempotency key; any changed case fails safely instead of
+widening the batch. A committed batch creates individual decisions and one
+batch audit record.
+
+Reversing an unapplied human decision creates a compensating decision event.
+Once apply begins, recovery uses apply-plan cancellation, verification, and
+rollback resources rather than a review-interface undo operation.
+
 ## Mutation guards
 
 Mutating endpoints require the narrowest applicable combination of:
@@ -66,12 +116,16 @@ upstream responses are never returned to ordinary clients.
 
 ## Collection behavior
 
-- Cursor pagination for unbounded history and job collections.
+- Cursor pagination for review queues, unbounded history, and job collections.
 - Explicit filters with documented semantics.
 - Stable sort keys and deterministic tie-breaking.
 - Bounded page sizes.
 - Summary endpoints for counts instead of forcing clients to download entire
   histories.
+
+The bundled interface may retain non-authoritative display preferences in the
+browser. Acknowledged decisions, notes, bulk previews, and workflow state live
+on the server and survive refresh, restart, and device changes.
 
 ## Long-running work
 

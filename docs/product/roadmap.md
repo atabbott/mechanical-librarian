@@ -62,9 +62,14 @@ Exit: new items are normally corrected without human involvement.
 
 ## M6: Review experience
 
-- Implement the stable review-case and approval contract.
+- Implement the DUX-derived, snapshot-aware review-case and decision contract.
 - Expose current unresolved work and historical automatic decisions.
-- Support safe approval and rejection without coupling UI state to run files.
+- Provide target-level queue, decision-first detail, progressive evidence,
+  confirmed sibling navigation, and review summaries.
+- Support guarded individual and bulk decisions without coupling authoritative
+  state to browser storage or run files.
+- Pass real-browser mobile, keyboard, accessibility, stale-state, and
+  performance gates.
 
 Exit: occasional review is efficient, persistent, and server-authoritative.
 
