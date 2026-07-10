@@ -4,7 +4,7 @@ This plan turns the product and architecture documents into an implementation se
 
 Each work package must leave the repository releasable, documented, and testable. A later package may not compensate for missing safety or quality work in an earlier one.
 
-## Package 0: project foundation
+## WP0: project foundation
 
 Deliverables:
 
@@ -22,7 +22,7 @@ Exit criteria:
 - no production or prototype credentials exist in history; and
 - the public API and compatibility promises are explicitly marked pre-stable.
 
-## Package 1: domain kernel and configuration
+## WP1: domain kernel and configuration
 
 Deliverables:
 
@@ -38,7 +38,7 @@ Exit criteria:
 - invalid transitions cannot be constructed through public interfaces; and
 - configuration errors fail before any job or network mutation starts.
 
-## Package 2: persistence and durable jobs
+## WP2: persistence and durable jobs
 
 Deliverables:
 
@@ -55,7 +55,7 @@ Exit criteria:
 - every state transition is attributable; and
 - upgrade and rollback rehearsals pass against representative databases.
 
-## Package 3: Audiobookshelf read adapter
+## WP3: Audiobookshelf read adapter
 
 Deliverables:
 
@@ -73,7 +73,7 @@ Exit criteria:
 - pagination, rate limiting, timeouts, and partial failures are tested; and
 - unsupported target behavior degrades to an explicit capability state.
 
-## Package 4: local evidence extraction
+## WP4: local evidence extraction
 
 Deliverables:
 
@@ -92,7 +92,7 @@ Exit criteria:
 - evidence is reproducible and content-addressed where practical; and
 - unsupported formats fail visibly without preventing ingestion.
 
-## Package 5: candidate and policy engine
+## WP5: candidate and policy engine
 
 Deliverables:
 
@@ -109,7 +109,7 @@ Exit criteria:
 - high-risk changes cannot enter the automatic apply path; and
 - golden fixtures cover ambiguous editions, series order, and conflicting identifiers.
 
-## Package 6: untrusted AI reviewer
+## WP6: untrusted AI reviewer
 
 Deliverables:
 
@@ -126,7 +126,7 @@ Exit criteria:
 - timeouts and malformed output produce safe workflow states; and
 - evaluation results meet the documented minimum before automation is enabled.
 
-## Package 7: guarded Audiobookshelf apply
+## WP7: guarded Audiobookshelf apply
 
 Deliverables:
 
@@ -144,7 +144,7 @@ Exit criteria:
 - every mutation has a principal, plan, before state, after state, and verification result; and
 - fault-injection tests cover timeouts before, during, and after mutation.
 
-## Package 8: single-container product shell
+## WP8: single-container product shell
 
 Deliverables:
 
@@ -161,7 +161,7 @@ Exit criteria:
 - no internal component requires an exposed port; and
 - the image passes vulnerability and secret scans.
 
-## Package 9: review API and minimal operator surface
+## WP9: review API and minimal operator surface
 
 Deliverables:
 

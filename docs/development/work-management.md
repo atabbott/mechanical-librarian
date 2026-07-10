@@ -24,10 +24,15 @@ Use four issue types:
 - **Task**: bounded implementation, testing, operations, or documentation work;
 - **Bug**: behavior that violates an implemented contract.
 
-The M0–M9 packages in the
-[initial build plan](../product/initial-build-plan.md) are parent Epic issues.
-Deliverables become sub-issues. Use native issue dependencies for blocking
-relationships; do not encode dependency order only in prose or checklists.
+The WP0–WP9 packages in the
+[initial build plan](../product/initial-build-plan.md) are parent work-package
+issues. Deliverables become sub-issues. Use native issue dependencies for
+blocking relationships; do not encode dependency order only in prose or
+checklists.
+
+The M0–M7 outcome milestones in the [roadmap](../product/roadmap.md) are a
+separate product progression. `WP` always means implementation work package;
+`M` always means product milestone.
 
 Milestones represent release trains such as `0.1.0`, `0.2.0`, and `1.0.0`.
 They do not duplicate work packages.
@@ -73,8 +78,8 @@ must normally be decomposed before it becomes `Ready`.
 ### Target release and work package
 
 Target release connects work to a release milestone. Work package maps work to
-M0–M9 for roadmap reporting. Parent relationships remain the authoritative
-hierarchy.
+WP0–WP9 for implementation reporting. Parent relationships remain the
+authoritative hierarchy.
 
 ## Labels
 
