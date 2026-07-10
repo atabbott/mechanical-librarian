@@ -9,6 +9,7 @@ versioning after the first public release.
 
 ### Added
 
+- Typed least-authority application ports and adapter failure vocabulary.
 - Explicit pure domain lifecycle transitions and authorization-boundary checks.
 - Immutable library connection, item, snapshot, normalized metadata, and
   target-capability domain models.
