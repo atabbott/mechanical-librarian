@@ -9,6 +9,7 @@ versioning after the first public release.
 
 ### Added
 
+- Deterministic dry-run configuration import plans with restart and re-extraction impact.
 - Bounded evidence references and compact review-summary projections.
 - Snapshot-aware review cases, sibling projections, notices, and decision authorization records.
 - Immutable evidence, candidate, field-proposal, risk, notice, and disposition vocabulary.
