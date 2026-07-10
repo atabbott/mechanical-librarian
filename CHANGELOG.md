@@ -9,6 +9,7 @@ versioning after the first public release.
 
 ### Added
 
+- Versioned, fail-fast, secret-free application configuration validation.
 - Pull-request workflow enforcing a real auto-closing implementation-issue link.
 - Typed least-authority application ports and adapter failure vocabulary.
 - Explicit pure domain lifecycle transitions and authorization-boundary checks.

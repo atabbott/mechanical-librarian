@@ -9,6 +9,15 @@
 - Configuration changes are audited and identify whether restart or
   re-evaluation is required.
 
+## Current schema boundary
+
+The initial `config-v1` model validates an untrusted in-memory mapping before
+any application work begins. File, environment, CLI, dashboard, encrypted-store,
+and Docker-secret transports must call this same validator; none may introduce
+an undocumented environment-variable override. Its canonical export reports
+only secret configuration status and logical mount identity, never service
+origins, secret references, or private paths.
+
 ## Configuration groups
 
 ### Instance
