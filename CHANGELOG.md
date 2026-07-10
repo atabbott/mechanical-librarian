@@ -9,6 +9,7 @@ versioning after the first public release.
 
 ### Added
 
+- Explicit pure domain lifecycle transitions and authorization-boundary checks.
 - Immutable library connection, item, snapshot, normalized metadata, and
   target-capability domain models.
 - Typed, deterministic, secret-safe domain identifiers, version markers,

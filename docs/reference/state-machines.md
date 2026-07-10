@@ -3,6 +3,11 @@
 State machines are authoritative domain contracts. Implementations may add
 timestamps and metadata but cannot invent transitions outside these rules.
 
+The domain transition API is pure: a successful transition returns an immutable
+record containing the old state, new state, actor, and reason. Persistence
+records that fact separately; callers cannot bypass the transition table by
+constructing a replacement workflow state.
+
 ## Job lifecycle
 
 ```text
