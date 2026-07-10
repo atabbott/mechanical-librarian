@@ -34,6 +34,29 @@ Use a discussion or design issue before implementing:
 - Never make AI confidence alone sufficient for a production write.
 - Add provenance to every derived value and decision.
 
+## Local package bootstrap
+
+The initial scaffold uses Python 3.13 or 3.14 and
+[uv](https://docs.astral.sh/uv/) to create an isolated environment from the
+committed lockfile:
+
+```text
+uv sync --frozen --no-editable
+uv run --frozen --no-editable python -m unittest discover -s tests -p 'test_*.py'
+uv build
+uv run --frozen --no-editable mechanical-librarian
+```
+
+The final command intentionally exits without starting a service while the
+product shell is still empty. Issue #36 owns the future platform-neutral
+bootstrap and one-command verification wrapper; until then, these commands are
+the canonical scaffold checks. Re-run the non-editable sync after changing
+package source so tests exercise the same installed shape as a built wheel.
+
+Do not install project tools globally or add unrecorded dependencies. Update
+`pyproject.toml` and regenerate `uv.lock` together when the dependency graph
+changes.
+
 ## Pull requests
 
 A pull request must:

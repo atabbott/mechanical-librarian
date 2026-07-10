@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Added
 
+- Installable typed Python package, empty CLI entrypoint, locked dependency
+  metadata, layered package scaffold, smoke tests, and executable architecture
+  boundary checks.
 - `AGPL-3.0-or-later` project licensing, including the canonical licence text,
   accepted architecture decision, contribution terms, compatibility policy,
   and publication gate.

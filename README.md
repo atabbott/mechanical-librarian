@@ -29,8 +29,9 @@ changing the domain model.
 
 ## Current status
 
-The project is in documentation and architecture design. No production image
-or supported release exists yet.
+The project is in its initial implementation stage. An installable typed Python
+package and architecture-boundary scaffold exist, but no production image or
+supported release exists yet.
 
 The earlier Ebook Management workspace is a prototype and evidence source. Its
 completed DUX dashboard work is frozen as a traceable baseline and informs the
