@@ -74,6 +74,11 @@ only through an ADR or quality-policy pull request.
 - Review transitive and licence changes in dependency pull requests.
 - Remove unused dependencies promptly.
 - Do not adopt a framework merely to implement a small stable contract.
+- Record SPDX identities and required notices for dependencies, assets,
+  fixtures, generated material, copied components, plugins, and container
+  contents.
+- Reject material that is incompatible with `AGPL-3.0-or-later` or lacks
+  sufficient authorship, provenance, and redistribution evidence.
 
 ## Review depth by risk
 

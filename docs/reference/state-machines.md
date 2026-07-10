@@ -17,8 +17,11 @@ Rules:
 
 - Lease ownership and expiry are transactional.
 - Retrying increments attempt count and records a typed reason.
+- Retry eligibility, backoff deadlines, and intentional suppression are
+  persisted and survive process restart.
 - Terminal failure cannot silently become success.
-- A deduplication key prevents concurrent equivalent jobs.
+- A deduplication key prevents concurrent equivalent jobs and lets redelivery
+  reuse or inspect the durable prior outcome instead of starting a retry storm.
 
 ## Review case lifecycle
 

@@ -6,7 +6,8 @@
 - Audiobookshelf ebook and audiobook libraries.
 - Event-driven incremental processing plus scheduled reconciliation.
 - Application-level metadata and cover updates through supported APIs.
-- EPUB evidence and read-only audio tags, chapters, and duration.
+- EPUB package, bounded opening-matter, navigation, and structural evidence plus
+  read-only audio tags, chapters, and duration.
 - Replaceable catalogue/provider adapters.
 - Replaceable AI reviewer adapters, beginning with Codex CLI.
 - SQLite-backed durable state, job recovery, audit history, and configuration.
@@ -17,6 +18,8 @@
 ## Planned extensions
 
 - AZW3 and MOBI metadata evidence.
+- Optional bounded opening-audio transcription and spoken-credit extraction
+  under the [opening-audio evidence contract](opening-audio-evidence.md).
 - Calibre-Web/Calibre-compatible service adapter.
 - Additional AI backends, including API and local models.
 - Embedded metadata writes with separate media backup gates.
@@ -34,6 +37,10 @@
 - A general media acquisition or download-management system.
 - Replacing Audiobookshelf's playback, reading, user, or library-management UI.
 - Perfect edition matching as a prerequisite for useful cover improvement.
+
+The audiobook-transcription non-goal applies to the first stable release. The
+planned extension is limited to qualified opening-credit windows; general
+story-content and whole-book transcription remain outside this scope.
 
 ## Compatibility posture
 

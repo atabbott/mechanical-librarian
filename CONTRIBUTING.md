@@ -67,3 +67,15 @@ acceptable only when:
 Use focused commits with descriptive messages. Do not commit generated runtime
 state. Releases follow semantic versioning once the first public API is declared
 stable. Breaking changes require migration notes and a supported upgrade path.
+
+## Contribution licence
+
+Mechanical Librarian is licensed under `AGPL-3.0-or-later`. By submitting a
+contribution, you agree to license that contribution under the same terms and
+confirm that you have the right to do so. The project does not currently
+require a contributor licence agreement.
+
+Preserve compatible third-party notices and identify generated, adapted, or
+copied material in the pull request. Technical interoperability does not remove
+the requirement to review the licence and provenance of dependencies, assets,
+fixtures, plugins, container contents, or extracted components.

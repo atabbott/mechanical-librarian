@@ -138,4 +138,9 @@ contract suite and may add adapter-specific tests without forking core policy.
 
 Plugin loading is not required for the first release. Prefer explicit,
 statically registered adapters until configuration, compatibility, and security
-contracts have stabilized.
+contracts have stabilized. A future extension contract must declare typed
+capabilities, configuration and secret requirements, compatibility bounds,
+resource and network permissions, health metrics, and automatic-suspension
+behavior. A manifest is descriptive only; enforceable isolation must exist
+before third-party code can receive secrets or execute in a production
+process.

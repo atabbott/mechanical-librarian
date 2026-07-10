@@ -17,7 +17,8 @@ Deliverables:
 - define contribution, security, release, and code-ownership workflows;
 - create reproducible development and CI environments;
 - record the frozen DUX baseline and establish sanitized extraction fixtures;
-  and
+- establish an independently authored synthetic metadata-chaos and reliability
+  corpus with explicit fixture provenance; and
 - publish an initial threat model and ADR set.
 
 Exit criteria:
@@ -57,13 +58,16 @@ Deliverables:
 - introduce versioned SQLite migrations;
 - implement repositories behind application-owned interfaces;
 - implement leases, retries, backoff, cancellation, and dead-letter handling;
+- persist event and ingestion deduplication outcomes, including failed or
+  intentionally suppressed work, across process restarts;
 - persist audit events and immutable evidence; and
 - add backup-aware migration tests.
 
 Exit criteria:
 
 - process termination cannot silently lose acknowledged work;
-- duplicate delivery is safe;
+- duplicate delivery, persistent failure redelivery, and worker restart cannot
+  create unbounded retries or duplicate external work;
 - every state transition is attributable; and
 - upgrade and rollback rehearsals pass against representative databases.
 
@@ -90,12 +94,21 @@ Exit criteria:
 
 Deliverables:
 
-- extract metadata from EPUB;
+- extract raw and normalized EPUB package metadata under the
+  [opening-ebook evidence contract](opening-ebook-evidence.md);
+- select semantic title, copyright, imprint, edition, contributor, and other
+  opening-matter resources, with a bounded reading-order fallback;
+- extract typed identifiers, contributor roles, dates, publisher/imprint,
+  series, edition, translation, illustration, omnibus, and structural facts
+  with exact resource and text-span provenance;
 - define the format boundary so AZW3 and MOBI can follow without changing the
   evidence model;
 - extract audio tags, chapters, and duration without transcription;
+- optionally record bounded read-only media-health observations such as a
+  missing audio stream, invalid duration, parser timeout, or inability to read
+  near the end of a file;
 - isolate parsers and enforce resource limits;
-- fingerprint source files without copying whole libraries; and
+- fingerprint source files without copying whole libraries;
 - attach provenance and confidence to every fact;
 - store each bounded evidence fact once and reference it by stable ID from
   proposals, notices, and review cases; and
@@ -105,8 +118,13 @@ Exit criteria:
 
 - malformed or hostile files cannot block the job system;
 - extraction is read-only and bounded;
+- package, opening-matter, navigation, and structural observations retain raw
+  values, normalized interpretations, same-file correlation, contradictions,
+  and edition-applicability warnings;
 - evidence is reproducible and content-addressed where practical; and
-- unsupported formats fail visibly without preventing ingestion.
+- unsupported formats fail visibly without preventing ingestion; and
+- media-health diagnostics remain distinct from metadata evidence and never
+  quarantine an otherwise consumable item solely because curation is pending.
 
 ## WP5: candidate and policy engine
 
@@ -115,6 +133,10 @@ Deliverables:
 - generate field-level proposals from current values and local evidence;
 - collapse identical values while retaining source consensus and alternatives;
 - implement configurable risk and confidence policies;
+- model source applicability, independence, correlation, and contradiction
+  before agreement can increase automatic-write eligibility;
+- handle generic titles, initial-aware author matching, contributor-role
+  confusion, swapped fields, and release-name debris as explicit risk facts;
 - distinguish no-op, safe automatic, AI-review, and human-review outcomes;
 - implement adapter/media applicability and reviewer-facing notice classes;
 - generate typed cover and series choices without applying them; and
@@ -127,7 +149,9 @@ Exit criteria:
 - unsafe, rejected, inapplicable, and no-op choices cannot contaminate a safe
   field selection;
 - high-risk changes cannot enter the automatic apply path; and
-- golden fixtures cover ambiguous editions, series order, and conflicting identifiers.
+- golden fixtures cover ambiguous editions, series order, conflicting
+  identifiers, generic titles, initial-only names, contributor-role confusion,
+  and same-title/different-author works.
 
 ## WP6: untrusted AI reviewer
 
@@ -174,6 +198,8 @@ Deliverables:
 - package the API, job runtime, scheduler, static web assets, and database into one image;
 - implement first-run setup and health endpoints;
 - add structured logging, metrics, and redacted support bundles;
+- expose typed job stage, active adapter, attempt, retry eligibility, and
+  circuit-breaker or automatic-suspension reasons for operator diagnostics;
 - publish TrueNAS-oriented and generic container deployment examples; and
 - produce multi-architecture images, SBOMs, signatures, and provenance.
 
@@ -217,8 +243,15 @@ After the first production-quality vertical slice:
 - expand metadata providers and cover comparison;
 - add optional application-level write-back to ebook files;
 - evaluate a CWA adapter only against supported mutation paths;
+- define any future extension manifest around typed capabilities,
+  configuration schema, compatibility, health, and automatic suspension before
+  permitting third-party code loading;
+- implement bounded opening-audio transcription only after the sampling,
+  privacy, backend, resource, retention, and field-qualification decisions in
+  the [opening-audio evidence contract](opening-audio-evidence.md) are resolved;
 - add PostgreSQL only if measured scale or deployment requirements justify it; and
-- consider transcription only with an explicit cost, privacy, and resource model.
+- consider broader story-content transcription only through a separate scope,
+  cost, privacy, copyright, and resource decision.
 
 ## Planning rule
 

@@ -109,7 +109,16 @@ read-only media mounts, and preserves state across upgrade/restart tests.
 Fixture families include:
 
 - valid and malformed EPUB packages;
+- EPUB package and opening-matter variants covering title, copyright, imprint,
+  edition, contributor, identifier, series, translation, illustration,
+  omnibus, navigation, same-file contradiction, and edition applicability
+  under the
+  [opening-ebook evidence contract](../product/opening-ebook-evidence.md);
 - bounded synthetic audio tags and chapter data;
+- generated opening-credit audio covering speech, silence, music, delayed
+  credits, spoken roles, multilingual cases, no-credit controls, and hostile
+  spoken instructions under the
+  [opening-audio evidence contract](../product/opening-audio-evidence.md);
 - ambiguous title/author/series cases;
 - omnibus, abridged, dramatized, summary, and alternate-edition conflicts;
 - missing and low-quality synthetic covers;
@@ -124,6 +133,33 @@ Fixture families include:
 - explicit automatic, human, stale, unsupported, and destructive review paths;
 - service payloads from supported compatibility versions, irreversibly
   sanitized or generated from schema.
+
+### Synthetic metadata chaos corpus
+
+Maintain an independently authored, licence-recorded corpus of deliberately
+messy but synthetic library observations. It complements adapter fixtures and
+DUX-derived scenarios without copying source text, formatting, or personal
+library facts. At minimum it covers:
+
+- title and author fields swapped or reversed in paths;
+- narrator names presented as authors and ambiguous contributor roles;
+- initial-only, collapsed-initial, particle, suffix, pseudonym, collective,
+  and multi-author names;
+- generic, numeric, very short, Unicode, translated, and same-title/different-
+  author works;
+- release prefixes, encoding labels, years, sequence markers, and other path
+  debris that must not erase meaningful title text;
+- missing metadata, conflicting identifiers, wrong series membership or
+  sequence, and plausible candidates for different editions;
+- repeated, correlated, malformed, oversized, redirected, timed-out, and
+  rate-limited provider responses; and
+- duplicate events, persistent failure redelivery, worker death, and restart
+  scenarios capable of producing retry storms.
+
+Each production defect becomes a minimized synthetic regression when it
+reveals a reusable behavior. The regression records the violated contract and
+failure class rather than copying a user's metadata or preserving incidental
+implementation output.
 
 Fixture licences and provenance must be documented.
 
@@ -156,5 +192,20 @@ For every supported source schema:
 
 Provide deterministic controls for connection loss, timeout, malformed JSON,
 rate limit, disk-full, read-only volume, expired authentication, worker death,
-database lock, duplicate event, changing fingerprint, and verification
-mismatch.
+database lock, duplicate event, persistent failure redelivery, changing
+fingerprint, and verification mismatch. Recovery assertions prove that
+deduplication and backoff survive restart and bound both retries and external
+calls.
+
+Future opening-audio tests additionally inject decoder failure, unsupported
+codec, model-load failure, transcription timeout, temporary-space exhaustion,
+stale source fingerprints, hosted quota failure, cancellation, and orphaned
+temporary samples. They assert that ordinary non-transcription evidence work
+continues and no transcript outcome becomes direct write authority.
+
+EPUB extraction tests additionally inject archive traversal, entity expansion,
+compression bombs, oversized and deeply nested documents, invalid encodings,
+duplicate identifiers, broken spines, missing semantics, image-only front
+matter, encrypted resources, unrelated previews, hostile instructions, and
+concurrent source changes. They assert bounded reads, exact provenance,
+same-file correlation, typed failure, and continued ingestion.
