@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- Evidence values, references, readiness, and persistence/reviewer/API
+  projections now enforce deterministic size, privacy, target-scope, and
+  versioned cross-target policy bounds before untrusted data crosses a boundary.
 - Audit persistence now returns typed safe outcomes and rejects unsafe summary
   values without exposing SQLite errors or stored payloads, with bounded
   indexed chronological queries in the initial schema.
