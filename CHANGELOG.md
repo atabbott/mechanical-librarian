@@ -9,6 +9,8 @@ versioning after the first public release.
 
 ### Fixed
 
+- Ready pull requests now pass the linked-work gate only with GitHub-recognized
+  closing references to open issues in this repository.
 - Configuration import plans now validate both inputs identically and report a
   deterministic, value-free impact matrix for connection, evidence, provider,
   reviewer, policy, notification, and backup changes.
