@@ -31,6 +31,9 @@ versioning after the first public release.
 
 ### Added
 
+- A `state-check --database PATH` operator diagnostic that creates or opens
+  application state, applies migrations, and verifies idempotent audit
+  write/read behavior with fixed path-free success and failure output.
 - Structured Project work-kind classification and separate Defect/Bug intake
   for pre-release contract failures versus failures of delivered behavior.
 - Functional-slice delivery governance for new functionality during the initial
@@ -49,7 +52,7 @@ versioning after the first public release.
   target-capability domain models.
 - Typed, deterministic, secret-safe domain identifiers, version markers,
   fingerprints, and idempotency keys.
-- Installable typed Python package, empty CLI entrypoint, locked dependency
+- Installable typed Python package, initial CLI entrypoint, locked dependency
   metadata, layered package scaffold, smoke tests, and executable architecture
   boundary checks.
 - `AGPL-3.0-or-later` project licensing, including the canonical licence text,

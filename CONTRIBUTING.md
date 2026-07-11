@@ -45,14 +45,14 @@ committed lockfile:
 uv sync --frozen --no-editable
 uv run --frozen --no-editable python -m unittest discover -s tests -p 'test_*.py'
 uv build
-uv run --frozen --no-editable mechanical-librarian
+uv run --frozen --no-editable mechanical-librarian state-check --database ./state.sqlite
 ```
 
-The final command intentionally exits without starting a service while the
-product shell is still empty. Issue #36 owns the future platform-neutral
-bootstrap and one-command verification wrapper; until then, these commands are
-the canonical scaffold checks. Re-run the non-editable sync after changing
-package source so tests exercise the same installed shape as a built wheel.
+The final command exercises the current supported operator diagnostic and
+creates local SQLite state; remove that generated state before committing.
+Issue #36 owns the future platform-neutral bootstrap and one-command
+verification wrapper. Re-run the non-editable sync after changing package
+source so tests exercise the same installed shape as a built wheel.
 
 Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph

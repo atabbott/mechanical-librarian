@@ -12,6 +12,8 @@ from mechanical_librarian.application.audit import (
     AuditEventKind,
     AuditQueryOutcome,
     AuditQueryResult,
+    AuditReadOutcome,
+    AuditReadResult,
     AuditRepository,
     SafeAuditSummary,
 )
@@ -119,6 +121,31 @@ class SQLiteAuditRepository(AuditRepository):
             else AuditAppendOutcome.CONFLICT
         )
         return AuditAppendResult(outcome)
+
+    def read(self, event_id: AuditEventId) -> AuditReadResult:
+        if type(event_id) is not AuditEventId:
+            return AuditReadResult(AuditReadOutcome.INVALID)
+        try:
+            validated_id = AuditEventId(event_id.value)
+        except (AttributeError, TypeError, ValueError):
+            return AuditReadResult(AuditReadOutcome.INVALID)
+        try:
+            row = self._connection.execute(
+                "SELECT id, kind, created_at, summary FROM audit_events "
+                "WHERE id = ? LIMIT 1",
+                (validated_id.value,),
+            ).fetchone()
+        except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+            return AuditReadResult(AuditReadOutcome.UNAVAILABLE)
+        except sqlite3.DatabaseError:
+            return AuditReadResult(AuditReadOutcome.CORRUPT)
+        if row is None:
+            return AuditReadResult(AuditReadOutcome.NOT_FOUND)
+        try:
+            event = _deserialize_event(row)
+        except (TypeError, ValueError):
+            return AuditReadResult(AuditReadOutcome.CORRUPT)
+        return AuditReadResult(AuditReadOutcome.FOUND, event)
 
     def recent(self, limit: int) -> AuditQueryResult:
         if type(limit) is not int or not 1 <= limit <= 100:
