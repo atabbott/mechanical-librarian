@@ -14,10 +14,13 @@ versioning after the first public release.
 - SQLite migrations now execute and record their checksums atomically, with
   fail-closed detection of partial, tampered, newer, and unrecognized schemas.
 - Decision authorizations now retain and validate immutable review-case and
-  human-decision evidence, rejecting stale, mismatched, or ID-only authority.
+  human-decision or qualified automatic-policy evidence, rejecting stale,
+  mismatched, disposition-only, or ID-only authority.
 
 ### Added
 
+- Structured Project work-kind classification and separate Defect/Bug intake
+  for pre-release contract failures versus failures of delivered behavior.
 - Functional-slice delivery governance for new functionality during the initial
   build, with focused ticket PRs retained for fixes, security, documentation,
   tooling, dependencies, maintenance, and standalone work.

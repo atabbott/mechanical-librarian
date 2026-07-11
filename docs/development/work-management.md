@@ -22,19 +22,31 @@ system behavior; issues link to those contracts rather than copying them.
 
 ## Work hierarchy
 
-Use four work kinds:
+Use six work kinds:
 
 - **Epic**: an outcome spanning multiple independently deliverable issues;
 - **Feature**: a user-visible capability or coherent behavior change;
 - **Task**: bounded implementation, testing, operations, or documentation work;
-- **Bug**: behavior that violates an implemented contract.
+- **Defect**: an internally discovered or pre-release nonconformance where the
+  implementation, tests, documentation, or delivered ticket fails an accepted
+  contract or acceptance criterion; and
+- **Bug**: behavior previously treated as delivered and working that fails in a
+  supported build or observable user/operator workflow.
+
+Use `Defect` for audit findings such as an incomplete closed ticket, a failed
+qualification gate, or a contract violation found before the affected behavior
+is released as supported. Use `Bug` for regressions and incorrect behavior
+reported against a delivered build. Discovery source does not determine the
+kind: a user may expose a pre-release defect, and an automated test may expose a
+released bug.
 
 The initial personal repository uses ordinary GitHub issues because native
-organization issue types are unavailable. Issue forms, titles, parent
-relationships, and required content express the work kind. Do not create
-duplicate type labels solely to simulate native issue types. If the repository
+issue types are unavailable. The Project `Work kind` field is authoritative;
+issue forms express submission intent and triage assigns the field. Do not
+create duplicate type labels solely to simulate issue types. If the repository
 moves to an organization later, native issue types may be adopted through a
-reviewed migration.
+reviewed migration while preserving the Defect/Bug distinction where it remains
+useful.
 
 The WP0–WP9 packages in the
 [initial build plan](../product/initial-build-plan.md) are parent work-package
@@ -116,6 +128,20 @@ Target release connects work to a release milestone. Work package maps work to
 WP0–WP9 for implementation reporting. Parent relationships remain the
 authoritative hierarchy.
 
+### Work kind
+
+`Work kind` is the structured classification for `Epic`, `Feature`, `Task`,
+`Defect`, and `Bug`. New or legacy items that have not yet been assessed use
+`Unclassified`; an item cannot move to `Ready` until triage replaces that value.
+
+Work kind does not encode urgency or danger. Priority controls sequencing and
+Risk controls review depth. A low-impact bug can be `P3 Low`; a pre-release
+defect capable of silent corruption can be `P0 Critical` with `Critical` risk.
+
+Changing between `Defect` and `Bug` requires a brief issue comment explaining
+which delivery/support boundary changed or was misunderstood. Reclassification
+does not erase history, reproduction evidence, or linked review findings.
+
 ### Delivery slice
 
 `Delivery slice` maps new-functionality work to the primary executable outcome
@@ -158,6 +184,15 @@ An issue reaching `Ready` must contain:
 - dependencies and migration or rollback needs; and
 - privacy and security considerations proportionate to risk.
 
+A Defect or Bug additionally requires:
+
+- the affected commit, build, or release when known;
+- the violated contract or previously working behavior;
+- a minimal deterministic reproduction or qualification failure;
+- expected and actual behavior;
+- impact and safe workaround, if any; and
+- the regression test or other evidence required to prevent recurrence.
+
 An issue is not a substitute for an ADR. A durable decision is discussed in an
 issue and recorded in an ADR before the implementation issue closes.
 
@@ -174,6 +209,8 @@ Maintain these Project views:
   and slice ID;
 - **Roadmap**: Epics and Features by work package and target release;
 - **Quality and security**: High or Critical risk plus security-labelled work;
+- **Defects and bugs**: `Defect` and `Bug`, grouped by status and sorted by
+  priority, risk, and age;
 - **Recently completed**: recent `Done` work before automatic archival.
 
 ## Automation
@@ -212,6 +249,11 @@ maintenance, and standalone tickets use one purpose-based branch and
 ticket-level ready pull request. Their issue moves through the same status and
 quality gates without creating a slice tracker.
 
+Defects and bugs use `fix/<issue>-<short-slug>`. Their pull requests include the
+pre-fix reproduction, root cause, regression evidence, affected-version scope,
+and any recovery or compatibility impact. Closing a Defect or Bug without a
+regression test requires an explicit reason and alternative durable evidence.
+
 Emergency fixes may create the issue and pull request together. Private
 security work uses a repository security advisory and temporary private fork,
 not a public issue.
@@ -221,6 +263,8 @@ not a public issue.
 During initial solo development:
 
 - process `Inbox` before selecting new work;
+- replace `Unclassified` with an assessed Work kind before moving work to
+  `Ready`;
 - keep at most one new-functionality slice actively in progress unless it is
   independently blocked; focused non-slice work may proceed when it does not
   obscure or destabilize the active slice;
