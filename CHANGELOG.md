@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- Configuration import plans now validate both inputs identically and report a
+  deterministic, value-free impact matrix for connection, evidence, provider,
+  reviewer, policy, notification, and backup changes.
 - Audit persistence now returns typed safe outcomes and rejects unsafe summary
   values without exposing SQLite errors or stored payloads, with bounded
   indexed chronological queries in the initial schema.
