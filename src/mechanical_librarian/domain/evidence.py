@@ -605,6 +605,7 @@ class EvidenceReadiness:
             unique=False,
         )
         ensure_unique((fact.target for fact in self.facts), "evidence readiness targets")
+        self.to_api_json()
 
     @property
     def evidence_count(self) -> int:

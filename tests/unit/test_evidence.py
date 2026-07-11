@@ -994,6 +994,81 @@ class EvidenceTypeTests(unittest.TestCase):
                 (self.reference, duplicate_id),
             )
 
+    def test_readiness_enforces_aggregate_serialized_size_at_construction(self) -> None:
+        policy = CrossTargetPolicyDecision(
+            PolicyVersion("p" * 64),
+            "r" * 64,
+        )
+        source_target = TargetId(
+            AdapterId("a" * 64),
+            ConnectionId("s" * 64),
+            LibraryId("l" * 64),
+            ExternalItemId("source-" + "x" * 505),
+        )
+
+        cross_target_facts = []
+        terminal_facts = []
+        for fact_index in range(MAX_PACKET_RECORDS):
+            consuming_target = TargetId(
+                AdapterId("a" * 64),
+                ConnectionId(f"c{fact_index:02d}" + "x" * 61),
+                LibraryId("l" * 64),
+                ExternalItemId(f"item-{fact_index:02d}" + "x" * 505),
+            )
+            references = tuple(
+                EvidenceReference(
+                    EvidenceId(f"e{reference_index:02d}" + "x" * 61),
+                    source_target,
+                    consuming_target,
+                    EvidenceRelationship.EXPLICIT_CROSS_TARGET,
+                    policy,
+                )
+                for reference_index in range(MAX_EVIDENCE_REFERENCES)
+            )
+            cross_target_facts.append(
+                EvidenceReadinessFact(
+                    consuming_target,
+                    EvidenceReadinessState.CURRENT,
+                    references,
+                )
+            )
+            terminal_facts.append(
+                EvidenceReadinessFact(
+                    consuming_target,
+                    EvidenceReadinessState.MISSING,
+                )
+            )
+
+        exact_reference_limit = EvidenceReadiness((cross_target_facts[0],))
+        self.assertEqual(
+            len(exact_reference_limit.facts[0].evidence),
+            MAX_EVIDENCE_REFERENCES,
+        )
+        self.assertLessEqual(
+            len(exact_reference_limit.to_api_json().encode()), MAX_SERIALIZED_BYTES
+        )
+
+        terminal_limit = EvidenceReadiness(tuple(terminal_facts))
+        self.assertEqual(terminal_limit.target_count, MAX_PACKET_RECORDS)
+        self.assertEqual(terminal_limit.evidence_count, 0)
+        self.assertLessEqual(
+            len(terminal_limit.to_api_json().encode()), MAX_SERIALIZED_BYTES
+        )
+
+        near_limit = EvidenceReadiness(tuple(cross_target_facts[:17]))
+        serialized = near_limit.to_api_json()
+        self.assertEqual(serialized, near_limit.to_api_json())
+        self.assertGreater(len(serialized.encode()), MAX_SERIALIZED_BYTES - 5_000)
+        self.assertLessEqual(len(serialized.encode()), MAX_SERIALIZED_BYTES)
+
+        with self.assertRaisesRegex(EvidenceValueError, "serialized size limit") as raised:
+            EvidenceReadiness(tuple(cross_target_facts))
+        self.assertEqual(
+            str(raised.exception),
+            "evidence readiness projection exceeds its serialized size limit",
+        )
+        self.assertNotIn("x" * 64, repr(raised.exception))
+
     def test_all_documented_exact_limits_accept(self) -> None:
         field_values = tuple(f"value-{index}" for index in range(MAX_FIELD_VALUES))
         self.assertEqual(len(FieldValue(field_values).values), MAX_FIELD_VALUES)
