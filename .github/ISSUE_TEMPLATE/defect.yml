@@ -1,0 +1,102 @@
+name: Defect report
+description: Record a pre-release or internally discovered failure to meet an accepted contract or criterion.
+title: "defect: "
+labels:
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form for an implementation, test, documentation, closed-ticket,
+        or qualification result that fails an accepted contract before the
+        affected behavior is supported as delivered. Do not include credentials,
+        private URLs, production data, media, personal paths, or unredacted logs.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: State the nonconformance and why the current implementation cannot be accepted.
+    validations:
+      required: true
+
+  - type: textarea
+    id: governing_contract
+    attributes:
+      label: Violated contract or criterion
+      description: Link the issue criterion, ADR, specification, invariant, test gate, or review finding that is not satisfied.
+    validations:
+      required: true
+
+  - type: input
+    id: affected_revision
+    attributes:
+      label: Affected revision
+      description: Identify the commit, pull request, branch, build, or pre-release version where the defect exists.
+      placeholder: commit, PR #123, or 0.1.0-dev
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction or qualification failure
+      description: Give the smallest deterministic reproduction using synthetic inputs, or the exact gate that fails.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected contract behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: dropdown
+    id: discovery
+    attributes:
+      label: Discovery source
+      options:
+        - Acceptance or closure audit
+        - Code or architecture review
+        - Automated test or qualification gate
+        - Security or privacy review
+        - Development or integration testing
+        - User or operator report against pre-release behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact and blockers
+      description: Describe affected slices, releases, safety boundaries, dependencies, and any safe temporary workaround.
+    validations:
+      required: true
+
+  - type: textarea
+    id: regression_evidence
+    attributes:
+      label: Required regression evidence
+      description: Identify the test, fixture, deliberate-failure check, or other durable evidence required before closure.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched for an existing issue describing this nonconformance.
+          required: true
+        - label: I removed credentials, private paths, private URLs, production data, and copyrighted content.
+          required: true
+        - label: This is not an undisclosed security vulnerability.
+          required: true

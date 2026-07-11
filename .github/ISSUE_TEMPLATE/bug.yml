@@ -1,5 +1,5 @@
 name: Bug report
-description: Report reproducible incorrect or unsafe behavior.
+description: Report behavior that was delivered as working but now fails in a supported build or workflow.
 title: "bug: "
 labels:
   - needs-triage
@@ -8,8 +8,10 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting a defect. Do not include credentials, private URLs,
-        book contents, personal library exports, or unredacted logs.
+        Use this form for a bug in behavior previously treated as delivered and
+        working. Use the defect form for a pre-release contract, acceptance, or
+        qualification failure. Do not include credentials, private URLs, book
+        contents, personal library exports, or unredacted logs.
 
   - type: textarea
     id: summary
@@ -44,7 +46,7 @@ body:
     id: reproduction
     attributes:
       label: Reproduction steps
-      description: Give the smallest deterministic sequence that reproduces the defect with synthetic or sanitized data.
+      description: Give the smallest deterministic sequence that reproduces the bug with synthetic or sanitized data.
     validations:
       required: true
 
@@ -86,7 +88,7 @@ body:
     attributes:
       label: Submission checks
       options:
-        - label: I searched for an existing issue describing this defect.
+        - label: I searched for an existing issue describing this bug.
           required: true
         - label: I removed credentials, private paths, private URLs, and copyrighted content.
           required: true
