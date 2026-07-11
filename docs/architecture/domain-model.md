@@ -29,8 +29,18 @@ libraries.
 ### ItemSnapshot
 
 Immutable observation of current service state at a point in time. Contains a
-canonical fingerprint, normalized fields, file references, cover reference,
-service version, and observation provenance.
+canonical fingerprint, normalized fields, file and cover identity, lifecycle,
+media type, adapter and service releases, concurrency evidence, relevant
+capability state, and observation provenance. `ItemSnapshot.create` derives the
+fingerprint from the versioned canonical input; the public constructor rejects
+a supplied fingerprint or canonical input that does not describe the same
+state.
+
+`InventoryRecord` is the public aggregate boundary for a connection, item, and
+snapshot. It rejects cross-adapter, cross-connection, cross-library,
+cross-target, cross-snapshot, media, lifecycle, and capability mismatches before
+the graph can enter application or persistence code. Adapter implementation
+versions and upstream service versions use distinct, adapter-bound values.
 
 ### EvidenceRecord
 
@@ -50,6 +60,49 @@ time, confidence facts, warnings, upstream lineage or correlation identity, and
 an optional artifact reference. Evidence does not contain an approval decision.
 Read-only media-health observations may use the same immutable storage pattern,
 but cannot imply that metadata is absent or create a review case by themselves.
+
+All evidence inputs are immutable and bounded before persistence, logging,
+reviewer staging, or API projection:
+
+| Value | Maximum |
+| --- | ---: |
+| controlled code | 64 characters |
+| short source, lineage, correlation, or action text | 256 characters |
+| one normalized field value | 4,096 characters |
+| one confidence-fact value | 1,024 characters |
+| ordinary excerpt | 280 characters |
+| values in one field | 32 |
+| facts in one evidence record | 64 |
+| warnings in one evidence record | 32 |
+| evidence references on one value | 64 |
+| risks on one proposal | 32 |
+| notices on one review case | 32 |
+| records in one reviewer/readiness projection | 32 |
+| one serialized evidence projection | 524,288 UTF-8 bytes |
+
+Text rejects blank or untrimmed values, control characters, line and bidi
+controls, noncharacters, and unpaired surrogates. Collections use exact
+immutable tuple types and reject duplicates. Ordinary excerpts additionally
+reject path-shaped content.
+
+`evidence-persistence-v1`, `reviewer-evidence-v1`, `evidence-api-v1`, and
+`evidence-readiness-v1` are distinct strict serialization boundaries. Unknown,
+missing, non-canonical, incompatible, malformed, or oversized data fails
+closed. Persistence retains the bounded authoritative record. Reviewer and API
+details include only controlled projection-safe fact classes and omit lineage,
+artifact locations, raw payloads, and target external IDs from diagnostics.
+
+Evidence citations use target-scoped `EvidenceReference` values. Cross-target
+use requires both an explicit relationship and an immutable policy version and
+rule. Proposals, risks, notices, review cases, decisions through their case,
+readiness, and future apply provenance retain references rather than copied
+facts.
+
+`EvidenceReadiness` is a compact projection, not workflow orchestration. It
+preserves `current`, `missing`, `stale`, `unsupported`, and `approved_skip`
+facts while counting unique evidence IDs and target scopes. Approved skip
+requires versioned policy evidence; missing and unsupported states cannot
+invent evidence.
 
 ### Candidate
 
@@ -158,6 +211,10 @@ circuit-breaker transition.
   adapter-scoped external item.
 - `ExternalItemId`: adapter-scoped service identity.
 - `Fingerprint`: versioned digest of canonical observed state.
+- `CanonicalSnapshotInput`: immutable `snapshot-v1` canonical JSON defining
+  snapshot state equality and the fingerprint input.
+- `ConcurrencyToken`: bounded, opaque upstream stale-state evidence; its value
+  is redacted and only a one-way identity enters canonical serialization.
 - `FieldName`: controlled vocabulary with adapter mappings.
 - `FieldValue`: typed normalized scalar or collection.
 - `EvidenceId`, `ProposalId`, `ReviewCaseId`, `DecisionId`, `ApplyPlanId`:
@@ -175,6 +232,11 @@ circuit-breaker transition.
   set unless the policy explicitly supports a typed derived field.
 - A proposal cannot cite evidence from a different target unless the evidence
   relationship is explicit and policy-approved.
+- A snapshot's target, provenance, adapter release, service release, media type,
+  capability state, canonical input, and fingerprint must agree at construction.
+- A connection, item, and snapshot become one inventory record only when their
+  adapter, connection, library, target, snapshot, media, lifecycle, and
+  capability scopes agree.
 - Evidence facts are stored once and referenced by ID; browser projections do
   not become a second source of truth.
 - A ReviewGroup cannot propagate a selection, decision, disposition, or apply

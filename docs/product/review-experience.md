@@ -196,6 +196,12 @@ and completeness state. A partial result identifies missing partitions; a
 stale result identifies the superseded input version. Neither may be relabelled
 as a complete current total, readiness, or successful completion.
 
+Evidence readiness counts unique evidence records and target scopes. It
+preserves current, missing, stale, unsupported, and policy-approved-skip states
+rather than collapsing them into one boolean. Approved skip records the exact
+policy version and rule. The projection carries evidence references only; facts
+remain in bounded evidence detail and reviewer-packet schemas.
+
 ## Bulk decisions
 
 Bulk review is an optimization for a bounded unresolved queue, not an

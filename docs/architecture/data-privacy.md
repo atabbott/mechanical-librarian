@@ -68,6 +68,14 @@ For every metadata provider or AI backend, the product must disclose:
 
 The reviewer receives the smallest structured evidence packet that can answer the decision question. Candidate retrieval and target mutation remain separate capabilities.
 
+Reviewer packets and ordinary evidence API responses use separate versioned,
+allowlisted projections. Only centrally controlled projection-safe fact classes
+may enter them; untrusted records cannot self-declare content safe. They never
+carry lineage, artifact locations, raw provider or
+extractor payloads, unrestricted excerpts, whole works, production paths, or
+credentials. Domain representations and exception diagnostics redact private
+field values, excerpts, warnings, and evidence content.
+
 ## Retention
 
 Default retention should preserve enough history to explain and reverse changes while avoiding indefinite storage of bulky artifacts.

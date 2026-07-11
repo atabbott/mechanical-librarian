@@ -5,7 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .evidence import Disposition
+from .evidence import Disposition, EvidenceReference
+from .evidence_bounds import (
+    MAX_EVIDENCE_REFERENCES,
+    MAX_NOTICES,
+    MAX_SHORT_TEXT_LENGTH,
+    ensure_unique,
+    validate_text as validate_bounded_text,
+    validate_tuple,
+)
 from .identifiers import (
     AdapterId,
     ConnectionId,
@@ -57,7 +65,9 @@ class ReviewNotice:
         ):
             raise ValueError("review notices require exact classification and proposal types")
         _validate_code_tuple(self.diagnostic_codes, "review notice diagnostics")
-        _validate_text(self.required_action, "review notice action", 256)
+        validate_bounded_text(
+            self.required_action, "review notice action", MAX_SHORT_TEXT_LENGTH
+        )
 
 
 @dataclass(frozen=True)
@@ -72,6 +82,7 @@ class ReviewCase:
     disposition: Disposition
     notices: tuple[ReviewNotice, ...] = ()
     destructive: bool = False
+    evidence: tuple[EvidenceReference, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -96,6 +107,7 @@ class ReviewCase:
         if (
             type(self.proposals) is not tuple
             or not self.proposals
+            or len(self.proposals) > MAX_EVIDENCE_REFERENCES
             or any(type(item) is not ProposalId for item in self.proposals)
         ):
             raise ValueError("review case proposals must be a non-empty immutable typed tuple")
@@ -103,6 +115,20 @@ class ReviewCase:
             type(item) is not ReviewNotice for item in self.notices
         ):
             raise ValueError("review case notices must be an immutable typed tuple")
+        if len(self.notices) > MAX_NOTICES or len(self.notices) != len(set(self.notices)):
+            raise ValueError("review case notices must be bounded and unique")
+        validate_tuple(
+            self.evidence,
+            label="review case evidence",
+            item_type=EvidenceReference,
+            maximum=MAX_EVIDENCE_REFERENCES,
+        )
+        if any(reference.consuming_target != self.target for reference in self.evidence):
+            raise ValueError("review case evidence must consume the case target")
+        ensure_unique(
+            (reference.evidence for reference in self.evidence),
+            "review case evidence IDs",
+        )
         if len(self.proposals) != len(set(self.proposals)):
             raise ValueError("review cases cannot repeat proposals")
         if any(notice.affected_proposal not in self.proposals for notice in self.notices):
