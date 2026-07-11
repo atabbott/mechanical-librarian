@@ -9,6 +9,8 @@ versioning after the first public release.
 
 ### Fixed
 
+- Ready pull requests now pass the linked-work gate only with GitHub-recognized
+  closing references to open issues in this repository.
 - Audit persistence now returns typed safe outcomes and rejects unsafe summary
   values without exposing SQLite errors or stored payloads, with bounded
   indexed chronological queries in the initial schema.

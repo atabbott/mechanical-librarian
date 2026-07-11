@@ -239,6 +239,26 @@ placeholder, nonexistent, closed, or missing references. A horizontal ticket
 commit may exist on the slice branch, but completion of that commit alone does
 not justify a separate ready pull request.
 
+The gate uses GitHub-recognized closing-link metadata rather than parsing pull
+request Markdown. Examples, quotations, fenced code, manual links, nonexistent
+issues, and closed issues do not satisfy it. At least one `Closes`, `Fixes`, or
+`Resolves` reference must resolve to an open issue in this repository, and every
+recognized closing reference used by the gate must remain open when the pull
+request becomes ready. Cross-repository and non-default-branch closing links do
+not satisfy this repository-local gate. Drafts are exempt and are checked on the
+`ready_for_review` transition; description edits are checked again.
+The bounded gate supports at most 100 recognized references and reports a
+specific limit failure rather than evaluating incomplete pagination. If the
+same issue is both manually linked and named by a closing keyword, place the
+closing reference on its own line so the gate can distinguish the body source
+using GitHub's rendered closing-keyword and issue-link annotations without
+treating examples, custom links, formatting, quotations, or code as closing
+instructions.
+The workflow runs from protected base-branch context with explicit read-only
+permissions, checks out only the recorded base SHA, and treats pull-request
+metadata as data. It never executes the pull request checkout or receives write
+authority.
+
 This keeps issue and slice lifecycles aligned with the merge commit without
 granting a workflow token authority to change priority, risk, or scope. The
 required branch naming, scope, demonstration, review, and exception rules are in
