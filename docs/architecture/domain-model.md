@@ -29,8 +29,18 @@ libraries.
 ### ItemSnapshot
 
 Immutable observation of current service state at a point in time. Contains a
-canonical fingerprint, normalized fields, file references, cover reference,
-service version, and observation provenance.
+canonical fingerprint, normalized fields, file and cover identity, lifecycle,
+media type, adapter and service releases, concurrency evidence, relevant
+capability state, and observation provenance. `ItemSnapshot.create` derives the
+fingerprint from the versioned canonical input; the public constructor rejects
+a supplied fingerprint or canonical input that does not describe the same
+state.
+
+`InventoryRecord` is the public aggregate boundary for a connection, item, and
+snapshot. It rejects cross-adapter, cross-connection, cross-library,
+cross-target, cross-snapshot, media, lifecycle, and capability mismatches before
+the graph can enter application or persistence code. Adapter implementation
+versions and upstream service versions use distinct, adapter-bound values.
 
 ### EvidenceRecord
 
@@ -158,6 +168,10 @@ circuit-breaker transition.
   adapter-scoped external item.
 - `ExternalItemId`: adapter-scoped service identity.
 - `Fingerprint`: versioned digest of canonical observed state.
+- `CanonicalSnapshotInput`: immutable `snapshot-v1` canonical JSON defining
+  snapshot state equality and the fingerprint input.
+- `ConcurrencyToken`: bounded, opaque upstream stale-state evidence; its value
+  is redacted and only a one-way identity enters canonical serialization.
 - `FieldName`: controlled vocabulary with adapter mappings.
 - `FieldValue`: typed normalized scalar or collection.
 - `EvidenceId`, `ProposalId`, `ReviewCaseId`, `DecisionId`, `ApplyPlanId`:
@@ -175,6 +189,11 @@ circuit-breaker transition.
   set unless the policy explicitly supports a typed derived field.
 - A proposal cannot cite evidence from a different target unless the evidence
   relationship is explicit and policy-approved.
+- A snapshot's target, provenance, adapter release, service release, media type,
+  capability state, canonical input, and fingerprint must agree at construction.
+- A connection, item, and snapshot become one inventory record only when their
+  adapter, connection, library, target, snapshot, media, lifecycle, and
+  capability scopes agree.
 - Evidence facts are stored once and referenced by ID; browser projections do
   not become a second source of truth.
 - A ReviewGroup cannot propagate a selection, decision, disposition, or apply
