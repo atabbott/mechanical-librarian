@@ -79,18 +79,21 @@ class AuditEvent:
 
     def __post_init__(self) -> None:
         if (
-            not isinstance(self.id, AuditEventId)
-            or not isinstance(self.kind, AuditEventKind)
-            or not isinstance(self.summary, SafeAuditSummary)
+            type(self.id) is not AuditEventId
+            or type(self.kind) is not AuditEventKind
+            or type(self.summary) is not SafeAuditSummary
         ):
             raise ValueError("audit events require typed safe identifiers, kinds, and summaries")
+        AuditEventId(self.id.value)
+        AuditEventKind(self.kind.value)
+        SafeAuditSummary(self.summary.value)
         if type(self.created_at) is not datetime:
             raise ValueError("audit events require a typed timestamp")
         try:
             offset = self.created_at.utcoffset()
             self.created_at.astimezone(timezone.utc)
-        except (OverflowError, ValueError) as error:
-            raise ValueError("audit timestamps must be representable in UTC") from error
+        except Exception:
+            raise ValueError("audit timestamps must be representable in UTC") from None
         if self.created_at.tzinfo is None or offset is None:
             raise ValueError("audit timestamps must be timezone-aware")
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -122,6 +122,29 @@ class AuditRepositoryTests(unittest.TestCase):
         class StringSubclass(str):
             pass
 
+        class AuditEventIdSubclass(AuditEventId):
+            pass
+
+        class AuditEventKindSubclass(AuditEventKind):
+            pass
+
+        class SafeAuditSummarySubclass(SafeAuditSummary):
+            def __str__(self) -> str:
+                return "Cookie: session=credential"
+
+        class AuditEventSubclass(AuditEvent):
+            pass
+
+        class HostileTimezone(tzinfo):
+            def __init__(self, error: Exception) -> None:
+                self._error = error
+
+            def utcoffset(self, value: datetime | None) -> timedelta:
+                raise self._error
+
+            def dst(self, value: datetime | None) -> timedelta:
+                return timedelta(0)
+
         self.assertEqual(str(SafeAuditSummary("authorization granted")), "authorization granted")
         hostile_values: tuple[object, ...] = (
             "https://private.example/token",
@@ -182,6 +205,115 @@ class AuditRepositoryTests(unittest.TestCase):
             )
         with self.assertRaises(ValueError):
             AuditEvent("event-one", "discovery", datetime.now(timezone.utc), "https://private.example/token")  # type: ignore[arg-type]
+        typed_timestamp = datetime.now(timezone.utc)
+        typed_id = AuditEventId("event-one")
+        typed_kind = AuditEventKind("discovery")
+        typed_summary = SafeAuditSummary("discovered item")
+        for unsafe_field_set in (
+            (
+                AuditEventIdSubclass("event-one"),
+                typed_kind,
+                typed_summary,
+            ),
+            (
+                typed_id,
+                AuditEventKindSubclass("discovery"),
+                typed_summary,
+            ),
+            (
+                typed_id,
+                typed_kind,
+                SafeAuditSummarySubclass("discovered item"),
+            ),
+        ):
+            with self.subTest(unsafe_field_set=unsafe_field_set), self.assertRaises(ValueError):
+                AuditEvent(
+                    unsafe_field_set[0],
+                    unsafe_field_set[1],
+                    typed_timestamp,
+                    unsafe_field_set[2],
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            repository = SQLiteAuditRepository(connection)
+            unsafe_event = AuditEventSubclass(
+                typed_id, typed_kind, typed_timestamp, typed_summary
+            )
+            self.assertEqual(
+                repository.append(unsafe_event).outcome,
+                AuditAppendOutcome.INVALID,
+            )
+            for field, unsafe_value in (
+                ("id", "invalid identifier"),
+                ("kind", "invalid kind"),
+                ("summary", "password=private-value"),
+            ):
+                with self.subTest(forged_field=field):
+                    forged_id = AuditEventId("event-one")
+                    forged_kind = AuditEventKind("discovery")
+                    forged_summary = SafeAuditSummary("discovered item")
+                    object.__setattr__(
+                        {"id": forged_id, "kind": forged_kind, "summary": forged_summary}[field],
+                        "value",
+                        unsafe_value,
+                    )
+                    forged_event = object.__new__(AuditEvent)
+                    object.__setattr__(forged_event, "id", forged_id)
+                    object.__setattr__(forged_event, "kind", forged_kind)
+                    object.__setattr__(forged_event, "created_at", typed_timestamp)
+                    object.__setattr__(forged_event, "summary", forged_summary)
+                    self.assertEqual(
+                        repository.append(forged_event).outcome,
+                        AuditAppendOutcome.INVALID,
+                    )
+            missing_fields = object.__new__(AuditEvent)
+            self.assertEqual(
+                repository.append(missing_fields).outcome,
+                AuditAppendOutcome.INVALID,
+            )
+            for hostile_error in (
+                RuntimeError("password=private-value"),
+                ValueError("token=private-value"),
+            ):
+                with self.subTest(hostile_error_type=type(hostile_error).__name__):
+                    hostile_timestamp = datetime(
+                        2026,
+                        7,
+                        10,
+                        10,
+                        tzinfo=HostileTimezone(hostile_error),
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError, "audit timestamps must be representable in UTC"
+                    ) as raised:
+                        AuditEvent(
+                            AuditEventId("event-hostile"),
+                            AuditEventKind("discovery"),
+                            hostile_timestamp,
+                            SafeAuditSummary("discovered item"),
+                        )
+                    self.assertIsNone(raised.exception.__cause__)
+                    self.assertNotIn("private-value", str(raised.exception))
+
+                    forged_event = object.__new__(AuditEvent)
+                    object.__setattr__(forged_event, "id", AuditEventId("event-hostile"))
+                    object.__setattr__(
+                        forged_event, "kind", AuditEventKind("discovery")
+                    )
+                    object.__setattr__(forged_event, "created_at", hostile_timestamp)
+                    object.__setattr__(
+                        forged_event,
+                        "summary",
+                        SafeAuditSummary("discovered item"),
+                    )
+                    self.assertEqual(
+                        repository.append(forged_event).outcome,
+                        AuditAppendOutcome.INVALID,
+                    )
+            self.assertEqual(repository.recent(10).events, ())
 
     def test_audit_event_requires_exact_utc_representable_datetime(self) -> None:
         with self.assertRaises(ValueError):

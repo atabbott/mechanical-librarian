@@ -23,12 +23,33 @@ _AuditStorageRow = tuple[str, str, str, str]
 
 
 def _serialize_event(event: AuditEvent) -> _AuditStorageRow:
-    timestamp = (
-        event.created_at.astimezone(timezone.utc)
-        .isoformat(timespec="microseconds")
-        .replace("+00:00", "Z")
+    if (
+        type(event) is not AuditEvent
+        or type(event.id) is not AuditEventId
+        or type(event.kind) is not AuditEventKind
+        or type(event.summary) is not SafeAuditSummary
+        or type(event.created_at) is not datetime
+    ):
+        raise ValueError("audit persistence requires exact event value types")
+    try:
+        utc_timestamp = event.created_at.astimezone(timezone.utc)
+    except Exception:
+        raise ValueError("audit timestamp could not be converted to UTC") from None
+    validated = AuditEvent(
+        AuditEventId(event.id.value),
+        AuditEventKind(event.kind.value),
+        utc_timestamp,
+        SafeAuditSummary(event.summary.value),
     )
-    return str(event.id), str(event.kind), timestamp, str(event.summary)
+    timestamp = (
+        validated.created_at.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    )
+    return (
+        validated.id.value,
+        validated.kind.value,
+        timestamp,
+        validated.summary.value,
+    )
 
 
 def _deserialize_event(row: tuple[object, ...]) -> AuditEvent:
@@ -53,11 +74,11 @@ class SQLiteAuditRepository(AuditRepository):
         self._connection = connection
 
     def append(self, event: AuditEvent) -> AuditAppendResult:
-        if not isinstance(event, AuditEvent):
+        if type(event) is not AuditEvent:
             return AuditAppendResult(AuditAppendOutcome.INVALID)
         try:
             row = _serialize_event(event)
-        except (OverflowError, TypeError, ValueError):
+        except (AttributeError, OverflowError, TypeError, ValueError):
             return AuditAppendResult(AuditAppendOutcome.INVALID)
         try:
             self._connection.execute(
