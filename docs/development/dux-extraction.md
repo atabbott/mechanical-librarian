@@ -26,6 +26,64 @@ record was written. If it is later published or transferred, this record must
 be updated with the durable source URL without adding a personal filesystem
 path.
 
+## Post-DUX operational-learning baseline
+
+Two later prototype revisions provide additional operating evidence without
+changing the frozen DUX source baseline above:
+
+| Source commit | Captured learning |
+| --- | --- |
+| `28cb81e73a2a475c3c2935bdefad2472f56b4771` | Review-evidence reconciliation, title-candidate reliability, and readiness verification |
+| `c5b2fa8005e09e9c4a5d9d065c72e182aed45c81` | Checkpointed full-run orchestration and independently verified completion |
+
+These commits are an operational-learning baseline, not a production
+architecture, module boundary, or replacement for
+`358d70039a2d7da5e1d4cf7f19032ed5bf0fdc3f`. Mechanical Librarian preserves
+the following contracts from them:
+
+- a multi-stage review run has durable stage checkpoints, can resume without
+  repeating completed external work, and cannot advance when required scope is
+  incomplete or unverified or when an upstream version is stale; typed terminal
+  no-result and degraded optional outcomes remain valid inputs;
+- readiness is a typed, scoped statement of coverage over the selected
+  targets, not the existence of an artifact or a global ingestion gate, and a
+  blocker identifies the required scope, stage, target, and missing or failed
+  terminal outcome;
+- agreement is measured across independent evidence families, so repeated or
+  projected records from one provider do not manufacture consensus;
+- independence is not a universal two-family rule: a decisive single-family
+  result remains possible when target identity is supported and direct,
+  authoritative, edition-applicable evidence satisfies the field policy;
+- candidate selection must establish target and work identity; edition identity
+  or applicability is additionally required when the field policy or proposed
+  change is edition-sensitive. Values equivalent to current state are omitted,
+  and identity or comparable-identifier conflicts relevant to the field reject
+  the candidate;
+- provider failure is a typed operational outcome, not negative metadata
+  evidence and not support for a competing candidate; and
+- AI completion is independently audited against the selected targets, exact
+  supplied proposal IDs, and authoritative upstream evidence and provider
+  outcomes. Required inputs need an accepted terminal outcome. An optional
+  provider failure may be a typed terminal operational outcome without blocking
+  unrelated ingestion or becoming negative evidence.
+
+A successful command or output file is insufficient. When proposal selection
+proves exact target coverage and yields zero proposals, orchestration records a
+terminal no-review outcome and does not invoke the reviewer. Every packet that
+is invoked requires exact per-proposal output coverage.
+
+For AI output, `manual` remains reviewer-result semantics only: it means that
+multiple specifically supported alternatives remain unresolved. It does not
+create a human decision, imply general uncertainty, or establish apply
+readiness. A valid `manual` result may satisfy reviewer-output completeness for
+its proposal while leaving human resolution outstanding.
+
+The prototype's agent controller, generated static dashboard, self-editing
+skill behavior, service-specific pipeline topology, and hard-coded fusion
+weights are explicitly excluded. Mechanical Librarian implements the retained
+contracts through its application services, durable jobs, adapter-neutral
+domain types, persisted audit records, and supported interfaces.
+
 ## Verification at capture
 
 The frozen DUX working tree passed:
@@ -105,6 +163,10 @@ behavior; they do not qualify that implementation for production reuse.
 - DUX-23 retention and cleanup executors; and
 - CWA implementation until a supported production adapter is separately
   approved.
+
+The post-DUX exclusions additionally cover the agent controller, generated
+static dashboard, self-editing skill behavior, service-specific orchestration
+topology, and hard-coded candidate-fusion weights recorded above.
 
 ## Preserved behavioral invariants
 

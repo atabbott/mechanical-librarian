@@ -65,15 +65,28 @@ production write authority.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
-| F09 Candidate and proposal report | #145 | Persisted evidence and provider results become normalized, source-correlated candidates and deterministic field-level proposals with explanations. | #16, #46, #68-#73 | `slice/f09-candidate-proposals` |
-| F10 Persistent review case | #146 | One proposal set becomes a snapshot-aware review case whose notices, readiness, history, supersession, and authorization guards survive restart. | #50 and slice-specific implementation tickets | `slice/f10-persistent-review-case` |
-| F11 AI shadow recommendation | #147 | An isolated reviewer receives only a bounded packet, returns a validated recommendation, and exposes replayable agreement or failure without authorizing apply. | #74-#80 | `slice/f11-ai-shadow-review` |
+| F09 Candidate and proposal report | #145 | Persisted evidence and provider results become target- and work-identified, evidence-family-aware candidates and deterministic field-level proposals with explanations; edition identity or applicability is required for edition-sensitive fields or changes, correlated repeats cannot manufacture consensus, policy-defined decisive single-family evidence remains possible, current-equivalent values are omitted, field-relevant identity or comparable-identifier conflicts are rejected, and provider failure stays operational. | #16, #46, #68-#73 | `slice/f09-candidate-proposals` |
+| F10 Persistent review case | #146 | One proposal set becomes a snapshot-aware review case whose typed, target-scoped coverage readiness, durable stage checkpoints, blocker facts naming the required scope, stage, target, and outcome, history, supersession, and authorization guards survive restart without blocking unrelated ingestion. | #50 and slice-specific implementation tickets | `slice/f10-persistent-review-case` |
+| F11 AI shadow recommendation | #147 | An isolated reviewer receives a bounded packet only after required authoritative evidence and provider inputs have accepted terminal outcomes, returns exact per-proposal recommendations, and exposes independently audited coverage or typed failure without authorizing apply; a zero-proposal selection terminates without reviewer invocation, and optional provider failure remains operational. | #74-#80 | `slice/f11-ai-shadow-review` |
 
 ### 0.2.0 release exit
 
 - candidate and proposal generation is deterministic, bounded, and
   provenance-complete;
-- a review case remains authoritative across restart and stale input;
+- independent evidence-family rules, decisive single-family exceptions,
+  target and work identity, edition-sensitive identity or applicability, no-op
+  omission, field-relevant conflicting-identifier rejection, and provider
+  failure separation pass the synthetic title cohort;
+- a review case remains authoritative across restart and stale input, resumes
+  only from valid checkpoints, and advances only when independently recomputed
+  coverage matches its selected target scope; blockers identify the required
+  scope, stage, target, and outcome;
+- AI completion is independently audited rather than inferred from process or
+  artifact success, and `manual` remains AI semantics for multiple specifically
+  supported alternatives; it may complete reviewer output but creates neither
+  a human decision nor apply readiness;
+- zero proposals completes proposal selection without reviewer invocation,
+  while every invoked packet has exact per-proposal output coverage;
 - arbitrary, stale, AI-only, or destructive authorization cannot be
   constructed; and
 - reviewer timeout, malformed output, citation failure, and authentication
