@@ -36,9 +36,13 @@ class AuditRepositoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             SafeAuditSummary("/private/library")
         with self.assertRaises(ValueError):
+            SafeAuditSummary(r"C:\Users\alice\Audiobooks")
+        with self.assertRaises(ValueError):
             SafeAuditSummary('{"provider": "payload"}')
         with self.assertRaises(ValueError):
             AuditEvent(AuditEventId("event-one"), AuditEventKind("discovery"), datetime.now(), SafeAuditSummary("safe"))
+        with self.assertRaises(ValueError):
+            AuditEvent("event-one", "discovery", datetime.now(timezone.utc), "https://private.example/token")  # type: ignore[arg-type]
 
     def test_unavailable_corrupt_and_invalid_query_return_typed_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

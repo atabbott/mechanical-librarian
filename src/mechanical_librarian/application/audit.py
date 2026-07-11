@@ -11,7 +11,7 @@ from typing import Protocol
 from mechanical_librarian.domain.identifiers import AuditEventId, Identifier
 
 
-_FORBIDDEN_SUMMARY = re.compile(r"(?:https?://|/[^ ]|\\\\|\b(?:token|secret|password|authorization)\b)", re.IGNORECASE)
+_FORBIDDEN_SUMMARY = re.compile(r"(?:https?://|/[^ ]|\\|\b(?:token|secret|password|authorization)\b)", re.IGNORECASE)
 
 
 class AuditEventKind(Identifier):
@@ -47,6 +47,10 @@ class AuditEvent:
     summary: SafeAuditSummary
 
     def __post_init__(self) -> None:
+        if not isinstance(self.id, AuditEventId) or not isinstance(self.kind, AuditEventKind) or not isinstance(self.summary, SafeAuditSummary):
+            raise ValueError("audit events require typed safe identifiers, kinds, and summaries")
+        if not isinstance(self.created_at, datetime):
+            raise ValueError("audit events require a typed timestamp")
         if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
             raise ValueError("audit timestamps must be timezone-aware")
 
