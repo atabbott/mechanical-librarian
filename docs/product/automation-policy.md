@@ -22,12 +22,42 @@ The reference deployment may accept a measurable correction or override rate in 
 
 Ingestion and consumption do not wait for metadata curation.
 
-1. Audiobookshelf discovers and exposes the new item using whatever metadata is initially available.
+1. The target-service adapter (Audiobookshelf first) discovers and exposes the
+   new item using whatever metadata is initially available.
 2. Mechanical Librarian observes the item after a configurable stability delay.
 3. Evidence, review, and safe apply proceed asynchronously.
 4. Failures leave the item available with its prior metadata and create an operational or review state as appropriate.
 
 The curator must not quarantine an otherwise usable item merely because metadata is poor or evidence services are unavailable.
+
+## Evidence-role and sufficiency contract
+
+The planned policy keeps five roles separate: target-service adapters observe
+and mutate supported service state; local extractors produce bounded content
+evidence; optional metadata providers produce remote evidence; deterministic
+domain policy decides sufficiency, candidates, and disposition; and isolated AI
+reviewers recommend among supplied proposals. No role may infer the
+configuration, capability, outcome, credentials, or authority of another.
+
+The current snapshot is authoritative for the exact scoped target state used by
+no-op detection, optimistic concurrency, apply planning, and verification. Its
+metadata remains one versioned bibliographic observation, not privileged truth.
+
+Each policy version includes a sufficiency matrix by field, media type,
+operation, and change class. Fill-empty, replace-populated, no-op, rejection,
+and edition-sensitive work are distinct entries. Each entry declares:
+
+- when normalized current and local evidence can support deterministic closure
+  or a bounded proposal without an external provider;
+- when materially independent provider evidence is required for a disposition;
+- which missing-provider conditions route to human review; and
+- which capability combinations produce an explicit unsupported outcome.
+
+Providerless report-only operation is valid. Inventory, local evidence,
+deterministic no-op and rejection handling, bounded proposals, and human review
+continue when all external metadata providers are disabled or unavailable. The
+sufficiency matrix prevents this from silently weakening fields that require
+provider evidence.
 
 ## Initial field policy
 
@@ -87,6 +117,37 @@ An embedded value is not automatically true, and a catalogue value is not automa
 
 Provider outage, timeout, quota exhaustion, authentication failure, and empty malformed response are operational facts. They are never evidence that a candidate or field is absent.
 
+Candidate sourcing is accounted for by a versioned manifest derived per lane
+role. Inventory lanes require target capability and scope. Local-evidence lanes
+use target, media, field, and extractor capabilities. Provider-evidence lanes
+use target, media, field, provider, query, and configuration capabilities.
+Candidate lanes depend on relevant successfully completed evidence and the
+active policy. A dimension irrelevant to a lane is absent, not a failed
+capability, and derivation never branches on service or provider names.
+For every
+derived lane it records applicability. Applicable lanes record a typed execution
+outcome. Only successfully completed applicable lanes record candidate count,
+which may be zero, and execution mode `executed` or `reused`; `reused` is valid
+only for the exact target scope, matching input fingerprint, compatible
+provider, query, configuration, and artifact-contract versions, and a validated
+complete expected artifact. A missing derived lane is a coverage failure.
+Failed execution is never reusable; failed, stale, partial, or incompatible
+execution follows governed retry, backoff, and suppression and cannot be
+silently skipped.
+
+Provider configuration, declared capability, connection availability,
+execution outcome, candidate count, and evidence assessment are orthogonal.
+Unconfigured and unsupported do not mean failed; unavailable, degraded, failed,
+or empty are typed scoped outcomes; and none is negative metadata evidence or
+independent agreement. Provider lanes cannot block unrelated current/local
+evidence or another provider lane.
+
+The application constructs a minimal bounded allowlisted `ProviderQuery` for an
+applicable provider lane. The adapter receives only that query, its own scoped
+credential, and its restricted network client. It never receives a raw
+`ItemSnapshot` or service row, target endpoint or credential, unrestricted
+external ID or path, media handle, database repository, or mutation port.
+
 ### Directional title arbitration
 
 Title normalization is directional. With supported target and work identity,
@@ -105,6 +166,19 @@ preserves meaning, or a candidate that deterministically degrades the title,
 resolves through policy rather than becoming AI `manual`. Genuine supported
 alternatives remain eligible for review.
 
+### Candidate aggregation
+
+When equal normalized candidate values are combined, every source assessment,
+lineage, applicability fact, and contradiction remains individually auditable.
+The policy engine recomputes the aggregate disposition deterministically from
+the current assessments. It neither unions all historical adverse facts nor
+allows a strongest-row winner to erase a genuine conflict.
+
+Candidates retain generic source-adapter or provider provenance and correlation,
+but provider name is not semantic proposal identity. For the same canonical
+target, snapshot, field, normalized value, proposal schema, and policy, equal
+values collapse while retaining all distinct evidence lineage.
+
 ### Identifier arbitration
 
 Identifier ingestion preserves the raw value and declared source type before
@@ -113,6 +187,16 @@ comparable ISBN forms, and compares values only within compatible namespaces.
 Non-comparable identifier types are neutral: neither agreement nor conflict can
 be inferred from them. Source lineage and correlation remain attached through
 canonicalization.
+
+One distinct checksum-valid ISBN with typed format- and edition-applicable
+content provenance can strongly establish an edition only when a materially
+independent, format-appropriate provider returns the same canonical ISBN,
+including ISBN-10/ISBN-13 equivalence, and the target, work, and media identity
+agree. Multiple distinct content ISBNs, unrelated preview or other-work claims,
+correlated providers, and edition, format, narrator, abridgement, dramatization,
+omnibus, or cross-media conflicts remain unresolved. A spoken ISBN is useful
+typed audio evidence but is not equivalent to an embedded/content ISBN for this
+rule.
 
 A malformed or invalid current identifier may be replaced under ordinary
 applicable field evidence. A validated current comparable identifier may be

@@ -36,6 +36,17 @@ An adapter must report capabilities based on the connected target, not only on t
 
 Workflows are built from available capabilities. A missing capability must disable or narrow the affected workflow with a clear explanation; it must not trigger a database workaround.
 
+Planned lane derivation uses only dimensions relevant to the lane role:
+inventory uses target capability and scope; local evidence uses target, media,
+field, and extractor; provider evidence uses target, media, field, provider,
+query, and configuration; candidates use successfully completed relevant
+evidence and policy. An irrelevant dimension is absent, not falsely required. Target
+compatibility, provider configuration, provider capability, connection
+availability, execution outcome, candidate count, and evidence assessment
+remain orthogonal. Unconfigured, unsupported, unavailable, degraded, failed,
+and successful-empty states are not interchangeable and cannot block unrelated
+capable lanes.
+
 ## Audiobookshelf support
 
 Audiobookshelf compatibility is verified with:
@@ -46,6 +57,14 @@ Audiobookshelf compatibility is verified with:
 - mutation canaries that verify before-state, request, response, and after-state.
 
 When an upstream release changes undocumented behavior, the project may mark that version experimental or unsupported until the adapter is verified. Direct writes to the Audiobookshelf database are not a compatibility strategy.
+
+Audiobookshelf remains the first production target adapter. A future CWA adapter
+may be declared supported only after its target-service contract, capability
+matrix, and supported service API have passed qualification. A CWA-shaped fake
+is test evidence for the vendor-neutral contract only; it does not establish a
+runtime adapter, database compatibility, UI-automation fallback, or production
+write support. Direct Calibre or CWA database access is not a compatibility
+strategy.
 
 ## File formats
 
@@ -94,6 +113,41 @@ collection limits, target scope, cross-target policy evidence, and privacy
 classification are compatibility semantics. Changing one requires a new schema
 version and a documented reader or migration path; a schema from one boundary
 is never accepted by another.
+
+Canonical target, snapshot, evidence, candidate, proposal, reviewer-packet,
+decision, and apply-plan schemas contain only application/domain-owned fields
+and opaque namespace-scoped identities. Raw Audiobookshelf, CWA, and metadata-
+provider semantics and payload fields stay adapter-local. A raw external item
+value crosses only as an uninterpreted `ExternalItemId` inside its fully scoped
+canonical `TargetId`, never unscoped. The planned shared contract cohort will
+run the same canonical scenario through Audiobookshelf and CWA-shaped target
+fakes, each with provider-disabled and configured-provider variants, without
+schema forks.
+
+Workflow definitions are also durable compatibility inputs. A run records its
+immutable workflow-definition version and graph digest. Adding a required
+stage, changing dependencies or expected outcomes, or otherwise making the
+definition incompatible creates linked superseding or replanned work and
+marks transitively affected downstream checkpoints in that linked run ineligible
+for reuse or current applicability. Readers preserve and can explain the
+original graph and outcomes, which are never mutated or erased.
+
+Candidate-lane manifests record applicability for every derived lane and typed
+execution outcome for applicable lanes. Only successfully completed applicable
+lanes record candidate count and `executed` or `reused` mode. Reuse is
+compatible only when target scope and input fingerprints match, provider,
+query, and configuration revisions are declared compatible, the lane contract
+version is supported, and the completed expected artifact validates. A missing
+lane is a coverage failure, and failed execution is never reusable. A capability
+change causes the manifest to be re-derived and cannot silently turn missing
+execution or not-applicable into a completed applicable zero-candidate result.
+
+JSONL is an artifact-specific framing contract, not the reviewer protocol.
+Approved JSONL boundaries use physical LF or CRLF record delimiters and do not
+treat Unicode U+2028 or U+2029 inside a JSON string as record breaks. Each
+artifact schema publishes blank-line, malformed-record, final-newline, size,
+bare-carriage-return, invalid-UTF-8, BOM, and recovery behavior. Reviewer
+responses remain direct closed-schema JSON objects.
 
 ### Canonical inventory snapshot v1
 

@@ -28,7 +28,7 @@ path.
 
 ## Post-DUX operational-learning baseline
 
-Two later prototype revisions provide additional operating evidence without
+Later prototype revisions provide additional operating evidence without
 changing the frozen DUX source baseline above:
 
 | Source commit | Captured learning |
@@ -37,6 +37,9 @@ changing the frozen DUX source baseline above:
 | `c5b2fa8005e09e9c4a5d9d065c72e182aed45c81` | Checkpointed full-run orchestration and independently verified completion |
 | `13d219d81281ace1aab13ba79f055cfec5b27eb5` | Series-label reconciliation, projected-candidate provenance, and review-summary count semantics |
 | `0a05639d9a38037a513d7e38b5f4bf357927293c` | Dependency-aware unattended orchestration, durable resume, and bounded progress reporting |
+| `fd2685450c985a8c213602888470ef53d79abd5b` | Adverse reviewer-problem polarity, series review, and proposal-version default refresh |
+| `0c1f953256397d616d35350cccc993f397287f1c` | Candidate-lane accounting and reuse, workflow upgrades, candidate aggregation, and browser qualification |
+| `cfb014c46dd6fb0c4356381b91b8845fcc6f642b` | Authoritative current/evidence packet joins, content-ISBN edition evidence, and JSONL framing |
 
 These commits are an operational-learning baseline, not a production
 architecture, module boundary, or replacement for
@@ -89,7 +92,42 @@ the following contracts from them:
   applicability, current state, evidence, and policy; and
 - review reporting distinguishes target count, ordinary and destructive case
   counts, field work-item count, and planned-change count rather than using one
-  ambiguous total.
+  ambiguous total;
+- the required reviewer `problems` list contains only unresolved or adverse
+  problem codes. A clean approval uses `problems: []`; supporting facts remain
+  in typed evidence references and the concise reason;
+- every authoritative reviewer packet joins the exact bounded normalized
+  current snapshot, explicit loaded, missing, or unavailable field state,
+  relevant evidence, and candidate and policy versions before invocation;
+- a versioned, capability-derived lane manifest records applicability for every
+  derived lane. Applicable lanes record a typed execution outcome; only a
+  successfully completed applicable lane records candidate count, which may be
+  zero, and execution mode `executed` or `reused`. Reuse requires exact target
+  scope, matching input fingerprints, compatible provider, query,
+  configuration, and contract versions, and validated complete expected
+  artifacts. A missing lane is a coverage failure, while failed execution is
+  never reusable and follows governed retry, backoff, and suppression;
+- each run pins an immutable workflow-definition version and graph digest.
+  Incompatible definition changes create linked superseding or replanned work
+  whose affected downstream checkpoints are transitively marked ineligible for
+  reuse or current applicability; original history is never mutated or erased;
+- one distinct checksum-valid ISBN with typed format- and edition-applicable
+  content provenance can be strong edition evidence only when a materially
+  independent, format-appropriate provider returns the same canonical ISBN
+  (including ISBN-10/ISBN-13 equivalence) and work, target, and media identity
+  agree. Multiple content ISBNs, unrelated previews or other-work claims,
+  correlated providers, and edition, format, narration, abridgement,
+  dramatization, omnibus, or cross-media conflicts remain unresolved;
+- collapsing an identical normalized candidate retains each source assessment,
+  lineage, and contradiction. Deterministic policy recomputes the aggregate
+  rather than unioning every risk code or selecting a strongest row; and
+- JSONL interoperability artifacts use physical record delimiters, so Unicode
+  line and paragraph separators inside JSON strings do not create records.
+  Real-browser qualification derives categories from the versioned product and
+  category-capability contract, covers a representative fixture for each
+  applicable category, records explicit reasons for not-applicable categories,
+  captures page and console errors, and verifies proposal-version-bound
+  presentation defaults.
 
 A successful command or output file is insufficient. When proposal selection
 proves exact target coverage and yields zero proposals, orchestration records a
@@ -106,9 +144,12 @@ The prototype's agent controller, generated static dashboard, self-editing
 skill behavior, service-specific pipeline topology, hard-coded fusion weights
 and production-learned aliases, OS process IDs or detached watchers as durable
 authority, free-form run briefs as policy, and JSON encoded inside a schema
-string are explicitly excluded. Mechanical Librarian implements the retained
-contracts through its application services, durable jobs, adapter-neutral
-domain types, persisted audit records, and supported interfaces.
+string are explicitly excluded. So are prototype provider topology, in-place
+mutation of historical workflow graphs, broad host-language line splitting,
+browser-local authority, and any production title, alias, identifier, path, or
+report. Mechanical Librarian implements the retained contracts through its
+application services, durable jobs, adapter-neutral domain types, persisted
+audit records, and supported interfaces.
 
 ## Verification at capture
 

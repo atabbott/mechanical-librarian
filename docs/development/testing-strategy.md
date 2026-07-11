@@ -38,13 +38,36 @@ Use generated inputs for invariants such as:
 
 ### Contract tests
 
-Every adapter implementation runs a shared suite covering capabilities,
-authentication failure, timeouts, rate limits, malformed responses, unsupported
-fields, idempotency, and redaction.
+Every adapter implementation runs the shared suite for its role. Target-service
+contracts cover canonical inventory translation, opaque scoped identity,
+capabilities, stale-state evidence, supported mutations where applicable,
+authentication failure, idempotency, and redaction. Local-extractor contracts
+cover bounded vendor-neutral evidence without network or credentials.
+Metadata-provider contracts cover query capabilities, provenance, correlation,
+unconfigured and unavailable states, timeouts, rate limits, malformed responses,
+empty successful outcomes, and denial of target credentials and write ports.
+Reviewer contracts consume only canonical packets and proposals.
+
+Provider contract tests accept only a minimal bounded application-built
+allowlisted `ProviderQuery`, the provider's own credential, and a restricted
+network client. Spies fail the test if the adapter receives a raw `ItemSnapshot`
+or service row, target endpoint or credential, unrestricted external ID or path,
+media handle, database repository, or mutation port.
 
 Audiobookshelf tests use a fake HTTP and Socket.io service with synthetic item
 payloads. Live service tests are opt-in, report-only, and never part of ordinary
 CI.
+
+The planned contract suite uses a CWA-shaped fake only as a fixture for the
+future target-service port. It models supported API payload and capability
+boundaries; it is not a runtime adapter, database integration, UI automation
+path, or claim of production support. It traps attempted database, UI,
+maintenance-container, media-write, unsupported-API, and production-mutation
+fallbacks. The same synthetic canonical target, evidence, candidate, proposal,
+and reviewer-packet scenario will run through Audiobookshelf and CWA-shaped
+target fakes, each under provider-disabled and configured-provider variants,
+without changing domain or reviewer schemas. The CWA-shaped fake exposes no
+production mutation capability.
 
 ### Integration tests
 
@@ -61,6 +84,11 @@ Durable review-run tests terminate and resume work at each stage checkpoint,
 independently recompute exact selected-target coverage, reject incomplete or
 unverified required scope and stale upstream versions before dependent stages,
 and prove that scoped review unreadiness does not stop unrelated ingestion.
+Workflow-definition upgrade cases pin the original version and graph digest,
+introduce a newly required upstream stage, and prove that linked superseding or
+replanned work preserves immutable history while marking transitively affected
+downstream checkpoints ineligible for reuse or current applicability. Resume
+never mutates or erases the old graph or its outcomes.
 Typed terminal no-result and degraded optional outcomes count toward coverage.
 Every blocker identifies the required scope, stage, target, and missing or
 failed terminal outcome without pretending that an artifact or proposal exists.
@@ -100,6 +128,14 @@ cases. Required scenarios include:
   automated accessibility checks; and
 - bounded initial DOM, API payload, asset, cover-decode, and interaction costs.
 
+The real-browser cohort derives review categories from the versioned product and
+category-capability contract, records a representative fixture for every
+applicable category and an explicit reason for every not-applicable category,
+and fails on unexpected page or console errors. Version-change cases distinguish
+untouched presentation defaults, which may refresh with the current proposal,
+from acknowledged user decisions, which must remain server-authoritative and
+must never be silently rewritten.
+
 Static markup assertions may guard a narrow contract but cannot be the only
 evidence for interaction, responsive, or accessibility acceptance. Run real
 browser tests and an automated accessibility scanner against representative
@@ -120,6 +156,21 @@ Run the published container against synthetic services and media fixtures:
 Separate scenarios cover reviewer failure, provider outage, backup failure,
 stale state, partial apply, verification disagreement, rollback, and circuit
 breaker behavior.
+
+A report-only end-to-end scenario disables every external metadata provider and
+still completes inventory, local evidence extraction, deterministic no-op and
+rejection handling, bounded proposal creation, and human-review projection. A
+paired configured-provider scenario may improve evidence but must preserve the
+same canonical proposal identity rules. Versioned per-field sufficiency
+fixtures span media type, operation, and change class—including fill-empty,
+replace-populated, no-op, rejection, and edition-sensitive work—and prove
+provider-required cases route to review or explicit unsupported outcomes rather
+than disappearing.
+
+The provider-disabled variant asserts that composition constructs no provider
+adapter or provider network client, resolves no provider secret, and performs no
+provider network request. It is a configuration variant against the same target
+fake, never a substitute providerless target adapter.
 
 ### Container security tests
 
@@ -154,6 +205,21 @@ Fixture families include:
 - omnibus, abridged, dramatized, summary, and alternate-edition conflicts;
 - missing and low-quality synthetic covers;
 - duplicate provider results and redirects;
+- orthogonal provider configuration, declared capability, connection
+  availability, execution outcome, candidate count, and evidence disposition;
+- role-specific lane derivation: inventory from target capability and scope;
+  local evidence from target, media, field, and extractor; provider evidence
+  from target, media, field, provider, query, and configuration; and candidates
+  from successfully completed relevant evidence and policy. Fixtures prove an
+  absent irrelevant dimension is not a false requirement and cover provider-
+  disabled, unsupported, unavailable, degraded, failed, empty-success, and
+  unrelated-lane controls;
+- sufficiency matrices keyed by field, media type, operation, and change class,
+  including fill-empty, replace-populated, no-op, rejection, and edition-
+  sensitive cases;
+- equal normalized candidates from different source adapters/providers proving
+  generic provenance and correlation survive while provider name does not alter
+  semantic proposal identity for the same target, snapshot, field, and value;
 - repeated and projected records from one evidence family that must not count
   as independent agreement;
 - identity-backed title cleanup with supported target and work identity, plus
@@ -181,6 +247,12 @@ Fixture families include:
   identifier and a materially independent provider identifier that agree on the
   same validated canonical replacement identity, plus disagreement, missing-
   family, correlated-lineage, and inapplicable controls;
+- one distinct checksum-valid ISBN with typed format- and edition-applicable
+  embedded/content provenance, a canonically equivalent ISBN-10 or ISBN-13 from
+  a materially independent format-appropriate provider, and agreeing target,
+  work, and media identity, plus multiple-content-ISBN, unrelated-preview,
+  other-work, correlated-provider, edition, format, narrator, abridgement,
+  dramatization, omnibus, cross-media, and spoken-ISBN-only controls;
 - current metadata that is outweighed by applicable evidence rather than
   treated as privileged truth;
 - multi-field cases proving that resolution of one field preserves title,
@@ -205,9 +277,34 @@ Fixture families include:
 - checkpointed review runs with missing, duplicate, stale, terminal-no-result,
   degraded optional, typed-blocker, and exact-coverage stage outcomes;
 - AI completion cases with independently audited proposal IDs, decisions,
-  reasons, problem lists, selected targets, and authoritative upstream input
-  outcomes, including required-input blockers and invalid claimed-complete
-  artifacts;
+  reasons, required `problems` lists, selected targets, and authoritative
+  upstream input outcomes, including required-input blockers and invalid
+  claimed-complete artifacts;
+- direct closed-schema reviewer objects with clean approvals carrying
+  `problems: []`, plus duplicate JSON keys, trailing content, unknown fields,
+  missing required fields, unknown and duplicate proposal IDs, partial coverage,
+  malformed values, backend-envelope normalization, and controls proving no
+  semantic repair or JSON-inside-string fallback occurs;
+- authoritative packet joins with the exact bounded normalized current snapshot,
+  explicit loaded, missing, and unavailable field states, relevant evidence,
+  candidate and policy versions, and completeness provenance, including
+  policy-qualified cross-target evidence, plus pre-invocation failures for
+  missing, duplicate, unauthorized or target-incompatible cross-target
+  evidence (including consuming-target mismatches and absent explicit
+  relationships, immutable policy versions, or qualifying rules), stale, required-
+  context-truncated, raw-row, or otherwise unjoinable context;
+- capability-derived candidate manifests proving every derived lane records
+  applicability, applicable lanes record typed execution outcome, and only
+  successfully completed applicable lanes record candidate count and `executed`
+  or compatibility-validated `reused` mode; cases include completed applicable
+  zero-candidate lanes, not-applicable reasons, missing-lane coverage failure,
+  failed, stale, and partial execution, exact target and input fingerprints,
+  compatible provider, query, configuration, and contract versions, validated
+  expected artifacts, and bounded retry, backoff, and suppression proving
+  failures are never reused;
+- identical normalized candidates with separate agreeing and contradicting
+  source assessments, stale risks, and lineage, proving deterministic aggregate
+  recomputation without risk union or strongest-row conflict erasure;
 - zero-proposal selection that records a terminal orchestration outcome without
   reviewer invocation, plus invoked packets with exact per-proposal coverage;
 - AI `manual` results with multiple specifically supported alternatives, plus
@@ -274,6 +371,15 @@ Post-DUX operational scenarios additionally cite the applicable full commit
 from the separate baseline in that record. Tests preserve the stage-coverage,
 evidence-independence, and completion-audit contracts, not the prototype's
 agent controller, static dashboard, service topology, or scoring weights.
+
+JSONL interoperability tests delimit records only with the artifact contract's
+physical CRLF or LF separators. Fixtures include escaped newlines, literal
+Unicode U+2028 and U+2029 within JSON strings, a missing final newline, blank
+and malformed physical records, a bare carriage return rejected as a delimiter,
+oversize records, and the artifact contract's declared invalid-UTF-8 and BOM
+policy, with bounded recovery or rejection. Broad host-language `splitlines()`
+behavior is not the parser contract. AI reviewer output remains one direct
+schema object, not JSONL.
 
 ## Determinism
 

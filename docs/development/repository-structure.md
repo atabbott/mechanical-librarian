@@ -9,6 +9,7 @@
 │   ├── application/
 │   ├── adapters/
 │   │   ├── library_services/
+│   │   ├── evidence_extractors/
 │   │   ├── reviewers/
 │   │   ├── providers/
 │   │   ├── notifications/
@@ -79,6 +80,29 @@ Implement application ports for external systems and technology boundaries,
 including persistence repositories and task execution. Adapters may depend on
 application and domain contracts; adapters never import one another directly
 and never import infrastructure.
+
+The planned adapter packages preserve role boundaries:
+
+- `library_services` translates supported target APIs into canonical inventory
+  and accepts validated mutations without owning metadata policy;
+- `evidence_extractors` produces bounded local facts without target/provider
+  clients or network access;
+- `providers` supplies optional remote evidence without target credentials,
+  media access, or write ports;
+- `reviewers` consumes staged canonical packets and returns schema-constrained
+  recommendations without discovering evidence or authorizing writes; and
+- deterministic candidate sufficiency, aggregation, and disposition remain in
+  domain/application code rather than any adapter.
+
+Adapter-specific payload models and vendor semantic types stay inside the owning
+adapter. A raw external item value may cross only as an uninterpreted
+`ExternalItemId` inside its fully adapter/connection/library-scoped canonical
+`TargetId`, never as an unscoped identifier. Application ports expose vendor-
+neutral target, snapshot, evidence, candidate, proposal, reviewer-packet,
+decision, and apply-plan schemas. A CWA-shaped implementation under test
+fixtures may exercise the common target-service port, but no production CWA
+adapter package is created until supported-API compatibility and delivery work
+authorize it.
 
 ### `infrastructure`
 

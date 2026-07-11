@@ -8,6 +8,10 @@
 - Unknown fields fail validation rather than being silently ignored.
 - Configuration changes are audited and identify whether restart or
   re-evaluation is required.
+- The current target connection credential is a scoped secret reference.
+  Structured provider and reviewer credential references and role-scoped
+  resolution are planned and must never share credentials implicitly by
+  endpoint or adapter type.
 
 ## Current schema boundary
 
@@ -22,6 +26,12 @@ Import planning accepts current and proposed mappings and validates both through
 that same loader before comparing them. Its output contains only fixed schema
 paths and the impacts below; it retains no old or new values and performs no
 persistence, probing, secret resolution, or mutation.
+
+In current `config-v1`, only `connections.secret_reference` is a structured
+credential reference. The `providers` and `reviewers` paths participate in
+aggregate impact detection but do not yet define structured credential-reference
+or role-scoped resolution contracts. The detailed provider/reviewer secret
+contracts below are planned extensions, not current behavior.
 
 ### `config-v1` impact matrix
 
@@ -77,6 +87,13 @@ comparison.
 - event and reconciliation behavior;
 - capability overrides only when explicitly supported for diagnosis.
 
+The connection describes a target-service role, not a metadata provider. Raw
+adapter payload fields and vendor semantics stay at the adapter boundary. An
+external item value crosses only as an uninterpreted `ExternalItemId` inside its
+fully adapter/connection/library-scoped canonical `TargetId`, never alone;
+endpoints and private paths do not enter canonical inventory or downstream
+schemas.
+
 ### Media mounts
 
 - logical library type;
@@ -97,12 +114,33 @@ comparison.
 
 ### Providers
 
+The structured provider group is planned beyond the current aggregate
+`providers` impact path:
+
 - enabled providers and order;
 - credentials by secret reference;
 - timeouts, retry policy, rate limits, and cache policy;
-- allowed hosts.
+- allowed hosts;
+- declared media, field, query, and evidence capabilities; and
+- independently versioned query, normalization, and response contracts.
+
+Configuration allowlists query capabilities and bounds; it does not contain a
+raw target row or reusable provider request. The application builds each minimal
+bounded `ProviderQuery` from canonical allowlisted facts at execution time.
+
+Under the planned provider contract, configuration state, declared capability,
+connection availability, execution outcome, candidate count, and evidence
+assessment are orthogonal. An entry may be absent or explicitly disabled
+without creating a failed job; unsupported, unavailable, degraded, failed, and
+successful-empty are distinct typed scoped states. A provider-disabled
+configuration is valid for report-only inventory, local evidence, deterministic
+policy, bounded proposals, and human review, subject to the active sufficiency
+matrix keyed by field, media type, operation, and change class.
 
 ### AI reviewers
+
+Structured reviewer authentication references are likewise planned beyond the
+current aggregate `reviewers` impact path:
 
 - backend type;
 - model or profile selection;
@@ -114,6 +152,11 @@ comparison.
 ### Policy
 
 - field-specific automatic decision and apply rules;
+- versioned evidence sufficiency rules keyed by field, media type, operation,
+  and change class—including fill-empty, replace-populated, no-op, rejection,
+  and edition-sensitive work—stating when current/local evidence suffices,
+  independent provider evidence is required, or missing provider evidence
+  routes to review or unsupported;
 - destructive-action prohibition;
 - stability delay;
 - batch and circuit-breaker bounds;
@@ -138,8 +181,15 @@ Support Docker secret files and an encrypted application secret store. Plain
 environment variables may be supported for compatibility but should not be the
 preferred documented production path.
 
-APIs return only whether a secret is configured and its last successful test;
-they never return the value.
+Current APIs expose only target connection secret status where supported and
+never return the value. Planned provider/reviewer status surfaces follow the
+same rule after their structured credential contracts exist.
+
+The planned secret-resolution contract produces role-scoped handles: a target-
+service adapter cannot resolve provider or reviewer secrets, a provider adapter
+cannot resolve target or reviewer secrets, and a reviewer backend cannot resolve
+target or provider secrets. Canonical exports preserve only typed configuration
+status, never a credential value or reusable cross-role handle.
 
 ## Export and import
 
