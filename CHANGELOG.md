@@ -25,12 +25,19 @@ versioning after the first public release.
   indexed chronological queries in the initial schema.
 - SQLite migrations now execute and record their checksums atomically, with
   fail-closed detection of partial, tampered, newer, and unrecognized schemas.
+- First-run durable state is now verified in a private same-filesystem staging
+  file and published atomically without replacing a concurrent creator, so a
+  failed initialization leaves the requested database path retryable.
 - Decision authorizations now retain and validate immutable review-case and
   human-decision or qualified automatic-policy evidence, rejecting stale,
   mismatched, disposition-only, or ID-only authority.
 
 ### Added
 
+- A `state-check --database PATH` operator diagnostic for durable filesystem
+  state that creates or opens application state, applies migrations, and
+  verifies idempotent audit write/read behavior with fixed path-free success and
+  failure output.
 - Structured Project work-kind classification and separate Defect/Bug intake
   for pre-release contract failures versus failures of delivered behavior.
 - Functional-slice delivery governance for new functionality during the initial
@@ -49,7 +56,7 @@ versioning after the first public release.
   target-capability domain models.
 - Typed, deterministic, secret-safe domain identifiers, version markers,
   fingerprints, and idempotency keys.
-- Installable typed Python package, empty CLI entrypoint, locked dependency
+- Installable typed Python package, initial CLI entrypoint, locked dependency
   metadata, layered package scaffold, smoke tests, and executable architecture
   boundary checks.
 - `AGPL-3.0-or-later` project licensing, including the canonical licence text,

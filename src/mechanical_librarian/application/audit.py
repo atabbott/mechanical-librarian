@@ -79,6 +79,14 @@ class AuditQueryOutcome(StrEnum):
     CORRUPT = "corrupt"
 
 
+class AuditReadOutcome(StrEnum):
+    FOUND = "found"
+    NOT_FOUND = "not_found"
+    INVALID = "invalid"
+    UNAVAILABLE = "unavailable"
+    CORRUPT = "corrupt"
+
+
 @dataclass(frozen=True)
 class AuditAppendResult:
     outcome: AuditAppendOutcome
@@ -94,6 +102,13 @@ class AuditQueryResult:
     events: tuple[AuditEvent, ...] = ()
 
 
+@dataclass(frozen=True)
+class AuditReadResult:
+    outcome: AuditReadOutcome
+    event: AuditEvent | None = None
+
+
 class AuditRepository(Protocol):
     def append(self, event: AuditEvent) -> AuditAppendResult: ...
+    def read(self, event_id: AuditEventId) -> AuditReadResult: ...
     def recent(self, limit: int) -> AuditQueryResult: ...

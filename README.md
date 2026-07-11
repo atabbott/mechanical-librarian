@@ -30,8 +30,10 @@ changing the domain model.
 ## Current status
 
 The project is in its initial implementation stage. An installable typed Python
-package and architecture-boundary scaffold exist, but no production image or
-supported release exists yet.
+package, architecture-boundary scaffold, and supported durable-state diagnostic
+exist, but no production image or supported release exists yet. See the
+[durable state check](docs/operations/state-check.md) for the current executable
+operator surface.
 
 The earlier Ebook Management workspace is a prototype and evidence source. Its
 completed DUX dashboard work is frozen as a traceable baseline and informs the

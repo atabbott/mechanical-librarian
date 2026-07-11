@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from mechanical_librarian.domain import audit_values
 from mechanical_librarian.infrastructure.persistence import sqlite
@@ -17,6 +18,81 @@ CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
+    def test_integrity_verification_requires_one_exact_ok_row(self) -> None:
+        connection = Mock()
+        connection.execute.return_value.fetchall.return_value = [("ok",), ("extra",)]
+
+        with self.assertRaisesRegex(SchemaError, "integrity"):
+            sqlite._verify_integrity(connection)
+
+    def test_safe_copy_rejects_fifo_replacement_without_blocking(self) -> None:
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("FIFO replacement requires POSIX mkfifo")
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "state.sqlite"
+            destination = Path(directory) / "copied.sqlite"
+            source.write_bytes(b"regular state")
+            expected = sqlite._state_snapshot(source)[""]
+            source.unlink()
+            os.mkfifo(source)
+
+            with self.assertRaisesRegex(SchemaError, "changed"):
+                sqlite._copy_regular_state(source, destination, expected)
+            self.assertFalse(destination.exists())
+
+    def test_safe_copy_rejects_source_change_during_read(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "state.sqlite"
+            destination = Path(directory) / "copied.sqlite"
+            source.write_bytes(b"stable state")
+            expected = sqlite._state_snapshot(source)[""]
+            real_copy = sqlite.shutil.copyfileobj
+
+            def copy_then_change(input_file, output_file) -> None:
+                real_copy(input_file, output_file)
+                source.write_bytes(b"changed state")
+
+            with (
+                patch.object(
+                    sqlite.shutil,
+                    "copyfileobj",
+                    side_effect=copy_then_change,
+                ),
+                self.assertRaisesRegex(SchemaError, "changed"),
+            ):
+                sqlite._copy_regular_state(source, destination, expected)
+
+    def test_in_memory_database_is_not_a_durable_connection(self) -> None:
+        with self.assertRaisesRegex(SchemaError, "filesystem database"):
+            connect(Path(":memory:"))
+
+    def test_wal_failure_precedes_every_migration_write(self) -> None:
+        class WalFailureConnection:
+            def __init__(self, connection: sqlite3.Connection) -> None:
+                self._connection = connection
+
+            def execute(self, statement: str, parameters: tuple[object, ...] = ()):
+                if statement == "PRAGMA journal_mode = WAL":
+                    raise sqlite3.OperationalError("injected WAL failure")
+                return self._connection.execute(statement, parameters)
+
+            def __getattr__(self, name: str):
+                return getattr(self._connection, name)
+
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+
+            with self.assertRaisesRegex(SchemaError, "journal mode"):
+                migrate(WalFailureConnection(connection))  # type: ignore[arg-type]
+
+            self.assertEqual(
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall(),
+                [],
+            )
+
     def test_initial_migration_checksum_remains_stable(self) -> None:
         self.assertEqual(
             MIGRATIONS[0].checksum,

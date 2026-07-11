@@ -8,7 +8,15 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from mechanical_librarian.adapters.persistence.audit import SQLiteAuditRepository
-from mechanical_librarian.application.audit import AuditAppendOutcome, AuditEvent, AuditEventKind, AuditEventId, AuditQueryOutcome, SafeAuditSummary
+from mechanical_librarian.application.audit import (
+    AuditAppendOutcome,
+    AuditEvent,
+    AuditEventKind,
+    AuditEventId,
+    AuditQueryOutcome,
+    AuditReadOutcome,
+    SafeAuditSummary,
+)
 from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate, transaction
 from tests.contract.audit_repository import AuditRepositoryContract
 
@@ -477,6 +485,44 @@ class AuditRepositoryTests(unittest.TestCase):
             connection.close()
             self.assertEqual(repository.append(event("event-two")).outcome, AuditAppendOutcome.UNAVAILABLE)
             self.assertEqual(repository.recent(1).outcome, AuditQueryOutcome.UNAVAILABLE)
+
+    def test_exact_read_maps_unavailable_corrupt_and_invalid_results(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            migrate(connection)
+            repository = SQLiteAuditRepository(connection)
+            for invalid in ("event-one", True, object(), None):
+                with self.subTest(invalid=invalid):
+                    self.assertEqual(
+                        repository.read(invalid).outcome,  # type: ignore[arg-type]
+                        AuditReadOutcome.INVALID,
+                    )
+            connection.execute("PRAGMA ignore_check_constraints = ON")
+            connection.execute(
+                "INSERT INTO audit_events(id, kind, created_at, summary) "
+                "VALUES ('event-one', 'discovery', 'bad-time', 'discovered item')"
+            )
+            connection.execute("PRAGMA ignore_check_constraints = OFF")
+            self.assertEqual(
+                repository.read(AuditEventId("event-one")).outcome,
+                AuditReadOutcome.CORRUPT,
+            )
+            connection.close()
+            self.assertEqual(
+                repository.read(AuditEventId("event-one")).outcome,
+                AuditReadOutcome.UNAVAILABLE,
+            )
+
+        failing_connection = Mock()
+        failing_connection.execute.side_effect = sqlite3.DatabaseError(
+            "synthetic corruption"
+        )
+        self.assertEqual(
+            SQLiteAuditRepository(failing_connection)
+            .read(AuditEventId("event-one"))
+            .outcome,
+            AuditReadOutcome.CORRUPT,
+        )
 
     def test_corrupt_stored_value_types_and_values_return_corrupt(self) -> None:
         corrupt_rows = (

@@ -19,8 +19,10 @@ class PackageSmokeTests(unittest.TestCase):
             mechanical_librarian.__version__,
         )
 
-    def test_empty_composed_cli_succeeds(self) -> None:
-        self.assertEqual(main([]), 0)
+    def test_composed_cli_exposes_help(self) -> None:
+        with self.assertRaises(SystemExit) as raised:
+            main(["--help"])
+        self.assertEqual(raised.exception.code, 0)
 
     def test_all_modules_import_outside_checkout_without_creating_state(self) -> None:
         environment = {
