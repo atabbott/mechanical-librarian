@@ -22,6 +22,7 @@ class Migration:
     expected_tables: frozenset[str]
     checksum_source: str | None = None
     expected_table_definitions: Mapping[str, str] | None = None
+    expected_objects: frozenset[tuple[str, str]] = frozenset()
 
     @property
     def checksum(self) -> str:
@@ -87,7 +88,20 @@ def _expected_tables(known: dict[int, Migration], versions: set[int]) -> set[str
 
 
 def _expected_schema_objects(known: dict[int, Migration], versions: set[int]) -> set[tuple[str, str]]:
-    return {("table", table) for table in _expected_tables(known, versions)}
+    objects: set[tuple[str, str]] = set()
+    for version in versions:
+        migration = known[version]
+        objects.update(("table", table) for table in migration.expected_tables)
+        objects.update(migration.expected_objects)
+        for statement in migration.statements:
+            match = re.match(
+                r"\s*CREATE\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+                statement,
+                re.IGNORECASE,
+            )
+            if match is not None:
+                objects.add((match.group(1).lower(), match.group(2)))
+    return objects
 
 
 def _normalise_schema_sql(sql: str) -> str:

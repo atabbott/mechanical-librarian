@@ -125,6 +125,21 @@ class SqliteFoundationTests(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall(), [(1,), (2,)])
             self.assertIn("source", {row[1] for row in connection.execute("PRAGMA table_info(instance_metadata)")})
 
+    def test_migration_can_declare_and_validate_an_index(self) -> None:
+        index = Migration(
+            2,
+            ("CREATE INDEX audit_events_by_created_at ON audit_events(created_at)",),
+            frozenset(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            self.assertEqual(migrate(connection), 1)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index)):
+                self.assertEqual(migrate(connection), 2)
+                self.assertEqual(migrate(connection), 2)
+            self.assertIsNotNone(connection.execute("SELECT name FROM sqlite_master WHERE name = 'audit_events_by_created_at'").fetchone())
+
     def test_partial_schema_is_rejected_without_modification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
