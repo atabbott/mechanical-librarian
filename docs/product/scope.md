@@ -3,7 +3,8 @@
 ## Initial scope
 
 - One self-contained Linux container.
-- Audiobookshelf ebook and audiobook libraries.
+- Audiobookshelf ebook and audiobook libraries as the first production
+  target-service adapter, behind vendor-neutral application/domain contracts.
 - Event-driven incremental processing plus scheduled reconciliation.
 - Application-level metadata and cover updates through supported APIs.
 - EPUB package, bounded opening-matter, navigation, and structural evidence plus
@@ -48,3 +49,13 @@ Service adapters must detect and publish their capabilities. Unsupported fields
 remain unsupported rather than falling back to undocumented database or UI
 automation. A service version change that invalidates a capability must block
 affected writes until compatibility is re-established.
+
+Initial Audiobookshelf support does not make its payloads, identifiers, getters,
+provider integrations, or provider availability part of the domain contract.
+Providerless report-only inventory, local evidence, deterministic no-op and
+rejection handling, bounded proposals, and human review remain within scope.
+
+The planned Calibre-Web Automated/Calibre-compatible adapter must use a
+supported service API and explicit capability declarations. A CWA-shaped fake
+may qualify the common target-service contract, but the initial scope adds no
+CWA runtime adapter, database access, UI automation, or production write path.

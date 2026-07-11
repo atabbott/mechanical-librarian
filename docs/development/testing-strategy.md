@@ -38,13 +38,36 @@ Use generated inputs for invariants such as:
 
 ### Contract tests
 
-Every adapter implementation runs a shared suite covering capabilities,
-authentication failure, timeouts, rate limits, malformed responses, unsupported
-fields, idempotency, and redaction.
+Every adapter implementation runs the shared suite for its role. Target-service
+contracts cover canonical inventory translation, opaque scoped identity,
+capabilities, stale-state evidence, supported mutations where applicable,
+authentication failure, idempotency, and redaction. Local-extractor contracts
+cover bounded vendor-neutral evidence without network or credentials.
+Metadata-provider contracts cover query capabilities, provenance, correlation,
+unconfigured and unavailable states, timeouts, rate limits, malformed responses,
+empty successful outcomes, and denial of target credentials and write ports.
+Reviewer contracts consume only canonical packets and proposals.
+
+Provider contract tests accept only a minimal bounded application-built
+allowlisted `ProviderQuery`, the provider's own credential, and a restricted
+network client. Spies fail the test if the adapter receives a raw `ItemSnapshot`
+or service row, target endpoint or credential, unrestricted external ID or path,
+media handle, database repository, or mutation port.
 
 Audiobookshelf tests use a fake HTTP and Socket.io service with synthetic item
 payloads. Live service tests are opt-in, report-only, and never part of ordinary
 CI.
+
+The planned contract suite uses a CWA-shaped fake only as a fixture for the
+future target-service port. It models supported API payload and capability
+boundaries; it is not a runtime adapter, database integration, UI automation
+path, or claim of production support. It traps attempted database, UI,
+maintenance-container, media-write, unsupported-API, and production-mutation
+fallbacks. The same synthetic canonical target, evidence, candidate, proposal,
+and reviewer-packet scenario will run through Audiobookshelf and CWA-shaped
+target fakes, each under provider-disabled and configured-provider variants,
+without changing domain or reviewer schemas. The CWA-shaped fake exposes no
+production mutation capability.
 
 ### Integration tests
 
@@ -134,6 +157,21 @@ Separate scenarios cover reviewer failure, provider outage, backup failure,
 stale state, partial apply, verification disagreement, rollback, and circuit
 breaker behavior.
 
+A report-only end-to-end scenario disables every external metadata provider and
+still completes inventory, local evidence extraction, deterministic no-op and
+rejection handling, bounded proposal creation, and human-review projection. A
+paired configured-provider scenario may improve evidence but must preserve the
+same canonical proposal identity rules. Versioned per-field sufficiency
+fixtures span media type, operation, and change class—including fill-empty,
+replace-populated, no-op, rejection, and edition-sensitive work—and prove
+provider-required cases route to review or explicit unsupported outcomes rather
+than disappearing.
+
+The provider-disabled variant asserts that composition constructs no provider
+adapter or provider network client, resolves no provider secret, and performs no
+provider network request. It is a configuration variant against the same target
+fake, never a substitute providerless target adapter.
+
 ### Container security tests
 
 From the reviewer principal, assert denial of:
@@ -167,6 +205,21 @@ Fixture families include:
 - omnibus, abridged, dramatized, summary, and alternate-edition conflicts;
 - missing and low-quality synthetic covers;
 - duplicate provider results and redirects;
+- orthogonal provider configuration, declared capability, connection
+  availability, execution outcome, candidate count, and evidence disposition;
+- role-specific lane derivation: inventory from target capability and scope;
+  local evidence from target, media, field, and extractor; provider evidence
+  from target, media, field, provider, query, and configuration; and candidates
+  from successfully completed relevant evidence and policy. Fixtures prove an
+  absent irrelevant dimension is not a false requirement and cover provider-
+  disabled, unsupported, unavailable, degraded, failed, empty-success, and
+  unrelated-lane controls;
+- sufficiency matrices keyed by field, media type, operation, and change class,
+  including fill-empty, replace-populated, no-op, rejection, and edition-
+  sensitive cases;
+- equal normalized candidates from different source adapters/providers proving
+  generic provenance and correlation survive while provider name does not alter
+  semantic proposal identity for the same target, snapshot, field, and value;
 - repeated and projected records from one evidence family that must not count
   as independent agreement;
 - identity-backed title cleanup with supported target and work identity, plus

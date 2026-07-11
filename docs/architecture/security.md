@@ -48,6 +48,24 @@ The single container must preserve least privilege internally:
 
 This boundary must be tested from inside the published image.
 
+Within the curator principal, planned composition still follows least authority.
+Target-service adapters receive only their scoped connection secret and
+supported read/write client; local evidence extractors receive bounded read-only
+media handles and no network client; metadata-provider adapters receive only
+an application-built minimal bounded allowlisted `ProviderQuery`, their own
+provider secret, and an allowlisted outbound client; deterministic policy
+receives canonical facts and no credentials or network access; reviewer
+backends receive staged canonical packets and their own authentication state.
+Provider adapters never receive target-service credentials, main-database
+repositories, production write interfaces, or raw media access, and target
+adapters never receive provider or reviewer credentials.
+
+A provider adapter never receives a raw `ItemSnapshot` or service row, target
+endpoint or credential, unrestricted external ID or path, media handle,
+main-database repository, or mutation port. When providers are disabled,
+composition constructs no provider adapter or network client, resolves no
+provider secret, and permits no provider egress.
+
 ## Primary threats and mitigations
 
 ### Prompt injection in books or provider metadata
@@ -76,6 +94,8 @@ Mitigations:
 - Use separate Unix principals and deny cross-principal reads.
 - Centralize redaction and test known token, URL, header, and query patterns.
 - Never include raw request headers or environment dumps in support bundles.
+- Resolve target, provider, and reviewer secret references independently and
+  inject only the role-specific credential into the owning adapter or runner.
 
 ### Server-side request forgery
 
@@ -90,6 +110,9 @@ Mitigations:
 - Re-check every redirect destination.
 - Bound redirects, response size, content type, and timeout.
 - Keep provider hosts in adapter-specific allow rules where practical.
+- Do not reuse a target-service HTTP client, redirect policy, cookie jar, or
+  authorization header for provider traffic; provider egress uses an
+  independently allowlisted client with no access to target write endpoints.
 
 ### Archive, image, and parser attacks
 
@@ -174,6 +197,12 @@ of scope for unattended operation and must never be hidden configuration.
 - SSRF and redirect tests.
 - Zip, image, path traversal, and parser resource-bound tests.
 - Container tests proving reviewer isolation.
+- Contract and container tests proving provider adapters cannot read target
+  credentials, production media, or mutation interfaces and target adapters
+  cannot read provider or reviewer credentials.
+- Provider-disabled container tests proving no provider adapter/client is
+  constructed, no provider secret is resolved, and no provider network request
+  can occur.
 - Authorization and CSRF integration tests.
 - Apply concurrency, stale fingerprint, replay, and rollback tests.
 - Dependency, image, static-analysis, and secret scans on every release.

@@ -9,6 +9,8 @@
 - Never rewrite history to represent the current state.
 - Use stable internal identifiers independent of service titles or paths.
 - Include schema and policy versions on durable derived records.
+- Keep canonical contracts vendor-neutral and scope opaque external identities
+  by adapter, connection, library, target, and schema version.
 
 ## Core entities
 
@@ -41,6 +43,17 @@ snapshot. It rejects cross-adapter, cross-connection, cross-library,
 cross-target, cross-snapshot, media, lifecycle, and capability mismatches before
 the graph can enter application or persistence code. Adapter implementation
 versions and upstream service versions use distinct, adapter-bound values.
+
+The snapshot is authoritative for the exact scoped service state that was
+observed. It drives no-op detection, optimistic concurrency, plan validation,
+and verification, but its metadata is one versioned evidence source rather than
+privileged bibliographic truth. Canonical snapshot fields and identity wrappers
+do not expose Audiobookshelf, CWA, or provider payload names.
+
+Raw payload fields and vendor semantic types stay adapter-local. The raw
+external item value crosses the adapter boundary only as an uninterpreted
+`ExternalItemId` inside its fully scoped canonical `TargetId`; application and
+domain APIs never accept or persist it as a free, unscoped identity.
 
 ### EvidenceRecord
 
@@ -106,16 +119,39 @@ invent evidence.
 
 ### Candidate
 
-Normalized provider or derived proposal source. A candidate may support several
-field values but must retain its original source identity, provider response
-fingerprint, upstream lineage or correlation identity, edition indicators, and
-risk facts.
+Normalized proposal source derived from current-state, local, or optional
+provider evidence. A candidate may support several field values but must retain
+generic source-adapter or provider provenance, its original source identity,
+response or extraction fingerprint, upstream lineage or correlation identity,
+edition indicators, and risk facts. Its canonical shape is vendor-neutral;
+retaining source provenance does not make a provider name a policy fact.
+
+### CandidateLaneManifest
+
+Versioned coverage record whose required dimensions depend on lane role.
+Inventory lanes use target capability and scope; local-evidence lanes use
+target, media, field, and extractor capabilities; provider-evidence lanes use
+target, media, field, provider, query, and configuration capabilities;
+candidate lanes use completed relevant evidence and the policy version. An
+irrelevant dimension is absent, not falsely unsatisfied. Every derived lane
+records applicability; applicable
+lanes record a typed execution outcome; only successfully completed applicable
+lanes record candidate count and `executed` or compatibility-validated `reused`
+mode. An unconfigured, unsupported, unavailable, degraded, failed, successful-
+empty, or missing provider state remains scoped and typed. It cannot become
+negative metadata evidence, manufacture consensus, or block unrelated lanes.
 
 ### FieldProposal
 
 One proposed value for one field on one item snapshot. It references supporting
 and contradicting evidence and declares whether it fills an empty field,
 replaces a populated field, or represents no change.
+
+Semantic proposal identity is the canonical target, snapshot, field, normalized
+value, proposal schema, and applicable policy identity. The provider or source
+adapter name is provenance, not an identity component: equivalent values for
+the same target/snapshot/field collapse without losing their distinct evidence,
+lineage, or correlation records.
 
 ### ReviewCase
 
@@ -209,7 +245,8 @@ circuit-breaker transition.
 
 - `TargetId`: internal stable identity for one connection-, library-, and
   adapter-scoped external item.
-- `ExternalItemId`: adapter-scoped service identity.
+- `ExternalItemId`: uninterpreted adapter-scoped service value that crosses and
+  is valid only inside its fully scoped canonical `TargetId`, never alone.
 - `Fingerprint`: versioned digest of canonical observed state.
 - `CanonicalSnapshotInput`: immutable `snapshot-v1` canonical JSON defining
   snapshot state equality and the fingerprint input.
@@ -217,8 +254,13 @@ circuit-breaker transition.
   is redacted and only a one-way identity enters canonical serialization.
 - `FieldName`: controlled vocabulary with adapter mappings.
 - `FieldValue`: typed normalized scalar or collection.
+- `ProviderQuery`: minimal bounded application-built request containing only
+  allowlisted canonical search facts for one scoped provider lane; it contains
+  no raw snapshot, target credential, endpoint, unrestricted external ID/path,
+  service payload, media handle, or mutation capability.
 - `EvidenceId`, `ProposalId`, `ReviewCaseId`, `DecisionId`, `ApplyPlanId`:
-  immutable IDs.
+  immutable opaque IDs whose namespace and target scope are validated without
+  embedding vendor identifiers.
 - `PolicyVersion`, `SchemaVersion`, `ExtractorVersion`: reproducibility keys.
 - `Risk`: structured code, severity, blocking status, and evidence reference.
 - `Disposition`: `auto_apply`, `needs_review`, `closed_rejected`, or
@@ -247,6 +289,8 @@ circuit-breaker transition.
   automatic policy disposition or an applicable human decision.
 - Provider, job, authentication, and other operational failures cannot be
   represented as human metadata decisions.
+- Provider configuration, capability, execution outcome, candidate count, and
+  evidence disposition cannot be inferred from one another.
 - Unsupported fields cannot enter an apply plan.
 - Destructive actions cannot receive `auto_apply` disposition.
 - Verification is mandatory before an apply attempt can become successful.
