@@ -137,6 +137,10 @@ class DecisionAuthorization:
             return AuthorizationResult.stale("review fingerprint changed")
         if current_case.proposal_set_version != self.case.proposal_set_version:
             return AuthorizationResult.stale("review proposal set changed")
+        if current_case.proposals != self.case.proposals:
+            return AuthorizationResult.stale("review proposals changed")
+        if current_case.disposition is not self.case.disposition:
+            return AuthorizationResult.stale("review disposition changed")
         if self.case.destructive:
             return AuthorizationResult.rejected("destructive work has no automatic authorization path")
         if self.case.disposition is Disposition.AUTO_APPLY:

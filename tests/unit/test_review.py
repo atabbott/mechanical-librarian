@@ -85,6 +85,24 @@ class ReviewCaseTests(unittest.TestCase):
         )
         self.assertIsNone(DecisionAuthorization(DecisionAuthorizationId("authorization-one"), case).human_decision)
 
+    def test_automatic_authorization_stales_when_retained_case_evidence_changes(self) -> None:
+        case = ReviewCase(
+            ReviewCaseId("case-one"), self.target, SnapshotId("snapshot-one"), self.fingerprint,
+            "set-v1", (ProposalId("proposal-one"),), ReviewCaseState.AUTO_RESOLVED, Disposition.AUTO_APPLY,
+        )
+        authorization = DecisionAuthorization(DecisionAuthorizationId("authorization-one"), case)
+        changed_proposals = ReviewCase(
+            ReviewCaseId("case-one"), self.target, SnapshotId("snapshot-one"), self.fingerprint,
+            "set-v1", (ProposalId("proposal-two"),), ReviewCaseState.AUTO_RESOLVED, Disposition.AUTO_APPLY,
+        )
+        downgraded_disposition = ReviewCase(
+            ReviewCaseId("case-one"), self.target, SnapshotId("snapshot-one"), self.fingerprint,
+            "set-v1", (ProposalId("proposal-one"),), ReviewCaseState.AUTO_RESOLVED, Disposition.NEEDS_REVIEW,
+        )
+
+        self.assertEqual(authorization.applicability_for(changed_proposals).state.value, "stale")
+        self.assertEqual(authorization.applicability_for(downgraded_disposition).state.value, "stale")
+
 
 if __name__ == "__main__":
     unittest.main()
