@@ -414,6 +414,104 @@ class EvidenceTypeTests(unittest.TestCase):
         self.assertIn("policy-v1", cross_target_json)
         self.assertIn("same-work", cross_target_json)
 
+    def test_windows_paths_are_retained_only_outside_projection_safe_facts(self) -> None:
+        private_paths = (
+            "prefix C:\\Users\\reader\\book.epub",
+            "prefix D:\\Media\\book.epub",
+            "prefix D:/Media/book.epub",
+            "prefix \\\\server\\share\\book.epub",
+            "'C:\\Users\\reader\\book.epub'",
+            '"D:\\Media\\book.epub"',
+            "<E:/Media/book.epub>",
+            "'\\\\server\\share\\book.epub'",
+            '"\\\\server\\share\\book.epub"',
+            "<\\\\server\\share\\book.epub>",
+        )
+        for private_path in private_paths:
+            with self.subTest(private_path=private_path, boundary="direct-detail"):
+                with self.assertRaisesRegex(EvidenceValueError, "production path"):
+                    EvidenceDetail(
+                        self.reference,
+                        self.snapshot,
+                        self.snapshot_fingerprint,
+                        "epub",
+                        (ConfidenceFact("title", private_path),),
+                        (),
+                    )
+
+            projection_safe_record = self._record(
+                facts=(ConfidenceFact("title", private_path),)
+            )
+            persisted_projection_safe = json.loads(
+                projection_safe_record.to_persistence_json()
+            )
+            self.assertEqual(
+                persisted_projection_safe["facts"][0]["value"], private_path
+            )
+            with self.subTest(private_path=private_path, boundary="record-projection"):
+                with self.assertRaisesRegex(EvidenceValueError, "production path"):
+                    EvidenceDetail.from_record(projection_safe_record)
+
+            with self.subTest(private_path=private_path, boundary="summary"):
+                with self.assertRaisesRegex(EvidenceValueError, "production path"):
+                    EvidenceSummary(
+                        EvidenceId("evidence-summary"),
+                        "epub",
+                        1,
+                        0,
+                        private_path,
+                    )
+
+        retained_path = ConfidenceFact("path", private_paths[0])
+        public_title = ConfidenceFact("title", "Example")
+        authoritative_record = self._record(facts=(retained_path, public_title))
+        persisted_values = {
+            fact["value"]
+            for fact in json.loads(authoritative_record.to_persistence_json())["facts"]
+        }
+        self.assertIn(private_paths[0], persisted_values)
+        detail = EvidenceDetail.from_record(authoritative_record)
+        self.assertEqual(detail.facts, (public_title,))
+        detail_values = {
+            fact["value"] for fact in json.loads(detail.to_api_json())["facts"]
+        }
+        self.assertNotIn(private_paths[0], detail_values)
+        packet = ReviewerEvidencePacket(
+            self.target,
+            self.snapshot,
+            self.snapshot_fingerprint,
+            (detail,),
+        )
+        packet_values = {
+            fact["value"]
+            for packet_detail in json.loads(packet.to_json())["details"]
+            for fact in packet_detail["facts"]
+        }
+        self.assertNotIn(private_paths[0], packet_values)
+
+        for ordinary_value in (
+            "C:chapter",
+            "Volume C: A History",
+            "ordinary\\single",
+            "AC:\\Users\\reader\\book.epub",
+            "_C:\\Users\\reader\\book.epub",
+            "A\\\\server\\share\\book.epub",
+            "_\\\\server\\share\\book.epub",
+        ):
+            with self.subTest(ordinary_value=ordinary_value):
+                detail = EvidenceDetail(
+                    self.reference,
+                    self.snapshot,
+                    self.snapshot_fingerprint,
+                    "epub",
+                    (ConfidenceFact("title", ordinary_value),),
+                    (),
+                )
+                self.assertEqual(
+                    json.loads(detail.to_api_json())["facts"][0]["value"],
+                    ordinary_value,
+                )
+
     def test_reviewer_packets_require_matching_snapshot_provenance(self) -> None:
         record = self._record(facts=(ConfidenceFact("title", "Example"),))
         detail = EvidenceDetail.from_record(record)

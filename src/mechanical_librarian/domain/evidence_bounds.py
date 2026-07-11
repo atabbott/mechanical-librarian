@@ -64,6 +64,12 @@ _LABELLED_PATH_PATTERN = re.compile(
 _ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?:^|[\s:=;,([{])/(?:[^\s/:]+/)+[^\s/]*"
 )
+_WINDOWS_DRIVE_ROOT_PATTERN = re.compile(
+    r"(?i)(?<![a-z0-9_])[a-z]:[/\\]"
+)
+_UNC_PATH_PATTERN = re.compile(
+    r"(?<![\w\\])\\\\[^\\\s]+\\[^\\\s]+"
+)
 
 T = TypeVar("T")
 
@@ -112,6 +118,8 @@ def validate_projection_text(value: object, label: str, maximum: int) -> str:
         or _HOME_PATH_PATTERN.search(text)
         or _LABELLED_PATH_PATTERN.search(text)
         or _ABSOLUTE_PATH_PATTERN.search(text)
+        or _WINDOWS_DRIVE_ROOT_PATTERN.search(text)
+        or _UNC_PATH_PATTERN.search(text)
         or "/users/" in lowered
         or "/home/" in lowered
         or "../" in text
