@@ -154,6 +154,54 @@ class ComposedStateCheckTests(unittest.TestCase):
                 )
                 self.assertNotIn("hostile-sentinel", output + errors)
 
+    def test_unvisited_managed_page_corruption_fails_without_mutating_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            self.assertEqual(self.run_check(path)[0], 0)
+            connection = sqlite3.connect(path)
+            connection.execute(
+                "INSERT INTO instance_metadata(key, value) VALUES ('probe', ?)",
+                ("x" * 3000,),
+            )
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            page_size = connection.execute("PRAGMA page_size").fetchone()[0]
+            root_page = connection.execute(
+                "SELECT rootpage FROM sqlite_master WHERE name = 'instance_metadata'"
+            ).fetchone()[0]
+            connection.close()
+
+            contents = bytearray(path.read_bytes())
+            page_offset = (root_page - 1) * page_size
+            contents[page_offset + 5 : page_offset + 7] = (1).to_bytes(2, "big")
+            path.write_bytes(contents)
+            probe = sqlite3.connect(path)
+            try:
+                self.assertNotEqual(
+                    probe.execute("PRAGMA integrity_check").fetchall(),
+                    [("ok",)],
+                )
+            finally:
+                probe.close()
+            before = {
+                candidate.name: candidate.read_bytes()
+                for candidate in Path(directory).iterdir()
+            }
+
+            with patch(
+                "mechanical_librarian.bootstrap.connect_existing",
+                side_effect=AssertionError("corrupt source must not be opened"),
+            ):
+                self.assertEqual(
+                    self.run_check(path),
+                    (1, "", "State check failed: state could not be verified.\n"),
+                )
+            after = {
+                candidate.name: candidate.read_bytes()
+                for candidate in Path(directory).iterdir()
+            }
+            self.assertEqual(after, before)
+
     def test_rejected_existing_state_is_byte_for_byte_unchanged(self) -> None:
         for state_kind in ("delete", "journal", "wal"):
             with (
@@ -197,6 +245,43 @@ class ComposedStateCheckTests(unittest.TestCase):
                 self.assertEqual(after, before)
                 if state_kind != "delete":
                     connection.close()
+
+    def test_non_regular_recovery_sidecars_are_rejected_without_changes(self) -> None:
+        cases = (
+            ("-journal", False),
+            ("-wal", False),
+            ("-shm", False),
+            ("-shm", True),
+        )
+        for suffix, dangling in cases:
+            with (
+                self.subTest(suffix=suffix, dangling=dangling),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path = Path(directory) / "state.sqlite"
+                self.assertEqual(self.run_check(path)[0], 0)
+                target = Path(directory) / "sidecar-target"
+                if not dangling:
+                    target.write_bytes(b"synthetic sentinel")
+                sidecar = Path(f"{path}{suffix}")
+                sidecar.symlink_to(target)
+                before_names = {candidate.name for candidate in Path(directory).iterdir()}
+                before_main = path.read_bytes()
+                before_target = target.read_bytes() if not dangling else None
+
+                self.assertEqual(
+                    self.run_check(path),
+                    (1, "", "State check failed: state could not be verified.\n"),
+                )
+                self.assertEqual(
+                    {candidate.name for candidate in Path(directory).iterdir()},
+                    before_names,
+                )
+                self.assertEqual(path.read_bytes(), before_main)
+                self.assertTrue(sidecar.is_symlink())
+                self.assertEqual(sidecar.readlink(), target)
+                if not dangling:
+                    self.assertEqual(target.read_bytes(), before_target)
 
     def test_existing_empty_state_and_in_memory_name_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -473,20 +473,73 @@ def publish_staged_state(staged: Path, target: Path) -> bool:
     return True
 
 
-def _state_snapshot(path: Path) -> dict[str, tuple[int, int, int, int]]:
-    snapshot: dict[str, tuple[int, int, int, int]] = {}
+def _state_signature(status: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        status.st_mode,
+        status.st_dev,
+        status.st_ino,
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+    )
+
+
+def _state_snapshot(path: Path) -> dict[str, tuple[int, int, int, int, int, int]]:
+    snapshot: dict[str, tuple[int, int, int, int, int, int]] = {}
     for suffix in _STATE_SUFFIXES:
         candidate = Path(f"{path}{suffix}")
-        if not candidate.exists():
+        if not path_entry_exists(candidate):
             continue
-        status = candidate.stat()
-        snapshot[suffix] = (
-            status.st_dev,
-            status.st_ino,
-            status.st_size,
-            status.st_mtime_ns,
-        )
+        try:
+            status = candidate.lstat()
+        except OSError:
+            raise SchemaError("existing state entry could not be inspected") from None
+        if not stat.S_ISREG(status.st_mode):
+            raise SchemaError("existing state entry is not a regular file")
+        snapshot[suffix] = _state_signature(status)
     return snapshot
+
+
+def _copy_regular_state(
+    source: Path,
+    destination: Path,
+    expected: tuple[int, int, int, int, int, int],
+) -> None:
+    descriptor: int | None = None
+    try:
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        nonblock = getattr(os, "O_NONBLOCK", None)
+        if nofollow is None or nonblock is None:
+            raise SchemaError("safe existing-state copying is unavailable")
+        descriptor = os.open(
+            source,
+            os.O_RDONLY | nofollow | nonblock | getattr(os, "O_CLOEXEC", 0),
+        )
+        status = os.fstat(descriptor)
+        if not stat.S_ISREG(status.st_mode) or _state_signature(status) != expected:
+            raise SchemaError("database changed during validation")
+        with os.fdopen(descriptor, "rb", closefd=False) as input_file:
+            with destination.open("xb") as output_file:
+                shutil.copyfileobj(input_file, output_file)
+        status = os.fstat(descriptor)
+        if not stat.S_ISREG(status.st_mode) or _state_signature(status) != expected:
+            raise SchemaError("database changed during validation")
+    except SchemaError:
+        raise
+    except OSError:
+        raise SchemaError("existing state could not be copied safely") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _verify_integrity(connection: sqlite3.Connection) -> None:
+    try:
+        integrity = connection.execute("PRAGMA integrity_check").fetchall()
+    except sqlite3.Error:
+        raise SchemaError("database integrity could not be verified") from None
+    if integrity != [("ok",)]:
+        raise SchemaError("database integrity could not be verified")
 
 
 def preflight(path: Path) -> None:
@@ -510,9 +563,12 @@ def preflight(path: Path) -> None:
         with tempfile.TemporaryDirectory() as directory:
             copied_path = Path(directory) / "state.sqlite"
             for suffix in _RECOVERY_COPY_SUFFIXES:
-                source = Path(f"{path}{suffix}")
-                if source.exists():
-                    shutil.copyfile(source, Path(f"{copied_path}{suffix}"))
+                if suffix in before:
+                    _copy_regular_state(
+                        Path(f"{path}{suffix}"),
+                        Path(f"{copied_path}{suffix}"),
+                        before[suffix],
+                    )
             if before != _state_snapshot(path):
                 raise SchemaError("database changed during validation")
             probe = sqlite3.connect(
@@ -522,6 +578,7 @@ def preflight(path: Path) -> None:
             )
             try:
                 applied = _validate_existing_schema(probe, _known_migrations())
+                _verify_integrity(probe)
             finally:
                 probe.close()
                 probe = None
@@ -597,11 +654,11 @@ def finalize_staged_state(connection: sqlite3.Connection) -> None:
         raise SchemaError("prepared state still has an active transaction")
     try:
         checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-        integrity = connection.execute("PRAGMA integrity_check").fetchone()
     except sqlite3.Error:
         raise SchemaError("prepared state could not be verified") from None
-    if checkpoint != (0, 0, 0) or integrity != ("ok",):
+    if checkpoint != (0, 0, 0):
         raise SchemaError("prepared state could not be verified")
+    _verify_integrity(connection)
 
 
 @contextmanager
