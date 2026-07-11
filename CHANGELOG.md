@@ -16,6 +16,8 @@ versioning after the first public release.
 
 ### Added
 
+- Structured Project work-kind classification and separate Defect/Bug intake
+  for pre-release contract failures versus failures of delivered behavior.
 - Functional-slice delivery governance for new functionality during the initial
   build, with focused ticket PRs retained for fixes, security, documentation,
   tooling, dependencies, maintenance, and standalone work.

@@ -9,7 +9,7 @@ Closes #
 ## Delivery mode
 
 - [ ] New-functionality slice
-- [ ] Focused ticket: fix, security, documentation, tooling, dependency, maintenance, or standalone work
+- [ ] Focused ticket: defect, bug, security, documentation, tooling, dependency, maintenance, or standalone work
 
 Slice tracker, when applicable: #
 
@@ -42,6 +42,9 @@ Describe the implementation at the level a reviewer needs to evaluate it.
 ## Risk and recovery
 
 Describe security, privacy, compatibility, data, migration, deployment, and rollback impact. Write `None` only after considering each category.
+
+For a Defect or Bug, include the affected revision, pre-fix reproduction, root
+cause, regression evidence, and any workaround or recovery implications.
 
 ## Verification
 

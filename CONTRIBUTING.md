@@ -88,6 +88,20 @@ intent from implementation details or from a chain of partial pull requests.
 The complete workflow and permitted exceptions are defined in
 [functional slice delivery](docs/development/slice-delivery.md).
 
+## Defects and bugs
+
+Use the defect form for an internally discovered or pre-release failure to meet
+an accepted contract, closed-ticket criterion, or qualification gate. Use the
+bug form when behavior previously treated as delivered and working fails in a
+supported build or user/operator workflow.
+
+Triage records the authoritative distinction in the Project `Work kind` field;
+do not add type labels. Both kinds use a focused `fix/<issue>-<short-slug>`
+branch and one ticket-level pull request. Include a deterministic reproduction,
+expected and actual behavior, affected build, impact, root cause, and regression
+evidence. Suspected undisclosed vulnerabilities use a private security advisory
+instead of either public form.
+
 ## Fixtures and privacy
 
 Use synthetic fixtures by default. A sanitized production-derived fixture is
