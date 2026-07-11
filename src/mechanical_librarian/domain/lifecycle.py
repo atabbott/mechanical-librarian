@@ -73,6 +73,66 @@ class Disposition(StrEnum):
     UNSUPPORTED = "unsupported"
 
 
+class AuthorizationState(StrEnum):
+    AUTHORIZED = "authorized"
+    REJECTED = "rejected"
+    STALE = "stale"
+    SUPERSEDED = "superseded"
+    OPERATIONAL_FAILURE = "operational_failure"
+
+
+class AuthorizationEvent(StrEnum):
+    AUTOMATIC_POLICY = "automatic_policy"
+    HUMAN_DECISION = "human_decision"
+    IDEMPOTENT_REPLAY = "idempotent_replay"
+    STALE_INPUT = "stale_input"
+    OPERATIONAL_FAILURE = "operational_failure"
+
+
+class HumanDecisionApplicability(StrEnum):
+    CURRENT = "current"
+    STALE = "stale"
+    SUPERSEDED = "superseded"
+    REJECTED = "rejected"
+
+
+@dataclass(frozen=True)
+class AuthorizationResult:
+    state: AuthorizationState
+    event: AuthorizationEvent
+    reason: str
+    retryable: bool
+    terminal: bool
+    idempotent_replay: bool
+
+    @classmethod
+    def authorized(cls, event: AuthorizationEvent = AuthorizationEvent.IDEMPOTENT_REPLAY) -> "AuthorizationResult":
+        return cls(
+            AuthorizationState.AUTHORIZED,
+            event,
+            "authorization is current",
+            False,
+            False,
+            event is AuthorizationEvent.IDEMPOTENT_REPLAY,
+        )
+
+    @classmethod
+    def rejected(cls, reason: str) -> "AuthorizationResult":
+        return cls(AuthorizationState.REJECTED, AuthorizationEvent.HUMAN_DECISION, reason, False, True, False)
+
+    @classmethod
+    def stale(cls, reason: str) -> "AuthorizationResult":
+        return cls(AuthorizationState.STALE, AuthorizationEvent.STALE_INPUT, reason, False, True, False)
+
+    @classmethod
+    def superseded(cls, reason: str) -> "AuthorizationResult":
+        return cls(AuthorizationState.SUPERSEDED, AuthorizationEvent.STALE_INPUT, reason, False, True, False)
+
+    @classmethod
+    def operational_failure(cls, reason: str) -> "AuthorizationResult":
+        return cls(AuthorizationState.OPERATIONAL_FAILURE, AuthorizationEvent.OPERATIONAL_FAILURE, reason, True, False, False)
+
+
 S = TypeVar("S", bound=StrEnum)
 
 
@@ -82,10 +142,17 @@ class Transition(Generic[S]):
     to_state: S
     actor: str
     reason: str
+    reproducibility_context: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.actor.strip() or not self.reason.strip():
             raise DomainValueError("lifecycle transitions require a non-empty actor and reason")
+        if len(self.reproducibility_context) > 8:
+            raise DomainValueError("lifecycle transitions permit at most eight context entries")
+        if len({key for key, _ in self.reproducibility_context}) != len(self.reproducibility_context):
+            raise DomainValueError("lifecycle transition context keys must be unique")
+        if any(not key or not value or len(key) > 64 or len(value) > 128 for key, value in self.reproducibility_context):
+            raise DomainValueError("lifecycle transition context must be bounded non-empty text")
 
 
 class InvalidTransition(DomainValueError):
@@ -123,13 +190,15 @@ _BREAKER: dict[CircuitBreakerState, frozenset[CircuitBreakerState]] = {
 }
 
 
-def transition(current: S, target: S, *, actor: str, reason: str) -> Transition[S]:
+def transition(
+    current: S, target: S, *, actor: str, reason: str, reproducibility_context: tuple[tuple[str, str], ...] = ()
+) -> Transition[S]:
     """Validate and describe one state change without mutating any entity."""
 
     table = _table_for(current)
     if target not in table.get(current, frozenset()):
         raise InvalidTransition(f"{type(current).__name__} cannot transition from {current} to {target}")
-    return Transition(current, target, actor, reason)
+    return Transition(current, target, actor, reason, reproducibility_context)
 
 
 def can_authorize_apply(

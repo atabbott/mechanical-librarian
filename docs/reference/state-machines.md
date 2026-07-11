@@ -79,6 +79,11 @@ A human decision becomes inapplicable when its case, proposal-set version, or
 expected item fingerprint changes. Reconsideration creates a new decision
 event; history is never rewritten.
 
+Applicability is typed as `current`, `stale`, `superseded`, or `rejected`.
+Authorization results separately record `authorized`, `rejected`, `stale`,
+`superseded`, or `operational_failure`; operational failure is retryable and
+never becomes a human decision or an authorization rejection.
+
 ## Decision authorization
 
 An apply plan may reference exactly one applicable authorization path:
@@ -90,6 +95,9 @@ current human decision:       needs_review -> human_resolved
 
 Both paths retain field-level evidence and decision provenance. AI output alone
 cannot authorize an apply plan. Destructive work has no automatic path.
+Authorization construction retains the immutable review case and, where
+required, the full current human decision rather than accepting an unchecked
+decision identifier.
 
 ## Bulk decision batch
 

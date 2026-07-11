@@ -7,7 +7,7 @@ from enum import StrEnum
 
 from .evidence import Disposition
 from .identifiers import DecisionAuthorizationId, DecisionId, Fingerprint, ProposalId, ReviewCaseId, SnapshotId, TargetId
-from .lifecycle import ReviewCaseState
+from .lifecycle import AuthorizationEvent, AuthorizationResult, AuthorizationState, HumanDecisionApplicability, ReviewCaseState
 
 
 class NoticeClass(StrEnum):
@@ -76,38 +76,80 @@ class ReviewGroup:
 @dataclass(frozen=True)
 class HumanDecision:
     id: DecisionId
-    case: ReviewCaseId
-    target: TargetId
-    fingerprint: Fingerprint
-    proposal_set_version: str
+    case: ReviewCase
     action: HumanDecisionAction
     selected_proposals: tuple[ProposalId, ...]
     actor: str
 
     def __post_init__(self) -> None:
-        if not self.actor or (self.action is HumanDecisionAction.ACCEPT_SELECTED and not self.selected_proposals):
-            raise ValueError("human decisions require an actor and selected proposals when accepting")
+        if self.case.disposition is not Disposition.NEEDS_REVIEW or self.case.state is not ReviewCaseState.HUMAN_RESOLVED:
+            raise ValueError("human decisions require a resolved needs-review case")
+        if not self.actor.strip():
+            raise ValueError("human decisions require an actor")
+        if self.action is HumanDecisionAction.ACCEPT_SELECTED:
+            if not self.selected_proposals:
+                raise ValueError("accepting a decision requires selected proposals")
+            if not set(self.selected_proposals).issubset(self.case.proposals):
+                raise ValueError("human decisions may select only proposals from their review case")
+        elif self.selected_proposals:
+            raise ValueError("only accepting a decision may select proposals")
+        if len(self.selected_proposals) != len(set(self.selected_proposals)):
+            raise ValueError("human decisions cannot repeat selected proposals")
 
     def is_current_for(self, case: ReviewCase) -> bool:
-        return self.case == case.id and self.target == case.target and self.fingerprint == case.fingerprint and self.proposal_set_version == case.proposal_set_version
+        return self.applicability_for(case) is HumanDecisionApplicability.CURRENT
 
+    def applicability_for(self, case: ReviewCase) -> HumanDecisionApplicability:
+        if self.case.id != case.id:
+            return HumanDecisionApplicability.SUPERSEDED
+        if (
+            self.case.target != case.target
+            or self.case.fingerprint != case.fingerprint
+            or self.case.proposal_set_version != case.proposal_set_version
+            or self.case.proposals != case.proposals
+        ):
+            return HumanDecisionApplicability.STALE
+        if case.state is not ReviewCaseState.HUMAN_RESOLVED or case.disposition is not Disposition.NEEDS_REVIEW:
+            return HumanDecisionApplicability.REJECTED
+        return HumanDecisionApplicability.CURRENT
 
 @dataclass(frozen=True)
 class DecisionAuthorization:
     id: DecisionAuthorizationId
-    case: ReviewCaseId
-    fingerprint: Fingerprint
-    proposal_set_version: str
-    disposition: Disposition
-    human_decision: DecisionId | None = None
+    case: ReviewCase
+    human_decision: HumanDecision | None = None
 
     def __post_init__(self) -> None:
-        if self.disposition is Disposition.NEEDS_REVIEW and self.human_decision is None:
-            raise ValueError("human review authorization requires a current human decision")
-        if self.disposition is not Disposition.NEEDS_REVIEW and self.human_decision is not None:
-            raise ValueError("automatic authorization cannot carry a human decision")
-        if self.disposition not in {Disposition.AUTO_APPLY, Disposition.NEEDS_REVIEW}:
-            raise ValueError("only applicable dispositions can authorize apply")
+        result = self.applicability_for(self.case)
+        if result.state is not AuthorizationState.AUTHORIZED:
+            raise ValueError(result.reason)
+
+    @property
+    def selected_proposals(self) -> tuple[ProposalId, ...]:
+        return () if self.human_decision is None else self.human_decision.selected_proposals
+
+    def applicability_for(self, current_case: ReviewCase) -> AuthorizationResult:
+        if current_case.id != self.case.id:
+            return AuthorizationResult.superseded("review case was replaced")
+        if current_case.target != self.case.target:
+            return AuthorizationResult.stale("review target changed")
+        if current_case.fingerprint != self.case.fingerprint:
+            return AuthorizationResult.stale("review fingerprint changed")
+        if current_case.proposal_set_version != self.case.proposal_set_version:
+            return AuthorizationResult.stale("review proposal set changed")
+        if self.case.destructive:
+            return AuthorizationResult.rejected("destructive work has no automatic authorization path")
+        if self.case.disposition is Disposition.AUTO_APPLY:
+            if self.human_decision is not None:
+                return AuthorizationResult.rejected("automatic authorization cannot carry a human decision")
+            if current_case.state is not ReviewCaseState.AUTO_RESOLVED:
+                return AuthorizationResult.stale("automatic disposition is no longer resolved")
+            return AuthorizationResult.authorized(AuthorizationEvent.AUTOMATIC_POLICY)
+        if self.case.disposition is not Disposition.NEEDS_REVIEW or self.human_decision is None:
+            return AuthorizationResult.rejected("authorization requires an applicable disposition")
+        if not self.human_decision.is_current_for(current_case):
+            return AuthorizationResult.stale("human decision is no longer current")
+        return AuthorizationResult.authorized(AuthorizationEvent.HUMAN_DECISION)
 
 
 def supersedes(previous: ReviewCase, replacement: ReviewCase) -> bool:
