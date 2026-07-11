@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- Inventory records now reject cross-adapter, connection, library, target,
+  snapshot, media, lifecycle, and capability combinations, and snapshots use a
+  versioned deterministic canonical state for fingerprints and equality.
 - Audit persistence now returns typed safe outcomes and rejects unsafe summary
   values without exposing SQLite errors or stored payloads, with bounded
   indexed chronological queries in the initial schema.

@@ -189,6 +189,10 @@ class AdapterVersion(Version):
     kind = "adapter version"
 
 
+class ServiceVersion(Version):
+    kind = "service version"
+
+
 class CompatibilityVersion(Version):
     kind = "compatibility version"
 
@@ -209,7 +213,7 @@ class Fingerprint:
 
     @classmethod
     def from_canonical_value(cls, value: Any, *, schema: SchemaVersion) -> Self:
-        serialized = _canonical_json(value)
+        serialized = canonical_json(value)
         return cls(
             algorithm="sha256",
             schema=schema,
@@ -238,7 +242,7 @@ class IdempotencyKey:
     def from_canonical_input(
         cls, *, operation: str, target: TargetId, value: Any
     ) -> Self:
-        serialized = _canonical_json(
+        serialized = canonical_json(
             {
                 "operation": operation,
                 "target": {
@@ -275,7 +279,7 @@ class Clock(Protocol):
     def now(self) -> datetime: ...
 
 
-def _canonical_json(value: Any) -> str:
+def canonical_json(value: Any) -> str:
     """Serialize JSON-compatible values deterministically without coercion."""
 
     try:
