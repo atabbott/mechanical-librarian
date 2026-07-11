@@ -42,6 +42,17 @@ class AuditRepositoryTests(unittest.TestCase):
             repository.append(fractional)
             self.assertEqual(repository.recent(2).events, (fractional, exact))
 
+    def test_legacy_timestamp_row_is_an_idempotent_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            connection.execute(
+                "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)",
+                ("event-one", "discovery", "2026-07-10T10:00:00Z", "discovered item"),
+            )
+            self.assertEqual(SQLiteAuditRepository(connection).append(event("event-one")).outcome, AuditAppendOutcome.DUPLICATE)
+
     def test_invalid_and_hostile_values_are_rejected_at_boundary(self) -> None:
         with self.assertRaises(ValueError):
             SafeAuditSummary("https://private.example/token")

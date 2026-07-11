@@ -38,7 +38,11 @@ class SQLiteAuditRepository(AuditRepository):
             return AuditAppendResult(AuditAppendOutcome.INTEGRITY_FAILURE)
         if stored is None:
             return AuditAppendResult(AuditAppendOutcome.INTEGRITY_FAILURE)
-        return AuditAppendResult(AuditAppendOutcome.DUPLICATE if tuple(stored) == row else AuditAppendOutcome.CONFLICT)
+        try:
+            stored_row = AuditEvent.from_storage(*stored).storage_row
+        except (TypeError, ValueError):
+            return AuditAppendResult(AuditAppendOutcome.INTEGRITY_FAILURE)
+        return AuditAppendResult(AuditAppendOutcome.DUPLICATE if stored_row == row else AuditAppendOutcome.CONFLICT)
 
     def recent(self, limit: int) -> AuditQueryResult:
         if not 1 <= limit <= 100:
