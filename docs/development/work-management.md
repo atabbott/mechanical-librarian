@@ -241,11 +241,13 @@ not justify a separate ready pull request.
 
 The gate uses GitHub-recognized closing-link metadata rather than parsing pull
 request Markdown. Examples, quotations, fenced code, manual links, nonexistent
-issues, and closed issues do not satisfy it. At least one `Closes`, `Fixes`, or
-`Resolves` reference must resolve to an open issue in this repository, and every
-recognized closing reference used by the gate must remain open when the pull
-request becomes ready. Cross-repository and non-default-branch closing links do
-not satisfy this repository-local gate. Drafts are exempt and are checked on the
+issues, and closed issues do not satisfy it. At least one supported closing
+reference must resolve to an open issue in this repository. The case-insensitive
+keyword vocabulary is `close`, `closes`, `closed`, `fix`,
+`fixes`, `fixed`, `resolve`, `resolves`, and `resolved`. Every recognized closing
+reference used by the gate must remain open when the pull request becomes ready.
+Cross-repository and non-default-branch closing links do not satisfy this
+repository-local gate. Drafts are exempt and are checked on the
 `ready_for_review` transition; description edits are checked again.
 The bounded gate supports at most 100 recognized references and reports a
 specific limit failure rather than evaluating incomplete pagination. If the

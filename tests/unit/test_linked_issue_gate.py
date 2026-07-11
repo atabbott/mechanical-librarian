@@ -128,19 +128,44 @@ class LinkedIssueGateTests(unittest.TestCase):
                 )
                 self.assertEqual(result.code, "manual_link_not_closing_reference")
 
-    def test_colon_closing_keywords_disambiguate_native_manual_overlap(self) -> None:
-        for keyword in ("Closes", "Fixes", "Resolves"):
-            with self.subTest(keyword=keyword):
+    def test_all_closing_keywords_disambiguate_native_manual_overlap(self) -> None:
+        keywords = (
+            "close",
+            "closes",
+            "closed",
+            "fix",
+            "fixes",
+            "fixed",
+            "resolve",
+            "resolves",
+            "resolved",
+        )
+        for keyword in keywords:
+            for separator in (" ", ": "):
+                with self.subTest(keyword=keyword, separator=separator):
+                    body_html = (
+                        f'<p><span class="issue-keyword">{keyword}</span>{separator}'
+                        '<a class="issue-link" href="/issues/135">#135</a></p>'
+                    )
+                    result = evaluate_snapshot(
+                        snapshot([issue(135)], [issue(135)], body_html=body_html),
+                        REPOSITORY,
+                    )
+                    self.assertTrue(result.allowed)
+                    self.assertEqual(result.code, "valid")
+
+        for keyword in ("CLOSE", "FIXED", "RESOLVED"):
+            with self.subTest(keyword=keyword, case="uppercase"):
                 body_html = (
                     f'<p><span class="issue-keyword">{keyword}</span>: '
                     '<a class="issue-link" href="/issues/135">#135</a></p>'
                 )
-                result = evaluate_snapshot(
-                    snapshot([issue(135)], [issue(135)], body_html=body_html),
-                    REPOSITORY,
+                self.assertTrue(
+                    evaluate_snapshot(
+                        snapshot([issue(135)], [issue(135)], body_html=body_html),
+                        REPOSITORY,
+                    ).allowed
                 )
-                self.assertTrue(result.allowed)
-                self.assertEqual(result.code, "valid")
 
     def test_colon_separator_and_context_variants_remain_fail_closed(self) -> None:
         invalid_body_html = (
@@ -164,6 +189,8 @@ class LinkedIssueGateTests(unittest.TestCase):
             '<a class="issue-link" href="/issues/135">#135</a></p></blockquote>',
             '<p><code><span class="issue-keyword">Closes</span>: '
             '<a class="issue-link" href="/issues/135">#135</a></code></p>',
+            '<p><span class="issue-keyword">closing</span>: '
+            '<a class="issue-link" href="/issues/135">#135</a></p>',
         )
         for body_html in invalid_body_html:
             with self.subTest(body_html=body_html):

@@ -27,6 +27,19 @@ class TooManyReferencesError(ValueError):
 
 
 _IGNORED_HTML = frozenset({"blockquote", "code", "pre", "script", "style"})
+_CLOSING_KEYWORDS = frozenset(
+    {
+        "close",
+        "closes",
+        "closed",
+        "fix",
+        "fixes",
+        "fixed",
+        "resolve",
+        "resolves",
+        "resolved",
+    }
+)
 
 
 class ClosingLineHTMLParser(HTMLParser):
@@ -83,7 +96,7 @@ class ClosingLineHTMLParser(HTMLParser):
             return
         if tag == "span" and self.keyword_fragments is not None:
             keyword = "".join(self.keyword_fragments).strip().casefold()
-            self.pending_keyword = keyword in {"closes", "fixes", "resolves"}
+            self.pending_keyword = keyword in _CLOSING_KEYWORDS
             self.separator_fragments = [] if self.pending_keyword else None
             self.keyword_fragments = None
         elif tag == "a" and self.issue_fragments is not None:
