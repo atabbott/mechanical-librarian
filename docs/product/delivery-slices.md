@@ -65,7 +65,7 @@ production write authority.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
-| F09 Candidate and proposal report | #145 | Persisted evidence and provider results become target- and work-identified, evidence-family-aware candidates and deterministic field-level proposals with explanations; edition identity or applicability is required for edition-sensitive fields or changes, correlated repeats cannot manufacture consensus, policy-defined decisive single-family evidence remains possible, current-equivalent values are omitted, field-relevant identity or comparable-identifier conflicts are rejected, and provider failure stays operational. | #16, #46, #68-#73 | `slice/f09-candidate-proposals` |
+| F09 Candidate and proposal report | #145 | Persisted current, embedded, and provider evidence becomes target- and work-identified, evidence-family-aware, independent field proposals under the identity, independence, no-op, conflict, and provider-failure rules; title cleanup preserves meaningful structure and removes meaningful series/order text only with independently supported structured sibling capture; identifier comparison retains raw lineage, uses canonical compatible namespaces, and applies the two-family replacement gate only to validated current comparable identifiers; deterministic cleanup or degradation resolves through policy without erasing sibling proposals or requiring AI `manual`. | #16, #46, #68-#73 | `slice/f09-candidate-proposals` |
 | F10 Persistent review case | #146 | One proposal set becomes a snapshot-aware review case whose typed, target-scoped coverage readiness, durable stage checkpoints, blocker facts naming the required scope, stage, target, and outcome, history, supersession, and authorization guards survive restart without blocking unrelated ingestion. | #50 and slice-specific implementation tickets | `slice/f10-persistent-review-case` |
 | F11 AI shadow recommendation | #147 | An isolated reviewer receives a bounded packet only after required authoritative evidence and provider inputs have accepted terminal outcomes, returns exact per-proposal recommendations, and exposes independently audited coverage or typed failure without authorizing apply; a zero-proposal selection terminates without reviewer invocation, and optional provider failure remains operational. | #74-#80 | `slice/f11-ai-shadow-review` |
 
@@ -77,6 +77,18 @@ production write authority.
   target and work identity, edition-sensitive identity or applicability, no-op
   omission, field-relevant conflicting-identifier rejection, and provider
   failure separation pass the synthetic title cohort;
+- directional title cleanup preserves meaningful subtitle and structured
+  series/order information, removes meaningful series/order text only with an
+  independently supported persisted or emitted structured sibling proposal,
+  rejects unsupported noise additions, and resolves deterministic cleanup or
+  degradation through policy rather than AI `manual`;
+- raw identifier provenance, alias and ISBN canonicalization, compatible
+  namespace comparison, non-comparable neutrality, and independently
+  corroborated replacement of a validated current comparable identifier pass
+  the synthetic identifier cohort; malformed or invalid current identifiers
+  remain governed by ordinary applicable field evidence;
+- current metadata remains sourced evidence, and resolving one field leaves
+  every sibling proposal intact;
 - a review case remains authoritative across restart and stale input, resumes
   only from valid checkpoints, and advances only when independently recomputed
   coverage matches its selected target scope; blockers identify the required
