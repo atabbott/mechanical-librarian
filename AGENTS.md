@@ -58,6 +58,33 @@ Do not weaken tests, safety gates, types, linters, or coverage thresholds to
 make a change pass. Fix the implementation or explicitly revise the governing
 decision with rationale and review.
 
+## Functional slice delivery
+
+- During the initial application build, new product functionality is normally
+  delivered as a functional slice rather than as horizontal layer or
+  work-package PRs.
+- Fixes, audit corrections, security work, dependencies, documentation,
+  tooling, maintenance, and genuinely standalone tickets are not slices. Use a
+  focused purpose branch such as `fix/`, `docs/`, `chore/`, or `feature/` and
+  one ticket-level pull request.
+- Before starting new slice functionality, identify a `Ready` slice tracker
+  with an observable executable outcome and complete exit criteria. Create one
+  branch from current `main` named `slice/<slice-id>-<short-slug>` and keep the
+  contracts, adapters, persistence, interfaces, tests, migrations, and
+  documentation required for that outcome together.
+- Raise the slice pull request when the end-to-end outcome is demonstrable and
+  all slice exit criteria pass. It closes the slice tracker and only those
+  constituent tickets whose full acceptance criteria are satisfied.
+- Use focused commits within a slice branch. Do not turn those commits into
+  horizontal PRs or hide partial ticket acceptance in follow-up work.
+- After the initial product has stable executable seams, maintainers may deliver
+  small bounded additions as ordinary `feature/` PRs. Cross-cutting, high-risk,
+  or independently demonstrable capabilities continue to use slices.
+- Follow [functional slice delivery](docs/development/slice-delivery.md) and the
+  ordered [delivery-slice plan](docs/product/delivery-slices.md). Governance,
+  urgent incident, and private security exceptions follow the narrow rules in
+  the delivery workflow and do not redefine normal product delivery.
+
 ## Repository hygiene
 
 - Use synthetic or irreversibly sanitized fixtures.

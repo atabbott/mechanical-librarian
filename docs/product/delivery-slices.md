@@ -2,147 +2,130 @@
 
 ## Purpose
 
-Mechanical Librarian is delivered through thin end-to-end slices that prove a
-usable product outcome across the required work packages. WP0-WP9 remain
-capability ownership buckets and parent issue groups; they are not chronological
-phases and are not completed wholesale before later work begins.
+Mechanical Librarian is delivered through small end-to-end outcomes rather than
+through completed horizontal work packages. WP0-WP9 remain capability ownership
+buckets and issue parents. A functional slice crosses whichever packages are
+needed to produce one executable, reviewable result.
 
-Each slice must be demonstrable through a real executable surface, use synthetic
-or isolated services, include its required failure behavior, and leave the
-repository releasable. Work that does not contribute to the active slice remains
-in its owning work package until needed.
+The sequence below is the default implementation order. Each row becomes a
+slice tracker, one `slice/...` branch, and one ready pull request. The tracker
+contains the final ticket list and may narrow the outcome further before work
+starts. If a row would exceed an `L` review, divide it into suffixed slices such
+as `F05a` and `F05b`, each with an independent supported demonstration. Never
+divide it into unreviewable horizontal-layer PRs.
 
-## Slice 0: executable foundation
+The authoritative branch, issue, and review mechanics are defined in
+[functional slice delivery](../development/slice-delivery.md).
 
-Prove that a clean checkout builds, installs, runs checks, and starts the empty
-CLI through the composition root.
+## Focused work outside the slice sequence
 
-Cross-cutting ownership:
+Fixes, audit corrections, security work, documentation, tooling, dependencies,
+maintenance, and standalone tickets use focused ticket branches and PRs. They
+may be native prerequisites for a new-functionality slice, but they are never
+absorbed into that slice merely to satisfy its checks.
 
-- WP0: package, dependency lock, checks, CI, release foundations;
-- WP8: the earliest process and packaging constraints where needed.
+Current focused work includes:
 
-Exit criteria:
+- contributor, CI, licence, publication, and governance work under #36-#43,
+  #135, and #154;
+- durability and architecture corrections #127, #130, and #131 before F01;
+- port, scope, and configuration corrections #129, #132, and #134 before F03;
+- evidence-bound correction #133 before F06; and
+- lifecycle and authorization correction #128 before F10.
 
-- the typed package installs from the committed lockfile;
-- all executable entry points delegate through `mechanical_librarian.bootstrap`;
-- architecture, package, documentation, and privacy checks pass from a clean
-  checkout; and
-- no network, persistence, credential, media, or production-write behavior is
-  introduced.
+## Release 0.1.0: trustworthy report-only product spine
 
-## Slice 1: read-only inventory
+Production metadata and cover writes remain disabled throughout these slices.
 
-Connect to a synthetic Audiobookshelf service, load validated configuration,
-discover one library and item, persist the item and immutable snapshot, and
-expose the result through a minimal CLI or HTTP diagnostic surface.
+| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
+| --- | --- | --- | --- | --- |
+| F01 Durable state check | #136 | A CLI diagnostic creates or opens application state, applies migrations atomically, records and reads a safe audit event, and reports failure without exposing a database path. | #51-#53 | `slice/f01-durable-state-check` |
+| F02 Recoverable job heartbeat | #137 | A synthetic job is scheduled, claimed once, survives restart, recovers after lease expiry, and exposes a safe bounded outcome. | #54-#58, #126 | `slice/f02-recoverable-job-heartbeat` |
+| F03 Synthetic inventory round trip | #139 | Validated configuration drives a synthetic library read; one scoped item and immutable snapshot are persisted and inspected through the CLI without database access. | #49 and slice-specific implementation tickets | `slice/f03-synthetic-inventory` |
+| F04 Audiobookshelf connection report | #140 | A configured isolated Audiobookshelf instance can be authenticated, versioned, capability-discovered, and diagnosed without reading or mutating library content. | #60, #61 | `slice/f04-audiobookshelf-connection` |
+| F05 Persisted Audiobookshelf inventory | #141 | One real isolated library is paged, normalized, fingerprinted, persisted, reconciled, and inspected; duplicate notifications and restart do not duplicate work. | #62-#67 | `slice/f05-audiobookshelf-inventory` |
+| F06 EPUB package evidence report | #142 | One generated EPUB is parsed within hostile-input bounds and produces a cited, bounded package-metadata evidence report through a supported surface. | #13, #21, #27-#29 | `slice/f06-epub-package-evidence` |
+| F07 EPUB opening-matter evidence report | #143 | The same isolated workflow selects bounded opening matter, extracts edition-aware claims with exact provenance, persists them, and explains unsupported or rejected input. | #25, #26, #30-#32 | `slice/f07-epub-opening-evidence` |
+| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
 
-Cross-cutting ownership:
+### 0.1.0 release exit
 
-- WP1: target identity, fingerprints, configuration, and ports;
-- WP2: minimal SQLite repository, migration, and durable job path;
-- WP3: read-only Audiobookshelf adapter;
-- WP8/WP9: minimal health and inventory surface needed to demonstrate the slice.
+- the focused foundation and trusted-change-loop prerequisites pass from a
+  clean checkout;
+- an operator can inspect isolated Audiobookshelf inventory and local evidence
+  without shell-level database access;
+- duplicate work, process restart, malformed media, authentication failure, and
+  unsupported capability behavior are bounded and visible; and
+- no development or CI path points at a contributor's production library.
 
-Exit criteria:
+## Release 0.2.0: explainable decisions and shadow review
 
-- duplicate discovery and process restart do not create duplicate item work;
-- configuration and authentication failures are explicit and non-mutating;
-- unsupported service behavior produces a typed capability result; and
-- a user can inspect discovered inventory without shell-level database access.
+These slices produce proposals and reviewer recommendations but still grant no
+production write authority.
 
-## Slice 2: local evidence to review case
+| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
+| --- | --- | --- | --- | --- |
+| F09 Candidate and proposal report | #145 | Persisted evidence and provider results become normalized, source-correlated candidates and deterministic field-level proposals with explanations. | #16, #46, #68-#73 | `slice/f09-candidate-proposals` |
+| F10 Persistent review case | #146 | One proposal set becomes a snapshot-aware review case whose notices, readiness, history, supersession, and authorization guards survive restart. | #50 and slice-specific implementation tickets | `slice/f10-persistent-review-case` |
+| F11 AI shadow recommendation | #147 | An isolated reviewer receives only a bounded packet, returns a validated recommendation, and exposes replayable agreement or failure without authorizing apply. | #74-#80 | `slice/f11-ai-shadow-review` |
 
-For one discovered synthetic EPUB, extract bounded evidence, produce one or more
-field proposals, resolve deterministic policy, persist a snapshot-aware review
-case, and expose it through a minimal review API or CLI projection.
+### 0.2.0 release exit
 
-Cross-cutting ownership:
+- candidate and proposal generation is deterministic, bounded, and
+  provenance-complete;
+- a review case remains authoritative across restart and stale input;
+- arbitrary, stale, AI-only, or destructive authorization cannot be
+  constructed; and
+- reviewer timeout, malformed output, citation failure, and authentication
+  recovery are typed safe states.
 
-- WP1: review-case and notice lifecycle;
-- WP2: evidence and review-case persistence;
-- WP4: bounded EPUB extraction;
-- WP5: candidate and policy resolution;
-- WP9: minimal decision-first review projection.
+## Release 1.0.0: guarded mutation and product operation
 
-Exit criteria:
+Write-capable slices use fake or disposable services until their explicit
+canary slice. Destructive operations remain outside ordinary review and apply.
 
-- malformed or hostile input fails within declared resource bounds;
-- evidence provenance survives normalization and proposal creation;
-- no-op, rejected, unsupported, and unresolved outcomes remain distinct; and
-- restart preserves the same authoritative review case without browser-local
-  state.
+| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
+| --- | --- | --- | --- | --- |
+| F12 Human decision round trip | #148 | A user accepts, keeps, or rejects one field through the versioned API; the decision survives restart and stale submissions fail closed. | #17-#19, #97, #98 | `slice/f12-human-decision` |
+| F13 Guarded fake-service apply | #149 | A current human-approved field change is planned, backed up, idempotently applied to a fake service, read back, verified, audited, and safely rolled back on injected failure. | #81-#83, #86 | `slice/f13-guarded-fake-apply` |
+| F14 Audiobookshelf canary apply | #150 | The same gates perform one bounded field or cover mutation against a disposable qualified Audiobookshelf instance and prove before/request/after evidence. | #84, #85, #87 | `slice/f14-audiobookshelf-canary` |
+| F15 Containerized report-only operation | #151 | The trusted read and review paths run in the supported single container with health, diagnostics, backup, restore, and upgrade checks while writes default off. | #88-#93 | `slice/f15-container-report-only` |
+| F16 Review operator experience | #152 | The target queue, decision-first detail, progressive evidence, sibling navigation, guarded bulk flow, accessibility, and performance contracts work in a real browser. | #20, #96, #99-#103 | `slice/f16-review-experience` |
+| F17 Continuous-operation qualification | #153 | Events, reconciliation, review, guarded apply, circuit breakers, restart, upgrade, backup, restore, release provenance, and support diagnostics pass the release cohort. | #94, #95 and a slice-specific release cohort | `slice/f17-release-qualification` |
 
-## Slice 3: guarded human-approved apply
+### 1.0.0 release exit
 
-Approve one safe field-level change through the server-authoritative decision
-contract, build an immutable apply plan, back up the current value, apply through
-a fake or isolated Audiobookshelf API, read back, and verify the result.
+- every write is current, authorized, backed up, idempotent, verified, audited,
+  and recoverable;
+- read-only discovery and diagnosis continue when writes are disabled;
+- the normal deployment is one supported container with one persistent volume,
+  read-only media mounts, and one HTTP port;
+- the review experience is persistent, accessible, responsive, and
+  server-authoritative; and
+- release, upgrade, restore, isolation, and end-to-end qualification evidence is
+  complete.
 
-Cross-cutting ownership:
+## Deferred slice series
 
-- WP1/WP5: decision authorization and deterministic policy;
-- WP2: audit, backup references, jobs, and idempotency;
-- WP7: guarded apply, verification, and rollback;
-- WP9: minimal review and approval mutation surface.
-
-Exit criteria:
-
-- stale target state blocks the write;
-- retries cannot duplicate or widen the change;
-- every mutation records authorization, before state, after state, and
-  verification; and
-- verification failure produces safe rollback or a visible write-disabled state.
-
-## Slice 4: AI shadow review
-
-Stage only bounded evidence for the isolated reviewer, receive a
-schema-constrained recommendation, validate its citations and proposal IDs, and
-compare it with deterministic and human decisions without granting write
-authority.
-
-Cross-cutting ownership:
-
-- WP6: reviewer process, schemas, validation, and evaluation;
-- WP5: policy interpretation of reviewer output;
-- WP8: internal principal separation;
-- WP9: reviewer reasoning and diagnostic projection where useful.
-
-Exit criteria:
-
-- the reviewer cannot access service secrets, the main database, backups, or
-  production media;
-- malformed, timed-out, or hostile output becomes a typed safe state;
-- AI output alone cannot create decision authorization; and
-- replayable synthetic cohorts expose disagreement and systematic failure modes.
-
-## Slice 5: unattended single-container operation
-
-Package the proven workflows into the supported container, process events and
-reconciliation durably, expose the bounded review queue, and exercise restart,
-upgrade, backup, restore, diagnostics, and circuit-breaker behavior.
-
-Cross-cutting ownership:
-
-- all work packages, limited to behavior proven by preceding slices.
-
-Exit criteria:
-
-- one container, one persistent volume, read-only media mounts, and one HTTP port
-  support the normal deployment;
-- process death, duplicate events, and persistent failures remain bounded;
-- writes can be disabled independently of discovery and diagnosis; and
-- backup, restore, upgrade, container isolation, and end-to-end tests pass.
+Opening-audio transcription (#24 and #104-#110), additional adapters,
+embedded-file updates, and plugin loading remain unassigned backlog work until
+their prerequisite design and qualification decisions are accepted. When
+scheduled, they receive new functional slice IDs and executable outcomes; they
+are not appended opportunistically to an active branch.
 
 ## Planning rules
 
-- The active delivery slice determines execution order across work packages.
-- Issues retain their WP parent and area labels but also link the active slice or
-  target release they advance.
-- A slice may use deliberately narrow implementations; later issues extend them
-  without bypassing the established contracts.
-- A work-package parent is complete only when all of its owned outcomes are
-  complete, but its incomplete status does not block slices that need only a
-  bounded subset.
-- No slice may defer its safety, recovery, observability, documentation, or test
-  obligations to a later slice.
+- The highest-priority unblocked slice determines execution order across work
+  packages.
+- The Project `Delivery slice` field records each new-functionality ticket's
+  primary slice. Focused work uses `Not applicable`.
+- Slice trackers carry the exact closure list; the issue ranges above are
+  planning inputs, not permission to close a parent whose full criteria are not
+  satisfied.
+- A deliberately narrow adapter or interface is acceptable when it completely
+  demonstrates the slice and preserves compatibility for later extension.
+- No slice may defer its required safety, recovery, observability,
+  documentation, migration, or test obligations to a later slice.
+- A work-package parent closes only when all owned outcomes are complete. A
+  merged slice proves its bounded outcome, not wholesale work-package
+  completion.

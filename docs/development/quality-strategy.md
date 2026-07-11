@@ -103,6 +103,10 @@ and maintainer approval.
 
 A change is done only when:
 
+- when the change is a new-functionality slice, it is demonstrable through the
+  supported surface and meets every slice exit criterion;
+- when the change is focused ticket work, its reproduction or bounded outcome
+  satisfies that ticket without unrelated slice scope;
 - behavior and failure semantics are documented;
 - tests prove the intended contract;
 - telemetry supports diagnosis without exposing private data;

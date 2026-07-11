@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Added
 
+- Functional-slice delivery governance for new functionality during the initial
+  build, with focused ticket PRs retained for fixes, security, documentation,
+  tooling, dependencies, maintenance, and standalone work.
 - Append-only SQLite audit repository with bounded recent-event queries.
 - Deterministic dry-run configuration import plans with restart and re-extraction impact.
 - Bounded evidence references and compact review-summary projections.
