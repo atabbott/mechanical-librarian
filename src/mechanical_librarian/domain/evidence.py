@@ -25,6 +25,7 @@ from .evidence_bounds import (
     ensure_unique,
     validate_code,
     validate_excerpt,
+    validate_persisted_fact_text,
     validate_projection_text,
     validate_string_tuple,
     validate_text,
@@ -134,7 +135,9 @@ class ConfidenceFact:
 
     def __post_init__(self) -> None:
         validate_code(self.code, "confidence fact code")
-        validate_text(self.value, "confidence fact value", MAX_FACT_VALUE_LENGTH)
+        validate_persisted_fact_text(
+            self.value, "confidence fact value", MAX_FACT_VALUE_LENGTH
+        )
 
     def __repr__(self) -> str:
         return f"ConfidenceFact(code={self.code!r}, value=<redacted>)"
@@ -176,7 +179,9 @@ class EvidenceRecord:
             codes=True,
         )
         if self.lineage is not None:
-            validate_text(self.lineage, "evidence lineage", MAX_SHORT_TEXT_LENGTH)
+            validate_persisted_fact_text(
+                self.lineage, "evidence lineage", MAX_SHORT_TEXT_LENGTH
+            )
 
     def to_persistence_json(self) -> str:
         return _bounded_json(
@@ -332,12 +337,18 @@ class EvidenceSummary:
 @dataclass(frozen=True, repr=False)
 class EvidenceDetail:
     reference: EvidenceReference
+    snapshot: SnapshotId
+    snapshot_fingerprint: Fingerprint
     source_type: str
     facts: tuple[ConfidenceFact, ...]
     warnings: tuple[str, ...]
 
     def __post_init__(self) -> None:
         _require_exact(self.reference, EvidenceReference, "evidence detail reference")
+        _require_exact(self.snapshot, SnapshotId, "evidence detail snapshot")
+        _require_exact(
+            self.snapshot_fingerprint, Fingerprint, "evidence detail fingerprint"
+        )
         validate_code(self.source_type, "evidence detail source type")
         validate_tuple(
             self.facts,
@@ -383,6 +394,8 @@ class EvidenceDetail:
                 relationship,
                 policy_decision,
             ),
+            record.snapshot,
+            record.snapshot_fingerprint,
             record.source_type,
             tuple(fact for fact in record.facts if fact.code in _PROJECTION_SAFE_FACT_CODES),
             record.warnings,
@@ -392,8 +405,10 @@ class EvidenceDetail:
         return _bounded_json(
             {
                 "reference": _reference_projection(self.reference),
+                "fingerprint": _fingerprint_data(self.snapshot_fingerprint),
                 "facts": [{"code": fact.code, "value": fact.value} for fact in self.facts],
                 "schema": EVIDENCE_API_SCHEMA.value,
+                "snapshot": self.snapshot.value,
                 "source_type": self.source_type,
                 "warnings": list(self.warnings),
             },
@@ -627,11 +642,15 @@ class EvidenceReadiness:
 class ReviewerEvidencePacket:
     target: TargetId
     snapshot: SnapshotId
+    snapshot_fingerprint: Fingerprint
     details: tuple[EvidenceDetail, ...]
 
     def __post_init__(self) -> None:
         _validate_target(self.target)
         _require_exact(self.snapshot, SnapshotId, "reviewer packet snapshot")
+        _require_exact(
+            self.snapshot_fingerprint, Fingerprint, "reviewer packet fingerprint"
+        )
         validate_tuple(
             self.details,
             label="reviewer evidence details",
@@ -647,6 +666,17 @@ class ReviewerEvidencePacket:
             detail.reference.consuming_target != self.target for detail in self.details
         ):
             raise EvidenceValueError("reviewer evidence must consume the packet target")
+        if any(
+            detail.reference.relationship is EvidenceRelationship.SAME_TARGET
+            and (
+                detail.snapshot != self.snapshot
+                or detail.snapshot_fingerprint != self.snapshot_fingerprint
+            )
+            for detail in self.details
+        ):
+            raise EvidenceValueError(
+                "same-target reviewer evidence must match the packet snapshot and fingerprint"
+            )
         self.to_json()
 
     def to_json(self) -> str:
@@ -655,9 +685,11 @@ class ReviewerEvidencePacket:
                 "details": [
                     {
                         "reference": _reference_projection(detail.reference),
+                        "fingerprint": _fingerprint_data(detail.snapshot_fingerprint),
                         "facts": [
                             {"code": fact.code, "value": fact.value} for fact in detail.facts
                         ],
+                        "snapshot": detail.snapshot.value,
                         "source_type": detail.source_type,
                         "warnings": list(detail.warnings),
                     }
@@ -665,6 +697,7 @@ class ReviewerEvidencePacket:
                         self.details, key=lambda item: item.reference.evidence.value
                     )
                 ],
+                "fingerprint": _fingerprint_data(self.snapshot_fingerprint),
                 "schema": REVIEWER_EVIDENCE_SCHEMA.value,
                 "snapshot": self.snapshot.value,
                 "target": _projection_target_data(self.target),

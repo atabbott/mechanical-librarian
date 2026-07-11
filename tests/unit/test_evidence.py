@@ -60,6 +60,10 @@ class EvidenceTypeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.target = self._target("primary", "book-1")
         self.other = self._target("secondary", "book-1")
+        self.snapshot = SnapshotId("snapshot-one")
+        self.snapshot_fingerprint = Fingerprint.from_canonical_value(
+            {"title": "Example"}, schema=SchemaVersion("snapshot-v1")
+        )
         self.reference = EvidenceReference(
             EvidenceId("evidence-one"),
             self.target,
@@ -110,6 +114,45 @@ class EvidenceTypeTests(unittest.TestCase):
         with self.assertRaises(EvidenceValueError):
             self._record(lineage=" ")
         self.assertNotIn("private-lineage", repr(self._record(lineage="private-lineage")))
+
+    def test_persisted_facts_reject_credentials_without_rejecting_private_paths(self) -> None:
+        for credential in (
+            "Authorization: Bearer private-token",
+            "Bearer private-token-123",
+            "Bearer abcdefgh1234",
+            "Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature",
+            "token=private-token",
+            "secret=private-secret",
+            "password=private-password",
+            "API-Key: private-key",
+        ):
+            with self.subTest(credential=credential):
+                with self.assertRaisesRegex(EvidenceValueError, "credential-shaped"):
+                    ConfidenceFact("title", credential)
+
+        for ordinary_value in (
+            "Bearer of Bad News",
+            "Bearer Certificate",
+            "Bearer Authentication",
+            "Bearer Williams",
+            "Bearer Moonlight",
+            "The Secret: A Novel",
+            "Passwordless: Modern Authentication",
+            "A key contribution",
+        ):
+            with self.subTest(ordinary_value=ordinary_value):
+                self.assertEqual(ConfidenceFact("title", ordinary_value).value, ordinary_value)
+
+        private_path = ConfidenceFact("path", "/private/library/book.epub")
+        persisted = self._record(facts=(private_path,)).to_persistence_json()
+        self.assertIn("/private/library/book.epub", persisted)
+
+        unsafe_persisted = json.loads(
+            self._record(facts=(ConfidenceFact("title", "Example"),)).to_persistence_json()
+        )
+        unsafe_persisted["facts"][0]["value"] = "token=private-token"
+        with self.assertRaisesRegex(EvidenceValueError, "credential-shaped"):
+            EvidenceRecord.from_persistence_json(_canonical(unsafe_persisted))
 
     def test_cross_target_references_require_versioned_policy(self) -> None:
         with self.assertRaises(EvidenceValueError):
@@ -223,6 +266,23 @@ class EvidenceTypeTests(unittest.TestCase):
         with self.assertRaises(EvidenceValueError):
             EvidenceRecord.from_persistence_json("x" * (MAX_SERIALIZED_BYTES + 1))
 
+    def test_persisted_lineage_rejects_credentials_but_retains_paths(self) -> None:
+        with self.assertRaisesRegex(EvidenceValueError, "credential-shaped"):
+            self._record(lineage="token=private-token")
+
+        private_path_record = self._record(lineage="/private/library/provider-record")
+        self.assertEqual(
+            EvidenceRecord.from_persistence_json(
+                private_path_record.to_persistence_json()
+            ),
+            private_path_record,
+        )
+
+        persisted = json.loads(self._record(lineage="provider-family").to_persistence_json())
+        persisted["lineage"] = "token=private-token"
+        with self.assertRaisesRegex(EvidenceValueError, "credential-shaped"):
+            EvidenceRecord.from_persistence_json(_canonical(persisted))
+
     def test_api_and_reviewer_projections_are_bounded_and_privacy_allowlisted(self) -> None:
         private = ConfidenceFact("path", "/private/library/book.epub")
         public = ConfidenceFact("title", "Example")
@@ -234,6 +294,8 @@ class EvidenceTypeTests(unittest.TestCase):
         with self.assertRaises(EvidenceValueError):
             EvidenceDetail(
                 self.reference,
+                self.snapshot,
+                self.snapshot_fingerprint,
                 "epub",
                 (ConfidenceFact("title", "/private/library/book.epub"),),
                 (),
@@ -284,6 +346,8 @@ class EvidenceTypeTests(unittest.TestCase):
                 with self.assertRaises(EvidenceValueError):
                     EvidenceDetail(
                         self.reference,
+                        self.snapshot,
+                        self.snapshot_fingerprint,
                         "epub",
                         (ConfidenceFact("title", private_value),),
                         (),
@@ -303,6 +367,8 @@ class EvidenceTypeTests(unittest.TestCase):
             with self.subTest(ordinary_title=ordinary_title):
                 detail_with_title = EvidenceDetail(
                     self.reference,
+                    self.snapshot,
+                    self.snapshot_fingerprint,
                     "epub",
                     (ConfidenceFact("title", ordinary_title),),
                     (),
@@ -316,7 +382,12 @@ class EvidenceTypeTests(unittest.TestCase):
         with self.assertRaises(EvidenceValueError):
             replace(summary, excerpt="control\x00")
 
-        packet = ReviewerEvidencePacket(self.target, SnapshotId("snapshot-one"), (detail,))
+        packet = ReviewerEvidencePacket(
+            self.target,
+            self.snapshot,
+            self.snapshot_fingerprint,
+            (detail,),
+        )
         self.assertEqual(packet.to_json(), packet.to_json())
         self.assertNotIn("private-lineage", packet.to_json())
         self.assertNotIn("book-1", packet.to_json())
@@ -333,12 +404,78 @@ class EvidenceTypeTests(unittest.TestCase):
             ),
         )
         cross_target_packet = ReviewerEvidencePacket(
-            self.other, SnapshotId("snapshot-one"), (cross_target_detail,)
+            self.other,
+            self.snapshot,
+            self.snapshot_fingerprint,
+            (cross_target_detail,),
         )
         cross_target_json = cross_target_packet.to_json()
         self.assertIn("explicit_cross_target", cross_target_json)
         self.assertIn("policy-v1", cross_target_json)
         self.assertIn("same-work", cross_target_json)
+
+    def test_reviewer_packets_require_matching_snapshot_provenance(self) -> None:
+        record = self._record(facts=(ConfidenceFact("title", "Example"),))
+        detail = EvidenceDetail.from_record(record)
+        packet = ReviewerEvidencePacket(
+            self.target,
+            record.snapshot,
+            record.snapshot_fingerprint,
+            (detail,),
+        )
+        self.assertEqual(packet.details, (detail,))
+        detail_projection = json.loads(detail.to_api_json())
+        self.assertEqual(detail_projection["snapshot"], record.snapshot.value)
+        self.assertEqual(
+            detail_projection["fingerprint"]["digest"],
+            record.snapshot_fingerprint.digest,
+        )
+
+        mismatches = (
+            replace(detail, snapshot=SnapshotId("snapshot-two")),
+            replace(
+                detail,
+                snapshot_fingerprint=Fingerprint.from_canonical_value(
+                    {"title": "Different"}, schema=SchemaVersion("snapshot-v1")
+                ),
+            ),
+        )
+        for mismatched_detail in mismatches:
+            with self.subTest(detail=mismatched_detail):
+                with self.assertRaisesRegex(EvidenceValueError, "snapshot and fingerprint"):
+                    replace(packet, details=(mismatched_detail,))
+
+        cross_target_detail = EvidenceDetail.from_record(
+            record,
+            consuming_target=self.other,
+            policy_decision=CrossTargetPolicyDecision(
+                PolicyVersion("policy-v1"), "same-work"
+            ),
+        )
+        consuming_snapshot = SnapshotId("snapshot-two")
+        consuming_fingerprint = Fingerprint.from_canonical_value(
+            {"title": "Consuming target"}, schema=SchemaVersion("snapshot-v1")
+        )
+        cross_target_packet = ReviewerEvidencePacket(
+            self.other,
+            consuming_snapshot,
+            consuming_fingerprint,
+            (cross_target_detail,),
+        )
+        self.assertEqual(cross_target_packet.details, (cross_target_detail,))
+        cross_target_projection = json.loads(cross_target_packet.to_json())
+        self.assertEqual(cross_target_projection["snapshot"], consuming_snapshot.value)
+        self.assertEqual(
+            cross_target_projection["fingerprint"]["digest"],
+            consuming_fingerprint.digest,
+        )
+        self.assertEqual(
+            cross_target_projection["details"][0]["snapshot"], record.snapshot.value
+        )
+        self.assertEqual(
+            cross_target_projection["details"][0]["fingerprint"]["digest"],
+            record.snapshot_fingerprint.digest,
+        )
 
     def test_readiness_preserves_states_and_counts_unique_records_and_targets(self) -> None:
         second_reference = replace(self.reference, evidence=EvidenceId("evidence-two"))
@@ -479,6 +616,8 @@ class EvidenceTypeTests(unittest.TestCase):
         )
         large_detail = EvidenceDetail(
             replace(self.reference, evidence=EvidenceId("evidence-large")),
+            self.snapshot,
+            self.snapshot_fingerprint,
             "epub",
             tuple(
                 ConfidenceFact(code, "x" * MAX_FACT_VALUE_LENGTH)
@@ -488,7 +627,8 @@ class EvidenceTypeTests(unittest.TestCase):
         )
         packet = ReviewerEvidencePacket(
             self.target,
-            SnapshotId("snapshot-one"),
+            self.snapshot,
+            self.snapshot_fingerprint,
             tuple(
                 replace(
                     large_detail,
@@ -526,10 +666,8 @@ class EvidenceTypeTests(unittest.TestCase):
         return EvidenceRecord(
             EvidenceId("evidence-one"),
             self.target,
-            SnapshotId("snapshot-one"),
-            Fingerprint.from_canonical_value(
-                {"title": "Example"}, schema=SchemaVersion("snapshot-v1")
-            ),
+            self.snapshot,
+            self.snapshot_fingerprint,
             ExtractorVersion("extractor-v1"),
             SchemaVersion("evidence-v1"),
             "epub",

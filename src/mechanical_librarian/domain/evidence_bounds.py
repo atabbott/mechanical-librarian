@@ -44,6 +44,9 @@ _CREDENTIAL_PATTERN = re.compile(
     r"|\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@"
     r")"
 )
+_BARE_BEARER_PATTERN = re.compile(
+    r"(?i)\bbearer\s+([a-z0-9._~+/=-]{8,})(?=\s|$)"
+)
 _CREDENTIAL_ASSIGNMENT_PATTERN = re.compile(
     r"[\"']?([A-Za-z][A-Za-z0-9_-]{1,80})[\"']?\s*[:=]"
 )
@@ -120,6 +123,15 @@ def validate_projection_text(value: object, label: str, maximum: int) -> str:
     return text
 
 
+def validate_persisted_fact_text(value: object, label: str, maximum: int) -> str:
+    """Reject credential-shaped facts while retaining private path evidence."""
+
+    text = validate_text(value, label, maximum)
+    if _credential_shaped(text):
+        raise EvidenceValueError(f"{label} must not contain credential-shaped text")
+    return text
+
+
 def validate_tuple(
     values: object,
     *,
@@ -185,6 +197,14 @@ def _forbidden_codepoint(codepoint: int) -> bool:
 def _credential_shaped(value: str) -> bool:
     if _CREDENTIAL_PATTERN.search(value) or _MULTIWORD_CREDENTIAL_PATTERN.search(value):
         return True
+    bare_bearer = _BARE_BEARER_PATTERN.search(value)
+    if bare_bearer is not None:
+        credential = bare_bearer.group(1)
+        if (
+            any(character.isdigit() or character in "_~+/=-" for character in credential)
+            or credential.count(".") >= 2
+        ):
+            return True
     for match in _CREDENTIAL_ASSIGNMENT_PATTERN.finditer(value):
         raw_label = match.group(1)
         label = _CAMEL_BOUNDARY.sub("_", raw_label).replace("-", "_").casefold()
