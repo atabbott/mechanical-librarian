@@ -45,6 +45,7 @@ from mechanical_librarian.domain.inventory import (
     ServiceRelease,
     ServiceEndpoint,
     SNAPSHOT_CANONICAL_MAX_BYTES,
+    SNAPSHOT_CANONICAL_MAX_COLLECTION_ITEMS,
     SNAPSHOT_CANONICAL_SOURCE_MAX_BYTES,
     SNAPSHOT_SCHEMA_V1,
 )
@@ -182,6 +183,24 @@ class InventoryEntityTests(unittest.TestCase):
         with self.assertRaisesRegex(DomainValueError, "immutable tuple"):
             replace(self._snapshot(), files=[])  # type: ignore[arg-type]
 
+    def test_library_item_requires_exact_domain_types(self) -> None:
+        snapshot = self._snapshot()
+        item = LibraryItem(
+            self.target,
+            MediaType.EBOOK,
+            ItemLifecycle.ACTIVE,
+            (snapshot.id,),
+        )
+        self.assertEqual(InventoryRecord(self._connection(), item, snapshot).item, item)
+
+        for field, value in (
+            ("media_type", MediaType.EBOOK.value),
+            ("lifecycle", ItemLifecycle.ACTIVE.value),
+        ):
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(DomainValueError, "target, media type, and lifecycle"):
+                    replace(item, **{field: value})
+
     def test_snapshot_rejects_canonical_state_or_fingerprint_mismatch(self) -> None:
         snapshot = self._snapshot()
         changed_metadata = NormalizedMetadata((MetadataField(FieldName.TITLE, ("Changed",)),))
@@ -246,6 +265,20 @@ class InventoryEntityTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(DomainValueError, "source exceeds"):
             self._snapshot(metadata=metadata)
+
+    def test_canonical_reader_enforces_collection_item_limit(self) -> None:
+        stored = json.loads(self._snapshot().canonical_input.serialized)
+        stored["files"] = []
+        stored["metadata"][0]["values"] = [
+            "x"
+        ] * SNAPSHOT_CANONICAL_MAX_COLLECTION_ITEMS
+
+        boundary = CanonicalSnapshotInput.from_json(canonical_json(stored))
+        self.assertEqual(boundary.schema, SNAPSHOT_SCHEMA_V1)
+
+        stored["metadata"][0]["values"].append("x")
+        with self.assertRaisesRegex(DomainValueError, "too many collection items"):
+            CanonicalSnapshotInput.from_json(canonical_json(stored))
 
     def test_canonical_reader_and_writer_reject_unpaired_unicode_surrogates(self) -> None:
         metadata = NormalizedMetadata(

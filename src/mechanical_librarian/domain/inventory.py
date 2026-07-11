@@ -315,6 +315,14 @@ class LibraryItem:
     snapshot_ids: tuple[SnapshotId, ...] = ()
 
     def __post_init__(self) -> None:
+        if (
+            type(self.target) is not TargetId
+            or type(self.media_type) is not MediaType
+            or type(self.lifecycle) is not ItemLifecycle
+        ):
+            raise DomainValueError(
+                "library item requires a target, media type, and lifecycle"
+            )
         if type(self.snapshot_ids) is not tuple or not all(
             type(snapshot_id) is SnapshotId for snapshot_id in self.snapshot_ids
         ):
@@ -622,17 +630,19 @@ def _validate_snapshot_v1(value: dict[object, object]) -> None:
     _validate_capabilities(value["capabilities"])
     _validate_digest_or_none(value["concurrency_identity"], "concurrency identity")
     _validate_cover(value["cover"])
-    _validate_digest_list(value["files"], "files")
+    file_count = _validate_digest_list(value["files"], "files")
     try:
         ItemLifecycle(value["lifecycle"])
         MediaType(value["media_type"])
     except (TypeError, ValueError) as error:
         raise DomainValueError("canonical snapshot lifecycle or media type is invalid") from error
-    _validate_metadata(value["metadata"])
+    metadata_value_count = _validate_metadata(value["metadata"])
     _validate_fingerprint(value["raw_observation_fingerprint"], "raw observation fingerprint")
     if value["schema"] != SNAPSHOT_SCHEMA_V1.value:
         raise DomainValueError("canonical snapshot schema marker is inconsistent")
     _validate_target(value["target"])
+    if file_count + metadata_value_count > SNAPSHOT_CANONICAL_MAX_COLLECTION_ITEMS:
+        raise DomainValueError("canonical snapshot has too many collection items")
     adapter_release = _require_mapping(value["adapter_release"], "adapter release")
     service_release = _require_mapping(value["service_release"], "service release")
     target = _require_mapping(value["target"], "target")
@@ -715,7 +725,7 @@ def _validate_cover(value: object) -> None:
     _validate_digest_or_none(mapping["reference_identity"], "cover identity", allow_none=False)
 
 
-def _validate_metadata(value: object) -> None:
+def _validate_metadata(value: object) -> int:
     if type(value) is not list:
         raise DomainValueError("canonical metadata must be a list")
     names: list[str] = []
@@ -738,6 +748,7 @@ def _validate_metadata(value: object) -> None:
         names.append(name)
     if names != sorted(set(names)):
         raise DomainValueError("canonical metadata fields must be sorted and unique")
+    return sum(len(entry["values"]) for entry in value)
 
 
 def _validate_target(value: object) -> None:
@@ -771,10 +782,11 @@ def _validate_fingerprint(value: object, label: str) -> None:
         raise DomainValueError(f"canonical {label} is invalid") from error
 
 
-def _validate_digest_list(value: object, label: str) -> None:
+def _validate_digest_list(value: object, label: str) -> int:
     strings = _require_sorted_unique_strings(value, label)
     for digest in strings:
         _validate_digest_or_none(digest, label, allow_none=False)
+    return len(strings)
 
 
 def _validate_digest_or_none(value: object, label: str, *, allow_none: bool = True) -> None:
