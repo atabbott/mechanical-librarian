@@ -22,6 +22,15 @@ Every release that changes durable state must publish:
 
 Breaking configuration, API, or adapter changes follow the compatibility and deprecation policy.
 
+Workflow-definition changes are classified independently from database schema
+changes. Release notes identify the old and new workflow versions and graph
+digests, newly required stages, compatible resumptions, and transitive
+reuse and current-applicability boundary. An incompatible change never rewrites
+a completed run's graph or outcomes; the application creates auditable linked
+superseding or replanned work, marks transitively affected downstream
+checkpoints there ineligible for reuse or current applicability, and preserves
+immutable history.
+
 ## Preflight
 
 Before an upgrade, the operator or deployment automation should:
@@ -33,6 +42,8 @@ Before an upgrade, the operator or deployment automation should:
 5. Create and validate an application-state backup.
 6. Record the running image digest and schema version.
 7. Confirm sufficient free disk space for the new image, migration, and rollback copy.
+8. Inspect active workflow-definition versions and confirm how incompatible
+   runs will be superseded, replanned, cancelled, or allowed to finish.
 
 The application must refuse a migration when its preconditions are not met.
 
@@ -61,6 +72,8 @@ After upgrade:
 - run database integrity checks;
 - verify configured connections without mutating them;
 - inspect failed, leased, and pending jobs;
+- inspect superseded and replanned runs, graph-digest linkage, and downstream
+  checkpoint reuse and current-applicability outcomes;
 - run a read-only discovery smoke test; and
 - perform a guarded mutation canary only when the release affects apply behavior.
 

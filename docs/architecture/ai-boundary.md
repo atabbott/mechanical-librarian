@@ -11,7 +11,8 @@ change policy, construct service requests, or execute writes.
 Input is a versioned evidence packet containing:
 
 - target and snapshot IDs using non-sensitive logical identifiers;
-- current normalized field values;
+- the exact bounded normalized current snapshot for the reviewed target and an
+  explicit loaded, missing, or unavailable state for each applicable field;
 - explicit candidate values;
 - supporting and contradicting evidence summaries;
 - bounded excerpts labelled as untrusted content;
@@ -20,6 +21,14 @@ Input is a versioned evidence packet containing:
 - optional typed, bounded, versioned operator intent, explicitly separated from
   policy instructions and untrusted evidence; and
 - closed decision and problem vocabularies.
+
+Packet assembly records candidate and policy versions, source completeness, and
+the join provenance for every authoritative row. If the current snapshot,
+required field state, candidate, or relevant evidence cannot be joined exactly,
+assembly fails before reviewer invocation. Raw service rows, database records,
+and unbounded source payloads never substitute for the normalized snapshot.
+Missing, duplicate, cross-target, stale, or required-context-truncated joins are
+typed assembly failures, not reviewer inputs.
 
 Operator intent can describe a run-local review emphasis within the already
 authorized target and proposal scope. It cannot introduce candidates, widen
@@ -37,13 +46,20 @@ Output is JSON conforming to a versioned schema. Each field decision contains:
 - proposal ID;
 - `approve`, `reject`, or `manual`;
 - concise reason;
-- structured problem codes;
+- required `problems`, containing unresolved or adverse problem codes only;
 - cited evidence IDs;
 - optional confidence facts that do not independently control apply.
 
 The structured result is the schema object itself. A backend compatibility
 layer must not evade validation by embedding another JSON document in a string
-payload.
+payload. Parsing accepts one direct JSON object with exactly its declared
+required and optional fields and rejects duplicate object keys, trailing
+content, unknown fields or missing required fields, duplicate decisions,
+partial proposal coverage, and malformed values. Compatibility normalization may
+remove a documented backend envelope; it must not infer a decision, discard an
+unknown field, repair substantive output, or translate JSONL into this contract.
+Positive support belongs in cited evidence and the reason, not in
+`problems`; a clean approval uses `problems: []`.
 
 ## Forbidden reviewer behavior
 
@@ -66,7 +82,8 @@ The curator rejects output when:
 - IDs do not exist in the input packet;
 - evidence references are unknown or target-incompatible;
 - a proposed value differs from the declared candidate;
-- required reason or problem fields are missing;
+- the required reason or `problems` list is missing;
+- a proposal is missing, repeated, or represented by an unknown decision;
 - a field is unsupported by the active service adapter;
 - the reviewer or policy version is not allowed;
 - the target fingerprint changed;

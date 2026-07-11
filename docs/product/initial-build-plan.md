@@ -60,6 +60,11 @@ Deliverables:
 - implement leases, retries, backoff, cancellation, and dead-letter handling;
 - persist bounded acyclic run dependency graphs, expected typed outcomes, and a
   nonterminal `waiting` run/stage state distinct from job `retry_wait`;
+- pin an immutable workflow-definition version and graph digest to each run;
+  incompatible definitions create linked superseding or replanned runs,
+  preserve the original graph and outcomes, and mark every transitively affected
+  downstream checkpoint in the linked run ineligible for reuse or current
+  applicability without mutating or erasing history;
 - persist and durably enqueue the complete dependency-ready set, make
   capacity-bounded claims under leases with stable job identity and
   deduplication, and accept one monotonic-fenced independently validated outcome
@@ -153,7 +158,19 @@ Exit criteria:
 Deliverables:
 
 - generate field-level proposals from current values and local evidence;
-- collapse identical values while retaining source consensus and alternatives;
+- collapse identical normalized values while retaining every source
+  assessment, evidence lineage, contradiction, and source-specific problem
+  fact; recompute one deterministic aggregate disposition without unioning
+  stale risks or allowing a strongest-source winner to erase conflict;
+- persist a versioned, capability-derived candidate-lane manifest that records
+  applicability for every derived lane and a typed execution outcome for each
+  applicable lane; only successfully completed applicable lanes record a
+  candidate count, which may be zero, and execution mode `executed` or `reused`.
+  Reuse requires exact target scope, matching input fingerprints, compatible
+  provider, query, configuration, and contract versions, and a validated
+  complete expected artifact. Missing lanes are coverage failures, and failed
+  execution is never reusable and follows governed retry, backoff, and
+  suppression;
 - implement configurable risk and confidence policies;
 - model source applicability, independence, correlation, and contradiction
   before agreement can increase automatic-write eligibility;
@@ -177,6 +194,13 @@ Deliverables:
 - preserve raw identifier observations, validate and canonicalize recognized
   aliases and comparable ISBN forms, compare compatible namespaces only, and
   keep non-comparable identifier types neutral;
+- treat one distinct checksum-valid ISBN with typed format- and edition-
+  applicable embedded/content provenance as strong edition evidence only when
+  a materially independent, format-appropriate provider returns the same
+  canonical ISBN, including ISBN-10/ISBN-13 equivalence, and target, work, and
+  media identity agree; multiple content ISBNs, unrelated previews or other-work
+  claims, correlated providers, and edition, format, narration, abridgement,
+  dramatization, omnibus, or cross-media conflicts remain unresolved;
 - allow malformed or invalid current identifiers to follow ordinary applicable
   field evidence, but supersede a validated current comparable identifier only
   when an applicable embedded/content identifier and a materially independent
@@ -230,11 +254,19 @@ Exit criteria:
 Deliverables:
 
 - define the versioned AI request and response schemas;
+- require each authoritative packet row to contain its exact bounded normalized
+  current snapshot, explicit loaded, missing, or unavailable field state,
+  relevant bounded evidence, candidate and policy versions, and completeness
+  provenance; fail the join before reviewer invocation when required context is
+  absent;
 - represent optional per-run reviewer intent as typed, bounded, versioned data
   in the closed request schema, separated from policy instructions and
   untrusted evidence;
 - implement the Codex CLI backend behind a generic reviewer port;
-- validate, bound, and audit all responses;
+- validate, bound, and audit direct closed-schema responses, rejecting duplicate
+  JSON object keys, trailing content, unknown fields or missing required fields,
+  duplicate or partial proposal decisions, and malformed values without
+  semantic repair;
 - enumerate the authoritative upstream evidence and provider inputs for each
   selected target, and require accepted terminal outcomes for required inputs;
 - allow optional provider failure as a typed terminal operational outcome that
@@ -247,6 +279,9 @@ Deliverables:
 - keep `manual` as an AI result only for multiple specifically supported
   alternatives; it may complete reviewer output but never creates a human
   decision or apply readiness;
+- require the `AIDecision.problems` list to contain only unresolved or adverse
+  problem codes; positive support belongs in cited evidence and the concise
+  reason, so a clean approval uses `problems: []`;
 - add replayable evaluation cohorts; and
 - support disabling AI without disabling the core product.
 
@@ -257,9 +292,12 @@ Exit criteria:
 - per-run intent cannot override policy, safety, scope, authority, or schema,
   and structured output is validated directly rather than carried as encoded
   JSON inside a string field;
+- backend normalization may remove a documented transport envelope but cannot
+  infer missing decisions, drop unknown fields, repair substantive output, or
+  convert JSONL into the reviewer response contract;
 - a successful process, artifact, or claimed count cannot establish completion
-  without an independent audit of decisions, reasons, problem lists, proposal
-  references, and exact selected-target coverage;
+  without an independent audit of decisions, reasons, required `problems`
+  lists, proposal references, and exact selected-target coverage;
 - missing accepted terminal outcomes for required upstream inputs block only
   the affected review scope;
 - timeouts and malformed output produce safe workflow states; and
