@@ -6,8 +6,28 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .evidence import Disposition
-from .identifiers import DecisionAuthorizationId, DecisionId, Fingerprint, ProposalId, ReviewCaseId, SnapshotId, TargetId
-from .lifecycle import AuthorizationEvent, AuthorizationResult, AuthorizationState, HumanDecisionApplicability, ReviewCaseState
+from .identifiers import (
+    AdapterId,
+    ConnectionId,
+    DecisionAuthorizationId,
+    DecisionId,
+    ExternalItemId,
+    Fingerprint,
+    LibraryId,
+    PolicyVersion,
+    ProposalId,
+    ReviewCaseId,
+    SchemaVersion,
+    SnapshotId,
+    TargetId,
+)
+from .lifecycle import (
+    AuthorizationEvent,
+    AuthorizationResult,
+    AuthorizationState,
+    HumanDecisionApplicability,
+    ReviewCaseState,
+)
 
 
 class NoticeClass(StrEnum):
@@ -31,8 +51,13 @@ class ReviewNotice:
     required_action: str
 
     def __post_init__(self) -> None:
-        if not self.diagnostic_codes or not self.required_action:
-            raise ValueError("review notices require diagnostics and an action")
+        if (
+            type(self.classification) is not NoticeClass
+            or type(self.affected_proposal) is not ProposalId
+        ):
+            raise ValueError("review notices require exact classification and proposal types")
+        _validate_code_tuple(self.diagnostic_codes, "review notice diagnostics")
+        _validate_text(self.required_action, "review notice action", 256)
 
 
 @dataclass(frozen=True)
@@ -49,12 +74,51 @@ class ReviewCase:
     destructive: bool = False
 
     def __post_init__(self) -> None:
-        if not self.proposal_set_version or not self.proposals:
-            raise ValueError("review cases require a proposal-set version and proposals")
+        if (
+            type(self.id) is not ReviewCaseId
+            or type(self.target) is not TargetId
+            or type(self.snapshot) is not SnapshotId
+            or type(self.fingerprint) is not Fingerprint
+            or type(self.state) is not ReviewCaseState
+            or type(self.disposition) is not Disposition
+            or type(self.destructive) is not bool
+        ):
+            raise ValueError("review cases require exact authority-bearing domain types")
+        if (
+            type(self.target.adapter) is not AdapterId
+            or type(self.target.connection) is not ConnectionId
+            or type(self.target.library) is not LibraryId
+            or type(self.target.external_item) is not ExternalItemId
+            or type(self.fingerprint.schema) is not SchemaVersion
+        ):
+            raise ValueError("review cases require fully typed target and fingerprint components")
+        _validate_text(self.proposal_set_version, "proposal-set version", 64)
+        if (
+            type(self.proposals) is not tuple
+            or not self.proposals
+            or any(type(item) is not ProposalId for item in self.proposals)
+        ):
+            raise ValueError("review case proposals must be a non-empty immutable typed tuple")
+        if type(self.notices) is not tuple or any(
+            type(item) is not ReviewNotice for item in self.notices
+        ):
+            raise ValueError("review case notices must be an immutable typed tuple")
         if len(self.proposals) != len(set(self.proposals)):
             raise ValueError("review cases cannot repeat proposals")
+        if any(notice.affected_proposal not in self.proposals for notice in self.notices):
+            raise ValueError("review notices must affect a proposal in their review case")
         if self.destructive:
             raise ValueError("destructive work belongs to a separate review flow")
+        if self.disposition is Disposition.AUTO_APPLY and any(
+            notice.classification in {NoticeClass.BLOCKING, NoticeClass.NEEDS_ATTENTION}
+            for notice in self.notices
+        ):
+            raise ValueError("automatic cases cannot retain unresolved review notices")
+        if self.state is ReviewCaseState.HUMAN_RESOLVED and any(
+            notice.classification in {NoticeClass.BLOCKING, NoticeClass.NEEDS_ATTENTION}
+            for notice in self.notices
+        ):
+            raise ValueError("human-resolved cases cannot retain unresolved review notices")
 
 
 @dataclass(frozen=True)
@@ -82,10 +146,22 @@ class HumanDecision:
     actor: str
 
     def __post_init__(self) -> None:
-        if self.case.disposition is not Disposition.NEEDS_REVIEW or self.case.state is not ReviewCaseState.HUMAN_RESOLVED:
+        if (
+            type(self.id) is not DecisionId
+            or type(self.case) is not ReviewCase
+            or type(self.action) is not HumanDecisionAction
+        ):
+            raise ValueError("human decisions require exact authority-bearing domain types")
+        if type(self.selected_proposals) is not tuple or any(
+            type(item) is not ProposalId for item in self.selected_proposals
+        ):
+            raise ValueError("selected proposals must be an immutable typed tuple")
+        if (
+            self.case.disposition is not Disposition.NEEDS_REVIEW
+            or self.case.state is not ReviewCaseState.HUMAN_RESOLVED
+        ):
             raise ValueError("human decisions require a resolved needs-review case")
-        if not self.actor.strip():
-            raise ValueError("human decisions require an actor")
+        _validate_text(self.actor, "human decision actor", 128)
         if self.action is HumanDecisionAction.ACCEPT_SELECTED:
             if not self.selected_proposals:
                 raise ValueError("accepting a decision requires selected proposals")
@@ -100,27 +176,63 @@ class HumanDecision:
         return self.applicability_for(case) is HumanDecisionApplicability.CURRENT
 
     def applicability_for(self, case: ReviewCase) -> HumanDecisionApplicability:
+        if type(case) is not ReviewCase:
+            raise ValueError("decision applicability requires an exact review case")
         if self.case.id != case.id:
             return HumanDecisionApplicability.SUPERSEDED
-        if (
-            self.case.target != case.target
-            or self.case.fingerprint != case.fingerprint
-            or self.case.proposal_set_version != case.proposal_set_version
-            or self.case.proposals != case.proposals
-        ):
+        if self.case != case:
             return HumanDecisionApplicability.STALE
-        if case.state is not ReviewCaseState.HUMAN_RESOLVED or case.disposition is not Disposition.NEEDS_REVIEW:
+        if (
+            case.state is not ReviewCaseState.HUMAN_RESOLVED
+            or case.disposition is not Disposition.NEEDS_REVIEW
+        ):
             return HumanDecisionApplicability.REJECTED
+        if self.action is HumanDecisionAction.ACCEPT_SELECTED and not set(
+            self.selected_proposals
+        ).issubset(case.proposals):
+            return HumanDecisionApplicability.STALE
         return HumanDecisionApplicability.CURRENT
+
+
+@dataclass(frozen=True)
+class AutomaticPolicyQualification:
+    case: ReviewCase
+    policy_version: PolicyVersion
+    rule_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.case) is not ReviewCase or type(self.policy_version) is not PolicyVersion:
+            raise ValueError("automatic qualification requires exact case and policy types")
+        _validate_code_tuple(self.rule_codes, "automatic policy rule codes")
+        if tuple(sorted(self.rule_codes)) != self.rule_codes:
+            raise ValueError("automatic policy rule codes must be deterministically sorted")
+        if (
+            self.case.disposition is not Disposition.AUTO_APPLY
+            or self.case.state is not ReviewCaseState.AUTO_RESOLVED
+        ):
+            raise ValueError("automatic qualification requires an auto-resolved case")
+        if self.case.destructive:
+            raise ValueError("destructive work cannot be automatically qualified")
+
 
 @dataclass(frozen=True)
 class DecisionAuthorization:
     id: DecisionAuthorizationId
     case: ReviewCase
     human_decision: HumanDecision | None = None
+    automatic_qualification: AutomaticPolicyQualification | None = None
 
     def __post_init__(self) -> None:
-        result = self.applicability_for(self.case)
+        if type(self.id) is not DecisionAuthorizationId or type(self.case) is not ReviewCase:
+            raise ValueError("decision authorizations require exact authority-bearing types")
+        if self.human_decision is not None and type(self.human_decision) is not HumanDecision:
+            raise ValueError("decision authorization human evidence has an invalid type")
+        if (
+            self.automatic_qualification is not None
+            and type(self.automatic_qualification) is not AutomaticPolicyQualification
+        ):
+            raise ValueError("decision authorization policy evidence has an invalid type")
+        result = self.applicability_for(self.case, self.automatic_qualification)
         if result.state is not AuthorizationState.AUTHORIZED:
             raise ValueError(result.reason)
 
@@ -128,23 +240,35 @@ class DecisionAuthorization:
     def selected_proposals(self) -> tuple[ProposalId, ...]:
         return () if self.human_decision is None else self.human_decision.selected_proposals
 
-    def applicability_for(self, current_case: ReviewCase) -> AuthorizationResult:
+    def applicability_for(
+        self,
+        current_case: ReviewCase,
+        current_automatic_qualification: AutomaticPolicyQualification | None = None,
+    ) -> AuthorizationResult:
+        if type(current_case) is not ReviewCase:
+            raise ValueError("authorization applicability requires an exact review case")
         if current_case.id != self.case.id:
             return AuthorizationResult.superseded("review case was replaced")
-        if current_case.target != self.case.target:
-            return AuthorizationResult.stale("review target changed")
-        if current_case.fingerprint != self.case.fingerprint:
-            return AuthorizationResult.stale("review fingerprint changed")
-        if current_case.proposal_set_version != self.case.proposal_set_version:
-            return AuthorizationResult.stale("review proposal set changed")
+        if current_case != self.case:
+            return AuthorizationResult.stale("review case evidence changed")
         if self.case.destructive:
             return AuthorizationResult.rejected("destructive work has no automatic authorization path")
         if self.case.disposition is Disposition.AUTO_APPLY:
             if self.human_decision is not None:
                 return AuthorizationResult.rejected("automatic authorization cannot carry a human decision")
+            if self.automatic_qualification is None:
+                return AuthorizationResult.rejected("automatic authorization requires policy qualification")
+            if (
+                type(current_automatic_qualification) is not AutomaticPolicyQualification
+                or current_automatic_qualification != self.automatic_qualification
+                or current_automatic_qualification.case != current_case
+            ):
+                return AuthorizationResult.stale("automatic policy qualification is no longer current")
             if current_case.state is not ReviewCaseState.AUTO_RESOLVED:
                 return AuthorizationResult.stale("automatic disposition is no longer resolved")
             return AuthorizationResult.authorized(AuthorizationEvent.AUTOMATIC_POLICY)
+        if self.automatic_qualification is not None:
+            return AuthorizationResult.rejected("human authorization cannot carry automatic policy evidence")
         if self.case.disposition is not Disposition.NEEDS_REVIEW or self.human_decision is None:
             return AuthorizationResult.rejected("authorization requires an applicable disposition")
         if not self.human_decision.is_current_for(current_case):
@@ -160,3 +284,23 @@ def supersedes(previous: ReviewCase, replacement: ReviewCase) -> bool:
     if previous.state not in {ReviewCaseState.OPEN, ReviewCaseState.NEEDS_REVIEW}:
         return False
     return previous.fingerprint != replacement.fingerprint or previous.proposal_set_version != replacement.proposal_set_version
+
+
+def _validate_text(value: object, label: str, maximum: int) -> None:
+    if (
+        type(value) is not str
+        or not value
+        or value.strip() != value
+        or len(value) > maximum
+        or not value.isprintable()
+    ):
+        raise ValueError(f"{label} must be bounded trimmed printable text")
+
+
+def _validate_code_tuple(value: object, label: str) -> None:
+    if type(value) is not tuple or not value or len(value) > 16:
+        raise ValueError(f"{label} must be a non-empty immutable bounded tuple")
+    for code in value:
+        _validate_text(code, label, 64)
+    if len(value) != len(set(value)):
+        raise ValueError(f"{label} cannot contain duplicates")

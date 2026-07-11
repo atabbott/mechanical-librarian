@@ -130,10 +130,13 @@ The product represents these facts separately:
 5. Apply-plan authorization and readiness.
 6. Apply, verification, and rollback outcomes.
 
-AI approval is never itself production authority. A qualified deterministic
-policy may authorize an `auto_apply` disposition without a human decision. A
-`needs_review` case requires an applicable human decision before an apply plan
-can be built. Destructive work always requires typed explicit authorization.
+AI approval is never itself production authority. An `auto_apply` disposition
+requires a separate immutable automatic-policy qualification bound to the exact
+review case, policy version, and deterministic rule codes; disposition alone is
+never authority. A qualified deterministic policy may authorize without a human
+decision. A `needs_review` case requires an applicable human decision before an
+apply plan can be built. Destructive work always requires typed explicit
+authorization.
 
 Human actions are explicit and field-aware:
 
