@@ -30,6 +30,18 @@ class AuditRepositoryTests(unittest.TestCase):
             self.assertEqual(result.outcome, AuditQueryOutcome.OK)
             self.assertEqual(result.events, (event("event-two", "2026-07-11T10:00:00Z"),))
 
+    def test_recent_orders_fractional_timestamps_after_exact_second(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            repository = SQLiteAuditRepository(connection)
+            exact = event("event-one", "2026-07-10T10:00:00Z")
+            fractional = event("event-two", "2026-07-10T10:00:00.500000Z")
+            repository.append(exact)
+            repository.append(fractional)
+            self.assertEqual(repository.recent(2).events, (fractional, exact))
+
     def test_invalid_and_hostile_values_are_rejected_at_boundary(self) -> None:
         with self.assertRaises(ValueError):
             SafeAuditSummary("https://private.example/token")

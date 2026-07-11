@@ -56,7 +56,7 @@ class AuditEvent:
 
     @property
     def storage_row(self) -> tuple[str, str, str, str]:
-        timestamp = self.created_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        timestamp = self.created_at.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
         return str(self.id), str(self.kind), timestamp, str(self.summary)
 
     @classmethod
