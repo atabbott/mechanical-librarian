@@ -27,8 +27,12 @@ the join provenance for every authoritative row. If the current snapshot,
 required field state, candidate, or relevant evidence cannot be joined exactly,
 assembly fails before reviewer invocation. Raw service rows, database records,
 and unbounded source payloads never substitute for the normalized snapshot.
-Missing, duplicate, cross-target, stale, or required-context-truncated joins are
-typed assembly failures, not reviewer inputs.
+Policy-qualified cross-target evidence is permitted only when its consuming
+target matches the packet target and its provenance records an explicit
+cross-target relationship plus an immutable policy version and qualifying rule.
+Missing, duplicate, unauthorized or target-incompatible cross-target, stale,
+or required-context-truncated joins are typed assembly failures, not reviewer
+inputs.
 
 Operator intent can describe a run-local review emphasis within the already
 authorized target and proposal scope. It cannot introduce candidates, widen
