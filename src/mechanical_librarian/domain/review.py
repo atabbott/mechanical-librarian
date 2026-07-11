@@ -125,7 +125,7 @@ class DecisionAuthorization:
 
     def applicability_for(self, current_case: ReviewCase) -> AuthorizationResult:
         if current_case.id != self.case.id:
-            return AuthorizationResult.stale("review case changed")
+            return AuthorizationResult.superseded("review case was replaced")
         if current_case.target != self.case.target:
             return AuthorizationResult.stale("review target changed")
         if current_case.fingerprint != self.case.fingerprint:

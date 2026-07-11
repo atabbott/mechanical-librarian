@@ -4,6 +4,7 @@ import unittest
 
 from mechanical_librarian.domain.lifecycle import (
     ApplyPlanState,
+    AuthorizationEvent,
     AuthorizationResult,
     CircuitBreakerState,
     Disposition,
@@ -52,6 +53,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(result.retryable)
         self.assertFalse(result.terminal)
         self.assertEqual(result.state.value, "operational_failure")
+
+    def test_only_replays_are_marked_idempotent(self) -> None:
+        self.assertFalse(AuthorizationResult.authorized(event=AuthorizationEvent.HUMAN_DECISION).idempotent_replay)
+        self.assertTrue(AuthorizationResult.authorized().idempotent_replay)
 
 
 if __name__ == "__main__":

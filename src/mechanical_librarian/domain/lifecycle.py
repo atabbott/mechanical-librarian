@@ -107,7 +107,14 @@ class AuthorizationResult:
 
     @classmethod
     def authorized(cls, event: AuthorizationEvent = AuthorizationEvent.IDEMPOTENT_REPLAY) -> "AuthorizationResult":
-        return cls(AuthorizationState.AUTHORIZED, event, "authorization is current", False, False, True)
+        return cls(
+            AuthorizationState.AUTHORIZED,
+            event,
+            "authorization is current",
+            False,
+            False,
+            event is AuthorizationEvent.IDEMPOTENT_REPLAY,
+        )
 
     @classmethod
     def rejected(cls, reason: str) -> "AuthorizationResult":
@@ -116,6 +123,10 @@ class AuthorizationResult:
     @classmethod
     def stale(cls, reason: str) -> "AuthorizationResult":
         return cls(AuthorizationState.STALE, AuthorizationEvent.STALE_INPUT, reason, False, True, False)
+
+    @classmethod
+    def superseded(cls, reason: str) -> "AuthorizationResult":
+        return cls(AuthorizationState.SUPERSEDED, AuthorizationEvent.STALE_INPUT, reason, False, True, False)
 
     @classmethod
     def operational_failure(cls, reason: str) -> "AuthorizationResult":
