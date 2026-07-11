@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- Configuration import plans now validate both inputs identically and report a
+  deterministic, value-free impact matrix for connection, evidence, provider,
+  reviewer, policy, notification, and backup changes.
 - Inventory records now reject cross-adapter, connection, library, target,
   snapshot, media, lifecycle, and capability combinations, and snapshots use a
   versioned deterministic canonical state for fingerprints and equality.
