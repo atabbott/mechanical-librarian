@@ -125,6 +125,453 @@ class SqliteFoundationTests(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall(), [(1,), (2,)])
             self.assertIn("source", {row[1] for row in connection.execute("PRAGMA table_info(instance_metadata)")})
 
+    def test_migration_can_declare_and_validate_an_index(self) -> None:
+        index = Migration(
+            2,
+            ("CREATE INDEX IF NOT EXISTS audit_events_by_created_at ON audit_events(created_at)",),
+            frozenset(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            self.assertEqual(migrate(connection), 1)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index)):
+                self.assertEqual(migrate(connection), 2)
+                self.assertEqual(migrate(connection), 2)
+                self.assertIsNotNone(connection.execute("SELECT name FROM sqlite_master WHERE name = 'audit_events_by_created_at'").fetchone())
+
+    def test_tampered_index_definition_fails_closed(self) -> None:
+        index = Migration(2, ("CREATE UNIQUE INDEX audit_events_by_created_at ON audit_events(created_at)",), frozenset())
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index)):
+                migrate(connection)
+                connection.execute("DROP INDEX audit_events_by_created_at")
+                connection.execute("CREATE INDEX audit_events_by_created_at ON audit_events(id)")
+                with self.assertRaisesRegex(SchemaError, "object definition"):
+                    migrate(connection)
+
+    def test_quoted_index_definition_fails_closed(self) -> None:
+        index = Migration(2, ('CREATE INDEX "audit-events-by-created-at" ON audit_events(created_at)',), frozenset())
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index)):
+                migrate(connection)
+                connection.execute('DROP INDEX "audit-events-by-created-at"')
+                connection.execute('CREATE INDEX "audit-events-by-created-at" ON audit_events(id)')
+                with self.assertRaisesRegex(SchemaError, "object definition"):
+                    migrate(connection)
+
+    def test_view_definition_preserves_if_not_exists_in_a_literal(self) -> None:
+        view = Migration(2, ("CREATE VIEW audit_label AS SELECT 'a if not exists b' AS label",), frozenset())
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, view)):
+                migrate(connection)
+                connection.execute("DROP VIEW audit_label")
+                connection.execute("CREATE VIEW audit_label AS SELECT 'a b' AS label")
+                with self.assertRaisesRegex(SchemaError, "object definition"):
+                    migrate(connection)
+
+    def test_schema_sql_normalisation_preserves_quoted_contents(self) -> None:
+        baseline = (
+            "CREATE VIEW quoted_values AS SELECT 'Alpha  Beta', 'it''s', "
+            "'-- literal', '/* literal */', "
+            '"Mixed -- Name", `Tick /* Name */`, [Bracket -- Name], X\'A0 B1\''
+        )
+        formatting_only = (
+            "create\n\tview   quoted_values as\tselect 'Alpha  Beta', 'it''s', "
+            "'-- literal', '/* literal */', "
+            '"Mixed -- Name", `Tick /* Name */`, [Bracket -- Name], x\'A0 B1\';'
+        )
+        self.assertEqual(
+            sqlite._normalise_schema_sql(baseline),
+            sqlite._normalise_schema_sql(formatting_only),
+        )
+        tampered_values = (
+            baseline.replace("Alpha  Beta", "alpha  beta"),
+            baseline.replace("Alpha  Beta", "Alpha Beta"),
+            baseline.replace("it''s", "IT''S"),
+            baseline.replace("Mixed -- Name", "mixed -- name"),
+            baseline.replace("Tick /* Name */", "Tick  /* Name */"),
+            baseline.replace("Bracket -- Name", "Bracket\t-- Name"),
+            baseline.replace("A0 B1", "a0 b1"),
+        )
+        for tampered in tampered_values:
+            with self.subTest(tampered=tampered):
+                self.assertNotEqual(
+                    sqlite._normalise_schema_sql(baseline),
+                    sqlite._normalise_schema_sql(tampered),
+                )
+
+    def test_literal_tampering_in_view_trigger_and_table_fails_closed(self) -> None:
+        cases = (
+            (
+                "view",
+                "CREATE VIEW literal_object AS SELECT 'Alpha  Beta' AS value",
+                "DROP VIEW literal_object",
+                "CREATE VIEW literal_object AS SELECT 'alpha  beta' AS value",
+            ),
+            (
+                "trigger",
+                "CREATE TRIGGER literal_object AFTER INSERT ON audit_events "
+                "BEGIN SELECT 'it''s  Safe'; END",
+                "DROP TRIGGER literal_object",
+                "CREATE TRIGGER literal_object AFTER INSERT ON audit_events "
+                "BEGIN SELECT 'it''''s  Safe'; END",
+            ),
+            (
+                "view with literal tab and newline",
+                "CREATE VIEW literal_object AS SELECT 'Alpha\tBeta\nGamma' AS value",
+                "DROP VIEW literal_object",
+                "CREATE VIEW literal_object AS SELECT 'Alpha Beta Gamma' AS value",
+            ),
+        )
+        for kind, declaration, drop, tampered in cases:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                connection = connect(Path(directory) / "state.sqlite")
+                self.addCleanup(connection.close)
+                migrate(connection)
+                extension = Migration(2, (declaration,), frozenset())
+                with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
+                    migrate(connection)
+                    connection.execute(drop)
+                    connection.execute(tampered)
+                    with self.assertRaisesRegex(SchemaError, "object definition"):
+                        migrate(connection)
+
+        table_migration = Migration(
+            1,
+            (
+                "CREATE TABLE schema_migrations "
+                "(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL)",
+                "CREATE TABLE literal_table "
+                "(value TEXT DEFAULT 'Alpha  Beta' CHECK(value != 'it''s'))",
+            ),
+            frozenset({"schema_migrations", "literal_table"}),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            with patch.object(sqlite, "MIGRATIONS", (table_migration,)):
+                migrate(connection)
+                connection.execute("DROP TABLE literal_table")
+                connection.execute(
+                    "CREATE TABLE literal_table "
+                    "(value TEXT DEFAULT 'Alpha Beta' CHECK(value != 'it''s'))"
+                )
+                with self.assertRaisesRegex(SchemaError, "definition"):
+                    migrate(connection)
+
+    def test_supported_non_table_objects_survive_restart_and_validate_exactly(self) -> None:
+        extension = Migration(
+            2,
+            (
+                "CREATE INDEX IF NOT EXISTS audit_events_by_kind ON audit_events(kind)",
+                "CREATE VIEW IF NOT EXISTS audit_kinds AS SELECT kind FROM audit_events",
+                "CREATE TRIGGER IF NOT EXISTS audit_inserted AFTER INSERT ON audit_events "
+                "BEGIN INSERT OR REPLACE INTO instance_metadata(key, value) "
+                "VALUES ('last audit action', 'inserted'); END",
+            ),
+            frozenset(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            connection = connect(path)
+            migrate(connection)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
+                self.assertEqual(migrate(connection), 2)
+                self.assertEqual(migrate(connection), 2)
+            connection.close()
+
+            reopened = connect(path)
+            self.addCleanup(reopened.close)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
+                self.assertEqual(migrate(reopened), 2)
+                objects = set(
+                    reopened.execute(
+                        "SELECT type, name FROM sqlite_master "
+                        "WHERE name IN ('audit_events_by_kind', 'audit_kinds', 'audit_inserted')"
+                    )
+                )
+                self.assertEqual(
+                    objects,
+                    {
+                        ("index", "audit_events_by_kind"),
+                        ("view", "audit_kinds"),
+                        ("trigger", "audit_inserted"),
+                    },
+                )
+
+    def test_temporary_and_schema_qualified_declarations_are_rejected_durably(self) -> None:
+        declarations = (
+            "CREATE TEMP VIEW transient_object AS SELECT 1",
+            "CREATE TEMPORARY TABLE transient_object(value TEXT)",
+            "CREATE INDEX temp.transient_object ON audit_events(kind)",
+            "CREATE VIEW main.transient_object AS SELECT 1",
+            "CREATE TRIGGER other.transient_object AFTER INSERT ON audit_events BEGIN SELECT 1; END",
+        )
+        for declaration in declarations:
+            with self.subTest(declaration=declaration), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "state.sqlite"
+                connection = connect(path)
+                migrate(connection)
+                extension = Migration(2, (declaration,), frozenset())
+                with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
+                    with self.assertRaisesRegex(SchemaError, "temporary|schema-qualified"):
+                        migrate(connection)
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    ).fetchall(),
+                    [(1,)],
+                )
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT 1 FROM sqlite_temp_master WHERE name = 'transient_object'"
+                    ).fetchone()
+                )
+                connection.close()
+
+                reopened = connect(path)
+                self.addCleanup(reopened.close)
+                self.assertIsNone(
+                    reopened.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name = 'transient_object'"
+                    ).fetchone()
+                )
+                self.assertIsNone(
+                    reopened.execute(
+                        "SELECT 1 FROM sqlite_temp_master WHERE name = 'transient_object'"
+                    ).fetchone()
+                )
+                self.assertEqual(
+                    reopened.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    ).fetchall(),
+                    [(1,)],
+                )
+
+    def test_comment_obscured_temporary_declarations_are_rejected_durably(self) -> None:
+        declarations = (
+            "CREATE /* comment */ TEMP VIEW transient_object AS SELECT 1",
+            "CREATE -- comment\n TEMPORARY TABLE transient_object(value TEXT)",
+            "CREATE VIEW temp /* comment */ . transient_object AS SELECT 1",
+            "CREATE TRIGGER temp -- comment\n . transient_object "
+            "AFTER INSERT ON audit_events BEGIN SELECT 1; END",
+        )
+        for declaration in declarations:
+            with self.subTest(declaration=declaration), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "state.sqlite"
+                connection = connect(path)
+                migrate(connection)
+                extension = Migration(2, (declaration,), frozenset())
+                with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
+                    with self.assertRaisesRegex(SchemaError, "comments"):
+                        migrate(connection)
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    ).fetchall(),
+                    [(1,)],
+                )
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT 1 FROM sqlite_temp_master WHERE name = 'transient_object'"
+                    ).fetchone()
+                )
+                connection.close()
+
+                reopened = connect(path)
+                self.addCleanup(reopened.close)
+                self.assertIsNone(
+                    reopened.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name = 'transient_object'"
+                    ).fetchone()
+                )
+                self.assertIsNone(
+                    reopened.execute(
+                        "SELECT 1 FROM sqlite_temp_master WHERE name = 'transient_object'"
+                    ).fetchone()
+                )
+                self.assertEqual(
+                    reopened.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    ).fetchall(),
+                    [(1,)],
+                )
+
+    def test_sql_comments_outside_quotes_are_rejected_durably(self) -> None:
+        declarations = (
+            "CREATE/**/TABLE comment_object(value TEXT)",
+            "CREATE -- comment\n TABLE comment_object(value TEXT)",
+            "CREATE VIEW comment_object AS /* comment */ SELECT 1",
+            "CREATE TRIGGER comment_object /* comment */ "
+            "AFTER INSERT ON audit_events BEGIN SELECT 1; END",
+        )
+        for declaration in declarations:
+            with self.subTest(declaration=declaration), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "state.sqlite"
+                connection = connect(path)
+                migrate(connection)
+                extension = Migration(2, (declaration,), frozenset())
+                with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
+                    with self.assertRaisesRegex(SchemaError, "comments"):
+                        migrate(connection)
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    ).fetchall(),
+                    [(1,)],
+                )
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name = 'comment_object'"
+                    ).fetchone()
+                )
+                connection.close()
+
+                reopened = connect(path)
+                self.addCleanup(reopened.close)
+                self.assertEqual(migrate(reopened), 1)
+                self.assertIsNone(
+                    reopened.execute(
+                        "SELECT 1 FROM sqlite_master WHERE name = 'comment_object'"
+                    ).fetchone()
+                )
+
+    def test_comment_markers_inside_quoted_content_are_allowed(self) -> None:
+        extension = Migration(
+            2,
+            (
+                "CREATE VIEW quoted_comment_markers AS SELECT "
+                "'-- literal' AS line_value, '/* literal */' AS block_value, "
+                '1 AS "-- identifier", 2 AS `/* identifier */`, 3 AS [-- bracket]',
+            ),
+            frozenset(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            connection = connect(path)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
+                self.assertEqual(migrate(connection), 2)
+                self.assertEqual(migrate(connection), 2)
+            connection.close()
+
+            reopened = connect(path)
+            self.addCleanup(reopened.close)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
+                self.assertEqual(migrate(reopened), 2)
+
+    def test_attached_schema_declaration_cannot_be_recorded(self) -> None:
+        extension = Migration(
+            2,
+            ("CREATE VIEW auxiliary /* comment */ . external_object AS SELECT 1",),
+            frozenset(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            connection = connect(path / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            connection.execute(
+                "ATTACH DATABASE ? AS auxiliary",
+                (str(path / "auxiliary.sqlite"),),
+            )
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
+                with self.assertRaisesRegex(SchemaError, "attached schema"):
+                    migrate(connection)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall(),
+                [(1,)],
+            )
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT 1 FROM auxiliary.sqlite_master WHERE name = 'external_object'"
+                ).fetchone()
+            )
+            connection.execute("DETACH DATABASE auxiliary")
+            connection.close()
+
+            reopened = connect(path / "state.sqlite")
+            self.addCleanup(reopened.close)
+            self.assertEqual(migrate(reopened), 1)
+            self.assertEqual(
+                reopened.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall(),
+                [(1,)],
+            )
+
+    def test_preexisting_temporary_object_is_rejected_independently_of_sql_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            connection.execute("CREATE TEMP VIEW external_temp_object AS SELECT 1")
+            with self.assertRaisesRegex(SchemaError, "temporary object"):
+                migrate(connection)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall(),
+                [(1,)],
+            )
+            connection.execute("DROP VIEW external_temp_object")
+            self.assertEqual(migrate(connection), 1)
+
+    def test_failure_after_non_table_ddl_rolls_back_objects_and_checksum(self) -> None:
+        failed = Migration(
+            2,
+            (
+                "CREATE INDEX rollback_index ON audit_events(kind)",
+                "CREATE VIEW rollback_view AS SELECT kind FROM audit_events",
+                "CREATE TRIGGER rollback_trigger AFTER INSERT ON audit_events BEGIN SELECT 1; END",
+                "CREATE TABLE",
+            ),
+            frozenset(),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, failed)):
+                with self.assertRaisesRegex(SchemaError, "rolled back"):
+                    migrate(connection)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall(),
+                [(1,)],
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE name IN ('rollback_index', 'rollback_view', 'rollback_trigger')"
+                ).fetchall(),
+                [],
+            )
+
+    def test_migration_can_drop_a_previously_declared_index(self) -> None:
+        index = Migration(2, ("CREATE INDEX audit_events_by_created_at ON audit_events(created_at)",), frozenset())
+        remove_index = Migration(3, ("DROP INDEX IF EXISTS audit_events_by_created_at",), frozenset())
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index, remove_index)):
+                self.assertEqual(migrate(connection), 3)
+                self.assertEqual(migrate(connection), 3)
+                self.assertIsNone(connection.execute("SELECT name FROM sqlite_master WHERE name = 'audit_events_by_created_at'").fetchone())
+
     def test_partial_schema_is_rejected_without_modification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
