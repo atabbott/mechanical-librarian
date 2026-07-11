@@ -177,6 +177,12 @@ readiness, and planned changes by adapter. Automatic history is available
 through separate filters and sampling views rather than mixed into the active
 queue.
 
+Evidence readiness counts unique evidence records and target scopes. It
+preserves current, missing, stale, unsupported, and policy-approved-skip states
+rather than collapsing them into one boolean. Approved skip records the exact
+policy version and rule. The projection carries evidence references only; facts
+remain in bounded evidence detail and reviewer-packet schemas.
+
 ## Bulk decisions
 
 Bulk review is an optimization for a bounded unresolved queue, not an

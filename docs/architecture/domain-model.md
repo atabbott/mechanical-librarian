@@ -61,6 +61,49 @@ an optional artifact reference. Evidence does not contain an approval decision.
 Read-only media-health observations may use the same immutable storage pattern,
 but cannot imply that metadata is absent or create a review case by themselves.
 
+All evidence inputs are immutable and bounded before persistence, logging,
+reviewer staging, or API projection:
+
+| Value | Maximum |
+| --- | ---: |
+| controlled code | 64 characters |
+| short source, lineage, correlation, or action text | 256 characters |
+| one normalized field value | 4,096 characters |
+| one confidence-fact value | 1,024 characters |
+| ordinary excerpt | 280 characters |
+| values in one field | 32 |
+| facts in one evidence record | 64 |
+| warnings in one evidence record | 32 |
+| evidence references on one value | 64 |
+| risks on one proposal | 32 |
+| notices on one review case | 32 |
+| records in one reviewer/readiness projection | 32 |
+| one serialized evidence projection | 524,288 UTF-8 bytes |
+
+Text rejects blank or untrimmed values, control characters, line and bidi
+controls, noncharacters, and unpaired surrogates. Collections use exact
+immutable tuple types and reject duplicates. Ordinary excerpts additionally
+reject path-shaped content.
+
+`evidence-persistence-v1`, `reviewer-evidence-v1`, `evidence-api-v1`, and
+`evidence-readiness-v1` are distinct strict serialization boundaries. Unknown,
+missing, non-canonical, incompatible, malformed, or oversized data fails
+closed. Persistence retains the bounded authoritative record. Reviewer and API
+details include only controlled projection-safe fact classes and omit lineage,
+artifact locations, raw payloads, and target external IDs from diagnostics.
+
+Evidence citations use target-scoped `EvidenceReference` values. Cross-target
+use requires both an explicit relationship and an immutable policy version and
+rule. Proposals, risks, notices, review cases, decisions through their case,
+readiness, and future apply provenance retain references rather than copied
+facts.
+
+`EvidenceReadiness` is a compact projection, not workflow orchestration. It
+preserves `current`, `missing`, `stale`, `unsupported`, and `approved_skip`
+facts while counting unique evidence IDs and target scopes. Approved skip
+requires versioned policy evidence; missing and unsupported states cannot
+invent evidence.
+
 ### Candidate
 
 Normalized provider or derived proposal source. A candidate may support several

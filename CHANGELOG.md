@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- Evidence values, references, readiness, and persistence/reviewer/API
+  projections now enforce deterministic size, privacy, target-scope, and
+  versioned cross-target policy bounds before untrusted data crosses a boundary.
 - Ready pull requests now pass the linked-work gate only with GitHub-recognized
   closing references to open issues in this repository.
 - Configuration import plans now validate both inputs identically and report a

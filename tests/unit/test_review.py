@@ -3,8 +3,14 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 
-from mechanical_librarian.domain.evidence import Disposition
-from mechanical_librarian.domain.identifiers import AdapterId, ConnectionId, DecisionAuthorizationId, DecisionId, ExternalItemId, Fingerprint, LibraryId, PolicyVersion, ProposalId, ReviewCaseId, SchemaVersion, SnapshotId, TargetId
+from mechanical_librarian.domain.evidence import (
+    CrossTargetPolicyDecision,
+    Disposition,
+    EvidenceReference,
+    EvidenceRelationship,
+)
+from mechanical_librarian.domain.evidence_bounds import MAX_NOTICES
+from mechanical_librarian.domain.identifiers import AdapterId, ConnectionId, DecisionAuthorizationId, DecisionId, EvidenceId, ExternalItemId, Fingerprint, LibraryId, PolicyVersion, ProposalId, ReviewCaseId, SchemaVersion, SnapshotId, TargetId
 from mechanical_librarian.domain.lifecycle import ReviewCaseState
 from mechanical_librarian.domain.review import AutomaticPolicyQualification, DecisionAuthorization, HumanDecision, HumanDecisionAction, NoticeClass, ReviewCase, ReviewGroup, ReviewNotice, supersedes
 
@@ -22,6 +28,75 @@ class ReviewCaseTests(unittest.TestCase):
     def test_group_only_holds_sibling_case_ids(self) -> None:
         group = ReviewGroup("Example", "identifier", "high", (ReviewCaseId("case-one"), ReviewCaseId("case-two")))
         self.assertEqual(group.sibling_case_ids, (ReviewCaseId("case-one"), ReviewCaseId("case-two")))
+
+    def test_case_and_decisions_retain_target_checked_evidence_references(self) -> None:
+        reference = EvidenceReference(
+            EvidenceId("evidence-one"),
+            self.target,
+            self.target,
+            EvidenceRelationship.SAME_TARGET,
+        )
+        case = ReviewCase(
+            ReviewCaseId("case-one"),
+            self.target,
+            SnapshotId("snapshot-one"),
+            self.fingerprint,
+            "set-v1",
+            (ProposalId("proposal-one"),),
+            ReviewCaseState.HUMAN_RESOLVED,
+            Disposition.NEEDS_REVIEW,
+            evidence=(reference,),
+        )
+        decision = HumanDecision(
+            DecisionId("decision-one"),
+            case,
+            HumanDecisionAction.KEEP_CURRENT,
+            (),
+            "operator",
+        )
+        self.assertEqual(decision.case.evidence, (reference,))
+        other_target = TargetId(
+            AdapterId("abs"),
+            ConnectionId("secondary"),
+            LibraryId("books"),
+            ExternalItemId("book-1"),
+        )
+        with self.assertRaises(ValueError):
+            replace(case, evidence=(replace(reference, consuming_target=other_target),))
+        duplicate_id = EvidenceReference(
+            reference.evidence,
+            other_target,
+            self.target,
+            EvidenceRelationship.EXPLICIT_CROSS_TARGET,
+            CrossTargetPolicyDecision(PolicyVersion("policy-v1"), "same-work"),
+        )
+        with self.assertRaises(ValueError):
+            replace(case, evidence=(reference, duplicate_id))
+
+    def test_review_case_notice_limit_accepts_exact_maximum(self) -> None:
+        notices = tuple(
+            ReviewNotice(
+                NoticeClass.RESOLVED,
+                ProposalId("proposal-one"),
+                (f"resolved-{index}",),
+                "No action",
+            )
+            for index in range(MAX_NOTICES)
+        )
+        case = ReviewCase(
+            ReviewCaseId("case-one"),
+            self.target,
+            SnapshotId("snapshot-one"),
+            self.fingerprint,
+            "set-v1",
+            (ProposalId("proposal-one"),),
+            ReviewCaseState.OPEN,
+            Disposition.NEEDS_REVIEW,
+            notices=notices,
+        )
+        self.assertEqual(len(case.notices), MAX_NOTICES)
+        with self.assertRaises(ValueError):
+            replace(case, notices=notices + (notices[0],))
 
     def test_ordinary_case_rejects_destructive_work(self) -> None:
         with self.assertRaises(ValueError):

@@ -88,6 +88,13 @@ identifier scopes must not change silently. A future migration must retain the
 source representation and record the exact compatibility path before replacing
 or interpreting a durable value.
 
+Evidence persistence, reviewer packet, review API, and readiness projections
+use independent v1 schema markers. Their allowlisted fields, ordering, text and
+collection limits, target scope, cross-target policy evidence, and privacy
+classification are compatibility semantics. Changing one requires a new schema
+version and a documented reader or migration path; a schema from one boundary
+is never accepted by another.
+
 ### Canonical inventory snapshot v1
 
 `snapshot-v1` is the first durable canonical input for inventory fingerprints
