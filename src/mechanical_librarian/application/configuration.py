@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Callable
 
-from mechanical_librarian.domain.identifiers import SchemaVersion
+from mechanical_librarian.domain.identifiers import (
+    DomainValueError,
+    PolicyVersion,
+    SchemaVersion,
+)
 from mechanical_librarian.domain.inventory import SecretReference, ServiceEndpoint
 
 
@@ -154,17 +158,12 @@ class PolicyConfiguration:
     policy_version: str = "policy-v1"
 
     def __post_init__(self) -> None:
-        if (
-            type(self.policy_version) is not str
-            or not self.policy_version
-            or self.policy_version.strip() != self.policy_version
-            or len(self.policy_version) > 64
-            or any(
-                ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
-                for character in self.policy_version
-            )
-        ):
+        if type(self.policy_version) is not str:
             raise ConfigurationError("policy version is malformed")
+        try:
+            PolicyVersion(self.policy_version)
+        except DomainValueError:
+            raise ConfigurationError("policy version is malformed") from None
 
 
 @dataclass(frozen=True, repr=False)

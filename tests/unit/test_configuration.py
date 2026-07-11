@@ -10,6 +10,7 @@ from mechanical_librarian.application.configuration import (
     ConfigurationChange,
     ConfigurationError,
     MediaMountConfiguration,
+    PolicyConfiguration,
     ResourceLimits,
     load_configuration,
     plan_import,
@@ -240,6 +241,44 @@ class ConfigurationTests(unittest.TestCase):
 
         with self.assertRaises(ConfigurationError):
             plan_import(load_configuration(self.source), self.source)
+
+    def test_policy_versions_use_the_domain_version_contract_everywhere(self) -> None:
+        for valid in ("policy-v1", "policy-v2"):
+            with self.subTest(valid=valid):
+                source = self.proposed()
+                source["policy"]["policy_version"] = valid
+                self.assertEqual(load_configuration(source).policy.policy_version, valid)
+
+        invalid_versions = ("Policy-v1", "policy v1", "policy/v1")
+        for invalid_version in invalid_versions:
+            with self.subTest(invalid_version=invalid_version, boundary="constructor"):
+                with self.assertRaises(ConfigurationError) as raised:
+                    PolicyConfiguration(invalid_version)
+                self.assertNotIn(invalid_version, repr(raised.exception))
+                self.assertIsNone(raised.exception.__cause__)
+
+            invalid = self.proposed()
+            invalid["policy"]["policy_version"] = invalid_version
+            with self.subTest(invalid_version=invalid_version, boundary="load"):
+                with self.assertRaises(ConfigurationError) as raised:
+                    load_configuration(invalid)
+                self.assertNotIn(invalid_version, repr(raised.exception))
+                self.assertIsNone(raised.exception.__cause__)
+
+            for current, proposed in ((invalid, self.source), (self.source, invalid)):
+                boundary = "current" if current is invalid else "proposed"
+                with self.subTest(invalid_version=invalid_version, boundary=boundary):
+                    with self.assertRaises(ConfigurationError) as raised:
+                        plan_import(current, proposed)
+                    self.assertNotIn(invalid_version, repr(raised.exception))
+                    self.assertIsNone(raised.exception.__cause__)
+
+        proposed = self.proposed()
+        proposed["policy"]["policy_version"] = "policy-v2"
+        self.assertEqual(
+            plan_import(self.source, proposed).changes,
+            (ConfigurationChange("policy.policy_version", (R, V)),),
+        )
 
     def test_unknown_nested_fields_duplicates_and_unsafe_values_fail_closed(self) -> None:
         cases = []
