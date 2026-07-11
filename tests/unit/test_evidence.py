@@ -154,6 +154,113 @@ class EvidenceTypeTests(unittest.TestCase):
         with self.assertRaisesRegex(EvidenceValueError, "credential-shaped"):
             EvidenceRecord.from_persistence_json(_canonical(unsafe_persisted))
 
+    def test_persisted_fact_values_reject_dotted_and_colon_credential_labels(self) -> None:
+        credential_values = (
+            "client.secret=private-secret",
+            "client:secret=private-secret",
+            "aws.secret.access.key=private-key",
+            "access.token=private-token",
+            "refresh:token=private-token",
+        )
+        for value in credential_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(EvidenceValueError, "credential-shaped") as raised:
+                    ConfidenceFact("title", value)
+                self.assertNotIn(value, repr(raised.exception))
+
+        for value in (
+            "secret.title=ordinary",
+            "token.count=ordinary",
+            "authorization.status=ordinary",
+            "client.secretary=ordinary",
+        ):
+            with self.subTest(value=value):
+                fact = ConfidenceFact("title", value)
+                self.assertEqual(fact.value, value)
+                self.assertNotIn(value, repr(fact))
+
+        tampered = json.loads(
+            self._record(
+                facts=(ConfidenceFact("title", "ordinary-looking-value"),)
+            ).to_persistence_json()
+        )
+        tampered["facts"][0]["value"] = "aws.secret.access.key=private-key"
+        with self.assertRaisesRegex(EvidenceValueError, "credential-shaped") as raised:
+            EvidenceRecord.from_persistence_json(_canonical(tampered))
+        self.assertNotIn("private-key", repr(raised.exception))
+
+    def test_persisted_fact_codes_reject_credential_labels_without_near_misses(self) -> None:
+        credential_codes = (
+            "password",
+            "passwd",
+            "token",
+            "secret",
+            "authorization",
+            "api-key",
+            "api_key",
+            "api.key",
+            "apiKey",
+            "API_KEY",
+            "access-token",
+            "access_token",
+            "access.token",
+            "accessToken",
+            "access-key",
+            "refresh-token",
+            "refresh_token",
+            "refresh.token",
+            "refreshToken",
+            "client-secret",
+            "client_secret",
+            "client.secret",
+            "clientSecret",
+            "private-key",
+            "private_key",
+            "private.key",
+            "privateKey",
+            "secret-key",
+            "secret_access_key",
+            "access-key-id",
+            "Authorization",
+            "Secret",
+        )
+        for code in credential_codes:
+            with self.subTest(code=code):
+                with self.assertRaisesRegex(EvidenceValueError, "credential label") as raised:
+                    ConfidenceFact(code, "ordinary-looking-value")
+                self.assertNotIn(code, repr(raised.exception))
+                self.assertNotIn("ordinary-looking-value", repr(raised.exception))
+
+        for code in (
+            "token-count",
+            "tokenization",
+            "passwordless",
+            "password-strength",
+            "secretariat",
+            "secret-title",
+            "authorization-status",
+            "accessibility-key",
+            "key",
+        ):
+            with self.subTest(code=code):
+                fact = ConfidenceFact(code, "ordinary-looking-value")
+                self.assertEqual(fact.code, code)
+                self.assertNotIn("ordinary-looking-value", repr(fact))
+
+        tampered = json.loads(
+            self._record(
+                facts=(ConfidenceFact("title", "ordinary-looking-value"),)
+            ).to_persistence_json()
+        )
+        tampered["facts"][0]["code"] = "client_secret"
+        with self.assertRaisesRegex(EvidenceValueError, "credential label") as raised:
+            EvidenceRecord.from_persistence_json(_canonical(tampered))
+        self.assertNotIn("ordinary-looking-value", repr(raised.exception))
+
+        private_path = ConfidenceFact("path", "/private/library/book.epub")
+        persisted = json.loads(self._record(facts=(private_path,)).to_persistence_json())
+        self.assertEqual(persisted["facts"][0]["value"], private_path.value)
+
     def test_cross_target_references_require_versioned_policy(self) -> None:
         with self.assertRaises(EvidenceValueError):
             EvidenceReference(
@@ -497,6 +604,93 @@ class EvidenceTypeTests(unittest.TestCase):
             "_C:\\Users\\reader\\book.epub",
             "A\\\\server\\share\\book.epub",
             "_\\\\server\\share\\book.epub",
+        ):
+            with self.subTest(ordinary_value=ordinary_value):
+                detail = EvidenceDetail(
+                    self.reference,
+                    self.snapshot,
+                    self.snapshot_fingerprint,
+                    "epub",
+                    (ConfidenceFact("title", ordinary_value),),
+                    (),
+                )
+                self.assertEqual(
+                    json.loads(detail.to_api_json())["facts"][0]["value"],
+                    ordinary_value,
+                )
+
+    def test_home_paths_are_retained_only_outside_projection_safe_facts(self) -> None:
+        private_paths = (
+            "~/Library/Books/book.epub",
+            "~\\Library\\Books\\book.epub",
+            "prefix ~/Library/Books/book.epub",
+            "prefix ~\\Library\\Books\\book.epub",
+            "'~/Library/Books/book.epub'",
+            '"~\\Library\\Books\\book.epub"',
+            "<~/Library/Books/book.epub>",
+            "[~\\Library\\Books\\book.epub]",
+            "(~/Library/Books/book.epub)",
+        )
+        for private_path in private_paths:
+            with self.subTest(private_path=private_path, boundary="direct-detail"):
+                with self.assertRaisesRegex(EvidenceValueError, "production path"):
+                    EvidenceDetail(
+                        self.reference,
+                        self.snapshot,
+                        self.snapshot_fingerprint,
+                        "epub",
+                        (ConfidenceFact("title", private_path),),
+                        (),
+                    )
+
+            record = self._record(facts=(ConfidenceFact("title", private_path),))
+            persisted = json.loads(record.to_persistence_json())
+            self.assertEqual(persisted["facts"][0]["value"], private_path)
+            with self.subTest(private_path=private_path, boundary="record-projection"):
+                with self.assertRaisesRegex(EvidenceValueError, "production path"):
+                    EvidenceDetail.from_record(record)
+
+            with self.subTest(private_path=private_path, boundary="summary"):
+                with self.assertRaisesRegex(EvidenceValueError, "production path"):
+                    EvidenceSummary(
+                        EvidenceId("evidence-summary"), "epub", 1, 0, private_path
+                    )
+
+        retained_path = ConfidenceFact("path", private_paths[0])
+        public_title = ConfidenceFact("title", "Example")
+        authoritative_record = self._record(facts=(retained_path, public_title))
+        persisted_values = {
+            fact["value"]
+            for fact in json.loads(authoritative_record.to_persistence_json())["facts"]
+        }
+        self.assertIn(retained_path.value, persisted_values)
+        detail = EvidenceDetail.from_record(authoritative_record)
+        self.assertEqual(detail.facts, (public_title,))
+        api_values = {
+            fact["value"] for fact in json.loads(detail.to_api_json())["facts"]
+        }
+        self.assertNotIn(retained_path.value, api_values)
+        packet = ReviewerEvidencePacket(
+            self.target,
+            self.snapshot,
+            self.snapshot_fingerprint,
+            (detail,),
+        )
+        packet_values = {
+            fact["value"]
+            for packet_detail in json.loads(packet.to_json())["details"]
+            for fact in packet_detail["facts"]
+        }
+        self.assertNotIn(retained_path.value, packet_values)
+
+        for ordinary_value in (
+            "A~/Library/Books/book.epub",
+            "_~/Library/Books/book.epub",
+            "A~\\Library\\Books\\book.epub",
+            "_~\\Library\\Books\\book.epub",
+            "~",
+            "~approximation",
+            "'~ /approximation'",
         ):
             with self.subTest(ordinary_value=ordinary_value):
                 detail = EvidenceDetail(

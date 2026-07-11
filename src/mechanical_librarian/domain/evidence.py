@@ -25,6 +25,7 @@ from .evidence_bounds import (
     ensure_unique,
     validate_code,
     validate_excerpt,
+    validate_persisted_fact_code,
     validate_persisted_fact_text,
     validate_projection_text,
     validate_string_tuple,
@@ -134,7 +135,7 @@ class ConfidenceFact:
     value: str
 
     def __post_init__(self) -> None:
-        validate_code(self.code, "confidence fact code")
+        validate_persisted_fact_code(self.code, "confidence fact code")
         validate_persisted_fact_text(
             self.value, "confidence fact value", MAX_FACT_VALUE_LENGTH
         )

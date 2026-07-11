@@ -48,7 +48,7 @@ _BARE_BEARER_PATTERN = re.compile(
     r"(?i)\bbearer\s+([a-z0-9._~+/=-]{8,})(?=\s|$)"
 )
 _CREDENTIAL_ASSIGNMENT_PATTERN = re.compile(
-    r"[\"']?([A-Za-z][A-Za-z0-9_-]{1,80})[\"']?\s*[:=]"
+    r"[\"']?([A-Za-z][A-Za-z0-9_.:-]{1,80})[\"']?\s*[:=]"
 )
 _MULTIWORD_CREDENTIAL_PATTERN = re.compile(
     r"(?i)\b(?:client\s+secret|consumer\s+secret|secret\s+key|"
@@ -56,8 +56,9 @@ _MULTIWORD_CREDENTIAL_PATTERN = re.compile(
     r"private\s+key)\s*[:=]"
 )
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_CREDENTIAL_LABEL_SEPARATOR = re.compile(r"[._:-]+")
 _FILESYSTEM_URI_PATTERN = re.compile(r"(?i)\b(?:file|smb|nfs|afp)://")
-_HOME_PATH_PATTERN = re.compile(r"(?:^|[\s:=;,([{])~[/\\]")
+_HOME_PATH_PATTERN = re.compile(r"(?<!\w)~[/\\]")
 _LABELLED_PATH_PATTERN = re.compile(
     r"(?i)\b(?:path|file|location|source)\s*[:=]\s*(?:~[/\\]|[/\\]|[a-z]:[/\\])"
 )
@@ -140,6 +141,15 @@ def validate_persisted_fact_text(value: object, label: str, maximum: int) -> str
     return text
 
 
+def validate_persisted_fact_code(value: object, label: str) -> str:
+    """Reject high-confidence credential labels before fact persistence."""
+
+    code = validate_code(value, label)
+    if _credential_label_shaped(code, reject_exact_secret=True):
+        raise EvidenceValueError(f"{label} must not use a credential label")
+    return code
+
+
 def validate_tuple(
     values: object,
     *,
@@ -215,29 +225,35 @@ def _credential_shaped(value: str) -> bool:
             return True
     for match in _CREDENTIAL_ASSIGNMENT_PATTERN.finditer(value):
         raw_label = match.group(1)
-        label = _CAMEL_BOUNDARY.sub("_", raw_label).replace("-", "_").casefold()
-        parts = tuple(part for part in label.split("_") if part)
-        compact = "".join(character for character in label if character.isalnum())
-        compound = (
-            "_" in raw_label
-            or "-" in raw_label
-            or _CAMEL_BOUNDARY.search(raw_label) is not None
-        )
         structured_prefix = match.start() == 0 or value[match.start() - 1] in "?&{[,;"
-        if compact == "secret":
-            if structured_prefix:
-                return True
-            continue
-        if compact in {"authorization", "password", "passwd", "token"}:
-            return True
-        if compact.endswith(
-            ("password", "passwd", "secret", "token", "apikey", "accesskey", "privatekey")
-        ):
-            return True
-        if any(marker in compact for marker in ("apikey", "secretaccesskey", "accesskeyid", "privatekey")):
-            return True
-        if "key" in parts and any(
-            part in {"api", "access", "secret", "private"} for part in parts
+        if _credential_label_shaped(
+            raw_label, reject_exact_secret=structured_prefix
         ):
             return True
     return False
+
+
+def _credential_label_shaped(
+    raw_label: str, *, reject_exact_secret: bool
+) -> bool:
+    label = _CREDENTIAL_LABEL_SEPARATOR.sub(
+        "_", _CAMEL_BOUNDARY.sub("_", raw_label)
+    ).casefold()
+    parts = tuple(part for part in label.split("_") if part)
+    compact = "".join(character for character in label if character.isalnum())
+    if compact == "secret":
+        return reject_exact_secret
+    if compact in {"authorization", "password", "passwd", "token"}:
+        return True
+    if compact.endswith(
+        ("password", "passwd", "secret", "token", "apikey", "accesskey", "privatekey")
+    ):
+        return True
+    if any(
+        marker in compact
+        for marker in ("apikey", "secretaccesskey", "accesskeyid", "privatekey")
+    ):
+        return True
+    return "key" in parts and any(
+        part in {"api", "access", "secret", "private"} for part in parts
+    )
