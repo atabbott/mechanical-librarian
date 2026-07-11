@@ -95,7 +95,7 @@ def _expected_schema_objects(known: dict[int, Migration], versions: set[int]) ->
         objects.update(migration.expected_objects)
         for statement in migration.statements:
             match = re.match(
-                r"\s*CREATE\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+                r"\s*CREATE\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\b",
                 statement,
                 re.IGNORECASE,
             )
@@ -109,7 +109,7 @@ def _expected_non_table_definitions(known: dict[int, Migration], versions: set[i
     for version in versions:
         for statement in known[version].statements:
             match = re.match(
-                r"\s*CREATE\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+                r"\s*CREATE\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\b",
                 statement,
                 re.IGNORECASE,
             )
@@ -119,7 +119,7 @@ def _expected_non_table_definitions(known: dict[int, Migration], versions: set[i
 
 
 def _normalise_schema_sql(sql: str) -> str:
-    return " ".join(sql.split()).casefold().rstrip(";")
+    return " ".join(sql.split()).casefold().replace(" if not exists ", " ").rstrip(";")
 
 
 def _expected_table_definitions(known: dict[int, Migration], versions: set[int]) -> dict[str, str]:

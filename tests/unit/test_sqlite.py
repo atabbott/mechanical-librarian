@@ -128,7 +128,7 @@ class SqliteFoundationTests(unittest.TestCase):
     def test_migration_can_declare_and_validate_an_index(self) -> None:
         index = Migration(
             2,
-            ("CREATE INDEX audit_events_by_created_at ON audit_events(created_at)",),
+            ("CREATE INDEX IF NOT EXISTS audit_events_by_created_at ON audit_events(created_at)",),
             frozenset(),
         )
         with tempfile.TemporaryDirectory() as directory:
