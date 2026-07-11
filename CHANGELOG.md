@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- Audit persistence now returns typed safe outcomes and rejects unsafe summary
+  values without exposing SQLite errors or stored payloads, with bounded
+  indexed chronological queries in the initial schema.
 - SQLite migrations now execute and record their checksums atomically, with
   fail-closed detection of partial, tampered, newer, and unrecognized schemas.
 - Decision authorizations now retain and validate immutable review-case and

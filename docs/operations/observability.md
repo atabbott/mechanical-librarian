@@ -52,7 +52,26 @@ cardinality or private values.
 
 Audit events are user-facing product records, not debug logs. They remain
 queryable after log rotation and include sufficient provenance to reconstruct
-the decision and apply chain without exposing secrets.
+the decision and apply chain without exposing secrets. They use typed logical
+identifiers, kinds, UTC timestamps, and single-line safe summaries. Summaries
+use a closed public-safe vocabulary rather than accepting arbitrary text. The
+exact permitted phrases are: `apply completed`, `apply failed`, `apply
+started`, `apply verified`, `authorization denied`, `authorization granted`,
+`authorization revoked`, `backup failed`, `backup verified`, `decision
+recorded`, `discovered item`, `item changed`, `item discovered`, `item skipped`,
+`item unresolved`, `job completed`, `job failed`, `job queued`, `job retrying`,
+`job started`, `plan created`, `plan validated`,
+`review approved`, `review rejected`, `review requested`, `rollback completed`,
+`rollback failed`, `rollback started`, `verification
+failed`, and `verification succeeded`. Every other value fails closed.
+Repository outcomes are typed: duplicate
+replay, conflicting duplicate, invalid input, unavailability, integrity
+failure, and corrupt stored data never expose SQLite exceptions or SQL values.
+Stored timestamps use fixed-width UTC microseconds. The initial managed schema
+enforces bounded identifiers, the public-safe summary vocabulary, and canonical
+timestamps, and includes the chronological index. Recent-event queries use that
+index, then event ID for deterministic ties; a malformed selected row returns
+`CORRUPT` without exposing its contents.
 
 ## Notifications
 
