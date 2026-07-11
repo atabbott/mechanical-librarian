@@ -177,6 +177,25 @@ readiness, and planned changes by adapter. Automatic history is available
 through separate filters and sampling views rather than mixed into the active
 queue.
 
+Summary counts are server-authoritative and name their unit:
+
+- `target_count` is the number of distinct adapter-scoped `TargetId` identities
+  in the selected scope; the current snapshot and fingerprint are version
+  bindings and are counted separately where snapshot totals are exposed;
+- `ordinary_case_count` and `destructive_case_count` count their separate case
+  classes;
+- `field_work_item_count` counts independently decidable ordinary field, cover,
+  or series actions; destructive actions remain represented only by their
+  separate destructive-case count; and
+- `planned_change_count` counts validated changes in current apply-plan
+  versions, not proposals or recommendations.
+
+One target may therefore contribute several work items and planned changes.
+Every summary includes the selected scope and version, calculation timestamp,
+and completeness state. A partial result identifies missing partitions; a
+stale result identifies the superseded input version. Neither may be relabelled
+as a complete current total, readiness, or successful completion.
+
 Evidence readiness counts unique evidence records and target scopes. It
 preserves current, missing, stale, unsupported, and policy-approved-skip states
 rather than collapsing them into one boolean. Approved skip records the exact

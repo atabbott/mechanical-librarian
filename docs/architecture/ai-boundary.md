@@ -17,7 +17,20 @@ Input is a versioned evidence packet containing:
 - bounded excerpts labelled as untrusted content;
 - image attachments selected by the curator;
 - field applicability and policy instructions;
+- optional typed, bounded, versioned operator intent, explicitly separated from
+  policy instructions and untrusted evidence; and
 - closed decision and problem vocabularies.
+
+Operator intent can describe a run-local review emphasis within the already
+authorized target and proposal scope. It cannot introduce candidates, widen
+scope, alter policy or safety gates, grant write authority, or request
+destructive work. Free-form run briefs are not instructions. If an interface
+accepts operator text, an application-owned parser must either map it into the
+closed intent schema under fixed bounds or reject it before reviewer invocation.
+Any retained source text remains labelled untrusted and is never interpolated
+into system or policy instructions; only allowlisted typed values may affect
+review behavior. Intent cannot suppress required evidence, contradictions,
+applicability checks, output validation, or any other mandatory input or gate.
 
 Output is JSON conforming to a versioned schema. Each field decision contains:
 
@@ -27,6 +40,10 @@ Output is JSON conforming to a versioned schema. Each field decision contains:
 - structured problem codes;
 - cited evidence IDs;
 - optional confidence facts that do not independently control apply.
+
+The structured result is the schema object itself. A backend compatibility
+layer must not evade validation by embedding another JSON document in a string
+payload.
 
 ## Forbidden reviewer behavior
 
@@ -38,6 +55,8 @@ Output is JSON conforming to a versioned schema. Each field decision contains:
   normal credential refresh handled by the runner.
 - Producing an apply bundle or service payload.
 - Converting uncertainty into approval merely to reduce the queue.
+- Treating run-local operator intent or projected source AI recommendations as
+  policy, evidence, consensus, disposition, or authorization.
 
 ## Validation after review
 

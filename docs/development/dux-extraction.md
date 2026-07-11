@@ -35,6 +35,8 @@ changing the frozen DUX source baseline above:
 | --- | --- |
 | `28cb81e73a2a475c3c2935bdefad2472f56b4771` | Review-evidence reconciliation, title-candidate reliability, and readiness verification |
 | `c5b2fa8005e09e9c4a5d9d065c72e182aed45c81` | Checkpointed full-run orchestration and independently verified completion |
+| `13d219d81281ace1aab13ba79f055cfec5b27eb5` | Series-label reconciliation, projected-candidate provenance, and review-summary count semantics |
+| `0a05639d9a38037a513d7e38b5f4bf357927293c` | Dependency-aware unattended orchestration, durable resume, and bounded progress reporting |
 
 These commits are an operational-learning baseline, not a production
 architecture, module boundary, or replacement for
@@ -65,7 +67,29 @@ the following contracts from them:
   supplied proposal IDs, and authoritative upstream evidence and provider
   outcomes. Required inputs need an accepted terminal outcome. An optional
   provider failure may be a typed terminal operational outcome without blocking
-  unrelated ingestion or becoming negative evidence.
+  unrelated ingestion or becoming negative evidence;
+- a run or stage may persist a nonterminal `waiting` state while bounded
+  dependencies are incomplete. Scheduling persists and durably enqueues the
+  complete eligible set, capacity-bounded workers claim stable job identities,
+  and fan-in accepts one monotonic-fenced independently validated outcome per
+  job. At-least-once redelivery is expected; idempotent handlers and provider
+  idempotency or reconciliation prevent or recover duplicate external effects;
+- restart and resume inspect durable job identity and outcomes rather than
+  process IDs. Report-only unattended continuation retains an immutable
+  initiating principal and authorization context, scope, policy and schema
+  versions, resource bounds, cancellation, and expiry. Each actual transition
+  actor is audited and linked to that authority; resume cannot widen authority
+  or turn observation into apply permission;
+- qualified, versioned series-label mappings preserve the raw provider label,
+  lineage, work identity, rule version, and replay or supersession history;
+  unknown labels remain unchanged;
+- a source AI recommendation carried with projected shared evidence is
+  provenance only. It is not destination evidence, consensus, disposition, or
+  authority, and the destination independently requalifies identity,
+  applicability, current state, evidence, and policy; and
+- review reporting distinguishes target count, ordinary and destructive case
+  counts, field work-item count, and planned-change count rather than using one
+  ambiguous total.
 
 A successful command or output file is insufficient. When proposal selection
 proves exact target coverage and yields zero proposals, orchestration records a
@@ -79,8 +103,10 @@ readiness. A valid `manual` result may satisfy reviewer-output completeness for
 its proposal while leaving human resolution outstanding.
 
 The prototype's agent controller, generated static dashboard, self-editing
-skill behavior, service-specific pipeline topology, and hard-coded fusion
-weights are explicitly excluded. Mechanical Librarian implements the retained
+skill behavior, service-specific pipeline topology, hard-coded fusion weights
+and production-learned aliases, OS process IDs or detached watchers as durable
+authority, free-form run briefs as policy, and JSON encoded inside a schema
+string are explicitly excluded. Mechanical Librarian implements the retained
 contracts through its application services, durable jobs, adapter-neutral
 domain types, persisted audit records, and supported interfaces.
 
@@ -166,7 +192,10 @@ behavior; they do not qualify that implementation for production reuse.
 
 The post-DUX exclusions additionally cover the agent controller, generated
 static dashboard, self-editing skill behavior, service-specific orchestration
-topology, and hard-coded candidate-fusion weights recorded above.
+topology, hard-coded candidate-fusion weights and author- or title-specific
+series aliases, detached process watchers, process-local job identity,
+free-form reviewer instructions, and nested JSON string workarounds recorded
+above.
 
 ## Preserved behavioral invariants
 
