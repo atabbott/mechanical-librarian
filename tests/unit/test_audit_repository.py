@@ -5,12 +5,11 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from mechanical_librarian.adapters.persistence.audit import SQLiteAuditRepository
 from mechanical_librarian.application.audit import AuditAppendOutcome, AuditEvent, AuditEventKind, AuditEventId, AuditQueryOutcome, SafeAuditSummary
-from mechanical_librarian.infrastructure.persistence import sqlite
-from mechanical_librarian.infrastructure.persistence.sqlite import SchemaError, connect, migrate, transaction
+from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate, transaction
 from tests.contract.audit_repository import AuditRepositoryContract
 
 
@@ -49,26 +48,6 @@ class AuditRepositoryTests(unittest.TestCase):
             repository.append(fractional)
             self.assertEqual(repository.recent(2).events, (fractional, exact))
 
-    def test_recent_orders_mixed_legacy_timestamp_spellings_chronologically(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            connection = connect(Path(directory) / "state.sqlite")
-            self.addCleanup(connection.close)
-            with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:1]):
-                migrate(connection)
-            rows = (
-                ("event-exact", "discovery", "2026-07-10T10:00:00Z", "discovered item"),
-                ("event-fractional", "discovery", "2026-07-10T10:00:00.500000+00:00", "item changed"),
-                ("event-offset", "discovery", "2026-07-10T11:00:00+01:00", "item skipped"),
-                ("event-next", "discovery", "2026-07-10T10:00:01+00:00", "job started"),
-            )
-            connection.executemany(
-                "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)", rows
-            )
-            migrate(connection)
-            result = SQLiteAuditRepository(connection).recent(3)
-            self.assertEqual(result.outcome, AuditQueryOutcome.OK)
-            self.assertEqual(tuple(str(item.id) for item in result.events), ("event-next", "event-fractional", "event-offset"))
-
     def test_recent_uses_covering_timestamp_index_without_temporary_sort(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
@@ -88,35 +67,104 @@ class AuditRepositoryTests(unittest.TestCase):
             )
             self.assertFalse(any("TEMP B-TREE" in step for step in plan), plan)
 
+    def test_initial_schema_rejects_unsafe_audit_values(self) -> None:
+        unsafe_rows = (
+            (
+                "Invalid ID",
+                "discovery",
+                "2026-07-10T10:00:00.000000Z",
+                "discovered item",
+            ),
+            (
+                "event-one",
+                "Invalid Kind",
+                "2026-07-10T10:00:00.000000Z",
+                "discovered item",
+            ),
+            (
+                "event-one",
+                "discovery",
+                "2026-07-10T10:00:00Z",
+                "discovered item",
+            ),
+            (
+                "event-one",
+                "discovery",
+                "0000-01-01T00:00:00.000000Z",
+                "discovered item",
+            ),
+            (
+                "event-one",
+                "discovery",
+                "2026-13-01T10:00:00.000000Z",
+                "discovered item",
+            ),
+            (
+                "event-one",
+                "discovery",
+                "2025-02-29T10:00:00.000000Z",
+                "discovered item",
+            ),
+            (
+                "event-one",
+                "discovery",
+                "2026-04-31T10:00:00.000000Z",
+                "discovered item",
+            ),
+            (
+                "event-one",
+                "discovery",
+                "2026-01-01T24:00:00.000000Z",
+                "discovered item",
+            ),
+            (
+                "event-one",
+                "discovery",
+                "2026-01-01T23:60:00.000000Z",
+                "discovered item",
+            ),
+            (
+                "event-one",
+                "discovery",
+                "2026-01-01T23:59:60.000000Z",
+                "discovered item",
+            ),
+            (
+                "event-one",
+                "discovery",
+                "2026-07-10T10:00:00.000000Z",
+                "Authorization: Bearer private-value",
+            ),
+        )
+        for field, unsafe_row in enumerate(unsafe_rows):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                connection = connect(Path(directory) / "state.sqlite")
+                migrate(connection)
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        "INSERT INTO audit_events(id, kind, created_at, summary) "
+                        "VALUES (?, ?, ?, ?)",
+                        unsafe_row,
+                    )
+                self.assertIsNone(
+                    connection.execute("SELECT 1 FROM audit_events").fetchone()
+                )
+                connection.close()
+
     def test_recent_uses_id_as_tie_break_for_equivalent_timestamps_at_limit_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
-            with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:1]):
-                migrate(connection)
+            migrate(connection)
             connection.executemany(
                 "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)",
                 (
-                    ("event-a", "discovery", "2026-07-10T10:00:00Z", "discovered item"),
-                    ("event-b", "discovery", "2026-07-10T11:00:00+01:00", "item changed"),
+                    ("event-a", "discovery", "2026-07-10T10:00:00.000000Z", "discovered item"),
+                    ("event-b", "discovery", "2026-07-10T10:00:00.000000Z", "item changed"),
                 ),
             )
-            migrate(connection)
             result = SQLiteAuditRepository(connection).recent(1)
             self.assertEqual(tuple(str(item.id) for item in result.events), ("event-b",))
-
-    def test_legacy_timestamp_row_is_an_idempotent_replay(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            connection = connect(Path(directory) / "state.sqlite")
-            self.addCleanup(connection.close)
-            with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:1]):
-                migrate(connection)
-            connection.execute(
-                "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)",
-                ("event-one", "discovery", "2026-07-10T10:00:00Z", "discovered item"),
-            )
-            migrate(connection)
-            self.assertEqual(SQLiteAuditRepository(connection).append(event("event-one")).outcome, AuditAppendOutcome.DUPLICATE)
 
     def test_invalid_and_hostile_values_are_rejected_at_boundary(self) -> None:
         class StringSubclass(str):
@@ -412,69 +460,6 @@ class AuditRepositoryTests(unittest.TestCase):
             self.assertEqual(result.outcome, AuditQueryOutcome.OK)
             self.assertEqual(tuple(str(item.id) for item in result.events), ("event-a",))
 
-    def test_migration_rejects_unsupported_or_hidden_corrupt_timestamp(self) -> None:
-        corrupt_timestamps = ("2026-07-10X10:00:00Z", "bad-time")
-        for corrupt_timestamp in corrupt_timestamps:
-            with self.subTest(corrupt_timestamp=corrupt_timestamp), tempfile.TemporaryDirectory() as directory:
-                connection = connect(Path(directory) / "state.sqlite")
-                with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:1]):
-                    migrate(connection)
-                connection.executemany(
-                    "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)",
-                    (
-                        ("event-valid", "discovery", "2026-07-11T10:00:00Z", "discovered item"),
-                        ("event-corrupt", "discovery", corrupt_timestamp, "item changed"),
-                    ),
-                )
-                original_schema = connection.execute(
-                    "SELECT sql FROM sqlite_master "
-                    "WHERE type = 'table' AND name = 'audit_events'"
-                ).fetchone()
-                original_rows = connection.execute(
-                    "SELECT id, kind, created_at, summary FROM audit_events ORDER BY id"
-                ).fetchall()
-                with self.assertRaisesRegex(SchemaError, "rolled back"):
-                    migrate(connection)
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT version FROM schema_migrations ORDER BY version"
-                    ).fetchall(),
-                    [(1,)],
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT sql FROM sqlite_master "
-                        "WHERE type = 'table' AND name = 'audit_events'"
-                    ).fetchone(),
-                    original_schema,
-                )
-                self.assertEqual(
-                    connection.execute(
-                        "SELECT id, kind, created_at, summary "
-                        "FROM audit_events ORDER BY id"
-                    ).fetchall(),
-                    original_rows,
-                )
-                self.assertIsNone(
-                    connection.execute(
-                        "SELECT 1 FROM sqlite_master "
-                        "WHERE name IN ('audit_events_v2', 'audit_events_by_created_at')"
-                    ).fetchone()
-                )
-                connection.close()
-
-                reopened = connect(Path(directory) / "state.sqlite")
-                with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:1]):
-                    self.assertEqual(migrate(reopened), 1)
-                self.assertEqual(
-                    reopened.execute(
-                        "SELECT id, kind, created_at, summary "
-                        "FROM audit_events ORDER BY id"
-                    ).fetchall(),
-                    original_rows,
-                )
-                reopened.close()
-
     def test_unavailable_corrupt_and_invalid_query_return_typed_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
@@ -530,7 +515,7 @@ class AuditRepositoryTests(unittest.TestCase):
         self.assertEqual(repository.append(event("event-one")).outcome, AuditAppendOutcome.INTEGRITY_FAILURE)
         self.assertEqual(repository.recent(1).outcome, AuditQueryOutcome.CORRUPT)
 
-    def test_invalid_append_input_and_benign_legacy_authorization_summary_return_typed_results(self) -> None:
+    def test_invalid_append_input_and_benign_authorization_summary_return_typed_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)

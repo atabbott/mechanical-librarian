@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from mechanical_librarian.domain import audit_values
 from mechanical_librarian.infrastructure.persistence import sqlite
 from mechanical_librarian.infrastructure.persistence.sqlite import MIGRATIONS, Migration, SchemaError, connect, migrate, transaction
 
@@ -17,13 +17,11 @@ CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
-    def test_initial_migration_checksum_remains_compatible(self) -> None:
-        legacy_source = """
-        CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL);
-        CREATE TABLE instance_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE audit_events (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL, summary TEXT NOT NULL);
-    """
-        self.assertEqual(MIGRATIONS[0].checksum, hashlib.sha256(legacy_source.encode("utf-8")).hexdigest())
+    def test_initial_migration_checksum_remains_stable(self) -> None:
+        self.assertEqual(
+            MIGRATIONS[0].checksum,
+            "9634bb21b101030bb214f62f59e28a2baecbf91f82d0aa127a7a140507d06fea",
+        )
 
     def test_migration_is_idempotent_and_records_checksums(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -33,47 +31,38 @@ class SqliteFoundationTests(unittest.TestCase):
             self.assertEqual(migrate(connection), CURRENT_VERSION)
             self.assertEqual(connection.execute("SELECT checksum FROM schema_migrations").fetchone()[0], MIGRATIONS[0].checksum)
 
-    def test_audit_timestamp_migration_normalizes_rows_and_survives_restart(self) -> None:
+    def test_plain_sqlite_integrity_check_supports_initial_schema(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.sqlite"
             connection = connect(path)
-            with patch.object(sqlite, "MIGRATIONS", MIGRATIONS[:1]):
-                self.assertEqual(migrate(connection), 1)
-            connection.executemany(
-                "INSERT INTO audit_events(id, kind, created_at, summary) "
-                "VALUES (?, 'discovery', ?, 'discovered item')",
-                (
-                    ("event-one", "2026-07-10T10:00:00Z"),
-                    ("event-two", "2026-07-10T11:00:00.123456+01:00"),
-                ),
-            )
-            self.assertEqual(migrate(connection), CURRENT_VERSION)
-            self.assertEqual(
-                connection.execute(
-                    "SELECT id, created_at FROM audit_events ORDER BY id"
-                ).fetchall(),
-                [
-                    ("event-one", "2026-07-10T10:00:00.000000Z"),
-                    ("event-two", "2026-07-10T10:00:00.123456Z"),
-                ],
-            )
-            self.assertIsNotNone(
-                connection.execute(
-                    "SELECT 1 FROM sqlite_master "
-                    "WHERE type = 'index' AND name = 'audit_events_by_created_at'"
-                ).fetchone()
-            )
+            migrate(connection)
             connection.close()
 
-            reopened = connect(path)
-            self.addCleanup(reopened.close)
-            self.assertEqual(migrate(reopened), CURRENT_VERSION)
-            with self.assertRaises(sqlite3.IntegrityError):
-                reopened.execute(
-                    "INSERT INTO audit_events(id, kind, created_at, summary) "
-                    "VALUES ('event-three', 'discovery', "
-                    "'2026-07-10T10:00:00Z', 'discovered item')"
+            plain = sqlite3.connect(path)
+            self.addCleanup(plain.close)
+            self.assertEqual(plain.execute("PRAGMA integrity_check").fetchone(), ("ok",))
+
+    def test_python_vocabulary_change_cannot_mutate_recorded_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            recorded_checksum = connection.execute(
+                "SELECT checksum FROM schema_migrations WHERE version = 1"
+            ).fetchone()[0]
+            expanded = frozenset({*audit_values.SAFE_AUDIT_SUMMARIES, "new phrase"})
+            with patch.object(audit_values, "SAFE_AUDIT_SUMMARIES", expanded):
+                self.assertEqual(
+                    audit_values.validated_safe_audit_summary("new phrase"),
+                    "new phrase",
                 )
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        "INSERT INTO audit_events(id, kind, created_at, summary) "
+                        "VALUES ('event-one', 'discovery', "
+                        "'2026-07-10T10:00:00.000000Z', 'new phrase')"
+                    )
+            self.assertEqual(MIGRATIONS[0].checksum, recorded_checksum)
 
     def test_transaction_rolls_back(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

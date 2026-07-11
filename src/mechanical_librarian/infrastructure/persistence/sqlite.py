@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Mapping
 
-from mechanical_librarian.domain.timestamps import canonical_utc_timestamp
+from mechanical_librarian.domain.audit_values import SAFE_AUDIT_SUMMARIES
 
 
 class SchemaError(RuntimeError):
@@ -31,34 +31,40 @@ class Migration:
         return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
+_SAFE_AUDIT_SUMMARIES_SQL = ", ".join(
+    f"'{summary}'" for summary in sorted(SAFE_AUDIT_SUMMARIES)
+)
+_AUDIT_EVENTS_TABLE_SQL = (
+    "CREATE TABLE audit_events ("
+    "id TEXT PRIMARY KEY CHECK (typeof(id) = 'text' AND length(id) BETWEEN 1 AND 64 "
+    "AND id GLOB '[a-z]*' AND id NOT GLOB '*[^a-z0-9_-]*'), "
+    "kind TEXT NOT NULL CHECK (typeof(kind) = 'text' AND length(kind) BETWEEN 1 AND 64 "
+    "AND kind GLOB '[a-z]*' AND kind NOT GLOB '*[^a-z0-9_-]*'), "
+    "created_at TEXT NOT NULL CHECK (typeof(created_at) = 'text' AND length(created_at) = 27 "
+    "AND created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9][0-9][0-9][0-9]Z' "
+    "AND strftime('%Y-%m-%d', created_at) IS NOT NULL "
+    "AND strftime('%Y-%m-%d', created_at) = substr(created_at, 1, 10) "
+    "AND strftime('%H:%M:%S', created_at) IS NOT NULL "
+    "AND strftime('%H:%M:%S', created_at) = substr(created_at, 12, 8) "
+    "AND CAST(substr(created_at, 1, 4) AS INTEGER) BETWEEN 1 AND 9999 "
+    "AND CAST(substr(created_at, 12, 2) AS INTEGER) BETWEEN 0 AND 23 "
+    "AND CAST(substr(created_at, 15, 2) AS INTEGER) BETWEEN 0 AND 59 "
+    "AND CAST(substr(created_at, 18, 2) AS INTEGER) BETWEEN 0 AND 59), "
+    "summary TEXT NOT NULL CHECK (typeof(summary) = 'text' AND summary IN ("
+    f"{_SAFE_AUDIT_SUMMARIES_SQL})))"
+)
+
+
 MIGRATIONS = (
     Migration(
         1,
         (
             "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL)",
             "CREATE TABLE instance_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-            "CREATE TABLE audit_events (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL, summary TEXT NOT NULL)",
-        ),
-        frozenset({"schema_migrations", "instance_metadata", "audit_events"}),
-        """
-        CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL);
-        CREATE TABLE instance_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE audit_events (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL, summary TEXT NOT NULL);
-    """,
-    ),
-    Migration(
-        2,
-        (
-            "CREATE TABLE audit_events_v2 (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL CHECK (audit_timestamp_key(created_at) IS NOT NULL AND created_at = audit_timestamp_key(created_at)), summary TEXT NOT NULL)",
-            "INSERT INTO audit_events_v2(id, kind, created_at, summary) SELECT id, kind, audit_timestamp_key(created_at), summary FROM audit_events",
-            "DROP TABLE audit_events",
-            "ALTER TABLE audit_events_v2 RENAME TO audit_events",
+            _AUDIT_EVENTS_TABLE_SQL,
             "CREATE INDEX audit_events_by_created_at ON audit_events(created_at DESC, id DESC)",
         ),
-        frozenset({"audit_events"}),
-        expected_table_definitions={
-            "audit_events": "CREATE TABLE \"audit_events\" (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL CHECK (audit_timestamp_key(created_at) IS NOT NULL AND created_at = audit_timestamp_key(created_at)), summary TEXT NOT NULL)"
-        },
+        frozenset({"schema_migrations", "instance_metadata", "audit_events"}),
     ),
 )
 
@@ -70,9 +76,6 @@ def connect(path: Path) -> sqlite3.Connection:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(path, isolation_level=None, check_same_thread=True)
-        connection.create_function(
-            "audit_timestamp_key", 1, canonical_utc_timestamp, deterministic=True
-        )
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = FULL")

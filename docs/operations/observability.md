@@ -67,11 +67,9 @@ failed`, and `verification succeeded`. Every other value fails closed.
 Repository outcomes are typed: duplicate
 replay, conflicting duplicate, invalid input, unavailability, integrity
 failure, and corrupt stored data never expose SQLite exceptions or SQL values.
-Stored timestamps accept only `YYYY-MM-DDTHH:MM:SS[.ffffff]Z` and the legacy
-`YYYY-MM-DDTHH:MM:SS[.ffffff]±HH:MM` spelling, with one to six fractional
-digits and offsets bounded to ±14:00. Migration atomically normalizes legacy
-spellings to fixed-width UTC microseconds, rejects an invalid legacy timestamp,
-and creates the managed chronological index. Recent-event queries use that
+Stored timestamps use fixed-width UTC microseconds. The initial managed schema
+enforces bounded identifiers, the public-safe summary vocabulary, and canonical
+timestamps, and includes the chronological index. Recent-event queries use that
 index, then event ID for deterministic ties; a malformed selected row returns
 `CORRUPT` without exposing its contents.
 

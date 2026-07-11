@@ -86,32 +86,6 @@ Power loss or forced termination during migration must be covered by automated f
 
 Ambiguous partial completion is unacceptable.
 
-## Schema 1 to 2: audit timestamp index
-
-Schema 2 is a forward-only application-state migration from schema 1. It
-rebuilds `audit_events`, normalizes every supported legacy timestamp to
-fixed-width UTC microseconds, and creates the managed chronological index.
-
-- Preconditions: schema 1 must validate exactly, no application work may be
-  active, and every stored audit timestamp must use a supported UTC or numeric
-  offset spelling. An invalid timestamp stops the upgrade without changing the
-  schema-1 database.
-- Resources and downtime: migration holds the exclusive database migration
-  lock, scans and copies the audit table once, and requires temporary disk space
-  proportional to that table. Workers and mutation endpoints remain unavailable
-  until the transaction commits.
-- Backup: create and validate a curator application-state backup before
-  starting. The backup is required even though a failed migration rolls its own
-  transaction back atomically.
-- Validation: confirm schema versions 1 and 2 are recorded, verify
-  `audit_events_by_created_at` exists, run the database integrity check, and
-  exercise a bounded read-only recent-audit query before enabling workers.
-- Rollback: there is no down migration. An older binary rejects schema 2. To
-  roll back after a successful upgrade, stop the new container, restore the
-  pre-upgrade application-state backup, then start the previous image and verify
-  schema 1. Restoring curator state does not reverse changes already applied to
-  an external library service.
-
 ## Major versions
 
 A major-version upgrade should support a documented rehearsal using a restored copy of `/data`. When a direct upgrade path is not provided, the project must document the required intermediate version or export/import path.

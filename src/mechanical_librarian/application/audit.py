@@ -7,43 +7,8 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Protocol
 
+from mechanical_librarian.domain.audit_values import validated_safe_audit_summary
 from mechanical_librarian.domain.identifiers import AuditEventId, Identifier
-
-
-_SAFE_AUDIT_SUMMARIES = frozenset(
-    {
-        "apply completed",
-        "apply failed",
-        "apply started",
-        "apply verified",
-        "authorization denied",
-        "authorization granted",
-        "authorization revoked",
-        "backup failed",
-        "backup verified",
-        "decision recorded",
-        "discovered item",
-        "item changed",
-        "item discovered",
-        "item skipped",
-        "item unresolved",
-        "job completed",
-        "job failed",
-        "job queued",
-        "job retrying",
-        "job started",
-        "plan created",
-        "plan validated",
-        "review approved",
-        "review rejected",
-        "review requested",
-        "rollback completed",
-        "rollback failed",
-        "rollback started",
-        "verification failed",
-        "verification succeeded",
-    }
-)
 
 class AuditEventKind(Identifier):
     """Bounded logical event category; it cannot carry a provider payload."""
@@ -60,7 +25,7 @@ class SafeAuditSummary:
     def __post_init__(self) -> None:
         if type(self.value) is not str:
             raise ValueError("audit summaries must be exact text values")
-        if self.value not in _SAFE_AUDIT_SUMMARIES:
+        if validated_safe_audit_summary(self.value) is None:
             raise ValueError("audit summary is not in the public-safe vocabulary")
 
     def __str__(self) -> str:
