@@ -37,8 +37,15 @@ Deliverables:
 - implement the domain entities and state machines;
 - define configuration schemas, validation, and secret references;
 - define adapter interfaces and capability declarations;
-- define stable target, snapshot, review-case, proposal, and decision
-  identifiers, clocks, and idempotency keys;
+- define separate application-owned ports for target-service adapters, local
+  evidence extractors, metadata providers, and reviewer backends, while keeping
+  deterministic policy in the domain;
+- define vendor-neutral canonical target, snapshot, evidence, candidate,
+  proposal, reviewer-packet, decision, and apply-plan schemas with stable opaque
+  scoped identifiers, clocks, and idempotency keys;
+- keep raw vendor payload semantics adapter-local and permit an external item
+  value to cross only as an uninterpreted `ExternalItemId` inside a fully scoped
+  canonical `TargetId`, never as an unscoped ID;
 - implement the snapshot-aware ReviewCase lifecycle, ReviewNotice classes,
   HumanDecision and DecisionAuthorization contracts, and display-only
   ReviewGroup projection; and
@@ -47,6 +54,9 @@ Deliverables:
 Exit criteria:
 
 - the domain layer imports no framework, database, network, or vendor modules;
+- no canonical domain or application schema exposes Audiobookshelf, CWA, or
+  provider payload semantics; generic opaque source provenance and correlation
+  remain allowed without becoming semantic proposal identity;
 - sibling groups cannot propagate decisions or apply state;
 - invalid transitions cannot be constructed through public interfaces; and
 - configuration errors fail before any job or network mutation starts.
@@ -105,6 +115,10 @@ Deliverables:
 - implement authentication and connection testing;
 - discover libraries and scan items incrementally;
 - normalize supported ebook and audiobook metadata;
+- translate Audiobookshelf payloads and identifiers at the adapter boundary into
+  canonical inventory records; only an uninterpreted external value wrapped
+  inside the opaque adapter/connection/library-scoped `TargetId` crosses the
+  boundary;
 - preserve connection- and library-scoped external identity and media type;
 - capture optimistic-concurrency snapshots;
 - expose capability and version diagnostics; and
@@ -115,7 +129,9 @@ Exit criteria:
 - read-only operation is the default;
 - the adapter performs no database or media-file writes;
 - pagination, rate limiting, timeouts, and partial failures are tested; and
-- unsupported target behavior degrades to an explicit capability state.
+- unsupported target behavior degrades to an explicit capability state; and
+- the same target-service port remains implementable by a CWA-shaped fake
+  without changing inventory or downstream schemas.
 
 ## WP4: local evidence extraction
 
@@ -158,10 +174,26 @@ Exit criteria:
 Deliverables:
 
 - generate field-level proposals from current values and local evidence;
+- model the current snapshot as authoritative scoped target state for no-op,
+  concurrency, planning, and verification while treating its metadata as one
+  versioned bibliographic observation rather than privileged truth;
+- derive capabilities per lane role, never from one global intersection or
+  hard-coded service/provider names: inventory lanes use target and scope;
+  local-evidence lanes use target, media, field, and extractor; provider lanes
+  use target, media, field, provider, query, and configuration; candidate lanes
+  use relevant successfully completed evidence and policy. An irrelevant
+  dimension is absent rather than falsely required;
+- build minimal bounded allowlisted `ProviderQuery` values in the application;
+  pass a provider adapter only that query, its own credential, and restricted
+  network client, never a raw `ItemSnapshot` or service row, service endpoint,
+  target credential, unrestricted external ID or path, or mutation port;
 - collapse identical normalized values while retaining every source
   assessment, evidence lineage, contradiction, and source-specific problem
   fact; recompute one deterministic aggregate disposition without unioning
   stale risks or allowing a strongest-source winner to erase conflict;
+- keep generic source adapter/provider provenance and correlation on candidates,
+  while defining semantic proposal identity from canonical target, snapshot,
+  field, normalized value, schema, and policy rather than provider name;
 - persist a versioned, capability-derived candidate-lane manifest that records
   applicability for every derived lane and a typed execution outcome for each
   applicable lane; only successfully completed applicable lanes record a
@@ -219,7 +251,16 @@ Deliverables:
   state, evidence, and policy independently;
 - retain complete reasons for accepted and rejected candidates;
 - treat provider failure as an operational outcome rather than negative
-  metadata evidence or support for another candidate; and
+  metadata evidence or support for another candidate;
+- publish a versioned sufficiency matrix by field, media type, operation, and
+  change class—including fill-empty, replace-populated, no-op, rejection, and
+  edition-sensitive work—stating when current/local evidence is sufficient,
+  when materially independent provider evidence is required, and when missing
+  provider evidence produces human review or an explicit unsupported outcome
+  rather than silent suppression;
+- support a providerless report-only path through current/local evidence,
+  deterministic no-op and rejection handling, bounded proposals, and human
+  review; and
 - keep every field proposal independent so resolving one field cannot erase or
   implicitly decide a sibling proposal.
 
@@ -244,7 +285,10 @@ Exit criteria:
 - resolving any field leaves every sibling proposal intact;
 - unsafe, rejected, inapplicable, and no-op choices cannot contaminate a safe
   field selection;
-- high-risk changes cannot enter the automatic apply path; and
+- high-risk changes cannot enter the automatic apply path;
+- disabling or losing every external metadata provider does not disable
+  inventory, local evidence, deterministic policy, bounded proposals, or human
+  review, while any provider-required field follows the sufficiency matrix; and
 - golden fixtures cover ambiguous editions, series order, conflicting
   identifiers, generic titles, initial-only names, contributor-role confusion,
   and same-title/different-author works.
@@ -271,6 +315,9 @@ Deliverables:
   selected target, and require accepted terminal outcomes for required inputs;
 - allow optional provider failure as a typed terminal operational outcome that
   neither blocks unrelated ingestion nor becomes negative metadata evidence;
+- consume only canonical evidence and proposal contracts; the reviewer backend
+  cannot call target-service or metadata-provider adapters or depend on their
+  vendor payloads;
 - independently recompute selected-target and proposal coverage before marking
   an AI review complete;
 - record zero proposals as a proposal-selection/orchestration terminal outcome
@@ -387,7 +434,10 @@ After the first production-quality vertical slice:
   DUX-derived server contracts silently;
 - expand metadata providers and cover comparison;
 - add optional application-level write-back to ebook files;
-- evaluate a CWA adapter only against supported mutation paths;
+- evaluate a CWA adapter only against supported service APIs, explicit
+  capability declarations, and the common target-service contract; no CWA
+  database, UI automation, runtime adapter, or production write path is added by
+  this planning work;
 - define any future extension manifest around typed capabilities,
   configuration schema, compatibility, health, and automatic suspension before
   permitting third-party code loading;
