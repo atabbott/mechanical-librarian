@@ -11,9 +11,11 @@
 │   │   ├── library_services/
 │   │   ├── reviewers/
 │   │   ├── providers/
-│   │   └── notifications/
-│   ├── infrastructure/
+│   │   ├── notifications/
 │   │   ├── persistence/
+│   │   └── task_execution/
+│   ├── infrastructure/
+│   │   ├── persistence/ (connection and migration runtime)
 │   │   ├── jobs/
 │   │   ├── security/
 │   │   └── observability/
@@ -73,14 +75,18 @@ boundaries without choosing HTTP, SQLite, Audiobookshelf, or an AI provider.
 
 ### `adapters`
 
-Implement application ports for external systems. Adapters may depend on
-application and domain contracts; adapters never import one another directly.
+Implement application ports for external systems and technology boundaries,
+including persistence repositories and task execution. Adapters may depend on
+application and domain contracts; adapters never import one another directly
+and never import infrastructure.
 
 ### `infrastructure`
 
-Persistence, job execution, configuration, security primitives, logging,
-metrics, migrations, and process integration. It wires contracts but does not
-own metadata policy.
+Process-wide configuration, connection and migration runtime, security
+primitives, logging, metrics, and process integration. Infrastructure does not
+implement or import application ports, does not own metadata policy, and does
+not import adapters. Bootstrap supplies explicit constructor boundaries when an
+adapter needs an infrastructure-owned runtime resource.
 
 ### `interfaces`
 
@@ -103,6 +109,8 @@ test should fail on:
 - domain imports from application, adapters, infrastructure, or interfaces;
 - application imports from concrete adapters or interfaces;
 - adapter-to-adapter imports;
+- adapter-to-infrastructure or infrastructure-to-adapter imports;
+- infrastructure imports of application ports or implementations of them;
 - interface access to concrete persistence repositories;
 - production code importing test fixtures or scripts.
 

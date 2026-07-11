@@ -1,1 +1,1 @@
-"""Runtime infrastructure implementing application and domain contracts."""
+"""Runtime mechanisms that do not implement application-owned ports."""

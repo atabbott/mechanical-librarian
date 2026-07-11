@@ -19,7 +19,7 @@ ALLOWED_LAYER_IMPORTS = {
     "domain": {"domain"},
     "application": {"application", "domain"},
     "adapters": {"adapters", "application", "domain"},
-    "infrastructure": {"infrastructure", "application", "domain"},
+    "infrastructure": {"infrastructure", "domain"},
     "interfaces": {"interfaces", "application", "domain"},
     "bootstrap": PRODUCTION_LAYERS,
 }
@@ -154,6 +154,38 @@ class ImportBoundaryTests(unittest.TestCase):
             violates_boundary(
                 "mechanical_librarian.adapters.persistence.sqlite",
                 "mechanical_librarian.infrastructure.configuration",
+            )
+        )
+
+    def test_persistence_adapter_can_implement_application_repository_port(self) -> None:
+        self.assertFalse(
+            violates_boundary(
+                "mechanical_librarian.adapters.persistence.audit",
+                "mechanical_librarian.application.audit",
+            )
+        )
+
+    def test_task_execution_adapter_can_implement_application_port(self) -> None:
+        self.assertFalse(
+            violates_boundary(
+                "mechanical_librarian.adapters.task_execution.worker",
+                "mechanical_librarian.application.ports",
+            )
+        )
+
+    def test_infrastructure_cannot_implement_persistence_port(self) -> None:
+        self.assertTrue(
+            violates_boundary(
+                "mechanical_librarian.infrastructure.persistence.audit",
+                "mechanical_librarian.application.audit",
+            )
+        )
+
+    def test_infrastructure_cannot_implement_task_execution_port(self) -> None:
+        self.assertTrue(
+            violates_boundary(
+                "mechanical_librarian.infrastructure.jobs.worker",
+                "mechanical_librarian.application.ports",
             )
         )
 

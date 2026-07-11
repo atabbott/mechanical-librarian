@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from mechanical_librarian.adapters.persistence.audit import SQLiteAuditRepository
 from mechanical_librarian.application.audit import AuditEvent
-from mechanical_librarian.infrastructure.persistence.audit import SQLiteAuditRepository
 from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate, transaction
 
 
