@@ -32,6 +32,9 @@ def _serialize_event(event: AuditEvent) -> _AuditStorageRow:
     ):
         raise ValueError("audit persistence requires exact event value types")
     try:
+        offset = event.created_at.utcoffset()
+        if event.created_at.tzinfo is None or offset is None:
+            raise ValueError("audit timestamp must be timezone-aware")
         utc_timestamp = event.created_at.astimezone(timezone.utc)
     except Exception:
         raise ValueError("audit timestamp could not be converted to UTC") from None

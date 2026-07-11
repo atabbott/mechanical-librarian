@@ -145,6 +145,13 @@ class AuditRepositoryTests(unittest.TestCase):
             def dst(self, value: datetime | None) -> timedelta:
                 return timedelta(0)
 
+        class OffsetlessTimezone(tzinfo):
+            def utcoffset(self, value: datetime | None) -> None:
+                return None
+
+            def dst(self, value: datetime | None) -> timedelta:
+                return timedelta(0)
+
         self.assertEqual(str(SafeAuditSummary("authorization granted")), "authorization granted")
         hostile_values: tuple[object, ...] = (
             "https://private.example/token",
@@ -304,6 +311,32 @@ class AuditRepositoryTests(unittest.TestCase):
                         forged_event, "kind", AuditEventKind("discovery")
                     )
                     object.__setattr__(forged_event, "created_at", hostile_timestamp)
+                    object.__setattr__(
+                        forged_event,
+                        "summary",
+                        SafeAuditSummary("discovered item"),
+                    )
+                    self.assertEqual(
+                        repository.append(forged_event).outcome,
+                        AuditAppendOutcome.INVALID,
+                    )
+            for offsetless_timestamp in (
+                datetime(2026, 7, 10, 10),
+                datetime(2026, 7, 10, 10, tzinfo=OffsetlessTimezone()),
+            ):
+                with self.subTest(
+                    offsetless_timezone=type(offsetless_timestamp.tzinfo).__name__
+                ):
+                    forged_event = object.__new__(AuditEvent)
+                    object.__setattr__(
+                        forged_event, "id", AuditEventId("event-offsetless")
+                    )
+                    object.__setattr__(
+                        forged_event, "kind", AuditEventKind("discovery")
+                    )
+                    object.__setattr__(
+                        forged_event, "created_at", offsetless_timestamp
+                    )
                     object.__setattr__(
                         forged_event,
                         "summary",
