@@ -153,6 +153,32 @@ class SqliteFoundationTests(unittest.TestCase):
                 with self.assertRaisesRegex(SchemaError, "object definition"):
                     migrate(connection)
 
+    def test_quoted_index_definition_fails_closed(self) -> None:
+        index = Migration(2, ('CREATE INDEX "audit-events-by-created-at" ON audit_events(created_at)',), frozenset())
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index)):
+                migrate(connection)
+                connection.execute('DROP INDEX "audit-events-by-created-at"')
+                connection.execute('CREATE INDEX "audit-events-by-created-at" ON audit_events(id)')
+                with self.assertRaisesRegex(SchemaError, "object definition"):
+                    migrate(connection)
+
+    def test_view_definition_preserves_if_not_exists_in_a_literal(self) -> None:
+        view = Migration(2, ("CREATE VIEW audit_label AS SELECT 'a if not exists b' AS label",), frozenset())
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, view)):
+                migrate(connection)
+                connection.execute("DROP VIEW audit_label")
+                connection.execute("CREATE VIEW audit_label AS SELECT 'a b' AS label")
+                with self.assertRaisesRegex(SchemaError, "object definition"):
+                    migrate(connection)
+
     def test_migration_can_drop_a_previously_declared_index(self) -> None:
         index = Migration(2, ("CREATE INDEX audit_events_by_created_at ON audit_events(created_at)",), frozenset())
         remove_index = Migration(3, ("DROP INDEX IF EXISTS audit_events_by_created_at",), frozenset())

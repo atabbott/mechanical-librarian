@@ -22,7 +22,6 @@ class Migration:
     expected_tables: frozenset[str]
     checksum_source: str | None = None
     expected_table_definitions: Mapping[str, str] | None = None
-    expected_objects: frozenset[tuple[str, str]] = frozenset()
 
     @property
     def checksum(self) -> str:
@@ -92,7 +91,6 @@ def _expected_schema_objects(known: dict[int, Migration], versions: set[int]) ->
     for version in sorted(versions):
         migration = known[version]
         objects.update(("table", table) for table in migration.expected_tables)
-        objects.update(migration.expected_objects)
         for statement in migration.statements:
             declaration = _schema_object_statement(statement)
             if declaration is None:
@@ -122,17 +120,26 @@ def _expected_non_table_definitions(known: dict[int, Migration], versions: set[i
 
 def _schema_object_statement(statement: str) -> tuple[str, tuple[str, str]] | None:
     match = re.match(
-        r"\s*(CREATE|DROP)\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\b",
+        r'\s*(CREATE|DROP)\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*|"(?:[^"]|"")*")(?=\s|\(|;|$)',
         statement,
         re.IGNORECASE,
     )
     if match is None:
         return None
-    return match.group(1).upper(), (match.group(2).lower(), match.group(3))
+    name = match.group(3)
+    if name.startswith('"'):
+        name = name[1:-1].replace('""', '"')
+    return match.group(1).upper(), (match.group(2).lower(), name)
 
 
 def _normalise_schema_sql(sql: str) -> str:
-    return " ".join(sql.split()).casefold().replace(" if not exists ", " ").rstrip(";")
+    without_idempotency_clause = re.sub(
+        r"^(\s*CREATE\s+(?:UNIQUE\s+)?(?:INDEX|TRIGGER|VIEW))\s+IF\s+NOT\s+EXISTS\s+",
+        r"\1 ",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    return " ".join(without_idempotency_clause.split()).casefold().rstrip(";")
 
 
 def _expected_table_definitions(known: dict[int, Migration], versions: set[int]) -> dict[str, str]:
