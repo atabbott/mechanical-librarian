@@ -95,6 +95,46 @@ classification are compatibility semantics. Changing one requires a new schema
 version and a documented reader or migration path; a schema from one boundary
 is never accepted by another.
 
+### Canonical inventory snapshot v1
+
+`snapshot-v1` is the first durable canonical input for inventory fingerprints
+and semantic snapshot equality. Its canonical JSON contains:
+
+- the complete adapter-, connection-, library-, and external-item target scope;
+- media type, lifecycle, and normalized metadata with fields ordered by name;
+- sorted one-way identities for logical file references;
+- a one-way cover-reference identity and optional versioned cover-content
+  fingerprint;
+- adapter-bound adapter and upstream service release versions;
+- the versioned raw-observation payload fingerprint;
+- a one-way identity for opaque concurrency evidence; and
+- the declared inventory, metadata, file, notification, pagination,
+  concurrency, cover, writable-field, and supported-media capability state.
+
+Snapshot IDs and observation timestamps are deliberately excluded: repeating
+the same observation at another time or under a new immutable record ID does
+not change canonical state. Canonical JSON uses sorted object keys, ASCII JSON,
+finite values, and compact separators. Set-like capabilities and file
+identities are sorted; order within a multi-value metadata field remains
+meaningful.
+
+The serialized v1 input is bounded to 1 MiB. Generation rejects more than
+10,000 collection entries or more than 128 KiB of source text before sorting,
+hashing, or JSON serialization, leaving room for worst-case JSON escaping and
+structural overhead. Stored input is accepted only when every
+documented field is present, no unknown field exists, nested values have their
+declared type, normalized text contains no unpaired Unicode surrogate, and
+set-like values are sorted and unique. Corrupt, oversized,
+deeply malformed, or non-canonical stored input fails before it can become a
+fingerprint or snapshot.
+
+Changing any included field, identity rule, ordering rule, or equality meaning
+requires a new snapshot schema version. Readers must retain the original
+canonical bytes and schema marker until a documented migration can recompute
+and attribute the replacement. Adapter implementation versions and upstream
+service versions are distinct typed values and must remain bound to the target
+adapter family.
+
 ## Inventory and capability contracts
 
 Inventory records preserve stable target identity separately from immutable

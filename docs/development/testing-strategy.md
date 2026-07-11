@@ -22,6 +22,13 @@ and compatibility decisions.
 Use generated inputs for invariants such as:
 
 - normalization and fingerprint determinism;
+- directional title normalization: adding removable noise and then cleaning it
+  returns the same meaningful title, while reversing the transformation is not
+  automatically accepted;
+- identifier alias and comparable ISBN forms canonicalize consistently without
+  changing preserved raw observations;
+- non-comparable identifier namespaces produce neither agreement nor conflict;
+- resolving one field preserves the complete sibling-proposal set;
 - idempotent event handling;
 - apply-plan merge associativity where defined;
 - no destructive auto-apply disposition;
@@ -136,6 +143,12 @@ Fixture families include:
 - identity-backed title cleanup with supported target and work identity, plus
   edition identity or applicability when the field policy or proposed change is
   edition-sensitive;
+- recognized series/order, format, identifier, and filename-noise removal that
+  preserves meaningful subtitles and independently supported structured
+  series/order sibling facts, paired with unsupported inverse additions that
+  policy rejects;
+- deterministic title cleanup and degradation outcomes that never route to AI
+  `manual`;
 - decisive single-family evidence with supported identity, direct
   authoritative exact-identifier or content provenance, and edition
   applicability, plus controls where those conditions are absent;
@@ -143,6 +156,19 @@ Fixture families include:
 - current-equivalent title candidates that produce no proposal;
 - conflicting work identity, plus edition or comparable-identifier conflicts
   that reject the candidate when relevant to the field;
+- raw identifier observations with validated aliases, canonical comparable ISBN
+  forms, compatible-namespace agreement and conflict, and non-comparable
+  namespace neutrality;
+- malformed or invalid current identifiers resolved under ordinary applicable
+  field evidence;
+- validated current comparable identifiers with an applicable embedded/content
+  identifier and a materially independent provider identifier that agree on the
+  same validated canonical replacement identity, plus disagreement, missing-
+  family, correlated-lineage, and inapplicable controls;
+- current metadata that is outweighed by applicable evidence rather than
+  treated as privileged truth;
+- multi-field cases proving that resolution of one field preserves title,
+  identifier, series, cover, and other sibling proposals;
 - provider timeout and failure outcomes that remain operational rather than
   becoming negative evidence;
 - prompt injection embedded in every untrusted text field;
@@ -195,6 +221,20 @@ failure class rather than copying a user's metadata or preserving incidental
 implementation output.
 
 Fixture licences and provenance must be documented.
+
+Directional title and identifier cohorts are independently authored from
+generic token classes and generated identifier shapes. They contain no titles,
+identifiers, paths, or other observations taken from the prototype. Metamorphic
+variants add and remove synthetic noise, permute independent source order,
+substitute identifier aliases, vary ISBN presentation, and add unrelated sibling
+proposals while asserting unchanged policy outcomes where the contract says
+those transformations are neutral.
+
+Named generic cohorts include compact series-prefix removal, title-appended
+series/order removal with separate structured capture, and clean-title to
+year/source-suffix addition rejection. Each series/order-removal cohort includes
+controls proving that an unchanged pre-existing field is insufficient without
+independent support and a persisted or newly emitted preserved sibling fact.
 
 DUX-derived scenarios cite the frozen source revision and follow the fixture,
 licence, and rejection rules in the
