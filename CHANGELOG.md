@@ -31,9 +31,10 @@ versioning after the first public release.
 
 ### Added
 
-- A `state-check --database PATH` operator diagnostic that creates or opens
-  application state, applies migrations, and verifies idempotent audit
-  write/read behavior with fixed path-free success and failure output.
+- A `state-check --database PATH` operator diagnostic for durable filesystem
+  state that creates or opens application state, applies migrations, and
+  verifies idempotent audit write/read behavior with fixed path-free success and
+  failure output.
 - Structured Project work-kind classification and separate Defect/Bug intake
   for pre-release contract failures versus failures of delivered behavior.
 - Functional-slice delivery governance for new functionality during the initial

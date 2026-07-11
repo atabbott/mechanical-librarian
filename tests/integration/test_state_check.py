@@ -54,6 +54,10 @@ class ComposedStateCheckTests(unittest.TestCase):
 
             connection = sqlite3.connect(path)
             self.addCleanup(connection.close)
+            self.assertEqual(
+                connection.execute("PRAGMA journal_mode").fetchone(),
+                ("wal",),
+            )
             rows = connection.execute(
                 "SELECT id, kind, summary FROM audit_events"
             ).fetchall()
@@ -140,6 +144,82 @@ class ComposedStateCheckTests(unittest.TestCase):
                     "State check failed: state could not be verified.\n",
                 )
                 self.assertNotIn("hostile-sentinel", output + errors)
+
+    def test_rejected_existing_state_is_byte_for_byte_unchanged(self) -> None:
+        for state_kind in ("delete", "journal", "wal"):
+            with (
+                self.subTest(state_kind=state_kind),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path = Path(directory) / "hostile-sentinel.sqlite"
+                connection = sqlite3.connect(path)
+                if state_kind == "wal":
+                    self.assertEqual(
+                        connection.execute("PRAGMA journal_mode = WAL").fetchone(),
+                        ("wal",),
+                    )
+                connection.execute("CREATE TABLE foreign_state(value TEXT)")
+                connection.commit()
+                if state_kind == "delete":
+                    connection.close()
+                elif state_kind == "journal":
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute("INSERT INTO foreign_state VALUES ('pending')")
+
+                before = {
+                    candidate.name: candidate.read_bytes()
+                    for candidate in Path(directory).iterdir()
+                    if candidate.is_file()
+                }
+                if state_kind == "journal":
+                    self.assertIn(f"{path.name}-journal", before)
+                elif state_kind == "wal":
+                    self.assertIn(f"{path.name}-wal", before)
+                    self.assertIn(f"{path.name}-shm", before)
+                self.assertEqual(
+                    self.run_check(path),
+                    (1, "", "State check failed: state could not be verified.\n"),
+                )
+                after = {
+                    candidate.name: candidate.read_bytes()
+                    for candidate in Path(directory).iterdir()
+                    if candidate.is_file()
+                }
+                self.assertEqual(after, before)
+                if state_kind != "delete":
+                    connection.close()
+
+    def test_existing_empty_state_and_in_memory_name_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hostile-sentinel.sqlite"
+            path.touch()
+
+            self.assertEqual(
+                self.run_check(path),
+                (1, "", "State check failed: state could not be verified.\n"),
+            )
+            self.assertEqual(path.read_bytes(), b"")
+            self.assertEqual(
+                {candidate.name for candidate in Path(directory).iterdir()},
+                {path.name},
+            )
+
+            executable = Path(sys.executable).with_name("mechanical-librarian")
+            completed = subprocess.run(
+                [str(executable), "state-check", "--database", ":memory:"],
+                cwd=directory,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            self.assertEqual(completed.returncode, 2)
+            self.assertEqual(completed.stdout, "")
+            self.assertNotIn(":memory:", completed.stderr)
+            self.assertEqual(
+                {candidate.name for candidate in Path(directory).iterdir()},
+                {path.name},
+            )
 
     def test_unavailable_parent_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -15,6 +15,7 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
     SchemaError,
     connect,
     migrate,
+    preflight,
 )
 from mechanical_librarian.interfaces.cli import main as cli_main
 
@@ -22,6 +23,7 @@ from mechanical_librarian.interfaces.cli import main as cli_main
 def _run_state_check(database: Path) -> StateCheckResult:
     connection = None
     try:
+        preflight(database)
         connection = connect(database)
         migrate(connection)
         return CheckDurableState(SQLiteAuditRepository(connection)).run()

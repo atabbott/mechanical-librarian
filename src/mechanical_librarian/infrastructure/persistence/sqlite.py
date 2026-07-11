@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 import sqlite3
+import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,17 +72,22 @@ MIGRATIONS = (
 
 
 def connect(path: Path) -> sqlite3.Connection:
-    """Open one application-owned connection with the required safety settings."""
+    """Open one application-owned connection without changing durable state."""
 
     connection: sqlite3.Connection | None = None
     try:
+        if path == Path(":memory:"):
+            raise SchemaError("durable state requires a filesystem database")
         path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(path, isolation_level=None, check_same_thread=True)
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = FULL")
         connection.execute("PRAGMA busy_timeout = 5000")
         return connection
+    except SchemaError:
+        if connection is not None:
+            connection.close()
+        raise
     except (OSError, sqlite3.Error):
         if connection is not None:
             connection.close()
@@ -326,12 +333,99 @@ def _validate_existing_schema(connection: sqlite3.Connection, known: dict[int, M
     return applied
 
 
-def migrate(connection: sqlite3.Connection) -> int:
-    """Apply ordered migrations atomically, rejecting tampered or newer schemas."""
+_STATE_SUFFIXES = ("", "-journal", "-wal", "-shm")
+_RECOVERY_COPY_SUFFIXES = ("", "-journal", "-wal")
 
+
+def _state_snapshot(path: Path) -> dict[str, tuple[int, int, int, int]]:
+    snapshot: dict[str, tuple[int, int, int, int]] = {}
+    for suffix in _STATE_SUFFIXES:
+        candidate = Path(f"{path}{suffix}")
+        if not candidate.exists():
+            continue
+        status = candidate.stat()
+        snapshot[suffix] = (
+            status.st_dev,
+            status.st_ino,
+            status.st_size,
+            status.st_mtime_ns,
+        )
+    return snapshot
+
+
+def preflight(path: Path) -> None:
+    """Validate a stable copy before SQLite can recover or rewrite existing state."""
+
+    if path == Path(":memory:"):
+        raise SchemaError("durable state requires a filesystem database")
+    if not path.exists():
+        return
+
+    before = _state_snapshot(path)
+    probe: sqlite3.Connection | None = None
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            copied_path = Path(directory) / "state.sqlite"
+            for suffix in _RECOVERY_COPY_SUFFIXES:
+                source = Path(f"{path}{suffix}")
+                if source.exists():
+                    shutil.copyfile(source, Path(f"{copied_path}{suffix}"))
+            if before != _state_snapshot(path):
+                raise SchemaError("database changed during validation")
+            probe = sqlite3.connect(
+                copied_path,
+                isolation_level=None,
+                check_same_thread=True,
+            )
+            try:
+                applied = _validate_existing_schema(probe, _known_migrations())
+            finally:
+                probe.close()
+                probe = None
+            if not applied:
+                raise SchemaError("existing database has no recorded application schema")
+    except SchemaError:
+        raise
+    except (OSError, sqlite3.Error):
+        raise SchemaError("existing database could not be validated") from None
+    finally:
+        if probe is not None:
+            probe.close()
+
+
+def _validated_migrations(connection: sqlite3.Connection) -> dict[int, Migration]:
     try:
         connection.execute("BEGIN EXCLUSIVE")
         known = _known_migrations()
+        _validate_existing_schema(connection, known)
+        connection.commit()
+    except SchemaError:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    except (sqlite3.Error, OSError):
+        if connection.in_transaction:
+            connection.rollback()
+        raise SchemaError("database schema could not be validated") from None
+    return known
+
+
+def _enable_wal(connection: sqlite3.Connection) -> None:
+    try:
+        journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()
+    except sqlite3.Error:
+        raise SchemaError("database journal mode could not be enabled") from None
+    if journal_mode != ("wal",):
+        raise SchemaError("database journal mode could not be enabled")
+
+
+def migrate(connection: sqlite3.Connection) -> int:
+    """Apply ordered migrations atomically, rejecting tampered or newer schemas."""
+
+    known = _validated_migrations(connection)
+    _enable_wal(connection)
+    try:
+        connection.execute("BEGIN EXCLUSIVE")
         applied = _validate_existing_schema(connection, known)
         for migration in MIGRATIONS:
             if migration.version not in applied:

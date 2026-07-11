@@ -4,6 +4,7 @@ import io
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from unittest.mock import Mock
 
 from mechanical_librarian.application.state_check import (
     StateCheckOutcome,
@@ -84,6 +85,18 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("usage:", errors.getvalue())
+
+    def test_in_memory_database_is_rejected_before_runner_invocation(self) -> None:
+        runner = Mock()
+        errors = io.StringIO()
+
+        with redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+            main(["state-check", "--database", ":memory:"], state_check_runner=runner)
+
+        self.assertEqual(raised.exception.code, 2)
+        runner.assert_not_called()
+        self.assertNotIn(":memory:", errors.getvalue())
+        self.assertIn("durable filesystem path", errors.getvalue())
 
 
 if __name__ == "__main__":

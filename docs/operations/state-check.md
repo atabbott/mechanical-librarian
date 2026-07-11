@@ -12,6 +12,9 @@ Run it with an explicit state database path:
 mechanical-librarian state-check --database /var/lib/mechanical-librarian/state.sqlite
 ```
 
+The path must name durable filesystem state. SQLite's exact `:memory:` special
+name is rejected as a command-line error and never invokes the diagnostic.
+
 A successful check prints exactly `State check passed.` to standard output and
 exits with status `0`. Repeating the command, including after a process restart,
 reuses the same audit marker without adding duplicate records.
@@ -23,8 +26,11 @@ readback disagreement. Diagnostics never include the configured database path,
 stored event values, or exception text. Command-line syntax errors retain the
 standard `argparse` exit status `2`.
 
-The command does not repair, replace, or downgrade state. A migration failure is
+The command does not repair, replace, or downgrade state. Before opening an
+existing database, it validates a stable disposable copy with its recovery
+journal or WAL. Empty, truncated, incompatible, partial, or corrupt state fails
+without changing the database or its recovery sidecars. A migration failure is
 rolled back atomically and can be retried after the underlying problem is
-resolved. For incompatible, partial, or corrupt state, preserve the database
-and follow the [backup and recovery guidance](backups-and-recovery.md) before
-taking corrective action.
+resolved. Preserve rejected state and follow the
+[backup and recovery guidance](backups-and-recovery.md) before taking corrective
+action.

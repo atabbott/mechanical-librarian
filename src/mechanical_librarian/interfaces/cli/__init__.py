@@ -31,6 +31,15 @@ _FAILURE_MESSAGES = {
 }
 
 
+def _database_path(value: str) -> Path:
+    path = Path(value)
+    if path == Path(":memory:"):
+        raise argparse.ArgumentTypeError(
+            "database must be a durable filesystem path"
+        )
+    return path
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mechanical-librarian",
@@ -41,7 +50,9 @@ def _parser() -> argparse.ArgumentParser:
         "state-check",
         help="create or open state and verify durable audit readback",
     )
-    state_check.add_argument("--database", required=True, metavar="PATH", type=Path)
+    state_check.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
     return parser
 
 

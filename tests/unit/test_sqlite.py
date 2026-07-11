@@ -17,6 +17,37 @@ CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
+    def test_in_memory_database_is_not_a_durable_connection(self) -> None:
+        with self.assertRaisesRegex(SchemaError, "filesystem database"):
+            connect(Path(":memory:"))
+
+    def test_wal_failure_precedes_every_migration_write(self) -> None:
+        class WalFailureConnection:
+            def __init__(self, connection: sqlite3.Connection) -> None:
+                self._connection = connection
+
+            def execute(self, statement: str, parameters: tuple[object, ...] = ()):
+                if statement == "PRAGMA journal_mode = WAL":
+                    raise sqlite3.OperationalError("injected WAL failure")
+                return self._connection.execute(statement, parameters)
+
+            def __getattr__(self, name: str):
+                return getattr(self._connection, name)
+
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+
+            with self.assertRaisesRegex(SchemaError, "journal mode"):
+                migrate(WalFailureConnection(connection))  # type: ignore[arg-type]
+
+            self.assertEqual(
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall(),
+                [],
+            )
+
     def test_initial_migration_checksum_remains_stable(self) -> None:
         self.assertEqual(
             MIGRATIONS[0].checksum,
