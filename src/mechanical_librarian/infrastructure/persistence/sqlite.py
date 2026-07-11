@@ -104,6 +104,20 @@ def _expected_schema_objects(known: dict[int, Migration], versions: set[int]) ->
     return objects
 
 
+def _expected_non_table_definitions(known: dict[int, Migration], versions: set[int]) -> dict[tuple[str, str], str]:
+    definitions: dict[tuple[str, str], str] = {}
+    for version in versions:
+        for statement in known[version].statements:
+            match = re.match(
+                r"\s*CREATE\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+                statement,
+                re.IGNORECASE,
+            )
+            if match is not None:
+                definitions[(match.group(1).lower(), match.group(2))] = _normalise_schema_sql(statement)
+    return definitions
+
+
 def _normalise_schema_sql(sql: str) -> str:
     return " ".join(sql.split()).casefold().rstrip(";")
 
@@ -167,6 +181,16 @@ def _validate_existing_schema(connection: sqlite3.Connection, known: dict[int, M
     }
     if actual_definitions != expected_definitions:
         raise SchemaError("database schema definition does not match its recorded migration")
+    expected_non_table = _expected_non_table_definitions(known, versions)
+    actual_non_table = {
+        (kind, name): _normalise_schema_sql(sql)
+        for kind, name, sql in connection.execute(
+            "SELECT type, name, sql FROM sqlite_master WHERE type IN ('index', 'trigger', 'view')"
+        )
+        if (kind, name) in expected_non_table and sql is not None
+    }
+    if actual_non_table != expected_non_table:
+        raise SchemaError("database schema object definition does not match its recorded migration")
     return applied
 
 

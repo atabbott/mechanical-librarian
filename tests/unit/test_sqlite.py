@@ -138,7 +138,20 @@ class SqliteFoundationTests(unittest.TestCase):
             with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index)):
                 self.assertEqual(migrate(connection), 2)
                 self.assertEqual(migrate(connection), 2)
-            self.assertIsNotNone(connection.execute("SELECT name FROM sqlite_master WHERE name = 'audit_events_by_created_at'").fetchone())
+                self.assertIsNotNone(connection.execute("SELECT name FROM sqlite_master WHERE name = 'audit_events_by_created_at'").fetchone())
+
+    def test_tampered_index_definition_fails_closed(self) -> None:
+        index = Migration(2, ("CREATE UNIQUE INDEX audit_events_by_created_at ON audit_events(created_at)",), frozenset())
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index)):
+                migrate(connection)
+                connection.execute("DROP INDEX audit_events_by_created_at")
+                connection.execute("CREATE INDEX audit_events_by_created_at ON audit_events(id)")
+                with self.assertRaisesRegex(SchemaError, "object definition"):
+                    migrate(connection)
 
     def test_partial_schema_is_rejected_without_modification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
