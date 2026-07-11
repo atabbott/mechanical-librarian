@@ -5,7 +5,7 @@ import unittest
 from mechanical_librarian.domain.evidence import Disposition
 from mechanical_librarian.domain.identifiers import AdapterId, ConnectionId, DecisionAuthorizationId, DecisionId, ExternalItemId, Fingerprint, LibraryId, ProposalId, ReviewCaseId, SchemaVersion, SnapshotId, TargetId
 from mechanical_librarian.domain.lifecycle import ReviewCaseState
-from mechanical_librarian.domain.review import DecisionAuthorization, HumanDecision, HumanDecisionAction, ReviewCase, ReviewGroup, supersedes
+from mechanical_librarian.domain.review import DecisionAuthorization, HumanDecision, HumanDecisionAction, NoticeClass, ReviewCase, ReviewGroup, ReviewNotice, supersedes
 
 
 class ReviewCaseTests(unittest.TestCase):
@@ -102,6 +102,25 @@ class ReviewCaseTests(unittest.TestCase):
 
         self.assertEqual(authorization.applicability_for(changed_proposals).state.value, "stale")
         self.assertEqual(authorization.applicability_for(downgraded_disposition).state.value, "stale")
+
+    def test_automatic_authorization_stales_on_notice_drift_and_rejects_blocking_notices(self) -> None:
+        case = ReviewCase(
+            ReviewCaseId("case-one"), self.target, SnapshotId("snapshot-one"), self.fingerprint,
+            "set-v1", (ProposalId("proposal-one"),), ReviewCaseState.AUTO_RESOLVED, Disposition.AUTO_APPLY,
+        )
+        authorization = DecisionAuthorization(DecisionAuthorizationId("authorization-one"), case)
+        blocking_notice = ReviewNotice(
+            NoticeClass.BLOCKING, ProposalId("proposal-one"), ("unsafe-change",), "require human review",
+        )
+        changed_notices = ReviewCase(
+            ReviewCaseId("case-one"), self.target, SnapshotId("snapshot-one"), self.fingerprint,
+            "set-v1", (ProposalId("proposal-one"),), ReviewCaseState.AUTO_RESOLVED, Disposition.AUTO_APPLY,
+            (blocking_notice,),
+        )
+
+        self.assertEqual(authorization.applicability_for(changed_notices).state.value, "stale")
+        with self.assertRaises(ValueError):
+            DecisionAuthorization(DecisionAuthorizationId("authorization-two"), changed_notices)
 
 
 if __name__ == "__main__":

@@ -141,11 +141,15 @@ class DecisionAuthorization:
             return AuthorizationResult.stale("review proposals changed")
         if current_case.disposition is not self.case.disposition:
             return AuthorizationResult.stale("review disposition changed")
+        if current_case.notices != self.case.notices:
+            return AuthorizationResult.stale("review notices changed")
         if self.case.destructive:
             return AuthorizationResult.rejected("destructive work has no automatic authorization path")
         if self.case.disposition is Disposition.AUTO_APPLY:
             if self.human_decision is not None:
                 return AuthorizationResult.rejected("automatic authorization cannot carry a human decision")
+            if any(notice.classification is NoticeClass.BLOCKING for notice in current_case.notices):
+                return AuthorizationResult.rejected("blocking review notice prevents automatic authorization")
             if current_case.state is not ReviewCaseState.AUTO_RESOLVED:
                 return AuthorizationResult.stale("automatic disposition is no longer resolved")
             return AuthorizationResult.authorized(AuthorizationEvent.AUTOMATIC_POLICY)
