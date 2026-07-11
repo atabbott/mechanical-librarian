@@ -52,7 +52,12 @@ cardinality or private values.
 
 Audit events are user-facing product records, not debug logs. They remain
 queryable after log rotation and include sufficient provenance to reconstruct
-the decision and apply chain without exposing secrets.
+the decision and apply chain without exposing secrets. They use typed logical
+identifiers, kinds, UTC timestamps, and single-line safe summaries. Summaries
+reject credentials, endpoints, private paths, control characters, and
+provider-payload shaped values. Repository outcomes are typed: duplicate
+replay, conflicting duplicate, invalid input, unavailability, integrity
+failure, and corrupt stored data never expose SQLite exceptions or SQL values.
 
 ## Notifications
 
