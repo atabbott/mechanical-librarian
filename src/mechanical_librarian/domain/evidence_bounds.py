@@ -48,7 +48,7 @@ _BARE_BEARER_PATTERN = re.compile(
     r"(?i)\bbearer\s+([a-z0-9._~+/=-]{8,})(?=\s|$)"
 )
 _CREDENTIAL_ASSIGNMENT_PATTERN = re.compile(
-    r"[\"']?([A-Za-z][A-Za-z0-9_.:-]{1,80})[\"']?\s*[:=]"
+    r"[\"']?([A-Za-z][A-Za-z0-9_.:-]{1,80})[\"']?\s*([:=])"
 )
 _MULTIWORD_CREDENTIAL_PATTERN = re.compile(
     r"(?i)\b(?:client\s+secret|consumer\s+secret|secret\s+key|"
@@ -63,7 +63,7 @@ _LABELLED_PATH_PATTERN = re.compile(
     r"(?i)\b(?:path|file|location|source)\s*[:=]\s*(?:~[/\\]|[/\\]|[a-z]:[/\\])"
 )
 _ABSOLUTE_PATH_PATTERN = re.compile(
-    r"(?:^|[\s:=;,([{])/(?:[^\s/:]+/)+[^\s/]*"
+    r"(?<![\w/~])/(?!/)[^\s/:]+(?:/[^\s/:]+)*"
 )
 _WINDOWS_DRIVE_ROOT_PATTERN = re.compile(
     r"(?i)(?<![a-z0-9_])[a-z]:[/\\]"
@@ -107,7 +107,7 @@ def validate_projection_text(value: object, label: str, maximum: int) -> str:
     text = validate_text(value, label, maximum)
     lowered = text.casefold()
     if (
-        text.startswith(("/", "\\"))
+        text.startswith("\\")
         or (
             len(text) >= 3
             and text[0].isascii()
@@ -225,9 +225,13 @@ def _credential_shaped(value: str) -> bool:
             return True
     for match in _CREDENTIAL_ASSIGNMENT_PATTERN.finditer(value):
         raw_label = match.group(1)
-        structured_prefix = match.start() == 0 or value[match.start() - 1] in "?&{[,;"
+        delimiter = match.group(2)
+        structured_prefix = match.start() == 0 or (
+            match.start() > 0 and value[match.start() - 1] in "?&{[,;"
+        )
         if _credential_label_shaped(
-            raw_label, reject_exact_secret=structured_prefix
+            raw_label,
+            reject_exact_secret=delimiter == "=" or structured_prefix,
         ):
             return True
     return False

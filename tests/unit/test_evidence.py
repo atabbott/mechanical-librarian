@@ -189,6 +189,75 @@ class EvidenceTypeTests(unittest.TestCase):
             EvidenceRecord.from_persistence_json(_canonical(tampered))
         self.assertNotIn("private-key", repr(raised.exception))
 
+    def test_exact_secret_equals_assignments_reject_in_all_text_positions(self) -> None:
+        secret_assignments = (
+            "prefix secret=private-secret",
+            "prefix secret = private-secret",
+            'prefix "secret"=private-secret',
+            "prefix 'secret' = private-secret",
+        )
+        for value in secret_assignments:
+            with self.subTest(value=value, boundary="fact"):
+                with self.assertRaisesRegex(EvidenceValueError, "credential-shaped") as raised:
+                    ConfidenceFact("title", value)
+                self.assertNotIn(value, repr(raised.exception))
+            with self.subTest(value=value, boundary="lineage"):
+                with self.assertRaisesRegex(EvidenceValueError, "credential-shaped") as raised:
+                    self._record(lineage=value)
+                self.assertNotIn(value, repr(raised.exception))
+
+        for value in ("secret: private-secret", "secret: ordinary"):
+            with self.subTest(value=value, boundary="structured-fact"):
+                with self.assertRaisesRegex(EvidenceValueError, "credential-shaped") as raised:
+                    ConfidenceFact("title", value)
+                self.assertNotIn(value, repr(raised.exception))
+            with self.subTest(value=value, boundary="structured-lineage"):
+                with self.assertRaisesRegex(EvidenceValueError, "credential-shaped") as raised:
+                    self._record(lineage=value)
+                self.assertNotIn(value, repr(raised.exception))
+
+            tampered = json.loads(
+                self._record(
+                    facts=(ConfidenceFact("title", "ordinary-looking-value"),),
+                    lineage="ordinary-lineage",
+                ).to_persistence_json()
+            )
+            tampered["facts"][0]["value"] = value
+            with self.subTest(value=value, boundary="structured-fact-persistence"):
+                with self.assertRaisesRegex(EvidenceValueError, "credential-shaped"):
+                    EvidenceRecord.from_persistence_json(_canonical(tampered))
+
+            tampered["facts"][0]["value"] = "ordinary-looking-value"
+            tampered["lineage"] = value
+            with self.subTest(value=value, boundary="structured-lineage-persistence"):
+                with self.assertRaisesRegex(EvidenceValueError, "credential-shaped"):
+                    EvidenceRecord.from_persistence_json(_canonical(tampered))
+
+        for prose in (
+            "The Secret: A Novel",
+            "prefix secret: ordinary",
+            "secret.title=ordinary",
+        ):
+            with self.subTest(prose=prose):
+                self.assertEqual(ConfidenceFact("title", prose).value, prose)
+
+        tampered = json.loads(
+            self._record(
+                facts=(ConfidenceFact("title", "ordinary-looking-value"),),
+                lineage="ordinary-lineage",
+            ).to_persistence_json()
+        )
+        tampered["facts"][0]["value"] = "prefix secret=private-secret"
+        with self.assertRaisesRegex(EvidenceValueError, "credential-shaped") as raised:
+            EvidenceRecord.from_persistence_json(_canonical(tampered))
+        self.assertNotIn("private-secret", repr(raised.exception))
+
+        tampered["facts"][0]["value"] = "ordinary-looking-value"
+        tampered["lineage"] = "prefix secret = private-secret"
+        with self.assertRaisesRegex(EvidenceValueError, "credential-shaped") as raised:
+            EvidenceRecord.from_persistence_json(_canonical(tampered))
+        self.assertNotIn("private-secret", repr(raised.exception))
+
     def test_persisted_fact_codes_reject_credential_labels_without_near_misses(self) -> None:
         credential_codes = (
             "password",
@@ -690,7 +759,102 @@ class EvidenceTypeTests(unittest.TestCase):
             "_~\\Library\\Books\\book.epub",
             "~",
             "~approximation",
-            "'~ /approximation'",
+            "'~ / approximation'",
+        ):
+            with self.subTest(ordinary_value=ordinary_value):
+                detail = EvidenceDetail(
+                    self.reference,
+                    self.snapshot,
+                    self.snapshot_fingerprint,
+                    "epub",
+                    (ConfidenceFact("title", ordinary_value),),
+                    (),
+                )
+                self.assertEqual(
+                    json.loads(detail.to_api_json())["facts"][0]["value"],
+                    ordinary_value,
+                )
+
+    def test_posix_paths_are_retained_only_outside_projection_safe_facts(self) -> None:
+        private_paths = (
+            "/etc",
+            "/book.epub",
+            "/tmp",
+            "'/etc'",
+            '"/book.epub"',
+            "'/tmp'",
+            "</etc>",
+            "</book.epub>",
+            "</tmp>",
+            "/srv/media/book.epub",
+            "prefix /srv/media/book.epub",
+            "'/srv/media/book.epub'",
+            '"/srv/media/book.epub"',
+            "</srv/media/book.epub>",
+            "[/srv/media/book.epub]",
+            "(/srv/media/book.epub)",
+            "source=/srv/media/book.epub",
+            "found ~ /etc",
+            "found ~ /srv/media",
+        )
+        for private_path in private_paths:
+            with self.subTest(private_path=private_path, boundary="direct-detail"):
+                with self.assertRaisesRegex(EvidenceValueError, "production path"):
+                    EvidenceDetail(
+                        self.reference,
+                        self.snapshot,
+                        self.snapshot_fingerprint,
+                        "epub",
+                        (ConfidenceFact("title", private_path),),
+                        (),
+                    )
+
+            record = self._record(facts=(ConfidenceFact("title", private_path),))
+            persisted = json.loads(record.to_persistence_json())
+            self.assertEqual(persisted["facts"][0]["value"], private_path)
+            with self.subTest(private_path=private_path, boundary="record-projection"):
+                with self.assertRaisesRegex(EvidenceValueError, "production path"):
+                    EvidenceDetail.from_record(record)
+
+            with self.subTest(private_path=private_path, boundary="summary"):
+                with self.assertRaisesRegex(EvidenceValueError, "production path"):
+                    EvidenceSummary(
+                        EvidenceId("evidence-summary"), "epub", 1, 0, private_path
+                    )
+
+        retained_path = ConfidenceFact("path", private_paths[0])
+        public_title = ConfidenceFact("title", "Example")
+        authoritative_record = self._record(facts=(retained_path, public_title))
+        persisted_values = {
+            fact["value"]
+            for fact in json.loads(authoritative_record.to_persistence_json())["facts"]
+        }
+        self.assertIn(retained_path.value, persisted_values)
+        detail = EvidenceDetail.from_record(authoritative_record)
+        self.assertEqual(detail.facts, (public_title,))
+        api_values = {
+            fact["value"] for fact in json.loads(detail.to_api_json())["facts"]
+        }
+        self.assertNotIn(retained_path.value, api_values)
+        packet = ReviewerEvidencePacket(
+            self.target,
+            self.snapshot,
+            self.snapshot_fingerprint,
+            (detail,),
+        )
+        packet_values = {
+            fact["value"]
+            for packet_detail in json.loads(packet.to_json())["details"]
+            for fact in packet_detail["facts"]
+        }
+        self.assertNotIn(retained_path.value, packet_values)
+
+        for ordinary_value in (
+            "https://example.com/books/title",
+            "//host/path/file.epub",
+            "Love / Hate",
+            "A/srv/media/book.epub",
+            "_/srv/media/book.epub",
         ):
             with self.subTest(ordinary_value=ordinary_value):
                 detail = EvidenceDetail(
