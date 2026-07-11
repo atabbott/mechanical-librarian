@@ -21,9 +21,11 @@ class BootstrapTests(unittest.TestCase):
             )
         return exit_code, output.getvalue(), errors.getvalue()
 
-    @patch("mechanical_librarian.bootstrap.connect")
+    @patch("mechanical_librarian.bootstrap.preflight")
+    @patch("mechanical_librarian.bootstrap.path_entry_exists", return_value=True)
+    @patch("mechanical_librarian.bootstrap.connect_existing")
     def test_connection_failure_maps_to_fixed_path_free_result(
-        self, mocked_connect: Mock
+        self, mocked_connect: Mock, _mocked_exists: Mock, _mocked_preflight: Mock
     ) -> None:
         mocked_connect.side_effect = SchemaError(
             "/private/hostile-sentinel.sqlite token=private"
@@ -35,9 +37,15 @@ class BootstrapTests(unittest.TestCase):
         )
 
     @patch("mechanical_librarian.bootstrap.migrate")
-    @patch("mechanical_librarian.bootstrap.connect")
+    @patch("mechanical_librarian.bootstrap.preflight")
+    @patch("mechanical_librarian.bootstrap.path_entry_exists", return_value=True)
+    @patch("mechanical_librarian.bootstrap.connect_existing")
     def test_schema_failure_closes_connection_in_finally(
-        self, mocked_connect: Mock, mocked_migrate: Mock
+        self,
+        mocked_connect: Mock,
+        _mocked_exists: Mock,
+        _mocked_preflight: Mock,
+        mocked_migrate: Mock,
     ) -> None:
         connection = Mock()
         mocked_connect.return_value = connection
@@ -47,9 +55,15 @@ class BootstrapTests(unittest.TestCase):
         connection.close.assert_called_once_with()
 
     @patch("mechanical_librarian.bootstrap.migrate", return_value=1)
-    @patch("mechanical_librarian.bootstrap.connect")
+    @patch("mechanical_librarian.bootstrap.preflight")
+    @patch("mechanical_librarian.bootstrap.path_entry_exists", return_value=True)
+    @patch("mechanical_librarian.bootstrap.connect_existing")
     def test_locked_append_is_typed_unavailable_and_connection_is_closed(
-        self, mocked_connect: Mock, _mocked_migrate: Mock
+        self,
+        mocked_connect: Mock,
+        _mocked_exists: Mock,
+        _mocked_preflight: Mock,
+        _mocked_migrate: Mock,
     ) -> None:
         connection = Mock()
         connection.execute.side_effect = sqlite3.OperationalError("database is locked")

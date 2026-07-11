@@ -1,10 +1,11 @@
 # Durable state check
 
 The `state-check` command is the supported diagnostic for the application-owned
-SQLite state. It creates the database and parent directories when they do not
-exist, applies the current migrations atomically, records one code-owned audit
-marker, and reads that exact marker back through the application audit
-contract.
+SQLite state. When the database does not exist, it prepares private state in
+the same directory, applies the current migrations atomically, records one
+code-owned audit marker, reads that exact marker back through the application
+audit contract, and only then publishes the complete database without
+replacing any concurrent creator's state.
 
 Run it with an explicit state database path:
 
@@ -29,8 +30,10 @@ standard `argparse` exit status `2`.
 The command does not repair, replace, or downgrade state. Before opening an
 existing database, it validates a stable disposable copy with its recovery
 journal or WAL. Empty, truncated, incompatible, partial, or corrupt state fails
-without changing the database or its recovery sidecars. A migration failure is
-rolled back atomically and can be retried after the underlying problem is
-resolved. Preserve rejected state and follow the
+without changing the database or its recovery sidecars. If first-time setup
+fails before publication, the requested database path remains absent and the
+command can be retried after the underlying problem is resolved. A migration
+failure for valid existing state is rolled back atomically and can also be
+retried. Preserve rejected existing state and follow the
 [backup and recovery guidance](backups-and-recovery.md) before taking corrective
 action.

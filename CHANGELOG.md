@@ -25,6 +25,9 @@ versioning after the first public release.
   indexed chronological queries in the initial schema.
 - SQLite migrations now execute and record their checksums atomically, with
   fail-closed detection of partial, tampered, newer, and unrecognized schemas.
+- First-run durable state is now verified in a private same-filesystem staging
+  file and published atomically without replacing a concurrent creator, so a
+  failed initialization leaves the requested database path retryable.
 - Decision authorizations now retain and validate immutable review-case and
   human-decision or qualified automatic-policy evidence, rejecting stale,
   mismatched, disposition-only, or ID-only authority.

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import sqlite3
+import stat
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -92,6 +94,35 @@ def connect(path: Path) -> sqlite3.Connection:
         if connection is not None:
             connection.close()
         raise SchemaError("database connection could not be opened") from None
+
+
+def connect_existing(path: Path) -> sqlite3.Connection:
+    """Open an existing regular database entry without creating a replacement."""
+
+    connection: sqlite3.Connection | None = None
+    try:
+        status = path.lstat()
+        if not stat.S_ISREG(status.st_mode):
+            raise SchemaError("existing database entry is not a regular file")
+        uri = f"{path.absolute().as_uri()}?mode=rw&nofollow=1"
+        connection = sqlite3.connect(
+            uri,
+            uri=True,
+            isolation_level=None,
+            check_same_thread=True,
+        )
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA synchronous = FULL")
+        connection.execute("PRAGMA busy_timeout = 5000")
+        return connection
+    except SchemaError:
+        if connection is not None:
+            connection.close()
+        raise
+    except (OSError, sqlite3.Error, ValueError):
+        if connection is not None:
+            connection.close()
+        raise SchemaError("existing database could not be opened") from None
 
 
 def _user_schema_objects(connection: sqlite3.Connection) -> set[tuple[str, str]]:
@@ -335,6 +366,111 @@ def _validate_existing_schema(connection: sqlite3.Connection, known: dict[int, M
 
 _STATE_SUFFIXES = ("", "-journal", "-wal", "-shm")
 _RECOVERY_COPY_SUFFIXES = ("", "-journal", "-wal")
+_STAGED_PREFIX = ".mechanical-librarian-state-"
+
+
+def path_entry_exists(path: Path) -> bool:
+    """Return whether a directory entry exists without following symlinks."""
+
+    return os.path.lexists(path)
+
+
+@contextmanager
+def staged_state(target: Path) -> Iterator[Path]:
+    """Yield one private same-filesystem path owned only by this invocation."""
+
+    if target == Path(":memory:"):
+        raise SchemaError("durable state requires a filesystem database")
+    descriptor: int | None = None
+    staged: Path | None = None
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, name = tempfile.mkstemp(
+            dir=target.parent,
+            prefix=_STAGED_PREFIX,
+            suffix=".sqlite",
+        )
+        os.fchmod(descriptor, 0o600)
+        staged = Path(name)
+        os.close(descriptor)
+        descriptor = None
+        yield staged
+    except SchemaError:
+        raise
+    except OSError:
+        raise SchemaError("private state staging could not be prepared") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if staged is not None:
+            cleanup_failed = False
+            for suffix in _STATE_SUFFIXES:
+                try:
+                    Path(f"{staged}{suffix}").unlink(missing_ok=True)
+                except OSError:
+                    cleanup_failed = True
+            if cleanup_failed:
+                raise SchemaError("private state staging could not be removed")
+
+
+def _fsync_file(path: Path) -> None:
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, os.O_RDONLY)
+        os.fsync(descriptor)
+    except OSError:
+        raise SchemaError("prepared state could not be synchronized") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        os.fsync(descriptor)
+    except OSError:
+        raise SchemaError("state directory could not be synchronized") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def publish_staged_state(staged: Path, target: Path) -> bool:
+    """Atomically publish a complete staged database without replacing a winner."""
+
+    try:
+        staged_status = staged.lstat()
+    except OSError:
+        raise SchemaError("prepared state is unavailable") from None
+    if not stat.S_ISREG(staged_status.st_mode) or staged_status.st_nlink != 1:
+        raise SchemaError("prepared state is not an exclusive regular file")
+    if stat.S_IMODE(staged_status.st_mode) & 0o077:
+        raise SchemaError("prepared state permissions are too broad")
+    if any(path_entry_exists(Path(f"{staged}{suffix}")) for suffix in _STATE_SUFFIXES[1:]):
+        raise SchemaError("prepared state still requires recovery sidecars")
+
+    _fsync_file(staged)
+    try:
+        os.link(staged, target, follow_symlinks=False)
+    except FileExistsError:
+        return False
+    except OSError:
+        raise SchemaError("prepared state could not be published") from None
+
+    # The target is complete once linked. Never remove it after this point: a
+    # concurrent process may already be using the published inode.
+    _fsync_directory(target.parent)
+    try:
+        staged.unlink()
+    except OSError:
+        raise SchemaError("private state staging could not be removed") from None
+    _fsync_directory(target.parent)
+    return True
 
 
 def _state_snapshot(path: Path) -> dict[str, tuple[int, int, int, int]]:
@@ -358,8 +494,15 @@ def preflight(path: Path) -> None:
 
     if path == Path(":memory:"):
         raise SchemaError("durable state requires a filesystem database")
-    if not path.exists():
+    if not path_entry_exists(path):
         return
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            raise SchemaError("existing database entry is not a regular file")
+    except SchemaError:
+        raise
+    except OSError:
+        raise SchemaError("existing database could not be inspected") from None
 
     before = _state_snapshot(path)
     probe: sqlite3.Connection | None = None
@@ -445,6 +588,20 @@ def migrate(connection: sqlite3.Connection) -> int:
             connection.rollback()
         raise SchemaError("migration failed and was rolled back") from None
     return max(known)
+
+
+def finalize_staged_state(connection: sqlite3.Connection) -> None:
+    """Checkpoint and verify a new database before no-clobber publication."""
+
+    if connection.in_transaction:
+        raise SchemaError("prepared state still has an active transaction")
+    try:
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        integrity = connection.execute("PRAGMA integrity_check").fetchone()
+    except sqlite3.Error:
+        raise SchemaError("prepared state could not be verified") from None
+    if checkpoint != (0, 0, 0) or integrity != ("ok",):
+        raise SchemaError("prepared state could not be verified")
 
 
 @contextmanager

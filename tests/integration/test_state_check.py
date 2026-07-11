@@ -5,11 +5,19 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
-from mechanical_librarian.bootstrap import main
+from mechanical_librarian.bootstrap import _run_state_check, main
+from mechanical_librarian.infrastructure.persistence import sqlite
+from mechanical_librarian.infrastructure.persistence.sqlite import (
+    Migration,
+    SchemaError,
+)
 
 
 class ComposedStateCheckTests(unittest.TestCase):
@@ -65,6 +73,7 @@ class ComposedStateCheckTests(unittest.TestCase):
                 rows,
                 [("state-check-v1", "state-check", "verification succeeded")],
             )
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_exact_readback_succeeds_after_more_than_one_hundred_newer_events(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -220,6 +229,161 @@ class ComposedStateCheckTests(unittest.TestCase):
                 {candidate.name for candidate in Path(directory).iterdir()},
                 {path.name},
             )
+
+    def test_failed_first_initialization_leaves_retryable_absent_state(self) -> None:
+        failed_migration = Migration(
+            1,
+            (
+                "CREATE TABLE schema_migrations "
+                "(version INTEGER PRIMARY KEY, checksum TEXT NOT NULL)",
+                "CREATE TABLE incomplete_state (id INTEGER PRIMARY KEY)",
+                "CREATE TABLE",
+            ),
+            frozenset({"schema_migrations", "incomplete_state"}),
+        )
+        failures = (
+            patch.object(sqlite, "MIGRATIONS", (failed_migration,)),
+            patch.object(
+                sqlite,
+                "_enable_wal",
+                side_effect=SchemaError("injected WAL failure"),
+            ),
+        )
+        for failure in failures:
+            with (
+                self.subTest(failure=failure),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path = Path(directory) / "state.sqlite"
+                with failure:
+                    self.assertEqual(
+                        self.run_check(path),
+                        (1, "", "State check failed: state could not be verified.\n"),
+                    )
+                self.assertFalse(path.exists())
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+                self.assertEqual(
+                    self.run_check(path),
+                    (0, "State check passed.\n", ""),
+                )
+
+    def test_no_clobber_publication_preserves_a_competing_invalid_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            real_publish = sqlite.publish_staged_state
+
+            def publish_after_competitor(staged: Path, target: Path) -> bool:
+                target.write_bytes(b"competing-state")
+                return real_publish(staged, target)
+
+            with patch(
+                "mechanical_librarian.bootstrap.publish_staged_state",
+                side_effect=publish_after_competitor,
+            ):
+                self.assertEqual(
+                    self.run_check(path),
+                    (1, "", "State check failed: state could not be verified.\n"),
+                )
+
+            self.assertEqual(path.read_bytes(), b"competing-state")
+            self.assertEqual(
+                {candidate.name for candidate in Path(directory).iterdir()},
+                {path.name},
+            )
+
+    def test_unsupported_publication_fails_without_exposing_partial_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            with patch.object(sqlite.os, "link", side_effect=OSError("unsupported")):
+                self.assertEqual(
+                    self.run_check(path),
+                    (1, "", "State check failed: state could not be verified.\n"),
+                )
+
+            self.assertFalse(path.exists())
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_concurrent_first_initializers_share_one_published_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            barrier = threading.Barrier(2)
+            real_publish = sqlite.publish_staged_state
+
+            def synchronized_publish(staged: Path, target: Path) -> bool:
+                barrier.wait(timeout=5)
+                return real_publish(staged, target)
+
+            with (
+                patch(
+                    "mechanical_librarian.bootstrap.publish_staged_state",
+                    side_effect=synchronized_publish,
+                ),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                results = tuple(executor.map(_run_state_check, (path, path)))
+
+            self.assertTrue(all(result.succeeded for result in results))
+            connection = sqlite3.connect(path)
+            try:
+                self.assertEqual(
+                    connection.execute("SELECT count(*) FROM audit_events").fetchone(),
+                    (1,),
+                )
+            finally:
+                connection.close()
+            self.assertEqual(
+                {candidate.name for candidate in Path(directory).iterdir()},
+                {path.name},
+            )
+
+    def test_existing_upgrade_failure_rolls_back_and_can_retry(self) -> None:
+        failed_upgrade = Migration(
+            2,
+            (
+                "CREATE TABLE retry_state (id INTEGER PRIMARY KEY)",
+                "CREATE TABLE",
+            ),
+            frozenset({"retry_state"}),
+        )
+        successful_upgrade = Migration(
+            2,
+            ("CREATE TABLE retry_state (id INTEGER PRIMARY KEY)",),
+            frozenset({"retry_state"}),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            self.assertEqual(self.run_check(path)[0], 0)
+
+            with patch.object(sqlite, "MIGRATIONS", (*sqlite.MIGRATIONS, failed_upgrade)):
+                self.assertEqual(self.run_check(path)[0], 1)
+            connection = sqlite3.connect(path)
+            try:
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT name FROM sqlite_master WHERE name = 'retry_state'"
+                    ).fetchone()
+                )
+            finally:
+                connection.close()
+
+            with patch.object(
+                sqlite,
+                "MIGRATIONS",
+                (*sqlite.MIGRATIONS, successful_upgrade),
+            ):
+                self.assertEqual(self.run_check(path)[0], 0)
+
+    def test_dangling_symlink_is_rejected_without_replacement(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            destination = Path(directory) / "missing.sqlite"
+            path.symlink_to(destination)
+
+            self.assertEqual(self.run_check(path)[0], 1)
+            self.assertTrue(path.is_symlink())
+            self.assertEqual(path.readlink(), destination)
+            self.assertFalse(destination.exists())
 
     def test_unavailable_parent_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
