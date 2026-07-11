@@ -57,6 +57,7 @@ class LifecycleTests(unittest.TestCase):
     def test_only_replays_are_marked_idempotent(self) -> None:
         self.assertFalse(AuthorizationResult.authorized(event=AuthorizationEvent.HUMAN_DECISION).idempotent_replay)
         self.assertTrue(AuthorizationResult.authorized().idempotent_replay)
+        self.assertFalse(AuthorizationResult.rejected("invalid authorization").idempotent_replay)
 
 
 if __name__ == "__main__":

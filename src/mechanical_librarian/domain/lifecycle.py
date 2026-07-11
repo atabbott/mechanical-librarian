@@ -118,7 +118,7 @@ class AuthorizationResult:
 
     @classmethod
     def rejected(cls, reason: str) -> "AuthorizationResult":
-        return cls(AuthorizationState.REJECTED, AuthorizationEvent.HUMAN_DECISION, reason, False, True, True)
+        return cls(AuthorizationState.REJECTED, AuthorizationEvent.HUMAN_DECISION, reason, False, True, False)
 
     @classmethod
     def stale(cls, reason: str) -> "AuthorizationResult":

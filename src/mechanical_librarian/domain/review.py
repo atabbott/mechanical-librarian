@@ -102,7 +102,12 @@ class HumanDecision:
     def applicability_for(self, case: ReviewCase) -> HumanDecisionApplicability:
         if self.case.id != case.id:
             return HumanDecisionApplicability.SUPERSEDED
-        if self.case.target != case.target or self.case.fingerprint != case.fingerprint or self.case.proposal_set_version != case.proposal_set_version:
+        if (
+            self.case.target != case.target
+            or self.case.fingerprint != case.fingerprint
+            or self.case.proposal_set_version != case.proposal_set_version
+            or self.case.proposals != case.proposals
+        ):
             return HumanDecisionApplicability.STALE
         if case.state is not ReviewCaseState.HUMAN_RESOLVED or case.disposition is not Disposition.NEEDS_REVIEW:
             return HumanDecisionApplicability.REJECTED

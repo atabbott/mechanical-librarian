@@ -67,6 +67,11 @@ class ReviewCaseTests(unittest.TestCase):
         )
         self.assertEqual(authorization.applicability_for(changed).state.value, "stale")
         self.assertEqual(decision.applicability_for(changed).value, "stale")
+        changed_proposals = ReviewCase(
+            ReviewCaseId("case-one"), self.target, SnapshotId("snapshot-two"), self.fingerprint,
+            "set-v1", (ProposalId("proposal-two"),), ReviewCaseState.HUMAN_RESOLVED, Disposition.NEEDS_REVIEW,
+        )
+        self.assertEqual(authorization.applicability_for(changed_proposals).state.value, "stale")
         replacement = ReviewCase(
             ReviewCaseId("case-two"), self.target, SnapshotId("snapshot-two"), self.fingerprint,
             "set-v1", (ProposalId("proposal-one"),), ReviewCaseState.HUMAN_RESOLVED, Disposition.NEEDS_REVIEW,
