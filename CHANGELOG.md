@@ -7,6 +7,11 @@ versioning after the first public release.
 
 ## Unreleased
 
+### Fixed
+
+- SQLite migrations now execute and record their checksums atomically, with
+  fail-closed detection of partial, tampered, newer, and unrecognized schemas.
+
 ### Added
 
 - Functional-slice delivery governance for new functionality during the initial
