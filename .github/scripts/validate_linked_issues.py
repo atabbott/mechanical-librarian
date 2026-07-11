@@ -172,11 +172,13 @@ def evaluate_snapshot(snapshot: object, expected_repository: str) -> GateResult:
     all_by_key = {_key(node): node for node in all_references}
     if not manual_keys.issubset(all_by_key):
         return GateResult(False, "metadata_incomplete")
-    explicit_body_numbers = _explicit_body_references(body_html)
+    explicit_body_keys = {
+        (expected_repository, number) for number in _explicit_body_references(body_html)
+    }
     recognized = tuple(
         node
         for node in all_references
-        if _key(node) not in manual_keys or node["number"] in explicit_body_numbers
+        if _key(node) not in manual_keys or _key(node) in explicit_body_keys
     )
     if not recognized:
         if manual_references:

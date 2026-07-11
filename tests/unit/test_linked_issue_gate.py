@@ -128,6 +128,80 @@ class LinkedIssueGateTests(unittest.TestCase):
                 )
                 self.assertEqual(result.code, "manual_link_not_closing_reference")
 
+    def test_manual_overlap_preserves_repository_identity(self) -> None:
+        body_html = (
+            '<p><span class="issue-keyword">Closes</span> '
+            '<a class="issue-link" href="/issues/135">#135</a></p>'
+        )
+        foreign_same_number = issue(135, repository="another/repository")
+        same_number_result = evaluate_snapshot(
+            snapshot(
+                [issue(135), foreign_same_number],
+                [foreign_same_number],
+                body_html=body_html,
+            ),
+            REPOSITORY,
+        )
+        self.assertTrue(same_number_result.allowed)
+        self.assertEqual(
+            same_number_result.references,
+            ("example/mechanical-librarian#135",),
+        )
+
+        foreign_other_number = issue(139, repository="another/repository")
+        different_number_result = evaluate_snapshot(
+            snapshot(
+                [issue(135), foreign_other_number],
+                [foreign_other_number],
+                body_html=body_html,
+            ),
+            REPOSITORY,
+        )
+        self.assertTrue(different_number_result.allowed)
+        self.assertEqual(
+            different_number_result.references,
+            ("example/mechanical-librarian#135",),
+        )
+
+        local_manual = issue(135)
+        foreign_native_result = evaluate_snapshot(
+            snapshot(
+                [foreign_same_number, local_manual],
+                [local_manual],
+                body_html=body_html,
+            ),
+            REPOSITORY,
+        )
+        self.assertFalse(foreign_native_result.allowed)
+        self.assertEqual(foreign_native_result.code, "foreign_repository_reference")
+        self.assertEqual(
+            foreign_native_result.references,
+            ("another/repository#135",),
+        )
+
+        local_overlap_result = evaluate_snapshot(
+            snapshot([local_manual], [local_manual], body_html=body_html),
+            REPOSITORY,
+        )
+        self.assertTrue(local_overlap_result.allowed)
+        self.assertEqual(
+            local_overlap_result.references,
+            ("example/mechanical-librarian#135",),
+        )
+
+        foreign_manual_result = evaluate_snapshot(
+            snapshot(
+                [foreign_same_number],
+                [foreign_same_number],
+                body_html=body_html,
+            ),
+            REPOSITORY,
+        )
+        self.assertFalse(foreign_manual_result.allowed)
+        self.assertEqual(
+            foreign_manual_result.code, "manual_link_not_closing_reference"
+        )
+
     def test_all_closing_keywords_disambiguate_native_manual_overlap(self) -> None:
         keywords = (
             "close",
