@@ -8,43 +8,6 @@ record containing the old state, new state, actor, and reason. Persistence
 records that fact separately; callers cannot bypass the transition table by
 constructing a replacement workflow state.
 
-## Run and stage lifecycle
-
-```text
-pending -> running | cancelled
-running -> waiting | succeeded | failed_terminal | cancelled
-waiting -> running | failed_terminal | cancelled
-```
-
-`waiting` is nonterminal: a run or stage has incomplete dependencies but no
-currently eligible work left to launch, and every required prerequisite can
-still reach an accepted outcome. It is distinct from a job's `retry_wait`, and
-never means ready, complete, successful, or authorized. An exhausted required
-prerequisite or a missing or malformed expected outcome records a typed blocker
-and moves the affected run or stage to `failed_terminal`; it cannot wait
-indefinitely or advance fan-in.
-
-Each run persists a bounded acyclic dependency graph and the expected typed
-outcome of every node. A scheduling pass persists and durably enqueues the
-complete eligible set, then workers make capacity-bounded claims using stable
-job identity and deduplication keys. Delivery is at least once, so redelivery is
-expected; idempotent handlers plus provider idempotency or reconciliation
-prevent or recover duplicate external effects. Fan-in advances only after one
-monotonic-fenced accepted outcome per job has been independently validated
-against its current input versions.
-Leases, fencing tokens, durable job IDs, cancellation, and expiry make resume
-safe after worker, scheduler, or process restart. Fencing tokens increase
-monotonically for each new lease holder. A stale holder is rejected when it
-renews a lease or records an outcome, artifact, checkpoint, audit completion,
-or fan-in transition. Operating-system process IDs, shell sessions, and
-detached watchers are diagnostics only and never workflow identity or
-transition authority.
-
-Expiry is a typed cancellation reason, not a separate state. It may cancel an
-eligible `pending`, `running`, or `waiting` run or stage and preserves the
-expiry reason, actual transition actor, and initiating authorization reference
-in the audit event.
-
 ## Job lifecycle
 
 ```text
