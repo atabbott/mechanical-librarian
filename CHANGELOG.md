@@ -11,6 +11,8 @@ versioning after the first public release.
 
 - SQLite migrations now execute and record their checksums atomically, with
   fail-closed detection of partial, tampered, newer, and unrecognized schemas.
+- Decision authorizations now retain and validate immutable review-case and
+  human-decision evidence, rejecting stale, mismatched, or ID-only authority.
 
 ### Added
 

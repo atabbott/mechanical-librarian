@@ -4,6 +4,7 @@ import unittest
 
 from mechanical_librarian.domain.lifecycle import (
     ApplyPlanState,
+    AuthorizationResult,
     CircuitBreakerState,
     Disposition,
     InvalidTransition,
@@ -41,6 +42,16 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(can_authorize_apply(disposition=Disposition.AUTO_APPLY, human_decision_current=False, destructive=False))
         self.assertFalse(can_authorize_apply(disposition=Disposition.AUTO_APPLY, human_decision_current=False, destructive=True))
         self.assertTrue(can_authorize_apply(disposition=Disposition.NEEDS_REVIEW, human_decision_current=True, destructive=True))
+
+    def test_transition_context_is_bounded_and_reproducible(self) -> None:
+        record = transition(JobState.PENDING, JobState.LEASED, actor="worker", reason="claim", reproducibility_context=(("job", "job-one"),))
+        self.assertTrue(record.reproducibility_context)
+
+    def test_operational_failure_is_not_a_decision_rejection(self) -> None:
+        result = AuthorizationResult.operational_failure("temporary policy source unavailable")
+        self.assertTrue(result.retryable)
+        self.assertFalse(result.terminal)
+        self.assertEqual(result.state.value, "operational_failure")
 
 
 if __name__ == "__main__":
