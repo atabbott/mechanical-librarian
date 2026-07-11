@@ -38,6 +38,7 @@ release standards as code.
 - [Quality strategy](development/quality-strategy.md)
 - [Testing strategy](development/testing-strategy.md)
 - [Documentation standards](development/documentation-standards.md)
+- [Functional slice delivery](development/slice-delivery.md)
 - [Work management](development/work-management.md)
 - [Release engineering](development/release-engineering.md)
 - [Repository structure](development/repository-structure.md)

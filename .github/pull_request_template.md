@@ -6,9 +6,34 @@ Describe the problem and the resulting behavior.
 
 Closes #
 
+## Delivery mode
+
+- [ ] New-functionality slice
+- [ ] Focused ticket: fix, security, documentation, tooling, dependency, maintenance, or standalone work
+
+Slice tracker, when applicable: #
+
+Additional constituent tickets closed in full by a slice:
+
+- Closes #
+
 Parent issue or work package:
 
 Governing specification or ADR:
+
+Branch: `slice/`, `fix/`, `feature/`, `docs/`, `chore/`, or another purpose-based name
+
+## Functional outcome
+
+For a slice, describe what a user or operator can now do through a supported
+CLI, API, browser, or container surface. For focused ticket work, describe the
+corrected or bounded outcome.
+
+Demonstration steps:
+
+```text
+
+```
 
 ## Change
 
@@ -36,6 +61,10 @@ List the exact commands and outcomes:
 
 ## Review checklist
 
+- [ ] The selected delivery mode is accurate; fixes and standalone work have not been relabelled as slices.
+- [ ] If this is a slice, it completes the documented functionality and exit criteria through a supported demonstration.
+- [ ] Every auto-closed ticket is satisfied in full; no partial acceptance is hidden in follow-up work.
+- [ ] The relevant demonstration or reproduction works from a clean checkout.
 - [ ] The change is narrowly scoped and contains no unrelated refactoring.
 - [ ] No credentials, private URLs, personal paths, copyrighted media, or production data are included.
 - [ ] New failure states are explicit, observable, and recoverable.

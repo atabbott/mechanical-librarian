@@ -255,4 +255,13 @@ After the first production-quality vertical slice:
 
 ## Planning rule
 
-Implementation tickets should reference the governing documents and state which invariant, ADR, threat, and test layer they affect. A ticket is not complete when code merely works; its contracts, tests, operations, and documentation must agree.
+Implementation tickets should reference the governing documents and state which
+invariant, ADR, threat, and test layer they affect. New functionality also names
+its functional delivery slice. Work packages remain ownership buckets; they do
+not define branch or pull-request boundaries. Initial product functionality
+follows the branch and review workflow in
+[functional slice delivery](../development/slice-delivery.md) and the ordered
+[delivery-slice plan](delivery-slices.md). Fixes, corrections, documentation,
+tooling, maintenance, and standalone tickets retain focused ticket-level
+delivery. A ticket is not complete when code merely works; its contracts, tests,
+operations, and documentation must agree.

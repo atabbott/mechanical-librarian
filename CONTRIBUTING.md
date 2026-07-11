@@ -13,6 +13,7 @@ Read:
 4. [Quality strategy](docs/development/quality-strategy.md)
 5. [Documentation standards](docs/development/documentation-standards.md)
 6. [Work management](docs/development/work-management.md)
+7. [Functional slice delivery](docs/development/slice-delivery.md)
 
 Use a discussion or design issue before implementing:
 
@@ -59,8 +60,20 @@ changes.
 
 ## Pull requests
 
-A pull request must:
+During the initial application build, new product functionality is delivered as
+one functional slice per branch and ready pull request. Select a `Ready` slice
+tracker, branch from current `main` as `slice/<slice-id>-<short-slug>`, and keep
+the cross-layer work together until the documented outcome is executable.
 
+Fixes, security corrections, documentation, tooling, dependency updates,
+maintenance, and standalone tickets use focused purpose branches and
+ticket-level pull requests instead. Do not create a slice tracker merely to
+rename one of those changes.
+
+A new-functionality slice pull request must:
+
+- close the slice tracker and only fully completed constituent tickets;
+- demonstrate the observable outcome through a supported surface;
 - explain the problem and intended behavior;
 - identify user-visible, data, security, and operational impact;
 - include tests for success, failure, retry, and idempotency where relevant;
@@ -71,7 +84,9 @@ A pull request must:
   documentation, and container-build checks.
 
 Reviewers should be able to understand the change without reconstructing its
-intent from implementation details.
+intent from implementation details or from a chain of partial pull requests.
+The complete workflow and permitted exceptions are defined in
+[functional slice delivery](docs/development/slice-delivery.md).
 
 ## Fixtures and privacy
 
