@@ -86,7 +86,10 @@ Process-wide configuration, connection and migration runtime, security
 primitives, logging, metrics, and process integration. Infrastructure does not
 implement or import application ports, does not own metadata policy, and does
 not import adapters. Bootstrap supplies explicit constructor boundaries when an
-adapter needs an infrastructure-owned runtime resource.
+adapter needs an infrastructure-owned runtime resource. Infrastructure may
+import non-port application contracts, such as configuration validation, but
+the static boundary check rejects the application modules that define ports
+(`application.audit` and `application.ports`).
 
 ### `interfaces`
 

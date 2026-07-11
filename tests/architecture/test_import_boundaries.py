@@ -15,11 +15,15 @@ PRODUCTION_LAYERS = {
     "bootstrap",
 }
 ROOT_MODULES = {"__init__", "__main__", "_version"}
+APPLICATION_PORT_MODULES = {
+    "mechanical_librarian.application.audit",
+    "mechanical_librarian.application.ports",
+}
 ALLOWED_LAYER_IMPORTS = {
     "domain": {"domain"},
     "application": {"application", "domain"},
     "adapters": {"adapters", "application", "domain"},
-    "infrastructure": {"infrastructure", "domain"},
+    "infrastructure": {"infrastructure", "application", "domain"},
     "interfaces": {"interfaces", "application", "domain"},
     "bootstrap": PRODUCTION_LAYERS,
 }
@@ -57,6 +61,13 @@ def _layer(module: str) -> str | None:
     return parts[1] if parts[1] in PRODUCTION_LAYERS else None
 
 
+def _is_application_port_module(module: str) -> bool:
+    return any(
+        module == port_module or module.startswith(f"{port_module}.")
+        for port_module in APPLICATION_PORT_MODULES
+    )
+
+
 def violates_boundary(origin: str, target: str) -> bool:
     target_parts = target.split(".")
     if target_parts[0] in {"tests", "scripts"} or "tests" in target_parts:
@@ -67,6 +78,9 @@ def violates_boundary(origin: str, target: str) -> bool:
     if origin_layer is None or target_layer is None:
         return False
     if target_layer not in ALLOWED_LAYER_IMPORTS[origin_layer]:
+        return True
+
+    if origin_layer == "infrastructure" and _is_application_port_module(target):
         return True
 
     if origin_layer == target_layer == "adapters":
@@ -186,6 +200,14 @@ class ImportBoundaryTests(unittest.TestCase):
             violates_boundary(
                 "mechanical_librarian.infrastructure.jobs.worker",
                 "mechanical_librarian.application.ports",
+            )
+        )
+
+    def test_infrastructure_can_import_non_port_application_contract(self) -> None:
+        self.assertFalse(
+            violates_boundary(
+                "mechanical_librarian.infrastructure.configuration.loader",
+                "mechanical_librarian.application.configuration",
             )
         )
 
