@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Generic, TypeVar
 
+from .evidence import Disposition
 from .identifiers import DomainValueError
 
 
@@ -66,13 +67,6 @@ class CircuitBreakerState(StrEnum):
     HALF_OPEN = "half_open"
 
 
-class Disposition(StrEnum):
-    AUTO_APPLY = "auto_apply"
-    NEEDS_REVIEW = "needs_review"
-    CLOSED_REJECTED = "closed_rejected"
-    UNSUPPORTED = "unsupported"
-
-
 class AuthorizationState(StrEnum):
     AUTHORIZED = "authorized"
     REJECTED = "rejected"
@@ -96,6 +90,31 @@ class HumanDecisionApplicability(StrEnum):
     REJECTED = "rejected"
 
 
+_AUTHORIZATION_REASONS_BY_STATE = {
+    AuthorizationState.AUTHORIZED: frozenset({"authorization is current"}),
+    AuthorizationState.REJECTED: frozenset(
+        {
+            "authorization requires an applicable disposition",
+            "automatic authorization cannot carry a human decision",
+            "automatic authorization requires policy qualification",
+            "destructive work has no automatic authorization path",
+            "human authorization cannot carry automatic policy evidence",
+            "invalid authorization",
+        }
+    ),
+    AuthorizationState.STALE: frozenset(
+        {
+            "automatic disposition is no longer resolved",
+            "automatic policy qualification is no longer current",
+            "human decision is no longer current",
+            "review case evidence changed",
+        }
+    ),
+    AuthorizationState.SUPERSEDED: frozenset({"review case was replaced"}),
+    AuthorizationState.OPERATIONAL_FAILURE: frozenset(
+        {"temporary policy source unavailable"}
+    ),
+}
 @dataclass(frozen=True)
 class AuthorizationResult:
     state: AuthorizationState
@@ -105,8 +124,57 @@ class AuthorizationResult:
     terminal: bool
     idempotent_replay: bool
 
+    def __post_init__(self) -> None:
+        if (
+            type(self.state) is not AuthorizationState
+            or type(self.event) is not AuthorizationEvent
+        ):
+            raise DomainValueError("authorization results require exact state and event types")
+        if (
+            type(self.reason) is not str
+            or self.reason not in _AUTHORIZATION_REASONS_BY_STATE[self.state]
+        ):
+            raise DomainValueError(
+                "authorization reason is inconsistent with its result state"
+            )
+        if any(
+            type(value) is not bool
+            for value in (self.retryable, self.terminal, self.idempotent_replay)
+        ):
+            raise DomainValueError("authorization result flags must be exact booleans")
+        legal = {
+            AuthorizationState.AUTHORIZED: (
+                {
+                    AuthorizationEvent.AUTOMATIC_POLICY,
+                    AuthorizationEvent.HUMAN_DECISION,
+                    AuthorizationEvent.IDEMPOTENT_REPLAY,
+                },
+                False,
+                False,
+            ),
+            AuthorizationState.REJECTED: ({AuthorizationEvent.HUMAN_DECISION}, False, True),
+            AuthorizationState.STALE: ({AuthorizationEvent.STALE_INPUT}, False, True),
+            AuthorizationState.SUPERSEDED: ({AuthorizationEvent.STALE_INPUT}, False, True),
+            AuthorizationState.OPERATIONAL_FAILURE: (
+                {AuthorizationEvent.OPERATIONAL_FAILURE},
+                True,
+                False,
+            ),
+        }
+        events, retryable, terminal = legal[self.state]
+        if (
+            self.event not in events
+            or self.retryable is not retryable
+            or self.terminal is not terminal
+        ):
+            raise DomainValueError("authorization result state, event, and flags are inconsistent")
+        if self.idempotent_replay is not (self.event is AuthorizationEvent.IDEMPOTENT_REPLAY):
+            raise DomainValueError("only idempotent replay events may be marked as replayed")
+
     @classmethod
-    def authorized(cls, event: AuthorizationEvent = AuthorizationEvent.IDEMPOTENT_REPLAY) -> "AuthorizationResult":
+    def authorized(
+        cls, event: AuthorizationEvent = AuthorizationEvent.IDEMPOTENT_REPLAY
+    ) -> "AuthorizationResult":
         return cls(
             AuthorizationState.AUTHORIZED,
             event,
@@ -118,19 +186,47 @@ class AuthorizationResult:
 
     @classmethod
     def rejected(cls, reason: str) -> "AuthorizationResult":
-        return cls(AuthorizationState.REJECTED, AuthorizationEvent.HUMAN_DECISION, reason, False, True, False)
+        return cls(
+            AuthorizationState.REJECTED,
+            AuthorizationEvent.HUMAN_DECISION,
+            reason,
+            False,
+            True,
+            False,
+        )
 
     @classmethod
     def stale(cls, reason: str) -> "AuthorizationResult":
-        return cls(AuthorizationState.STALE, AuthorizationEvent.STALE_INPUT, reason, False, True, False)
+        return cls(
+            AuthorizationState.STALE,
+            AuthorizationEvent.STALE_INPUT,
+            reason,
+            False,
+            True,
+            False,
+        )
 
     @classmethod
     def superseded(cls, reason: str) -> "AuthorizationResult":
-        return cls(AuthorizationState.SUPERSEDED, AuthorizationEvent.STALE_INPUT, reason, False, True, False)
+        return cls(
+            AuthorizationState.SUPERSEDED,
+            AuthorizationEvent.STALE_INPUT,
+            reason,
+            False,
+            True,
+            False,
+        )
 
     @classmethod
     def operational_failure(cls, reason: str) -> "AuthorizationResult":
-        return cls(AuthorizationState.OPERATIONAL_FAILURE, AuthorizationEvent.OPERATIONAL_FAILURE, reason, True, False, False)
+        return cls(
+            AuthorizationState.OPERATIONAL_FAILURE,
+            AuthorizationEvent.OPERATIONAL_FAILURE,
+            reason,
+            True,
+            False,
+            False,
+        )
 
 
 S = TypeVar("S", bound=StrEnum)
@@ -145,14 +241,31 @@ class Transition(Generic[S]):
     reproducibility_context: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
-        if not self.actor.strip() or not self.reason.strip():
-            raise DomainValueError("lifecycle transitions require a non-empty actor and reason")
+        if (
+            type(self.from_state) is not type(self.to_state)
+            or type(self.from_state) not in _STATE_TABLES
+        ):
+            raise InvalidTransition("lifecycle transitions require one exact supported state type")
+        if self.to_state not in _table_for(self.from_state).get(self.from_state, frozenset()):
+            raise InvalidTransition("lifecycle transition edge is not permitted")
+        _validate_text(self.actor, "transition actor", 128)
+        _validate_text(self.reason, "transition reason", 256)
+        if type(self.reproducibility_context) is not tuple:
+            raise DomainValueError("lifecycle transition context must be an immutable tuple")
         if len(self.reproducibility_context) > 8:
             raise DomainValueError("lifecycle transitions permit at most eight context entries")
-        if len({key for key, _ in self.reproducibility_context}) != len(self.reproducibility_context):
+        if any(
+            type(entry) is not tuple or len(entry) != 2
+            for entry in self.reproducibility_context
+        ):
+            raise DomainValueError("lifecycle transition context entries must be exact pairs")
+        if len({key for key, _ in self.reproducibility_context}) != len(
+            self.reproducibility_context
+        ):
             raise DomainValueError("lifecycle transition context keys must be unique")
-        if any(not key or not value or len(key) > 64 or len(value) > 128 for key, value in self.reproducibility_context):
-            raise DomainValueError("lifecycle transition context must be bounded non-empty text")
+        for key, value in self.reproducibility_context:
+            _validate_text(key, "transition context key", 64)
+            _validate_text(value, "transition context value", 128)
 
 
 class InvalidTransition(DomainValueError):
@@ -188,6 +301,14 @@ _BREAKER: dict[CircuitBreakerState, frozenset[CircuitBreakerState]] = {
     CircuitBreakerState.OPEN: frozenset({CircuitBreakerState.HALF_OPEN}),
     CircuitBreakerState.HALF_OPEN: frozenset({CircuitBreakerState.CLOSED, CircuitBreakerState.OPEN}),
 }
+_STATE_TABLES: dict[type[StrEnum], object] = {
+    JobState: _JOB,
+    ReviewCaseState: _REVIEW,
+    ProposalDecisionState: _PROPOSAL,
+    BulkDecisionBatchState: _BATCH,
+    ApplyPlanState: _APPLY,
+    CircuitBreakerState: _BREAKER,
+}
 
 
 def transition(
@@ -195,31 +316,19 @@ def transition(
 ) -> Transition[S]:
     """Validate and describe one state change without mutating any entity."""
 
-    table = _table_for(current)
-    if target not in table.get(current, frozenset()):
-        raise InvalidTransition(f"{type(current).__name__} cannot transition from {current} to {target}")
     return Transition(current, target, actor, reason, reproducibility_context)
 
 
-def can_authorize_apply(
-    *, disposition: Disposition, human_decision_current: bool, destructive: bool
-) -> bool:
-    """Encode the authorization boundary without constructing an apply plan."""
-
-    if destructive:
-        return human_decision_current
-    return disposition is Disposition.AUTO_APPLY or (
-        disposition is Disposition.NEEDS_REVIEW and human_decision_current
-    )
-
-
 def _table_for(state: S) -> dict[S, frozenset[S]]:
-    tables: dict[type[StrEnum], object] = {
-        JobState: _JOB,
-        ReviewCaseState: _REVIEW,
-        ProposalDecisionState: _PROPOSAL,
-        BulkDecisionBatchState: _BATCH,
-        ApplyPlanState: _APPLY,
-        CircuitBreakerState: _BREAKER,
-    }
-    return tables[type(state)]  # type: ignore[return-value,index]
+    return _STATE_TABLES[type(state)]  # type: ignore[return-value,index]
+
+
+def _validate_text(value: object, label: str, maximum: int) -> None:
+    if (
+        type(value) is not str
+        or not value
+        or value.strip() != value
+        or len(value) > maximum
+        or not value.isprintable()
+    ):
+        raise DomainValueError(f"{label} must be bounded trimmed printable text")

@@ -45,6 +45,7 @@ from .inventory import (
     SecretReference,
     ServiceEndpoint,
 )
+from .evidence import Disposition
 from .lifecycle import (
     AuthorizationEvent,
     AuthorizationResult,
@@ -52,14 +53,12 @@ from .lifecycle import (
     ApplyPlanState,
     BulkDecisionBatchState,
     CircuitBreakerState,
-    Disposition,
     InvalidTransition,
     HumanDecisionApplicability,
     JobState,
     ProposalDecisionState,
     ReviewCaseState,
     Transition,
-    can_authorize_apply,
     transition,
 )
 
@@ -118,6 +117,5 @@ __all__ = [
     "ServiceEndpoint",
     "TargetId",
     "Transition",
-    "can_authorize_apply",
     "transition",
 ]
