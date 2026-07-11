@@ -18,6 +18,12 @@ evidence, inclusion matrix, and explicit exclusions in the
 [review-experience contract](../product/review-experience.md) is authoritative
 where it intentionally differs from the prototype.
 
+Later prototype work is recorded separately in that extraction record as a
+post-DUX operational-learning baseline. It supplies scenarios and invariants
+for durable orchestration, coverage-based readiness, evidence-family
+independence, and independently audited AI completion; it does not supersede
+the frozen DUX revision or make later prototype structure authoritative.
+
 ## Extraction checklist
 
 A component may be extracted only when:
@@ -42,6 +48,7 @@ A component may be extracted only when:
 - Audiobookshelf API payload and verification knowledge;
 - review-plan validation rules;
 - fingerprints, idempotency concepts, and failure vocabularies;
+- stage-checkpoint, coverage-readiness, and evidence-family invariants; and
 - sanitized structural fixtures.
 
 ## Prefer reimplementation for
@@ -52,6 +59,8 @@ A component may be extracted only when:
 - console-output parsing between stages;
 - direct database snapshot assumptions;
 - code coupling CWA and Audiobookshelf throughout the core;
+- service-specific pipeline topology and hard-coded evidence weights;
+- an agent controller or a controller that edits its own operating skill;
 - human approval gates embedded into candidate generation;
 - code without clear provenance or safe reusable fixtures.
 
@@ -70,6 +79,11 @@ Each extracted component should have a short record in its pull request:
 DUX-derived pull requests also cite the frozen prototype commit and tag recorded
 in [the DUX extraction record](dux-extraction.md). Do not replace that revision
 with a filesystem path or an uncommitted workspace description.
+
+Pull requests preserving a post-DUX operational scenario cite the applicable
+full source commit from the separate post-DUX baseline in that record and state
+which behavior was reimplemented. They must not present those commits as a new
+DUX baseline.
 
 ## Runtime independence
 

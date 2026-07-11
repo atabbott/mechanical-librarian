@@ -58,6 +58,14 @@ Deliverables:
 - introduce versioned SQLite migrations;
 - implement repositories behind application-owned interfaces;
 - implement leases, retries, backoff, cancellation, and dead-letter handling;
+- persist resumable stage checkpoints for bounded multi-stage review runs and
+  reject downstream execution when required scope is incomplete or unverified
+  or an upstream version is stale, while accepting typed terminal no-result and
+  degraded optional outcomes;
+- model typed readiness facts as exact coverage over a selected target scope,
+  including terminal no-result outcomes, without blocking unrelated ingestion;
+- persist typed blocker facts naming the required scope, stage, target, and
+  missing or failed terminal outcome that prevents completion;
 - persist event and ingestion deduplication outcomes, including failed or
   intentionally suppressed work, across process restarts;
 - persist audit events and immutable evidence; and
@@ -68,6 +76,8 @@ Exit criteria:
 - process termination cannot silently lose acknowledged work;
 - duplicate delivery, persistent failure redelivery, and worker restart cannot
   create unbounded retries or duplicate external work;
+- restart resumes from the last valid checkpoint, and independently recomputed
+  coverage must match the selected scope before a dependent stage advances;
 - every state transition is attributable; and
 - upgrade and rollback rehearsals pass against representative databases.
 
@@ -135,17 +145,33 @@ Deliverables:
 - implement configurable risk and confidence policies;
 - model source applicability, independence, correlation, and contradiction
   before agreement can increase automatic-write eligibility;
+- require supported target and work identity before proposing a correction;
+  additionally require edition identity or applicability when the field policy
+  or proposed change is edition-sensitive, and reject identity or comparable
+  identifier conflicts relevant to the field;
+- count agreement across independent evidence families rather than repeated or
+  projected records, while allowing a policy-defined decisive single-family
+  result from direct authoritative, identity-supported, edition-applicable
+  evidence;
 - handle generic titles, initial-aware author matching, contributor-role
   confusion, swapped fields, and release-name debris as explicit risk facts;
 - distinguish no-op, safe automatic, AI-review, and human-review outcomes;
+- omit proposals whose normalized value is equivalent to current state;
 - implement adapter/media applicability and reviewer-facing notice classes;
-- generate typed cover and series choices without applying them; and
-- retain complete reasons for accepted and rejected candidates.
+- generate typed cover and series choices without applying them;
+- retain complete reasons for accepted and rejected candidates; and
+- treat provider failure as an operational outcome rather than negative
+  metadata evidence or support for another candidate.
 
 Exit criteria:
 
 - policy decisions are deterministic for identical inputs;
 - provenance is never lost during normalization or ranking;
+- correlated records cannot manufacture consensus, and no universal
+  two-family minimum suppresses a qualifying decisive source;
+- identity-backed title cleanup, exact-identifier or direct-content decisive
+  evidence, close supported alternatives, no-op omission, and conflicting
+  identifier rejection pass the synthetic reconciliation cohort;
 - unsafe, rejected, inapplicable, and no-op choices cannot contaminate a safe
   field selection;
 - high-risk changes cannot enter the automatic apply path; and
@@ -160,6 +186,18 @@ Deliverables:
 - define the versioned AI request and response schemas;
 - implement the Codex CLI backend behind a generic reviewer port;
 - validate, bound, and audit all responses;
+- enumerate the authoritative upstream evidence and provider inputs for each
+  selected target, and require accepted terminal outcomes for required inputs;
+- allow optional provider failure as a typed terminal operational outcome that
+  neither blocks unrelated ingestion nor becomes negative metadata evidence;
+- independently recompute selected-target and proposal coverage before marking
+  an AI review complete;
+- record zero proposals as a proposal-selection/orchestration terminal outcome
+  without invoking the reviewer, and require exact per-proposal coverage for
+  every packet that is invoked;
+- keep `manual` as an AI result only for multiple specifically supported
+  alternatives; it may complete reviewer output but never creates a human
+  decision or apply readiness;
 - add replayable evaluation cohorts; and
 - support disabling AI without disabling the core product.
 
@@ -167,6 +205,11 @@ Exit criteria:
 
 - the reviewer cannot access target credentials or mutation interfaces;
 - arbitrary reviewer text cannot become an apply instruction;
+- a successful process, artifact, or claimed count cannot establish completion
+  without an independent audit of decisions, reasons, problem lists, proposal
+  references, and exact selected-target coverage;
+- missing accepted terminal outcomes for required upstream inputs block only
+  the affected review scope;
 - timeouts and malformed output produce safe workflow states; and
 - evaluation results meet the documented minimum before automation is enabled.
 

@@ -50,6 +50,14 @@ supersession, cursor pagination, exact-version bulk preview/commit, stale-batch
 rejection, compensating decisions, audit attribution, and cross-device/restart
 recovery.
 
+Durable review-run tests terminate and resume work at each stage checkpoint,
+independently recompute exact selected-target coverage, reject incomplete or
+unverified required scope and stale upstream versions before dependent stages,
+and prove that scoped review unreadiness does not stop unrelated ingestion.
+Typed terminal no-result and degraded optional outcomes count toward coverage.
+Every blocker identifies the required scope, stage, target, and missing or
+failed terminal outcome without pretending that an artifact or proposal exists.
+
 ### Interface and accessibility tests
 
 Test the bundled review interface against the versioned API using synthetic
@@ -123,6 +131,20 @@ Fixture families include:
 - omnibus, abridged, dramatized, summary, and alternate-edition conflicts;
 - missing and low-quality synthetic covers;
 - duplicate provider results and redirects;
+- repeated and projected records from one evidence family that must not count
+  as independent agreement;
+- identity-backed title cleanup with supported target and work identity, plus
+  edition identity or applicability when the field policy or proposed change is
+  edition-sensitive;
+- decisive single-family evidence with supported identity, direct
+  authoritative exact-identifier or content provenance, and edition
+  applicability, plus controls where those conditions are absent;
+- close specifically supported title alternatives that route to AI `manual`;
+- current-equivalent title candidates that produce no proposal;
+- conflicting work identity, plus edition or comparable-identifier conflicts
+  that reject the candidate when relevant to the field;
+- provider timeout and failure outcomes that remain operational rather than
+  becoming negative evidence;
 - prompt injection embedded in every untrusted text field;
 - repeated direct and projected candidates for one target;
 - evidence-only observations that must not create queue cases;
@@ -131,6 +153,17 @@ Fixture families include:
 - independent ebook/audiobook sibling cases plus same-title non-identity
   controls;
 - explicit automatic, human, stale, unsupported, and destructive review paths;
+- checkpointed review runs with missing, duplicate, stale, terminal-no-result,
+  degraded optional, typed-blocker, and exact-coverage stage outcomes;
+- AI completion cases with independently audited proposal IDs, decisions,
+  reasons, problem lists, selected targets, and authoritative upstream input
+  outcomes, including required-input blockers and invalid claimed-complete
+  artifacts;
+- zero-proposal selection that records a terminal orchestration outcome without
+  reviewer invocation, plus invoked packets with exact per-proposal coverage;
+- AI `manual` results with multiple specifically supported alternatives, plus
+  controls proving that `manual` may complete reviewer output but creates
+  neither a human decision nor apply readiness;
 - service payloads from supported compatibility versions, irreversibly
   sanitized or generated from schema.
 
@@ -167,6 +200,11 @@ DUX-derived scenarios cite the frozen source revision and follow the fixture,
 licence, and rejection rules in the
 [DUX extraction record](dux-extraction.md). Golden files preserve behavior, not
 prototype HTML or browser formatting.
+
+Post-DUX operational scenarios additionally cite the applicable full commit
+from the separate baseline in that record. Tests preserve the stage-coverage,
+evidence-independence, and completion-audit contracts, not the prototype's
+agent controller, static dashboard, service topology, or scoring weights.
 
 ## Determinism
 
