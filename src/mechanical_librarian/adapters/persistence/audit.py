@@ -14,7 +14,12 @@ class SQLiteAuditRepository(AuditRepository):
         self._connection = connection
 
     def append(self, event: AuditEvent) -> AuditAppendResult:
-        row = event.storage_row
+        if not isinstance(event, AuditEvent):
+            return AuditAppendResult(AuditAppendOutcome.INVALID)
+        try:
+            row = event.storage_row
+        except (TypeError, ValueError):
+            return AuditAppendResult(AuditAppendOutcome.INVALID)
         try:
             self._connection.execute(
                 "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)", row

@@ -11,7 +11,9 @@ from typing import Protocol
 from mechanical_librarian.domain.identifiers import AuditEventId, Identifier
 
 
-_FORBIDDEN_SUMMARY = re.compile(r"(?:https?://|/[^ ]|\\|\b(?:token|secret|password|authorization)\b)", re.IGNORECASE)
+_FORBIDDEN_SUMMARY = re.compile(
+    r"(?:https?://|/[^ ]|\\|\b(?:token|secret|password)\b|\bauthorization\s*:)", re.IGNORECASE
+)
 
 
 class AuditEventKind(Identifier):
