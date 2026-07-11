@@ -58,6 +58,15 @@ Deliverables:
 - introduce versioned SQLite migrations;
 - implement repositories behind application-owned interfaces;
 - implement leases, retries, backoff, cancellation, and dead-letter handling;
+- persist bounded acyclic run dependency graphs, expected typed outcomes, and a
+  nonterminal `waiting` run/stage state distinct from job `retry_wait`;
+- persist and durably enqueue the complete dependency-ready set, make
+  capacity-bounded claims under leases with stable job identity and
+  deduplication, and accept one monotonic-fenced independently validated outcome
+  per job before fan-in;
+- treat at-least-once redelivery as expected and require idempotent handlers plus
+  provider idempotency or reconciliation to prevent or recover duplicate
+  external effects;
 - persist resumable stage checkpoints for bounded multi-stage review runs and
   reject downstream execution when required scope is incomplete or unverified
   or an upstream version is stale, while accepting typed terminal no-result and
@@ -75,9 +84,12 @@ Exit criteria:
 
 - process termination cannot silently lose acknowledged work;
 - duplicate delivery, persistent failure redelivery, and worker restart cannot
-  create unbounded retries or duplicate external work;
+  create unbounded retries, and duplicate external effects are prevented or
+  recovered through idempotency and reconciliation;
 - restart resumes from the last valid checkpoint, and independently recomputed
   coverage must match the selected scope before a dependent stage advances;
+- worker, scheduler, or process restart cannot duplicate completed work, lose
+  cancellation, or treat `waiting` as readiness or success;
 - every state transition is attributable; and
 - upgrade and rollback rehearsals pass against representative databases.
 
@@ -174,6 +186,13 @@ Deliverables:
 - omit proposals whose normalized value is equivalent to current state;
 - implement adapter/media applicability and reviewer-facing notice classes;
 - generate typed cover and series choices without applying them;
+- apply only qualified, versioned series-label mappings, preserving raw,
+  normalized, and canonical labels, source lineage, work identity, rule
+  version, and replay or supersession history while leaving unknown labels
+  unchanged;
+- treat source AI recommendations carried by projected shared evidence as
+  provenance only and requalify destination identity, applicability, current
+  state, evidence, and policy independently;
 - retain complete reasons for accepted and rejected candidates;
 - treat provider failure as an operational outcome rather than negative
   metadata evidence or support for another candidate; and
@@ -211,6 +230,9 @@ Exit criteria:
 Deliverables:
 
 - define the versioned AI request and response schemas;
+- represent optional per-run reviewer intent as typed, bounded, versioned data
+  in the closed request schema, separated from policy instructions and
+  untrusted evidence;
 - implement the Codex CLI backend behind a generic reviewer port;
 - validate, bound, and audit all responses;
 - enumerate the authoritative upstream evidence and provider inputs for each
@@ -232,6 +254,9 @@ Exit criteria:
 
 - the reviewer cannot access target credentials or mutation interfaces;
 - arbitrary reviewer text cannot become an apply instruction;
+- per-run intent cannot override policy, safety, scope, authority, or schema,
+  and structured output is validated directly rather than carried as encoded
+  JSON inside a string field;
 - a successful process, artifact, or claimed count cannot establish completion
   without an independent audit of decisions, reasons, problem lists, proposal
   references, and exact selected-target coverage;
@@ -268,8 +293,15 @@ Deliverables:
 - package the API, job runtime, scheduler, static web assets, and database into one image;
 - implement first-run setup and health endpoints;
 - add structured logging, metrics, and redacted support bundles;
+- run supervised report-only auto-resume through the application scheduler with
+  an immutable initiating principal and authorization context, scope,
+  policy/schema versions, resource bounds, cancellation, and expiry; record
+  each transition actor linked to that authority, and never enable writes or
+  mutate the governing authority through continuation;
 - expose typed job stage, active adapter, attempt, retry eligibility, and
-  circuit-breaker or automatic-suspension reasons for operator diagnostics;
+  circuit-breaker or automatic-suspension reasons for operator diagnostics,
+  plus bounded advisory ETA with calculation basis, timestamp, freshness, and
+  an explicit unknown state;
 - publish TrueNAS-oriented and generic container deployment examples; and
 - produce multi-architecture images, SBOMs, signatures, and provenance.
 
@@ -277,6 +309,8 @@ Exit criteria:
 
 - a new user can deploy with one container, one data volume, media mounts, and one web port;
 - restart, backup, restore, and upgrade drills pass;
+- scheduler restart and supervised continuation resume from durable state, not
+  process IDs, shell sessions, or detached watcher ownership;
 - no internal component requires an exposed port; and
 - the image passes vulnerability and secret scans.
 
@@ -288,6 +322,9 @@ Deliverables:
   groups, evidence, decisions, summaries, jobs, audit events, and rollback;
 - implement target-level queue, decision-first detail, progressive evidence,
   sibling navigation, and global review-summary surfaces;
+- expose server-authoritative target, ordinary-case, destructive-case,
+  field-work-item, and planned-change counts with explicit partial and stale
+  semantics;
 - implement exact-version bulk preview and commit with stale rejection,
   idempotency, individual decision records, and compensating reversal;
 - satisfy the responsive, keyboard, accessibility, privacy, and performance

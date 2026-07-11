@@ -65,6 +65,22 @@ Typed terminal no-result and degraded optional outcomes count toward coverage.
 Every blocker identifies the required scope, stage, target, and missing or
 failed terminal outcome without pretending that an artifact or proposal exists.
 
+Scheduler integration tests use bounded acyclic graphs to cover durable enqueue
+of the complete eligible set, capacity-bounded claims, stable identity and
+deduplication, partial launch, fan-in dependency promotion, missing or malformed
+expected outcomes, worker and scheduler death, process restart, cancellation
+and expiry, stale leases and fencing tokens, and report-only authority
+isolation. They prove `waiting` is nonterminal and
+distinct from `retry_wait`; at-least-once redelivery is expected, while
+idempotent handlers plus provider idempotency or reconciliation prevent or
+recover duplicate external effects. Process IDs or watcher liveness never
+establish outcome or authority. Competing-scheduler tests prove fencing
+increases monotonically, only one fenced outcome is accepted, and reject stale
+lease renewal, completion, artifacts, checkpoints, audit
+completion, and fan-in. ETA tests cover bounded basis and timestamp reporting,
+freshness, insufficient samples, stale estimates, and the explicit unknown
+state.
+
 ### Interface and accessibility tests
 
 Test the bundled review interface against the versioned API using synthetic
@@ -173,6 +189,13 @@ Fixture families include:
   becoming negative evidence;
 - prompt injection embedded in every untrusted text field;
 - repeated direct and projected candidates for one target;
+- qualified versioned series-label aliases with raw lineage, replay and
+  supersession, unknown-label preservation, collision and many-to-one cases,
+  wrong-work-identity, correlated-lineage non-consensus, stale-rule, and
+  out-of-scope mapping controls;
+- projected shared evidence carrying a source AI recommendation, with controls
+  proving it adds no evidence family, consensus, destination disposition,
+  human decision, or authority and that the destination requalifies it;
 - evidence-only observations that must not create queue cases;
 - agreeing sources, rejected alternatives, no-ops, unresolved replacements,
   and incompatible media fields;
@@ -190,6 +213,12 @@ Fixture families include:
 - AI `manual` results with multiple specifically supported alternatives, plus
   controls proving that `manual` may complete reviewer output but creates
   neither a human decision nor apply readiness;
+- typed run-local reviewer intent within fixed scope and controls rejecting
+  policy, safety, authority, destructive, schema, or candidate overrides,
+  free-form instruction smuggling, and JSON encoded inside string fields;
+- review summaries where targets, ordinary and destructive cases, field work
+  items, and planned changes deliberately differ, including partial and stale
+  results that cannot claim complete current totals;
 - service payloads from supported compatibility versions, irreversibly
   sanitized or generated from schema.
 

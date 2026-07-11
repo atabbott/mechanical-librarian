@@ -123,6 +123,39 @@ unresolved or the candidate is rejected according to field policy. Resolving an
 identifier, title, or any other field cannot erase or implicitly decide sibling
 field proposals.
 
+### Series-label reconciliation and projection
+
+A provider series label may be canonicalized only by a qualified, versioned
+mapping applicable to the supported work identity and source contract. The
+evidence record retains the raw, normalized, and canonical labels, source
+lineage, work identity, mapping-rule version, and replay or supersession
+relationship.
+Unknown or out-of-scope labels remain unchanged and visible; production-learned
+author-, title-, or library-specific aliases are not silently hard-coded into
+policy.
+
+Shared evidence may be projected to another confirmed target, but a source AI
+recommendation travels only as provenance. It is not evidence, independent
+agreement, target disposition, human decision, or apply authority. The
+destination independently revalidates target and work identity, edition or
+field applicability, current state, evidence lineage, contradictions, and the
+current policy version before creating or resolving a proposal.
+
+## Supervised report-only continuation
+
+Unattended continuation is allowed only for report-only work already authorized
+for a bounded run. Its durable authority fixes the initiating principal and
+authorization context, target and operation scope, configuration, policy and
+schema versions, resource and time bounds, cancellation behavior, and expiry
+before scheduling begins. Every actual transition actor is recorded and linked
+to that authority reference. Resume may recover or complete that exact work; it
+cannot widen scope, enable apply or destruction, change skills or policy, or
+replace the governing authority record.
+
+The application scheduler owns continuation through durable jobs, leases,
+fencing, and validated outcomes. Operating-system PIDs, detached watchers,
+shell sessions, and tool sessions are diagnostic implementation details only.
+
 ## Cover policy
 
 Cover selection optimizes for usefulness rather than exact edition purity:

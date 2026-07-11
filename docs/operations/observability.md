@@ -45,6 +45,14 @@ Initial metrics include:
 - backup freshness and integrity status;
 - processing duration and artifact storage use.
 
+Progress and ETA are advisory diagnostics. They are derived from the persisted
+dependency graph and completed comparable work, bounded to the selected run
+scope, and include the calculation basis, calculation timestamp, freshness,
+sample count and comparison cohort, and an optional uncertainty bound. The API
+reports ETA as unknown when evidence is insufficient or stale. ETA, a zero
+queue-depth sample, a live process ID, or a watcher heartbeat never establishes
+readiness, completion, or authorization.
+
 Metrics labels must avoid titles, authors, paths, identifiers, and other high-
 cardinality or private values.
 
