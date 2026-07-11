@@ -1,4 +1,4 @@
-"""Least-authority contracts implemented by adapters and infrastructure."""
+"""Least-authority contracts implemented by adapters."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""SQLite implementation of the application audit repository."""
+"""SQLite implementation of the application-owned audit repository."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from mechanical_librarian.application.audit import AuditEvent, AuditRepository
 
 
 class SQLiteAuditRepository(AuditRepository):
+    """Append-only audit adapter over a bootstrap-supplied SQLite connection."""
+
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
 
