@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -282,6 +283,100 @@ class ComposedStateCheckTests(unittest.TestCase):
                 self.assertEqual(sidecar.readlink(), target)
                 if not dangling:
                     self.assertEqual(target.read_bytes(), before_target)
+
+    def test_orphan_recovery_sidecars_block_first_publication_and_allow_retry(self) -> None:
+        cases = (
+            ("-journal", b"synthetic journal"),
+            ("-wal", b"synthetic wal"),
+            ("-shm", b"synthetic shm"),
+            ("-shm", None),
+        )
+        for suffix, contents in cases:
+            with (
+                self.subTest(suffix=suffix, dangling=contents is None),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path = Path(directory) / "state.sqlite"
+                sidecar = Path(f"{path}{suffix}")
+                if contents is None:
+                    sidecar.symlink_to(Path(directory) / "missing-sidecar-target")
+                else:
+                    sidecar.write_bytes(contents)
+                before_names = {candidate.name for candidate in Path(directory).iterdir()}
+
+                self.assertEqual(
+                    self.run_check(path),
+                    (1, "", "State check failed: state could not be verified.\n"),
+                )
+                self.assertFalse(path.exists())
+                self.assertEqual(
+                    {candidate.name for candidate in Path(directory).iterdir()},
+                    before_names,
+                )
+                if contents is None:
+                    self.assertTrue(sidecar.is_symlink())
+                else:
+                    self.assertEqual(sidecar.read_bytes(), contents)
+
+                sidecar.unlink()
+                self.assertEqual(self.run_check(path)[0], 0)
+
+    def test_real_orphan_wal_cannot_replace_newly_published_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            donor = Path(directory) / "donor.sqlite"
+            path = Path(directory) / "state.sqlite"
+            connection = sqlite3.connect(donor)
+            try:
+                self.assertEqual(
+                    connection.execute("PRAGMA journal_mode = WAL").fetchone(),
+                    ("wal",),
+                )
+                connection.execute("CREATE TABLE stale_payload(value TEXT)")
+                connection.execute("INSERT INTO stale_payload VALUES ('stale')")
+                connection.commit()
+                orphan_paths = tuple(
+                    Path(f"{path}{suffix}") for suffix in ("-wal", "-shm")
+                )
+                for suffix, orphan in zip(("-wal", "-shm"), orphan_paths, strict=True):
+                    shutil.copyfile(Path(f"{donor}{suffix}"), orphan)
+                before = {orphan.name: orphan.read_bytes() for orphan in orphan_paths}
+
+                self.assertEqual(
+                    self.run_check(path),
+                    (1, "", "State check failed: state could not be verified.\n"),
+                )
+                self.assertFalse(path.exists())
+                self.assertEqual(
+                    {orphan.name: orphan.read_bytes() for orphan in orphan_paths},
+                    before,
+                )
+            finally:
+                connection.close()
+
+    def test_sidecar_created_during_staging_blocks_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            real_publish = sqlite.publish_staged_state
+
+            def publish_after_orphan(staged: Path, target: Path) -> bool:
+                Path(f"{target}-wal").write_bytes(b"appeared during staging")
+                return real_publish(staged, target)
+
+            with patch(
+                "mechanical_librarian.bootstrap.publish_staged_state",
+                side_effect=publish_after_orphan,
+            ):
+                self.assertEqual(
+                    self.run_check(path),
+                    (1, "", "State check failed: state could not be verified.\n"),
+                )
+
+            self.assertFalse(path.exists())
+            self.assertEqual(Path(f"{path}-wal").read_bytes(), b"appeared during staging")
+            self.assertEqual(
+                {candidate.name for candidate in Path(directory).iterdir()},
+                {f"{path.name}-wal"},
+            )
 
     def test_existing_empty_state_and_in_memory_name_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

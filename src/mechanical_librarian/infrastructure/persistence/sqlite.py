@@ -455,6 +455,11 @@ def publish_staged_state(staged: Path, target: Path) -> bool:
         raise SchemaError("prepared state still requires recovery sidecars")
 
     _fsync_file(staged)
+    target_before = _state_snapshot(target)
+    if "" in target_before:
+        return False
+    if target_before:
+        raise SchemaError("recovery state exists without a database")
     try:
         os.link(staged, target, follow_symlinks=False)
     except FileExistsError:
@@ -547,17 +552,12 @@ def preflight(path: Path) -> None:
 
     if path == Path(":memory:"):
         raise SchemaError("durable state requires a filesystem database")
-    if not path_entry_exists(path):
-        return
-    try:
-        if not stat.S_ISREG(path.lstat().st_mode):
-            raise SchemaError("existing database entry is not a regular file")
-    except SchemaError:
-        raise
-    except OSError:
-        raise SchemaError("existing database could not be inspected") from None
-
     before = _state_snapshot(path)
+    if "" not in before:
+        if before:
+            raise SchemaError("recovery state exists without a database")
+        return
+
     probe: sqlite3.Connection | None = None
     try:
         with tempfile.TemporaryDirectory() as directory:
