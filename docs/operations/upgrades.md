@@ -45,6 +45,13 @@ The application must refuse a migration when its preconditions are not met.
 - A failed migration leaves an explicit recovery state; it must not repeatedly retry on every restart without a bounded policy.
 - Migration logs contain versions and step identifiers but no secrets or private content.
 
+Before applying any migration, startup verifies that the recorded migration
+versions, checksums, and managed schema objects form one known contiguous
+prefix. It refuses newer, tampered, partial, or unrecognized state without
+deleting or rewriting it. Operators must inspect that state and restore a
+verified backup when the documented recovery procedure requires it; ordinary
+startup does not attempt an unbounded repair loop.
+
 ## Verification
 
 After upgrade:
