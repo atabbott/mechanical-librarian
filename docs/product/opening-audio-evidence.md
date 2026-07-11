@@ -156,6 +156,17 @@ The transcript, parsed claims, and any reviewer interpretation of that same
 transcript are correlated. Agreement among them cannot be counted as several
 sources.
 
+A spoken ISBN is stored as a typed claim with transcript-span, track, sample,
+extractor, and canonicalization provenance. It may improve search, corroborate
+other independently qualified evidence, or expose a conflict, but it is not
+equivalent to an embedded/content ISBN for a decisive edition rule. One spoken
+identifier cannot by itself establish the edition; multiple spoken identifiers
+or disagreement with content, a materially independent format-appropriate
+provider, work, media, narration, abridgement, dramatization, or omnibus
+evidence remains unresolved. An identifier in an unrelated preview or claim
+about another work and a provider correlated with the same source remain
+non-decisive even when the canonical ISBN-10/ISBN-13 forms match.
+
 ## Privacy and retention
 
 Opening audio and its transcript are content evidence under the

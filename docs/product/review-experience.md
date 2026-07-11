@@ -60,7 +60,9 @@ An ordinary `ReviewCase` contains only the decision surface for one target:
 
 Evidence-only observations enrich a case and never create empty actionable
 queue rows. Identical candidate values collapse into one choice while retaining
-source consensus and provenance.
+every source assessment, evidence lineage, source-specific problem fact, and
+contradiction. The displayed aggregate is the current deterministic policy
+result, not a union of historical risks or the verdict of one strongest row.
 
 A `ReviewGroup` is a display/query projection for confirmed instances of the
 same work, such as an Audiobookshelf ebook and audiobook or a future target in
@@ -86,6 +88,9 @@ Every proposed field change distinguishes:
 - source consensus;
 - supporting and contradicting evidence IDs;
 - AI recommendation and reason;
+- the required AI `problems` list containing adverse or unresolved problem
+  codes, with positive support shown through the cited evidence and reason and
+  a clean approval represented as `problems: []`;
 - applicable risks and notices; and
 - whether the choice is allowed for the target adapter and media type.
 
@@ -288,6 +293,12 @@ The review experience is ready when:
 - unsupported, rejected, stale, conflicting, and destructive work cannot enter
   an ordinary apply plan;
 - queue, decision, bulk, accessibility, responsive, and performance contracts
-  pass in real browser tests; and
+  pass in real browser tests that derive categories from the versioned product
+  and category-capability contract, exercise at least one representative fixture
+  for each applicable category, record explicit reasons for not-applicable
+  categories, and fail on unexpected page or console errors;
+- untouched presentation defaults remain bound to the current proposal version
+  and may refresh only when that version changes, while an acknowledged user
+  decision is never silently rewritten by a new default; and
 - restart and cross-device tests prove that acknowledged state is server-
   authoritative.

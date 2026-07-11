@@ -61,6 +61,11 @@ Durable review-run tests terminate and resume work at each stage checkpoint,
 independently recompute exact selected-target coverage, reject incomplete or
 unverified required scope and stale upstream versions before dependent stages,
 and prove that scoped review unreadiness does not stop unrelated ingestion.
+Workflow-definition upgrade cases pin the original version and graph digest,
+introduce a newly required upstream stage, and prove that linked superseding or
+replanned work preserves immutable history while marking transitively affected
+downstream checkpoints ineligible for reuse or current applicability. Resume
+never mutates or erases the old graph or its outcomes.
 Typed terminal no-result and degraded optional outcomes count toward coverage.
 Every blocker identifies the required scope, stage, target, and missing or
 failed terminal outcome without pretending that an artifact or proposal exists.
@@ -99,6 +104,14 @@ cases. Required scenarios include:
 - keyboard-only use, visible focus, semantic controls, live announcements, and
   automated accessibility checks; and
 - bounded initial DOM, API payload, asset, cover-decode, and interaction costs.
+
+The real-browser cohort derives review categories from the versioned product and
+category-capability contract, records a representative fixture for every
+applicable category and an explicit reason for every not-applicable category,
+and fails on unexpected page or console errors. Version-change cases distinguish
+untouched presentation defaults, which may refresh with the current proposal,
+from acknowledged user decisions, which must remain server-authoritative and
+must never be silently rewritten.
 
 Static markup assertions may guard a narrow contract but cannot be the only
 evidence for interaction, responsive, or accessibility acceptance. Run real
@@ -181,6 +194,12 @@ Fixture families include:
   identifier and a materially independent provider identifier that agree on the
   same validated canonical replacement identity, plus disagreement, missing-
   family, correlated-lineage, and inapplicable controls;
+- one distinct checksum-valid ISBN with typed format- and edition-applicable
+  embedded/content provenance, a canonically equivalent ISBN-10 or ISBN-13 from
+  a materially independent format-appropriate provider, and agreeing target,
+  work, and media identity, plus multiple-content-ISBN, unrelated-preview,
+  other-work, correlated-provider, edition, format, narrator, abridgement,
+  dramatization, omnibus, cross-media, and spoken-ISBN-only controls;
 - current metadata that is outweighed by applicable evidence rather than
   treated as privileged truth;
 - multi-field cases proving that resolution of one field preserves title,
@@ -205,9 +224,34 @@ Fixture families include:
 - checkpointed review runs with missing, duplicate, stale, terminal-no-result,
   degraded optional, typed-blocker, and exact-coverage stage outcomes;
 - AI completion cases with independently audited proposal IDs, decisions,
-  reasons, problem lists, selected targets, and authoritative upstream input
-  outcomes, including required-input blockers and invalid claimed-complete
-  artifacts;
+  reasons, required `problems` lists, selected targets, and authoritative
+  upstream input outcomes, including required-input blockers and invalid
+  claimed-complete artifacts;
+- direct closed-schema reviewer objects with clean approvals carrying
+  `problems: []`, plus duplicate JSON keys, trailing content, unknown fields,
+  missing required fields, unknown and duplicate proposal IDs, partial coverage,
+  malformed values, backend-envelope normalization, and controls proving no
+  semantic repair or JSON-inside-string fallback occurs;
+- authoritative packet joins with the exact bounded normalized current snapshot,
+  explicit loaded, missing, and unavailable field states, relevant evidence,
+  candidate and policy versions, and completeness provenance, including
+  policy-qualified cross-target evidence, plus pre-invocation failures for
+  missing, duplicate, unauthorized or target-incompatible cross-target
+  evidence (including consuming-target mismatches and absent explicit
+  relationships, immutable policy versions, or qualifying rules), stale, required-
+  context-truncated, raw-row, or otherwise unjoinable context;
+- capability-derived candidate manifests proving every derived lane records
+  applicability, applicable lanes record typed execution outcome, and only
+  successfully completed applicable lanes record candidate count and `executed`
+  or compatibility-validated `reused` mode; cases include completed applicable
+  zero-candidate lanes, not-applicable reasons, missing-lane coverage failure,
+  failed, stale, and partial execution, exact target and input fingerprints,
+  compatible provider, query, configuration, and contract versions, validated
+  expected artifacts, and bounded retry, backoff, and suppression proving
+  failures are never reused;
+- identical normalized candidates with separate agreeing and contradicting
+  source assessments, stale risks, and lineage, proving deterministic aggregate
+  recomputation without risk union or strongest-row conflict erasure;
 - zero-proposal selection that records a terminal orchestration outcome without
   reviewer invocation, plus invoked packets with exact per-proposal coverage;
 - AI `manual` results with multiple specifically supported alternatives, plus
@@ -274,6 +318,15 @@ Post-DUX operational scenarios additionally cite the applicable full commit
 from the separate baseline in that record. Tests preserve the stage-coverage,
 evidence-independence, and completion-audit contracts, not the prototype's
 agent controller, static dashboard, service topology, or scoring weights.
+
+JSONL interoperability tests delimit records only with the artifact contract's
+physical CRLF or LF separators. Fixtures include escaped newlines, literal
+Unicode U+2028 and U+2029 within JSON strings, a missing final newline, blank
+and malformed physical records, a bare carriage return rejected as a delimiter,
+oversize records, and the artifact contract's declared invalid-UTF-8 and BOM
+policy, with bounded recovery or rejection. Broad host-language `splitlines()`
+behavior is not the parser contract. AI reviewer output remains one direct
+schema object, not JSONL.
 
 ## Determinism
 

@@ -95,6 +95,31 @@ classification are compatibility semantics. Changing one requires a new schema
 version and a documented reader or migration path; a schema from one boundary
 is never accepted by another.
 
+Workflow definitions are also durable compatibility inputs. A run records its
+immutable workflow-definition version and graph digest. Adding a required
+stage, changing dependencies or expected outcomes, or otherwise making the
+definition incompatible creates linked superseding or replanned work and
+marks transitively affected downstream checkpoints in that linked run ineligible
+for reuse or current applicability. Readers preserve and can explain the
+original graph and outcomes, which are never mutated or erased.
+
+Candidate-lane manifests record applicability for every derived lane and typed
+execution outcome for applicable lanes. Only successfully completed applicable
+lanes record candidate count and `executed` or `reused` mode. Reuse is
+compatible only when target scope and input fingerprints match, provider,
+query, and configuration revisions are declared compatible, the lane contract
+version is supported, and the completed expected artifact validates. A missing
+lane is a coverage failure, and failed execution is never reusable. A capability
+change causes the manifest to be re-derived and cannot silently turn missing
+execution or not-applicable into a completed applicable zero-candidate result.
+
+JSONL is an artifact-specific framing contract, not the reviewer protocol.
+Approved JSONL boundaries use physical LF or CRLF record delimiters and do not
+treat Unicode U+2028 or U+2029 inside a JSON string as record breaks. Each
+artifact schema publishes blank-line, malformed-record, final-newline, size,
+bare-carriage-return, invalid-UTF-8, BOM, and recovery behavior. Reviewer
+responses remain direct closed-schema JSON objects.
+
 ### Canonical inventory snapshot v1
 
 `snapshot-v1` is the first durable canonical input for inventory fingerprints
