@@ -18,6 +18,47 @@ an undocumented environment-variable override. Its canonical export reports
 only secret configuration status and logical mount identity, never service
 origins, secret references, or private paths.
 
+Import planning accepts current and proposed mappings and validates both through
+that same loader before comparing them. Its output contains only fixed schema
+paths and the impacts below; it retains no old or new values and performs no
+persistence, probing, secret resolution, or mutation.
+
+### `config-v1` impact matrix
+
+Impact identifiers have a fixed order: restart, inventory reconciliation,
+evidence invalidation, evidence re-evaluation, candidate re-evaluation, review
+re-evaluation, notification reconfiguration, and backup-readiness revalidation.
+
+| Changed schema path | Required impacts |
+| --- | --- |
+| `instance.instance_name` | restart |
+| `connections.adapter` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
+| `connections.endpoint` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
+| `connections.secret_reference` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
+| `connections.enabled_libraries` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
+| `connections.capability_overrides` | restart, inventory reconciliation, evidence, candidate, and review re-evaluation |
+| `media_mounts.name`, `.library_type`, `.container_path`, or `.service_path` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
+| `limits.parser_concurrency` | restart |
+| `limits.parser_timeout_seconds` or `.temporary_bytes` | restart and evidence re-evaluation |
+| `providers` | restart, candidate and review re-evaluation |
+| `reviewers` | restart and review re-evaluation |
+| `policy.policy_version` | restart and review re-evaluation |
+| `notifications` | restart and notification reconfiguration |
+| `backups_enabled` | restart, backup-readiness revalidation, and review re-evaluation |
+
+Connection and mount collections are compared by fixed aggregate field paths;
+plans never expose a collection index, endpoint, secret reference, library
+identifier, or path. A connection endpoint or credential-reference change is
+treated conservatively as a possible account, tenant, or target-scope change.
+Capability overrides are bounded diagnostic identifiers only and cannot grant
+write authority. The closed read-only vocabulary is `inventory-read`,
+`metadata-read`, `media-file-read`, `notifications`, `pagination`,
+`concurrency-tokens`, and `cover-read`; other values fail validation. The
+omitted policy default is `policy-v1`. Provider, reviewer, connection, and
+notification ordering is significant in `config-v1`. Enabled-library and
+capability-override ordering is not significant and is canonicalized before
+comparison.
+
 ## Configuration groups
 
 ### Instance
