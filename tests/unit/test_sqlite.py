@@ -153,6 +153,18 @@ class SqliteFoundationTests(unittest.TestCase):
                 with self.assertRaisesRegex(SchemaError, "object definition"):
                     migrate(connection)
 
+    def test_migration_can_drop_a_previously_declared_index(self) -> None:
+        index = Migration(2, ("CREATE INDEX audit_events_by_created_at ON audit_events(created_at)",), frozenset())
+        remove_index = Migration(3, ("DROP INDEX IF EXISTS audit_events_by_created_at",), frozenset())
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index, remove_index)):
+                self.assertEqual(migrate(connection), 3)
+                self.assertEqual(migrate(connection), 3)
+                self.assertIsNone(connection.execute("SELECT name FROM sqlite_master WHERE name = 'audit_events_by_created_at'").fetchone())
+
     def test_partial_schema_is_rejected_without_modification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")

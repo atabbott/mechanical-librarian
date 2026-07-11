@@ -89,33 +89,46 @@ def _expected_tables(known: dict[int, Migration], versions: set[int]) -> set[str
 
 def _expected_schema_objects(known: dict[int, Migration], versions: set[int]) -> set[tuple[str, str]]:
     objects: set[tuple[str, str]] = set()
-    for version in versions:
+    for version in sorted(versions):
         migration = known[version]
         objects.update(("table", table) for table in migration.expected_tables)
         objects.update(migration.expected_objects)
         for statement in migration.statements:
-            match = re.match(
-                r"\s*CREATE\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\b",
-                statement,
-                re.IGNORECASE,
-            )
-            if match is not None:
-                objects.add((match.group(1).lower(), match.group(2)))
+            declaration = _schema_object_statement(statement)
+            if declaration is None:
+                continue
+            operation, object_key = declaration
+            if operation == "CREATE":
+                objects.add(object_key)
+            else:
+                objects.discard(object_key)
     return objects
 
 
 def _expected_non_table_definitions(known: dict[int, Migration], versions: set[int]) -> dict[tuple[str, str], str]:
     definitions: dict[tuple[str, str], str] = {}
-    for version in versions:
+    for version in sorted(versions):
         for statement in known[version].statements:
-            match = re.match(
-                r"\s*CREATE\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\b",
-                statement,
-                re.IGNORECASE,
-            )
-            if match is not None:
-                definitions[(match.group(1).lower(), match.group(2))] = _normalise_schema_sql(statement)
+            declaration = _schema_object_statement(statement)
+            if declaration is None:
+                continue
+            operation, object_key = declaration
+            if operation == "CREATE":
+                definitions[object_key] = _normalise_schema_sql(statement)
+            else:
+                definitions.pop(object_key, None)
     return definitions
+
+
+def _schema_object_statement(statement: str) -> tuple[str, tuple[str, str]] | None:
+    match = re.match(
+        r"\s*(CREATE|DROP)\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)\b",
+        statement,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    return match.group(1).upper(), (match.group(2).lower(), match.group(3))
 
 
 def _normalise_schema_sql(sql: str) -> str:
