@@ -287,9 +287,12 @@ Fixture families include:
   semantic repair or JSON-inside-string fallback occurs;
 - authoritative packet joins with the exact bounded normalized current snapshot,
   explicit loaded, missing, and unavailable field states, relevant evidence,
-  candidate and policy versions, and completeness provenance, plus pre-invocation
-  failures for missing, duplicate, cross-target, stale, required-context-
-  truncated, raw-row, or otherwise unjoinable context;
+  candidate and policy versions, and completeness provenance, including
+  policy-qualified cross-target evidence, plus pre-invocation failures for
+  missing, duplicate, unauthorized or target-incompatible cross-target
+  evidence (including consuming-target mismatches and absent explicit
+  relationships, immutable policy versions, or qualifying rules), stale, required-
+  context-truncated, raw-row, or otherwise unjoinable context;
 - capability-derived candidate manifests proving every derived lane records
   applicability, applicable lanes record typed execution outcome, and only
   successfully completed applicable lanes record candidate count and `executed`
