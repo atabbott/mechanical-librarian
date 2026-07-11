@@ -119,8 +119,10 @@ def _expected_non_table_definitions(known: dict[int, Migration], versions: set[i
 
 
 def _schema_object_statement(statement: str) -> tuple[str, tuple[str, str]] | None:
+    quoted_name = r'(?:[A-Za-z_][A-Za-z0-9_]*|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\])'
     match = re.match(
-        r'\s*(CREATE|DROP)\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*|"(?:[^"]|"")*")(?=\s|\(|;|$)',
+        rf"\s*(CREATE|DROP)\s+(?:UNIQUE\s+)?(INDEX|TRIGGER|VIEW)\s+"
+        rf"(?:IF\s+(?:NOT\s+)?EXISTS\s+)?({quoted_name})(?=\s|\(|;|$)",
         statement,
         re.IGNORECASE,
     )
@@ -129,6 +131,10 @@ def _schema_object_statement(statement: str) -> tuple[str, tuple[str, str]] | No
     name = match.group(3)
     if name.startswith('"'):
         name = name[1:-1].replace('""', '"')
+    elif name.startswith("`"):
+        name = name[1:-1].replace("``", "`")
+    elif name.startswith("["):
+        name = name[1:-1]
     return match.group(1).upper(), (match.group(2).lower(), name)
 
 
@@ -139,7 +145,37 @@ def _normalise_schema_sql(sql: str) -> str:
         sql,
         flags=re.IGNORECASE,
     )
-    return " ".join(without_idempotency_clause.split()).casefold().rstrip(";")
+    canonical: list[str] = []
+    pending_space = False
+    position = 0
+    while position < len(without_idempotency_clause):
+        character = without_idempotency_clause[position]
+        if character.isspace():
+            pending_space = bool(canonical)
+            position += 1
+            continue
+        if pending_space:
+            canonical.append(" ")
+            pending_space = False
+        if character in {"'", '"', "`", "["}:
+            closing = "]" if character == "[" else character
+            canonical.append(character)
+            position += 1
+            while position < len(without_idempotency_clause):
+                quoted_character = without_idempotency_clause[position]
+                canonical.append(quoted_character)
+                position += 1
+                if quoted_character != closing:
+                    continue
+                if closing != "]" and position < len(without_idempotency_clause) and without_idempotency_clause[position] == closing:
+                    canonical.append(closing)
+                    position += 1
+                    continue
+                break
+            continue
+        canonical.append(character.casefold())
+        position += 1
+    return "".join(canonical).rstrip().removesuffix(";").rstrip()
 
 
 def _expected_table_definitions(known: dict[int, Migration], versions: set[int]) -> dict[str, str]:
@@ -159,13 +195,67 @@ def _expected_table_definitions(known: dict[int, Migration], versions: set[int])
     return definitions
 
 
+def _contains_sql_comment(statement: str) -> bool:
+    position = 0
+    while position < len(statement):
+        character = statement[position]
+        if character in {"'", '"', "`", "["}:
+            closing = "]" if character == "[" else character
+            position += 1
+            while position < len(statement):
+                quoted_character = statement[position]
+                position += 1
+                if quoted_character != closing:
+                    continue
+                if (
+                    closing != "]"
+                    and position < len(statement)
+                    and statement[position] == closing
+                ):
+                    position += 1
+                    continue
+                break
+            continue
+        if statement.startswith("--", position) or statement.startswith("/*", position):
+            return True
+        position += 1
+    return False
+
+
 def _validate_statement(statement: str) -> None:
+    if _contains_sql_comment(statement):
+        raise SchemaError("migration contains unsupported SQL comments")
     operation = statement.lstrip().split(maxsplit=1)[0].upper() if statement.strip() else ""
     if operation not in {"ALTER", "CREATE", "DELETE", "DROP", "INSERT", "UPDATE", "WITH"}:
         raise SchemaError("migration contains a transaction-control or unsupported statement")
+    if re.match(r"\s*CREATE\s+(?:TEMP|TEMPORARY)\b", statement, re.IGNORECASE):
+        raise SchemaError("migration contains an unsupported temporary schema declaration")
+    quoted_name = r'(?:[A-Za-z_][A-Za-z0-9_]*|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\])'
+    qualified = re.match(
+        rf"\s*(?:CREATE|DROP)\s+(?:UNIQUE\s+)?(?:INDEX|TRIGGER|VIEW)\s+"
+        rf"(?:IF\s+(?:NOT\s+)?EXISTS\s+)?{quoted_name}\s*\.",
+        statement,
+        re.IGNORECASE,
+    )
+    if qualified is not None:
+        raise SchemaError("migration contains an unsupported schema-qualified declaration")
 
 
 def _validate_existing_schema(connection: sqlite3.Connection, known: dict[int, Migration]) -> dict[int, str]:
+    attached_schemas = {
+        name
+        for _, name, _ in connection.execute("PRAGMA database_list")
+        if name not in {"main", "temp"}
+    }
+    if attached_schemas:
+        raise SchemaError("migration connection contains an unsupported attached schema")
+    temporary_objects = connection.execute(
+        "SELECT 1 FROM sqlite_temp_master "
+        "WHERE type IN ('table', 'index', 'trigger', 'view') "
+        "AND name NOT LIKE 'sqlite_%' LIMIT 1"
+    ).fetchone()
+    if temporary_objects is not None:
+        raise SchemaError("database schema contains an unsupported temporary object")
     objects = _user_schema_objects(connection)
     tables = {name for kind, name in objects if kind == "table"}
     known_objects = _expected_schema_objects(known, set(known))
