@@ -12,6 +12,12 @@ Do not copy a prototype module merely because it works in one environment.
 First identify the behavior worth preserving, encode that behavior in portable
 fixtures and tests, then decide whether to extract, adapt, or reimplement.
 
+Only a committed, immutable source revision can provide extraction provenance.
+Uncommitted observations may motivate independently authored generic
+requirements or synthetic test categories, but they are not extraction or
+fixture sources and must not contribute observed titles, identifiers, paths,
+records, thresholds, or implementation details.
+
 The completed DUX dashboard work has a frozen source revision, verification
 evidence, inclusion matrix, and explicit exclusions in the
 [DUX extraction record](dux-extraction.md). The production

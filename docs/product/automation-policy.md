@@ -33,13 +33,13 @@ The curator must not quarantine an otherwise usable item merely because metadata
 
 | Field or action | Intended automatic behavior | Escalate when |
 | --- | --- | --- |
-| Title | Fill or correct when work identity is supported by local or catalogue evidence. | Plausible candidates identify different works, editions materially change the title, or the change would discard meaningful subtitle information. |
+| Title | Fill or correct when target and work identity are supported. Recognized format, identifier, and filename noise may be removed when the meaningful title and subtitle are preserved. Meaningful series/order text may be removed only when independently supported separate structured facts are already persisted or emitted as preserved sibling proposals. | Plausible candidates identify different works, an edition-sensitive change lacks applicable edition evidence, or meaningful subtitle or series/order information lacks preserved structured capture. |
 | Author or authors | Fill, normalize, reorder, or correct when identity evidence supports the people and roles. | Authorship conflicts, contributor roles cannot be mapped safely, or a collective/pseudonym choice is materially ambiguous. |
 | Series name | Fill or correct when the work-to-series relationship is supported. | Sources disagree about whether the work belongs to the series or represent different series. |
 | Series index | Fill or correct when numeric, decimal, or labelled order is supported. | Reading order and publication order conflict without a selected policy, or the evidence is internally inconsistent. |
 | Publication date | Fill or correct from applicable embedded edition evidence; use catalogue evidence when edition applicability is credible. | Only work-level dates are available for an edition-specific field or sources materially conflict. |
 | Publisher | Fill or correct from applicable embedded edition evidence or a credible edition match. | Imprint and publisher roles are ambiguous or the evidence appears to refer to another edition. |
-| Identifiers | Add valid, typed identifiers and replace malformed or contradicted identifiers when edition evidence supports the change. | A valid current identifier and a candidate identify different editions or identifier type is uncertain. |
+| Identifiers | Add valid, typed identifiers and replace malformed or invalid current values under ordinary applicable field evidence. Supersede a validated current comparable identifier only when an applicable embedded/content identifier and a materially independent provider identifier agree on the same validated canonical replacement identity. Preserve raw observations and lineage. | Conflict identifies another applicable edition, or required validation, edition applicability, materially independent lineage, or agreement on the same canonical replacement identity is missing or unresolved. |
 | Cover | Replace when the candidate is clearly more legible, relevant, and visually useful. Exact regional edition matching is not required. | Candidates are similarly good but materially different, work identity is uncertain, or the image is misleading for the content. |
 | Description, genres, narrator, and other fields | Preserve initially unless a field-specific policy and adapter capability have passed shadow qualification. Safe empty-field fills may be enabled independently. | Replacement is subjective, provider vocabularies conflict, or evidence does not support field applicability. |
 | Duplicate or media removal | Never automatic. | Always requires a separate destructive review and explicit human authorization. |
@@ -65,6 +65,11 @@ Preferred evidence includes:
 - catalogue records that can be tied to the same work or edition; and
 - corroborating cross-format evidence for the same owned item.
 
+Current service metadata is one sourced observation with its own provenance and
+version. It is not privileged truth: policy compares it with applicable local
+and provider evidence while preserving it for explanation, stale-plan checks,
+and rollback.
+
 EPUB package and opening-matter facts are first-class evidence records, not
 merely hints supplied to a catalogue or reviewer. Applicable local facts may
 establish an edition or support a field proposal without a remote catalogue
@@ -81,6 +86,42 @@ identity while preserving the full observed and proposed names.
 An embedded value is not automatically true, and a catalogue value is not automatically edition-applicable. However, imperfect evidence can still support a non-destructive improvement when the competing explanation is materially less plausible.
 
 Provider outage, timeout, quota exhaustion, authentication failure, and empty malformed response are operational facts. They are never evidence that a candidate or field is absent.
+
+### Directional title arbitration
+
+Title normalization is directional. With supported target and work identity,
+policy may remove recognized format, identifier, and filename noise when the
+removal preserves the meaningful title and subtitle. Before removing meaningful
+series/order text, independently supported separate structured series and order
+facts must already be persisted or emitted as preserved sibling proposals.
+Merely leaving existing structured fields unchanged is insufficient. Edition
+identity or applicability is additionally required when the field policy or
+proposed change is edition-sensitive.
+
+The inverse is not equivalent evidence: a candidate that adds a token classified
+as recognized noise is rejected. Supported meaningful subtitle or structured
+series/order information is not noise. A cleanup that deterministically
+preserves meaning, or a candidate that deterministically degrades the title,
+resolves through policy rather than becoming AI `manual`. Genuine supported
+alternatives remain eligible for review.
+
+### Identifier arbitration
+
+Identifier ingestion preserves the raw value and declared source type before
+validation. Policy validates syntax, canonicalizes recognized aliases and
+comparable ISBN forms, and compares values only within compatible namespaces.
+Non-comparable identifier types are neutral: neither agreement nor conflict can
+be inferred from them. Source lineage and correlation remain attached through
+canonicalization.
+
+A malformed or invalid current identifier may be replaced under ordinary
+applicable field evidence. A validated current comparable identifier may be
+classified as stale and superseded only when an applicable embedded or content
+identifier and a materially independent provider identifier agree on the same
+validated canonical replacement identity. Otherwise the conflict remains
+unresolved or the candidate is rejected according to field policy. Resolving an
+identifier, title, or any other field cannot erase or implicitly decide sibling
+field proposals.
 
 ## Cover policy
 
@@ -106,6 +147,10 @@ The active queue contains only work that can benefit from a human choice:
 - destructive actions requiring explicit authorization.
 
 Operational failures belong in health and job views, not the metadata decision queue. Automatic rejections are closed by default but remain searchable for audit and quality sampling.
+
+Deterministic title cleanup and degradation outcomes also remain outside the
+active queue. AI `manual` is reserved for materially plausible supported
+alternatives, not for policy-resolved normalization direction.
 
 ## Qualification and monitoring
 

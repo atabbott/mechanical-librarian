@@ -155,13 +155,30 @@ Deliverables:
   evidence;
 - handle generic titles, initial-aware author matching, contributor-role
   confusion, swapped fields, and release-name debris as explicit risk facts;
+- implement directional title normalization that removes specifically
+  supported format, identifier, and filename noise while preserving meaningful
+  subtitles, removes meaningful series/order text only when independently
+  supported separate structured facts are already persisted or emitted as
+  preserved sibling proposals, and rejects the unsupported inverse addition;
+- treat current metadata as versioned sourced evidence rather than privileged
+  truth;
+- preserve raw identifier observations, validate and canonicalize recognized
+  aliases and comparable ISBN forms, compare compatible namespaces only, and
+  keep non-comparable identifier types neutral;
+- allow malformed or invalid current identifiers to follow ordinary applicable
+  field evidence, but supersede a validated current comparable identifier only
+  when an applicable embedded/content identifier and a materially independent
+  provider identifier agree on the same validated canonical replacement
+  identity, preserving source lineage and correlation;
 - distinguish no-op, safe automatic, AI-review, and human-review outcomes;
 - omit proposals whose normalized value is equivalent to current state;
 - implement adapter/media applicability and reviewer-facing notice classes;
 - generate typed cover and series choices without applying them;
-- retain complete reasons for accepted and rejected candidates; and
+- retain complete reasons for accepted and rejected candidates;
 - treat provider failure as an operational outcome rather than negative
-  metadata evidence or support for another candidate.
+  metadata evidence or support for another candidate; and
+- keep every field proposal independent so resolving one field cannot erase or
+  implicitly decide a sibling proposal.
 
 Exit criteria:
 
@@ -172,6 +189,16 @@ Exit criteria:
 - identity-backed title cleanup, exact-identifier or direct-content decisive
   evidence, close supported alternatives, no-op omission, and conflicting
   identifier rejection pass the synthetic reconciliation cohort;
+- recognized-noise removal and unsupported-noise addition have directional,
+  deterministic policy outcomes without AI `manual`, while meaningful subtitle
+  information survives cleanup and meaningful series/order removal requires an
+  independently supported persisted or newly emitted structured sibling fact;
+- identifier alias and ISBN canonicalization, namespace compatibility,
+  non-comparable neutrality, raw-value retention, and independently
+  corroborated replacement of validated current comparable identifiers pass
+  synthetic and metamorphic tests, while malformed or invalid current values
+  use ordinary applicable field evidence;
+- resolving any field leaves every sibling proposal intact;
 - unsafe, rejected, inapplicable, and no-op choices cannot contaminate a safe
   field selection;
 - high-risk changes cannot enter the automatic apply path; and
