@@ -128,6 +128,51 @@ class LinkedIssueGateTests(unittest.TestCase):
                 )
                 self.assertEqual(result.code, "manual_link_not_closing_reference")
 
+    def test_colon_closing_keywords_disambiguate_native_manual_overlap(self) -> None:
+        for keyword in ("Closes", "Fixes", "Resolves"):
+            with self.subTest(keyword=keyword):
+                body_html = (
+                    f'<p><span class="issue-keyword">{keyword}</span>: '
+                    '<a class="issue-link" href="/issues/135">#135</a></p>'
+                )
+                result = evaluate_snapshot(
+                    snapshot([issue(135)], [issue(135)], body_html=body_html),
+                    REPOSITORY,
+                )
+                self.assertTrue(result.allowed)
+                self.assertEqual(result.code, "valid")
+
+    def test_colon_separator_and_context_variants_remain_fail_closed(self) -> None:
+        invalid_body_html = (
+            '<p><span class="issue-keyword">Closes</span>; '
+            '<a class="issue-link" href="/issues/135">#135</a></p>',
+            '<p><span class="issue-keyword">Closes</span>:: '
+            '<a class="issue-link" href="/issues/135">#135</a></p>',
+            '<p><span class="issue-keyword">Closes</span> : '
+            '<a class="issue-link" href="/issues/135">#135</a></p>',
+            '<p><span class="issue-keyword">Closes</span>:'
+            '<a class="issue-link" href="/issues/135">#135</a></p>',
+            '<p><span class="issue-keyword">Closes</span>: example '
+            '<a class="issue-link" href="/issues/135">#135</a></p>',
+            '<p><span class="issue-keyword">Closes</span><em>:</em> '
+            '<a class="issue-link" href="/issues/135">#135</a></p>',
+            '<p><span class="issue-keyword">Closes</span><!-- example -->: '
+            '<a class="issue-link" href="/issues/135">#135</a></p>',
+            '<p><span class="issue-keyword">Closes</span>: '
+            '<a href="/issues/135">#135</a></p>',
+            '<blockquote><p><span class="issue-keyword">Closes</span>: '
+            '<a class="issue-link" href="/issues/135">#135</a></p></blockquote>',
+            '<p><code><span class="issue-keyword">Closes</span>: '
+            '<a class="issue-link" href="/issues/135">#135</a></code></p>',
+        )
+        for body_html in invalid_body_html:
+            with self.subTest(body_html=body_html):
+                result = evaluate_snapshot(
+                    snapshot([issue(135)], [issue(135)], body_html=body_html),
+                    REPOSITORY,
+                )
+                self.assertEqual(result.code, "manual_link_not_closing_reference")
+
     def test_edits_recompute_the_complete_snapshot(self) -> None:
         before = evaluate_snapshot(snapshot(), REPOSITORY)
         after = evaluate_snapshot(snapshot([issue(135)]), REPOSITORY)

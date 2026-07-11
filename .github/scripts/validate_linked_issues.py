@@ -40,6 +40,7 @@ class ClosingLineHTMLParser(HTMLParser):
         self.keyword_fragments: list[str] | None = None
         self.issue_fragments: list[str] | None = None
         self.pending_keyword = False
+        self.separator_fragments: list[str] | None = None
         self.references: set[int] = set()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -48,6 +49,7 @@ class ClosingLineHTMLParser(HTMLParser):
         if tag in _IGNORED_HTML:
             self.ignored_depth += 1
             self.pending_keyword = False
+            self.separator_fragments = None
         elif self.ignored_depth == 0 and self.capture_tag is None and tag in {"p", "li"}:
             self.capture_tag = tag
             self.pending_keyword = False
@@ -56,10 +58,18 @@ class ClosingLineHTMLParser(HTMLParser):
             if tag == "span" and "issue-keyword" in classes:
                 self.keyword_fragments = []
                 self.pending_keyword = False
-            elif tag == "a" and self.pending_keyword and "issue-link" in classes:
+                self.separator_fragments = None
+            elif (
+                tag == "a"
+                and self.pending_keyword
+                and "issue-link" in classes
+                and self._separator_is_valid()
+            ):
                 self.issue_fragments = []
+                self.separator_fragments = None
             else:
                 self.pending_keyword = False
+                self.separator_fragments = None
         self.stack.append(tag)
 
     def handle_endtag(self, tag: str) -> None:
@@ -74,6 +84,7 @@ class ClosingLineHTMLParser(HTMLParser):
         if tag == "span" and self.keyword_fragments is not None:
             keyword = "".join(self.keyword_fragments).strip().casefold()
             self.pending_keyword = keyword in {"closes", "fixes", "resolves"}
+            self.separator_fragments = [] if self.pending_keyword else None
             self.keyword_fragments = None
         elif tag == "a" and self.issue_fragments is not None:
             issue_text = "".join(self.issue_fragments).strip()
@@ -81,9 +92,11 @@ class ClosingLineHTMLParser(HTMLParser):
                 self.references.add(int(issue_text[1:]))
             self.issue_fragments = None
             self.pending_keyword = False
+            self.separator_fragments = None
         elif tag == self.capture_tag:
             self.capture_tag = None
             self.pending_keyword = False
+            self.separator_fragments = None
 
     def handle_data(self, data: str) -> None:
         if self.ignored_depth != 0:
@@ -92,8 +105,25 @@ class ClosingLineHTMLParser(HTMLParser):
             self.keyword_fragments.append(data)
         elif self.issue_fragments is not None:
             self.issue_fragments.append(data)
-        elif self.pending_keyword and data.strip():
+        elif self.pending_keyword and self.separator_fragments is not None:
+            self.separator_fragments.append(data)
+
+    def handle_comment(self, data: str) -> None:
+        if self.pending_keyword:
             self.pending_keyword = False
+            self.separator_fragments = None
+
+    def _separator_is_valid(self) -> bool:
+        separator = "".join(self.separator_fragments or ())
+        return (
+            not separator
+            or separator.isspace()
+            or (
+                separator.startswith(":")
+                and len(separator) > 1
+                and separator[1:].isspace()
+            )
+        )
 
 
 def evaluate_snapshot(snapshot: object, expected_repository: str) -> GateResult:
