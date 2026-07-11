@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,11 @@ from unittest.mock import patch
 
 from mechanical_librarian.infrastructure.persistence import sqlite
 from mechanical_librarian.infrastructure.persistence.sqlite import MIGRATIONS, Migration, SchemaError, connect, migrate, transaction
+
+
+CURRENT_VERSION = len(MIGRATIONS)
+NEXT_VERSION = CURRENT_VERSION + 1
+CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
@@ -23,9 +29,51 @@ class SqliteFoundationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
-            self.assertEqual(migrate(connection), 1)
-            self.assertEqual(migrate(connection), 1)
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
             self.assertEqual(connection.execute("SELECT checksum FROM schema_migrations").fetchone()[0], MIGRATIONS[0].checksum)
+
+    def test_audit_timestamp_migration_normalizes_rows_and_survives_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            connection = connect(path)
+            with patch.object(sqlite, "MIGRATIONS", MIGRATIONS[:1]):
+                self.assertEqual(migrate(connection), 1)
+            connection.executemany(
+                "INSERT INTO audit_events(id, kind, created_at, summary) "
+                "VALUES (?, 'discovery', ?, 'discovered item')",
+                (
+                    ("event-one", "2026-07-10T10:00:00Z"),
+                    ("event-two", "2026-07-10T11:00:00.123456+01:00"),
+                ),
+            )
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT id, created_at FROM audit_events ORDER BY id"
+                ).fetchall(),
+                [
+                    ("event-one", "2026-07-10T10:00:00.000000Z"),
+                    ("event-two", "2026-07-10T10:00:00.123456Z"),
+                ],
+            )
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master "
+                    "WHERE type = 'index' AND name = 'audit_events_by_created_at'"
+                ).fetchone()
+            )
+            connection.close()
+
+            reopened = connect(path)
+            self.addCleanup(reopened.close)
+            self.assertEqual(migrate(reopened), CURRENT_VERSION)
+            with self.assertRaises(sqlite3.IntegrityError):
+                reopened.execute(
+                    "INSERT INTO audit_events(id, kind, created_at, summary) "
+                    "VALUES ('event-three', 'discovery', "
+                    "'2026-07-10T10:00:00Z', 'discovered item')"
+                )
 
     def test_transaction_rolls_back(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -85,7 +133,7 @@ class SqliteFoundationTests(unittest.TestCase):
                 with self.assertRaises(SchemaError) as raised:
                     migrate(connection)
             self.assertNotIn("private-value", str(raised.exception))
-            self.assertEqual(migrate(connection), 1)
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
 
     def test_constraint_failure_rolls_back_preceding_statements(self) -> None:
         failed = Migration(
@@ -108,7 +156,7 @@ class SqliteFoundationTests(unittest.TestCase):
 
     def test_multi_step_upgrade_is_atomic_and_idempotent(self) -> None:
         upgrade = Migration(
-            2,
+            NEXT_VERSION,
             ("ALTER TABLE instance_metadata ADD COLUMN source TEXT",),
             frozenset(),
             expected_table_definitions={
@@ -118,56 +166,56 @@ class SqliteFoundationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
-            self.assertEqual(migrate(connection), 1)
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
             with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, upgrade)):
-                self.assertEqual(migrate(connection), 2)
-                self.assertEqual(migrate(connection), 2)
-            self.assertEqual(connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall(), [(1,), (2,)])
+                self.assertEqual(migrate(connection), NEXT_VERSION)
+                self.assertEqual(migrate(connection), NEXT_VERSION)
+            self.assertEqual(connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall(), [*CURRENT_VERSION_ROWS, (NEXT_VERSION,)])
             self.assertIn("source", {row[1] for row in connection.execute("PRAGMA table_info(instance_metadata)")})
 
     def test_migration_can_declare_and_validate_an_index(self) -> None:
         index = Migration(
-            2,
-            ("CREATE INDEX IF NOT EXISTS audit_events_by_created_at ON audit_events(created_at)",),
+            NEXT_VERSION,
+            ("CREATE INDEX IF NOT EXISTS audit_events_by_kind_test ON audit_events(kind)",),
             frozenset(),
         )
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
-            self.assertEqual(migrate(connection), 1)
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
             with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index)):
-                self.assertEqual(migrate(connection), 2)
-                self.assertEqual(migrate(connection), 2)
-                self.assertIsNotNone(connection.execute("SELECT name FROM sqlite_master WHERE name = 'audit_events_by_created_at'").fetchone())
+                self.assertEqual(migrate(connection), NEXT_VERSION)
+                self.assertEqual(migrate(connection), NEXT_VERSION)
+                self.assertIsNotNone(connection.execute("SELECT name FROM sqlite_master WHERE name = 'audit_events_by_kind_test'").fetchone())
 
     def test_tampered_index_definition_fails_closed(self) -> None:
-        index = Migration(2, ("CREATE UNIQUE INDEX audit_events_by_created_at ON audit_events(created_at)",), frozenset())
+        index = Migration(NEXT_VERSION, ("CREATE UNIQUE INDEX audit_events_by_kind_test ON audit_events(kind)",), frozenset())
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
             migrate(connection)
             with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index)):
                 migrate(connection)
-                connection.execute("DROP INDEX audit_events_by_created_at")
-                connection.execute("CREATE INDEX audit_events_by_created_at ON audit_events(id)")
+                connection.execute("DROP INDEX audit_events_by_kind_test")
+                connection.execute("CREATE INDEX audit_events_by_kind_test ON audit_events(id)")
                 with self.assertRaisesRegex(SchemaError, "object definition"):
                     migrate(connection)
 
     def test_quoted_index_definition_fails_closed(self) -> None:
-        index = Migration(2, ('CREATE INDEX "audit-events-by-created-at" ON audit_events(created_at)',), frozenset())
+        index = Migration(NEXT_VERSION, ('CREATE INDEX "audit-events-by-kind-test" ON audit_events(kind)',), frozenset())
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
             migrate(connection)
             with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index)):
                 migrate(connection)
-                connection.execute('DROP INDEX "audit-events-by-created-at"')
-                connection.execute('CREATE INDEX "audit-events-by-created-at" ON audit_events(id)')
+                connection.execute('DROP INDEX "audit-events-by-kind-test"')
+                connection.execute('CREATE INDEX "audit-events-by-kind-test" ON audit_events(id)')
                 with self.assertRaisesRegex(SchemaError, "object definition"):
                     migrate(connection)
 
     def test_view_definition_preserves_if_not_exists_in_a_literal(self) -> None:
-        view = Migration(2, ("CREATE VIEW audit_label AS SELECT 'a if not exists b' AS label",), frozenset())
+        view = Migration(NEXT_VERSION, ("CREATE VIEW audit_label AS SELECT 'a if not exists b' AS label",), frozenset())
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
@@ -238,7 +286,7 @@ class SqliteFoundationTests(unittest.TestCase):
                 connection = connect(Path(directory) / "state.sqlite")
                 self.addCleanup(connection.close)
                 migrate(connection)
-                extension = Migration(2, (declaration,), frozenset())
+                extension = Migration(NEXT_VERSION, (declaration,), frozenset())
                 with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
                     migrate(connection)
                     connection.execute(drop)
@@ -271,7 +319,7 @@ class SqliteFoundationTests(unittest.TestCase):
 
     def test_supported_non_table_objects_survive_restart_and_validate_exactly(self) -> None:
         extension = Migration(
-            2,
+            NEXT_VERSION,
             (
                 "CREATE INDEX IF NOT EXISTS audit_events_by_kind ON audit_events(kind)",
                 "CREATE VIEW IF NOT EXISTS audit_kinds AS SELECT kind FROM audit_events",
@@ -286,14 +334,14 @@ class SqliteFoundationTests(unittest.TestCase):
             connection = connect(path)
             migrate(connection)
             with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
-                self.assertEqual(migrate(connection), 2)
-                self.assertEqual(migrate(connection), 2)
+                self.assertEqual(migrate(connection), NEXT_VERSION)
+                self.assertEqual(migrate(connection), NEXT_VERSION)
             connection.close()
 
             reopened = connect(path)
             self.addCleanup(reopened.close)
             with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
-                self.assertEqual(migrate(reopened), 2)
+                self.assertEqual(migrate(reopened), NEXT_VERSION)
                 objects = set(
                     reopened.execute(
                         "SELECT type, name FROM sqlite_master "
@@ -322,7 +370,7 @@ class SqliteFoundationTests(unittest.TestCase):
                 path = Path(directory) / "state.sqlite"
                 connection = connect(path)
                 migrate(connection)
-                extension = Migration(2, (declaration,), frozenset())
+                extension = Migration(NEXT_VERSION, (declaration,), frozenset())
                 with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
                     with self.assertRaisesRegex(SchemaError, "temporary|schema-qualified"):
                         migrate(connection)
@@ -330,7 +378,7 @@ class SqliteFoundationTests(unittest.TestCase):
                     connection.execute(
                         "SELECT version FROM schema_migrations ORDER BY version"
                     ).fetchall(),
-                    [(1,)],
+                    CURRENT_VERSION_ROWS,
                 )
                 self.assertIsNone(
                     connection.execute(
@@ -355,7 +403,7 @@ class SqliteFoundationTests(unittest.TestCase):
                     reopened.execute(
                         "SELECT version FROM schema_migrations ORDER BY version"
                     ).fetchall(),
-                    [(1,)],
+                    CURRENT_VERSION_ROWS,
                 )
 
     def test_comment_obscured_temporary_declarations_are_rejected_durably(self) -> None:
@@ -371,7 +419,7 @@ class SqliteFoundationTests(unittest.TestCase):
                 path = Path(directory) / "state.sqlite"
                 connection = connect(path)
                 migrate(connection)
-                extension = Migration(2, (declaration,), frozenset())
+                extension = Migration(NEXT_VERSION, (declaration,), frozenset())
                 with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
                     with self.assertRaisesRegex(SchemaError, "comments"):
                         migrate(connection)
@@ -379,7 +427,7 @@ class SqliteFoundationTests(unittest.TestCase):
                     connection.execute(
                         "SELECT version FROM schema_migrations ORDER BY version"
                     ).fetchall(),
-                    [(1,)],
+                    CURRENT_VERSION_ROWS,
                 )
                 self.assertIsNone(
                     connection.execute(
@@ -404,7 +452,7 @@ class SqliteFoundationTests(unittest.TestCase):
                     reopened.execute(
                         "SELECT version FROM schema_migrations ORDER BY version"
                     ).fetchall(),
-                    [(1,)],
+                    CURRENT_VERSION_ROWS,
                 )
 
     def test_sql_comments_outside_quotes_are_rejected_durably(self) -> None:
@@ -420,7 +468,7 @@ class SqliteFoundationTests(unittest.TestCase):
                 path = Path(directory) / "state.sqlite"
                 connection = connect(path)
                 migrate(connection)
-                extension = Migration(2, (declaration,), frozenset())
+                extension = Migration(NEXT_VERSION, (declaration,), frozenset())
                 with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
                     with self.assertRaisesRegex(SchemaError, "comments"):
                         migrate(connection)
@@ -428,7 +476,7 @@ class SqliteFoundationTests(unittest.TestCase):
                     connection.execute(
                         "SELECT version FROM schema_migrations ORDER BY version"
                     ).fetchall(),
-                    [(1,)],
+                    CURRENT_VERSION_ROWS,
                 )
                 self.assertIsNone(
                     connection.execute(
@@ -439,7 +487,7 @@ class SqliteFoundationTests(unittest.TestCase):
 
                 reopened = connect(path)
                 self.addCleanup(reopened.close)
-                self.assertEqual(migrate(reopened), 1)
+                self.assertEqual(migrate(reopened), CURRENT_VERSION)
                 self.assertIsNone(
                     reopened.execute(
                         "SELECT 1 FROM sqlite_master WHERE name = 'comment_object'"
@@ -448,7 +496,7 @@ class SqliteFoundationTests(unittest.TestCase):
 
     def test_comment_markers_inside_quoted_content_are_allowed(self) -> None:
         extension = Migration(
-            2,
+            NEXT_VERSION,
             (
                 "CREATE VIEW quoted_comment_markers AS SELECT "
                 "'-- literal' AS line_value, '/* literal */' AS block_value, "
@@ -460,18 +508,18 @@ class SqliteFoundationTests(unittest.TestCase):
             path = Path(directory) / "state.sqlite"
             connection = connect(path)
             with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
-                self.assertEqual(migrate(connection), 2)
-                self.assertEqual(migrate(connection), 2)
+                self.assertEqual(migrate(connection), NEXT_VERSION)
+                self.assertEqual(migrate(connection), NEXT_VERSION)
             connection.close()
 
             reopened = connect(path)
             self.addCleanup(reopened.close)
             with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, extension)):
-                self.assertEqual(migrate(reopened), 2)
+                self.assertEqual(migrate(reopened), NEXT_VERSION)
 
     def test_attached_schema_declaration_cannot_be_recorded(self) -> None:
         extension = Migration(
-            2,
+            NEXT_VERSION,
             ("CREATE VIEW auxiliary /* comment */ . external_object AS SELECT 1",),
             frozenset(),
         )
@@ -491,7 +539,7 @@ class SqliteFoundationTests(unittest.TestCase):
                 connection.execute(
                     "SELECT version FROM schema_migrations ORDER BY version"
                 ).fetchall(),
-                [(1,)],
+                CURRENT_VERSION_ROWS,
             )
             self.assertIsNone(
                 connection.execute(
@@ -503,12 +551,12 @@ class SqliteFoundationTests(unittest.TestCase):
 
             reopened = connect(path / "state.sqlite")
             self.addCleanup(reopened.close)
-            self.assertEqual(migrate(reopened), 1)
+            self.assertEqual(migrate(reopened), CURRENT_VERSION)
             self.assertEqual(
                 reopened.execute(
                     "SELECT version FROM schema_migrations ORDER BY version"
                 ).fetchall(),
-                [(1,)],
+                CURRENT_VERSION_ROWS,
             )
 
     def test_preexisting_temporary_object_is_rejected_independently_of_sql_text(self) -> None:
@@ -523,14 +571,14 @@ class SqliteFoundationTests(unittest.TestCase):
                 connection.execute(
                     "SELECT version FROM schema_migrations ORDER BY version"
                 ).fetchall(),
-                [(1,)],
+                CURRENT_VERSION_ROWS,
             )
             connection.execute("DROP VIEW external_temp_object")
-            self.assertEqual(migrate(connection), 1)
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
 
     def test_failure_after_non_table_ddl_rolls_back_objects_and_checksum(self) -> None:
         failed = Migration(
-            2,
+            NEXT_VERSION,
             (
                 "CREATE INDEX rollback_index ON audit_events(kind)",
                 "CREATE VIEW rollback_view AS SELECT kind FROM audit_events",
@@ -550,7 +598,7 @@ class SqliteFoundationTests(unittest.TestCase):
                 connection.execute(
                     "SELECT version FROM schema_migrations ORDER BY version"
                 ).fetchall(),
-                [(1,)],
+                CURRENT_VERSION_ROWS,
             )
             self.assertEqual(
                 connection.execute(
@@ -561,16 +609,16 @@ class SqliteFoundationTests(unittest.TestCase):
             )
 
     def test_migration_can_drop_a_previously_declared_index(self) -> None:
-        index = Migration(2, ("CREATE INDEX audit_events_by_created_at ON audit_events(created_at)",), frozenset())
-        remove_index = Migration(3, ("DROP INDEX IF EXISTS audit_events_by_created_at",), frozenset())
+        index = Migration(NEXT_VERSION, ("CREATE INDEX removable_audit_index ON audit_events(kind)",), frozenset())
+        remove_index = Migration(NEXT_VERSION + 1, ("DROP INDEX IF EXISTS removable_audit_index",), frozenset())
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
             migrate(connection)
             with patch.object(sqlite, "MIGRATIONS", (*MIGRATIONS, index, remove_index)):
-                self.assertEqual(migrate(connection), 3)
-                self.assertEqual(migrate(connection), 3)
-                self.assertIsNone(connection.execute("SELECT name FROM sqlite_master WHERE name = 'audit_events_by_created_at'").fetchone())
+                self.assertEqual(migrate(connection), NEXT_VERSION + 1)
+                self.assertEqual(migrate(connection), NEXT_VERSION + 1)
+                self.assertIsNone(connection.execute("SELECT name FROM sqlite_master WHERE name = 'removable_audit_index'").fetchone())
 
     def test_partial_schema_is_rejected_without_modification(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -601,12 +649,23 @@ class SqliteFoundationTests(unittest.TestCase):
             self.addCleanup(connection.close)
             migrate(connection)
             connection.execute("DROP TABLE audit_events")
-            connection.execute("CREATE TABLE audit_events (id TEXT PRIMARY KEY, altered TEXT NOT NULL)")
+            connection.execute(
+                "CREATE TABLE audit_events (id TEXT PRIMARY KEY, kind TEXT NOT NULL, "
+                "created_at TEXT NOT NULL, summary TEXT NOT NULL, altered TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE INDEX audit_events_by_created_at "
+                "ON audit_events(created_at DESC, id DESC)"
+            )
             with self.assertRaisesRegex(SchemaError, "definition"):
                 migrate(connection)
             connection.execute("DROP TABLE audit_events")
             connection.execute(
                 "CREATE TABLE audit_events (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL, summary TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE INDEX audit_events_by_created_at "
+                "ON audit_events(created_at DESC, id DESC)"
             )
             connection.execute("CREATE VIEW unexpected_view AS SELECT id FROM audit_events")
             with self.assertRaisesRegex(SchemaError, "unrecognized"):

@@ -3,8 +3,47 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 
-from mechanical_librarian.application.audit import AuditAppendOutcome, AuditAppendResult, AuditEvent, AuditQueryOutcome, AuditQueryResult, AuditRepository
+from mechanical_librarian.application.audit import (
+    AuditAppendOutcome,
+    AuditAppendResult,
+    AuditEvent,
+    AuditEventKind,
+    AuditQueryOutcome,
+    AuditQueryResult,
+    AuditRepository,
+    SafeAuditSummary,
+)
+from mechanical_librarian.domain.identifiers import AuditEventId
+from mechanical_librarian.domain.timestamps import canonical_utc_timestamp
+
+
+_AuditStorageRow = tuple[str, str, str, str]
+
+
+def _serialize_event(event: AuditEvent) -> _AuditStorageRow:
+    timestamp = (
+        event.created_at.astimezone(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+    return str(event.id), str(event.kind), timestamp, str(event.summary)
+
+
+def _deserialize_event(row: tuple[object, ...]) -> AuditEvent:
+    if len(row) != 4 or not all(type(value) is str for value in row):
+        raise ValueError("stored audit event has invalid value types")
+    event_id, kind, created_at, summary = row
+    if canonical_utc_timestamp(created_at) != created_at:
+        raise ValueError("stored audit event has an invalid timestamp")
+    timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    return AuditEvent(
+        AuditEventId(event_id),
+        AuditEventKind(kind),
+        timestamp,
+        SafeAuditSummary(summary),
+    )
 
 
 class SQLiteAuditRepository(AuditRepository):
@@ -17,12 +56,14 @@ class SQLiteAuditRepository(AuditRepository):
         if not isinstance(event, AuditEvent):
             return AuditAppendResult(AuditAppendOutcome.INVALID)
         try:
-            row = event.storage_row
-        except (TypeError, ValueError):
+            row = _serialize_event(event)
+        except (OverflowError, TypeError, ValueError):
             return AuditAppendResult(AuditAppendOutcome.INVALID)
         try:
             self._connection.execute(
-                "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)", row
+                "INSERT INTO audit_events(id, kind, created_at, summary) "
+                "VALUES (?, ?, ?, ?)",
+                row,
             )
         except sqlite3.IntegrityError:
             return self._duplicate_outcome(row)
@@ -35,7 +76,8 @@ class SQLiteAuditRepository(AuditRepository):
     def _duplicate_outcome(self, row: tuple[str, str, str, str]) -> AuditAppendResult:
         try:
             stored = self._connection.execute(
-                "SELECT id, kind, created_at, summary FROM audit_events WHERE id = ?", (row[0],)
+                "SELECT id, kind, created_at, summary FROM audit_events WHERE id = ?",
+                (row[0],),
             ).fetchone()
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             return AuditAppendResult(AuditAppendOutcome.UNAVAILABLE)
@@ -44,19 +86,26 @@ class SQLiteAuditRepository(AuditRepository):
         if stored is None:
             return AuditAppendResult(AuditAppendOutcome.INTEGRITY_FAILURE)
         try:
-            stored_row = AuditEvent.from_storage(*stored).storage_row
-        except (TypeError, ValueError):
+            stored_row = _serialize_event(_deserialize_event(stored))
+        except (OverflowError, TypeError, ValueError):
             return AuditAppendResult(AuditAppendOutcome.INTEGRITY_FAILURE)
-        return AuditAppendResult(AuditAppendOutcome.DUPLICATE if stored_row == row else AuditAppendOutcome.CONFLICT)
+        outcome = (
+            AuditAppendOutcome.DUPLICATE
+            if stored_row == row
+            else AuditAppendOutcome.CONFLICT
+        )
+        return AuditAppendResult(outcome)
 
     def recent(self, limit: int) -> AuditQueryResult:
-        if not 1 <= limit <= 100:
+        if type(limit) is not int or not 1 <= limit <= 100:
             return AuditQueryResult(AuditQueryOutcome.INVALID)
         try:
             rows = self._connection.execute(
-                "SELECT id, kind, created_at, summary FROM audit_events ORDER BY created_at DESC, id DESC LIMIT ?", (limit,)
+                "SELECT id, kind, created_at, summary FROM audit_events "
+                "ORDER BY created_at DESC, id DESC LIMIT ?",
+                (limit,),
             )
-            events = tuple(AuditEvent.from_storage(*row) for row in rows)
+            events = tuple(_deserialize_event(row) for row in rows)
         except (sqlite3.OperationalError, sqlite3.ProgrammingError):
             return AuditQueryResult(AuditQueryOutcome.UNAVAILABLE)
         except (sqlite3.DatabaseError, ValueError, TypeError):

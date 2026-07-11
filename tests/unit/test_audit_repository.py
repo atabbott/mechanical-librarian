@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from mechanical_librarian.adapters.persistence.audit import SQLiteAuditRepository
 from mechanical_librarian.application.audit import AuditAppendOutcome, AuditEvent, AuditEventKind, AuditEventId, AuditQueryOutcome, SafeAuditSummary
-from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate, transaction
+from mechanical_librarian.infrastructure.persistence import sqlite
+from mechanical_librarian.infrastructure.persistence.sqlite import SchemaError, connect, migrate, transaction
+from tests.contract.audit_repository import AuditRepositoryContract
 
 
 def event(identifier: str, timestamp: str = "2026-07-10T10:00:00Z", summary: str = "discovered item") -> AuditEvent:
@@ -24,7 +28,10 @@ class AuditRepositoryTests(unittest.TestCase):
             first = event("event-one")
             self.assertEqual(repository.append(first).outcome, AuditAppendOutcome.APPENDED)
             self.assertEqual(repository.append(first).outcome, AuditAppendOutcome.DUPLICATE)
-            self.assertEqual(repository.append(event("event-one", summary="different summary")).outcome, AuditAppendOutcome.CONFLICT)
+            self.assertEqual(
+                repository.append(event("event-one", summary="item changed")).outcome,
+                AuditAppendOutcome.CONFLICT,
+            )
             repository.append(event("event-two", "2026-07-11T10:00:00Z"))
             result = repository.recent(1)
             self.assertEqual(result.outcome, AuditQueryOutcome.OK)
@@ -42,33 +49,266 @@ class AuditRepositoryTests(unittest.TestCase):
             repository.append(fractional)
             self.assertEqual(repository.recent(2).events, (fractional, exact))
 
-    def test_legacy_timestamp_row_is_an_idempotent_replay(self) -> None:
+    def test_recent_orders_mixed_legacy_timestamp_spellings_chronologically(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:1]):
+                migrate(connection)
+            rows = (
+                ("event-exact", "discovery", "2026-07-10T10:00:00Z", "discovered item"),
+                ("event-fractional", "discovery", "2026-07-10T10:00:00.500000+00:00", "item changed"),
+                ("event-offset", "discovery", "2026-07-10T11:00:00+01:00", "item skipped"),
+                ("event-next", "discovery", "2026-07-10T10:00:01+00:00", "job started"),
+            )
+            connection.executemany(
+                "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)", rows
+            )
+            migrate(connection)
+            result = SQLiteAuditRepository(connection).recent(3)
+            self.assertEqual(result.outcome, AuditQueryOutcome.OK)
+            self.assertEqual(tuple(str(item.id) for item in result.events), ("event-next", "event-fractional", "event-offset"))
+
+    def test_recent_uses_covering_timestamp_index_without_temporary_sort(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
             migrate(connection)
+            plan = tuple(
+                row[3]
+                for row in connection.execute(
+                    "EXPLAIN QUERY PLAN "
+                    "SELECT id, kind, created_at, summary FROM audit_events "
+                    "ORDER BY created_at DESC, id DESC LIMIT ?",
+                    (10,),
+                )
+            )
+            self.assertTrue(
+                any("audit_events_by_created_at" in step for step in plan), plan
+            )
+            self.assertFalse(any("TEMP B-TREE" in step for step in plan), plan)
+
+    def test_recent_uses_id_as_tie_break_for_equivalent_timestamps_at_limit_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:1]):
+                migrate(connection)
+            connection.executemany(
+                "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)",
+                (
+                    ("event-a", "discovery", "2026-07-10T10:00:00Z", "discovered item"),
+                    ("event-b", "discovery", "2026-07-10T11:00:00+01:00", "item changed"),
+                ),
+            )
+            migrate(connection)
+            result = SQLiteAuditRepository(connection).recent(1)
+            self.assertEqual(tuple(str(item.id) for item in result.events), ("event-b",))
+
+    def test_legacy_timestamp_row_is_an_idempotent_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:1]):
+                migrate(connection)
             connection.execute(
                 "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)",
                 ("event-one", "discovery", "2026-07-10T10:00:00Z", "discovered item"),
             )
+            migrate(connection)
             self.assertEqual(SQLiteAuditRepository(connection).append(event("event-one")).outcome, AuditAppendOutcome.DUPLICATE)
 
     def test_invalid_and_hostile_values_are_rejected_at_boundary(self) -> None:
+        class StringSubclass(str):
+            pass
+
         self.assertEqual(str(SafeAuditSummary("authorization granted")), "authorization granted")
+        hostile_values: tuple[object, ...] = (
+            "https://private.example/token",
+            "ssh://private-host/resource",
+            "private.example",
+            "private-host:8080",
+            "127.0.0.1",
+            "localhost",
+            "/private/library",
+            r"C:\Users\alice\Audiobooks",
+            "~/private/library",
+            "Authorization: Bearer example-credential",
+            "Proxy-Authorization: Basic example-credential",
+            "Cookie: session=example-credential",
+            "Set-Cookie: session=example-credential",
+            "Bearer example-credential",
+            "Basic example-credential",
+            "api_key=example-credential",
+            "access-token: example-credential",
+            "refresh_token=example-credential",
+            "client-secret=example-credential",
+            "password=example-credential",
+            "token example-credential",
+            "secret example-credential",
+            "credential example-credential",
+            "session-token example-credential",
+            "api key example-credential",
+            "?api_key=example-credential",
+            "::1",
+            "2001:db8::1",
+            "mailto:private@example.test",
+            "urn:example:private",
+            '{"provider": "payload"}',
+            "provider=[payload]",
+            "result={status:ok}",
+            "field=value",
+            "provider: payload",
+            "provider,payload,secret",
+            "provider: payload\nsecret: value",
+            "provider=value&token=secret",
+            "safe\nforged",
+            "safe\x00forged",
+            b"bytes are not text",
+            StringSubclass("subclass text"),
+        )
+        for hostile_value in hostile_values:
+            with self.subTest(hostile_value=repr(hostile_value)), self.assertRaises(ValueError):
+                SafeAuditSummary(hostile_value)  # type: ignore[arg-type]
+        summary = SafeAuditSummary("authorization granted")
+        self.assertEqual(repr(summary), "SafeAuditSummary(<redacted>)")
+        self.assertNotIn(summary.value, repr(summary))
         with self.assertRaises(ValueError):
-            SafeAuditSummary("https://private.example/token")
-        with self.assertRaises(ValueError):
-            SafeAuditSummary("/private/library")
-        with self.assertRaises(ValueError):
-            SafeAuditSummary(r"C:\Users\alice\Audiobooks")
-        with self.assertRaises(ValueError):
-            SafeAuditSummary("Authorization: Bearer example-credential")
-        with self.assertRaises(ValueError):
-            SafeAuditSummary('{"provider": "payload"}')
-        with self.assertRaises(ValueError):
-            AuditEvent(AuditEventId("event-one"), AuditEventKind("discovery"), datetime.now(), SafeAuditSummary("safe"))
+            AuditEvent(
+                AuditEventId("event-one"),
+                AuditEventKind("discovery"),
+                datetime.now(),
+                SafeAuditSummary("discovered item"),
+            )
         with self.assertRaises(ValueError):
             AuditEvent("event-one", "discovery", datetime.now(timezone.utc), "https://private.example/token")  # type: ignore[arg-type]
+
+    def test_audit_event_requires_exact_utc_representable_datetime(self) -> None:
+        with self.assertRaises(ValueError):
+            AuditEvent(
+                AuditEventId("event-min"),
+                AuditEventKind("discovery"),
+                datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+                SafeAuditSummary("discovered item"),
+            )
+        with self.assertRaises(ValueError):
+            AuditEvent(
+                AuditEventId("event-max"),
+                AuditEventKind("discovery"),
+                datetime.max.replace(tzinfo=timezone(-timedelta(hours=14))),
+                SafeAuditSummary("discovered item"),
+            )
+        self.assertEqual(
+            event(
+                "event-min-valid",
+                "0001-01-01T00:00:00-14:00",
+            ).created_at.utcoffset(),
+            -timedelta(hours=14),
+        )
+        self.assertEqual(
+            event(
+                "event-max-valid",
+                "9999-12-31T23:59:59.999999+14:00",
+            ).created_at.utcoffset(),
+            timedelta(hours=14),
+        )
+
+        invalid_event = object.__new__(AuditEvent)
+        object.__setattr__(invalid_event, "id", AuditEventId("event-min"))
+        object.__setattr__(invalid_event, "kind", AuditEventKind("discovery"))
+        object.__setattr__(
+            invalid_event,
+            "created_at",
+            datetime.min.replace(tzinfo=timezone(timedelta(hours=14))),
+        )
+        object.__setattr__(invalid_event, "summary", SafeAuditSummary("discovered item"))
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            self.assertEqual(
+                SQLiteAuditRepository(connection).append(invalid_event).outcome,
+                AuditAppendOutcome.INVALID,
+            )
+
+    def test_recent_orders_adjacent_microseconds_before_id_tie_break(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            connection.executemany(
+                "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)",
+                (
+                    ("event-z", "discovery", "2026-07-10T10:00:00.000001Z", "discovered item"),
+                    ("event-a", "discovery", "2026-07-10T10:00:00.000002Z", "item changed"),
+                ),
+            )
+            result = SQLiteAuditRepository(connection).recent(1)
+            self.assertEqual(result.outcome, AuditQueryOutcome.OK)
+            self.assertEqual(tuple(str(item.id) for item in result.events), ("event-a",))
+
+    def test_migration_rejects_unsupported_or_hidden_corrupt_timestamp(self) -> None:
+        corrupt_timestamps = ("2026-07-10X10:00:00Z", "bad-time")
+        for corrupt_timestamp in corrupt_timestamps:
+            with self.subTest(corrupt_timestamp=corrupt_timestamp), tempfile.TemporaryDirectory() as directory:
+                connection = connect(Path(directory) / "state.sqlite")
+                with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:1]):
+                    migrate(connection)
+                connection.executemany(
+                    "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)",
+                    (
+                        ("event-valid", "discovery", "2026-07-11T10:00:00Z", "discovered item"),
+                        ("event-corrupt", "discovery", corrupt_timestamp, "item changed"),
+                    ),
+                )
+                original_schema = connection.execute(
+                    "SELECT sql FROM sqlite_master "
+                    "WHERE type = 'table' AND name = 'audit_events'"
+                ).fetchone()
+                original_rows = connection.execute(
+                    "SELECT id, kind, created_at, summary FROM audit_events ORDER BY id"
+                ).fetchall()
+                with self.assertRaisesRegex(SchemaError, "rolled back"):
+                    migrate(connection)
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT version FROM schema_migrations ORDER BY version"
+                    ).fetchall(),
+                    [(1,)],
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT sql FROM sqlite_master "
+                        "WHERE type = 'table' AND name = 'audit_events'"
+                    ).fetchone(),
+                    original_schema,
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT id, kind, created_at, summary "
+                        "FROM audit_events ORDER BY id"
+                    ).fetchall(),
+                    original_rows,
+                )
+                self.assertIsNone(
+                    connection.execute(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE name IN ('audit_events_v2', 'audit_events_by_created_at')"
+                    ).fetchone()
+                )
+                connection.close()
+
+                reopened = connect(Path(directory) / "state.sqlite")
+                with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:1]):
+                    self.assertEqual(migrate(reopened), 1)
+                self.assertEqual(
+                    reopened.execute(
+                        "SELECT id, kind, created_at, summary "
+                        "FROM audit_events ORDER BY id"
+                    ).fetchall(),
+                    original_rows,
+                )
+                reopened.close()
 
     def test_unavailable_corrupt_and_invalid_query_return_typed_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -76,10 +316,54 @@ class AuditRepositoryTests(unittest.TestCase):
             migrate(connection)
             repository = SQLiteAuditRepository(connection)
             self.assertEqual(repository.recent(0).outcome, AuditQueryOutcome.INVALID)
-            connection.execute("INSERT INTO audit_events(id, kind, created_at, summary) VALUES ('event-one', 'discovery', 'bad-time', 'safe')")
+            self.assertEqual(repository.recent(101).outcome, AuditQueryOutcome.INVALID)
+            for malformed in (True, 1.0, "1", None):
+                with self.subTest(malformed=malformed):
+                    self.assertEqual(repository.recent(malformed).outcome, AuditQueryOutcome.INVALID)  # type: ignore[arg-type]
+            connection.execute("PRAGMA ignore_check_constraints = ON")
+            connection.execute("INSERT INTO audit_events(id, kind, created_at, summary) VALUES ('event-one', 'discovery', 'bad-time', 'discovered item')")
+            connection.execute("PRAGMA ignore_check_constraints = OFF")
             self.assertEqual(repository.recent(1).outcome, AuditQueryOutcome.CORRUPT)
             connection.close()
             self.assertEqual(repository.append(event("event-two")).outcome, AuditAppendOutcome.UNAVAILABLE)
+            self.assertEqual(repository.recent(1).outcome, AuditQueryOutcome.UNAVAILABLE)
+
+    def test_corrupt_stored_value_types_and_values_return_corrupt(self) -> None:
+        corrupt_rows = (
+            (sqlite3.Binary(b"event-one"), "discovery", "2026-07-10T10:00:00.000000Z", "discovered item"),
+            ("event-one", "UPPERCASE", "2026-07-10T10:00:00.000000Z", "discovered item"),
+            ("event-one", "discovery", "bad-time", "discovered item"),
+            ("event-one", "discovery", "2026-07-10T10:00:00.000000Z", "unknown summary"),
+        )
+        for row in corrupt_rows:
+            with self.subTest(row=row), tempfile.TemporaryDirectory() as directory:
+                connection = connect(Path(directory) / "state.sqlite")
+                migrate(connection)
+                connection.execute("PRAGMA ignore_check_constraints = ON")
+                connection.execute(
+                    "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)", row
+                )
+                connection.execute("PRAGMA ignore_check_constraints = OFF")
+                self.assertEqual(SQLiteAuditRepository(connection).recent(1).outcome, AuditQueryOutcome.CORRUPT)
+                connection.close()
+
+    def test_locked_database_and_integrity_failures_map_to_typed_outcomes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            locker = connect(path)
+            self.addCleanup(locker.close)
+            migrate(locker)
+            contender = connect(path)
+            self.addCleanup(contender.close)
+            contender.execute("PRAGMA busy_timeout = 0")
+            locker.execute("BEGIN EXCLUSIVE")
+            self.assertEqual(SQLiteAuditRepository(contender).append(event("event-one")).outcome, AuditAppendOutcome.UNAVAILABLE)
+
+        failing_connection = Mock()
+        failing_connection.execute.side_effect = sqlite3.DatabaseError("synthetic integrity failure")
+        repository = SQLiteAuditRepository(failing_connection)
+        self.assertEqual(repository.append(event("event-one")).outcome, AuditAppendOutcome.INTEGRITY_FAILURE)
+        self.assertEqual(repository.recent(1).outcome, AuditQueryOutcome.CORRUPT)
 
     def test_invalid_append_input_and_benign_legacy_authorization_summary_return_typed_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -90,7 +374,7 @@ class AuditRepositoryTests(unittest.TestCase):
             self.assertEqual(repository.append(object()).outcome, AuditAppendOutcome.INVALID)  # type: ignore[arg-type]
             connection.execute(
                 "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)",
-                ("event-one", "authorization", "2026-07-10T10:00:00Z", "authorization granted"),
+                ("event-one", "authorization", "2026-07-10T10:00:00.000000Z", "authorization granted"),
             )
             result = repository.recent(1)
             self.assertEqual(result.outcome, AuditQueryOutcome.OK)
@@ -107,6 +391,16 @@ class AuditRepositoryTests(unittest.TestCase):
                     self.assertEqual(repository.append(event("event-one")).outcome, AuditAppendOutcome.APPENDED)
                     raise RuntimeError("fail")
             self.assertEqual(repository.recent(1).events, ())
+
+
+class SQLiteAuditRepositoryContractTests(AuditRepositoryContract, unittest.TestCase):
+    def setUp(self) -> None:
+        self._temporary_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporary_directory.cleanup)
+        self._connection = connect(Path(self._temporary_directory.name) / "state.sqlite")
+        self.addCleanup(self._connection.close)
+        migrate(self._connection)
+        self.repository = SQLiteAuditRepository(self._connection)
 
 
 if __name__ == "__main__":

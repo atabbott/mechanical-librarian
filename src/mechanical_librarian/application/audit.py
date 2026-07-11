@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -11,10 +10,40 @@ from typing import Protocol
 from mechanical_librarian.domain.identifiers import AuditEventId, Identifier
 
 
-_FORBIDDEN_SUMMARY = re.compile(
-    r"(?:https?://|/[^ ]|\\|\b(?:token|secret|password)\b|\bauthorization\s*:)", re.IGNORECASE
+_SAFE_AUDIT_SUMMARIES = frozenset(
+    {
+        "apply completed",
+        "apply failed",
+        "apply started",
+        "apply verified",
+        "authorization denied",
+        "authorization granted",
+        "authorization revoked",
+        "backup failed",
+        "backup verified",
+        "decision recorded",
+        "discovered item",
+        "item changed",
+        "item discovered",
+        "item skipped",
+        "item unresolved",
+        "job completed",
+        "job failed",
+        "job queued",
+        "job retrying",
+        "job started",
+        "plan created",
+        "plan validated",
+        "review approved",
+        "review rejected",
+        "review requested",
+        "rollback completed",
+        "rollback failed",
+        "rollback started",
+        "verification failed",
+        "verification succeeded",
+    }
 )
-
 
 class AuditEventKind(Identifier):
     """Bounded logical event category; it cannot carry a provider payload."""
@@ -24,15 +53,15 @@ class AuditEventKind(Identifier):
 
 @dataclass(frozen=True, repr=False)
 class SafeAuditSummary:
+    """One exact phrase from the closed, public-safe audit vocabulary."""
+
     value: str
 
     def __post_init__(self) -> None:
-        if not self.value or len(self.value) > 512 or self.value.strip() != self.value:
-            raise ValueError("audit summaries must be trimmed and at most 512 characters")
-        if any(ord(character) < 32 or ord(character) == 127 for character in self.value):
-            raise ValueError("audit summaries cannot contain control characters")
-        if self.value.startswith(("{", "[")) or _FORBIDDEN_SUMMARY.search(self.value):
-            raise ValueError("audit summaries cannot contain private paths, endpoints, credentials, or payloads")
+        if type(self.value) is not str:
+            raise ValueError("audit summaries must be exact text values")
+        if self.value not in _SAFE_AUDIT_SUMMARIES:
+            raise ValueError("audit summary is not in the public-safe vocabulary")
 
     def __str__(self) -> str:
         return self.value
@@ -49,24 +78,21 @@ class AuditEvent:
     summary: SafeAuditSummary
 
     def __post_init__(self) -> None:
-        if not isinstance(self.id, AuditEventId) or not isinstance(self.kind, AuditEventKind) or not isinstance(self.summary, SafeAuditSummary):
+        if (
+            not isinstance(self.id, AuditEventId)
+            or not isinstance(self.kind, AuditEventKind)
+            or not isinstance(self.summary, SafeAuditSummary)
+        ):
             raise ValueError("audit events require typed safe identifiers, kinds, and summaries")
-        if not isinstance(self.created_at, datetime):
+        if type(self.created_at) is not datetime:
             raise ValueError("audit events require a typed timestamp")
-        if self.created_at.tzinfo is None or self.created_at.utcoffset() is None:
+        try:
+            offset = self.created_at.utcoffset()
+            self.created_at.astimezone(timezone.utc)
+        except (OverflowError, ValueError) as error:
+            raise ValueError("audit timestamps must be representable in UTC") from error
+        if self.created_at.tzinfo is None or offset is None:
             raise ValueError("audit timestamps must be timezone-aware")
-
-    @property
-    def storage_row(self) -> tuple[str, str, str, str]:
-        timestamp = self.created_at.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
-        return str(self.id), str(self.kind), timestamp, str(self.summary)
-
-    @classmethod
-    def from_storage(cls, event_id: object, kind: object, created_at: object, summary: object) -> "AuditEvent":
-        if not all(isinstance(value, str) for value in (event_id, kind, created_at, summary)):
-            raise ValueError("stored audit event has invalid value types")
-        timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-        return cls(AuditEventId(event_id), AuditEventKind(kind), timestamp, SafeAuditSummary(summary))
 
 
 class AuditAppendOutcome(StrEnum):

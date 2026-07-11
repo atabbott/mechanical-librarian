@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Mapping
 
+from mechanical_librarian.domain.timestamps import canonical_utc_timestamp
+
 
 class SchemaError(RuntimeError):
     """Database schema is missing, incompatible, or has been modified."""
@@ -44,6 +46,20 @@ MIGRATIONS = (
         CREATE TABLE audit_events (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL, summary TEXT NOT NULL);
     """,
     ),
+    Migration(
+        2,
+        (
+            "CREATE TABLE audit_events_v2 (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL CHECK (audit_timestamp_key(created_at) IS NOT NULL AND created_at = audit_timestamp_key(created_at)), summary TEXT NOT NULL)",
+            "INSERT INTO audit_events_v2(id, kind, created_at, summary) SELECT id, kind, audit_timestamp_key(created_at), summary FROM audit_events",
+            "DROP TABLE audit_events",
+            "ALTER TABLE audit_events_v2 RENAME TO audit_events",
+            "CREATE INDEX audit_events_by_created_at ON audit_events(created_at DESC, id DESC)",
+        ),
+        frozenset({"audit_events"}),
+        expected_table_definitions={
+            "audit_events": "CREATE TABLE \"audit_events\" (id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL CHECK (audit_timestamp_key(created_at) IS NOT NULL AND created_at = audit_timestamp_key(created_at)), summary TEXT NOT NULL)"
+        },
+    ),
 )
 
 
@@ -54,6 +70,9 @@ def connect(path: Path) -> sqlite3.Connection:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(path, isolation_level=None, check_same_thread=True)
+        connection.create_function(
+            "audit_timestamp_key", 1, canonical_utc_timestamp, deterministic=True
+        )
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = FULL")
