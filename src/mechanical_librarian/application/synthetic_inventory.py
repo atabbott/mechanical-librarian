@@ -19,6 +19,8 @@ from mechanical_librarian.application.ports import (
     PageRequest,
     PortResult,
     SnapshotRepository,
+    SnapshotInspection,
+    SnapshotInspectionRequest,
     SnapshotStoreRequest,
 )
 from mechanical_librarian.domain.identifiers import (
@@ -64,9 +66,9 @@ class SyntheticInventoryInspection:
     lifecycle: ItemLifecycle
     fingerprint: Fingerprint
     repository_outcome: RepositoryOutcome
-    item_count: int = 1
-    history_count: int = 1
-    current_count: int = 1
+    item_count: int
+    history_count: int
+    current_count: int
 
     def __post_init__(self) -> None:
         if (
@@ -79,7 +81,13 @@ class SyntheticInventoryInspection:
             or type(self.fingerprint) is not Fingerprint
             or self.repository_outcome
             not in {RepositoryOutcome.ACCEPTED, RepositoryOutcome.REUSED}
-            or (self.item_count, self.history_count, self.current_count) != (1, 1, 1)
+            or type(self.item_count) is not int
+            or type(self.history_count) is not int
+            or type(self.current_count) is not int
+            or self.item_count != 1
+            or self.history_count < 1
+            or self.history_count > 9_223_372_036_854_775_807
+            or self.current_count != 1
         ):
             raise ValueError("synthetic inventory inspection is invalid")
 
@@ -191,24 +199,36 @@ class InspectSyntheticInventory:
         if persisted is None:
             return _failed(SyntheticInventoryOutcome.PERSISTENCE_FAILURE)
 
-        readback = self._repository.read(LibraryReadRequest(snapshot.target, context))
+        inspected = self._repository.inspect(
+            SnapshotInspectionRequest(
+                persisted.target,
+                persisted.id,
+                persisted.fingerprint,
+                context,
+            )
+        )
         boundary = context.preflight_result(item_count=0, serialized_bytes=0)
         if boundary.failure is not None:
             return _failed(_context_outcome(boundary.failure.kind))
-        if not _valid_readback(readback, persisted):
+        durable = _durable_inspection(inspected, persisted)
+        if durable is None:
             return _failed(SyntheticInventoryOutcome.READBACK_MISMATCH)
+        durable_snapshot = durable.snapshot
 
         return SyntheticInventoryResult(
             SyntheticInventoryOutcome.READY,
             SyntheticInventoryInspection(
-                adapter=snapshot.target.adapter,
-                connection=snapshot.target.connection,
-                library=snapshot.target.library,
-                snapshot=persisted.id,
-                media_type=persisted.media_type,
-                lifecycle=persisted.lifecycle,
-                fingerprint=persisted.fingerprint,
+                adapter=durable_snapshot.target.adapter,
+                connection=durable_snapshot.target.connection,
+                library=durable_snapshot.target.library,
+                snapshot=durable_snapshot.id,
+                media_type=durable_snapshot.media_type,
+                lifecycle=durable_snapshot.lifecycle,
+                fingerprint=durable_snapshot.fingerprint,
                 repository_outcome=stored.outcome,
+                item_count=durable.item_count,
+                history_count=durable.history_count,
+                current_count=durable.current_count,
             ),
         )
 
@@ -271,13 +291,25 @@ def _same_canonical_state(left: ItemSnapshot, right: ItemSnapshot) -> bool:
     )
 
 
-def _valid_readback(result: object, expected: ItemSnapshot) -> bool:
-    return (
-        type(result) is RepositoryResult
-        and result.outcome in {RepositoryOutcome.ACCEPTED, RepositoryOutcome.REUSED}
-        and type(result.value) is ItemSnapshot
-        and result.value == expected
-    )
+def _durable_inspection(
+    result: object, expected: ItemSnapshot
+) -> SnapshotInspection | None:
+    if (
+        type(result) is not RepositoryResult
+        or result.outcome is not RepositoryOutcome.ACCEPTED
+        or type(result.value) is not SnapshotInspection
+        or result.value.snapshot != expected
+        or result.value.snapshot.target != expected.target
+        or type(result.value.item_count) is not int
+        or type(result.value.history_count) is not int
+        or type(result.value.current_count) is not int
+        or result.value.item_count != 1
+        or result.value.history_count < 1
+        or result.value.history_count > 9_223_372_036_854_775_807
+        or result.value.current_count != 1
+    ):
+        return None
+    return result.value
 
 
 def _port_value(result: object, expected_type: type[object]) -> object | None:

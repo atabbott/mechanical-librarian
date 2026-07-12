@@ -33,6 +33,12 @@ The snapshot fingerprint remains stable. Output never includes the
 configuration path, database path, endpoint, secret reference, external item
 value, media path, metadata value, or vendor field.
 
+The counts are read from one durable SQLite snapshot and apply only to the
+selected opaque target: `items` and `current` are one for a valid inspection,
+while `history` increases when that target advances to a new canonical
+snapshot. Counts from another adapter, connection, library, or item never
+contribute.
+
 ## Validation and failure behavior
 
 The JSON file is bounded to 1 MiB and is decoded as UTF-8. Duplicate keys,

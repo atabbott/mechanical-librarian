@@ -17,7 +17,8 @@ from mechanical_librarian.application.ports import (
     MetadataCandidate, MetadataMutation, Notification, OperationContext, Page, PageRequest,
     PortFailure, PortResult, ProviderFact, ProviderFactCode, ProviderProvenance, ProviderQuery,
     RepositoryOutcome, RepositoryResult, ResourceBounds, RetryAdvice, ReviewerDecision, ReviewerRequest, ReviewerResponse,
-    SafeSummary, SecretHandle, SecretResolver, SecretScope, SnapshotStoreRequest, Unit,
+    SafeSummary, SecretHandle, SecretResolver, SecretScope, SnapshotInspection,
+    SnapshotInspectionRequest, SnapshotStoreRequest, Unit,
     JobHeartbeatRepository, TimeProbe, Transaction, WorkRequest, WriteGrant, WriteGrantId, WriteReceipt, WriteRequest, mutation_digest, mutation_size, provider_response_preflight, provider_response_size,
 )
 from mechanical_librarian.domain.evidence import (
@@ -150,6 +151,11 @@ class SyntheticSnapshotRepository:
 
     def list(self, request: LibraryListRequest) -> RepositoryResult[Page[ItemSnapshot]]:
         return RepositoryResult(RepositoryOutcome.ACCEPTED, Page((), None))
+
+    def inspect(
+        self, request: SnapshotInspectionRequest
+    ) -> RepositoryResult[SnapshotInspection]:
+        return RepositoryResult(RepositoryOutcome.NOT_FOUND)
 
 
 class SyntheticTransaction:

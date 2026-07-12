@@ -26,6 +26,8 @@ from mechanical_librarian.application.ports import (
     PageRequest,
     PortResult,
     ResourceBounds,
+    SnapshotInspection,
+    SnapshotInspectionRequest,
     SnapshotStoreRequest,
     TimeProbe,
 )
@@ -83,6 +85,8 @@ class MemorySnapshotRepository:
         self.keys = []
         self.requests = []
         self.read_requests = []
+        self.inspect_requests = []
+        self.history_count = 1
 
     def store(self, request: SnapshotStoreRequest) -> RepositoryResult:
         self.keys.append(request.idempotency_key)
@@ -101,6 +105,20 @@ class MemorySnapshotRepository:
     def list(self, request: LibraryListRequest) -> RepositoryResult:
         items = () if self.snapshot is None else (self.snapshot,)
         return RepositoryResult(RepositoryOutcome.ACCEPTED, Page(items, None))
+
+    def inspect(self, request: SnapshotInspectionRequest) -> RepositoryResult:
+        self.inspect_requests.append(request)
+        if self.snapshot is None or self.snapshot.target != request.target:
+            return RepositoryResult(RepositoryOutcome.NOT_FOUND)
+        if (
+            self.snapshot.id != request.expected_snapshot
+            or self.snapshot.fingerprint != request.expected_fingerprint
+        ):
+            return RepositoryResult(RepositoryOutcome.REJECTED)
+        return RepositoryResult(
+            RepositoryOutcome.ACCEPTED,
+            SnapshotInspection(self.snapshot, 1, self.history_count, 1),
+        )
 
 
 class ReaderOverride:
@@ -129,11 +147,13 @@ class RepositoryOverride(MemorySnapshotRepository):
         store_result: object | None = None,
         read_result: object | None = None,
         read_results: list[object] | None = None,
+        inspect_result: object | None = None,
     ):
         super().__init__()
         self.store_result = store_result
         self.read_result = read_result
         self.read_results = list(read_results or [])
+        self.inspect_result = inspect_result
 
     def store(self, request):
         if self.store_result is not None:
@@ -146,6 +166,11 @@ class RepositoryOverride(MemorySnapshotRepository):
         if self.read_result is not None:
             return self.read_result
         return super().read(request)
+
+    def inspect(self, request):
+        if self.inspect_result is not None:
+            return self.inspect_result
+        return super().inspect(request)
 
 
 class MutableClock:
@@ -172,7 +197,7 @@ class ExpiringRepository:
 
     def read(self, request):
         self.reads += 1
-        phase = "pre-read" if self.reads == 1 else "readback"
+        phase = "pre-read"
         self._expire(phase)
         result = self.delegate.read(request)
         self.delegate_outcomes.append((phase, result.outcome))
@@ -186,6 +211,12 @@ class ExpiringRepository:
 
     def list(self, request):
         return self.delegate.list(request)
+
+    def inspect(self, request):
+        self._expire("readback")
+        result = self.delegate.inspect(request)
+        self.delegate_outcomes.append(("readback", result.outcome))
+        return result
 
 
 class SyntheticLibraryReaderTests(unittest.TestCase):
@@ -275,6 +306,14 @@ class InspectSyntheticInventoryTests(unittest.TestCase):
         self.assertEqual(result.inspection.snapshot, SnapshotId("synthetic-snapshot-one"))
         self.assertEqual(result.inspection.library, self.library)
         self.assertEqual(result.inspection.repository_outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            (
+                result.inspection.item_count,
+                result.inspection.history_count,
+                result.inspection.current_count,
+            ),
+            (1, 1, 1),
+        )
         self.assertFalse(hasattr(result.inspection, "external_item"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
             result.inspection.library = LibraryId("other-library")
@@ -310,6 +349,59 @@ class InspectSyntheticInventoryTests(unittest.TestCase):
         self.assertEqual(result.inspection.repository_outcome, RepositoryOutcome.REUSED)
         self.assertEqual(repository.requests[0].expected_previous, original.fingerprint)
         self.assertEqual(repository.snapshot, original)
+
+    def test_success_uses_repository_derived_nondefault_history_count(self) -> None:
+        repository = MemorySnapshotRepository()
+        repository.history_count = 2
+
+        result = InspectSyntheticInventory(self.reader, repository).run(
+            self.connection, self.library, _context()
+        )
+
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.inspection.history_count, 2)
+        self.assertEqual(len(repository.inspect_requests), 1)
+        request = repository.inspect_requests[0]
+        self.assertEqual(request.target, self.reader.record.snapshot.target)
+        self.assertEqual(request.expected_snapshot, self.reader.record.snapshot.id)
+        self.assertEqual(
+            request.expected_fingerprint, self.reader.record.snapshot.fingerprint
+        )
+
+    def test_inspection_contract_rejects_invalid_or_forged_cardinality(self) -> None:
+        snapshot = self.reader.record.snapshot
+        for counts in (
+            (0, 1, 1),
+            (1, 0, 1),
+            (1, 1, 0),
+            (True, 1, 1),
+            (1, 9_223_372_036_854_775_808, 1),
+        ):
+            with self.subTest(counts=counts), self.assertRaises(ValueError):
+                SnapshotInspection(snapshot, *counts)
+        with self.assertRaises(ValueError):
+            SnapshotInspectionRequest(
+                snapshot.target,
+                snapshot.id,
+                snapshot.fingerprint,
+                object(),  # type: ignore[arg-type]
+            )
+
+        forged = object.__new__(SnapshotInspection)
+        object.__setattr__(forged, "snapshot", snapshot)
+        object.__setattr__(forged, "item_count", 1)
+        object.__setattr__(forged, "history_count", 0)
+        object.__setattr__(forged, "current_count", 1)
+        repository = RepositoryOverride(
+            inspect_result=RepositoryResult(RepositoryOutcome.ACCEPTED, forged)
+        )
+
+        result = InspectSyntheticInventory(self.reader, repository).run(
+            self.connection, self.library, _context()
+        )
+
+        self.assertEqual(result.outcome, SyntheticInventoryOutcome.READBACK_MISMATCH)
+        self.assertIsNone(result.inspection)
 
     def test_pre_read_corruption_stops_before_store(self) -> None:
         repository = RepositoryOverride(
@@ -522,10 +614,11 @@ class InspectSyntheticInventoryTests(unittest.TestCase):
             store_result=RepositoryResult(
                 RepositoryOutcome.ACCEPTED, self.reader.record.snapshot
             ),
-            read_results=[
-                RepositoryResult(RepositoryOutcome.NOT_FOUND),
-                RepositoryResult(RepositoryOutcome.REUSED, other),
-            ],
+            read_result=RepositoryResult(RepositoryOutcome.NOT_FOUND),
+            inspect_result=RepositoryResult(
+                RepositoryOutcome.ACCEPTED,
+                SnapshotInspection(other, 1, 1, 1),
+            ),
         )
         result = InspectSyntheticInventory(self.reader, repository).run(
             self.connection, self.library, _context()

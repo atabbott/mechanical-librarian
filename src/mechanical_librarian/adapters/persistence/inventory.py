@@ -14,6 +14,8 @@ from mechanical_librarian.application.ports import (
     LibraryListRequest,
     LibraryReadRequest,
     Page,
+    SnapshotInspection,
+    SnapshotInspectionRequest,
     SnapshotStoreRequest,
 )
 from mechanical_librarian.domain.identifiers import (
@@ -225,6 +227,62 @@ class SQLiteInventoryRepository:
         except (KeyError, RecursionError, TypeError, ValueError):
             return RepositoryResult(RepositoryOutcome.CORRUPT)
 
+    def inspect(
+        self, request: SnapshotInspectionRequest
+    ) -> RepositoryResult[SnapshotInspection]:
+        if type(request) is not SnapshotInspectionRequest:
+            return RepositoryResult(RepositoryOutcome.REJECTED)
+        if request.context.preflight_result(
+            item_count=1, serialized_bytes=0
+        ).failure:
+            return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+        try:
+            with _read_transaction(self._connection):
+                measurement = self._inspection_measurement(request.target)
+                item_count, history_count, current_count = measurement[:3]
+                if not all(
+                    type(value) is int
+                    for value in (item_count, history_count, current_count)
+                ):
+                    raise ValueError("inventory inspection count is malformed")
+                if (item_count, history_count, current_count) == (0, 0, 0):
+                    return RepositoryResult(RepositoryOutcome.NOT_FOUND)
+                if item_count != 1 or history_count < 1 or current_count != 1:
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
+                header = measurement[3:]
+                if any(value is None for value in header):
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
+                size = _validated_header_size(request.target, header)
+                if request.context.preflight_result(
+                    item_count=1, serialized_bytes=size
+                ).failure:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                snapshot = self._read_current_row(request.target)
+                if snapshot is None:
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
+                if request.context.preflight_result(
+                    item_count=1, serialized_bytes=size
+                ).failure:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                if (
+                    snapshot.id != request.expected_snapshot
+                    or snapshot.fingerprint != request.expected_fingerprint
+                ):
+                    return RepositoryResult(RepositoryOutcome.REJECTED)
+                return RepositoryResult(
+                    RepositoryOutcome.ACCEPTED,
+                    SnapshotInspection(
+                        snapshot,
+                        item_count,
+                        history_count,
+                        current_count,
+                    ),
+                )
+        except sqlite3.Error:
+            return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+        except (KeyError, RecursionError, TypeError, ValueError):
+            return RepositoryResult(RepositoryOutcome.CORRUPT)
+
     def list(self, request: LibraryListRequest) -> RepositoryResult[Page[ItemSnapshot]]:
         if type(request) is not LibraryListRequest or request.page.cursor is not None:
             return RepositoryResult(RepositoryOutcome.REJECTED)
@@ -341,6 +399,36 @@ class SQLiteInventoryRepository:
             "AND c.external_item = ?",
             _target_values(target),
         ).fetchone()
+
+    def _inspection_measurement(self, target: TargetId) -> tuple[object, ...]:
+        row = self._connection.execute(
+            "WITH scope(adapter_id, connection_id, library_id, external_item) AS "
+            "(VALUES (?, ?, ?, ?)), history_count AS (SELECT count(*) AS value FROM "
+            "inventory_snapshots s JOIN scope x ON s.adapter_id = x.adapter_id AND "
+            "s.connection_id = x.connection_id AND s.library_id = x.library_id AND "
+            "s.external_item = x.external_item), current_count AS (SELECT count(*) "
+            "AS value FROM current_inventory_observations c JOIN scope x ON "
+            "c.adapter_id = x.adapter_id AND c.connection_id = x.connection_id AND "
+            "c.library_id = x.library_id AND c.external_item = x.external_item), "
+            "target_current AS (SELECT c.adapter_id, c.connection_id, c.library_id, "
+            "c.external_item, c.snapshot_id FROM current_inventory_observations c "
+            "JOIN scope x ON c.adapter_id = x.adapter_id AND "
+            "c.connection_id = x.connection_id AND c.library_id = x.library_id AND "
+            "c.external_item = x.external_item) SELECT CASE WHEN h.value > 0 OR "
+            "cc.value > 0 THEN 1 ELSE 0 END, h.value, cc.value, s.snapshot_id, "
+            "s.idempotency_operation, s.idempotency_digest, "
+            "s.fingerprint_algorithm, s.fingerprint_schema, s.fingerprint_digest, "
+            "typeof(s.canonical_input), length(CAST(s.canonical_input AS BLOB)), "
+            "s.observed_at FROM history_count h CROSS JOIN current_count cc "
+            "LEFT JOIN target_current c ON 1 = 1 "
+            "LEFT JOIN inventory_snapshots s ON s.adapter_id = c.adapter_id AND "
+            "s.connection_id = c.connection_id AND s.library_id = c.library_id AND "
+            "s.external_item = c.external_item AND s.snapshot_id = c.snapshot_id",
+            _target_values(target),
+        ).fetchone()
+        if row is None or len(row) != 12:
+            raise ValueError("inventory inspection measurement is malformed")
+        return row
 
     def _history_exists(self, target: TargetId) -> bool:
         return self._connection.execute(

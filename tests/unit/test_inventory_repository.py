@@ -24,6 +24,7 @@ from mechanical_librarian.application.ports import (
     OperationContext,
     PageRequest,
     ResourceBounds,
+    SnapshotInspectionRequest,
     SnapshotStoreRequest,
     TimeProbe,
 )
@@ -299,11 +300,191 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         self.assertEqual(result.outcome, RepositoryOutcome.UNAVAILABLE)
         hydrate.assert_not_called()
         self.assertFalse(self.connection.in_transaction)
+
+        cancellation = {"requested": False}
+        context = OperationContext(
+            Deadline(_NOW + timedelta(seconds=30)),
+            CancellationProbe(
+                CancellationId("inspection-cancel"),
+                lambda: cancellation["requested"],
+            ),
+            ResourceBounds(1, size),
+            TimeProbe(lambda: _NOW),
+        )
+        original_hydrate = inventory_adapter._snapshot_from_row
+
+        def cancel_after_hydration(*args):
+            hydrated = original_hydrate(*args)
+            cancellation["requested"] = True
+            return hydrated
+
+        with patch.object(
+            inventory_adapter,
+            "_snapshot_from_row",
+            side_effect=cancel_after_hydration,
+        ):
+            cancelled = repository.inspect(
+                SnapshotInspectionRequest(
+                    snapshot.target,
+                    snapshot.id,
+                    snapshot.fingerprint,
+                    context,
+                )
+            )
+        self.assertEqual(cancelled.outcome, RepositoryOutcome.UNAVAILABLE)
+        self.assertIsNone(cancelled.value)
+        self.assertFalse(self.connection.in_transaction)
         exact = repository.read(
             LibraryReadRequest(snapshot.target, _context(max_bytes=size))
         )
         self.assertEqual(exact.outcome, RepositoryOutcome.ACCEPTED)
         self.assertEqual(exact.value, snapshot)
+
+    def test_inspect_reports_exact_target_history_and_rejects_stale_expectation(
+        self,
+    ) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        missing = repository.inspect(
+            SnapshotInspectionRequest(
+                self.snapshot.target,
+                self.snapshot.id,
+                self.snapshot.fingerprint,
+                _context(),
+            )
+        )
+        self.assertEqual(missing.outcome, RepositoryOutcome.NOT_FOUND)
+        self.assertIsNone(missing.value)
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        changes_before_inspect = self.connection.total_changes
+        first = repository.inspect(
+            SnapshotInspectionRequest(
+                self.snapshot.target,
+                self.snapshot.id,
+                self.snapshot.fingerprint,
+                _context(),
+            )
+        )
+
+        self.assertEqual(first.outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(first.value.snapshot, self.snapshot)
+        self.assertEqual(
+            (first.value.item_count, first.value.history_count, first.value.current_count),
+            (1, 1, 1),
+        )
+        self.assertEqual(self.connection.total_changes, changes_before_inspect)
+
+        advanced = self.next_snapshot()
+        self.assertEqual(
+            repository.store(
+                self.request_for(advanced, self.snapshot.fingerprint)
+            ).outcome,
+            RepositoryOutcome.ACCEPTED,
+        )
+        other = self.snapshot_for_item("other-item")
+        self.assertEqual(
+            repository.store(self.request_for(other)).outcome,
+            RepositoryOutcome.ACCEPTED,
+        )
+        current = repository.inspect(
+            SnapshotInspectionRequest(
+                advanced.target, advanced.id, advanced.fingerprint, _context()
+            )
+        )
+        stale = repository.inspect(
+            SnapshotInspectionRequest(
+                self.snapshot.target,
+                self.snapshot.id,
+                self.snapshot.fingerprint,
+                _context(),
+            )
+        )
+
+        self.assertEqual(current.outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(current.value.snapshot, advanced)
+        self.assertEqual(
+            (
+                current.value.item_count,
+                current.value.history_count,
+                current.value.current_count,
+            ),
+            (1, 2, 1),
+        )
+        self.assertEqual(stale.outcome, RepositoryOutcome.REJECTED)
+        self.assertIsNone(stale.value)
+        self.assertFalse(self.connection.in_transaction)
+
+    def test_inspect_preflights_current_bytes_before_hydration(self) -> None:
+        snapshot = self.large_snapshot()
+        size = len(snapshot.canonical_input.serialized.encode("utf-8"))
+        repository = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(
+            repository.store(
+                self.request_for(snapshot, context=_context(max_bytes=size))
+            ).outcome,
+            RepositoryOutcome.ACCEPTED,
+        )
+
+        with patch.object(
+            inventory_adapter,
+            "_snapshot_from_row",
+            wraps=inventory_adapter._snapshot_from_row,
+        ) as hydrate:
+            result = repository.inspect(
+                SnapshotInspectionRequest(
+                    snapshot.target,
+                    snapshot.id,
+                    snapshot.fingerprint,
+                    _context(max_bytes=size - 1),
+                )
+            )
+
+        self.assertEqual(result.outcome, RepositoryOutcome.UNAVAILABLE)
+        hydrate.assert_not_called()
+        self.assertFalse(self.connection.in_transaction)
+
+    def test_inspect_uses_one_wal_snapshot_for_measurement_and_detail(self) -> None:
+        writer = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(writer.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        reader_connection = sqlite.connect_existing(self.path)
+        self.addCleanup(reader_connection.close)
+        reader = SQLiteInventoryRepository(reader_connection)
+        advanced = self.next_snapshot()
+        measurement = reader._inspection_measurement
+
+        def advance_after_measurement(target):
+            measured = measurement(target)
+            self.assertEqual(
+                writer.store(
+                    self.request_for(advanced, self.snapshot.fingerprint)
+                ).outcome,
+                RepositoryOutcome.ACCEPTED,
+            )
+            return measured
+
+        with patch.object(
+            reader, "_inspection_measurement", side_effect=advance_after_measurement
+        ):
+            old = reader.inspect(
+                SnapshotInspectionRequest(
+                    self.snapshot.target,
+                    self.snapshot.id,
+                    self.snapshot.fingerprint,
+                    _context(),
+                )
+            )
+
+        self.assertEqual(old.outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(old.value.snapshot, self.snapshot)
+        self.assertEqual(old.value.history_count, 1)
+        latest = reader.inspect(
+            SnapshotInspectionRequest(
+                advanced.target, advanced.id, advanced.fingerprint, _context()
+            )
+        )
+        self.assertEqual(latest.outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(latest.value.snapshot, advanced)
+        self.assertEqual(latest.value.history_count, 2)
+        self.assertFalse(reader_connection.in_transaction)
 
     def test_list_enforces_page_and_context_bounds_before_hydration(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
@@ -754,6 +935,13 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             repository.read(LibraryReadRequest(target, _context())).outcome,
             RepositoryOutcome.CORRUPT,
         )
+        inspected = repository.inspect(
+            SnapshotInspectionRequest(
+                target, self.snapshot.id, self.snapshot.fingerprint, _context()
+            )
+        )
+        self.assertEqual(inspected.outcome, RepositoryOutcome.CORRUPT)
+        self.assertIsNone(inspected.value)
         own_connection = LibraryConnection(
             target.connection,
             target.adapter,
@@ -838,6 +1026,16 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             repository.read(LibraryReadRequest(target, _context())).outcome,
             RepositoryOutcome.CORRUPT,
         )
+        changes_before_inspect = self.connection.total_changes
+        inspected = repository.inspect(
+            SnapshotInspectionRequest(
+                target, self.snapshot.id, self.snapshot.fingerprint, _context()
+            )
+        )
+        self.assertEqual(inspected.outcome, RepositoryOutcome.CORRUPT)
+        self.assertIsNone(inspected.value)
+        self.assertEqual(self.connection.total_changes, changes_before_inspect)
+        self.assertFalse(self.connection.in_transaction)
         own_connection = LibraryConnection(
             target.connection,
             target.adapter,
@@ -922,6 +1120,19 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                     )
                     self.assertEqual(result.outcome, RepositoryOutcome.CORRUPT)
                     self.assertIsNone(result.value)
+                    changes_before_inspect = connection.total_changes
+                    inspected = repository.inspect(
+                        SnapshotInspectionRequest(
+                            target,
+                            self.snapshot.id,
+                            self.snapshot.fingerprint,
+                            _context(),
+                        )
+                    )
+                    self.assertEqual(inspected.outcome, RepositoryOutcome.CORRUPT)
+                    self.assertIsNone(inspected.value)
+                    self.assertEqual(connection.total_changes, changes_before_inspect)
+                    self.assertFalse(connection.in_transaction)
                     domain_connection = LibraryConnection(
                         target.connection,
                         target.adapter,
@@ -985,6 +1196,16 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         read = repository.read(LibraryReadRequest(target, context))
         self.assertEqual(read.outcome, RepositoryOutcome.CORRUPT)
         self.assertIsNone(read.value)
+        changes_before_inspect = self.connection.total_changes
+        inspected = repository.inspect(
+            SnapshotInspectionRequest(
+                target, self.snapshot.id, self.snapshot.fingerprint, context
+            )
+        )
+        self.assertEqual(inspected.outcome, RepositoryOutcome.CORRUPT)
+        self.assertIsNone(inspected.value)
+        self.assertEqual(self.connection.total_changes, changes_before_inspect)
+        self.assertFalse(self.connection.in_transaction)
         connection = LibraryConnection(
             target.connection,
             target.adapter,
@@ -1074,10 +1295,20 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                 )
             )
             stored = repository.store(self.request())
+            inspected = repository.inspect(
+                SnapshotInspectionRequest(
+                    target,
+                    self.snapshot.id,
+                    self.snapshot.fingerprint,
+                    _context(max_bytes=1_048_576),
+                )
+            )
 
         self.assertEqual(read.outcome, RepositoryOutcome.CORRUPT)
         self.assertEqual(listed.outcome, RepositoryOutcome.CORRUPT)
         self.assertEqual(stored.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(inspected.outcome, RepositoryOutcome.CORRUPT)
+        self.assertIsNone(inspected.value)
         hydrate_row.assert_not_called()
         hydrate_selected.assert_not_called()
         self.assertFalse(self.connection.in_transaction)

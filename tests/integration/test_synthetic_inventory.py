@@ -16,6 +16,7 @@ from mechanical_librarian.adapters.library_services.synthetic import SyntheticLi
 from mechanical_librarian.application.ports import Page, PortResult
 from mechanical_librarian.application.synthetic_inventory import SyntheticInventoryOutcome
 from mechanical_librarian.domain.identifiers import SnapshotId
+from mechanical_librarian.domain.inventory import ItemLifecycle, ItemSnapshot
 
 
 ROOT = Path(__file__).parents[2]
@@ -132,6 +133,67 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
                         "SELECT count(*) FROM inventory_snapshots"
                     ).fetchone(),
                     (1,),
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT count(*) FROM current_inventory_observations"
+                    ).fetchone(),
+                    (1,),
+                )
+            finally:
+                connection.close()
+
+    def test_changed_snapshot_reports_persisted_history_after_restart(self) -> None:
+        class ChangedReader:
+            def __init__(self, connection, library) -> None:
+                self.delegate = SyntheticLibraryReader(connection, library)
+                original = self.delegate.record.snapshot
+                self.snapshot = ItemSnapshot.create(
+                    id=SnapshotId("synthetic-snapshot-two"),
+                    target=original.target,
+                    media_type=original.media_type,
+                    lifecycle=ItemLifecycle.UNAVAILABLE,
+                    metadata=original.metadata,
+                    files=original.files,
+                    cover=original.cover,
+                    provenance=original.provenance,
+                    service_release=original.service_release,
+                    concurrency_token=original.concurrency_token,
+                    capabilities=original.capabilities,
+                )
+
+            def discover_capabilities(self, connection, context):
+                return self.delegate.discover_capabilities(connection, context)
+
+            def list_snapshots(self, request):
+                return PortResult.success(Page((self.snapshot,), None))
+
+            def read_snapshot(self, request):
+                return PortResult.success(self.snapshot)
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "state.sqlite"
+            first = self.run_inventory(CONFIGURATION, database)
+            with patch.object(bootstrap, "SyntheticLibraryReader", ChangedReader):
+                second = self.run_inventory(CONFIGURATION, database)
+                third = self.run_inventory(CONFIGURATION, database)
+
+            self.assertEqual(first[0], 0, first[2])
+            self.assertIn("items=1 history=1 current=1", first[1])
+            self.assertEqual(second[0], 0, second[2])
+            self.assertIn("persistence=accepted", second[1])
+            self.assertIn("items=1 history=2 current=1", second[1])
+            self.assertEqual(third[0], 0, third[2])
+            self.assertIn("persistence=reused", third[1])
+            self.assertIn("items=1 history=2 current=1", third[1])
+
+            connection = sqlite3.connect(database)
+            try:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT count(*) FROM inventory_snapshots"
+                    ).fetchone(),
+                    (2,),
                 )
                 self.assertEqual(
                     connection.execute(
