@@ -206,6 +206,12 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                     self.assertEqual(stored.outcome, RepositoryOutcome.CORRUPT)
                     self.assertEqual(
                         connection.execute(
+                            "SELECT count(*) FROM inventory_snapshots"
+                        ).fetchone(),
+                        (1,),
+                    )
+                    self.assertEqual(
+                        connection.execute(
                             "SELECT count(*) FROM current_inventory_observations"
                         ).fetchone(),
                         (1,),
