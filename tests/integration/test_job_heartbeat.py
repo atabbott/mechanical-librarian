@@ -1503,6 +1503,101 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
             (0,),
         )
 
+    def test_reused_checkpoint_requires_immediate_replan_source(self) -> None:
+        self.assertTrue(RunSyntheticJobHeartbeat(self.repository).run().succeeded)
+        source = self.repository.inspect(RunId("heartbeat-main")).value
+        self.assertIsNotNone(source.superseded_by)
+        replacement = source.superseded_by
+        replacement_definition = synthetic_heartbeat_definition(incompatible=True)
+        unrelated = self.create_run("unrelated-checkpoint-source")
+        self.complete_run(unrelated)
+        original_source = self.connection.execute(
+            "SELECT source_run_id FROM stage_checkpoints "
+            "WHERE run_id = ? AND stage_id = 'root'",
+            (replacement.value,),
+        ).fetchone()
+        self.assertEqual(original_source, (source.id.value,))
+
+        for forged_source in (replacement, unrelated):
+            with self.subTest(forged_source=forged_source.value):
+                self.connection.execute(
+                    "UPDATE stage_checkpoints SET source_run_id = ? "
+                    "WHERE run_id = ? AND stage_id = 'root'",
+                    (forged_source.value, replacement.value),
+                )
+                before = self.connection.execute(
+                    "SELECT * FROM stage_checkpoints WHERE run_id = ? ORDER BY stage_id",
+                    (replacement.value,),
+                ).fetchall()
+                self.assertEqual(
+                    self.repository.validate_run(
+                        replacement, replacement_definition
+                    ).outcome,
+                    RepositoryOutcome.CORRUPT,
+                )
+                self.assertFalse(
+                    RunSyntheticJobHeartbeat(self.repository).run().succeeded
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT * FROM stage_checkpoints "
+                        "WHERE run_id = ? ORDER BY stage_id",
+                        (replacement.value,),
+                    ).fetchall(),
+                    before,
+                )
+                self.connection.execute(
+                    "UPDATE stage_checkpoints SET source_run_id = ? "
+                    "WHERE run_id = ? AND stage_id = 'root'",
+                    (source.id.value, replacement.value),
+                )
+
+        third_stages = tuple(
+            StageDefinition(
+                stage.id,
+                stage.kind,
+                StageVersion("stage-v3")
+                if stage.id == StageId("right")
+                else stage.version,
+                stage.expected_outcome,
+            )
+            for stage in replacement_definition.stages
+        )
+        third_definition = WorkflowDefinition(
+            WorkflowVersion("heartbeat-v3"),
+            third_stages,
+            replacement_definition.dependencies,
+        )
+        self.connection.execute(
+            "UPDATE stage_checkpoints SET source_run_id = ? "
+            "WHERE run_id = ? AND stage_id = 'root'",
+            (unrelated.value, replacement.value),
+        )
+        rejected = self.repository.create_or_resume(
+            replacement,
+            third_definition,
+            changed_stages=frozenset({StageId("right")}),
+            now=NOW + timedelta(minutes=2),
+        )
+        self.assertEqual(rejected.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM workflow_runs WHERE replanned_from = ?",
+                (replacement.value,),
+            ).fetchone(),
+            (0,),
+        )
+        self.connection.execute(
+            "UPDATE stage_checkpoints SET source_run_id = ? "
+            "WHERE run_id = ? AND stage_id = 'root'",
+            (source.id.value, replacement.value),
+        )
+        self.assertTrue(
+            self.repository.validate_run(
+                replacement, replacement_definition
+            ).accepted
+        )
+
     def test_supported_heartbeat_resumes_after_negative_phase_process_death(self) -> None:
         self.complete_heartbeat_main()
         negative = self.create_run("heartbeat-negative")

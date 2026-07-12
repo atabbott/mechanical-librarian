@@ -209,13 +209,15 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             return RepositoryResult(RepositoryOutcome.REJECTED)
         try:
             run = self._connection.execute(
-                "SELECT definition_version, graph_digest FROM workflow_runs WHERE run_id = ?",
+                "SELECT definition_version, graph_digest, replanned_from "
+                "FROM workflow_runs WHERE run_id = ?",
                 (run_id.value,),
             ).fetchone()
             if run is None:
                 return RepositoryResult(RepositoryOutcome.NOT_FOUND)
-            if run != (definition.version.value, definition.digest):
+            if run[:2] != (definition.version.value, definition.digest):
                 return RepositoryResult(RepositoryOutcome.CORRUPT)
+            replanned_from = run[2]
             positions = {
                 stage_id: position
                 for position, stage_id in enumerate(definition.topological_order())
@@ -257,6 +259,8 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             ).fetchall()
             for stage_id, source_run, source_stage, job_id, fence, outcome in checkpoints:
                 if source_run is not None:
+                    if replanned_from is None or source_run != replanned_from:
+                        return RepositoryResult(RepositoryOutcome.CORRUPT)
                     source = self._connection.execute(
                         "SELECT outcome FROM stage_checkpoints WHERE run_id = ? AND stage_id = ?",
                         (source_run, source_stage),
