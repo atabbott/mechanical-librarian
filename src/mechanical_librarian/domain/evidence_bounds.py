@@ -71,6 +71,11 @@ _WINDOWS_DRIVE_ROOT_PATTERN = re.compile(
 _UNC_PATH_PATTERN = re.compile(
     r"(?<![\w\\])\\\\[^\\\s]+\\[^\\\s]+"
 )
+_COOKIE_HEADER_PATTERN = re.compile(r"(?i)\b(?:cookie|set-cookie)\s*:")
+_SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
+    r"(?i)\b(?:api[ _-]?key|client[ _-]?secret|access[ _-]?token|"
+    r"refresh[ _-]?token|session[ _-]?token|password|passwd)\b\s*(?:[:=]|\s)\s*\S+"
+)
 
 T = TypeVar("T")
 
@@ -129,6 +134,20 @@ def validate_projection_text(value: object, label: str, maximum: int) -> str:
         raise EvidenceValueError(f"{label} must not contain a production path")
     if _credential_shaped(text):
         raise EvidenceValueError(f"{label} must not contain credential-shaped text")
+    return text
+
+
+def validate_safe_diagnostic_text(value: object, label: str, maximum: int) -> str:
+    """Reject secrets, cookies, credential-bearing URLs, and private paths.
+
+    Diagnostics are a stricter projection boundary shared by application ports;
+    callers receive only the validated public-safe text, never a redacted copy
+    that could conceal a changed operational meaning.
+    """
+
+    text = validate_projection_text(value, label, maximum)
+    if _COOKIE_HEADER_PATTERN.search(text) or _SENSITIVE_DIAGNOSTIC_PATTERN.search(text):
+        raise EvidenceValueError(f"{label} must not contain credential or cookie material")
     return text
 
 
