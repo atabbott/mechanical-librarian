@@ -44,6 +44,15 @@ Run the static architecture-boundary test whenever imports or packages move.
 
 ## Change requirements
 
+Ready pull requests normally require a supported closing reference to an open
+repository issue. Only spelling, formatting, broken-link, or comment-only
+cleanup with no material impact may use the maintainer-applied exact
+`tracking-exempt` label plus visible prose under one top-level
+`Tracking exemption` heading. Never use the exemption for executable behavior,
+dependencies or lockfiles, build/CI/workflow, release, configuration,
+migration, security, architecture, governance, product-contract, or
+delivery-plan changes.
+
 Every change must include the smallest appropriate combination of:
 
 - tests proving behavior and failure handling;
