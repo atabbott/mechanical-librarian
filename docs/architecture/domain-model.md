@@ -235,6 +235,17 @@ deduplication keys, lease state, attempts, retry classification, and terminal
 outcomes. Retry eligibility and suppression outcomes are persisted rather than
 inferred from process-local timers.
 
+The F02 report-only scheduler places jobs inside an immutable `WorkflowRun`
+and `WorkflowStage` graph. A run pins its definition version and canonical graph
+digest. Stages persist dependency `waiting` independently of executable job
+`retry_wait`. Claims carry an opaque owner, expiry, and monotonic fence; only the
+current unexpired owner-and-fence pair may publish an accepted outcome,
+checkpoint, completion audit fact, or fan-in transition. Incompatible graphs
+create reciprocally linked replacement runs and preserve the original history.
+Every persisted run, stage, and job state change also retains its validated
+source and target state, bounded actor and reason, run attribution, and
+timestamp.
+
 ### AuditEvent
 
 Append-only product event such as discovery, evidence reuse, decision, policy

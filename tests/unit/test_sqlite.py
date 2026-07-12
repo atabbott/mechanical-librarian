@@ -107,6 +107,65 @@ class SqliteFoundationTests(unittest.TestCase):
             self.assertEqual(migrate(connection), CURRENT_VERSION)
             self.assertEqual(connection.execute("SELECT checksum FROM schema_migrations").fetchone()[0], MIGRATIONS[0].checksum)
 
+    def test_f02_migration_is_additive_from_genuine_f01_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            connection = connect(path)
+            self.addCleanup(connection.close)
+            with patch.object(sqlite, "MIGRATIONS", (MIGRATIONS[0],)):
+                self.assertEqual(migrate(connection), 1)
+            connection.execute(
+                "INSERT INTO instance_metadata(key, value) VALUES ('sentinel', 'preserved')"
+            )
+
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT value FROM instance_metadata WHERE key = 'sentinel'"
+                ).fetchone(),
+                ("preserved",),
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall(),
+                CURRENT_VERSION_ROWS,
+            )
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'jobs'"
+                ).fetchone()
+            )
+
+    def test_f02_schema_rejects_invalid_digest_timestamp_and_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            migrate(connection)
+            valid = (
+                "run-one",
+                "heartbeat-v1",
+                "a" * 64,
+                "waiting",
+                "2026-01-01T00:00:00.000000Z",
+                "2026-01-01T00:00:00.000000Z",
+            )
+            for index, invalid in (
+                (2, "not-a-digest"),
+                (3, "unknown"),
+                (4, "2026-99-99T00:00:00.000000Z"),
+            ):
+                values = list(valid)
+                values[index] = invalid
+                with self.subTest(invalid=invalid), self.assertRaises(
+                    sqlite3.IntegrityError
+                ):
+                    connection.execute(
+                        "INSERT INTO workflow_runs(run_id, definition_version, graph_digest, state, "
+                        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                        values,
+                    )
+
     def test_plain_sqlite_integrity_check_supports_initial_schema(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.sqlite"

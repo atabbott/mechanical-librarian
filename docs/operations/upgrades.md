@@ -63,6 +63,14 @@ deleting or rewriting it. Operators must inspect that state and restore a
 verified backup when the documented recovery procedure requires it; ordinary
 startup does not attempt an unbounded repair loop.
 
+The F02 durable-job migration is additive and forward-only. It supports empty
+state and the genuine F01 schema as starting points and is exercised by the
+[synthetic job heartbeat](job-heartbeat.md). Downgrade requires restoring a
+verified pre-F02 application-state copy; an F01 binary must not open F02 state.
+The migration includes append-only workflow transition facts so recovery can
+retain the validated old state, new state, actor, reason, run attribution, and
+timestamp instead of inferring history from the current row alone.
+
 ## Verification
 
 After upgrade:

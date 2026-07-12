@@ -518,8 +518,9 @@ class ComposedStateCheckTests(unittest.TestCase):
             )
 
     def test_existing_upgrade_failure_rolls_back_and_can_retry(self) -> None:
+        next_version = len(sqlite.MIGRATIONS) + 1
         failed_upgrade = Migration(
-            2,
+            next_version,
             (
                 "CREATE TABLE retry_state (id INTEGER PRIMARY KEY)",
                 "CREATE TABLE",
@@ -527,7 +528,7 @@ class ComposedStateCheckTests(unittest.TestCase):
             frozenset({"retry_state"}),
         )
         successful_upgrade = Migration(
-            2,
+            next_version,
             ("CREATE TABLE retry_state (id INTEGER PRIMARY KEY)",),
             frozenset({"retry_state"}),
         )

@@ -17,6 +17,7 @@ PRODUCTION_LAYERS = {
 ROOT_MODULES = {"__init__", "__main__", "_version"}
 APPLICATION_PORT_MODULES = {
     "mechanical_librarian.application.audit",
+    "mechanical_librarian.application.job_heartbeat",
     "mechanical_librarian.application.ports",
 }
 ALLOWED_LAYER_IMPORTS = {

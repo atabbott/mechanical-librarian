@@ -48,6 +48,7 @@ release standards as code.
 ## Operations
 
 - [Durable state check](operations/state-check.md)
+- [Recoverable synthetic job heartbeat](operations/job-heartbeat.md)
 - [Deployment model](operations/deployment.md)
 - [Backups and recovery](operations/backups-and-recovery.md)
 - [Observability and supportability](operations/observability.md)

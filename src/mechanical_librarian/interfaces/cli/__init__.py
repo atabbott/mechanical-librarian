@@ -8,6 +8,11 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO
 
+from mechanical_librarian.application.job_heartbeat import (
+    HeartbeatInspection,
+    HeartbeatOutcome,
+    HeartbeatResult,
+)
 from mechanical_librarian.application.state_check import (
     StateCheckOutcome,
     StateCheckResult,
@@ -15,6 +20,7 @@ from mechanical_librarian.application.state_check import (
 
 
 StateCheckRunner = Callable[[Path], StateCheckResult]
+JobHeartbeatRunner = Callable[[Path], HeartbeatResult]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -29,6 +35,7 @@ _FAILURE_MESSAGES = {
     StateCheckOutcome.SETUP_FAILURE: "State check failed: state could not be verified.\n",
     StateCheckOutcome.INTERNAL_FAILURE: "State check failed: internal diagnostic error.\n",
 }
+_HEARTBEAT_FAILURE = "Job heartbeat failed: durable synthetic recovery could not be verified.\n"
 
 
 def _database_path(value: str) -> Path:
@@ -53,6 +60,13 @@ def _parser() -> argparse.ArgumentParser:
     state_check.add_argument(
         "--database", required=True, metavar="PATH", type=_database_path
     )
+    job_heartbeat = commands.add_parser(
+        "job-heartbeat",
+        help="run the bounded report-only durable job recovery demonstration",
+    )
+    job_heartbeat.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
     return parser
 
 
@@ -60,6 +74,7 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     state_check_runner: StateCheckRunner,
+    job_heartbeat_runner: JobHeartbeatRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -68,6 +83,57 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     arguments = _parser().parse_args(argv)
+    if arguments.command == "job-heartbeat":
+        if job_heartbeat_runner is None:
+            errors.write(_HEARTBEAT_FAILURE)
+            return 1
+        try:
+            result = job_heartbeat_runner(arguments.database)
+        except Exception:
+            errors.write(_HEARTBEAT_FAILURE)
+            return 1
+        if (
+            type(result) is not HeartbeatResult
+            or type(result.outcome) is not HeartbeatOutcome
+            or not result.succeeded
+            or type(result.inspection) is not HeartbeatInspection
+        ):
+            errors.write(_HEARTBEAT_FAILURE)
+            return 1
+        output.write("Job heartbeat passed.\n")
+        output.write(f"checks={','.join(result.checks)}\n")
+        output.write("authority=synthetic-report-only\n")
+        inspection = result.inspection
+        output.write(
+            "source="
+            f"{inspection.source_id.value} state={inspection.source_state.value} "
+            f"version={inspection.source_version} "
+            f"digest={inspection.source_digest}\n"
+        )
+        output.write(
+            "replacement="
+            f"{inspection.replacement_id.value} state={inspection.replacement_state.value} "
+            f"version={inspection.replacement_version} "
+            f"digest={inspection.replacement_digest}\n"
+        )
+        output.write(
+            f"retry={inspection.retry_state.value} attempts={inspection.retry_attempts}\n"
+        )
+        output.write(
+            "cancellation="
+            f"{inspection.cancellation_state.value} "
+            f"job={inspection.cancelled_job_state.value}\n"
+        )
+        required_states = ",".join(
+            f"{stage.value}:{state.value}"
+            for stage, state in inspection.required_stage_states
+        )
+        output.write(
+            "required-cancellation="
+            f"{inspection.required_cancellation_state.value} stages={required_states}\n"
+        )
+        output.write(f"negative-fan-in={inspection.negative_state.value}\n")
+        return 0
     try:
         result = state_check_runner(arguments.database)
     except Exception:
@@ -91,4 +157,4 @@ def main(
     return 1
 
 
-__all__ = ["StateCheckRunner", "main"]
+__all__ = ["JobHeartbeatRunner", "StateCheckRunner", "main"]

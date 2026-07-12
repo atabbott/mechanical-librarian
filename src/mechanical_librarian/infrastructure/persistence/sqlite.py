@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import stat
 import tempfile
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +59,128 @@ _AUDIT_EVENTS_TABLE_SQL = (
     f"{_SAFE_AUDIT_SUMMARIES_SQL})))"
 )
 
+_UTC_TIMESTAMP_GLOB = (
+    "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T"
+    "[0-9][0-9]:[0-9][0-9]:[0-9][0-9]."
+    "[0-9][0-9][0-9][0-9][0-9][0-9]Z"
+)
+
+
+def _timestamp_constraint(column: str, *, nullable: bool = False) -> str:
+    required = (
+        f"typeof({column}) = 'text' AND length({column}) = 27 "
+        f"AND {column} GLOB '{_UTC_TIMESTAMP_GLOB}' "
+        f"AND strftime('%Y-%m-%dT%H:%M:%S', {column}) IS NOT NULL "
+        f"AND strftime('%Y-%m-%dT%H:%M:%S', {column}) = substr({column}, 1, 19)"
+    )
+    return f"{column} IS NULL OR ({required})" if nullable else required
+
+_WORKFLOW_RUNS_TABLE_SQL = (
+    "CREATE TABLE workflow_runs ("
+    "run_id TEXT PRIMARY KEY CHECK (typeof(run_id) = 'text' AND length(run_id) BETWEEN 1 AND 64 "
+    "AND run_id GLOB '[a-z]*' AND run_id NOT GLOB '*[^a-z0-9_-]*'), "
+    "definition_version TEXT NOT NULL CHECK (typeof(definition_version) = 'text' AND length(definition_version) BETWEEN 1 AND 64), "
+    "graph_digest TEXT NOT NULL CHECK (typeof(graph_digest) = 'text' AND length(graph_digest) = 64 AND graph_digest NOT GLOB '*[^0-9a-f]*'), "
+    "state TEXT NOT NULL CHECK (state IN ('waiting','running','succeeded','failed_terminal','cancelled','superseded')), "
+    "cancellation_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancellation_requested IN (0,1)), "
+    "replanned_from TEXT UNIQUE REFERENCES workflow_runs(run_id), "
+    "superseded_by TEXT UNIQUE REFERENCES workflow_runs(run_id), "
+    f"created_at TEXT NOT NULL CHECK ({_timestamp_constraint('created_at')}), "
+    f"updated_at TEXT NOT NULL CHECK ({_timestamp_constraint('updated_at')}), "
+    "CHECK (replanned_from IS NULL OR replanned_from != run_id), "
+    "CHECK (superseded_by IS NULL OR superseded_by != run_id))"
+)
+_WORKFLOW_STAGES_TABLE_SQL = (
+    "CREATE TABLE workflow_stages ("
+    "run_id TEXT NOT NULL REFERENCES workflow_runs(run_id), "
+    "stage_id TEXT NOT NULL CHECK (typeof(stage_id) = 'text' AND length(stage_id) BETWEEN 1 AND 64 "
+    "AND stage_id GLOB '[a-z]*' AND stage_id NOT GLOB '*[^a-z0-9_-]*'), "
+    "position INTEGER NOT NULL CHECK (position BETWEEN 0 AND 31), "
+    "kind TEXT NOT NULL CHECK (kind IN ('root','branch','join')), "
+    "version TEXT NOT NULL CHECK (typeof(version) = 'text' AND length(version) BETWEEN 1 AND 64), "
+    "expected_outcome TEXT NOT NULL CHECK (expected_outcome IN ('completed')), "
+    "state TEXT NOT NULL CHECK (state IN ('waiting','ready','running','succeeded','failed_terminal','cancelled','dependency_failed','dependency_cancelled')), "
+    "PRIMARY KEY (run_id, stage_id), UNIQUE (run_id, position))"
+)
+_WORKFLOW_DEPENDENCIES_TABLE_SQL = (
+    "CREATE TABLE workflow_dependencies ("
+    "run_id TEXT NOT NULL, dependent_stage_id TEXT NOT NULL, prerequisite_stage_id TEXT NOT NULL, "
+    "required INTEGER NOT NULL DEFAULT 1 CHECK (required = 1), "
+    "PRIMARY KEY (run_id, dependent_stage_id, prerequisite_stage_id), "
+    "FOREIGN KEY (run_id, dependent_stage_id) REFERENCES workflow_stages(run_id, stage_id), "
+    "FOREIGN KEY (run_id, prerequisite_stage_id) REFERENCES workflow_stages(run_id, stage_id), "
+    "CHECK (dependent_stage_id != prerequisite_stage_id))"
+)
+_JOBS_TABLE_SQL = (
+    "CREATE TABLE jobs ("
+    "job_id TEXT PRIMARY KEY CHECK (typeof(job_id) = 'text' AND length(job_id) BETWEEN 1 AND 64 "
+    "AND job_id GLOB '[a-z]*' AND job_id NOT GLOB '*[^a-z0-9_-]*'), "
+    "dedup_key TEXT NOT NULL UNIQUE CHECK (typeof(dedup_key) = 'text' AND length(dedup_key) BETWEEN 1 AND 128), "
+    "run_id TEXT NOT NULL, stage_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN ('root','branch','join')), "
+    "version TEXT NOT NULL CHECK (typeof(version) = 'text' AND length(version) BETWEEN 1 AND 64), "
+    "state TEXT NOT NULL CHECK (state IN ('pending','leased','running','retry_wait','succeeded','failed_terminal','cancelled')), "
+    "attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt BETWEEN 0 AND 2), "
+    "max_attempts INTEGER NOT NULL DEFAULT 2 CHECK (max_attempts = 2), "
+    "lease_owner TEXT CHECK (lease_owner IS NULL OR (length(lease_owner) BETWEEN 1 AND 64 AND lease_owner GLOB '[a-z]*' AND lease_owner NOT GLOB '*[^a-z0-9_-]*')), "
+    f"lease_expires_at TEXT CHECK ({_timestamp_constraint('lease_expires_at', nullable=True)}), "
+    "fence INTEGER NOT NULL DEFAULT 0 CHECK (fence >= 0), "
+    "cancellation_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancellation_requested IN (0,1)), "
+    f"next_eligible_at TEXT CHECK ({_timestamp_constraint('next_eligible_at', nullable=True)}), "
+    "terminal_outcome TEXT CHECK (terminal_outcome IS NULL OR terminal_outcome IN ('completed')), "
+    "terminal_failure TEXT CHECK (terminal_failure IS NULL OR terminal_failure IN ('synthetic_retryable','synthetic_terminal','lease_expired','dependency_failed','dependency_cancelled','invalid_dependency_outcome')), "
+    f"created_at TEXT NOT NULL CHECK ({_timestamp_constraint('created_at')}), "
+    f"updated_at TEXT NOT NULL CHECK ({_timestamp_constraint('updated_at')}), "
+    "FOREIGN KEY (run_id, stage_id) REFERENCES workflow_stages(run_id, stage_id), "
+    "UNIQUE (run_id, stage_id))"
+)
+_JOB_ATTEMPTS_TABLE_SQL = (
+    "CREATE TABLE job_attempts ("
+    "job_id TEXT NOT NULL REFERENCES jobs(job_id), attempt INTEGER NOT NULL CHECK (attempt BETWEEN 1 AND 2), "
+    "fence INTEGER NOT NULL CHECK (fence > 0), worker_id TEXT NOT NULL CHECK (length(worker_id) BETWEEN 1 AND 64), "
+    f"started_at TEXT NOT NULL CHECK ({_timestamp_constraint('started_at')}), "
+    f"finished_at TEXT CHECK ({_timestamp_constraint('finished_at', nullable=True)}), "
+    "outcome TEXT CHECK (outcome IS NULL OR outcome IN ('completed')), "
+    "failure TEXT CHECK (failure IS NULL OR failure IN ('synthetic_retryable','synthetic_terminal','lease_expired','dependency_failed','dependency_cancelled','invalid_dependency_outcome')), "
+    "PRIMARY KEY (job_id, attempt), UNIQUE (job_id, fence))"
+)
+_STAGE_CHECKPOINTS_TABLE_SQL = (
+    "CREATE TABLE stage_checkpoints ("
+    "run_id TEXT NOT NULL, stage_id TEXT NOT NULL, source_run_id TEXT, source_stage_id TEXT, "
+    "accepting_job_id TEXT REFERENCES jobs(job_id), accepting_fence INTEGER CHECK (accepting_fence IS NULL OR accepting_fence > 0), "
+    "outcome TEXT NOT NULL CHECK (outcome IN ('completed')), "
+    "reuse_eligible INTEGER NOT NULL CHECK (reuse_eligible IN (0,1)), "
+    "current_applicable INTEGER NOT NULL CHECK (current_applicable IN (0,1)), "
+    f"accepted_at TEXT NOT NULL CHECK ({_timestamp_constraint('accepted_at')}), "
+    "PRIMARY KEY (run_id, stage_id), "
+    "FOREIGN KEY (run_id, stage_id) REFERENCES workflow_stages(run_id, stage_id), "
+    "FOREIGN KEY (source_run_id, source_stage_id) REFERENCES workflow_stages(run_id, stage_id), "
+    "CHECK ((source_run_id IS NULL) = (source_stage_id IS NULL)), "
+    "CHECK ((accepting_job_id IS NULL) = (accepting_fence IS NULL)), "
+    "CHECK ((accepting_job_id IS NULL) = (source_run_id IS NOT NULL)))"
+)
+_WORKFLOW_TRANSITIONS_TABLE_SQL = (
+    "CREATE TABLE workflow_transitions ("
+    "transition_id TEXT PRIMARY KEY, "
+    "run_id TEXT NOT NULL REFERENCES workflow_runs(run_id), "
+    "sequence INTEGER NOT NULL CHECK (sequence > 0), "
+    "entity_kind TEXT NOT NULL CHECK (entity_kind IN ('run','stage','job')), "
+    "entity_id TEXT NOT NULL CHECK (typeof(entity_id) = 'text' AND length(entity_id) BETWEEN 1 AND 64), "
+    "from_state TEXT NOT NULL CHECK (length(from_state) BETWEEN 1 AND 32), "
+    "to_state TEXT NOT NULL CHECK (length(to_state) BETWEEN 1 AND 32), "
+    "actor TEXT NOT NULL CHECK (actor = 'job repository'), "
+    "reason TEXT NOT NULL CHECK (reason IN ('persist durable job transition','persist durable run transition','persist durable stage transition')), "
+    f"occurred_at TEXT NOT NULL CHECK ({_timestamp_constraint('occurred_at')}), "
+    "UNIQUE (run_id, sequence))"
+)
+_WORKFLOW_TRANSITIONS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER workflow_transitions_no_update BEFORE UPDATE ON workflow_transitions "
+    "BEGIN SELECT RAISE(ABORT, 'workflow transitions are append-only'); END"
+)
+_WORKFLOW_TRANSITIONS_NO_DELETE_SQL = (
+    "CREATE TRIGGER workflow_transitions_no_delete BEFORE DELETE ON workflow_transitions "
+    "BEGIN SELECT RAISE(ABORT, 'workflow transitions are append-only'); END"
+)
+
 
 MIGRATIONS = (
     Migration(
@@ -69,6 +192,37 @@ MIGRATIONS = (
             "CREATE INDEX audit_events_by_created_at ON audit_events(created_at DESC, id DESC)",
         ),
         frozenset({"schema_migrations", "instance_metadata", "audit_events"}),
+    ),
+    Migration(
+        2,
+        (
+            _WORKFLOW_RUNS_TABLE_SQL,
+            _WORKFLOW_STAGES_TABLE_SQL,
+            _WORKFLOW_DEPENDENCIES_TABLE_SQL,
+            _JOBS_TABLE_SQL,
+            _JOB_ATTEMPTS_TABLE_SQL,
+            _STAGE_CHECKPOINTS_TABLE_SQL,
+            _WORKFLOW_TRANSITIONS_TABLE_SQL,
+            _WORKFLOW_TRANSITIONS_NO_UPDATE_SQL,
+            _WORKFLOW_TRANSITIONS_NO_DELETE_SQL,
+            "CREATE INDEX jobs_by_claim_eligibility ON jobs(state, next_eligible_at, created_at, job_id)",
+            "CREATE INDEX jobs_by_lease_expiry ON jobs(state, lease_expires_at, job_id)",
+            "CREATE INDEX jobs_by_run_stage ON jobs(run_id, stage_id)",
+            "CREATE INDEX workflow_dependencies_by_prerequisite ON workflow_dependencies(run_id, prerequisite_stage_id, dependent_stage_id)",
+            "CREATE INDEX workflow_runs_by_replan ON workflow_runs(replanned_from, superseded_by)",
+            "CREATE INDEX workflow_transitions_by_run ON workflow_transitions(run_id, occurred_at, transition_id)",
+        ),
+        frozenset(
+            {
+                "workflow_runs",
+                "workflow_stages",
+                "workflow_dependencies",
+                "jobs",
+                "job_attempts",
+                "stage_checkpoints",
+                "workflow_transitions",
+            }
+        ),
     ),
 )
 
@@ -463,6 +617,18 @@ def publish_staged_state(staged: Path, target: Path) -> bool:
     try:
         os.link(staged, target, follow_symlinks=False)
     except FileExistsError:
+        # A competing initializer may have linked its complete inode but not yet
+        # removed its private staging name. Wait briefly for that final ctime
+        # change so the loser's subsequent stable-copy preflight cannot race it.
+        # A crashed publisher is still safe: the linked target is complete, and
+        # this bounded wait never treats staging-name liveness as authority.
+        for _ in range(100):
+            try:
+                if target.lstat().st_nlink == 1:
+                    break
+            except OSError:
+                break
+            time.sleep(0.001)
         return False
     except OSError:
         raise SchemaError("prepared state could not be published") from None

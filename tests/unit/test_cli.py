@@ -6,6 +6,18 @@ from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import Mock
 
+from mechanical_librarian.application.job_heartbeat import (
+    HeartbeatInspection,
+    HeartbeatOutcome,
+    HeartbeatResult,
+)
+from mechanical_librarian.domain.workflow import (
+    JobState,
+    RunId,
+    RunState,
+    StageId,
+    StageState,
+)
 from mechanical_librarian.application.state_check import (
     StateCheckOutcome,
     StateCheckResult,
@@ -14,6 +26,109 @@ from mechanical_librarian.interfaces.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_heartbeat_projection_rejects_unknown_or_private_values(self) -> None:
+        with self.assertRaises(ValueError):
+            HeartbeatResult(HeartbeatOutcome.PASSED, ("/private/sentinel",))
+        with self.assertRaises(ValueError):
+            HeartbeatInspection(
+                RunId("heartbeat-main"),
+                RunState.SUPERSEDED,
+                "/private/version",
+                "a" * 64,
+                RunId("replacement-one"),
+                RunState.WAITING,
+                "heartbeat-v2",
+                "b" * 64,
+                RunState.FAILED_TERMINAL,
+                2,
+                RunState.CANCELLED,
+                JobState.CANCELLED,
+                RunState.FAILED_TERMINAL,
+                ((StageId("root"), StageState.CANCELLED),),
+                RunState.FAILED_TERMINAL,
+            )
+
+    def test_job_heartbeat_success_is_fixed_and_path_free(self) -> None:
+        output = io.StringIO()
+        errors = io.StringIO()
+        result = HeartbeatResult(
+            HeartbeatOutcome.PASSED,
+            ("complete-set", "lease-recovery"),
+            HeartbeatInspection(
+                RunId("heartbeat-main"),
+                RunState.SUPERSEDED,
+                "heartbeat-v1",
+                "a" * 64,
+                RunId("replacement-one"),
+                RunState.WAITING,
+                "heartbeat-v2",
+                "b" * 64,
+                RunState.FAILED_TERMINAL,
+                2,
+                RunState.CANCELLED,
+                JobState.CANCELLED,
+                RunState.FAILED_TERMINAL,
+                (
+                    (StageId("root"), StageState.CANCELLED),
+                    (StageId("left"), StageState.DEPENDENCY_CANCELLED),
+                ),
+                RunState.FAILED_TERMINAL,
+            ),
+        )
+
+        exit_code = main(
+            ["job-heartbeat", "--database", "/private/sentinel.sqlite"],
+            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+            job_heartbeat_runner=lambda _path: result,
+            stdout=output,
+            stderr=errors,
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            output.getvalue(),
+            "Job heartbeat passed.\n"
+            "checks=complete-set,lease-recovery\n"
+            "authority=synthetic-report-only\n"
+            f"source=heartbeat-main state=superseded version=heartbeat-v1 digest={'a' * 64}\n"
+            f"replacement=replacement-one state=waiting version=heartbeat-v2 digest={'b' * 64}\n"
+            "retry=failed_terminal attempts=2\n"
+            "cancellation=cancelled job=cancelled\n"
+            "required-cancellation=failed_terminal stages=root:cancelled,left:dependency_cancelled\n"
+            "negative-fan-in=failed_terminal\n",
+        )
+        self.assertNotIn("private", output.getvalue())
+        self.assertEqual(errors.getvalue(), "")
+
+    def test_job_heartbeat_failure_and_exception_do_not_leak(self) -> None:
+        def hostile(_path: Path) -> HeartbeatResult:
+            raise RuntimeError("/private/sentinel.sqlite token=secret")
+
+        for runner in (
+            lambda _path: HeartbeatResult(HeartbeatOutcome.FAILED),
+            hostile,
+            None,
+        ):
+            with self.subTest(runner=runner):
+                output = io.StringIO()
+                errors = io.StringIO()
+                exit_code = main(
+                    ["job-heartbeat", "--database", "/private/sentinel.sqlite"],
+                    state_check_runner=lambda _path: StateCheckResult(
+                        StateCheckOutcome.READY
+                    ),
+                    job_heartbeat_runner=runner,
+                    stdout=output,
+                    stderr=errors,
+                )
+                self.assertEqual(exit_code, 1)
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(
+                    errors.getvalue(),
+                    "Job heartbeat failed: durable synthetic recovery could not be verified.\n",
+                )
+                self.assertNotIn("sentinel", errors.getvalue())
+
     def test_state_check_success_uses_injected_runner_and_fixed_stdout(self) -> None:
         output = io.StringIO()
         errors = io.StringIO()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import sqlite3
+import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -12,6 +13,45 @@ from mechanical_librarian.infrastructure.persistence.sqlite import SchemaError
 
 
 class BootstrapTests(unittest.TestCase):
+    def test_composed_job_heartbeat_is_restart_safe_and_path_free(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hostile-sentinel.sqlite"
+            outputs: list[tuple[int, str, str]] = []
+            for _ in range(2):
+                output = io.StringIO()
+                errors = io.StringIO()
+                with redirect_stdout(output), redirect_stderr(errors):
+                    exit_code = main(
+                        ["job-heartbeat", "--database", str(path)]
+                    )
+                outputs.append((exit_code, output.getvalue(), errors.getvalue()))
+
+        for exit_code, output, errors in outputs:
+            self.assertEqual(exit_code, 0)
+            self.assertIn("Job heartbeat passed.", output)
+            self.assertIn("authority=synthetic-report-only", output)
+            self.assertNotIn("hostile-sentinel", output)
+            self.assertEqual(errors, "")
+
+    @patch("socket.socket", side_effect=AssertionError("network is forbidden"))
+    def test_job_heartbeat_constructs_no_network_authority(
+        self, _socket: Mock
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output = io.StringIO()
+            errors = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(errors):
+                exit_code = main(
+                    [
+                        "job-heartbeat",
+                        "--database",
+                        str(Path(directory) / "state.sqlite"),
+                    ]
+                )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(errors.getvalue(), "")
+        self.assertIn("synthetic-report-only", output.getvalue())
+
     def run_check(self) -> tuple[int, str, str]:
         output = io.StringIO()
         errors = io.StringIO()

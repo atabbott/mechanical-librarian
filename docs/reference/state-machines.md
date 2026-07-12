@@ -16,6 +16,8 @@ pending -> leased -> running -> succeeded
                      |       -> failed_terminal
                      |       -> cancelled
 leased/running --lease expiry--> pending
+pending/leased/retry_wait --required dependency failure--> failed_terminal
+pending/leased/retry_wait --cancellation--> cancelled
 ```
 
 Rules:
@@ -27,6 +29,35 @@ Rules:
 - Terminal failure cannot silently become success.
 - A deduplication key prevents concurrent equivalent jobs and lets redelivery
   reuse or inspect the durable prior outcome instead of starting a retry storm.
+
+## Workflow run and stage lifecycle
+
+The F02 synthetic scheduler persists dependency readiness separately from job
+execution:
+
+```text
+run:   waiting -> running -> succeeded
+                    |      -> failed_terminal
+                    |      -> cancelled
+                    |      -> superseded
+
+stage: waiting -> ready -> running -> succeeded
+          |         |         |    -> failed_terminal
+          |         |         |    -> cancelled
+          |         +--------------> cancelled
+          +------------------------> dependency_failed
+          +------------------------> dependency_cancelled
+```
+
+`waiting` means that required dependency outcomes are not yet independently
+validated. It is never interchangeable with job `retry_wait`. A required
+terminal failure, cancellation, or a terminal prerequisite with missing or
+invalid durable outcome evidence produces a typed terminal dependency state; it
+cannot leave descendants waiting indefinitely.
+
+An exact workflow-definition version and canonical graph-digest match resumes
+the pinned run. An incompatible definition creates one reciprocally linked
+replacement and marks the original superseded without rewriting its history.
 
 ## Review case lifecycle
 
