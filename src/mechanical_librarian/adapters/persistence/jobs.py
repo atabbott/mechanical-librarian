@@ -1497,6 +1497,7 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             state = RunState.SUCCEEDED.value
         elif states & {
             StageState.FAILED_TERMINAL.value,
+            StageState.CANCELLED.value,
             StageState.DEPENDENCY_FAILED.value,
             StageState.DEPENDENCY_CANCELLED.value,
         }:

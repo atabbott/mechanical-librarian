@@ -618,6 +618,99 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
         self.assertEqual(states["join"], StageState.DEPENDENCY_CANCELLED)
         self.assertEqual(snapshot.state, RunState.FAILED_TERMINAL)
 
+    def test_ready_leaf_cancellation_terminalizes_run_and_survives_restart(self) -> None:
+        run_id = self.create_run("leaf-cancel")
+        self.repository.enqueue_eligible(run_id, now=NOW)
+        root = self.claim_one("worker-leaf-root")
+        self.repository.start(root, now=NOW)
+        self.repository.complete(root, OutcomeKind.COMPLETED, now=NOW)
+        self.repository.enqueue_eligible(run_id, now=NOW)
+        branches = self.repository.claim(
+            WorkerId("worker-leaf-branches"),
+            capacity=2,
+            now=NOW,
+            lease_duration=LEASE,
+        ).value
+        self.assertEqual(len(branches), 2)
+        for claim in branches:
+            self.repository.start(claim, now=NOW)
+            self.repository.complete(claim, OutcomeKind.COMPLETED, now=NOW)
+        self.repository.enqueue_eligible(run_id, now=NOW)
+        before = self.repository.inspect(run_id).value
+        join_stage = next(
+            stage for stage in before.stages if stage.id == StageId("join")
+        )
+        join_job = next(
+            job for job in before.jobs if job.stage_id == StageId("join")
+        )
+        self.assertEqual(join_stage.state, StageState.READY)
+        self.assertEqual(join_job.state.value, "pending")
+
+        self.assertTrue(
+            self.repository.cancel_stage(
+                run_id, StageId("join"), now=NOW
+            ).accepted
+        )
+        snapshot = self.repository.inspect(run_id).value
+        stages = {stage.id: stage.state for stage in snapshot.stages}
+        jobs = {job.stage_id: job.state.value for job in snapshot.jobs}
+        self.assertEqual(snapshot.state, RunState.FAILED_TERMINAL)
+        self.assertEqual(stages[StageId("join")], StageState.CANCELLED)
+        self.assertEqual(jobs[StageId("join")], "cancelled")
+        self.assertTrue(
+            all(
+                state is StageState.SUCCEEDED
+                for stage_id, state in stages.items()
+                if stage_id != StageId("join")
+            )
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT terminal_failure FROM jobs WHERE run_id = ? AND stage_id = 'join'",
+                (run_id.value,),
+            ).fetchone(),
+            (FailureKind.DEPENDENCY_CANCELLED.value,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT from_state, to_state FROM workflow_transitions "
+                "WHERE run_id = ? AND entity_kind = 'run' "
+                "ORDER BY sequence DESC LIMIT 1",
+                (run_id.value,),
+            ).fetchone(),
+            (RunState.RUNNING.value, RunState.FAILED_TERMINAL.value),
+        )
+        self.assertTrue(
+            self.repository.validate_run(
+                run_id, synthetic_heartbeat_definition()
+            ).accepted
+        )
+
+        self.connection.close()
+        self.connection = connect(self.path)
+        migrate(self.connection)
+        self.repository = SQLiteJobHeartbeatRepository(self.connection)
+        restarted = self.repository.inspect(run_id).value
+        self.assertEqual(restarted.state, RunState.FAILED_TERMINAL)
+        self.assertEqual(
+            self.repository.enqueue_eligible(run_id, now=NOW).value,
+            0,
+        )
+        self.assertEqual(
+            self.repository.claim(
+                WorkerId("worker-after-leaf-cancel"),
+                capacity=4,
+                now=NOW + timedelta(seconds=10),
+                lease_duration=LEASE,
+            ).value,
+            (),
+        )
+        self.assertTrue(
+            self.repository.validate_run(
+                run_id, synthetic_heartbeat_definition()
+            ).accepted
+        )
+
     def test_terminal_branch_failure_cancels_unrelated_running_sibling(self) -> None:
         run_id = self.create_run("branch-failure")
         self.repository.enqueue_eligible(run_id, now=NOW)
