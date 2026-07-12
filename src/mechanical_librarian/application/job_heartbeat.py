@@ -112,6 +112,7 @@ class JobHeartbeatRepository(Protocol):
         self,
         worker_id: WorkerId,
         *,
+        run_id: RunId | None = None,
         capacity: int,
         now: datetime,
         lease_duration: timedelta,
@@ -413,9 +414,11 @@ class RunSyntheticJobHeartbeat:
         root_job = next(job for job in initial.jobs if job.stage_id == StageId("root"))
         if root_job.state is not JobState.SUCCEEDED:
             if root_job.state is JobState.PENDING:
-                old_claim = self._one_claim(WorkerId("worker-old"), self._START)
+                old_claim = self._one_claim(main, WorkerId("worker-old"), self._START)
                 self._require(self._repository.start(old_claim, now=self._START).accepted)
-                recovered_claim = self._one_claim(WorkerId("worker-new"), recovered_at)
+                recovered_claim = self._one_claim(
+                    main, WorkerId("worker-new"), recovered_at
+                )
                 self._require(recovered_claim.job_id == old_claim.job_id)
                 self._require(recovered_claim.fence > old_claim.fence)
                 self._require(
@@ -425,7 +428,7 @@ class RunSyntheticJobHeartbeat:
                 )
             elif root_job.state in {JobState.LEASED, JobState.RUNNING}:
                 recovered_claim = self._one_claim(
-                    WorkerId("worker-new"), recovered_at
+                    main, WorkerId("worker-new"), recovered_at
                 )
                 self._require(recovered_claim.fence > root_job.fence)
             else:
@@ -452,7 +455,10 @@ class RunSyntheticJobHeartbeat:
         if unfinished_branches:
             main_now = self._recovery_time(branch_snapshot, main_now)
             branch_claims = self._claims(
-                WorkerId("worker-branch"), main_now, len(unfinished_branches)
+                main,
+                WorkerId("worker-branch"),
+                main_now,
+                len(unfinished_branches),
             )
             self._require({claim.stage_id for claim in branch_claims} == unfinished_branches)
             for claim in branch_claims:
@@ -471,7 +477,7 @@ class RunSyntheticJobHeartbeat:
         self._require(join_job is not None)
         if join_job is not None and join_job.state is not JobState.SUCCEEDED:
             main_now = self._recovery_time(join_snapshot, main_now)
-            join = self._one_claim(WorkerId("worker-join"), main_now)
+            join = self._one_claim(main, WorkerId("worker-join"), main_now)
             self._require(join.stage_id == StageId("join"))
             self._require(self._repository.start(join, now=main_now).accepted)
             self._require(
@@ -526,7 +532,10 @@ class RunSyntheticJobHeartbeat:
         if unfinished_negative:
             negative_now = self._recovery_time(negative_snapshot, negative_now)
             negative_branches = self._claims(
-                WorkerId("worker-negative"), negative_now, len(unfinished_negative)
+                negative,
+                WorkerId("worker-negative"),
+                negative_now,
+                len(unfinished_negative),
             )
             self._require(
                 {claim.stage_id for claim in negative_branches} == unfinished_negative
@@ -591,6 +600,7 @@ class RunSyntheticJobHeartbeat:
             )
             early = self._repository.claim(
                 WorkerId("worker-early"),
+                run_id=retry_run,
                 capacity=1,
                 now=retry_now + timedelta(seconds=4),
                 lease_duration=self._LEASE,
@@ -603,7 +613,7 @@ class RunSyntheticJobHeartbeat:
                 retry_snapshot, retry_now + timedelta(seconds=5)
             )
             retry_claims = self._claims(
-                WorkerId("worker-retry"), retry_now, 1
+                retry_run, WorkerId("worker-retry"), retry_now, 1
             )
             if retry_claims:
                 second = retry_claims[0]
@@ -662,6 +672,7 @@ class RunSyntheticJobHeartbeat:
         else:
             self._repository.claim(
                 WorkerId("worker-cancel-recovery"),
+                run_id=cancelled,
                 capacity=1,
                 now=self._recovery_time(cancelled_snapshot, self._START),
                 lease_duration=self._LEASE,
@@ -711,6 +722,7 @@ class RunSyntheticJobHeartbeat:
         else:
             self._repository.claim(
                 WorkerId("worker-required-recovery"),
+                run_id=required_cancelled,
                 capacity=1,
                 now=self._recovery_time(required_snapshot, self._START),
                 lease_duration=self._LEASE,
@@ -761,16 +773,19 @@ class RunSyntheticJobHeartbeat:
         self._require(result.accepted and result.value is not None)
         return result.value
 
-    def _one_claim(self, worker: WorkerId, now: datetime) -> JobClaim:
-        claims = self._claims(worker, now, 1)
+    def _one_claim(
+        self, run_id: RunId, worker: WorkerId, now: datetime
+    ) -> JobClaim:
+        claims = self._claims(run_id, worker, now, 1)
         self._require(len(claims) == 1)
         return claims[0]
 
     def _claims(
-        self, worker: WorkerId, now: datetime, capacity: int
+        self, run_id: RunId, worker: WorkerId, now: datetime, capacity: int
     ) -> tuple[JobClaim, ...]:
         result = self._repository.claim(
             worker,
+            run_id=run_id,
             capacity=capacity,
             now=now,
             lease_duration=self._LEASE,
@@ -789,7 +804,7 @@ class RunSyntheticJobHeartbeat:
         job = next((item for item in snapshot.jobs if item.stage_id == stage_id), None)
         self._require(job is not None)
         now = self._recovery_time(snapshot, minimum)
-        claim = self._one_claim(worker, now)
+        claim = self._one_claim(run_id, worker, now)
         self._require(claim.run_id == run_id and claim.stage_id == stage_id)
         self._require(self._repository.start(claim, now=now).accepted)
         return claim, now

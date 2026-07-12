@@ -1093,6 +1093,109 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
         self.assertEqual(failed.outcome, RepositoryOutcome.UNAVAILABLE)
         self.assertEqual(tuple(self.connection.iterdump()), before_failure)
 
+    def test_replan_requires_every_running_source_attempt(self) -> None:
+        baseline = synthetic_heartbeat_definition()
+        replacement_definition = synthetic_heartbeat_definition(incompatible=True)
+        source = self.create_run("missing-replan-attempt")
+        self.repository.enqueue_eligible(source, now=NOW)
+        root = self.repository.claim(
+            WorkerId("replan-root"),
+            run_id=source,
+            capacity=1,
+            now=NOW,
+            lease_duration=LEASE,
+        ).value[0]
+        self.repository.start(root, now=NOW)
+        self.repository.complete(root, OutcomeKind.COMPLETED, now=NOW)
+        self.repository.enqueue_eligible(source, now=NOW)
+        branches = self.repository.claim(
+            WorkerId("replan-branches"),
+            run_id=source,
+            capacity=2,
+            now=NOW,
+            lease_duration=LEASE,
+        ).value
+        self.assertEqual(len(branches), 2)
+        for claim in branches:
+            self.repository.start(claim, now=NOW)
+        missing = branches[0]
+        missing_attempt = self.connection.execute(
+            "SELECT job_id, attempt, fence, worker_id, started_at, finished_at, "
+            "outcome, failure FROM job_attempts WHERE job_id = ? AND fence = ?",
+            (missing.job_id.value, missing.fence),
+        ).fetchone()
+        self.connection.execute(
+            "DELETE FROM job_attempts WHERE job_id = ? AND fence = ?",
+            (missing.job_id.value, missing.fence),
+        )
+        before = tuple(self.connection.iterdump())
+        rejected = self.repository.create_or_resume(
+            source,
+            replacement_definition,
+            changed_stages=frozenset({StageId("left")}),
+            now=NOW + timedelta(minutes=1),
+        )
+        self.assertEqual(rejected.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(tuple(self.connection.iterdump()), before)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM workflow_runs WHERE replanned_from = ?",
+                (source.value,),
+            ).fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM jobs WHERE run_id = ? AND state = 'running'",
+                (source.value,),
+            ).fetchone(),
+            (2,),
+        )
+
+        self.connection.execute(
+            "INSERT INTO job_attempts(job_id, attempt, fence, worker_id, started_at, "
+            "finished_at, outcome, failure) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            missing_attempt,
+        )
+        accepted = self.repository.create_or_resume(
+            source,
+            replacement_definition,
+            changed_stages=frozenset({StageId("left")}),
+            now=NOW + timedelta(minutes=1),
+        )
+        self.assertTrue(accepted.accepted)
+        closed_attempts = self.connection.execute(
+            "SELECT a.finished_at, a.failure FROM job_attempts a JOIN jobs j "
+            "ON j.job_id = a.job_id WHERE j.run_id = ? AND j.stage_id IN ('left','right') "
+            "ORDER BY j.stage_id",
+            (source.value,),
+        ).fetchall()
+        self.assertEqual(len(closed_attempts), 2)
+        self.assertTrue(
+            all(
+                finished_at is not None
+                and failure == FailureKind.DEPENDENCY_CANCELLED.value
+                for finished_at, failure in closed_attempts
+            )
+        )
+        self.assertTrue(self.repository.validate_run(source, baseline).accepted)
+        self.assertTrue(
+            self.repository.validate_run(
+                accepted.value.id, replacement_definition
+            ).accepted
+        )
+        replacement = accepted.value.id
+        self.connection.close()
+        self.connection = connect(self.path)
+        migrate(self.connection)
+        self.repository = SQLiteJobHeartbeatRepository(self.connection)
+        self.assertTrue(self.repository.validate_run(source, baseline).accepted)
+        self.assertTrue(
+            self.repository.validate_run(
+                replacement, replacement_definition
+            ).accepted
+        )
+
     def test_checkpoint_applicability_tampering_fails_closed(self) -> None:
         baseline = synthetic_heartbeat_definition()
         source = self.create_run("checkpoint-flags-source")
@@ -1276,6 +1379,108 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
         self.connection.execute("DELETE FROM audit_events WHERE kind = 'job'")
         repeated = RunSyntheticJobHeartbeat(self.repository).run()
         self.assertFalse(repeated.succeeded)
+
+    def test_supported_heartbeat_does_not_mutate_unrelated_claimable_work(self) -> None:
+        definition = synthetic_heartbeat_definition()
+        pending = RunId("unrelated-pending")
+        retry = RunId("unrelated-retry")
+        expired = RunId("unrelated-expired")
+        scenarios = (
+            (pending, NOW - timedelta(seconds=30)),
+            (retry, NOW - timedelta(seconds=20)),
+            (expired, NOW - timedelta(seconds=10)),
+        )
+        for run_id, created_at in scenarios:
+            self.assertTrue(
+                self.repository.create_or_resume(
+                    run_id,
+                    definition,
+                    changed_stages=frozenset(),
+                    now=created_at,
+                ).accepted
+            )
+            self.repository.enqueue_eligible(run_id, now=created_at)
+
+        retry_claim = self.repository.claim(
+            WorkerId("unrelated-retry-worker"),
+            run_id=retry,
+            capacity=1,
+            now=NOW - timedelta(seconds=20),
+            lease_duration=LEASE,
+        ).value[0]
+        self.repository.start(retry_claim, now=NOW - timedelta(seconds=20))
+        self.repository.fail(
+            retry_claim,
+            FailureKind.SYNTHETIC_RETRYABLE,
+            now=NOW - timedelta(seconds=20),
+        )
+        expired_claim = self.repository.claim(
+            WorkerId("unrelated-expired-worker"),
+            run_id=expired,
+            capacity=1,
+            now=NOW - timedelta(seconds=10),
+            lease_duration=LEASE,
+        ).value[0]
+        self.repository.start(expired_claim, now=NOW - timedelta(seconds=10))
+
+        def durable_rows(run_id: RunId) -> tuple[object, ...]:
+            return (
+                self.connection.execute(
+                    "SELECT * FROM workflow_runs WHERE run_id = ?", (run_id.value,)
+                ).fetchall(),
+                self.connection.execute(
+                    "SELECT * FROM workflow_stages WHERE run_id = ? ORDER BY stage_id",
+                    (run_id.value,),
+                ).fetchall(),
+                self.connection.execute(
+                    "SELECT * FROM jobs WHERE run_id = ? ORDER BY job_id",
+                    (run_id.value,),
+                ).fetchall(),
+                self.connection.execute(
+                    "SELECT a.* FROM job_attempts a JOIN jobs j ON j.job_id = a.job_id "
+                    "WHERE j.run_id = ? ORDER BY a.job_id, a.attempt",
+                    (run_id.value,),
+                ).fetchall(),
+                self.connection.execute(
+                    "SELECT * FROM workflow_transitions WHERE run_id = ? ORDER BY sequence",
+                    (run_id.value,),
+                ).fetchall(),
+                self.connection.execute(
+                    "SELECT * FROM stage_checkpoints WHERE run_id = ? ORDER BY stage_id",
+                    (run_id.value,),
+                ).fetchall(),
+            )
+
+        before = {run_id: durable_rows(run_id) for run_id, _created_at in scenarios}
+        invalid_scope = self.repository.claim(
+            WorkerId("invalid-scope-worker"),
+            run_id=object(),  # type: ignore[arg-type]
+            capacity=1,
+            now=NOW,
+            lease_duration=LEASE,
+        )
+        self.assertEqual(invalid_scope.outcome, RepositoryOutcome.REJECTED)
+        self.assertEqual(
+            {run_id: durable_rows(run_id) for run_id, _created_at in scenarios},
+            before,
+        )
+        self.assertTrue(RunSyntheticJobHeartbeat(self.repository).run().succeeded)
+        self.assertTrue(RunSyntheticJobHeartbeat(self.repository).run().succeeded)
+        self.assertEqual(
+            {run_id: durable_rows(run_id) for run_id, _created_at in scenarios},
+            before,
+        )
+
+        global_claims = self.repository.claim(
+            WorkerId("global-worker"),
+            capacity=3,
+            now=NOW,
+            lease_duration=LEASE,
+        ).value
+        self.assertEqual(
+            {claim.run_id for claim in global_claims},
+            {pending, retry, expired},
+        )
 
     def test_replan_failure_is_atomic_and_retryable(self) -> None:
         self.assertTrue(RunSyntheticJobHeartbeat(self.repository).run().succeeded)
