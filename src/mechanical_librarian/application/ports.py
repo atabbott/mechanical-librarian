@@ -734,14 +734,33 @@ class ProviderQuery:
     def preflight(self, page: PageRequest, context: OperationContext) -> None:
         if type(page) is not PageRequest or type(context) is not OperationContext:
             raise ValueError("provider preflight requires exact page and context")
-        values = sum(len(value.encode("utf-8")) for fact in self.facts for value in fact.values)
-        context.preflight(item_count=max(page.limit, sum(len(fact.values) for fact in self.facts)), serialized_bytes=values)
+        context.preflight(
+            item_count=max(page.limit, sum(len(fact.values) for fact in self.facts)),
+            serialized_bytes=self.canonical_request_size(page),
+        )
 
     def preflight_result(self, page: PageRequest, context: OperationContext) -> PortResult[Unit]:
         if type(page) is not PageRequest or type(context) is not OperationContext:
             return PortResult.failed(PortFailure(FailureKind.INVALID_REQUEST, RetryAdvice(False), SafeSummary("provider request invalid")))
-        values = sum(len(value.encode("utf-8")) for fact in self.facts for value in fact.values)
-        return context.preflight_result(item_count=max(page.limit, sum(len(fact.values) for fact in self.facts)), serialized_bytes=values)
+        return context.preflight_result(
+            item_count=max(page.limit, sum(len(fact.values) for fact in self.facts)),
+            serialized_bytes=self.canonical_request_size(page),
+        )
+
+    def canonical_request_size(self, page: PageRequest) -> int:
+        if type(page) is not PageRequest:
+            raise ValueError("provider request sizing requires an exact page request")
+        projection = {
+            "facts": [
+                {"code": fact.code.value, "values": list(fact.values)}
+                for fact in self.facts
+            ],
+            "field": None if self.field is None else self.field.value,
+            "media_type": self.media_type.value,
+            "page": {"cursor": page.cursor, "limit": page.limit},
+            "schema": self.schema.value,
+        }
+        return len(json.dumps(projection, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8"))
 
     def __repr__(self) -> str:
         return "ProviderQuery(media_type=<typed>, field=<typed>, facts=<redacted>, schema=<typed>)"
@@ -786,29 +805,59 @@ class CoverCandidate:
 
 def provider_response_preflight(
     page: Page[MetadataCandidate] | Page[CoverCandidate],
+    request: PageRequest,
     context: OperationContext,
     item_type: type[MetadataCandidate] | type[CoverCandidate],
 ) -> PortResult[Unit]:
     """Validate canonical provider output before returning adapter success."""
 
-    if type(page) is not Page or type(context) is not OperationContext or item_type not in {MetadataCandidate, CoverCandidate}:
+    if type(page) is not Page or type(request) is not PageRequest or type(context) is not OperationContext or item_type not in {MetadataCandidate, CoverCandidate}:
         return PortResult.failed(PortFailure(FailureKind.INVALID_RESPONSE, RetryAdvice(False), SafeSummary("provider response shape invalid")))
     if not all(type(item) is item_type for item in page.items):
         return PortResult.failed(PortFailure(FailureKind.INVALID_RESPONSE, RetryAdvice(False), SafeSummary("provider response item invalid")))
+    if len(page.items) > request.limit:
+        return PortResult.failed(PortFailure(FailureKind.INVALID_RESPONSE, RetryAdvice(False), SafeSummary("provider response exceeds page limit")))
+    size = provider_response_size(page, item_type)
+    return context.preflight_result(item_count=len(page.items), serialized_bytes=size)
+
+
+def provider_response_size(
+    page: Page[MetadataCandidate] | Page[CoverCandidate],
+    item_type: type[MetadataCandidate] | type[CoverCandidate],
+) -> int:
+    """Return the deterministic complete canonical provider-page envelope size."""
+
+    if type(page) is not Page or item_type not in {MetadataCandidate, CoverCandidate} or not all(type(item) is item_type for item in page.items):
+        raise ValueError("provider response sizing requires one exact canonical page family")
     serialized: list[dict[str, object]] = []
     for item in page.items:
         provenance = item.provenance
         common = {
-            "source": provenance.source_id,
             "correlation": provenance.correlation_id,
-            "fingerprint": provenance.fingerprint.digest,
+            "provenance_fingerprint": _provider_fingerprint_projection(provenance.fingerprint),
+            "source": provenance.source_id,
         }
         if type(item) is MetadataCandidate:
-            serialized.append({**common, "field": item.field.value, "values": item.value.values})
+            serialized.append({**common, "kind": "metadata", "field": item.field.value, "values": list(item.value.values)})
         else:
-            serialized.append({**common, "cover": item.cover.opaque_reference})
-    size = len(json.dumps(serialized, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8"))
-    return context.preflight_result(item_count=len(page.items), serialized_bytes=size)
+            serialized.append({
+                **common,
+                "kind": "cover",
+                "cover": {
+                    "content_fingerprint": None if item.cover.content_fingerprint is None else _provider_fingerprint_projection(item.cover.content_fingerprint),
+                    "opaque_reference": item.cover.opaque_reference,
+                },
+            })
+    envelope = {"items": serialized, "next_cursor": page.next_cursor}
+    return len(json.dumps(envelope, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+
+
+def _provider_fingerprint_projection(fingerprint: Fingerprint) -> dict[str, str]:
+    return {
+        "algorithm": fingerprint.algorithm,
+        "digest": fingerprint.digest,
+        "schema": fingerprint.schema.value,
+    }
 
 
 class MetadataProvider(Protocol):
@@ -1047,5 +1096,5 @@ __all__ = [
     "SecretResolver", "SecretScope", "SnapshotRepository", "SnapshotStoreRequest",
     "SupportedWriter", "TimeProbe", "Transaction", "TransactionManager", "Unit", "WorkRequest",
     "WorkScheduler", "WriteGrant", "WriteGrantId", "WriteMutation",
-    "WriteReceipt", "WriteRequest", "mutation_digest", "mutation_size", "provider_response_preflight",
+    "WriteReceipt", "WriteRequest", "mutation_digest", "mutation_size", "provider_response_preflight", "provider_response_size",
 ]

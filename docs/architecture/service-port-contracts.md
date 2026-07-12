@@ -60,6 +60,14 @@ Provider request and response bounds are independent. Before returning success,
 metadata and cover adapters validate the canonical response page's item count
 and serialized bytes against the operation context. Oversize pages return typed
 `resource_exhausted`; malformed canonical items return `invalid_response`.
+Request sizing covers one deterministic JSON envelope containing media type,
+optional field, fact codes and values, query schema, page limit, cursor, and
+all framing and escaping. Response sizing covers the complete deterministic
+page envelope, including `next_cursor`, item-family discriminants, all metadata
+values or cover identity, and full algorithm/schema/digest identities for
+provenance and optional cover-content fingerprints. A response may never exceed
+the originating `PageRequest.limit`, even when the context's broader item bound
+would permit it.
 Adapters additionally enforce transport response, streaming, redirect, and
 download limits before canonicalization. A page cursor never permits aggregate
 or per-page work to bypass these bounds.

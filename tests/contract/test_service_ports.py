@@ -18,7 +18,7 @@ from mechanical_librarian.application.ports import (
     PortFailure, PortResult, ProviderFact, ProviderFactCode, ProviderProvenance, ProviderQuery,
     RepositoryOutcome, RepositoryResult, ResourceBounds, RetryAdvice, ReviewerDecision, ReviewerRequest, ReviewerResponse,
     SafeSummary, SecretHandle, SecretResolver, SecretScope, SnapshotStoreRequest, Unit,
-    JobHeartbeatRepository, TimeProbe, Transaction, WorkRequest, WriteGrant, WriteGrantId, WriteReceipt, WriteRequest, mutation_digest, provider_response_preflight,
+    JobHeartbeatRepository, TimeProbe, Transaction, WorkRequest, WriteGrant, WriteGrantId, WriteReceipt, WriteRequest, mutation_digest, provider_response_preflight, provider_response_size,
 )
 from mechanical_librarian.domain.evidence import (
     ConfidenceFact, EvidenceDetail, EvidenceRecord, EvidenceReference, EvidenceRelationship, FieldProposal, FieldValue, ProposalKind,
@@ -97,7 +97,7 @@ class SyntheticProvider:
         end = min(start + page.limit, len(self.candidates))
         next_cursor = str(end) if end < len(self.candidates) else None
         output = Page(self.candidates[start:end], next_cursor)
-        response_preflight = provider_response_preflight(output, context, MetadataCandidate)
+        response_preflight = provider_response_preflight(output, page, context, MetadataCandidate)
         return PortResult.failed(response_preflight.failure) if response_preflight.failure is not None else PortResult.success(output)
 
 
@@ -109,8 +109,11 @@ class SyntheticCoverProvider:
         request_preflight = query.preflight_result(page, context)
         if request_preflight.failure is not None:
             return PortResult.failed(request_preflight.failure)
-        output = Page(self.candidates[:page.limit], None)
-        response_preflight = provider_response_preflight(output, context, CoverCandidate)
+        start = 0 if page.cursor is None else int(page.cursor)
+        end = min(start + page.limit, len(self.candidates))
+        next_cursor = str(end) if end < len(self.candidates) else None
+        output = Page(self.candidates[start:end], next_cursor)
+        response_preflight = provider_response_preflight(output, page, context, CoverCandidate)
         return PortResult.failed(response_preflight.failure) if response_preflight.failure is not None else PortResult.success(output)
 
 
@@ -501,6 +504,75 @@ class ServicePortContractTests(unittest.TestCase):
         cover_result = SyntheticCoverProvider((cover,)).lookup_covers(query, PageRequest(None, 1), _context(size=100))
         self.assertEqual(cover_result.failure.kind, FailureKind.RESOURCE_EXHAUSTED)  # type: ignore[union-attr]
 
+    def test_provider_request_complete_envelope_has_one_shared_exact_size(self) -> None:
+        query = ProviderQuery(
+            MediaType.EBOOK,
+            FieldName.TITLE,
+            (ProviderFact(ProviderFactCode.TITLE, ("Cien años", "百年孤独")),),
+            SchemaVersion("provider-query-v1"),
+        )
+        plain = PageRequest(None, 2)
+        escaped = PageRequest('cursor-"quoted"-\\-tail', 2)
+        plain_size = query.canonical_request_size(plain)
+        escaped_size = query.canonical_request_size(escaped)
+        self.assertGreater(escaped_size, plain_size)
+        larger_limit = PageRequest(None, 200)
+        self.assertGreater(query.canonical_request_size(larger_limit), plain_size)
+
+        exact = _context(items=4, size=escaped_size)
+        query.preflight(escaped, exact)
+        self.contract.require_unit_result(query.preflight_result(escaped, exact))
+        below = _context(items=4, size=escaped_size - 1)
+        with self.assertRaises(ValueError):
+            query.preflight(escaped, below)
+        self.contract.require_failure_result(query.preflight_result(escaped, below), FailureKind.RESOURCE_EXHAUSTED)
+
+    def test_provider_response_complete_envelope_boundaries_and_originating_limit(self) -> None:
+        request = PageRequest(None, 1)
+        provenance = ProviderProvenance("catalogue", "correlation", _fingerprint("provenance"))
+        metadata = MetadataCandidate(FieldName.TITLE, FieldValue(("Candidate",)), provenance)
+        no_cursor_metadata_page = Page((metadata,), None)
+        metadata_page = Page((metadata,), 'next-"quoted"-\\-tail')
+        no_cursor_size = provider_response_size(no_cursor_metadata_page, MetadataCandidate)
+        metadata_size = provider_response_size(metadata_page, MetadataCandidate)
+        self.assertGreater(metadata_size, no_cursor_size)
+        self.contract.require_unit_result(provider_response_preflight(no_cursor_metadata_page, request, _context(size=no_cursor_size), MetadataCandidate))
+        self.contract.require_failure_result(provider_response_preflight(metadata_page, request, _context(size=no_cursor_size), MetadataCandidate), FailureKind.RESOURCE_EXHAUSTED)
+        self.contract.require_unit_result(provider_response_preflight(metadata_page, request, _context(size=metadata_size), MetadataCandidate))
+        self.contract.require_failure_result(provider_response_preflight(metadata_page, request, _context(size=metadata_size - 1), MetadataCandidate), FailureKind.RESOURCE_EXHAUSTED)
+
+        empty_cursor_page: Page[MetadataCandidate] = Page((), "empty-next")
+        empty_size = provider_response_size(empty_cursor_page, MetadataCandidate)
+        self.contract.require_unit_result(provider_response_preflight(empty_cursor_page, request, _context(size=empty_size), MetadataCandidate))
+
+        no_content_cover = CoverCandidate(CoverReference("cover-reference"), provenance)
+        content_cover = CoverCandidate(CoverReference("cover-reference", _fingerprint("cover-content")), provenance)
+        no_content_page = Page((no_content_cover,), None)
+        content_page = Page((content_cover,), None)
+        self.assertGreater(provider_response_size(content_page, CoverCandidate), provider_response_size(no_content_page, CoverCandidate))
+        cover_size = provider_response_size(content_page, CoverCandidate)
+        self.contract.require_unit_result(provider_response_preflight(content_page, request, _context(size=cover_size), CoverCandidate))
+        self.contract.require_failure_result(provider_response_preflight(content_page, request, _context(size=cover_size - 1), CoverCandidate), FailureKind.RESOURCE_EXHAUSTED)
+
+        over_limit = Page((metadata, metadata), None)
+        self.contract.require_failure_result(provider_response_preflight(over_limit, request, _context(items=4, size=64 * 1024), MetadataCandidate), FailureKind.INVALID_RESPONSE)
+
+    def test_both_provider_families_return_typed_response_resource_failure(self) -> None:
+        query = ProviderQuery(MediaType.EBOOK, FieldName.TITLE, (ProviderFact(ProviderFactCode.TITLE, ("Title",)),), SchemaVersion("provider-query-v1"))
+        request = PageRequest(None, 1)
+        provenance = ProviderProvenance("catalogue", "correlation", _fingerprint("provenance"))
+        metadata = MetadataCandidate(FieldName.TITLE, FieldValue(("x" * 300,)), provenance)
+        metadata_page = Page((metadata,), None)
+        metadata_bound = provider_response_size(metadata_page, MetadataCandidate) - 1
+        self.assertLessEqual(query.canonical_request_size(request), metadata_bound)
+        self.contract.require_failure_result(SyntheticProvider((metadata,)).lookup(query, request, _context(size=metadata_bound)), FailureKind.RESOURCE_EXHAUSTED)
+
+        cover = CoverCandidate(CoverReference("x" * 300, _fingerprint("content")), provenance)
+        cover_page = Page((cover,), None)
+        cover_bound = provider_response_size(cover_page, CoverCandidate) - 1
+        self.assertLessEqual(query.canonical_request_size(request), cover_bound)
+        self.contract.require_failure_result(SyntheticCoverProvider((cover,)).lookup_covers(query, request, _context(size=cover_bound)), FailureKind.RESOURCE_EXHAUSTED)
+
     def test_provider_pagination_traverses_cursor_and_terminates_at_limit(self) -> None:
         query = ProviderQuery(MediaType.EBOOK, FieldName.TITLE, (ProviderFact(ProviderFactCode.TITLE, ("Synthetic",)),), SchemaVersion("provider-query-v1"))
         candidates = tuple(MetadataCandidate(FieldName.TITLE, FieldValue((f"Candidate {index}",)), ProviderProvenance(f"source-{index}", f"correlation-{index}", _fingerprint(f"candidate-{index}"))) for index in range(3))
@@ -510,6 +582,23 @@ class ServicePortContractTests(unittest.TestCase):
         while True:
             page_request = PageRequest(cursor, 2)
             page = self.contract.require_page_result(provider.lookup(query, page_request, _context()), MetadataCandidate, page_request)
+            self.assertLessEqual(len(page.items), 2)
+            collected.extend(page.items)
+            cursor = page.next_cursor
+            if cursor is None:
+                break
+        self.assertEqual(tuple(collected), candidates)
+
+    def test_cover_provider_pagination_traverses_cursor_and_terminates_at_limit(self) -> None:
+        query = ProviderQuery(MediaType.EBOOK, FieldName.TITLE, (ProviderFact(ProviderFactCode.TITLE, ("Synthetic",)),), SchemaVersion("provider-query-v1"))
+        provenance = ProviderProvenance("catalogue", "correlation", _fingerprint("provenance"))
+        candidates = tuple(CoverCandidate(CoverReference(f"cover-{index}", _fingerprint(f"cover-{index}")), provenance) for index in range(3))
+        provider = SyntheticCoverProvider(candidates)
+        cursor: str | None = None
+        collected: list[CoverCandidate] = []
+        while True:
+            page_request = PageRequest(cursor, 2)
+            page = self.contract.require_page_result(provider.lookup_covers(query, page_request, _context()), CoverCandidate, page_request)
             self.assertLessEqual(len(page.items), 2)
             collected.extend(page.items)
             cursor = page.next_cursor
