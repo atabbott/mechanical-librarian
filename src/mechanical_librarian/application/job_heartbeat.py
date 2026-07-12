@@ -407,7 +407,9 @@ class RunSyntheticJobHeartbeat:
         initial = self._snapshot(main)
         self._require("root" in self._job_stages(initial))
 
-        recovered_at = self._START + timedelta(seconds=6)
+        recovered_at = self._recovery_time(
+            initial, self._START + timedelta(seconds=6)
+        )
         root_job = next(job for job in initial.jobs if job.stage_id == StageId("root"))
         if root_job.state is not JobState.SUCCEEDED:
             if root_job.state is JobState.PENDING:
@@ -597,17 +599,33 @@ class RunSyntheticJobHeartbeat:
         retry_snapshot = self._snapshot(retry_run)
         retry_job = retry_snapshot.jobs[0]
         if retry_job.state is not JobState.FAILED_TERMINAL:
-            second, retry_now = self._resume_claim(
-                retry_run,
-                StageId("root"),
-                WorkerId("worker-retry"),
-                retry_now + timedelta(seconds=5),
+            retry_now = self._recovery_time(
+                retry_snapshot, retry_now + timedelta(seconds=5)
             )
-            self._require(
-                self._repository.fail(
-                    second, FailureKind.SYNTHETIC_RETRYABLE, now=retry_now
-                ).accepted
+            retry_claims = self._claims(
+                WorkerId("worker-retry"), retry_now, 1
             )
+            if retry_claims:
+                second = retry_claims[0]
+                self._require(
+                    second.run_id == retry_run
+                    and second.stage_id == StageId("root")
+                )
+                self._require(
+                    self._repository.start(second, now=retry_now).accepted
+                )
+                self._require(
+                    self._repository.fail(
+                        second, FailureKind.SYNTHETIC_RETRYABLE, now=retry_now
+                    ).accepted
+                )
+            else:
+                recovered_retry = self._snapshot(retry_run)
+                self._require(
+                    recovered_retry.state is RunState.FAILED_TERMINAL
+                    and recovered_retry.jobs[0].state
+                    is JobState.FAILED_TERMINAL
+                )
         self._require(self._snapshot(retry_run).state is RunState.FAILED_TERMINAL)
         checks.append("retry-bounded")
 

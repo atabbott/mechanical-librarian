@@ -1793,6 +1793,47 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
         migrate(self.connection)
         self.repository = SQLiteJobHeartbeatRepository(self.connection)
 
+    def test_supported_heartbeat_resumes_after_reclaimed_root_process_death(self) -> None:
+        run_id = self.create_run("heartbeat-main")
+        self.repository.enqueue_eligible(run_id, now=NOW)
+        old = self.claim_one("worker-root-old")
+        self.repository.start(old, now=NOW)
+        reclaimed = self.repository.claim(
+            WorkerId("worker-root-reclaimed"),
+            capacity=1,
+            now=NOW + timedelta(seconds=6),
+            lease_duration=LEASE,
+        ).value[0]
+        self.assertGreater(reclaimed.fence, old.fence)
+        self.connection.close()
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "mechanical_librarian",
+                "job-heartbeat",
+                "--database",
+                str(self.path),
+            ],
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.connection = connect(self.path)
+        migrate(self.connection)
+        self.repository = SQLiteJobHeartbeatRepository(self.connection)
+        result = RunSyntheticJobHeartbeat(self.repository).run()
+        self.assertTrue(result.succeeded)
+        source = self.repository.inspect(run_id).value
+        root = next(job for job in source.jobs if job.stage_id == StageId("root"))
+        self.assertEqual(root.state.value, "succeeded")
+        self.assertGreater(root.fence, reclaimed.fence)
+
     def test_supported_heartbeat_resumes_after_branch_process_death(self) -> None:
         run_id = self.create_run("heartbeat-main")
         self.repository.enqueue_eligible(run_id, now=NOW)
@@ -2158,6 +2199,43 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
         self.repository.start(retry_claim, now=NOW)
         self.repository.fail(retry_claim, FailureKind.SYNTHETIC_RETRYABLE, now=NOW)
         self.assertTrue(RunSyntheticJobHeartbeat(self.repository).run().succeeded)
+
+    def test_supported_heartbeat_resumes_after_second_retry_process_death(self) -> None:
+        retry = self.create_run("heartbeat-retry")
+        self.repository.enqueue_eligible(retry, now=NOW)
+        first = self.claim_one("worker-retry-first")
+        self.repository.start(first, now=NOW)
+        self.repository.fail(first, FailureKind.SYNTHETIC_RETRYABLE, now=NOW)
+        second = self.claim_one("worker-retry-second", NOW + timedelta(seconds=5))
+        self.repository.start(second, now=NOW + timedelta(seconds=5))
+        self.connection.close()
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = str(Path(__file__).parents[2] / "src")
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "mechanical_librarian",
+                "job-heartbeat",
+                "--database",
+                str(self.path),
+            ],
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.connection = connect(self.path)
+        migrate(self.connection)
+        self.repository = SQLiteJobHeartbeatRepository(self.connection)
+        result = RunSyntheticJobHeartbeat(self.repository).run()
+        self.assertTrue(result.succeeded)
+        snapshot = self.repository.inspect(retry).value
+        self.assertEqual(snapshot.state, RunState.FAILED_TERMINAL)
+        self.assertEqual(snapshot.attempt_count, 2)
+        self.assertEqual(snapshot.jobs[0].state.value, "failed_terminal")
 
 
 if __name__ == "__main__":
