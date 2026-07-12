@@ -109,18 +109,27 @@ configuration surface.
 
 1. Configure an owner-controlled OpenRouter credential through a write-only
    value or file-secret reference and inspect redacted status.
-2. Accept a destination-specific disclosure and select one exact qualified
-   free model configuration.
-3. Run the synthetic F11 packet, validate its direct closed-schema result, and
-   inspect the persisted model, provider, routing, usage, and validation
-   provenance.
-4. Select one exact qualified paid model configuration and show that it creates
-   a distinct immutable configuration and evaluation cohort.
-5. Inject missing and invalid credentials, insufficient credit, free-tier
+2. Select one exact qualified free model configuration. Before accepting its
+   matching disclosure or enabling it, attempt an OpenRouter connection test,
+   capability, identity, and authentication preflight and reviewer packet;
+   prove each is blocked locally with zero OpenRouter requests and zero
+   credential transmission.
+3. Accept the disclosure matching the free configuration, explicitly enable
+   it, perform its preflight, run the synthetic F11 packet, validate its direct
+   closed-schema result, and inspect the persisted model, provider, routing,
+   usage, and validation provenance.
+4. Select one distinct exact qualified paid model configuration and prove the
+   free configuration's acceptance does not transfer: the newly selected paid
+   configuration's preflight and packet remain blocked locally with zero
+   OpenRouter requests and zero credential transmission.
+5. Accept the disclosure matching the paid configuration, enable or re-enable
+   it as appropriate, perform its preflight, run the packet, and inspect its
+   distinct immutable configuration, evaluation cohort, and provenance.
+6. Inject missing and invalid credentials, insufficient credit, free-tier
    exhaustion, rate limiting, retired or unavailable models, provider-policy
    mismatch, unsupported structured output, timeout, malformed output, and
    unexpected model or provider identity.
-6. Confirm that affected work becomes visibly unavailable or manual while
+7. Confirm that affected work becomes visibly unavailable or manual while
    deterministic and human workflows continue and no write authority is
    created.
 
@@ -128,12 +137,24 @@ configuration surface.
 
 - The image contains no project-owned or shared OpenRouter credential. Every
   installation uses an owner-controlled account and reviewer-scoped secret.
-- No request occurs before the owner enables the backend and accepts a
-  disclosure naming every bounded field and excerpt and every staged
-  attachment or image category that may be sent, the processing parties,
-  relevant retention or training posture, and cost or quota behavior. The
-  disclosure explicitly excludes raw media, whole works or audio, production
-  paths, and unrelated evidence.
+- Before every OpenRouter connection test, capability, identity, or
+  authentication preflight, or reviewer request, the backend is explicitly
+  enabled and its currently accepted immutable disclosure/configuration
+  identity matches the active destination, model, provider, routing, privacy,
+  retention, training, region, free-or-paid status, cost or quota behavior,
+  sent-data fields and excerpts, and staged attachment or image categories.
+  Otherwise the operation blocks locally with zero OpenRouter requests and
+  zero credential transmission. The owner-visible matching disclosure itself
+  names every bounded sent-data field and excerpt, every staged attachment or
+  image category, the processing parties, the privacy, retention, training,
+  and region posture, and cost or quota behavior. It explicitly excludes raw
+  media, whole works or audio, production paths, and unrelated evidence.
+- Any material change to that destination, model, provider, routing, privacy,
+  retention, training, region, free-or-paid status, cost or quota behavior,
+  sent-data, or attachment configuration invalidates acceptance before the
+  next request and requires acceptance of the new matching disclosure.
+  Acceptance remains valid for unchanged requests under the same immutable
+  configuration identity.
 - OpenRouter traffic uses a dedicated reviewer client restricted to the fixed
   allowlisted OpenRouter HTTPS API origin with normal hostname and certificate
   validation. It shares no cookies, headers, credentials, or transport state
@@ -176,6 +197,18 @@ The exact model and route selected when this slice is scheduled must pass the
 shared semantic qualification plus provider or model identity mismatch,
 material route drift, authentication, credit, quota, `402`, `404`, `429`,
 timeout, provider `5xx`, cancellation, and retry-storm cases.
+
+Qualification covers the disclosure and enablement state matrix: disabled with
+a missing disclosure, disabled with a matching disclosure, and enabled with a
+missing, stale, or wrong-configuration disclosure each block locally with zero
+OpenRouter requests and zero credential transmission. Only enabled with a
+currently matching accepted disclosure permits preflight or a reviewer
+request. Material changes to the destination, model, provider, routing,
+privacy, retention, training, region, free-or-paid status, cost or quota
+behavior, sent-data, or attachment configuration invalidate acceptance and
+block with the same zero-request and zero-credential result until the new
+matching disclosure is accepted; unchanged requests do not require repeated
+acceptance.
 
 Any eligibility beyond shadow or manual review is granted to the exact
 backend/model/provider/routing/prompt/schema/policy tuple, not to OpenRouter or
@@ -249,7 +282,16 @@ OpenRouter reviewer configuration through the established reviewer workflow.
 
 - Accept only an owner-controlled, reviewer-scoped credential and expose only
   its redacted status.
-- Require the external-processing disclosure before the first request.
+- Before every connection test, capability, identity, or authentication
+  preflight, or reviewer request, require explicit enablement and a currently
+  accepted immutable disclosure/configuration identity matching the active
+  destination, model, provider, routing, privacy, retention, training, region,
+  free-or-paid status, cost or quota behavior, sent-data, and attachment
+  configuration; otherwise block locally with zero OpenRouter requests and
+  zero credential transmission.
+- Invalidate acceptance after any material change to that identity and require
+  acceptance of the new matching disclosure before another request, without
+  requiring repeated acceptance for unchanged requests.
 - Select one exact qualified model and versioned provider/privacy route; reject
   account defaults, random routing, and implicit free-to-paid fallback.
 - Use the fixed-origin bounded HTTPS reviewer client and never forward the
@@ -304,16 +346,23 @@ authenticated owner configuration surface.
    fake independently of Mechanical Librarian.
 2. Configure its exact origin, compatibility profile, model ID, optional
    reviewer-scoped credential, and explicit local-network policy.
-3. Preflight transport, direct structured output, context, image, model
+3. Before accepting the destination-specific disclosure or enabling the
+   endpoint, attempt a connection test, compatibility handshake, and
+   capability, identity, and authentication preflight; prove each is blocked
+   locally with zero external network requests and zero credential
+   transmission.
+4. Accept the matching destination-specific external-processing disclosure
+   and explicitly enable the endpoint.
+5. Preflight transport, direct structured output, context, image, model
    identity, authentication, and response-limit capabilities.
-4. Run the synthetic F11 packet, validate the response, and inspect immutable
+6. Run the synthetic F11 packet, validate the response, and inspect immutable
    endpoint/profile/model and validation provenance.
-5. Restart Mechanical Librarian without managing or restarting the external
+7. Restart Mechanical Librarian without managing or restarting the external
    server.
-6. Inject DNS, TLS, authentication, redirect, private-address policy, model
+8. Inject DNS, TLS, authentication, redirect, private-address policy, model
    identity, capability, timeout, disconnect, overload, malformed-output, and
    server-version failures.
-7. Confirm that disabling or losing the endpoint leaves the container healthy
+9. Confirm that disabling or losing the endpoint leaves the container healthy
    and deterministic and human review available.
 
 ### Acceptance criteria
@@ -326,13 +375,15 @@ authenticated owner configuration surface.
 - External inference remains optional owner-operated infrastructure and is
   never a normal deployment prerequisite or an automatically discovered
   service.
-- No packet is sent until the owner enables the endpoint and accepts a
-  disclosure naming every bounded field and excerpt and every staged
-  attachment or image category that may be sent, the processing purpose,
-  configured destination, declared storage or retention posture, functionality
-  lost when disabled, and synthetic connection-test path. The disclosure
-  explicitly excludes raw media, whole works or audio, production paths, and
-  unrelated evidence.
+- No external endpoint request, including a connection test, compatibility
+  handshake, capability, identity, or authentication preflight, or reviewer
+  packet, occurs until the owner explicitly enables the endpoint and accepts
+  the matching destination-specific disclosure. That disclosure names every
+  bounded field and excerpt and every staged attachment or image category that
+  may be sent, the processing purpose, configured destination, declared
+  storage or retention posture, functionality lost when disabled, and
+  synthetic connection-test path. It explicitly excludes raw media, whole
+  works or audio, production paths, and unrelated evidence.
 - Configuration names one exact `http` or `https` origin, compatibility
   profile, model ID, privacy mode, and optional reviewer-scoped secret. URLs
   containing credentials, fragments, ambiguous hosts, unsupported schemes, or
@@ -374,6 +425,15 @@ authenticated owner configuration surface.
 Qualification independently covers the shared semantic cohort plus
 endpoint-specific cases for:
 
+- the disclosure and enablement matrix: missing disclosure plus disabled,
+  accepted disclosure plus disabled, and enabled plus a missing, stale, or
+  wrong-destination disclosure each block locally with zero external network
+  requests and zero credential transmission; only an enabled endpoint with a
+  matching accepted disclosure permits a connection test, compatibility
+  handshake, capability, identity, or authentication preflight, or reviewer
+  packet;
+- invalidation of disclosure acceptance after any material destination,
+  privacy, or configuration change, before another external request occurs;
 - capability and model-identity mismatch;
 - unsupported schema keywords and envelope differences;
 - DNS rebinding, address-family changes, redirects, origin changes, and
@@ -440,8 +500,11 @@ endpoint/profile/model through the established reviewer workflow.
 
 - Keep inference runtime, weights, model lifecycle, device support, and service
   discovery outside the Mechanical Librarian image and process lifecycle.
-- Require explicit owner enablement and the endpoint-specific external-
-  processing disclosure before the first packet is sent.
+- Require explicit owner enablement and acceptance of the matching endpoint-
+  specific external-processing disclosure before any external request,
+  including a connection test, compatibility handshake, capability, identity,
+  or authentication preflight, or reviewer packet, can send network traffic or
+  transmit a credential.
 - Accept one exact origin, compatibility profile, model ID, privacy mode, and
   optional reviewer-scoped bearer or file secret.
 - Restrict local/private-network authority to the exact configured origin and
