@@ -16,6 +16,7 @@
 │   │   ├── persistence/
 │   │   └── task_execution/
 │   ├── infrastructure/
+│   │   ├── configuration.py (strict config-v1 source boundary)
 │   │   ├── persistence/ (connection and migration runtime)
 │   │   ├── jobs/
 │   │   ├── security/
@@ -52,8 +53,9 @@ than retained with placeholder files.
 ## Runtime baseline
 
 `pyproject.toml` is the authoritative machine-readable runtime declaration.
-The initial package supports CPython 3.13 and 3.14, has no runtime dependencies,
-and is typed through its `py.typed` marker. Development is expected on Linux
+The initial package supports CPython 3.13 and 3.14, pins Pydantic v2 for the
+strict configuration transport boundary, and is typed through its `py.typed`
+marker. Development is expected on Linux
 and macOS; automated host qualification belongs to the CI foundation. The
 supported production target remains the self-contained Linux container. Native
 Windows development and deployment are not yet qualified.

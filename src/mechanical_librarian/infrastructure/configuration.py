@@ -1,0 +1,275 @@
+"""Strict, bounded config-v1 source loading and transport validation."""
+
+from __future__ import annotations
+
+import json
+import os
+import stat
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Annotated, Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StringConstraints,
+    ValidationError,
+)
+
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    ConfigurationError,
+    ConfigurationImportPlan,
+    plan_projected_import,
+    project_configuration,
+)
+
+
+_MAX_CONFIGURATION_BYTES = 1_048_576
+_MODEL_CONFIG = ConfigDict(
+    extra="forbid",
+    frozen=True,
+    strict=True,
+    hide_input_in_errors=True,
+)
+IdentifierText = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_-]{0,63}$",
+    ),
+]
+VersionText = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$",
+    ),
+]
+BoundedText64 = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=64)]
+EndpointText = Annotated[
+    str,
+    StringConstraints(strict=True, min_length=8, max_length=256, pattern=r"^https?://"),
+]
+SecretReferenceText = Annotated[
+    str, StringConstraints(strict=True, min_length=1, max_length=256)
+]
+AbsolutePathText = Annotated[
+    str, StringConstraints(strict=True, min_length=1, max_length=1024, pattern=r"^/")
+]
+ReadCapability = Literal[
+    "inventory-read",
+    "metadata-read",
+    "media-file-read",
+    "notifications",
+    "pagination",
+    "concurrency-tokens",
+    "cover-read",
+]
+EvidenceFormat = Literal["epub", "m4b", "mp3"]
+
+
+class ConnectionInput(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    id: IdentifierText | None = None
+    adapter: IdentifierText
+    endpoint: EndpointText
+    secret_reference: SecretReferenceText
+    enabled_libraries: Annotated[
+        list[IdentifierText],
+        Field(min_length=1, max_length=64, json_schema_extra={"uniqueItems": True}),
+    ]
+    capability_overrides: Annotated[
+        list[ReadCapability],
+        Field(max_length=7, json_schema_extra={"uniqueItems": True}),
+    ] = []
+
+
+class MediaMountInput(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    name: IdentifierText
+    library_type: Literal["ebook", "audiobook"]
+    container_path: AbsolutePathText
+    service_path: AbsolutePathText
+    read_only: Literal[True] = True
+
+
+class ResourceLimitsInput(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    parser_concurrency: Annotated[StrictInt, Field(ge=1, le=8)] = 1
+    parser_timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 60
+    temporary_bytes: Annotated[
+        StrictInt, Field(ge=1_048_576, le=17_179_869_184)
+    ] = 1_073_741_824
+
+
+class EvidenceInput(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    enabled_formats: Annotated[
+        list[EvidenceFormat],
+        Field(min_length=1, max_length=3, json_schema_extra={"uniqueItems": True}),
+    ] = ["epub", "m4b", "mp3"]
+    maximum_document_bytes: Annotated[
+        StrictInt, Field(ge=1_048_576, le=536_870_912)
+    ] = 67_108_864
+    maximum_text_characters: Annotated[
+        StrictInt, Field(ge=1_024, le=4_194_304)
+    ] = 262_144
+
+
+class PolicyInput(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    policy_version: VersionText = "policy-v1"
+
+
+class RetentionInput(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    evidence_days: Annotated[StrictInt, Field(ge=1, le=3_650)] = 90
+    job_log_days: Annotated[StrictInt, Field(ge=1, le=365)] = 30
+    maximum_artifact_bytes: Annotated[
+        StrictInt, Field(ge=1_048_576, le=17_179_869_184)
+    ] = 1_073_741_824
+
+
+class ConfigurationInput(BaseModel):
+    """The single strict transport schema used by every supported config source."""
+
+    model_config = _MODEL_CONFIG
+
+    schema_version: Literal["config-v1"]
+    instance_name: BoundedText64
+    connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=64)]
+    media_mounts: Annotated[list[MediaMountInput], Field(max_length=64)] = []
+    limits: ResourceLimitsInput = ResourceLimitsInput()
+    evidence: EvidenceInput = EvidenceInput()
+    providers: Annotated[
+        list[IdentifierText], Field(max_length=64, json_schema_extra={"uniqueItems": True})
+    ] = []
+    reviewers: Annotated[
+        list[IdentifierText], Field(max_length=64, json_schema_extra={"uniqueItems": True})
+    ] = []
+    policy: PolicyInput = PolicyInput()
+    notifications: Annotated[
+        list[IdentifierText], Field(max_length=64, json_schema_extra={"uniqueItems": True})
+    ] = []
+    backups_enabled: StrictBool = True
+    retention: RetentionInput = RetentionInput()
+    destructive_actions_enabled: Literal[False] = False
+
+
+def validate_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
+    """Validate untrusted transport data and project immutable application values."""
+
+    try:
+        validated = ConfigurationInput.model_validate(source)
+        return project_configuration(validated.model_dump(mode="python"))
+    except ConfigurationError:
+        raise
+    except (TypeError, ValueError, ValidationError):
+        raise ConfigurationError("configuration is invalid") from None
+
+
+def load_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
+    """Compatibility name for the single supported strict mapping boundary."""
+
+    return validate_configuration(source)
+
+
+def plan_import(
+    current_source: Mapping[str, Any], proposed_source: Mapping[str, Any]
+) -> ConfigurationImportPlan:
+    """Strictly validate both sources through one path before comparing values."""
+
+    return plan_projected_import(
+        validate_configuration(current_source),
+        validate_configuration(proposed_source),
+    )
+
+
+def load_configuration_file(path: Path) -> ApplicationConfiguration:
+    """Load one bounded regular UTF-8 JSON file without exposing path or values."""
+
+    try:
+        payload = _read_bounded_regular_file(path)
+        source = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+        )
+        if not isinstance(source, dict):
+            raise ConfigurationError("configuration document is invalid")
+        return validate_configuration(source)
+    except ConfigurationError:
+        raise
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        raise ConfigurationError("configuration document is invalid") from None
+
+
+def configuration_schema_json() -> str:
+    """Return the deterministic generated config-v1 JSON Schema artifact."""
+
+    return json.dumps(
+        ConfigurationInput.model_json_schema(),
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+    ) + "\n"
+
+
+def _read_bounded_regular_file(path: Path) -> bytes:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    descriptor = os.open(path, flags)
+    try:
+        information = os.fstat(descriptor)
+        if not stat.S_ISREG(information.st_mode) or information.st_size > _MAX_CONFIGURATION_BYTES:
+            raise ConfigurationError("configuration document is invalid")
+        chunks: list[bytes] = []
+        remaining = _MAX_CONFIGURATION_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(65_536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        if not payload or len(payload) > _MAX_CONFIGURATION_BYTES:
+            raise ConfigurationError("configuration document is invalid")
+        return payload
+    finally:
+        os.close(descriptor)
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ConfigurationError("configuration document contains a duplicate field")
+        result[key] = value
+    return result
+
+
+__all__ = [
+    "ConfigurationInput",
+    "configuration_schema_json",
+    "load_configuration",
+    "load_configuration_file",
+    "plan_import",
+    "validate_configuration",
+]

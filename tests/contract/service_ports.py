@@ -57,7 +57,7 @@ def standard_family_contracts() -> tuple[FamilyContract, ...]:
 
     heartbeat_methods = tuple(method(JobHeartbeatRepository, name) for name in JobHeartbeatRepository.__dict__ if not name.startswith("_") and callable(JobHeartbeatRepository.__dict__[name]))
     return (
-        FamilyContract("repository", tuple(method(SnapshotRepository, name) for name in ("store", "read", "list")), ("apply", "resolve", "lookup", "lookup_covers")),
+        FamilyContract("repository", tuple(method(SnapshotRepository, name) for name in ("store", "read", "list", "inspect")), ("apply", "resolve", "lookup", "lookup_covers")),
         FamilyContract("transaction-manager", (method(TransactionManager, "begin"),), ("commit", "rollback", "lookup", "lookup_covers", "resolve")),
         FamilyContract("transaction", (method(Transaction, "commit"), method(Transaction, "rollback")), ("begin", "lookup", "lookup_covers", "resolve")),
         FamilyContract("durable-scheduler", (method(WorkScheduler, "schedule"),) + heartbeat_methods, ("apply", "resolve", "lookup", "lookup_covers")),

@@ -181,6 +181,41 @@ _WORKFLOW_TRANSITIONS_NO_DELETE_SQL = (
     "BEGIN SELECT RAISE(ABORT, 'workflow transitions are append-only'); END"
 )
 
+_INVENTORY_SNAPSHOTS_TABLE_SQL = (
+    "CREATE TABLE inventory_snapshots ("
+    "adapter_id TEXT NOT NULL CHECK (typeof(adapter_id) = 'text' AND length(adapter_id) BETWEEN 1 AND 64), "
+    "connection_id TEXT NOT NULL CHECK (typeof(connection_id) = 'text' AND length(connection_id) BETWEEN 1 AND 64), "
+    "library_id TEXT NOT NULL CHECK (typeof(library_id) = 'text' AND length(library_id) BETWEEN 1 AND 64), "
+    "external_item TEXT NOT NULL CHECK (typeof(external_item) = 'text' AND length(external_item) BETWEEN 1 AND 512), "
+    "snapshot_id TEXT NOT NULL CHECK (typeof(snapshot_id) = 'text' AND length(snapshot_id) BETWEEN 1 AND 64), "
+    "idempotency_operation TEXT NOT NULL CHECK (idempotency_operation = 'snapshot-store'), "
+    "idempotency_digest TEXT NOT NULL CHECK (length(idempotency_digest) = 64 AND idempotency_digest NOT GLOB '*[^0-9a-f]*'), "
+    "fingerprint_algorithm TEXT NOT NULL CHECK (fingerprint_algorithm = 'sha256'), "
+    "fingerprint_schema TEXT NOT NULL CHECK (fingerprint_schema = 'snapshot-v1'), "
+    "fingerprint_digest TEXT NOT NULL CHECK (length(fingerprint_digest) = 64 AND fingerprint_digest NOT GLOB '*[^0-9a-f]*'), "
+    "canonical_input TEXT NOT NULL CHECK (typeof(canonical_input) = 'text' AND length(CAST(canonical_input AS BLOB)) BETWEEN 2 AND 1048576), "
+    f"observed_at TEXT NOT NULL CHECK ({_timestamp_constraint('observed_at')}), "
+    "PRIMARY KEY (adapter_id, connection_id, library_id, external_item, snapshot_id), "
+    "UNIQUE (adapter_id, connection_id, library_id, external_item, idempotency_operation, idempotency_digest), "
+    "UNIQUE (adapter_id, connection_id, library_id, external_item, fingerprint_schema, fingerprint_digest))"
+)
+_CURRENT_INVENTORY_TABLE_SQL = (
+    "CREATE TABLE current_inventory_observations ("
+    "adapter_id TEXT NOT NULL, connection_id TEXT NOT NULL, library_id TEXT NOT NULL, "
+    "external_item TEXT NOT NULL, snapshot_id TEXT NOT NULL, "
+    "PRIMARY KEY (adapter_id, connection_id, library_id, external_item), "
+    "FOREIGN KEY (adapter_id, connection_id, library_id, external_item, snapshot_id) "
+    "REFERENCES inventory_snapshots(adapter_id, connection_id, library_id, external_item, snapshot_id))"
+)
+_INVENTORY_SNAPSHOTS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER inventory_snapshots_no_update BEFORE UPDATE ON inventory_snapshots "
+    "BEGIN SELECT RAISE(ABORT, 'inventory snapshots are append-only'); END"
+)
+_INVENTORY_SNAPSHOTS_NO_DELETE_SQL = (
+    "CREATE TRIGGER inventory_snapshots_no_delete BEFORE DELETE ON inventory_snapshots "
+    "BEGIN SELECT RAISE(ABORT, 'inventory snapshots are append-only'); END"
+)
+
 
 MIGRATIONS = (
     Migration(
@@ -223,6 +258,17 @@ MIGRATIONS = (
                 "workflow_transitions",
             }
         ),
+    ),
+    Migration(
+        3,
+        (
+            _INVENTORY_SNAPSHOTS_TABLE_SQL,
+            _CURRENT_INVENTORY_TABLE_SQL,
+            _INVENTORY_SNAPSHOTS_NO_UPDATE_SQL,
+            _INVENTORY_SNAPSHOTS_NO_DELETE_SQL,
+            "CREATE INDEX inventory_snapshots_by_target ON inventory_snapshots(adapter_id, connection_id, library_id, external_item, observed_at, snapshot_id)",
+        ),
+        frozenset({"inventory_snapshots", "current_inventory_observations"}),
     ),
 )
 

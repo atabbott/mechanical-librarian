@@ -436,10 +436,50 @@ class SnapshotStoreRequest:
             raise ValueError("snapshot storage requires typed snapshot and idempotency key")
         if self.idempotency_key.target != self.snapshot.target:
             raise ValueError("snapshot storage idempotency must match the snapshot target")
+        if self.idempotency_key.operation != "snapshot-store":
+            raise ValueError("snapshot storage requires the snapshot-store operation")
         if self.expected_previous is not None and type(self.expected_previous) is not Fingerprint:
             raise ValueError("expected previous snapshot state must be a fingerprint")
         if type(self.context) is not OperationContext:
             raise ValueError("snapshot storage requires an operation context")
+
+
+@dataclass(frozen=True)
+class SnapshotInspectionRequest:
+    target: TargetId
+    expected_snapshot: SnapshotId
+    expected_fingerprint: Fingerprint
+    context: OperationContext
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.target) is not TargetId
+            or type(self.expected_snapshot) is not SnapshotId
+            or type(self.expected_fingerprint) is not Fingerprint
+            or type(self.context) is not OperationContext
+        ):
+            raise ValueError("snapshot inspection requires exact typed values")
+
+
+@dataclass(frozen=True)
+class SnapshotInspection:
+    snapshot: ItemSnapshot
+    item_count: int
+    history_count: int
+    current_count: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.snapshot) is not ItemSnapshot
+            or type(self.item_count) is not int
+            or type(self.history_count) is not int
+            or type(self.current_count) is not int
+            or self.item_count != 1
+            or self.history_count < 1
+            or self.history_count > 9_223_372_036_854_775_807
+            or self.current_count != 1
+        ):
+            raise ValueError("snapshot inspection cardinality is invalid")
 
 
 class SnapshotRepository(Protocol):
@@ -448,6 +488,9 @@ class SnapshotRepository(Protocol):
     def store(self, request: SnapshotStoreRequest) -> RepositoryResult[ItemSnapshot]: ...
     def read(self, request: LibraryReadRequest) -> RepositoryResult[ItemSnapshot]: ...
     def list(self, request: LibraryListRequest) -> RepositoryResult[Page[ItemSnapshot]]: ...
+    def inspect(
+        self, request: SnapshotInspectionRequest
+    ) -> RepositoryResult[SnapshotInspection]: ...
 
 
 @dataclass(frozen=True)
@@ -1108,7 +1151,8 @@ __all__ = [
     "ProviderFact", "ProviderFactCode", "ProviderProvenance", "ProviderQuery", "RepositoryOutcome",
     "RepositoryResult", "ResourceBounds", "RetryAdvice", "Reviewer", "ReviewerAction",
     "ReviewerDecision", "ReviewerRequest", "ReviewerResponse", "SafeSummary", "SecretHandle",
-    "SecretResolver", "SecretScope", "SnapshotRepository", "SnapshotStoreRequest",
+    "SecretResolver", "SecretScope", "SnapshotInspection", "SnapshotInspectionRequest",
+    "SnapshotRepository", "SnapshotStoreRequest",
     "SupportedWriter", "TimeProbe", "Transaction", "TransactionManager", "Unit", "WorkRequest",
     "WorkScheduler", "WriteGrant", "WriteGrantId", "WriteMutation",
     "WriteReceipt", "WriteRequest", "mutation_digest", "mutation_size", "provider_response_preflight", "provider_response_size",

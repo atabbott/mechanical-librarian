@@ -37,6 +37,7 @@ release standards as code.
 ## Development
 
 - [Quality strategy](development/quality-strategy.md)
+- [Runtime dependency review](development/dependency-review.md)
 - [Testing strategy](development/testing-strategy.md)
 - [Documentation standards](development/documentation-standards.md)
 - [Functional slice delivery](development/slice-delivery.md)
@@ -50,6 +51,7 @@ release standards as code.
 
 - [Durable state check](operations/state-check.md)
 - [Recoverable synthetic job heartbeat](operations/job-heartbeat.md)
+- [Synthetic inventory round trip](operations/synthetic-inventory.md)
 - [Deployment model](operations/deployment.md)
 - [Backups and recovery](operations/backups-and-recovery.md)
 - [Observability and supportability](operations/observability.md)

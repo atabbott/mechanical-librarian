@@ -34,6 +34,9 @@ versioning after the first public release.
 
 ### Added
 
+- A report-only `synthetic-inventory --config PATH --database PATH` round trip
+  with strict config-v1 JSON validation, additive migration-3 persistence,
+  restart-safe inspection, and executable mutation-authority isolation.
 - A report-only `job-heartbeat --database PATH` demonstration with a durable
   bounded dependency graph, transactional complete-set scheduling,
   capacity-bounded leased claims, monotonic fencing, finite restart-safe retry,

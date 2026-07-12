@@ -31,6 +31,13 @@ Back up the `/data` volume, including SQLite, configuration, audit history,
 reviewer authentication where policy permits, and non-reconstructable
 artifacts. Reviewer credentials require encrypted storage and stricter access.
 
+Migration 3 is forward-only. Before an F03 upgrade of important state, retain a
+verified pre-F03 curator-data copy. If migration or qualification fails, stop
+the newer process and restore that copy; do not start an older binary against
+the newer schema. Transaction interruption during migration or inventory
+publication leaves the previous committed schema and current observation
+usable and is covered by deterministic fault-injection tests.
+
 ### Host snapshots
 
 Filesystem or ZFS snapshots are defense in depth. Document dataset coverage,

@@ -1,0 +1,368 @@
+{
+  "$defs": {
+    "ConnectionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "capability_overrides": {
+          "default": [],
+          "items": {
+            "enum": [
+              "inventory-read",
+              "metadata-read",
+              "media-file-read",
+              "notifications",
+              "pagination",
+              "concurrency-tokens",
+              "cover-read"
+            ],
+            "type": "string"
+          },
+          "maxItems": 7,
+          "title": "Capability Overrides",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "enabled_libraries": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Enabled Libraries",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "endpoint": {
+          "maxLength": 256,
+          "minLength": 8,
+          "pattern": "^https?://",
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "secret_reference": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Secret Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "adapter",
+        "endpoint",
+        "secret_reference",
+        "enabled_libraries"
+      ],
+      "title": "ConnectionInput",
+      "type": "object"
+    },
+    "EvidenceInput": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled_formats": {
+          "default": [
+            "epub",
+            "m4b",
+            "mp3"
+          ],
+          "items": {
+            "enum": [
+              "epub",
+              "m4b",
+              "mp3"
+            ],
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Enabled Formats",
+          "type": "array",
+          "uniqueItems": true
+        },
+        "maximum_document_bytes": {
+          "default": 67108864,
+          "maximum": 536870912,
+          "minimum": 1048576,
+          "title": "Maximum Document Bytes",
+          "type": "integer"
+        },
+        "maximum_text_characters": {
+          "default": 262144,
+          "maximum": 4194304,
+          "minimum": 1024,
+          "title": "Maximum Text Characters",
+          "type": "integer"
+        }
+      },
+      "title": "EvidenceInput",
+      "type": "object"
+    },
+    "MediaMountInput": {
+      "additionalProperties": false,
+      "properties": {
+        "container_path": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Container Path",
+          "type": "string"
+        },
+        "library_type": {
+          "enum": [
+            "ebook",
+            "audiobook"
+          ],
+          "title": "Library Type",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "read_only": {
+          "const": true,
+          "default": true,
+          "title": "Read Only",
+          "type": "boolean"
+        },
+        "service_path": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Service Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "library_type",
+        "container_path",
+        "service_path"
+      ],
+      "title": "MediaMountInput",
+      "type": "object"
+    },
+    "PolicyInput": {
+      "additionalProperties": false,
+      "properties": {
+        "policy_version": {
+          "default": "policy-v1",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+          "title": "Policy Version",
+          "type": "string"
+        }
+      },
+      "title": "PolicyInput",
+      "type": "object"
+    },
+    "ResourceLimitsInput": {
+      "additionalProperties": false,
+      "properties": {
+        "parser_concurrency": {
+          "default": 1,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Parser Concurrency",
+          "type": "integer"
+        },
+        "parser_timeout_seconds": {
+          "default": 60,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Parser Timeout Seconds",
+          "type": "integer"
+        },
+        "temporary_bytes": {
+          "default": 1073741824,
+          "maximum": 17179869184,
+          "minimum": 1048576,
+          "title": "Temporary Bytes",
+          "type": "integer"
+        }
+      },
+      "title": "ResourceLimitsInput",
+      "type": "object"
+    },
+    "RetentionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_days": {
+          "default": 90,
+          "maximum": 3650,
+          "minimum": 1,
+          "title": "Evidence Days",
+          "type": "integer"
+        },
+        "job_log_days": {
+          "default": 30,
+          "maximum": 365,
+          "minimum": 1,
+          "title": "Job Log Days",
+          "type": "integer"
+        },
+        "maximum_artifact_bytes": {
+          "default": 1073741824,
+          "maximum": 17179869184,
+          "minimum": 1048576,
+          "title": "Maximum Artifact Bytes",
+          "type": "integer"
+        }
+      },
+      "title": "RetentionInput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The single strict transport schema used by every supported config source.",
+  "properties": {
+    "backups_enabled": {
+      "default": true,
+      "title": "Backups Enabled",
+      "type": "boolean"
+    },
+    "connections": {
+      "items": {
+        "$ref": "#/$defs/ConnectionInput"
+      },
+      "maxItems": 64,
+      "minItems": 1,
+      "title": "Connections",
+      "type": "array"
+    },
+    "destructive_actions_enabled": {
+      "const": false,
+      "default": false,
+      "title": "Destructive Actions Enabled",
+      "type": "boolean"
+    },
+    "evidence": {
+      "$ref": "#/$defs/EvidenceInput",
+      "default": {
+        "enabled_formats": [
+          "epub",
+          "m4b",
+          "mp3"
+        ],
+        "maximum_document_bytes": 67108864,
+        "maximum_text_characters": 262144
+      }
+    },
+    "instance_name": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Instance Name",
+      "type": "string"
+    },
+    "limits": {
+      "$ref": "#/$defs/ResourceLimitsInput",
+      "default": {
+        "parser_concurrency": 1,
+        "parser_timeout_seconds": 60,
+        "temporary_bytes": 1073741824
+      }
+    },
+    "media_mounts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/MediaMountInput"
+      },
+      "maxItems": 64,
+      "title": "Media Mounts",
+      "type": "array"
+    },
+    "notifications": {
+      "default": [],
+      "items": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Notifications",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "policy": {
+      "$ref": "#/$defs/PolicyInput",
+      "default": {
+        "policy_version": "policy-v1"
+      }
+    },
+    "providers": {
+      "default": [],
+      "items": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Providers",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "retention": {
+      "$ref": "#/$defs/RetentionInput",
+      "default": {
+        "evidence_days": 90,
+        "job_log_days": 30,
+        "maximum_artifact_bytes": 1073741824
+      }
+    },
+    "reviewers": {
+      "default": [],
+      "items": {
+        "maxLength": 64,
+        "minLength": 1,
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+        "type": "string"
+      },
+      "maxItems": 64,
+      "title": "Reviewers",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "schema_version": {
+      "const": "config-v1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "instance_name",
+    "connections"
+  ],
+  "title": "ConfigurationInput",
+  "type": "object"
+}
