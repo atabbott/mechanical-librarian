@@ -77,9 +77,11 @@ class MemorySnapshotRepository:
     def __init__(self) -> None:
         self.snapshot = None
         self.keys = []
+        self.requests = []
 
     def store(self, request: SnapshotStoreRequest) -> RepositoryResult:
         self.keys.append(request.idempotency_key)
+        self.requests.append(request)
         if self.snapshot is None:
             self.snapshot = request.snapshot
             return RepositoryResult(RepositoryOutcome.ACCEPTED, request.snapshot)
@@ -116,10 +118,16 @@ class ReaderOverride:
 
 
 class RepositoryOverride(MemorySnapshotRepository):
-    def __init__(self, store_result: object | None = None, read_result: object | None = None):
+    def __init__(
+        self,
+        store_result: object | None = None,
+        read_result: object | None = None,
+        read_results: list[object] | None = None,
+    ):
         super().__init__()
         self.store_result = store_result
         self.read_result = read_result
+        self.read_results = list(read_results or [])
 
     def store(self, request):
         if self.store_result is not None:
@@ -127,6 +135,8 @@ class RepositoryOverride(MemorySnapshotRepository):
         return super().store(request)
 
     def read(self, request):
+        if self.read_results:
+            return self.read_results.pop(0)
         if self.read_result is not None:
             return self.read_result
         return super().read(request)
@@ -235,6 +245,38 @@ class InspectSyntheticInventoryTests(unittest.TestCase):
         self.assertEqual(repository.keys[0], repository.keys[1])
         self.assertEqual(repository.snapshot, self.reader.record.snapshot)
 
+    def test_fresh_id_unchanged_rediscovery_reuses_persisted_durable_id(self) -> None:
+        repository = MemorySnapshotRepository()
+        original = self.reader.record.snapshot
+        repository.snapshot = original
+        fresh = dataclasses.replace(
+            original, id=SnapshotId("synthetic-snapshot-fresh")
+        )
+        rediscovery = ReaderOverride(self.reader)
+        rediscovery.list_result = PortResult.success(Page((fresh,), None))
+
+        result = InspectSyntheticInventory(rediscovery, repository).run(
+            self.connection, self.library, _context()
+        )
+
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.inspection.snapshot, original.id)
+        self.assertEqual(result.inspection.repository_outcome, RepositoryOutcome.REUSED)
+        self.assertEqual(repository.requests[0].expected_previous, original.fingerprint)
+        self.assertEqual(repository.snapshot, original)
+
+    def test_pre_read_corruption_stops_before_store(self) -> None:
+        repository = RepositoryOverride(
+            read_result=RepositoryResult(RepositoryOutcome.CORRUPT)
+        )
+
+        result = InspectSyntheticInventory(self.reader, repository).run(
+            self.connection, self.library, _context()
+        )
+
+        self.assertEqual(result.outcome, SyntheticInventoryOutcome.PERSISTENCE_FAILURE)
+        self.assertEqual(repository.requests, [])
+
     def test_rejects_malformed_cross_scope_and_write_capable_reader_responses(self) -> None:
         malformed = ReaderOverride(self.reader)
         malformed.list_result = "raw vendor response"
@@ -294,9 +336,9 @@ class InspectSyntheticInventoryTests(unittest.TestCase):
                 self.assertEqual(repository.keys, [])
 
     def test_rejects_reused_or_readback_results_with_wrong_shape_or_value(self) -> None:
-        other = dataclasses.replace(
-            self.reader.record.snapshot, id=SnapshotId("different-snapshot")
-        )
+        other = SyntheticLibraryReader(
+            self.connection, LibraryId("other-library")
+        ).record.snapshot
         store_cases = (
             RepositoryResult(RepositoryOutcome.REUSED),
             RepositoryResult(RepositoryOutcome.REUSED, other),
@@ -310,11 +352,31 @@ class InspectSyntheticInventoryTests(unittest.TestCase):
                 ).run(self.connection, self.library, _context())
                 self.assertEqual(result.outcome, SyntheticInventoryOutcome.PERSISTENCE_FAILURE)
 
+        original = self.reader.record.snapshot
+        equivalent_but_not_current = dataclasses.replace(
+            original, id=SnapshotId("different-durable-snapshot")
+        )
+        wrong_reused = RepositoryOverride(
+            store_result=RepositoryResult(
+                RepositoryOutcome.REUSED, equivalent_but_not_current
+            ),
+            read_result=RepositoryResult(RepositoryOutcome.ACCEPTED, original),
+        )
+        self.assertEqual(
+            InspectSyntheticInventory(self.reader, wrong_reused)
+            .run(self.connection, self.library, _context())
+            .outcome,
+            SyntheticInventoryOutcome.PERSISTENCE_FAILURE,
+        )
+
         repository = RepositoryOverride(
             store_result=RepositoryResult(
                 RepositoryOutcome.ACCEPTED, self.reader.record.snapshot
             ),
-            read_result=RepositoryResult(RepositoryOutcome.REUSED, other),
+            read_results=[
+                RepositoryResult(RepositoryOutcome.NOT_FOUND),
+                RepositoryResult(RepositoryOutcome.REUSED, other),
+            ],
         )
         result = InspectSyntheticInventory(self.reader, repository).run(
             self.connection, self.library, _context()

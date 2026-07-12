@@ -225,7 +225,7 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             next_snapshot,
         )
 
-    def test_exact_history_with_changed_idempotency_evidence_is_corrupt(self) -> None:
+    def test_exact_history_with_changed_snapshot_or_key_is_corrupt(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
         self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
         changed_key = IdempotencyKey.from_canonical_input(
@@ -234,12 +234,54 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             value={"changed": True},
         )
 
-        result = repository.store(self.request_for(self.snapshot, key=changed_key))
-
-        self.assertEqual(result.outcome, RepositoryOutcome.CORRUPT)
+        changed_snapshot = replace(
+            self.next_snapshot(), id=self.snapshot.id
+        )
+        cases = (
+            ("changed-key", self.request_for(self.snapshot, key=changed_key)),
+            (
+                "changed-snapshot",
+                self.request_for(changed_snapshot, self.snapshot.fingerprint),
+            ),
+        )
+        for name, request in cases:
+            with self.subTest(name=name):
+                self.assertEqual(
+                    repository.store(request).outcome, RepositoryOutcome.CORRUPT
+                )
         self.assertEqual(
             self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
             (1,),
+        )
+
+    def test_exact_current_retry_does_not_materialize_unrelated_history(self) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        target = self.snapshot.target
+        self.connection.execute(
+            "INSERT INTO inventory_snapshots("
+            "adapter_id, connection_id, library_id, external_item, snapshot_id, "
+            "idempotency_operation, idempotency_digest, fingerprint_algorithm, "
+            "fingerprint_schema, fingerprint_digest, canonical_input, observed_at"
+            ") VALUES (?, ?, ?, ?, 'unrelated-history', 'snapshot-store', ?, "
+            "'sha256', 'snapshot-v1', ?, '{}', '2026-01-01T00:00:00.000000Z')",
+            (
+                target.adapter.value,
+                target.connection.value,
+                target.library.value,
+                target.external_item.value,
+                "c" * 64,
+                "d" * 64,
+            ),
+        )
+
+        result = repository.store(self.request())
+
+        self.assertEqual(result.outcome, RepositoryOutcome.REUSED)
+        self.assertEqual(result.value, self.snapshot)
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            (2,),
         )
 
     def test_exact_history_without_current_pointer_is_corrupt(self) -> None:
@@ -259,6 +301,292 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                 "SELECT count(*) FROM current_inventory_observations"
             ).fetchone(),
             (0,),
+        )
+
+    def test_identity_current_predecessor_matrix_preserves_cardinality(self) -> None:
+        """Cover snapshot-id/fingerprint/key/current/predecessor reconciliation as a table."""
+        repository = SQLiteInventoryRepository(self.connection)
+        current = self.snapshot
+        same_canonical_fresh_id = replace(
+            current, id=SnapshotId("synthetic-snapshot-fresh")
+        )
+        changed = self.next_snapshot()
+
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        cases = (
+            ("exact-current-matching-key", self.request(), RepositoryOutcome.REUSED),
+            (
+                "fresh-id-same-fingerprint-no-predecessor",
+                self.request_for(same_canonical_fresh_id),
+                RepositoryOutcome.REJECTED,
+            ),
+            (
+                "fresh-id-same-fingerprint-wrong-predecessor",
+                self.request_for(same_canonical_fresh_id, changed.fingerprint),
+                RepositoryOutcome.REJECTED,
+            ),
+            (
+                "fresh-id-same-fingerprint-matching-predecessor",
+                self.request_for(same_canonical_fresh_id, current.fingerprint),
+                RepositoryOutcome.REUSED,
+            ),
+            (
+                "new-state-missing-predecessor",
+                self.request_for(changed),
+                RepositoryOutcome.REJECTED,
+            ),
+            (
+                "new-state-matching-predecessor",
+                self.request_for(changed, current.fingerprint),
+                RepositoryOutcome.ACCEPTED,
+            ),
+        )
+        for name, request, expected in cases:
+            with self.subTest(name=name):
+                result = repository.store(request)
+                self.assertEqual(result.outcome, expected)
+                expected_rows = 2 if name == "new-state-matching-predecessor" else 1
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT count(*) FROM inventory_snapshots"
+                    ).fetchone(),
+                    (expected_rows,),
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT count(*) FROM current_inventory_observations"
+                    ).fetchone(),
+                    (1,),
+                )
+
+    def test_fresh_id_unchanged_state_reuses_durable_current_row(self) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        fresh = replace(self.snapshot, id=SnapshotId("synthetic-snapshot-fresh"))
+
+        result = repository.store(
+            self.request_for(fresh, self.snapshot.fingerprint)
+        )
+
+        self.assertEqual(result.outcome, RepositoryOutcome.REUSED)
+        self.assertEqual(result.value, self.snapshot)
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            (1,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM current_inventory_observations"
+            ).fetchone(),
+            (1,),
+        )
+
+    def test_historical_fingerprint_never_repoints_current(self) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        advanced = self.next_snapshot()
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(
+                self.request_for(advanced, self.snapshot.fingerprint)
+            ).outcome,
+            RepositoryOutcome.ACCEPTED,
+        )
+        fresh_historical = replace(
+            self.snapshot, id=SnapshotId("synthetic-snapshot-historical-fresh")
+        )
+
+        result = repository.store(
+            self.request_for(fresh_historical, advanced.fingerprint)
+        )
+
+        self.assertEqual(result.outcome, RepositoryOutcome.REJECTED)
+        self.assertEqual(
+            repository.read(LibraryReadRequest(self.snapshot.target, _context())).value,
+            advanced,
+        )
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            (2,),
+        )
+
+    def test_idempotency_identity_bound_to_another_snapshot_is_corrupt(self) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+
+        result = repository.store(
+            self.request_for(
+                self.next_snapshot(), self.snapshot.fingerprint, key=self.key
+            )
+        )
+
+        self.assertEqual(result.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            (1,),
+        )
+
+    def test_orphan_history_matrix_is_corrupt_and_never_mutates(self) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.connection.execute("DELETE FROM current_inventory_observations")
+        fresh = replace(self.snapshot, id=SnapshotId("synthetic-snapshot-fresh"))
+        changed = self.next_snapshot()
+        cases = (
+            ("exact-id", self.request()),
+            ("fresh-id-same-fingerprint-no-predecessor", self.request_for(fresh)),
+            (
+                "fresh-id-same-fingerprint-with-predecessor",
+                self.request_for(fresh, self.snapshot.fingerprint),
+            ),
+            ("fresh-state-no-predecessor", self.request_for(changed)),
+            (
+                "fresh-state-with-predecessor",
+                self.request_for(changed, self.snapshot.fingerprint),
+            ),
+        )
+        for name, request in cases:
+            with self.subTest(name=name):
+                self.assertEqual(
+                    repository.store(request).outcome, RepositoryOutcome.CORRUPT
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT count(*) FROM inventory_snapshots"
+                    ).fetchone(),
+                    (1,),
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT count(*) FROM current_inventory_observations"
+                    ).fetchone(),
+                    (0,),
+                )
+
+    def test_read_and_list_report_orphan_only_in_exact_connection_scope(self) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.connection.execute("DELETE FROM current_inventory_observations")
+        target = self.snapshot.target
+
+        self.assertEqual(
+            repository.read(LibraryReadRequest(target, _context())).outcome,
+            RepositoryOutcome.CORRUPT,
+        )
+        own_connection = LibraryConnection(
+            target.connection,
+            target.adapter,
+            ServiceEndpoint("https://synthetic.invalid"),
+            SecretReference("unused-reference"),
+            self.snapshot.capabilities,
+        )
+        self.assertEqual(
+            repository.list(
+                LibraryListRequest(own_connection, PageRequest(None, 1), _context())
+            ).outcome,
+            RepositoryOutcome.CORRUPT,
+        )
+        other_connection = replace(
+            own_connection, id=ConnectionId("other-connection")
+        )
+        listed = repository.list(
+            LibraryListRequest(other_connection, PageRequest(None, 1), _context())
+        )
+        self.assertEqual(listed.outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(listed.value.items, ())
+
+    def test_inverse_orphan_pointer_matrix_is_corrupt_and_connection_scoped(self) -> None:
+        target = self.snapshot.target
+        values = (
+            target.adapter.value,
+            target.connection.value,
+            target.library.value,
+            target.external_item.value,
+        )
+        self.connection.commit()
+        self.connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            self.connection.execute(
+                "INSERT INTO current_inventory_observations("
+                "adapter_id, connection_id, library_id, external_item, snapshot_id"
+                ") VALUES (?, ?, ?, ?, 'missing-history')",
+                values,
+            )
+            self.connection.commit()
+        finally:
+            self.connection.execute("PRAGMA foreign_keys = ON")
+        self.assertEqual(
+            self.connection.execute("PRAGMA foreign_keys").fetchone(), (1,)
+        )
+
+        repository = SQLiteInventoryRepository(self.connection)
+        fresh = replace(self.snapshot, id=SnapshotId("synthetic-snapshot-fresh"))
+        changed = self.next_snapshot()
+        cases = (
+            ("incoming-exact-no-predecessor", self.request()),
+            (
+                "incoming-exact-with-predecessor",
+                self.request_for(self.snapshot, self.snapshot.fingerprint),
+            ),
+            ("fresh-id-same-state", self.request_for(fresh)),
+            (
+                "fresh-id-same-state-with-predecessor",
+                self.request_for(fresh, self.snapshot.fingerprint),
+            ),
+            ("fresh-state", self.request_for(changed)),
+        )
+        for name, request in cases:
+            with self.subTest(name=name):
+                self.assertEqual(
+                    repository.store(request).outcome, RepositoryOutcome.CORRUPT
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT count(*) FROM inventory_snapshots"
+                    ).fetchone(),
+                    (0,),
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT count(*) FROM current_inventory_observations"
+                    ).fetchone(),
+                    (1,),
+                )
+
+        self.assertEqual(
+            repository.read(LibraryReadRequest(target, _context())).outcome,
+            RepositoryOutcome.CORRUPT,
+        )
+        own_connection = LibraryConnection(
+            target.connection,
+            target.adapter,
+            ServiceEndpoint("https://synthetic.invalid"),
+            SecretReference("unused-reference"),
+            self.snapshot.capabilities,
+        )
+        self.assertEqual(
+            repository.list(
+                LibraryListRequest(own_connection, PageRequest(None, 1), _context())
+            ).outcome,
+            RepositoryOutcome.CORRUPT,
+        )
+        other_connection = replace(
+            own_connection, id=ConnectionId("other-connection")
+        )
+        other = repository.list(
+            LibraryListRequest(other_connection, PageRequest(None, 1), _context())
+        )
+        self.assertEqual(other.outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(other.value.items, ())
+        self.assertEqual(
+            (
+                self.connection.execute(
+                    "SELECT count(*) FROM inventory_snapshots"
+                ).fetchone(),
+                self.connection.execute(
+                    "SELECT count(*) FROM current_inventory_observations"
+                ).fetchone(),
+            ),
+            ((0,), (1,)),
         )
 
     def test_history_is_append_only_and_cross_scope_reads_do_not_match(self) -> None:

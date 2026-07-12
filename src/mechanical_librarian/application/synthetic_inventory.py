@@ -153,6 +153,22 @@ class InspectSyntheticInventory:
         if bounded.failure is not None:
             return _failed(_context_outcome(bounded.failure.kind))
 
+        before = self._repository.read(LibraryReadRequest(snapshot.target, context))
+        if type(before) is not RepositoryResult:
+            return _failed(SyntheticInventoryOutcome.PERSISTENCE_FAILURE)
+        if before.outcome is RepositoryOutcome.NOT_FOUND and before.value is None:
+            expected_previous = None
+            current_snapshot = None
+        elif (
+            before.outcome in {RepositoryOutcome.ACCEPTED, RepositoryOutcome.REUSED}
+            and type(before.value) is ItemSnapshot
+            and _valid_snapshot_scope(before.value, connection, library, capabilities)
+        ):
+            expected_previous = before.value.fingerprint
+            current_snapshot = before.value
+        else:
+            return _failed(SyntheticInventoryOutcome.PERSISTENCE_FAILURE)
+
         key = IdempotencyKey.from_canonical_input(
             operation="snapshot-store",
             target=snapshot.target,
@@ -163,13 +179,14 @@ class InspectSyntheticInventory:
             },
         )
         stored = self._repository.store(
-            SnapshotStoreRequest(snapshot, key, None, context)
+            SnapshotStoreRequest(snapshot, key, expected_previous, context)
         )
-        if not _valid_repository_snapshot(stored, snapshot):
+        persisted = _persisted_snapshot(stored, snapshot, current_snapshot)
+        if persisted is None:
             return _failed(SyntheticInventoryOutcome.PERSISTENCE_FAILURE)
 
         readback = self._repository.read(LibraryReadRequest(snapshot.target, context))
-        if not _valid_readback(readback, snapshot):
+        if not _valid_readback(readback, persisted):
             return _failed(SyntheticInventoryOutcome.READBACK_MISMATCH)
 
         return SyntheticInventoryResult(
@@ -178,10 +195,10 @@ class InspectSyntheticInventory:
                 adapter=snapshot.target.adapter,
                 connection=snapshot.target.connection,
                 library=snapshot.target.library,
-                snapshot=snapshot.id,
-                media_type=snapshot.media_type,
-                lifecycle=snapshot.lifecycle,
-                fingerprint=snapshot.fingerprint,
+                snapshot=persisted.id,
+                media_type=persisted.media_type,
+                lifecycle=persisted.lifecycle,
+                fingerprint=persisted.fingerprint,
                 repository_outcome=stored.outcome,
             ),
         )
@@ -218,14 +235,30 @@ def _valid_snapshot_scope(
     )
 
 
-def _valid_repository_snapshot(
-    result: object, expected: ItemSnapshot
-) -> bool:
+def _persisted_snapshot(
+    result: object,
+    expected: ItemSnapshot,
+    current: ItemSnapshot | None,
+) -> ItemSnapshot | None:
+    if type(result) is not RepositoryResult or type(result.value) is not ItemSnapshot:
+        return None
+    if result.outcome is RepositoryOutcome.ACCEPTED:
+        return result.value if result.value == expected else None
+    if (
+        result.outcome is RepositoryOutcome.REUSED
+        and current is not None
+        and result.value == current
+        and _same_canonical_state(result.value, expected)
+    ):
+        return result.value
+    return None
+
+
+def _same_canonical_state(left: ItemSnapshot, right: ItemSnapshot) -> bool:
     return (
-        type(result) is RepositoryResult
-        and result.outcome in {RepositoryOutcome.ACCEPTED, RepositoryOutcome.REUSED}
-        and type(result.value) is ItemSnapshot
-        and result.value == expected
+        left.target == right.target
+        and left.fingerprint == right.fingerprint
+        and left.canonical_input.serialized == right.canonical_input.serialized
     )
 
 

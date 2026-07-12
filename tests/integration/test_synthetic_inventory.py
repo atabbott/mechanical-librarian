@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import sqlite3
@@ -10,6 +11,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import mechanical_librarian.bootstrap as bootstrap
+from mechanical_librarian.adapters.library_services.synthetic import SyntheticLibraryReader
+from mechanical_librarian.application.ports import Page, PortResult
+from mechanical_librarian.domain.identifiers import SnapshotId
 
 
 ROOT = Path(__file__).parents[2]
@@ -86,6 +90,55 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
                 "unused-synthetic-reference",
             ):
                 self.assertNotIn(private, persisted)
+
+    def test_restart_with_fresh_id_for_unchanged_state_reuses_durable_original(self) -> None:
+        class FreshIdReader:
+            def __init__(self, connection, library) -> None:
+                self.delegate = SyntheticLibraryReader(connection, library)
+                self.snapshot = dataclasses.replace(
+                    self.delegate.record.snapshot,
+                    id=SnapshotId("synthetic-snapshot-fresh-after-restart"),
+                )
+
+            def discover_capabilities(self, connection, context):
+                return self.delegate.discover_capabilities(connection, context)
+
+            def list_snapshots(self, request):
+                return PortResult.success(Page((self.snapshot,), None))
+
+            def read_snapshot(self, request):
+                return self.delegate.read_snapshot(request)
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "state.sqlite"
+            first = self.run_inventory(CONFIGURATION, database)
+            with patch.object(bootstrap, "SyntheticLibraryReader", FreshIdReader):
+                second = self.run_inventory(CONFIGURATION, database)
+                third = self.run_inventory(CONFIGURATION, database)
+
+            self.assertEqual(first[0], 0, first[2])
+            self.assertEqual(second[0], 0, second[2])
+            self.assertEqual(third[0], 0, third[2])
+            self.assertIn("snapshot=synthetic-snapshot-one", second[1])
+            self.assertIn("snapshot=synthetic-snapshot-one", third[1])
+            self.assertIn("persistence=reused", second[1])
+            self.assertNotIn("fresh-after-restart", second[1] + third[1])
+            connection = sqlite3.connect(database)
+            try:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT count(*) FROM inventory_snapshots"
+                    ).fetchone(),
+                    (1,),
+                )
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT count(*) FROM current_inventory_observations"
+                    ).fetchone(),
+                    (1,),
+                )
+            finally:
+                connection.close()
 
     @patch("mechanical_librarian.bootstrap.SQLiteInventoryRepository")
     @patch("mechanical_librarian.bootstrap.SyntheticLibraryReader")
