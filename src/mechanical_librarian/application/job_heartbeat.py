@@ -249,7 +249,10 @@ class RunSyntheticJobHeartbeat:
 
     def run(self) -> HeartbeatResult:
         try:
-            checks = self._qualified_existing() or self._run_scenarios()
+            checks = self._qualified_existing()
+            if checks is None:
+                self._run_scenarios()
+                checks = self._qualified_existing()
             inspection = self._inspection()
         except Exception:
             return HeartbeatResult(HeartbeatOutcome.FAILED)

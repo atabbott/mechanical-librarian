@@ -1736,6 +1736,35 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
                 self.connection.execute("ROLLBACK TO evidence_tamper")
                 self.connection.execute("RELEASE evidence_tamper")
 
+    def test_requalification_requires_durable_retry_attempt_evidence(self) -> None:
+        first = RunSyntheticJobHeartbeat(self.repository).run()
+        self.assertTrue(first.succeeded)
+        self.assertEqual(first.inspection.retry_attempts, 2)
+        attempts = self.connection.execute(
+            "SELECT job_id, attempt, fence, worker_id, started_at, finished_at, "
+            "outcome, failure FROM job_attempts WHERE job_id IN "
+            "(SELECT job_id FROM jobs WHERE run_id = 'heartbeat-retry') "
+            "ORDER BY attempt"
+        ).fetchall()
+        self.assertEqual(len(attempts), 2)
+        self.connection.execute(
+            "DELETE FROM job_attempts WHERE job_id IN "
+            "(SELECT job_id FROM jobs WHERE run_id = 'heartbeat-retry')"
+        )
+        before = tuple(self.connection.iterdump())
+        self.assertFalse(RunSyntheticJobHeartbeat(self.repository).run().succeeded)
+        self.assertEqual(tuple(self.connection.iterdump()), before)
+
+        self.connection.executemany(
+            "INSERT INTO job_attempts(job_id, attempt, fence, worker_id, "
+            "started_at, finished_at, outcome, failure) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            attempts,
+        )
+        restored = RunSyntheticJobHeartbeat(self.repository).run()
+        self.assertTrue(restored.succeeded)
+        self.assertEqual(restored.inspection.retry_attempts, 2)
+
     def test_supported_heartbeat_resumes_after_root_process_death(self) -> None:
         run_id = self.create_run("heartbeat-main")
         self.repository.enqueue_eligible(run_id, now=NOW)
