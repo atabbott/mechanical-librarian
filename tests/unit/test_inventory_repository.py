@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -28,10 +29,13 @@ from mechanical_librarian.application.ports import (
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
+    Fingerprint,
     IdempotencyKey,
     LibraryId,
+    SnapshotId,
 )
 from mechanical_librarian.domain.inventory import (
+    ItemSnapshot,
     LibraryConnection,
     SecretReference,
     ServiceEndpoint,
@@ -85,6 +89,49 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
     def request(self) -> SnapshotStoreRequest:
         return SnapshotStoreRequest(self.snapshot, self.key, None, _context())
 
+    def request_for(
+        self,
+        snapshot: ItemSnapshot,
+        expected_previous: Fingerprint | None = None,
+        *,
+        key: IdempotencyKey | None = None,
+    ) -> SnapshotStoreRequest:
+        selected_key = key or IdempotencyKey.from_canonical_input(
+            operation="snapshot-store",
+            target=snapshot.target,
+            value={
+                "fingerprint": snapshot.fingerprint.digest,
+                "schema": snapshot.fingerprint.schema.value,
+                "snapshot": snapshot.id.value,
+            },
+        )
+        return SnapshotStoreRequest(snapshot, selected_key, expected_previous, _context())
+
+    def next_snapshot(self) -> ItemSnapshot:
+        return ItemSnapshot.create(
+            id=SnapshotId("synthetic-snapshot-two"),
+            target=self.snapshot.target,
+            media_type=self.snapshot.media_type,
+            lifecycle=self.snapshot.lifecycle,
+            metadata=self.snapshot.metadata,
+            files=self.snapshot.files,
+            cover=self.snapshot.cover,
+            provenance=replace(
+                self.snapshot.provenance,
+                observed_at=self.snapshot.provenance.observed_at + timedelta(seconds=1),
+                raw_observation=replace(
+                    self.snapshot.provenance.raw_observation,
+                    payload_fingerprint=Fingerprint.from_canonical_value(
+                        {"state": "advanced"},
+                        schema=self.snapshot.provenance.raw_observation.payload_fingerprint.schema,
+                    ),
+                ),
+            ),
+            service_release=self.snapshot.service_release,
+            concurrency_token=self.snapshot.concurrency_token,
+            capabilities=self.snapshot.capabilities,
+        )
+
     def test_store_duplicate_restart_and_scoped_read_preserve_exact_cardinality(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
         first = repository.store(self.request())
@@ -136,6 +183,82 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         self.assertEqual(
             SQLiteInventoryRepository(self.connection).store(self.request()).outcome,
             RepositoryOutcome.ACCEPTED,
+        )
+
+    def test_asserted_predecessor_cannot_initialize_absent_target(self) -> None:
+        result = SQLiteInventoryRepository(self.connection).store(
+            self.request_for(self.snapshot, self.snapshot.fingerprint)
+        )
+
+        self.assertEqual(result.outcome, RepositoryOutcome.REJECTED)
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM current_inventory_observations"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_retry_of_superseded_snapshot_is_rejected_without_changing_state(self) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        next_snapshot = self.next_snapshot()
+
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(
+                self.request_for(next_snapshot, self.snapshot.fingerprint)
+            ).outcome,
+            RepositoryOutcome.ACCEPTED,
+        )
+        retry = repository.store(self.request())
+
+        self.assertEqual(retry.outcome, RepositoryOutcome.REJECTED)
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            (2,),
+        )
+        self.assertEqual(
+            repository.read(LibraryReadRequest(self.snapshot.target, _context())).value,
+            next_snapshot,
+        )
+
+    def test_exact_history_with_changed_idempotency_evidence_is_corrupt(self) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        changed_key = IdempotencyKey.from_canonical_input(
+            operation="snapshot-store",
+            target=self.snapshot.target,
+            value={"changed": True},
+        )
+
+        result = repository.store(self.request_for(self.snapshot, key=changed_key))
+
+        self.assertEqual(result.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            (1,),
+        )
+
+    def test_exact_history_without_current_pointer_is_corrupt(self) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.connection.execute("DELETE FROM current_inventory_observations")
+
+        result = repository.store(self.request())
+
+        self.assertEqual(result.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            (1,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM current_inventory_observations"
+            ).fetchone(),
+            (0,),
         )
 
     def test_history_is_append_only_and_cross_scope_reads_do_not_match(self) -> None:

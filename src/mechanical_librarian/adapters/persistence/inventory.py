@@ -80,12 +80,17 @@ class SQLiteInventoryRepository:
                         existing != snapshot
                         or existing_row[1] != request.idempotency_key.operation
                         or existing_row[2] != request.idempotency_key.digest
-                        or current != snapshot
                     ):
                         return RepositoryResult(RepositoryOutcome.CORRUPT)
+                    if current is None:
+                        return RepositoryResult(RepositoryOutcome.CORRUPT)
+                    if current != snapshot:
+                        return RepositoryResult(RepositoryOutcome.REJECTED)
                     return RepositoryResult(RepositoryOutcome.REUSED, existing)
 
                 current = self._read_current_row(snapshot.target)
+                if current is None and request.expected_previous is not None:
+                    return RepositoryResult(RepositoryOutcome.REJECTED)
                 if current is not None:
                     if current == snapshot:
                         return RepositoryResult(RepositoryOutcome.CORRUPT)
