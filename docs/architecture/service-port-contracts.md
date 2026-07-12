@@ -60,6 +60,9 @@ Metadata and cover provider roles are mutually isolated: metadata providers
 expose `lookup` but never `lookup_covers`, while cover providers expose
 `lookup_covers` but never `lookup`. Other directly provider-isolated families
 deny both methods where their contract already denies provider lookup.
+Durable schedulers and target library readers also deny both provider lookup
+methods so principals holding repository state or target-service read
+credentials cannot acquire provider authority through contract composition.
 Provider query facts use bounded safe Unicode metadata text, preserving
 accented and non-Latin bibliographic values while rejecting controls,
 credential-shaped content, absolute/home/traversal/filesystem-URI paths,

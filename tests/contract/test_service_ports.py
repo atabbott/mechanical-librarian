@@ -503,6 +503,28 @@ class ServicePortContractTests(unittest.TestCase):
             with self.subTest(family=family_name, forbidden="lookup_covers"):
                 self.contract.reject_family(nonconformer, family)
 
+        for family_name, conformer in {
+            "durable-scheduler": SyntheticScheduler(),
+            "library-reader": SyntheticLibraryReader(),
+        }.items():
+            family = contracts[family_name]
+            required = {
+                method.name: type(conformer).__dict__[method.name]
+                for method in family.methods
+            }
+            for forbidden_name in ("lookup", "lookup_covers"):
+                attributes = {
+                    **required,
+                    forbidden_name: FusedMetadataCoverProvider.__dict__[forbidden_name],
+                }
+                nonconformer = type(
+                    f"{forbidden_name.title().replace('_', '')}{type(conformer).__name__}",
+                    (),
+                    attributes,
+                )()
+                with self.subTest(family=family_name, forbidden=forbidden_name):
+                    self.contract.reject_family(nonconformer, family)
+
     def test_provider_empty_success_round_trip_and_boundaries(self) -> None:
         query = ProviderQuery(MediaType.EBOOK, FieldName.TITLE, (ProviderFact(ProviderFactCode.TITLE, ("Synthetic title",)),), SchemaVersion("provider-query-v1"))
         empty_request = PageRequest(None, 10)
@@ -525,6 +547,8 @@ class ServicePortContractTests(unittest.TestCase):
 
         cover = CoverCandidate(CoverReference("provider-cover", _fingerprint("cover")), provenance)
         self.assertIs(type(cover), CoverCandidate)
+        with self.assertRaises(ValueError):
+            CoverCandidate(CoverReference("provider-cover", "not-a-fingerprint"), provenance)  # type: ignore[arg-type]
 
     def test_provider_response_metadata_and_cover_bounds_return_typed_failure(self) -> None:
         query = ProviderQuery(MediaType.EBOOK, FieldName.TITLE, (ProviderFact(ProviderFactCode.TITLE, ("Title",)),), SchemaVersion("provider-query-v1"))

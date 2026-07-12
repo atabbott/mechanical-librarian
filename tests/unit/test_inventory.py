@@ -97,6 +97,16 @@ class InventoryEntityTests(unittest.TestCase):
                 with self.assertRaises(DomainValueError):
                     ServiceEndpoint(value)
 
+    def test_cover_reference_rejects_malformed_internal_types(self) -> None:
+        with self.assertRaises(DomainValueError):
+            CoverReference(b"cover-bytes")  # type: ignore[arg-type]
+        with self.assertRaises(DomainValueError):
+            CoverReference("cover-reference", "not-a-fingerprint")  # type: ignore[arg-type]
+        self.assertEqual(
+            CoverReference("cover-reference", self.fingerprint).content_fingerprint,
+            self.fingerprint,
+        )
+
     def test_normalized_metadata_is_immutable_and_has_one_value_per_field(self) -> None:
         metadata = NormalizedMetadata(
             (MetadataField(FieldName.TITLE, ("Example",)),)

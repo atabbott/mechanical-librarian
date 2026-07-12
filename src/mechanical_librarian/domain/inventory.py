@@ -235,8 +235,10 @@ class CoverReference:
     content_fingerprint: Fingerprint | None = None
 
     def __post_init__(self) -> None:
-        if not self.opaque_reference or len(self.opaque_reference) > 512:
+        if type(self.opaque_reference) is not str or not self.opaque_reference or len(self.opaque_reference) > 512:
             raise DomainValueError("cover reference must be a non-empty value up to 512 characters")
+        if self.content_fingerprint is not None and type(self.content_fingerprint) is not Fingerprint:
+            raise DomainValueError("cover content identity must be an exact fingerprint")
 
     def __repr__(self) -> str:
         return "CoverReference(opaque_reference=<redacted>, content_fingerprint=<redacted>)"
