@@ -280,6 +280,100 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
             (1,),
         )
 
+    def test_mixed_attempt_expiry_terminalizes_every_sibling_in_either_row_order(self) -> None:
+        runs: list[tuple[RunId, StageId, StageId]] = []
+        for exhausted_stage, sibling_stage in (
+            (StageId("left"), StageId("right")),
+            (StageId("right"), StageId("left")),
+        ):
+            run_id = self.create_run(f"mixed-expiry-{exhausted_stage.value}")
+            self.repository.enqueue_eligible(run_id, now=NOW)
+            root = self.claim_one(f"root-{exhausted_stage.value}")
+            self.repository.start(root, now=NOW)
+            self.repository.complete(root, OutcomeKind.COMPLETED, now=NOW)
+            self.repository.enqueue_eligible(run_id, now=NOW)
+            first = self.repository.claim(
+                WorkerId(f"first-{exhausted_stage.value}"),
+                capacity=2,
+                now=NOW,
+                lease_duration=LEASE,
+            ).value
+            self.assertIsNotNone(first)
+            exhausted = next(
+                claim for claim in first if claim.stage_id == exhausted_stage
+            )
+            self.repository.start(exhausted, now=NOW)
+
+            recovered_at = NOW + timedelta(seconds=6)
+            second = self.repository.claim(
+                WorkerId(f"second-{exhausted_stage.value}"),
+                capacity=2,
+                now=recovered_at,
+                lease_duration=LEASE,
+            ).value
+            self.assertIsNotNone(second)
+            self.assertEqual(len(second), 2)
+            for claim in second:
+                self.repository.start(claim, now=recovered_at)
+
+            terminal_at = NOW + timedelta(seconds=12)
+            recovered = self.repository.claim(
+                WorkerId(f"terminal-{exhausted_stage.value}"),
+                capacity=2,
+                now=terminal_at,
+                lease_duration=LEASE,
+            )
+            self.assertEqual(recovered.value, ())
+            snapshot = self.repository.inspect(run_id).value
+            self.assertEqual(snapshot.state, RunState.FAILED_TERMINAL)
+            jobs = {job.stage_id: job for job in snapshot.jobs}
+            self.assertEqual(jobs[exhausted_stage].state.value, "failed_terminal")
+            self.assertEqual(jobs[exhausted_stage].attempt, 2)
+            self.assertEqual(jobs[sibling_stage].state.value, "cancelled")
+            self.assertEqual(jobs[sibling_stage].attempt, 1)
+            stages = {stage.id: stage.state for stage in snapshot.stages}
+            self.assertEqual(stages[exhausted_stage], StageState.FAILED_TERMINAL)
+            self.assertEqual(stages[sibling_stage], StageState.CANCELLED)
+            self.assertEqual(stages[StageId("join")], StageState.DEPENDENCY_FAILED)
+            self.assertTrue(
+                self.repository.validate_run(
+                    run_id, synthetic_heartbeat_definition()
+                ).accepted
+            )
+            runs.append((run_id, exhausted_stage, sibling_stage))
+
+        self.connection.close()
+        self.connection = connect(self.path)
+        migrate(self.connection)
+        self.repository = SQLiteJobHeartbeatRepository(self.connection)
+        for run_id, exhausted_stage, sibling_stage in runs:
+            snapshot = self.repository.inspect(run_id).value
+            jobs = {job.stage_id: job for job in snapshot.jobs}
+            self.assertEqual(snapshot.state, RunState.FAILED_TERMINAL)
+            self.assertEqual(jobs[exhausted_stage].state.value, "failed_terminal")
+            self.assertEqual(jobs[sibling_stage].state.value, "cancelled")
+            failures = dict(
+                self.connection.execute(
+                    "SELECT stage_id, terminal_failure FROM jobs WHERE run_id = ?",
+                    (run_id.value,),
+                )
+            )
+            self.assertEqual(
+                failures[exhausted_stage.value], FailureKind.LEASE_EXPIRED.value
+            )
+            self.assertEqual(
+                failures[sibling_stage.value], FailureKind.DEPENDENCY_FAILED.value
+            )
+            self.assertEqual(
+                self.repository.claim(
+                    WorkerId(f"after-restart-{exhausted_stage.value}"),
+                    capacity=2,
+                    now=NOW + timedelta(seconds=30),
+                    lease_duration=LEASE,
+                ).value,
+                (),
+            )
+
     def test_renewal_rejects_nonpositive_and_unbounded_durations(self) -> None:
         run_id = self.create_run()
         self.repository.enqueue_eligible(run_id, now=NOW)
@@ -753,6 +847,154 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
         )
         self.assertTrue(graph_result.accepted)
         self.assertEqual(graph_result.value.replanned_from, graph_source)
+
+    def test_completed_version_only_replan_is_immediately_terminal_and_idempotent(self) -> None:
+        baseline = synthetic_heartbeat_definition()
+        source = self.create_run("completed-version-only")
+        self.complete_run(source)
+        version_only = WorkflowDefinition(
+            WorkflowVersion("heartbeat-v9"), baseline.stages, baseline.dependencies
+        )
+        replanned = self.repository.create_or_resume(
+            source,
+            version_only,
+            changed_stages=frozenset(),
+            now=NOW + timedelta(minutes=1),
+        )
+        self.assertTrue(replanned.accepted)
+        self.assertEqual(replanned.value.state, RunState.SUCCEEDED)
+        self.assertTrue(
+            all(
+                stage.state is StageState.SUCCEEDED
+                and stage.reuse_eligible
+                and stage.current_applicable
+                for stage in replanned.value.stages
+            )
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT from_state, to_state FROM workflow_transitions "
+                "WHERE run_id = ? AND entity_kind = 'run'",
+                (replanned.value.id.value,),
+            ).fetchall(),
+            [("waiting", "succeeded")],
+        )
+
+        self.connection.close()
+        self.connection = connect(self.path)
+        migrate(self.connection)
+        self.repository = SQLiteJobHeartbeatRepository(self.connection)
+        resumed = self.repository.create_or_resume(
+            replanned.value.id,
+            version_only,
+            changed_stages=frozenset(),
+            now=NOW + timedelta(minutes=2),
+        )
+        self.assertEqual(resumed.outcome, RepositoryOutcome.REUSED)
+        self.assertEqual(resumed.value.state, RunState.SUCCEEDED)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM workflow_transitions "
+                "WHERE run_id = ? AND entity_kind = 'run'",
+                (replanned.value.id.value,),
+            ).fetchone(),
+            (1,),
+        )
+        self.assertTrue(
+            self.repository.validate_run(replanned.value.id, version_only).accepted
+        )
+
+    def test_chained_replan_preserves_inherited_checkpoint_invalidity(self) -> None:
+        source = self.create_run("chained-replan")
+        self.complete_run(source)
+        second_definition = synthetic_heartbeat_definition(incompatible=True)
+        second = self.repository.create_or_resume(
+            source,
+            second_definition,
+            changed_stages=frozenset({StageId("left")}),
+            now=NOW + timedelta(minutes=1),
+        ).value
+        second_flags = {
+            stage.id: (stage.reuse_eligible, stage.current_applicable)
+            for stage in second.stages
+        }
+        self.assertEqual(second_flags[StageId("left")], (False, False))
+        self.assertEqual(second_flags[StageId("join")], (False, False))
+
+        third_stages = tuple(
+            StageDefinition(
+                stage.id,
+                stage.kind,
+                StageVersion("stage-v3")
+                if stage.id == StageId("right")
+                else stage.version,
+                stage.expected_outcome,
+            )
+            for stage in second_definition.stages
+        )
+        third_definition = WorkflowDefinition(
+            WorkflowVersion("heartbeat-v3"),
+            third_stages,
+            second_definition.dependencies,
+        )
+        third = self.repository.create_or_resume(
+            second.id,
+            third_definition,
+            changed_stages=frozenset({StageId("right")}),
+            now=NOW + timedelta(minutes=2),
+        ).value
+        third_flags = {
+            stage.id: (stage.reuse_eligible, stage.current_applicable)
+            for stage in third.stages
+        }
+        self.assertEqual(third_flags[StageId("root")], (True, True))
+        self.assertEqual(third_flags[StageId("left")], (False, False))
+        self.assertEqual(third_flags[StageId("right")], (False, False))
+        self.assertEqual(third_flags[StageId("join")], (False, False))
+        self.assertTrue(
+            self.repository.validate_run(third.id, third_definition).accepted
+        )
+
+        self.assertEqual(
+            self.repository.enqueue_eligible(
+                third.id, now=NOW + timedelta(minutes=2)
+            ).value,
+            2,
+        )
+        branches = self.repository.claim(
+            WorkerId("worker-chained-replan"),
+            capacity=2,
+            now=NOW + timedelta(minutes=2),
+            lease_duration=LEASE,
+        ).value
+        self.assertEqual(
+            {claim.stage_id for claim in branches},
+            {StageId("left"), StageId("right")},
+        )
+        for claim in branches:
+            self.repository.start(claim, now=NOW + timedelta(minutes=2))
+            self.repository.complete(
+                claim,
+                OutcomeKind.COMPLETED,
+                now=NOW + timedelta(minutes=2),
+            )
+        self.assertEqual(
+            self.repository.enqueue_eligible(
+                third.id, now=NOW + timedelta(minutes=2)
+            ).value,
+            1,
+        )
+        join = self.claim_one("worker-chained-join", NOW + timedelta(minutes=2))
+        self.assertEqual(join.stage_id, StageId("join"))
+        self.repository.start(join, now=NOW + timedelta(minutes=2))
+        self.repository.complete(
+            join,
+            OutcomeKind.COMPLETED,
+            now=NOW + timedelta(minutes=2),
+        )
+        final = self.repository.inspect(third.id).value
+        self.assertEqual(final.state, RunState.SUCCEEDED)
+        self.assertTrue(all(stage.current_applicable for stage in final.stages))
 
     def test_replan_preserves_complete_original_history(self) -> None:
         source = self.create_run("history-source")

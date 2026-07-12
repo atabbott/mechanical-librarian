@@ -501,6 +501,7 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             ).fetchone()
             if row != (definition.version.value, definition.digest):
                 raise ValueError("stored workflow replacement is incompatible")
+            self._refresh_run_state(connection, replacement, timestamp)
             return replacement
 
         self._insert_run(
@@ -510,13 +511,23 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             timestamp,
             replanned_from=source,
         )
-        affected = definition.descendants(changed_stages)
-        source_checkpoints = {
-            row[0]: row[1]
+        source_checkpoint_rows = {
+            row[0]: (row[1], bool(row[2]), bool(row[3]))
             for row in connection.execute(
-                "SELECT stage_id, outcome FROM stage_checkpoints WHERE run_id = ?",
+                "SELECT stage_id, outcome, reuse_eligible, current_applicable "
+                "FROM stage_checkpoints WHERE run_id = ?",
                 (source.value,),
             )
+        }
+        inherited_invalid = frozenset(
+            StageId(stage_id)
+            for stage_id, (_outcome, reuse_eligible, current_applicable)
+            in source_checkpoint_rows.items()
+            if not reuse_eligible or not current_applicable
+        )
+        affected = definition.descendants(changed_stages | inherited_invalid)
+        source_checkpoints = {
+            stage_id: row[0] for stage_id, row in source_checkpoint_rows.items()
         }
         for stage in definition.stages:
             outcome = source_checkpoints.get(stage.id.value)
@@ -571,6 +582,7 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             "WHERE run_id = ? AND superseded_by IS NULL",
             (replacement.value, timestamp, source.value),
         )
+        self._refresh_run_state(connection, replacement, timestamp)
         return replacement
 
     def enqueue_eligible(self, run_id: RunId, *, now: datetime) -> RepositoryResult[int]:
@@ -766,6 +778,7 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
     def _recover_expired(
         self, connection: sqlite3.Connection, now: datetime, timestamp: str
     ) -> None:
+        terminal_runs: set[str] = set()
         rows = connection.execute(
             "SELECT j.job_id, j.run_id, j.stage_id, j.state, j.attempt, "
             "j.cancellation_requested, j.terminal_failure, r.state, r.cancellation_requested, s.state "
@@ -848,7 +861,7 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                 self._propagate_terminal(
                     connection, RunId(run_id), StageId(stage_id), False, timestamp
                 )
-                self._refresh_run_state(connection, RunId(run_id), timestamp)
+                terminal_runs.add(run_id)
             else:
                 self._record_edge(
                     connection, run_id, "job", job_id,
@@ -868,6 +881,15 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                     "UPDATE workflow_stages SET state = 'ready' WHERE run_id = ? AND stage_id = ?",
                     (run_id, stage_id),
                 )
+        for run_id in sorted(terminal_runs):
+            typed_run_id = RunId(run_id)
+            self._terminalize_remaining(
+                connection,
+                typed_run_id,
+                FailureKind.DEPENDENCY_FAILED,
+                timestamp,
+            )
+            self._refresh_run_state(connection, typed_run_id, timestamp)
 
     def start(self, claim: JobClaim, *, now: datetime) -> RepositoryResult[None]:
         if type(claim) is not JobClaim:
