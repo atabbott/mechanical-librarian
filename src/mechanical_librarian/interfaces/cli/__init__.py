@@ -17,10 +17,16 @@ from mechanical_librarian.application.state_check import (
     StateCheckOutcome,
     StateCheckResult,
 )
+from mechanical_librarian.application.synthetic_inventory import (
+    SyntheticInventoryInspection,
+    SyntheticInventoryOutcome,
+    SyntheticInventoryResult,
+)
 
 
 StateCheckRunner = Callable[[Path], StateCheckResult]
 JobHeartbeatRunner = Callable[[Path], HeartbeatResult]
+SyntheticInventoryRunner = Callable[[Path, Path], SyntheticInventoryResult]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -36,6 +42,9 @@ _FAILURE_MESSAGES = {
     StateCheckOutcome.INTERNAL_FAILURE: "State check failed: internal diagnostic error.\n",
 }
 _HEARTBEAT_FAILURE = "Job heartbeat failed: durable synthetic recovery could not be verified.\n"
+_INVENTORY_FAILURE = (
+    "Synthetic inventory failed: bounded report-only inventory could not be verified.\n"
+)
 
 
 def _database_path(value: str) -> Path:
@@ -67,6 +76,14 @@ def _parser() -> argparse.ArgumentParser:
     job_heartbeat.add_argument(
         "--database", required=True, metavar="PATH", type=_database_path
     )
+    inventory = commands.add_parser(
+        "synthetic-inventory",
+        help="persist and inspect one bounded report-only synthetic inventory item",
+    )
+    inventory.add_argument("--config", required=True, metavar="PATH", type=Path)
+    inventory.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
     return parser
 
 
@@ -75,6 +92,7 @@ def main(
     *,
     state_check_runner: StateCheckRunner,
     job_heartbeat_runner: JobHeartbeatRunner | None = None,
+    synthetic_inventory_runner: SyntheticInventoryRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -83,6 +101,42 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     arguments = _parser().parse_args(argv)
+    if arguments.command == "synthetic-inventory":
+        if synthetic_inventory_runner is None:
+            errors.write(_INVENTORY_FAILURE)
+            return 1
+        try:
+            result = synthetic_inventory_runner(arguments.config, arguments.database)
+        except Exception:
+            errors.write(_INVENTORY_FAILURE)
+            return 1
+        if (
+            type(result) is not SyntheticInventoryResult
+            or type(result.outcome) is not SyntheticInventoryOutcome
+            or not result.succeeded
+            or type(result.inspection) is not SyntheticInventoryInspection
+        ):
+            errors.write(_INVENTORY_FAILURE)
+            return 1
+        inspection = result.inspection
+        output.write("Synthetic inventory passed.\n")
+        output.write("authority=synthetic-inventory-read-only\n")
+        output.write(
+            "scope="
+            f"{inspection.adapter.value}/{inspection.connection.value}/"
+            f"{inspection.library.value}\n"
+        )
+        output.write(
+            f"snapshot={inspection.snapshot.value} "
+            f"fingerprint={inspection.fingerprint.schema.value}:"
+            f"{inspection.fingerprint.digest}\n"
+        )
+        output.write(
+            f"items={inspection.item_count} history={inspection.history_count} "
+            f"current={inspection.current_count}\n"
+        )
+        output.write(f"persistence={inspection.repository_outcome.value}\n")
+        return 0
     if arguments.command == "job-heartbeat":
         if job_heartbeat_runner is None:
             errors.write(_HEARTBEAT_FAILURE)
@@ -157,4 +211,9 @@ def main(
     return 1
 
 
-__all__ = ["JobHeartbeatRunner", "StateCheckRunner", "main"]
+__all__ = [
+    "JobHeartbeatRunner",
+    "StateCheckRunner",
+    "SyntheticInventoryRunner",
+    "main",
+]

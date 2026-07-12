@@ -19,7 +19,9 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+  "pydantic==2.13.4",
+]
 
 [project.scripts]
 mechanical-librarian = "mechanical_librarian.bootstrap:main"

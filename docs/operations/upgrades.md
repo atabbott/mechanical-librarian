@@ -71,6 +71,15 @@ The migration includes append-only workflow transition facts so recovery can
 retain the validated old state, new state, actor, reason, run attribution, and
 timestamp instead of inferring history from the current row alone.
 
+The F03 inventory migration is likewise additive and forward-only from genuine
+F02 state. It adds immutable canonical snapshot history, an exact scoped current
+observation pointer, append-only history triggers, and a target-scoped index.
+Fault injection after the first F03 object proves the whole migration rolls
+back to usable F02 state while preserving instance, audit, workflow, stage,
+job, attempt, checkpoint, and transition data. A clean retry applies migration
+3 once. Downgrade requires restoring a verified pre-F03 copy; an F02 binary
+must not open F03 state.
+
 ## Verification
 
 After upgrade:

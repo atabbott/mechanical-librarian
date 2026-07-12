@@ -15,12 +15,20 @@
 
 ## Current schema boundary
 
-The initial `config-v1` model validates an untrusted in-memory mapping before
-any application work begins. File, environment, CLI, dashboard, encrypted-store,
+The initial `config-v1` model uses a strict Pydantic v2 transport schema and
+maps validated data into immutable application and domain values before any
+application work begins. The currently supported transport is one bounded
+UTF-8 JSON file. It rejects duplicate keys, coercion, unknown fields, malformed
+JSON and oversized input. Future environment, CLI, dashboard, encrypted-store,
 and Docker-secret transports must call this same validator; none may introduce
 an undocumented environment-variable override. Its canonical export reports
 only secret configuration status and logical mount identity, never service
 origins, secret references, or private paths.
+
+The generated schema is committed as
+[`config-v1.schema.json`](config-v1.schema.json). Regenerate it with
+`PYTHONPATH=src uv run --frozen python scripts/generate_configuration_schema.py`;
+the test suite fails if the generated artifact drifts.
 
 Import planning accepts current and proposed mappings and validates both through
 that same loader before comparing them. Its output contains only fixed schema
@@ -42,6 +50,7 @@ re-evaluation, notification reconfiguration, and backup-readiness revalidation.
 | Changed schema path | Required impacts |
 | --- | --- |
 | `instance.instance_name` | restart |
+| `connections.id` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
 | `connections.adapter` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
 | `connections.endpoint` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
 | `connections.secret_reference` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
@@ -50,11 +59,14 @@ re-evaluation, notification reconfiguration, and backup-readiness revalidation.
 | `media_mounts.name`, `.library_type`, `.container_path`, or `.service_path` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
 | `limits.parser_concurrency` | restart |
 | `limits.parser_timeout_seconds` or `.temporary_bytes` | restart and evidence re-evaluation |
+| `evidence.enabled_formats` | restart, evidence invalidation and re-evaluation, candidate and review re-evaluation |
+| `evidence.maximum_document_bytes` or `.maximum_text_characters` | restart and evidence re-evaluation |
 | `providers` | restart, candidate and review re-evaluation |
 | `reviewers` | restart and review re-evaluation |
 | `policy.policy_version` | restart and review re-evaluation |
 | `notifications` | restart and notification reconfiguration |
 | `backups_enabled` | restart, backup-readiness revalidation, and review re-evaluation |
+| `retention.evidence_days`, `.job_log_days`, or `.maximum_artifact_bytes` | restart |
 
 Connection and mount collections are compared by fixed aggregate field paths;
 plans never expose a collection index, endpoint, secret reference, library
@@ -112,6 +124,10 @@ schemas.
 - parser concurrency, timeout, retry, and circuit-breaker bounds; and
 - changes that require evidence invalidation and re-extraction.
 
+Current defaults enable `epub`, `m4b`, and `mp3`, bound one document to
+67,108,864 bytes, and bound retained text processing to 262,144 characters.
+The closed current format vocabulary is `epub`, `m4b`, and `mp3`.
+
 ### Providers
 
 The structured provider group is planned beyond the current aggregate
@@ -168,6 +184,12 @@ current aggregate `reviewers` impact path:
 - freshness and retention;
 - artifact and cache limits;
 - optional offsite target reference.
+
+The current model exposes `backups_enabled` plus bounded `retention` values for
+evidence days, job-log days, and maximum retained artifact bytes. Their defaults
+are 90 days, 30 days, and 1,073,741,824 bytes respectively. Backup execution
+and deletion workflows remain outside F03.
+Backups enabled defaults to true.
 
 ### Notifications
 

@@ -1,0 +1,44 @@
+{
+  "backups_enabled": true,
+  "connections": [
+    {
+      "adapter": "synthetic",
+      "capability_overrides": [
+        "inventory-read"
+      ],
+      "enabled_libraries": [
+        "synthetic-library"
+      ],
+      "endpoint": "https://synthetic.invalid",
+      "id": "synthetic-connection",
+      "secret_reference": "unused-synthetic-reference"
+    }
+  ],
+  "destructive_actions_enabled": false,
+  "evidence": {
+    "enabled_formats": [
+      "epub"
+    ],
+    "maximum_document_bytes": 1048576,
+    "maximum_text_characters": 1024
+  },
+  "instance_name": "synthetic-demo",
+  "limits": {
+    "parser_concurrency": 1,
+    "parser_timeout_seconds": 60,
+    "temporary_bytes": 1048576
+  },
+  "media_mounts": [],
+  "notifications": [],
+  "policy": {
+    "policy_version": "policy-v1"
+  },
+  "providers": [],
+  "retention": {
+    "evidence_days": 30,
+    "job_log_days": 7,
+    "maximum_artifact_bytes": 1048576
+  },
+  "reviewers": [],
+  "schema_version": "config-v1"
+}

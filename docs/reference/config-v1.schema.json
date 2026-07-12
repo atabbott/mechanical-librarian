@@ -1,0 +1,277 @@
+{
+  "$defs": {
+    "ConnectionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "title": "Adapter",
+          "type": "string"
+        },
+        "capability_overrides": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Capability Overrides",
+          "type": "array"
+        },
+        "enabled_libraries": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Enabled Libraries",
+          "type": "array"
+        },
+        "endpoint": {
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
+        },
+        "secret_reference": {
+          "title": "Secret Reference",
+          "type": "string"
+        }
+      },
+      "required": [
+        "adapter",
+        "endpoint",
+        "secret_reference",
+        "enabled_libraries"
+      ],
+      "title": "ConnectionInput",
+      "type": "object"
+    },
+    "EvidenceInput": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled_formats": {
+          "default": [
+            "epub",
+            "m4b",
+            "mp3"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "title": "Enabled Formats",
+          "type": "array"
+        },
+        "maximum_document_bytes": {
+          "default": 67108864,
+          "title": "Maximum Document Bytes",
+          "type": "integer"
+        },
+        "maximum_text_characters": {
+          "default": 262144,
+          "title": "Maximum Text Characters",
+          "type": "integer"
+        }
+      },
+      "title": "EvidenceInput",
+      "type": "object"
+    },
+    "MediaMountInput": {
+      "additionalProperties": false,
+      "properties": {
+        "container_path": {
+          "title": "Container Path",
+          "type": "string"
+        },
+        "library_type": {
+          "title": "Library Type",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "read_only": {
+          "default": true,
+          "title": "Read Only",
+          "type": "boolean"
+        },
+        "service_path": {
+          "title": "Service Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "library_type",
+        "container_path",
+        "service_path"
+      ],
+      "title": "MediaMountInput",
+      "type": "object"
+    },
+    "PolicyInput": {
+      "additionalProperties": false,
+      "properties": {
+        "policy_version": {
+          "default": "policy-v1",
+          "title": "Policy Version",
+          "type": "string"
+        }
+      },
+      "title": "PolicyInput",
+      "type": "object"
+    },
+    "ResourceLimitsInput": {
+      "additionalProperties": false,
+      "properties": {
+        "parser_concurrency": {
+          "default": 1,
+          "title": "Parser Concurrency",
+          "type": "integer"
+        },
+        "parser_timeout_seconds": {
+          "default": 60,
+          "title": "Parser Timeout Seconds",
+          "type": "integer"
+        },
+        "temporary_bytes": {
+          "default": 1073741824,
+          "title": "Temporary Bytes",
+          "type": "integer"
+        }
+      },
+      "title": "ResourceLimitsInput",
+      "type": "object"
+    },
+    "RetentionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_days": {
+          "default": 90,
+          "title": "Evidence Days",
+          "type": "integer"
+        },
+        "job_log_days": {
+          "default": 30,
+          "title": "Job Log Days",
+          "type": "integer"
+        },
+        "maximum_artifact_bytes": {
+          "default": 1073741824,
+          "title": "Maximum Artifact Bytes",
+          "type": "integer"
+        }
+      },
+      "title": "RetentionInput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The single strict transport schema used by every supported config source.",
+  "properties": {
+    "backups_enabled": {
+      "default": true,
+      "title": "Backups Enabled",
+      "type": "boolean"
+    },
+    "connections": {
+      "items": {
+        "$ref": "#/$defs/ConnectionInput"
+      },
+      "title": "Connections",
+      "type": "array"
+    },
+    "destructive_actions_enabled": {
+      "default": false,
+      "title": "Destructive Actions Enabled",
+      "type": "boolean"
+    },
+    "evidence": {
+      "$ref": "#/$defs/EvidenceInput",
+      "default": {
+        "enabled_formats": [
+          "epub",
+          "m4b",
+          "mp3"
+        ],
+        "maximum_document_bytes": 67108864,
+        "maximum_text_characters": 262144
+      }
+    },
+    "instance_name": {
+      "title": "Instance Name",
+      "type": "string"
+    },
+    "limits": {
+      "$ref": "#/$defs/ResourceLimitsInput",
+      "default": {
+        "parser_concurrency": 1,
+        "parser_timeout_seconds": 60,
+        "temporary_bytes": 1073741824
+      }
+    },
+    "media_mounts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/MediaMountInput"
+      },
+      "title": "Media Mounts",
+      "type": "array"
+    },
+    "notifications": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Notifications",
+      "type": "array"
+    },
+    "policy": {
+      "$ref": "#/$defs/PolicyInput",
+      "default": {
+        "policy_version": "policy-v1"
+      }
+    },
+    "providers": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Providers",
+      "type": "array"
+    },
+    "retention": {
+      "$ref": "#/$defs/RetentionInput",
+      "default": {
+        "evidence_days": 90,
+        "job_log_days": 30,
+        "maximum_artifact_bytes": 1073741824
+      }
+    },
+    "reviewers": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Reviewers",
+      "type": "array"
+    },
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "instance_name",
+    "connections"
+  ],
+  "title": "ConfigurationInput",
+  "type": "object"
+}

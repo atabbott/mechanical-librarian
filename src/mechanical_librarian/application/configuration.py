@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Callable
 
 from mechanical_librarian.domain.identifiers import (
+    ConnectionId,
     DomainValueError,
     PolicyVersion,
     SchemaVersion,
@@ -80,6 +81,26 @@ class ConfigurationImportPlan:
     def is_noop(self) -> bool:
         return not self.changes
 
+    def audit_event(self) -> "ConfigurationChangeEvent":
+        """Project a value-free typed fact suitable for later audit persistence."""
+
+        return ConfigurationChangeEvent(SchemaVersion("config-change-v1"), self.changes)
+
+
+@dataclass(frozen=True)
+class ConfigurationChangeEvent:
+    schema_version: SchemaVersion
+    changes: tuple[ConfigurationChange, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.schema_version) is not SchemaVersion
+            or self.schema_version != SchemaVersion("config-change-v1")
+            or type(self.changes) is not tuple
+            or any(type(change) is not ConfigurationChange for change in self.changes)
+        ):
+            raise ConfigurationError("configuration change event is malformed")
+
 
 @dataclass(frozen=True, repr=False)
 class ConnectionConfiguration:
@@ -88,6 +109,7 @@ class ConnectionConfiguration:
     secret: SecretReference
     enabled_libraries: tuple[str, ...]
     capability_overrides: tuple[str, ...] = ()
+    connection_id: ConnectionId | None = None
 
     def __post_init__(self) -> None:
         _text(self.adapter, "connection adapter", 64)
@@ -105,6 +127,8 @@ class ConnectionConfiguration:
             raise ConfigurationError("capability overrides must be a canonical tuple")
         if _capability_overrides(self.capability_overrides) != self.capability_overrides:
             raise ConfigurationError("capability overrides must be a canonical tuple")
+        if self.connection_id is not None and type(self.connection_id) is not ConnectionId:
+            raise ConfigurationError("connection ID is malformed")
 
     def __repr__(self) -> str:
         return "ConnectionConfiguration(<redacted>)"
@@ -154,6 +178,53 @@ class ResourceLimits:
 
 
 @dataclass(frozen=True)
+class EvidenceConfiguration:
+    enabled_formats: tuple[str, ...] = ("epub", "m4b", "mp3")
+    maximum_document_bytes: int = 67_108_864
+    maximum_text_characters: int = 262_144
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.enabled_formats) is not tuple
+            or not self.enabled_formats
+            or self.enabled_formats != tuple(sorted(self.enabled_formats))
+            or _text_tuple(self.enabled_formats, "evidence formats", required=True)
+            != self.enabled_formats
+        ):
+            raise ConfigurationError("evidence formats must be a canonical non-empty tuple")
+        if not all(value in {"epub", "m4b", "mp3"} for value in self.enabled_formats):
+            raise ConfigurationError("evidence format is unsupported")
+        if (
+            type(self.maximum_document_bytes) is not int
+            or not 1_048_576 <= self.maximum_document_bytes <= 536_870_912
+        ):
+            raise ConfigurationError("evidence document byte limit is outside safe bounds")
+        if (
+            type(self.maximum_text_characters) is not int
+            or not 1_024 <= self.maximum_text_characters <= 4_194_304
+        ):
+            raise ConfigurationError("evidence text limit is outside safe bounds")
+
+
+@dataclass(frozen=True)
+class RetentionConfiguration:
+    evidence_days: int = 90
+    job_log_days: int = 30
+    maximum_artifact_bytes: int = 1_073_741_824
+
+    def __post_init__(self) -> None:
+        if type(self.evidence_days) is not int or not 1 <= self.evidence_days <= 3_650:
+            raise ConfigurationError("evidence retention is outside safe bounds")
+        if type(self.job_log_days) is not int or not 1 <= self.job_log_days <= 365:
+            raise ConfigurationError("job-log retention is outside safe bounds")
+        if (
+            type(self.maximum_artifact_bytes) is not int
+            or not 1_048_576 <= self.maximum_artifact_bytes <= 17_179_869_184
+        ):
+            raise ConfigurationError("artifact retention limit is outside safe bounds")
+
+
+@dataclass(frozen=True)
 class PolicyConfiguration:
     policy_version: str = "policy-v1"
 
@@ -173,11 +244,13 @@ class ApplicationConfiguration:
     connections: tuple[ConnectionConfiguration, ...]
     media_mounts: tuple[MediaMountConfiguration, ...]
     limits: ResourceLimits
+    evidence: EvidenceConfiguration = field(default_factory=EvidenceConfiguration)
     providers: tuple[str, ...] = ()
     reviewers: tuple[str, ...] = ()
     policy: PolicyConfiguration = PolicyConfiguration()
     notifications: tuple[str, ...] = ()
     backups_enabled: bool = True
+    retention: RetentionConfiguration = field(default_factory=RetentionConfiguration)
     destructive_actions_enabled: bool = False
 
     def __post_init__(self) -> None:
@@ -196,7 +269,12 @@ class ApplicationConfiguration:
             type(value) is not MediaMountConfiguration for value in self.media_mounts
         ):
             raise ConfigurationError("configuration requires typed media mounts")
-        if type(self.limits) is not ResourceLimits or type(self.policy) is not PolicyConfiguration:
+        if (
+            type(self.limits) is not ResourceLimits
+            or type(self.evidence) is not EvidenceConfiguration
+            or type(self.policy) is not PolicyConfiguration
+            or type(self.retention) is not RetentionConfiguration
+        ):
             raise ConfigurationError("configuration limits or policy are malformed")
         for values, label in (
             (self.providers, "providers"),
@@ -222,6 +300,11 @@ class ApplicationConfiguration:
             "connections": [
                 {
                     "adapter": connection.adapter,
+                    "id": (
+                        None
+                        if connection.connection_id is None
+                        else connection.connection_id.value
+                    ),
                     "secret_configured": True,
                     "enabled_libraries": list(connection.enabled_libraries),
                     "capability_overrides": list(connection.capability_overrides),
@@ -241,11 +324,21 @@ class ApplicationConfiguration:
                 "parser_timeout_seconds": self.limits.parser_timeout_seconds,
                 "temporary_bytes": self.limits.temporary_bytes,
             },
+            "evidence": {
+                "enabled_formats": list(self.evidence.enabled_formats),
+                "maximum_document_bytes": self.evidence.maximum_document_bytes,
+                "maximum_text_characters": self.evidence.maximum_text_characters,
+            },
             "providers": list(self.providers),
             "reviewers": list(self.reviewers),
             "policy": {"policy_version": self.policy.policy_version},
             "notifications": list(self.notifications),
             "backups_enabled": self.backups_enabled,
+            "retention": {
+                "evidence_days": self.retention.evidence_days,
+                "job_log_days": self.retention.job_log_days,
+                "maximum_artifact_bytes": self.retention.maximum_artifact_bytes,
+            },
             "destructive_actions_enabled": False,
         }
 
@@ -256,14 +349,17 @@ _CONFIGURATION_FIELDS = frozenset({
     "connections",
     "media_mounts",
     "limits",
+    "evidence",
     "providers",
     "reviewers",
     "policy",
     "notifications",
     "backups_enabled",
+    "retention",
     "destructive_actions_enabled",
 })
 _CONNECTION_FIELDS = frozenset({
+    "id",
     "adapter",
     "endpoint",
     "secret_reference",
@@ -277,6 +373,12 @@ _LIMIT_FIELDS = frozenset(
     {"parser_concurrency", "parser_timeout_seconds", "temporary_bytes"}
 )
 _POLICY_FIELDS = frozenset({"policy_version"})
+_EVIDENCE_FIELDS = frozenset(
+    {"enabled_formats", "maximum_document_bytes", "maximum_text_characters"}
+)
+_RETENTION_FIELDS = frozenset(
+    {"evidence_days", "job_log_days", "maximum_artifact_bytes"}
+)
 _READ_ONLY_CAPABILITY_OVERRIDES = frozenset({
     "inventory-read",
     "metadata-read",
@@ -307,6 +409,21 @@ def load_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
         limits_source = source.get("limits", {})
         _only(limits_source, _LIMIT_FIELDS, "limits")
         limits = ResourceLimits(**limits_source)
+        evidence_source = source.get("evidence", {})
+        _only(evidence_source, _EVIDENCE_FIELDS, "evidence")
+        evidence = EvidenceConfiguration(
+            enabled_formats=_set_text_tuple(
+                evidence_source.get("enabled_formats", ("epub", "m4b", "mp3")),
+                "evidence formats",
+                required=True,
+            ),
+            maximum_document_bytes=evidence_source.get(
+                "maximum_document_bytes", 67_108_864
+            ),
+            maximum_text_characters=evidence_source.get(
+                "maximum_text_characters", 262_144
+            ),
+        )
         policy_source = source.get("policy", {})
         _only(policy_source, _POLICY_FIELDS, "policy")
         policy = PolicyConfiguration(
@@ -318,17 +435,22 @@ def load_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
         )
         if destructive:
             raise ConfigurationError("destructive actions are not configurable in this release")
+        retention_source = source.get("retention", {})
+        _only(retention_source, _RETENTION_FIELDS, "retention")
+        retention = RetentionConfiguration(**retention_source)
         return ApplicationConfiguration(
             schema_version=schema_version,
             instance_name=instance_name,
             connections=connections,
             media_mounts=mounts,
             limits=limits,
+            evidence=evidence,
             providers=_text_tuple(source.get("providers", ()), "providers"),
             reviewers=_text_tuple(source.get("reviewers", ()), "reviewers"),
             policy=policy,
             notifications=_text_tuple(source.get("notifications", ()), "notifications"),
             backups_enabled=backups_enabled,
+            retention=retention,
             destructive_actions_enabled=False,
         )
     except ConfigurationError:
@@ -367,10 +489,19 @@ def _limit_projection(attribute: str) -> Callable[[ApplicationConfiguration], ob
     return lambda configuration: getattr(configuration.limits, attribute)
 
 
+def _evidence_projection(attribute: str) -> Callable[[ApplicationConfiguration], object]:
+    return lambda configuration: getattr(configuration.evidence, attribute)
+
+
+def _retention_projection(attribute: str) -> Callable[[ApplicationConfiguration], object]:
+    return lambda configuration: getattr(configuration.retention, attribute)
+
+
 _IMPACT_MATRIX: tuple[
     tuple[str, Callable[[ApplicationConfiguration], object], tuple[ChangeImpact, ...]], ...
 ] = (
     ("instance.instance_name", _projection("instance_name"), (_R,)),
+    ("connections.id", _connection_projection("connection_id"), (_R, _I, _X, _C, _V)),
     ("connections.adapter", _connection_projection("adapter"), (_R, _I, _X, _C, _V)),
     ("connections.endpoint", _connection_projection("endpoint"), (_R, _I, _X, _C, _V)),
     (
@@ -411,11 +542,33 @@ _IMPACT_MATRIX: tuple[
         (_R, _E),
     ),
     ("limits.temporary_bytes", _limit_projection("temporary_bytes"), (_R, _E)),
+    (
+        "evidence.enabled_formats",
+        _evidence_projection("enabled_formats"),
+        (_R, _X, _E, _C, _V),
+    ),
+    (
+        "evidence.maximum_document_bytes",
+        _evidence_projection("maximum_document_bytes"),
+        (_R, _E),
+    ),
+    (
+        "evidence.maximum_text_characters",
+        _evidence_projection("maximum_text_characters"),
+        (_R, _E),
+    ),
     ("providers", _projection("providers"), (_R, _C, _V)),
     ("reviewers", _projection("reviewers"), (_R, _V)),
     ("policy.policy_version", lambda configuration: configuration.policy.policy_version, (_R, _V)),
     ("notifications", _projection("notifications"), (_R, _N)),
     ("backups_enabled", _projection("backups_enabled"), (_R, _B, _V)),
+    ("retention.evidence_days", _retention_projection("evidence_days"), (_R,)),
+    ("retention.job_log_days", _retention_projection("job_log_days"), (_R,)),
+    (
+        "retention.maximum_artifact_bytes",
+        _retention_projection("maximum_artifact_bytes"),
+        (_R,),
+    ),
 )
 
 
@@ -444,6 +597,11 @@ def _connection(value: object) -> ConnectionConfiguration:
             value.get("enabled_libraries"), "enabled libraries", required=True
         ),
         capability_overrides=_capability_overrides(value.get("capability_overrides", ())),
+        connection_id=(
+            None
+            if value.get("id") is None
+            else ConnectionId(_required_text(value, "id", 64))
+        ),
     )
 
 
