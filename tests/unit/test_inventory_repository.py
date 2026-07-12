@@ -35,8 +35,11 @@ from mechanical_librarian.domain.identifiers import (
     SnapshotId,
 )
 from mechanical_librarian.domain.inventory import (
+    FieldName,
     ItemSnapshot,
     LibraryConnection,
+    MetadataField,
+    NormalizedMetadata,
     SecretReference,
     ServiceEndpoint,
 )
@@ -47,11 +50,11 @@ from mechanical_librarian.infrastructure.persistence.sqlite import Migration, Sc
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _context() -> OperationContext:
+def _context(*, max_bytes: int = 524_288) -> OperationContext:
     return OperationContext(
         Deadline(_NOW + timedelta(seconds=30)),
         CancellationProbe(CancellationId("inventory-test"), lambda: False),
-        ResourceBounds(1, 524_288),
+        ResourceBounds(1, max_bytes),
         TimeProbe(lambda: _NOW),
     )
 
@@ -95,6 +98,7 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         expected_previous: Fingerprint | None = None,
         *,
         key: IdempotencyKey | None = None,
+        context: OperationContext | None = None,
     ) -> SnapshotStoreRequest:
         selected_key = key or IdempotencyKey.from_canonical_input(
             operation="snapshot-store",
@@ -105,7 +109,26 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                 "snapshot": snapshot.id.value,
             },
         )
-        return SnapshotStoreRequest(snapshot, selected_key, expected_previous, _context())
+        return SnapshotStoreRequest(
+            snapshot, selected_key, expected_previous, context or _context()
+        )
+
+    def large_snapshot(self) -> ItemSnapshot:
+        return ItemSnapshot.create(
+            id=SnapshotId("synthetic-snapshot-large"),
+            target=self.snapshot.target,
+            media_type=self.snapshot.media_type,
+            lifecycle=self.snapshot.lifecycle,
+            metadata=NormalizedMetadata(
+                (MetadataField(FieldName.DESCRIPTION, ("\x01" * 90_000,)),)
+            ),
+            files=self.snapshot.files,
+            cover=self.snapshot.cover,
+            provenance=self.snapshot.provenance,
+            service_release=self.snapshot.service_release,
+            concurrency_token=self.snapshot.concurrency_token,
+            capabilities=self.snapshot.capabilities,
+        )
 
     def next_snapshot(self) -> ItemSnapshot:
         return ItemSnapshot.create(
@@ -160,6 +183,70 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         self.assertEqual(
             restarted.read(LibraryReadRequest(self.snapshot.target, _context())).value,
             self.snapshot,
+        )
+
+    def test_large_domain_snapshot_obeys_exact_context_and_restarts_reused(self) -> None:
+        snapshot = self.large_snapshot()
+        size = len(snapshot.canonical_input.serialized.encode("utf-8"))
+        self.assertGreater(size, 524_288)
+        self.assertLessEqual(size, 1_048_576)
+        repository = SQLiteInventoryRepository(self.connection)
+
+        too_small = repository.store(
+            self.request_for(snapshot, context=_context(max_bytes=size - 1))
+        )
+        self.assertEqual(too_small.outcome, RepositoryOutcome.UNAVAILABLE)
+        self.assertEqual(
+            (
+                self.connection.execute(
+                    "SELECT count(*) FROM inventory_snapshots"
+                ).fetchone(),
+                self.connection.execute(
+                    "SELECT count(*) FROM current_inventory_observations"
+                ).fetchone(),
+            ),
+            ((0,), (0,)),
+        )
+
+        context = _context(max_bytes=size)
+        request = self.request_for(snapshot, context=context)
+        self.assertEqual(repository.store(request).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.read(LibraryReadRequest(snapshot.target, context)).value,
+            snapshot,
+        )
+        connection = LibraryConnection(
+            snapshot.target.connection,
+            snapshot.target.adapter,
+            ServiceEndpoint("https://synthetic.invalid"),
+            SecretReference("unused-reference"),
+            snapshot.capabilities,
+        )
+        listed = repository.list(
+            LibraryListRequest(connection, PageRequest(None, 1), context)
+        )
+        self.assertEqual(listed.value.items, (snapshot,))
+        self.assertEqual(repository.store(request).outcome, RepositoryOutcome.REUSED)
+
+        self.connection.close()
+        self.connection = sqlite.connect_existing(self.path)
+        sqlite.migrate(self.connection)
+        restarted = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(restarted.store(request).outcome, RepositoryOutcome.REUSED)
+        self.assertEqual(
+            restarted.read(LibraryReadRequest(snapshot.target, context)).value,
+            snapshot,
+        )
+        self.assertEqual(
+            (
+                self.connection.execute(
+                    "SELECT count(*) FROM inventory_snapshots"
+                ).fetchone(),
+                self.connection.execute(
+                    "SELECT count(*) FROM current_inventory_observations"
+                ).fetchone(),
+            ),
+            ((1,), (1,)),
         )
 
     def test_interruption_between_history_and_current_rolls_back_then_retries_cleanly(self) -> None:
@@ -670,8 +757,131 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                 finally:
                     connection.close()
 
+    def test_oversized_tampered_durable_input_is_corrupt_without_mutation(self) -> None:
+        target = self.snapshot.target
+        values = (
+            target.adapter.value,
+            target.connection.value,
+            target.library.value,
+            target.external_item.value,
+        )
+        self.connection.execute("PRAGMA ignore_check_constraints = ON")
+        try:
+            self.connection.execute(
+                "INSERT INTO inventory_snapshots("
+                "adapter_id, connection_id, library_id, external_item, snapshot_id, "
+                "idempotency_operation, idempotency_digest, fingerprint_algorithm, "
+                "fingerprint_schema, fingerprint_digest, canonical_input, observed_at"
+                ") VALUES (?, ?, ?, ?, 'tampered-large', 'snapshot-store', ?, "
+                "'sha256', 'snapshot-v1', ?, ?, '2026-01-01T00:00:00.000000Z')",
+                (*values, "e" * 64, "f" * 64, "x" * 1_048_577),
+            )
+            self.connection.execute(
+                "INSERT INTO current_inventory_observations("
+                "adapter_id, connection_id, library_id, external_item, snapshot_id"
+                ") VALUES (?, ?, ?, ?, 'tampered-large')",
+                values,
+            )
+        finally:
+            self.connection.execute("PRAGMA ignore_check_constraints = OFF")
+        repository = SQLiteInventoryRepository(self.connection)
+        context = _context(max_bytes=1_048_576)
+
+        read = repository.read(LibraryReadRequest(target, context))
+        self.assertEqual(read.outcome, RepositoryOutcome.CORRUPT)
+        self.assertIsNone(read.value)
+        connection = LibraryConnection(
+            target.connection,
+            target.adapter,
+            ServiceEndpoint("https://synthetic.invalid"),
+            SecretReference("unused-reference"),
+            self.snapshot.capabilities,
+        )
+        listed = repository.list(
+            LibraryListRequest(connection, PageRequest(None, 1), context)
+        )
+        self.assertEqual(listed.outcome, RepositoryOutcome.CORRUPT)
+        self.assertIsNone(listed.value)
+        stored = repository.store(
+            self.request_for(self.snapshot, context=context)
+        )
+        self.assertEqual(stored.outcome, RepositoryOutcome.CORRUPT)
+        self.assertIsNone(stored.value)
+        self.assertEqual(
+            (
+                self.connection.execute(
+                    "SELECT count(*) FROM inventory_snapshots"
+                ).fetchone(),
+                self.connection.execute(
+                    "SELECT count(*) FROM current_inventory_observations"
+                ).fetchone(),
+            ),
+            ((1,), (1,)),
+        )
+
 
 class InventoryMigrationTests(unittest.TestCase):
+    def test_inventory_canonical_sql_constraint_uses_utf8_bytes_and_text_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = sqlite.connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            sqlite.migrate(connection)
+
+            def insert(sequence: int, canonical: object) -> None:
+                digest = f"{sequence:064x}"
+                connection.execute(
+                    "INSERT INTO inventory_snapshots("
+                    "adapter_id, connection_id, library_id, external_item, snapshot_id, "
+                    "idempotency_operation, idempotency_digest, fingerprint_algorithm, "
+                    "fingerprint_schema, fingerprint_digest, canonical_input, observed_at"
+                    ") VALUES ('synthetic', 'boundary', 'library', ?, ?, "
+                    "'snapshot-store', ?, 'sha256', 'snapshot-v1', ?, ?, "
+                    "'2026-01-01T00:00:00.000000Z')",
+                    (f"item-{sequence}", f"snapshot-{sequence}", digest, digest, canonical),
+                )
+
+            insert(1, "x" * 1_048_576)
+            with self.assertRaises(sqlite3.IntegrityError):
+                insert(2, "x" * 1_048_577)
+            with self.assertRaises(sqlite3.IntegrityError):
+                insert(3, sqlite3.Binary(b"{}"))
+            insert(4, "é" * 524_288)
+            with self.assertRaises(sqlite3.IntegrityError):
+                insert(5, "é" * 524_289)
+
+            self.assertEqual(
+                connection.execute(
+                    "SELECT typeof(canonical_input), length(CAST(canonical_input AS BLOB)) "
+                    "FROM inventory_snapshots ORDER BY snapshot_id"
+                ).fetchall(),
+                [("text", 1_048_576), ("text", 1_048_576)],
+            )
+            definition = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'inventory_snapshots'"
+            ).fetchone()[0]
+            self.assertIn("length(CAST(canonical_input AS BLOB))", definition)
+            self.assertIn("1048576", definition)
+
+    def test_old_unreleased_f03_bound_fails_closed_against_corrected_checksum(self) -> None:
+        current = sqlite.MIGRATIONS[2]
+        old_statements = tuple(
+            statement.replace(
+                "length(CAST(canonical_input AS BLOB)) BETWEEN 2 AND 1048576",
+                "length(canonical_input) BETWEEN 2 AND 524288",
+            )
+            for statement in current.statements
+        )
+        old = replace(current, statements=old_statements)
+        with tempfile.TemporaryDirectory() as directory:
+            connection = sqlite.connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            with patch.object(
+                sqlite, "MIGRATIONS", (*sqlite.MIGRATIONS[:2], old)
+            ):
+                self.assertEqual(sqlite.migrate(connection), 3)
+            with self.assertRaises(SchemaError):
+                sqlite.migrate(connection)
+
     def test_genuine_f02_state_survives_f03_migration_and_idempotent_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.sqlite"

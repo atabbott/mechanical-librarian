@@ -193,7 +193,7 @@ _INVENTORY_SNAPSHOTS_TABLE_SQL = (
     "fingerprint_algorithm TEXT NOT NULL CHECK (fingerprint_algorithm = 'sha256'), "
     "fingerprint_schema TEXT NOT NULL CHECK (fingerprint_schema = 'snapshot-v1'), "
     "fingerprint_digest TEXT NOT NULL CHECK (length(fingerprint_digest) = 64 AND fingerprint_digest NOT GLOB '*[^0-9a-f]*'), "
-    "canonical_input TEXT NOT NULL CHECK (typeof(canonical_input) = 'text' AND length(canonical_input) BETWEEN 2 AND 524288), "
+    "canonical_input TEXT NOT NULL CHECK (typeof(canonical_input) = 'text' AND length(CAST(canonical_input AS BLOB)) BETWEEN 2 AND 1048576), "
     f"observed_at TEXT NOT NULL CHECK ({_timestamp_constraint('observed_at')}), "
     "PRIMARY KEY (adapter_id, connection_id, library_id, external_item, snapshot_id), "
     "UNIQUE (adapter_id, connection_id, library_id, external_item, idempotency_operation, idempotency_digest), "
