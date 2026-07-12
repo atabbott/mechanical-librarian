@@ -1503,6 +1503,76 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
             (0,),
         )
 
+    def test_direct_checkpoint_requires_stable_completion_audit(self) -> None:
+        source = self.create_run("missing-completion-audit")
+        self.repository.enqueue_eligible(source, now=NOW)
+        root = self.claim_one("worker-audit-root")
+        self.repository.start(root, now=NOW)
+        self.repository.complete(root, OutcomeKind.COMPLETED, now=NOW)
+        root_audit = self.connection.execute(
+            "SELECT id, kind, created_at, summary FROM audit_events"
+        ).fetchone()
+        self.assertIsNotNone(root_audit)
+        self.complete_run(source)
+        definition = synthetic_heartbeat_definition()
+        replacement_definition = synthetic_heartbeat_definition(incompatible=True)
+        self.assertTrue(self.repository.validate_run(source, definition).accepted)
+
+        corruptions = (
+            "DELETE FROM audit_events WHERE id = ?",
+            "UPDATE audit_events SET kind = 'other' WHERE id = ?",
+            "UPDATE audit_events SET summary = 'job failed' WHERE id = ?",
+        )
+        for statement in corruptions:
+            with self.subTest(statement=statement):
+                self.connection.execute(statement, (root_audit[0],))
+                self.assertEqual(
+                    self.repository.validate_run(source, definition).outcome,
+                    RepositoryOutcome.CORRUPT,
+                )
+                self.connection.execute(
+                    "INSERT OR REPLACE INTO audit_events(id, kind, created_at, summary) "
+                    "VALUES (?, ?, ?, ?)",
+                    root_audit,
+                )
+                self.assertTrue(
+                    self.repository.validate_run(source, definition).accepted
+                )
+
+        self.connection.execute(
+            "DELETE FROM audit_events WHERE id = ?", (root_audit[0],)
+        )
+        before = tuple(self.connection.iterdump())
+        compatible = self.repository.create_or_resume(
+            source,
+            definition,
+            changed_stages=frozenset(),
+            now=NOW + timedelta(minutes=1),
+        )
+        incompatible = self.repository.create_or_resume(
+            source,
+            replacement_definition,
+            changed_stages=frozenset({StageId("left")}),
+            now=NOW + timedelta(minutes=1),
+        )
+        self.assertEqual(compatible.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(incompatible.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(tuple(self.connection.iterdump()), before)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT superseded_by FROM workflow_runs WHERE run_id = ?",
+                (source.value,),
+            ).fetchone(),
+            (None,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM workflow_runs WHERE replanned_from = ?",
+                (source.value,),
+            ).fetchone(),
+            (0,),
+        )
+
     def test_reused_checkpoint_requires_immediate_replan_source(self) -> None:
         self.assertTrue(RunSyntheticJobHeartbeat(self.repository).run().succeeded)
         source = self.repository.inspect(RunId("heartbeat-main")).value

@@ -284,6 +284,14 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                     or accepted[5] is None
                 ):
                     return RepositoryResult(RepositoryOutcome.CORRUPT)
+                audit_id = _stable_id("job-complete", job_id, str(fence))
+                audit = self._connection.execute(
+                    "SELECT 1 FROM audit_events WHERE id = ? AND kind = 'job' "
+                    "AND summary = 'job completed'",
+                    (audit_id,),
+                ).fetchone()
+                if audit is None:
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
             current_run_state = self._connection.execute(
                 "SELECT state FROM workflow_runs WHERE run_id = ?", (run_id.value,)
             ).fetchone()[0]
