@@ -134,7 +134,7 @@ class SQLiteInventoryRepository:
             return RepositoryResult(RepositoryOutcome.ACCEPTED, snapshot)
         except (sqlite3.Error, OSError):
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
-        except (TypeError, ValueError):
+        except (KeyError, RecursionError, TypeError, ValueError):
             return RepositoryResult(RepositoryOutcome.CORRUPT)
 
     def read(self, request: LibraryReadRequest) -> RepositoryResult[ItemSnapshot]:
@@ -152,7 +152,7 @@ class SQLiteInventoryRepository:
             return RepositoryResult(RepositoryOutcome.ACCEPTED, snapshot)
         except sqlite3.Error:
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
-        except (TypeError, ValueError):
+        except (KeyError, RecursionError, TypeError, ValueError):
             return RepositoryResult(RepositoryOutcome.CORRUPT)
 
     def list(self, request: LibraryListRequest) -> RepositoryResult[Page[ItemSnapshot]]:
@@ -188,7 +188,7 @@ class SQLiteInventoryRepository:
             return RepositoryResult(RepositoryOutcome.ACCEPTED, Page(snapshots, None))
         except sqlite3.Error:
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
-        except (TypeError, ValueError):
+        except (KeyError, RecursionError, TypeError, ValueError):
             return RepositoryResult(RepositoryOutcome.CORRUPT)
 
     def _read_current_row(self, target: TargetId) -> ItemSnapshot | None:

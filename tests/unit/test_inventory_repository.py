@@ -153,6 +153,48 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             RepositoryOutcome.NOT_FOUND,
         )
 
+    def test_missing_nested_and_deep_canonical_rows_return_typed_corrupt(self) -> None:
+        for serialized in ("{}", '{"target":[]}', "[" * 1_000):
+            with self.subTest(serialized=serialized[:20]), tempfile.TemporaryDirectory() as directory:
+                connection = sqlite.connect(Path(directory) / "state.sqlite")
+                try:
+                    sqlite.migrate(connection)
+                    target = self.snapshot.target
+                    values = (
+                        target.adapter.value,
+                        target.connection.value,
+                        target.library.value,
+                        target.external_item.value,
+                    )
+                    connection.execute(
+                        "INSERT INTO inventory_snapshots("
+                        "adapter_id, connection_id, library_id, external_item, snapshot_id, "
+                        "idempotency_operation, idempotency_digest, fingerprint_algorithm, "
+                        "fingerprint_schema, fingerprint_digest, canonical_input, observed_at"
+                        ") VALUES (?, ?, ?, ?, 'corrupt-snapshot', 'snapshot-store', ?, "
+                        "'sha256', 'snapshot-v1', ?, ?, '2026-01-01T00:00:00.000000Z')",
+                        (*values, "a" * 64, "b" * 64, serialized),
+                    )
+                    connection.execute(
+                        "INSERT INTO current_inventory_observations("
+                        "adapter_id, connection_id, library_id, external_item, snapshot_id"
+                        ") VALUES (?, ?, ?, ?, 'corrupt-snapshot')",
+                        values,
+                    )
+                    result = SQLiteInventoryRepository(connection).read(
+                        LibraryReadRequest(target, _context())
+                    )
+                    self.assertEqual(result.outcome, RepositoryOutcome.CORRUPT)
+                    self.assertIsNone(result.value)
+                    self.assertEqual(
+                        connection.execute(
+                            "SELECT count(*) FROM current_inventory_observations"
+                        ).fetchone(),
+                        (1,),
+                    )
+                finally:
+                    connection.close()
+
 
 class InventoryMigrationTests(unittest.TestCase):
     def test_genuine_f02_state_survives_f03_migration_and_idempotent_reopen(self) -> None:
@@ -249,6 +291,36 @@ class InventoryMigrationTests(unittest.TestCase):
                 ("preserved",),
             )
             self.assertEqual(sqlite.migrate(connection), 3)
+            snapshot = _fixture()
+            key = IdempotencyKey.from_canonical_input(
+                operation="snapshot-store",
+                target=snapshot.target,
+                value={
+                    "fingerprint": snapshot.fingerprint.digest,
+                    "schema": snapshot.fingerprint.schema.value,
+                    "snapshot": snapshot.id.value,
+                },
+            )
+            request = SnapshotStoreRequest(snapshot, key, None, _context())
+            repository = SQLiteInventoryRepository(connection)
+            self.assertEqual(repository.store(request).outcome, RepositoryOutcome.ACCEPTED)
+            self.assertEqual(repository.store(request).outcome, RepositoryOutcome.REUSED)
+            self.assertEqual(
+                connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+                (1,),
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT count(*) FROM current_inventory_observations"
+                ).fetchone(),
+                (1,),
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT value FROM instance_metadata WHERE key = 'f02-sentinel'"
+                ).fetchone(),
+                ("preserved",),
+            )
             connection.close()
 
 

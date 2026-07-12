@@ -12,9 +12,8 @@ from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
     PolicyConfiguration,
     ResourceLimits,
-    load_configuration,
-    plan_import,
 )
+from mechanical_librarian.infrastructure.configuration import load_configuration, plan_import
 
 
 R = ChangeImpact.RESTART_REQUIRED
@@ -100,6 +99,7 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_connection_changes_are_distinct_and_conservative(self) -> None:
         cases = (
+            ("id", "connection-one", "connections.id", (R, I, X, C, V)),
             ("adapter", "synthetic", "connections.adapter", (R, I, X, C, V)),
             (
                 "endpoint",
@@ -163,6 +163,34 @@ class ConfigurationTests(unittest.TestCase):
                 self.assertEqual(
                     plan_import(self.source, proposed).changes,
                     (ConfigurationChange(f"limits.{key}", impacts),),
+                )
+
+        evidence_cases = (
+            ("enabled_formats", ["epub"], (R, X, E, C, V)),
+            ("maximum_document_bytes", 2_097_152, (R, E)),
+            ("maximum_text_characters", 2_048, (R, E)),
+        )
+        for key, value, impacts in evidence_cases:
+            with self.subTest(key=key):
+                proposed = self.proposed()
+                proposed["evidence"] = {key: value}
+                self.assertEqual(
+                    plan_import(self.source, proposed).changes,
+                    (ConfigurationChange(f"evidence.{key}", impacts),),
+                )
+
+        retention_cases = (
+            ("evidence_days", 91),
+            ("job_log_days", 31),
+            ("maximum_artifact_bytes", 2_147_483_648),
+        )
+        for key, value in retention_cases:
+            with self.subTest(key=key):
+                proposed = self.proposed()
+                proposed["retention"] = {key: value}
+                self.assertEqual(
+                    plan_import(self.source, proposed).changes,
+                    (ConfigurationChange(f"retention.{key}", (R,)),),
                 )
 
     def test_multiple_changes_have_fixed_path_and_impact_order(self) -> None:

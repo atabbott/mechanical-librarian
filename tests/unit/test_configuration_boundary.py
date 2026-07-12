@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from mechanical_librarian.application.configuration import ConfigurationError
-from mechanical_librarian.application.configuration import plan_import
-from mechanical_librarian.interfaces.configuration import (
+from mechanical_librarian.infrastructure.configuration import (
     configuration_schema_json,
     load_configuration_file,
+    plan_import,
     validate_configuration,
 )
 
@@ -49,6 +51,27 @@ class ConfigurationBoundaryTests(unittest.TestCase):
         ):
             self.assertIn(field, schema["properties"])
             self.assertIn(field.replace("_", " "), documentation.casefold())
+        definitions = schema["$defs"]
+        self.assertEqual(schema["properties"]["schema_version"]["const"], "config-v1")
+        self.assertEqual(schema["properties"]["connections"]["minItems"], 1)
+        self.assertEqual(
+            definitions["ResourceLimitsInput"]["properties"]["parser_concurrency"],
+            {
+                "default": 1,
+                "maximum": 8,
+                "minimum": 1,
+                "title": "Parser Concurrency",
+                "type": "integer",
+            },
+        )
+        formats = definitions["EvidenceInput"]["properties"]["enabled_formats"]
+        self.assertEqual(formats["items"]["enum"], ["epub", "m4b", "mp3"])
+        self.assertEqual((formats["minItems"], formats["maxItems"]), (1, 3))
+        self.assertTrue(
+            definitions["ConnectionInput"]["properties"]["enabled_libraries"][
+                "uniqueItems"
+            ]
+        )
 
     def test_checked_in_synthetic_file_maps_to_immutable_secret_free_values(self) -> None:
         configuration = load_configuration_file(FIXTURE)
@@ -115,6 +138,45 @@ class ConfigurationBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(validate_configuration(base), validate_configuration(self.source()))
 
+    def test_new_field_bounds_unknowns_and_import_differential_are_exhaustive(self) -> None:
+        invalid_updates = (
+            ("connection-id", lambda source, value: source["connections"][0].__setitem__("id", value), "A"),
+            ("connection-id-long", lambda source, value: source["connections"][0].__setitem__("id", value), "a" * 65),
+            ("evidence-empty", lambda source, value: source.__setitem__("evidence", {"enabled_formats": value}), []),
+            ("evidence-unknown", lambda source, value: source.__setitem__("evidence", {"enabled_formats": value}), ["pdf"]),
+            ("document-low", lambda source, value: source.__setitem__("evidence", {"maximum_document_bytes": value}), 1_048_575),
+            ("document-high", lambda source, value: source.__setitem__("evidence", {"maximum_document_bytes": value}), 536_870_913),
+            ("text-low", lambda source, value: source.__setitem__("evidence", {"maximum_text_characters": value}), 1_023),
+            ("text-high", lambda source, value: source.__setitem__("evidence", {"maximum_text_characters": value}), 4_194_305),
+            ("evidence-days", lambda source, value: source.__setitem__("retention", {"evidence_days": value}), 3_651),
+            ("job-log-days", lambda source, value: source.__setitem__("retention", {"job_log_days": value}), 0),
+            ("artifact-low", lambda source, value: source.__setitem__("retention", {"maximum_artifact_bytes": value}), 1_048_575),
+        )
+        for label, update, value in invalid_updates:
+            with self.subTest(label=label):
+                source = self.source()
+                update(source, value)
+                with self.assertRaises(ConfigurationError):
+                    validate_configuration(source)
+
+        for evidence_days in (1, 3_650):
+            source = self.source()
+            source["retention"]["evidence_days"] = evidence_days
+            self.assertEqual(validate_configuration(source).retention.evidence_days, evidence_days)
+
+        unknown = self.source()
+        unknown["evidence"]["private-sentinel"] = "token=secret"
+        with self.assertRaises(ConfigurationError) as raised:
+            validate_configuration(unknown)
+        self.assertNotIn("private-sentinel", repr(raised.exception))
+
+        tuple_source = self.source()
+        tuple_source["connections"] = tuple(tuple_source["connections"])
+        with self.assertRaises(ConfigurationError):
+            validate_configuration(tuple_source)
+        with self.assertRaises(ConfigurationError):
+            plan_import(tuple_source, self.source())
+
     def test_file_errors_and_oversize_documents_are_value_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "private-sentinel.json"
@@ -123,8 +185,23 @@ class ConfigurationBoundaryTests(unittest.TestCase):
             self.assertNotIn("private-sentinel", repr(raised.exception))
             oversized = Path(directory) / "oversized.json"
             oversized.write_bytes(b"x" * 1_048_577)
+            with patch("mechanical_librarian.infrastructure.configuration.os.read") as read:
+                with self.assertRaises(ConfigurationError):
+                    load_configuration_file(oversized)
+                read.assert_not_called()
+
+            fifo = Path(directory) / "config.fifo"
+            os.mkfifo(fifo)
             with self.assertRaises(ConfigurationError):
-                load_configuration_file(oversized)
+                load_configuration_file(fifo)
+
+            huge_integer = Path(directory) / "huge-number.json"
+            huge_integer.write_text(
+                '{"schema_version":' + "9" * 5_000 + "}", encoding="utf-8"
+            )
+            with self.assertRaises(ConfigurationError) as raised:
+                load_configuration_file(huge_integer)
+            self.assertIsNone(raised.exception.__cause__)
 
     def test_import_plan_projects_a_typed_value_free_audit_fact(self) -> None:
         current = self.source()

@@ -16,12 +16,12 @@
 │   │   ├── persistence/
 │   │   └── task_execution/
 │   ├── infrastructure/
+│   │   ├── configuration.py (strict config-v1 source boundary)
 │   │   ├── persistence/ (connection and migration runtime)
 │   │   ├── jobs/
 │   │   ├── security/
 │   │   └── observability/
 │   └── interfaces/
-│       ├── configuration.py (strict config-v1 transport boundary)
 │       ├── http/
 │       └── cli/
 ├── frontend/

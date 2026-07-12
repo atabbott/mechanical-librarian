@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from mechanical_librarian.interfaces.configuration import configuration_schema_json
+from mechanical_librarian.infrastructure.configuration import configuration_schema_json
 
 
 ROOT = Path(__file__).parents[1]

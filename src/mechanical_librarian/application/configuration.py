@@ -390,8 +390,8 @@ _READ_ONLY_CAPABILITY_OVERRIDES = frozenset({
 })
 
 
-def load_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
-    """Validate an untrusted mapping; every transport calls this function."""
+def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
+    """Project one already transport-validated mapping into immutable values."""
 
     try:
         _only(source, _CONFIGURATION_FIELDS, "configuration")
@@ -572,13 +572,13 @@ _IMPACT_MATRIX: tuple[
 )
 
 
-def plan_import(
-    current_source: Mapping[str, Any], proposed_source: Mapping[str, Any]
+def plan_projected_import(
+    current: ApplicationConfiguration, proposed: ApplicationConfiguration
 ) -> ConfigurationImportPlan:
-    """Validate both sources and compare them without persisting or applying."""
+    """Compare two strictly validated immutable configurations."""
 
-    current = load_configuration(current_source)
-    proposed = load_configuration(proposed_source)
+    if type(current) is not ApplicationConfiguration or type(proposed) is not ApplicationConfiguration:
+        raise ConfigurationError("configuration import requires validated projections")
     changes = tuple(
         ConfigurationChange(path, impacts)
         for path, project, impacts in _IMPACT_MATRIX

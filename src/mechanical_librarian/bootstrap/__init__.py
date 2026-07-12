@@ -41,7 +41,7 @@ from mechanical_librarian.application.synthetic_inventory import (
 )
 from mechanical_librarian.domain.identifiers import AdapterId, LibraryId
 from mechanical_librarian.domain.inventory import LibraryConnection
-from mechanical_librarian.interfaces.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.persistence.sqlite import (
     SchemaError,
     connect,

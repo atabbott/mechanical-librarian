@@ -41,6 +41,30 @@ aggregate impact detection but do not yet define structured credential-reference
 or role-scoped resolution contracts. The detailed provider/reviewer secret
 contracts below are planned extensions, not current behavior.
 
+### Current group coverage
+
+The bounded pre-release `config-v1` model covers every accepted configuration
+group with the following current fields. The broader capabilities described in
+later group sections are product direction unless named here; they do not imply
+hidden fields or environment behavior.
+
+| Group | Current fields |
+| --- | --- |
+| Instance | `instance_name` |
+| Library connections | `id`, `adapter`, `endpoint`, `secret_reference`, `enabled_libraries`, `capability_overrides` |
+| Media mounts | `name`, `library_type`, `container_path`, `service_path`, `read_only` |
+| Evidence extraction | `enabled_formats`, `maximum_document_bytes`, `maximum_text_characters`; shared parser limits remain under `limits` |
+| Providers | ordered, unique provider identifiers; an empty list disables providers |
+| Reviewers | ordered, unique reviewer identifiers; an empty list disables reviewers |
+| Policy | `policy_version` |
+| Backups and retention | `backups_enabled`, `evidence_days`, `job_log_days`, `maximum_artifact_bytes` |
+| Notifications | ordered, unique notification adapter identifiers |
+
+Public base URL, timezone/locale overrides, connection event policy, per-mount
+evidence selection, structured provider/reviewer authentication, detailed
+policy rules, notification schedules, and offsite backup targets are planned
+extensions. They are deliberately rejected as unknown fields today.
+
 ### `config-v1` impact matrix
 
 Impact identifiers have a fixed order: restart, inventory reconciliation,
