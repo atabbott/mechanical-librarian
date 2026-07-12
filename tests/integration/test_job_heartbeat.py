@@ -1848,6 +1848,90 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
             (0,),
         )
 
+    def test_inherited_checkpoint_requires_origin_completion_audit(self) -> None:
+        source = self.create_run("inherited-origin-audit")
+        self.complete_run(source)
+        baseline = synthetic_heartbeat_definition()
+        second_definition = WorkflowDefinition(
+            WorkflowVersion("heartbeat-v2"), baseline.stages, baseline.dependencies
+        )
+        second = self.repository.create_or_resume(
+            source,
+            second_definition,
+            changed_stages=frozenset(),
+            now=NOW + timedelta(minutes=1),
+        ).value
+        third_definition = WorkflowDefinition(
+            WorkflowVersion("heartbeat-v3"), baseline.stages, baseline.dependencies
+        )
+        third = self.repository.create_or_resume(
+            second.id,
+            third_definition,
+            changed_stages=frozenset(),
+            now=NOW + timedelta(minutes=2),
+        ).value
+        self.assertTrue(self.repository.validate_run(second.id, second_definition).accepted)
+        self.assertTrue(self.repository.validate_run(third.id, third_definition).accepted)
+
+        audits = self.connection.execute(
+            "SELECT id, kind, created_at, summary FROM audit_events ORDER BY id"
+        ).fetchall()
+        self.connection.execute("DELETE FROM audit_events")
+        before = tuple(self.connection.iterdump())
+        self.assertEqual(
+            self.repository.validate_run(second.id, second_definition).outcome,
+            RepositoryOutcome.CORRUPT,
+        )
+        self.assertEqual(
+            self.repository.validate_run(third.id, third_definition).outcome,
+            RepositoryOutcome.CORRUPT,
+        )
+        compatible = self.repository.create_or_resume(
+            third.id,
+            third_definition,
+            changed_stages=frozenset(),
+            now=NOW + timedelta(minutes=3),
+        )
+        fourth_definition = WorkflowDefinition(
+            WorkflowVersion("heartbeat-v4"),
+            tuple(
+                StageDefinition(
+                    stage.id,
+                    stage.kind,
+                    StageVersion("stage-v4")
+                    if stage.id == StageId("right")
+                    else stage.version,
+                    stage.expected_outcome,
+                )
+                for stage in baseline.stages
+            ),
+            baseline.dependencies,
+        )
+        incompatible = self.repository.create_or_resume(
+            third.id,
+            fourth_definition,
+            changed_stages=frozenset({StageId("right")}),
+            now=NOW + timedelta(minutes=3),
+        )
+        self.assertEqual(compatible.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(incompatible.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(tuple(self.connection.iterdump()), before)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM workflow_runs WHERE replanned_from = ?",
+                (third.id.value,),
+            ).fetchone(),
+            (0,),
+        )
+
+        self.connection.executemany(
+            "INSERT INTO audit_events(id, kind, created_at, summary) VALUES (?, ?, ?, ?)",
+            audits,
+        )
+        self.assertTrue(self.repository.validate_run(source, baseline).accepted)
+        self.assertTrue(self.repository.validate_run(second.id, second_definition).accepted)
+        self.assertTrue(self.repository.validate_run(third.id, third_definition).accepted)
+
     def test_reused_checkpoint_requires_immediate_replan_source(self) -> None:
         self.assertTrue(RunSyntheticJobHeartbeat(self.repository).run().succeeded)
         source = self.repository.inspect(RunId("heartbeat-main")).value

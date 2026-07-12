@@ -308,11 +308,9 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                 if source_run is not None:
                     if replanned_from is None or source_run != replanned_from:
                         return RepositoryResult(RepositoryOutcome.CORRUPT)
-                    source = self._connection.execute(
-                        "SELECT outcome FROM stage_checkpoints WHERE run_id = ? AND stage_id = ?",
-                        (source_run, source_stage),
-                    ).fetchone()
-                    if source_stage != stage_id or source != (outcome,):
+                    if source_stage != stage_id or not self._checkpoint_origin_is_valid(
+                        RunId(source_run), stage_id, outcome
+                    ):
                         return RepositoryResult(RepositoryOutcome.CORRUPT)
                     eligible = StageId(stage_id) not in inherited_affected
                     if (reuse_eligible, current_applicable) != (
@@ -325,29 +323,7 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                     continue
                 if (reuse_eligible, current_applicable) != (1, 1):
                     return RepositoryResult(RepositoryOutcome.CORRUPT)
-                accepted = self._connection.execute(
-                    "SELECT j.run_id, j.stage_id, j.state, j.fence, a.outcome, a.finished_at "
-                    "FROM jobs j JOIN job_attempts a ON a.job_id = j.job_id AND a.fence = ? "
-                    "WHERE j.job_id = ?",
-                    (fence, job_id),
-                ).fetchone()
-                if (
-                    accepted is None
-                    or accepted[0] != run_id.value
-                    or accepted[1] != stage_id
-                    or accepted[2] != JobState.SUCCEEDED.value
-                    or accepted[3] != fence
-                    or accepted[4] != outcome
-                    or accepted[5] is None
-                ):
-                    return RepositoryResult(RepositoryOutcome.CORRUPT)
-                audit_id = _stable_id("job-complete", job_id, str(fence))
-                audit = self._connection.execute(
-                    "SELECT 1 FROM audit_events WHERE id = ? AND kind = 'job' "
-                    "AND summary = 'job completed'",
-                    (audit_id,),
-                ).fetchone()
-                if audit is None:
+                if not self._checkpoint_origin_is_valid(run_id, stage_id, outcome):
                     return RepositoryResult(RepositoryOutcome.CORRUPT)
             current_run_state = self._connection.execute(
                 "SELECT state FROM workflow_runs WHERE run_id = ?", (run_id.value,)
@@ -428,6 +404,60 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             return RepositoryResult(RepositoryOutcome.ACCEPTED)
         except (sqlite3.Error, TypeError, ValueError):
             return RepositoryResult(RepositoryOutcome.CORRUPT)
+
+    def _checkpoint_origin_is_valid(
+        self, run_id: RunId, stage_id: str, outcome: str
+    ) -> bool:
+        """Follow inherited checkpoint lineage to its fenced completion audit."""
+
+        seen: set[str] = set()
+        current = run_id.value
+        while current not in seen:
+            seen.add(current)
+            run = self._connection.execute(
+                "SELECT replanned_from FROM workflow_runs WHERE run_id = ?",
+                (current,),
+            ).fetchone()
+            checkpoint = self._connection.execute(
+                "SELECT source_run_id, source_stage_id, accepting_job_id, "
+                "accepting_fence, outcome FROM stage_checkpoints "
+                "WHERE run_id = ? AND stage_id = ?",
+                (current, stage_id),
+            ).fetchone()
+            if run is None or checkpoint is None or checkpoint[4] != outcome:
+                return False
+            source_run, source_stage, job_id, fence, _stored_outcome = checkpoint
+            if source_run is not None:
+                if run[0] != source_run or source_stage != stage_id:
+                    return False
+                current = source_run
+                continue
+            accepted = self._connection.execute(
+                "SELECT j.run_id, j.stage_id, j.state, j.fence, a.outcome, a.finished_at "
+                "FROM jobs j JOIN job_attempts a ON a.job_id = j.job_id AND a.fence = ? "
+                "WHERE j.job_id = ?",
+                (fence, job_id),
+            ).fetchone()
+            if (
+                accepted is None
+                or accepted[0] != current
+                or accepted[1] != stage_id
+                or accepted[2] != JobState.SUCCEEDED.value
+                or accepted[3] != fence
+                or accepted[4] != outcome
+                or accepted[5] is None
+            ):
+                return False
+            audit_id = _stable_id("job-complete", job_id, str(fence))
+            return (
+                self._connection.execute(
+                    "SELECT 1 FROM audit_events WHERE id = ? AND kind = 'job' "
+                    "AND summary = 'job completed'",
+                    (audit_id,),
+                ).fetchone()
+                is not None
+            )
+        return False
 
     @staticmethod
     def _stored_definition(
