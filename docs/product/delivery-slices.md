@@ -149,10 +149,12 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 ## Deferred slice series
 
 Opening-audio transcription (#24 and #104-#110), additional adapters,
-embedded-file updates, and plugin loading remain unassigned backlog work until
-their prerequisite design and qualification decisions are accepted. When
-scheduled, they receive new functional slice IDs and executable outcomes; they
-are not appended opportunistically to an active branch.
+embedded-file updates, plugin loading, and the
+[post-1.0 reviewer backends](future-reviewer-backends.md) remain unassigned
+backlog work until their prerequisite design and qualification decisions are
+accepted. When scheduled, they receive new functional slice IDs and executable
+outcomes; they are not appended opportunistically to an active branch. The
+reviewer-backend plan does not alter F11, the F01-F17 order, or the 1.0.0 exit.
 
 ## Planning rules
 

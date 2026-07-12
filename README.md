@@ -52,6 +52,7 @@ Start with the [documentation index](docs/README.md).
 - [Bounded EPUB package and opening-matter evidence](docs/product/opening-ebook-evidence.md)
 - [Bounded opening-audio evidence](docs/product/opening-audio-evidence.md)
 - [Review experience](docs/product/review-experience.md)
+- [Post-1.0 reviewer backends](docs/product/future-reviewer-backends.md)
 - [Initial build plan](docs/product/initial-build-plan.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Security model](docs/architecture/security.md)
