@@ -75,10 +75,12 @@ Split a ticket whose acceptance criteria would require multiple slice pull
 requests before the ticket becomes `Ready`.
 
 Fixes, audit corrections, security work, documentation, CI and developer
-tooling, dependencies, maintenance, and independently reviewable standalone
-tickets are not slice trackers or slice constituents. They use focused branches
-and ticket-level pull requests. A focused correction may block a slice through a
-native dependency, but it remains independently reviewed and merged.
+tooling, dependency-only changes, maintenance, and independently reviewable
+standalone tickets are not slice trackers or slice constituents. They use
+focused branches and ticket-level pull requests. A focused correction may
+block a slice through a native dependency, but it remains independently
+reviewed and merged. A slice may introduce a dependency needed for its
+observable outcome without creating a separate permission ticket.
 
 See [functional slice delivery](slice-delivery.md) for the mandatory branch and
 review workflow and [delivery slices](../product/delivery-slices.md) for the
@@ -151,7 +153,7 @@ delivery-slice plan plus:
 - `Cross-slice parent` for work-package and other genuine parent issues;
 - `Unassigned backlog` for future functionality not yet scheduled; and
 - `Not applicable` for fixes, corrections, security work, documentation,
-  tooling, dependencies, maintenance, and standalone tickets.
+  tooling, dependency-only changes, maintenance, and standalone tickets.
 
 A new-functionality ticket cannot move to `Ready` without a delivery-slice
 value. Non-slice work may move to `Ready` with `Not applicable`. Slice tracker
@@ -256,6 +258,22 @@ closing reference on its own line so the gate can distinguish the body source
 using GitHub's rendered closing-keyword and issue-link annotations without
 treating examples, custom links, formatting, quotations, or code as closing
 instructions.
+
+The narrow exception is trivial cleanup that consists only of spelling,
+formatting, broken-link, or comment-only corrections. A maintainer authorizes
+the exception by applying the exact `tracking-exempt` label and adding visible
+prose beneath the single top-level `Tracking exemption` heading in the pull
+request description. The label and rationale are both required; the gate does
+not inspect or classify the diff. Quoted, commented, code-formatted, nested,
+empty, or duplicate rationale sections do not qualify.
+
+The exception is unavailable when a change affects executable behavior,
+dependencies or lockfiles, builds, CI or workflows, releases, configuration,
+migrations, security, architecture, governance, the product contract, or the
+delivery plan. Those changes require an open repository issue and a supported
+closing reference. Issue #198 and pull request #196 are material tracked work,
+not examples eligible for the exemption.
+
 The workflow runs from protected base-branch context with explicit read-only
 permissions, checks out only the recorded base SHA, and treats pull-request
 metadata as data. It never executes the pull request checkout or receives write
@@ -266,10 +284,11 @@ granting a workflow token authority to change priority, risk, or scope. The
 required branch naming, scope, demonstration, review, and exception rules are in
 [functional slice delivery](slice-delivery.md).
 
-Fixes, corrections, security work, documentation, tooling, dependency updates,
-maintenance, and standalone tickets use one purpose-based branch and
+Fixes, corrections, security work, documentation, tooling, dependency-only
+updates, maintenance, and standalone tickets use one purpose-based branch and
 ticket-level ready pull request. Their issue moves through the same status and
-quality gates without creating a slice tracker.
+quality gates without creating a slice tracker. Dependencies required by an
+observable slice remain inside that slice's branch and pull request.
 
 Defects and bugs use `fix/<issue>-<short-slug>`. Their pull requests include the
 pre-fix reproduction, root cause, regression evidence, affected-version scope,

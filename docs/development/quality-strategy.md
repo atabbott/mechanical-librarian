@@ -67,13 +67,39 @@ only through an ADR or quality-policy pull request.
 
 ## Dependency policy
 
-- Add dependencies only when they materially reduce risk or maintenance.
+- Frameworks, libraries, and developer tools may be introduced during ordinary
+  delivery when they materially reduce current implementation effort,
+  maintenance burden, or operational risk. A contributor does not need to
+  prove that a standard-library implementation is impossible first.
+- A dependency needed for the selected ticket or slice does not require a
+  separate permission ticket or maintainer approval merely because it is new.
+  Keep it inside that delivery boundary and satisfy the applicable
+  architecture, licence, security, testing, and reproducibility requirements.
+- Development-only dependencies may likewise be selected and added by the
+  delivery that first needs them, including test, fixture-generation,
+  code-generation, browser-qualification, build, analysis, and documentation
+  tools. Classify and lock them as development dependencies, keep them out of
+  runtime artifacts, and test or review the behavior the delivery relies on.
+  Create separate focused work only when changing repository-wide developer
+  infrastructure is itself the primary outcome.
+- Use dependencies for current requirements rather than speculative future
+  work. Dependency-only additions, upgrades, and removals remain focused
+  changes outside functional slices.
 - Prefer well-maintained libraries with clear licences and security history.
 - Keep runtime dependencies smaller than development dependencies.
 - Pin direct dependencies and commit a reproducible lockfile.
-- Review transitive and licence changes in dependency pull requests.
+- Review meaningful transitive and licence changes whenever a dependency is
+  introduced or updated.
+- Test the behavior and failure handling that the product relies on; do not
+  treat the dependency itself as proof of the product contract.
+- Preserve least authority: a dependency must not silently gain network,
+  credential, filesystem, private-data, or production-write access.
 - Remove unused dependencies promptly.
 - Do not adopt a framework merely to implement a small stable contract.
+- Record an ADR or perform the governing security review when a framework
+  establishes or materially changes a durable architecture, public contract,
+  parser boundary, authentication or authorization design, or another trust
+  boundary.
 - Record SPDX identities and required notices for dependencies, assets,
   fixtures, generated material, copied components, plugins, and container
   contents.

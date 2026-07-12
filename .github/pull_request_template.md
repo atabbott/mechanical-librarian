@@ -6,6 +6,14 @@ Describe the problem and the resulting behavior.
 
 Closes #
 
+## Tracking exemption
+
+<!--
+Leave this section blank for normal tracked work. A maintainer may apply the
+exact `tracking-exempt` label and replace this comment with a concise rationale
+only for eligible trivial cleanup described in the work-management policy.
+-->
+
 ## Delivery mode
 
 - [ ] New-functionality slice

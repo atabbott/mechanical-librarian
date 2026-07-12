@@ -20,12 +20,12 @@ Use a functional slice when the primary purpose is to add a new user- or
 operator-observable application capability and the outcome requires coherent
 work across more than one contract or layer.
 
-Do not use a slice for:
+Do not use a slice when the primary outcome is:
 
 - a bug fix or audit correction;
 - security remediation or incident recovery;
 - documentation or governance;
-- CI, developer tooling, release chores, or dependency updates;
+- CI, developer tooling, release chores, or dependency-only updates;
 - refactoring or maintenance with no new product capability; or
 - a genuinely standalone ticket that is already independently reviewable.
 
@@ -35,6 +35,16 @@ Those changes use a focused purpose branch such as `fix/<issue>-<slug>`,
 risk-proportionate quality and documentation gates. A fix that blocks a slice is
 merged separately before the slice continues; it is not absorbed into the slice
 merely to make the slice green.
+
+A slice may introduce a runtime or development framework, library, or tool
+needed to deliver or qualify its observable outcome. This includes scoped test,
+fixture-generation, code-generation, browser, build, analysis, and
+documentation dependencies. The dependency remains an implementation choice
+inside the slice rather than becoming a horizontal permission ticket. It must
+solve a current requirement, be classified and locked correctly, stay out of
+runtime artifacts when development-only, and meet the repository dependency
+policy. A standalone dependency addition, upgrade, removal, or repository-wide
+tooling change remains focused work.
 
 ## Unit of delivery
 
@@ -122,8 +132,9 @@ branch until the end-to-end behavior is reviewable.
   independently demonstrable slices before implementation starts.
 - Stacked slice branches require an explicit dependency and must remain
   independently reviewable; they are exceptional, not the default.
-- Fixes, corrections, security work, governance, tooling, dependencies,
-  maintenance, and standalone tickets remain focused PRs outside the slice.
+- Fixes, corrections, security work, governance, tooling, dependency-only
+  changes, maintenance, and standalone tickets remain focused PRs outside the
+  slice.
 - Urgent incident recovery and private security-advisory work follow their
   dedicated focused workflow.
 
