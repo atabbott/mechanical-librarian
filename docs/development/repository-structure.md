@@ -104,6 +104,9 @@ fixtures may exercise the common target-service port, but no production CWA
 adapter package is created until supported-API compatibility and delivery work
 authorize it.
 
+The application-owned request, result, failure, compatibility, and evolution
+rules are defined in [application service-port contracts](../architecture/service-port-contracts.md).
+
 ### `infrastructure`
 
 Process-wide configuration, connection and migration runtime, security
