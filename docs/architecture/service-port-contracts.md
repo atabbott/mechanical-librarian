@@ -32,6 +32,9 @@ is construction/static validation only; adapters do not use it for expected
 runtime conditions. Replayed operations return a typed receipt;
 stale state is a conflict rather than permission to overwrite. A capability
 declaration cannot create or substitute for a grant.
+Each supported write mutation set contains at most one metadata mutation per
+`FieldName` and at most one cover mutation. Distinct destinations retain their
+declared tuple order for digesting and execution.
 
 Providers receive only an allowlisted, bounded `ProviderQuery`. They do not
 receive an `ItemSnapshot`, target identity or credentials, a service endpoint,

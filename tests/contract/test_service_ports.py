@@ -12,13 +12,13 @@ from mechanical_librarian.application.job_heartbeat import JobClaim, JobHeartbea
 from mechanical_librarian.application.ports import (
     AdapterDiagnostics, BackupReadinessReport, BackupReadinessRequest, BackupState,
     CancellationId, CancellationProbe, Capability, CapabilitySet, CompatibilityReport, CompatibilityStatus,
-    CoverCandidate, CurrentFieldState, CurrentFieldStateKind, Deadline, EvidenceExtractor, ExpectedState, ExtractorRequest,
+    CoverCandidate, CoverMutation, CurrentFieldState, CurrentFieldStateKind, Deadline, EvidenceExtractor, ExpectedState, ExtractorRequest,
     FailureKind, HealthReport, HealthStatus, LibraryListRequest, LibraryReadRequest,
     MetadataCandidate, MetadataMutation, Notification, OperationContext, Page, PageRequest,
     PortFailure, PortResult, ProviderFact, ProviderFactCode, ProviderProvenance, ProviderQuery,
     RepositoryOutcome, RepositoryResult, ResourceBounds, RetryAdvice, ReviewerDecision, ReviewerRequest, ReviewerResponse,
     SafeSummary, SecretHandle, SecretResolver, SecretScope, SnapshotStoreRequest, Unit,
-    JobHeartbeatRepository, TimeProbe, Transaction, WorkRequest, WriteGrant, WriteGrantId, WriteReceipt, WriteRequest, mutation_digest, provider_response_preflight, provider_response_size,
+    JobHeartbeatRepository, TimeProbe, Transaction, WorkRequest, WriteGrant, WriteGrantId, WriteReceipt, WriteRequest, mutation_digest, mutation_size, provider_response_preflight, provider_response_size,
 )
 from mechanical_librarian.domain.evidence import (
     ConfidenceFact, EvidenceDetail, EvidenceRecord, EvidenceReference, EvidenceRelationship, FieldProposal, FieldValue, ProposalKind,
@@ -729,6 +729,59 @@ class ServicePortContractTests(unittest.TestCase):
             replace(request.grant, expected=ExpectedState(_fingerprint("other"), None))
         with self.assertRaises(ValueError):
             replace(request.grant, backup=replace(request.grant.backup, state=BackupState.NOT_READY))
+
+    def test_write_mutation_destinations_are_unique_before_grant_or_adapter_use(self) -> None:
+        title = MetadataMutation(MetadataField(FieldName.TITLE, ("Title",)))
+        same_title = MetadataMutation(MetadataField(FieldName.TITLE, ("Title",)))
+        different_title = MetadataMutation(MetadataField(FieldName.TITLE, ("Different",)))
+        first_cover = CoverMutation(CoverReference("cover-one", _fingerprint("cover-one")))
+        second_cover = CoverMutation(CoverReference("cover-two", _fingerprint("cover-two")))
+        duplicate_sets = (
+            (title, same_title),
+            (title, different_title),
+            (first_cover, second_cover),
+        )
+        writer = SyntheticWriter()
+        target = _target()
+        expected = ExpectedState(_fingerprint(), ConcurrencyToken("opaque-token"))
+        key = IdempotencyKey.from_canonical_input(operation="metadata-write", target=target, value={"set": "duplicate"})
+        context = _context()
+        backup = BackupReadinessReport(BackupState.READY, target, expected, context.observed_at, SafeSummary("backup verified"))
+        manual_grant = WriteGrant(
+            WriteGrantId("manual-grant"),
+            target,
+            "a" * 64,
+            expected,
+            key,
+            DecisionAuthorizationId("decision-auth"),
+            ApplyPlanId("apply-plan"),
+            backup,
+            context.observed_at + timedelta(minutes=1),
+        )
+
+        for mutations in duplicate_sets:
+            with self.subTest(kind=type(mutations[0]).__name__):
+                with self.assertRaises(ValueError):
+                    mutation_digest(mutations)
+                with self.assertRaises(ValueError):
+                    mutation_size(mutations)
+                with self.assertRaises(ValueError):
+                    WriteRequest(target, mutations, manual_grant, key, expected, context)
+        self.assertEqual(writer.receipts, {})
+
+        distinct = (
+            title,
+            MetadataMutation(MetadataField(FieldName.PUBLISHER, ("Publisher",))),
+            first_cover,
+        )
+        digest = mutation_digest(distinct)
+        size = mutation_size(distinct)
+        self.assertGreater(size, 0)
+        self.assertNotEqual(digest, mutation_digest(tuple(reversed(distinct))))
+        valid_grant = replace(manual_grant, mutation_digest=digest)
+        request = WriteRequest(target, distinct, valid_grant, key, expected, context)
+        receipt = self.contract.require_result_value(writer.apply(request), WriteReceipt)
+        self.assertFalse(receipt.replayed)
 
     def test_write_live_preflight_blocks_delayed_cancel_and_expiry_before_io(self) -> None:
         owner = CancellationOwner()

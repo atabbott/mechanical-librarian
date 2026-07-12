@@ -518,10 +518,18 @@ def _mutation_payload(mutations: tuple[WriteMutation, ...]) -> list[dict[str, ob
     if type(mutations) is not tuple or not mutations or not all(type(item) in {MetadataMutation, CoverMutation} for item in mutations):
         raise ValueError("mutation payload requires exact immutable mutation values")
     values: list[dict[str, object]] = []
+    metadata_destinations: set[FieldName] = set()
+    cover_seen = False
     for mutation in mutations:
         if type(mutation) is MetadataMutation:
+            if mutation.field.name in metadata_destinations:
+                raise ValueError("mutation payload cannot repeat a metadata field destination")
+            metadata_destinations.add(mutation.field.name)
             values.append({"kind": "metadata", "field": mutation.field.name.value, "values": mutation.field.values})
         else:
+            if cover_seen:
+                raise ValueError("mutation payload cannot contain more than one cover destination")
+            cover_seen = True
             fingerprint = mutation.cover.content_fingerprint
             values.append({
                 "kind": "cover",
