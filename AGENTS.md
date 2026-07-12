@@ -63,10 +63,18 @@ decision with rationale and review.
 - During the initial application build, new product functionality is normally
   delivered as a functional slice rather than as horizontal layer or
   work-package PRs.
-- Fixes, audit corrections, security work, dependencies, documentation,
-  tooling, maintenance, and genuinely standalone tickets are not slices. Use a
-  focused purpose branch such as `fix/`, `docs/`, `chore/`, or `feature/` and
-  one ticket-level pull request.
+- Fixes, audit corrections, security work, dependency-only changes,
+  documentation, tooling, maintenance, and genuinely standalone tickets are
+  not slices. Use a focused purpose branch such as `fix/`, `docs/`, `chore/`,
+  or `feature/` and one ticket-level pull request.
+- A ticket or slice may introduce a framework, library, or tool that materially
+  helps deliver its current outcome without a separate permission ticket.
+  This includes correctly classified development-only dependencies needed for
+  testing, generation, browser qualification, builds, analysis, or docs.
+  Keep the dependency within that delivery boundary and satisfy the documented
+  architecture, licence, security, testing, least-authority, and reproducible
+  lockfile requirements. Durable architecture or trust-boundary changes still
+  require their governing ADR or security review.
 - Before starting new slice functionality, identify a `Ready` slice tracker
   with an observable executable outcome and complete exit criteria. Create one
   branch from current `main` named `slice/<slice-id>-<short-slug>` and keep the

@@ -19,10 +19,12 @@ The authoritative branch, issue, and review mechanics are defined in
 
 ## Focused work outside the slice sequence
 
-Fixes, audit corrections, security work, documentation, tooling, dependencies,
-maintenance, and standalone tickets use focused ticket branches and PRs. They
-may be native prerequisites for a new-functionality slice, but they are never
-absorbed into that slice merely to satisfy its checks.
+Fixes, audit corrections, security work, documentation, tooling,
+dependency-only changes, maintenance, and standalone tickets use focused
+ticket branches and PRs. They may be native prerequisites for a
+new-functionality slice, but they are never absorbed into that slice merely to
+satisfy its checks. A slice may still introduce a dependency needed for its
+observable outcome under the repository dependency policy.
 
 Current focused work includes:
 
@@ -31,7 +33,8 @@ Current focused work includes:
 - durability and architecture corrections #127, #130, and #131 before F01;
 - port, scope, and configuration corrections #129, #132, and #134 before F03;
 - evidence-bound correction #133 before F06; and
-- lifecycle and authorization correction #128 before F10.
+- lifecycle and authorization correction #128 before F10; and
+- frontend architecture decision #192 before F16a.
 
 ## Release 0.1.0: trustworthy report-only product spine
 
@@ -41,11 +44,11 @@ Production metadata and cover writes remain disabled throughout these slices.
 | --- | --- | --- | --- | --- |
 | F01 Durable state check | #136 | A CLI diagnostic creates or opens application state, applies migrations atomically, records and reads a safe audit event, and reports failure without exposing a database path. | #51-#53 | `slice/f01-durable-state-check` |
 | F02 Recoverable job heartbeat | #137 | A bounded synthetic dependency graph pins an immutable workflow-definition version and graph digest, schedules the complete eligible set with stable deduplication, survives worker, scheduler, and process restart under leases and fencing, persists nonterminal `waiting` separately from `retry_wait`, and advances fan-in only after independently validating expected outcomes. An incompatible graph creates linked superseding or replanned work whose transitively affected downstream checkpoints are ineligible for reuse or current applicability without mutating or erasing original history. | #54-#58, #126 | `slice/f02-recoverable-job-heartbeat` |
-| F03 Synthetic inventory round trip | #139 | Validated configuration drives a vendor-neutral synthetic target-service read; one item whose uninterpreted external value exists only inside an opaque adapter/connection/library-scoped canonical identity and one immutable snapshot are persisted and inspected through the CLI without database access or vendor fields. | #49 and slice-specific implementation tickets | `slice/f03-synthetic-inventory` |
+| F03 Synthetic inventory round trip | #139 | Validated configuration drives a vendor-neutral synthetic target-service read; one item whose uninterpreted external value exists only inside an opaque adapter/connection/library-scoped canonical identity and one immutable snapshot are persisted and inspected through the CLI without database access or vendor fields. | #49, #187 | `slice/f03-synthetic-inventory` |
 | F04 Audiobookshelf connection report | #140 | A configured isolated Audiobookshelf instance can be authenticated, versioned, capability-discovered, and diagnosed without reading or mutating library content. | #60, #61 | `slice/f04-audiobookshelf-connection` |
 | F05 Persisted Audiobookshelf inventory | #141 | One real isolated Audiobookshelf library is paged through its supported API, translated at the adapter boundary into canonical vendor-neutral inventory, fingerprinted, persisted, reconciled, and inspected; duplicate notifications and restart do not duplicate work, and the downstream schemas remain reusable by another target adapter. | #62-#67 | `slice/f05-audiobookshelf-inventory` |
-| F06 EPUB package evidence report | #142 | One generated EPUB is parsed within hostile-input bounds and produces a cited, bounded package-metadata evidence report through a supported surface. | #13, #21, #27-#29 | `slice/f06-epub-package-evidence` |
-| F07 EPUB opening-matter evidence report | #143 | The same isolated workflow selects bounded opening matter, extracts edition-aware claims with exact provenance, persists them, and explains unsupported or rejected input. | #25, #26, #30-#32 | `slice/f07-epub-opening-evidence` |
+| F06 EPUB package evidence report | #142 | One generated EPUB is parsed within hostile-input bounds and produces a cited, bounded package-metadata evidence report through a supported surface. | #27-#29; #13 and #21 are non-closing inputs | `slice/f06-epub-package-evidence` |
+| F07 EPUB opening-matter evidence report | #143 | The same isolated workflow selects bounded opening matter, extracts edition-aware claims with exact provenance, persists them, and explains unsupported or rejected input. | #25, #26, #30-#32, #188 | `slice/f07-epub-opening-evidence` |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
 
 ### 0.1.0 release exit
@@ -115,11 +118,14 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
-| F12 Human decision round trip | #148 | A user accepts, keeps, or rejects one field through the versioned API; the decision survives restart and stale submissions fail closed. | #17-#19, #97, #98 | `slice/f12-human-decision` |
-| F13 Guarded fake-service apply | #149 | A current human-approved field change is planned, backed up, idempotently applied to a fake service, read back, verified, audited, and safely rolled back on injected failure. | #81-#83, #86 | `slice/f13-guarded-fake-apply` |
+| F12a Authenticated API foundation | #189 | The supported HTTP service exposes deterministic versioned OpenAPI, minimal anonymous liveness, and one bounded authenticated owner diagnostic; invalid sessions, origins, CSRF, proxy and rate-limit contexts fail closed. | #96, #97 | `slice/f12a-authenticated-api` |
+| F12b Human decision round trip | #148 | An authenticated owner accepts, keeps, or rejects one field, restarts and retrieves the immutable decision/history, then observes a safe stale-version conflict. | #19 | `slice/f12b-human-decision` |
+| F13 Guarded fake-service apply | #149 | A current human-approved field change is planned, backed up, idempotently applied to a fake service through the guarded application/API surfaces, read back, verified, audited, and safely rolled back on injected failure. | #17, #81-#83, #86, #190 | `slice/f13-guarded-fake-apply` |
 | F14 Audiobookshelf canary apply | #150 | The same gates perform one bounded field or cover mutation against a disposable qualified Audiobookshelf instance and prove before/request/after evidence. | #84, #85, #87 | `slice/f14-audiobookshelf-canary` |
-| F15 Containerized report-only operation | #151 | The trusted read and review paths run in the supported single container with health, diagnostics, backup, restore, and upgrade checks while writes default off; supervised auto-resume retains immutable bounded report-only authority through the application scheduler, and advisory ETA reports its basis, timestamp, freshness, or unknown state. | #88-#93 | `slice/f15-container-report-only` |
-| F16 Review operator experience | #152 | The target queue, decision-first detail, progressive evidence, sibling navigation, guarded bulk flow, accessibility, and performance contracts work in a real browser; qualification derives categories from the versioned product and category-capability contract, exercises a representative fixture for each applicable category, records explicit not-applicable reasons, captures page and console errors, and proves proposal-version-bound presentation defaults never rewrite acknowledged decisions; server-authoritative summaries distinguish targets, ordinary and destructive cases, field work items, and planned changes with explicit stale and partial semantics. | #20, #96, #99-#103 | `slice/f16-review-experience` |
+| F15a Report-only container runtime | #151 | The supported single container proves its reproducible image, explicit principals, filesystem/mount isolation, supervised lifecycle, first-run health and durable report-only restart with writes disabled. | #88-#91 | `slice/f15a-container-runtime` |
+| F15b Diagnostics and recovery | #191 | The F15a container exposes authenticated report-only operational status, bounded correlated diagnostics, a previewable redacted support bundle, and documented backup/restore support without write authority. | #92, #93, #98 | `slice/f15b-diagnostics-recovery` |
+| F16a Browser review case round trip | #152 | In a real browser, an authenticated owner finds one target, inspects decision-first detail and progressive evidence, navigates siblings, makes one individual decision, refreshes/restarts, and observes server-authoritative persistence. | #18, #99, #100; focused prerequisite #192 | `slice/f16a-review-case-browser` |
+| F16b Browser summaries, bulk, and qualification | #195 | The browser presents server-authoritative summaries/history, commits one exact-version bulk decision, reverses one unapplied decision, and qualifies every applicable category across the supported browser matrix. | #20, #101-#103, #193, #194 | `slice/f16b-review-bulk-qualification` |
 | F17 Continuous-operation qualification | #153 | The same canonical target/evidence/candidate scenario passes Audiobookshelf and CWA-shaped target fakes, each with provider-disabled and configured-provider variants, without schema changes; provider-disabled runs construct no provider adapter/client, resolve no provider secret, and make no provider network call, while the CWA-shaped fake traps database, UI, maintenance-container, media-write, unsupported-API, and production-mutation fallbacks. Events, reconciliation, review, guarded apply, circuit breakers, immutable workflow upgrades, dependency fan-out and fan-in, duplicate-safe resume, cancellation, worker and scheduler death, candidate-lane reuse and retry, physical JSONL framing, report-only authority isolation, browser-category coverage, advisory progress, restart, upgrade, backup, restore, release provenance, and support diagnostics pass the release cohort. | #94, #95 and a slice-specific release cohort | `slice/f17-release-qualification` |
 
 ### 1.0.0 release exit
