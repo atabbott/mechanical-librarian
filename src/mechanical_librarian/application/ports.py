@@ -436,6 +436,8 @@ class SnapshotStoreRequest:
             raise ValueError("snapshot storage requires typed snapshot and idempotency key")
         if self.idempotency_key.target != self.snapshot.target:
             raise ValueError("snapshot storage idempotency must match the snapshot target")
+        if self.idempotency_key.operation != "snapshot-store":
+            raise ValueError("snapshot storage requires the snapshot-store operation")
         if self.expected_previous is not None and type(self.expected_previous) is not Fingerprint:
             raise ValueError("expected previous snapshot state must be a fingerprint")
         if type(self.context) is not OperationContext:

@@ -22,6 +22,7 @@ from mechanical_librarian.domain.identifiers import (
     ConnectionId,
     ExternalItemId,
     Fingerprint,
+    IdempotencyKey,
     LibraryId,
     SchemaVersion,
     ServiceVersion,
@@ -41,6 +42,8 @@ from mechanical_librarian.domain.inventory import (
     RawObservation,
     ServiceRelease,
 )
+
+
 class SQLiteInventoryRepository:
     """Persist immutable history and publish its current pointer atomically."""
 
@@ -56,6 +59,8 @@ class SQLiteInventoryRepository:
     def store(self, request: SnapshotStoreRequest) -> RepositoryResult[ItemSnapshot]:
         if type(request) is not SnapshotStoreRequest:
             return RepositoryResult(RepositoryOutcome.REJECTED)
+        if request.idempotency_key.operation != "snapshot-store":
+            return RepositoryResult(RepositoryOutcome.REJECTED)
         snapshot = request.snapshot
         size = len(snapshot.canonical_input.serialized.encode("utf-8"))
         if request.context.preflight_result(item_count=1, serialized_bytes=size).failure:
@@ -67,25 +72,60 @@ class SQLiteInventoryRepository:
             with _transaction(self._connection):
                 history_exists = self._history_exists(snapshot.target)
                 pointer_exists = self._current_pointer_exists(snapshot.target)
-                current = self._read_current_row(snapshot.target)
-                if current is None and (history_exists or pointer_exists):
+                current_header = self._current_header(snapshot.target)
+                if current_header is None and (history_exists or pointer_exists):
                     return RepositoryResult(RepositoryOutcome.CORRUPT)
-
-                bound_row = self._row_for_idempotency(
+                bound_header = self._header_for_idempotency(
                     snapshot.target,
                     request.idempotency_key.operation,
                     request.idempotency_key.digest,
                 )
-                if bound_row is not None:
-                    bound = _snapshot_from_row(target_values, bound_row)
+                existing_header = self._header_for_snapshot(
+                    snapshot.target, snapshot.id
+                )
+                headers: dict[str, tuple[object, ...]] = {}
+                for header in (current_header, bound_header, existing_header):
+                    if header is None:
+                        continue
+                    row_id = str(header[0])
+                    if row_id in headers and headers[row_id] != header:
+                        raise ValueError("inventory identity headers disagree")
+                    headers[row_id] = header
+                durable_size = sum(
+                    _validated_header_size(snapshot.target, header)
+                    for header in headers.values()
+                )
+                if request.context.preflight_result(
+                    item_count=1, serialized_bytes=durable_size
+                ).failure:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+
+                hydrated: dict[str, tuple[tuple[object, ...], ItemSnapshot]] = {}
+                for row_id in headers:
+                    row = self._row_for_snapshot(
+                        snapshot.target, SnapshotId(row_id)
+                    )
+                    if row is None:
+                        raise ValueError("inventory identity row disappeared")
+                    persisted = _snapshot_from_row(target_values, row)
+                    hydrated[row_id] = (row, persisted)
+                if request.context.preflight_result(
+                    item_count=1, serialized_bytes=durable_size
+                ).failure:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+
+                current = (
+                    None
+                    if current_header is None
+                    else hydrated[str(current_header[0])][1]
+                )
+                if bound_header is not None:
+                    bound = hydrated[str(bound_header[0])][1]
                     if bound != snapshot:
                         return RepositoryResult(RepositoryOutcome.CORRUPT)
 
-                existing_row = self._row_for_snapshot(
-                    snapshot.target, snapshot.id
-                )
-                if existing_row is not None:
-                    existing = _snapshot_from_row(target_values, existing_row)
+                if existing_header is not None:
+                    existing_row, existing = hydrated[str(existing_header[0])]
                     if (
                         existing != snapshot
                         or existing_row[1] != request.idempotency_key.operation
@@ -159,17 +199,27 @@ class SQLiteInventoryRepository:
         if request.context.preflight_result(item_count=1, serialized_bytes=0).failure:
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
         try:
-            snapshot = self._read_current_row(request.target)
-            if snapshot is None:
-                if self._history_exists(request.target) or self._current_pointer_exists(
-                    request.target
-                ):
+            with _read_transaction(self._connection):
+                header = self._current_header(request.target)
+                if header is None:
+                    if self._history_exists(request.target) or self._current_pointer_exists(
+                        request.target
+                    ):
+                        return RepositoryResult(RepositoryOutcome.CORRUPT)
+                    return RepositoryResult(RepositoryOutcome.NOT_FOUND)
+                size = _validated_header_size(request.target, header)
+                if request.context.preflight_result(
+                    item_count=1, serialized_bytes=size
+                ).failure:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                snapshot = self._read_current_row(request.target)
+                if snapshot is None:
                     return RepositoryResult(RepositoryOutcome.CORRUPT)
-                return RepositoryResult(RepositoryOutcome.NOT_FOUND)
-            size = len(snapshot.canonical_input.serialized.encode("utf-8"))
-            if request.context.preflight_result(item_count=1, serialized_bytes=size).failure:
-                return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
-            return RepositoryResult(RepositoryOutcome.ACCEPTED, snapshot)
+                if request.context.preflight_result(
+                    item_count=1, serialized_bytes=size
+                ).failure:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                return RepositoryResult(RepositoryOutcome.ACCEPTED, snapshot)
         except sqlite3.Error:
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
         except (KeyError, RecursionError, TypeError, ValueError):
@@ -181,57 +231,83 @@ class SQLiteInventoryRepository:
         if request.context.preflight_result(item_count=0, serialized_bytes=0).failure:
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
         try:
-            orphan = self._connection.execute(
-                "SELECT 1 FROM inventory_snapshots s LEFT JOIN "
-                "current_inventory_observations c ON "
-                "s.adapter_id = c.adapter_id AND s.connection_id = c.connection_id AND "
-                "s.library_id = c.library_id AND s.external_item = c.external_item LEFT JOIN "
-                "inventory_snapshots current_s ON current_s.adapter_id = c.adapter_id AND "
-                "current_s.connection_id = c.connection_id AND current_s.library_id = c.library_id "
-                "AND current_s.external_item = c.external_item AND "
-                "current_s.snapshot_id = c.snapshot_id WHERE s.adapter_id = ? AND "
-                "s.connection_id = ? AND (c.snapshot_id IS NULL OR current_s.snapshot_id IS NULL) "
-                "LIMIT 1",
-                (request.connection.adapter.value, request.connection.id.value),
-            ).fetchone()
-            if orphan is not None:
-                return RepositoryResult(RepositoryOutcome.CORRUPT)
-            dangling_pointer = self._connection.execute(
-                "SELECT 1 FROM current_inventory_observations c LEFT JOIN "
-                "inventory_snapshots s ON s.adapter_id = c.adapter_id AND "
-                "s.connection_id = c.connection_id AND s.library_id = c.library_id AND "
-                "s.external_item = c.external_item AND s.snapshot_id = c.snapshot_id "
-                "WHERE c.adapter_id = ? AND c.connection_id = ? AND "
-                "s.snapshot_id IS NULL LIMIT 1",
-                (request.connection.adapter.value, request.connection.id.value),
-            ).fetchone()
-            if dangling_pointer is not None:
-                return RepositoryResult(RepositoryOutcome.CORRUPT)
-            rows = self._connection.execute(
-                "SELECT s.adapter_id, s.connection_id, s.library_id, s.external_item, "
-                "s.snapshot_id, s.idempotency_operation, s.idempotency_digest, "
-                "s.fingerprint_algorithm, s.fingerprint_schema, s.fingerprint_digest, "
-                "s.canonical_input, s.observed_at "
-                "FROM current_inventory_observations c JOIN inventory_snapshots s ON "
-                "s.adapter_id = c.adapter_id AND s.connection_id = c.connection_id AND "
-                "s.library_id = c.library_id AND s.external_item = c.external_item AND "
-                "s.snapshot_id = c.snapshot_id WHERE s.adapter_id = ? AND s.connection_id = ? "
-                "ORDER BY s.library_id, s.external_item LIMIT ?",
-                (
-                    request.connection.adapter.value,
-                    request.connection.id.value,
-                    request.page.limit + 1,
-                ),
-            ).fetchall()
-            if len(rows) > request.page.limit:
-                return RepositoryResult(RepositoryOutcome.REJECTED)
-            snapshots = tuple(_snapshot_from_selected_row(row) for row in rows)
-            size = sum(len(item.canonical_input.serialized.encode("utf-8")) for item in snapshots)
-            if request.context.preflight_result(
-                item_count=len(snapshots), serialized_bytes=size
-            ).failure:
-                return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
-            return RepositoryResult(RepositoryOutcome.ACCEPTED, Page(snapshots, None))
+            with _read_transaction(self._connection):
+                orphan = self._connection.execute(
+                    "SELECT 1 FROM inventory_snapshots s LEFT JOIN "
+                    "current_inventory_observations c ON "
+                    "s.adapter_id = c.adapter_id AND s.connection_id = c.connection_id AND "
+                    "s.library_id = c.library_id AND s.external_item = c.external_item LEFT JOIN "
+                    "inventory_snapshots current_s ON current_s.adapter_id = c.adapter_id AND "
+                    "current_s.connection_id = c.connection_id AND "
+                    "current_s.library_id = c.library_id AND "
+                    "current_s.external_item = c.external_item AND "
+                    "current_s.snapshot_id = c.snapshot_id WHERE s.adapter_id = ? AND "
+                    "s.connection_id = ? AND "
+                    "(c.snapshot_id IS NULL OR current_s.snapshot_id IS NULL) LIMIT 1",
+                    (request.connection.adapter.value, request.connection.id.value),
+                ).fetchone()
+                if orphan is not None:
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
+                dangling_pointer = self._connection.execute(
+                    "SELECT 1 FROM current_inventory_observations c LEFT JOIN "
+                    "inventory_snapshots s ON s.adapter_id = c.adapter_id AND "
+                    "s.connection_id = c.connection_id AND "
+                    "s.library_id = c.library_id AND "
+                    "s.external_item = c.external_item AND s.snapshot_id = c.snapshot_id "
+                    "WHERE c.adapter_id = ? AND c.connection_id = ? AND "
+                    "s.snapshot_id IS NULL LIMIT 1",
+                    (request.connection.adapter.value, request.connection.id.value),
+                ).fetchone()
+                if dangling_pointer is not None:
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
+                headers = self._connection.execute(
+                    "SELECT s.adapter_id, s.connection_id, s.library_id, s.external_item, "
+                    "s.snapshot_id, s.idempotency_operation, s.idempotency_digest, "
+                    "s.fingerprint_algorithm, s.fingerprint_schema, s.fingerprint_digest, "
+                    "typeof(s.canonical_input), length(CAST(s.canonical_input AS BLOB)), "
+                    "s.observed_at FROM current_inventory_observations c JOIN "
+                    "inventory_snapshots s ON s.adapter_id = c.adapter_id AND "
+                    "s.connection_id = c.connection_id AND s.library_id = c.library_id AND "
+                    "s.external_item = c.external_item AND s.snapshot_id = c.snapshot_id "
+                    "WHERE s.adapter_id = ? AND s.connection_id = ? "
+                    "ORDER BY s.library_id, s.external_item LIMIT ?",
+                    (
+                        request.connection.adapter.value,
+                        request.connection.id.value,
+                        request.page.limit + 1,
+                    ),
+                ).fetchall()
+                if len(headers) > request.page.limit:
+                    return RepositoryResult(RepositoryOutcome.REJECTED)
+                size = sum(_validated_selected_header_size(header) for header in headers)
+                if request.context.preflight_result(
+                    item_count=len(headers), serialized_bytes=size
+                ).failure:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                rows = self._connection.execute(
+                    "SELECT s.adapter_id, s.connection_id, s.library_id, s.external_item, "
+                    "s.snapshot_id, s.idempotency_operation, s.idempotency_digest, "
+                    "s.fingerprint_algorithm, s.fingerprint_schema, s.fingerprint_digest, "
+                    "s.canonical_input, s.observed_at "
+                    "FROM current_inventory_observations c JOIN inventory_snapshots s ON "
+                    "s.adapter_id = c.adapter_id AND s.connection_id = c.connection_id AND "
+                    "s.library_id = c.library_id AND s.external_item = c.external_item AND "
+                    "s.snapshot_id = c.snapshot_id WHERE s.adapter_id = ? AND "
+                    "s.connection_id = ? ORDER BY s.library_id, s.external_item LIMIT ?",
+                    (
+                        request.connection.adapter.value,
+                        request.connection.id.value,
+                        request.page.limit + 1,
+                    ),
+                ).fetchall()
+                if len(rows) != len(headers):
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
+                snapshots = tuple(_snapshot_from_selected_row(row) for row in rows)
+                if request.context.preflight_result(
+                    item_count=len(snapshots), serialized_bytes=size
+                ).failure:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                return RepositoryResult(RepositoryOutcome.ACCEPTED, Page(snapshots, None))
         except sqlite3.Error:
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
         except (KeyError, RecursionError, TypeError, ValueError):
@@ -251,6 +327,20 @@ class SQLiteInventoryRepository:
             target_values,
         ).fetchone()
         return None if row is None else _snapshot_from_row(target_values, row)
+
+    def _current_header(self, target: TargetId) -> tuple[object, ...] | None:
+        return self._connection.execute(
+            "SELECT s.snapshot_id, s.idempotency_operation, s.idempotency_digest, "
+            "s.fingerprint_algorithm, s.fingerprint_schema, s.fingerprint_digest, "
+            "typeof(s.canonical_input), length(CAST(s.canonical_input AS BLOB)), "
+            "s.observed_at FROM current_inventory_observations c JOIN "
+            "inventory_snapshots s ON s.adapter_id = c.adapter_id AND "
+            "s.connection_id = c.connection_id AND s.library_id = c.library_id AND "
+            "s.external_item = c.external_item AND s.snapshot_id = c.snapshot_id "
+            "WHERE c.adapter_id = ? AND c.connection_id = ? AND c.library_id = ? "
+            "AND c.external_item = ?",
+            _target_values(target),
+        ).fetchone()
 
     def _history_exists(self, target: TargetId) -> bool:
         return self._connection.execute(
@@ -278,6 +368,18 @@ class SQLiteInventoryRepository:
             (*_target_values(target), snapshot.value),
         ).fetchone()
 
+    def _header_for_snapshot(
+        self, target: TargetId, snapshot: SnapshotId
+    ) -> tuple[object, ...] | None:
+        return self._connection.execute(
+            "SELECT snapshot_id, idempotency_operation, idempotency_digest, "
+            "fingerprint_algorithm, fingerprint_schema, fingerprint_digest, "
+            "typeof(canonical_input), length(CAST(canonical_input AS BLOB)), observed_at "
+            "FROM inventory_snapshots WHERE adapter_id = ? AND connection_id = ? AND "
+            "library_id = ? AND external_item = ? AND snapshot_id = ?",
+            (*_target_values(target), snapshot.value),
+        ).fetchone()
+
     def _row_for_idempotency(
         self, target: TargetId, operation: str, digest: str
     ) -> tuple[object, ...] | None:
@@ -287,6 +389,19 @@ class SQLiteInventoryRepository:
             "canonical_input, observed_at FROM inventory_snapshots "
             "WHERE adapter_id = ? AND connection_id = ? AND library_id = ? "
             "AND external_item = ? AND idempotency_operation = ? "
+            "AND idempotency_digest = ?",
+            (*_target_values(target), operation, digest),
+        ).fetchone()
+
+    def _header_for_idempotency(
+        self, target: TargetId, operation: str, digest: str
+    ) -> tuple[object, ...] | None:
+        return self._connection.execute(
+            "SELECT snapshot_id, idempotency_operation, idempotency_digest, "
+            "fingerprint_algorithm, fingerprint_schema, fingerprint_digest, "
+            "typeof(canonical_input), length(CAST(canonical_input AS BLOB)), observed_at "
+            "FROM inventory_snapshots WHERE adapter_id = ? AND connection_id = ? AND "
+            "library_id = ? AND external_item = ? AND idempotency_operation = ? "
             "AND idempotency_digest = ?",
             (*_target_values(target), operation, digest),
         ).fetchone()
@@ -311,6 +426,48 @@ class SQLiteInventoryRepository:
 
 def _snapshot_from_selected_row(row: tuple[object, ...]) -> ItemSnapshot:
     return _snapshot_from_row(tuple(str(value) for value in row[:4]), row[4:])
+
+
+def _validated_selected_header_size(row: tuple[object, ...]) -> int:
+    if len(row) != 13 or not all(type(value) is str for value in row[:10]):
+        raise ValueError("inventory header is malformed")
+    target = TargetId(
+        AdapterId(str(row[0])),
+        ConnectionId(str(row[1])),
+        LibraryId(str(row[2])),
+        ExternalItemId(str(row[3])),
+    )
+    return _validated_header_size(target, row[4:])
+
+
+def _validated_header_size(target: TargetId, row: tuple[object, ...]) -> int:
+    if len(row) != 9:
+        raise ValueError("inventory header is malformed")
+    (
+        snapshot_id,
+        operation,
+        key_digest,
+        algorithm,
+        schema,
+        digest,
+        storage_type,
+        size,
+        observed,
+    ) = row
+    if (
+        not all(type(value) is str for value in row[:7])
+        or type(size) is not int
+        or type(observed) is not str
+        or storage_type != "text"
+        or not 2 <= size <= 1_048_576
+        or operation != "snapshot-store"
+    ):
+        raise ValueError("inventory header is malformed")
+    SnapshotId(str(snapshot_id))
+    IdempotencyKey(str(operation), target, str(key_digest))
+    Fingerprint(str(algorithm), SchemaVersion(str(schema)), str(digest))
+    datetime.fromisoformat(str(observed).replace("Z", "+00:00"))
+    return size
 
 
 def _snapshot_from_row(
@@ -438,6 +595,19 @@ def _transaction(connection: sqlite3.Connection) -> Iterator[None]:
     if connection.in_transaction:
         raise sqlite3.OperationalError("nested inventory transaction")
     connection.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+
+
+@contextmanager
+def _read_transaction(connection: sqlite3.Connection) -> Iterator[None]:
+    if connection.in_transaction:
+        raise sqlite3.OperationalError("nested inventory transaction")
+    connection.execute("BEGIN")
     try:
         yield
         connection.commit()

@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from mechanical_librarian.adapters.persistence import inventory as inventory_adapter
 from mechanical_librarian.adapters.library_services.synthetic import (
     SyntheticLibraryReader,
     synthetic_capabilities,
@@ -29,6 +30,7 @@ from mechanical_librarian.application.ports import (
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
+    ExternalItemId,
     Fingerprint,
     IdempotencyKey,
     LibraryId,
@@ -50,11 +52,11 @@ from mechanical_librarian.infrastructure.persistence.sqlite import Migration, Sc
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _context(*, max_bytes: int = 524_288) -> OperationContext:
+def _context(*, max_items: int = 1, max_bytes: int = 524_288) -> OperationContext:
     return OperationContext(
         Deadline(_NOW + timedelta(seconds=30)),
         CancellationProbe(CancellationId("inventory-test"), lambda: False),
-        ResourceBounds(1, max_bytes),
+        ResourceBounds(max_items, max_bytes),
         TimeProbe(lambda: _NOW),
     )
 
@@ -155,6 +157,33 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             capabilities=self.snapshot.capabilities,
         )
 
+    def snapshot_for_item(self, external_item: str) -> ItemSnapshot:
+        target = replace(
+            self.snapshot.target, external_item=ExternalItemId(external_item)
+        )
+        return ItemSnapshot.create(
+            id=SnapshotId(f"snapshot-{external_item}"),
+            target=target,
+            media_type=self.snapshot.media_type,
+            lifecycle=self.snapshot.lifecycle,
+            metadata=self.snapshot.metadata,
+            files=self.snapshot.files,
+            cover=self.snapshot.cover,
+            provenance=self.snapshot.provenance,
+            service_release=self.snapshot.service_release,
+            concurrency_token=self.snapshot.concurrency_token,
+            capabilities=self.snapshot.capabilities,
+        )
+
+    def domain_connection(self) -> LibraryConnection:
+        return LibraryConnection(
+            self.snapshot.target.connection,
+            self.snapshot.target.adapter,
+            ServiceEndpoint("https://synthetic.invalid"),
+            SecretReference("unused-reference"),
+            self.snapshot.capabilities,
+        )
+
     def test_store_duplicate_restart_and_scoped_read_preserve_exact_cardinality(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
         first = repository.store(self.request())
@@ -247,6 +276,172 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                 ).fetchone(),
             ),
             ((1,), (1,)),
+        )
+
+    def test_read_measures_durable_bytes_before_hydrating_canonical_input(self) -> None:
+        snapshot = self.large_snapshot()
+        size = len(snapshot.canonical_input.serialized.encode("utf-8"))
+        repository = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(
+            repository.store(
+                self.request_for(snapshot, context=_context(max_bytes=size))
+            ).outcome,
+            RepositoryOutcome.ACCEPTED,
+        )
+
+        with patch.object(
+            inventory_adapter, "_snapshot_from_row", wraps=inventory_adapter._snapshot_from_row
+        ) as hydrate:
+            result = repository.read(
+                LibraryReadRequest(snapshot.target, _context(max_bytes=size - 1))
+            )
+
+        self.assertEqual(result.outcome, RepositoryOutcome.UNAVAILABLE)
+        hydrate.assert_not_called()
+        self.assertFalse(self.connection.in_transaction)
+        exact = repository.read(
+            LibraryReadRequest(snapshot.target, _context(max_bytes=size))
+        )
+        self.assertEqual(exact.outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(exact.value, snapshot)
+
+    def test_list_enforces_page_and_context_bounds_before_hydration(self) -> None:
+        repository = SQLiteInventoryRepository(self.connection)
+        snapshots = (self.snapshot_for_item("item-a"), self.snapshot_for_item("item-b"))
+        for snapshot in snapshots:
+            self.assertEqual(
+                repository.store(self.request_for(snapshot)).outcome,
+                RepositoryOutcome.ACCEPTED,
+            )
+        total_size = sum(
+            len(snapshot.canonical_input.serialized.encode("utf-8"))
+            for snapshot in snapshots
+        )
+        connection = self.domain_connection()
+
+        cases = (
+            (
+                "page-overflow",
+                LibraryListRequest(connection, PageRequest(None, 1), _context()),
+                RepositoryOutcome.REJECTED,
+            ),
+            (
+                "item-bound",
+                LibraryListRequest(connection, PageRequest(None, 2), _context()),
+                RepositoryOutcome.UNAVAILABLE,
+            ),
+            (
+                "byte-bound",
+                LibraryListRequest(
+                    connection,
+                    PageRequest(None, 2),
+                    _context(max_items=2, max_bytes=total_size - 1),
+                ),
+                RepositoryOutcome.UNAVAILABLE,
+            ),
+        )
+        for name, request, expected in cases:
+            with self.subTest(name=name), patch.object(
+                inventory_adapter,
+                "_snapshot_from_selected_row",
+                wraps=inventory_adapter._snapshot_from_selected_row,
+            ) as hydrate:
+                result = repository.list(request)
+                self.assertEqual(result.outcome, expected)
+                hydrate.assert_not_called()
+                self.assertFalse(self.connection.in_transaction)
+
+        exact = repository.list(
+            LibraryListRequest(
+                connection,
+                PageRequest(None, 2),
+                _context(max_items=2, max_bytes=total_size),
+            )
+        )
+        self.assertEqual(exact.outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(exact.value.items, snapshots)
+
+    def test_store_measures_existing_durable_bytes_before_hydration(self) -> None:
+        current = self.large_snapshot()
+        current_size = len(current.canonical_input.serialized.encode("utf-8"))
+        repository = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(
+            repository.store(
+                self.request_for(current, context=_context(max_bytes=current_size))
+            ).outcome,
+            RepositoryOutcome.ACCEPTED,
+        )
+        incoming = self.next_snapshot()
+        incoming_size = len(incoming.canonical_input.serialized.encode("utf-8"))
+
+        with patch.object(
+            inventory_adapter, "_snapshot_from_row", wraps=inventory_adapter._snapshot_from_row
+        ) as hydrate:
+            result = repository.store(
+                self.request_for(
+                    incoming,
+                    current.fingerprint,
+                    context=_context(max_bytes=incoming_size),
+                )
+            )
+
+        self.assertEqual(result.outcome, RepositoryOutcome.UNAVAILABLE)
+        hydrate.assert_not_called()
+        self.assertFalse(self.connection.in_transaction)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT snapshot_id FROM current_inventory_observations"
+            ).fetchone(),
+            (current.id.value,),
+        )
+
+    def test_snapshot_store_operation_is_validated_and_defended_at_repository_boundary(
+        self,
+    ) -> None:
+        wrong_key = IdempotencyKey.from_canonical_input(
+            operation="other-store",
+            target=self.snapshot.target,
+            value={"snapshot": self.snapshot.id.value},
+        )
+        with self.assertRaises(ValueError):
+            SnapshotStoreRequest(self.snapshot, wrong_key, None, _context())
+
+        forged = object.__new__(SnapshotStoreRequest)
+        object.__setattr__(forged, "snapshot", self.snapshot)
+        object.__setattr__(forged, "idempotency_key", wrong_key)
+        object.__setattr__(forged, "expected_previous", None)
+        object.__setattr__(forged, "context", _context())
+        result = SQLiteInventoryRepository(self.connection).store(forged)
+
+        self.assertEqual(result.outcome, RepositoryOutcome.REJECTED)
+        self.assertFalse(self.connection.in_transaction)
+        self.assertEqual(
+            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            (0,),
+        )
+
+    def test_read_snapshot_remains_stable_while_writer_advances_wal_state(self) -> None:
+        writer = SQLiteInventoryRepository(self.connection)
+        self.assertEqual(writer.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        reader_connection = sqlite.connect_existing(self.path)
+        self.addCleanup(reader_connection.close)
+        reader = SQLiteInventoryRepository(reader_connection)
+        advanced = self.next_snapshot()
+
+        with inventory_adapter._read_transaction(reader_connection):
+            self.assertIsNotNone(reader._current_header(self.snapshot.target))
+            self.assertEqual(
+                writer.store(
+                    self.request_for(advanced, self.snapshot.fingerprint)
+                ).outcome,
+                RepositoryOutcome.ACCEPTED,
+            )
+            self.assertEqual(reader._read_current_row(self.snapshot.target), self.snapshot)
+
+        self.assertFalse(reader_connection.in_transaction)
+        self.assertEqual(
+            reader.read(LibraryReadRequest(self.snapshot.target, _context())).value,
+            advanced,
         )
 
     def test_interruption_between_history_and_current_rolls_back_then_retries_cleanly(self) -> None:
@@ -818,6 +1013,74 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             ),
             ((1,), (1,)),
         )
+
+    def test_tampered_durable_operation_is_corrupt_before_hydration(self) -> None:
+        target = self.snapshot.target
+        values = (
+            target.adapter.value,
+            target.connection.value,
+            target.library.value,
+            target.external_item.value,
+        )
+        self.connection.execute("PRAGMA ignore_check_constraints = ON")
+        try:
+            self.connection.execute(
+                "INSERT INTO inventory_snapshots("
+                "adapter_id, connection_id, library_id, external_item, snapshot_id, "
+                "idempotency_operation, idempotency_digest, fingerprint_algorithm, "
+                "fingerprint_schema, fingerprint_digest, canonical_input, observed_at"
+                ") VALUES (?, ?, ?, ?, ?, 'other-store', ?, ?, ?, ?, ?, ?)",
+                (
+                    *values,
+                    self.snapshot.id.value,
+                    self.key.digest,
+                    self.snapshot.fingerprint.algorithm,
+                    self.snapshot.fingerprint.schema.value,
+                    self.snapshot.fingerprint.digest,
+                    self.snapshot.canonical_input.serialized,
+                    "2026-01-01T00:00:00.000000Z",
+                ),
+            )
+            self.connection.execute(
+                "INSERT INTO current_inventory_observations("
+                "adapter_id, connection_id, library_id, external_item, snapshot_id"
+                ") VALUES (?, ?, ?, ?, ?)",
+                (*values, self.snapshot.id.value),
+            )
+        finally:
+            self.connection.execute("PRAGMA ignore_check_constraints = OFF")
+        repository = SQLiteInventoryRepository(self.connection)
+
+        with (
+            patch.object(
+                inventory_adapter,
+                "_snapshot_from_row",
+                wraps=inventory_adapter._snapshot_from_row,
+            ) as hydrate_row,
+            patch.object(
+                inventory_adapter,
+                "_snapshot_from_selected_row",
+                wraps=inventory_adapter._snapshot_from_selected_row,
+            ) as hydrate_selected,
+        ):
+            read = repository.read(
+                LibraryReadRequest(target, _context(max_bytes=1_048_576))
+            )
+            listed = repository.list(
+                LibraryListRequest(
+                    self.domain_connection(),
+                    PageRequest(None, 1),
+                    _context(max_bytes=1_048_576),
+                )
+            )
+            stored = repository.store(self.request())
+
+        self.assertEqual(read.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(listed.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(stored.outcome, RepositoryOutcome.CORRUPT)
+        hydrate_row.assert_not_called()
+        hydrate_selected.assert_not_called()
+        self.assertFalse(self.connection.in_transaction)
 
 
 class InventoryMigrationTests(unittest.TestCase):
