@@ -877,7 +877,8 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             expiry = _timestamp(now + lease_duration)
             claims: list[JobClaim] = []
             with self._transaction() as connection:
-                self._recover_expired(connection, now, timestamp)
+                if not self._recover_expired(connection, now, timestamp):
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
                 retry_rows = connection.execute(
                     "SELECT job_id, run_id FROM jobs WHERE state = 'retry_wait' "
                     "AND cancellation_requested = 0 AND next_eligible_at IS NOT NULL "
@@ -933,10 +934,10 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
 
     def _recover_expired(
         self, connection: sqlite3.Connection, now: datetime, timestamp: str
-    ) -> None:
+    ) -> bool:
         terminal_runs: set[str] = set()
         rows = connection.execute(
-            "SELECT j.job_id, j.run_id, j.stage_id, j.state, j.attempt, "
+            "SELECT j.job_id, j.run_id, j.stage_id, j.state, j.attempt, j.fence, "
             "j.cancellation_requested, j.terminal_failure, r.state, r.cancellation_requested, s.state "
             "FROM jobs j JOIN workflow_runs r ON r.run_id = j.run_id "
             "JOIN workflow_stages s ON s.run_id = j.run_id AND s.stage_id = j.stage_id "
@@ -944,12 +945,22 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             "AND j.lease_expires_at <= ?",
             (timestamp,),
         ).fetchall()
+        for job_id, _run_id, _stage_id, state, attempt, fence, *_rest in rows:
+            if state == JobState.RUNNING.value:
+                attempt_row = connection.execute(
+                    "SELECT 1 FROM job_attempts WHERE job_id = ? AND attempt = ? "
+                    "AND fence = ? AND finished_at IS NULL",
+                    (job_id, attempt, fence),
+                ).fetchone()
+                if attempt_row is None:
+                    return False
         for (
             job_id,
             run_id,
             stage_id,
             state,
             attempt,
+            _fence,
             cancellation_requested,
             terminal_failure,
             run_state,
@@ -1046,6 +1057,7 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                 timestamp,
             )
             self._refresh_run_state(connection, typed_run_id, timestamp)
+        return True
 
     def start(self, claim: JobClaim, *, now: datetime) -> RepositoryResult[None]:
         if type(claim) is not JobClaim:
@@ -1179,6 +1191,13 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                         (claim.run_id.value, claim.stage_id.value),
                     ).fetchone()[0]
                 )
+                attempt_update = connection.execute(
+                    "UPDATE job_attempts SET finished_at = ?, outcome = ? WHERE job_id = ? AND attempt = ? "
+                    "AND fence = ? AND finished_at IS NULL",
+                    (timestamp, outcome.value, claim.job_id.value, attempt, claim.fence),
+                )
+                if attempt_update.rowcount != 1:
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
                 self._record_edge(
                     connection, claim.run_id.value, "job", claim.job_id.value,
                     JobState.RUNNING, JobState.SUCCEEDED, timestamp
@@ -1186,11 +1205,6 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                 self._record_edge(
                     connection, claim.run_id.value, "stage", claim.stage_id.value,
                     stage_state, StageState.SUCCEEDED, timestamp
-                )
-                connection.execute(
-                    "UPDATE job_attempts SET finished_at = ?, outcome = ? WHERE job_id = ? AND attempt = ? "
-                    "AND fence = ? AND finished_at IS NULL",
-                    (timestamp, outcome.value, claim.job_id.value, attempt, claim.fence),
                 )
                 connection.execute(
                     "UPDATE jobs SET state = 'succeeded', terminal_outcome = ?, terminal_failure = NULL, "
@@ -1478,14 +1492,16 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                     }
                     else FailureKind.DEPENDENCY_CANCELLED.value
                 )
-                self._record_edge(
-                    connection, claim.run_id.value, "job", claim.job_id.value,
-                    JobState.RUNNING, JobState.CANCELLED, timestamp
-                )
-                connection.execute(
+                attempt_update = connection.execute(
                     "UPDATE job_attempts SET finished_at = ?, failure = ? "
                     "WHERE job_id = ? AND attempt = ? AND fence = ? AND finished_at IS NULL",
                     (timestamp, failure, claim.job_id.value, row[0], claim.fence),
+                )
+                if attempt_update.rowcount != 1:
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
+                self._record_edge(
+                    connection, claim.run_id.value, "job", claim.job_id.value,
+                    JobState.RUNNING, JobState.CANCELLED, timestamp
                 )
                 connection.execute(
                     "UPDATE jobs SET state = 'cancelled', terminal_failure = ?, "

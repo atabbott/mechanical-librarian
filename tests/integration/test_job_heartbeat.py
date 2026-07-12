@@ -466,6 +466,124 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
                     ).accepted
                 )
 
+    def test_completion_requires_current_attempt_evidence(self) -> None:
+        run_id = self.create_run("missing-completion-attempt")
+        self.repository.enqueue_eligible(run_id, now=NOW)
+        claim = self.claim_one("worker-completion")
+        self.repository.start(claim, now=NOW)
+        attempt = self.connection.execute(
+            "SELECT job_id, attempt, fence, worker_id, started_at, finished_at, "
+            "outcome, failure FROM job_attempts WHERE job_id = ? AND fence = ?",
+            (claim.job_id.value, claim.fence),
+        ).fetchone()
+        self.connection.execute(
+            "DELETE FROM job_attempts WHERE job_id = ? AND fence = ?",
+            (claim.job_id.value, claim.fence),
+        )
+        before = tuple(self.connection.iterdump())
+        rejected = self.repository.complete(claim, OutcomeKind.COMPLETED, now=NOW)
+        self.assertEqual(rejected.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(tuple(self.connection.iterdump()), before)
+        self.assertEqual(self.repository.inspect(run_id).value.jobs[0].state.value, "running")
+
+        self.connection.execute(
+            "INSERT INTO job_attempts(job_id, attempt, fence, worker_id, started_at, "
+            "finished_at, outcome, failure) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            attempt,
+        )
+        self.assertTrue(
+            self.repository.complete(claim, OutcomeKind.COMPLETED, now=NOW).accepted
+        )
+        self.assertTrue(
+            self.repository.validate_run(run_id, synthetic_heartbeat_definition()).accepted
+        )
+
+    def test_expired_recovery_requires_current_attempt_evidence(self) -> None:
+        run_id = self.create_run("missing-recovery-attempt")
+        self.repository.enqueue_eligible(run_id, now=NOW)
+        first = self.claim_one("worker-recovery-first")
+        self.repository.start(first, now=NOW)
+        self.repository.fail(first, FailureKind.SYNTHETIC_RETRYABLE, now=NOW)
+        second_now = NOW + timedelta(seconds=5)
+        second = self.claim_one("worker-recovery-second", second_now)
+        self.repository.start(second, now=second_now)
+        attempt = self.connection.execute(
+            "SELECT job_id, attempt, fence, worker_id, started_at, finished_at, "
+            "outcome, failure FROM job_attempts WHERE job_id = ? AND fence = ?",
+            (second.job_id.value, second.fence),
+        ).fetchone()
+        self.connection.execute(
+            "DELETE FROM job_attempts WHERE job_id = ? AND fence = ?",
+            (second.job_id.value, second.fence),
+        )
+        before = tuple(self.connection.iterdump())
+        recovery_now = NOW + timedelta(seconds=11)
+        rejected = self.repository.claim(
+            WorkerId("worker-recovery-third"),
+            capacity=1,
+            now=recovery_now,
+            lease_duration=LEASE,
+        )
+        self.assertEqual(rejected.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(tuple(self.connection.iterdump()), before)
+        self.assertEqual(self.repository.inspect(run_id).value.jobs[0].state.value, "running")
+
+        self.connection.execute(
+            "INSERT INTO job_attempts(job_id, attempt, fence, worker_id, started_at, "
+            "finished_at, outcome, failure) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            attempt,
+        )
+        self.assertTrue(
+            self.repository.claim(
+                WorkerId("worker-recovery-third"),
+                capacity=1,
+                now=recovery_now,
+                lease_duration=LEASE,
+            ).accepted
+        )
+        snapshot = self.repository.inspect(run_id).value
+        self.assertEqual(snapshot.state, RunState.FAILED_TERMINAL)
+        self.assertEqual(snapshot.attempt_count, 2)
+        self.assertTrue(
+            self.repository.validate_run(run_id, synthetic_heartbeat_definition()).accepted
+        )
+
+    def test_cancellation_acknowledgement_requires_current_attempt_evidence(self) -> None:
+        run_id = self.create_run("missing-cancellation-attempt")
+        self.repository.enqueue_eligible(run_id, now=NOW)
+        claim = self.claim_one("worker-cancellation")
+        self.repository.start(claim, now=NOW)
+        self.repository.cancel_run(run_id, now=NOW)
+        attempt = self.connection.execute(
+            "SELECT job_id, attempt, fence, worker_id, started_at, finished_at, "
+            "outcome, failure FROM job_attempts WHERE job_id = ? AND fence = ?",
+            (claim.job_id.value, claim.fence),
+        ).fetchone()
+        self.connection.execute(
+            "DELETE FROM job_attempts WHERE job_id = ? AND fence = ?",
+            (claim.job_id.value, claim.fence),
+        )
+        before = tuple(self.connection.iterdump())
+        rejected = self.repository.acknowledge_cancellation(claim, now=NOW)
+        self.assertEqual(rejected.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(tuple(self.connection.iterdump()), before)
+        self.assertEqual(self.repository.inspect(run_id).value.jobs[0].state.value, "running")
+
+        self.connection.execute(
+            "INSERT INTO job_attempts(job_id, attempt, fence, worker_id, started_at, "
+            "finished_at, outcome, failure) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            attempt,
+        )
+        self.assertTrue(
+            self.repository.acknowledge_cancellation(claim, now=NOW).accepted
+        )
+        snapshot = self.repository.inspect(run_id).value
+        self.assertEqual(snapshot.state, RunState.CANCELLED)
+        self.assertEqual(snapshot.attempt_count, 1)
+        self.assertTrue(
+            self.repository.validate_run(run_id, synthetic_heartbeat_definition()).accepted
+        )
+
     def test_worker_process_death_recovers_under_a_new_fence(self) -> None:
         script = (
             "import os,sys; from datetime import datetime,timedelta,timezone; "
