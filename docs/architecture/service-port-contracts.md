@@ -44,6 +44,11 @@ all be present as compatible references in the staged packet. Each
 typed recommendation cites known evidence, and the response must cover every
 and only supplied proposal exactly once. Neither capability
 declarations nor reviewer recommendations can become mutation authorization.
+Reviewer resource accounting counts every evidence detail, proposal, and
+current-field entry. Its byte bound includes the staged packet, proposal
+current/proposed values, and the independently delivered value of each loaded
+current field; missing and unavailable fields consume item count but no value
+bytes. Raising and typed preflight paths share the same accounting helper.
 Secret material is not an application value: application code carries only a
 redacted reference and a role-scoped opaque handle at the resolver boundary.
 Every request that carries both a `TargetId` and `IdempotencyKey` requires their
@@ -51,6 +56,10 @@ targets to match; an operation label is not required to equal a work-kind label.
 Metadata and cover providers return bounded canonical candidates with opaque
 provenance, correlation, and fingerprints; local extractors return canonical
 bounded `EvidenceRecord` values rather than raw payloads.
+Metadata and cover provider roles are mutually isolated: metadata providers
+expose `lookup` but never `lookup_covers`, while cover providers expose
+`lookup_covers` but never `lookup`. Other directly provider-isolated families
+deny both methods where their contract already denies provider lookup.
 Provider query facts use bounded safe Unicode metadata text, preserving
 accented and non-Latin bibliographic values while rejecting controls,
 credential-shaped content, absolute/home/traversal/filesystem-URI paths,

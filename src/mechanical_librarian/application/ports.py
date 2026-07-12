@@ -927,24 +927,31 @@ class ReviewerRequest:
         self.preflight()
 
     def preflight(self) -> None:
-        size = len(self.packet.to_json().encode("utf-8")) + sum(
-            len(value.encode("utf-8"))
-            for proposal in self.proposals
-            for field_value in (proposal.current_value, proposal.proposed_value)
-            if field_value is not None
-            for value in field_value.values
-        )
-        self.context.preflight(item_count=len(self.proposals) + len(self.packet.details), serialized_bytes=size)
+        item_count, size = self._resource_usage()
+        self.context.preflight(item_count=item_count, serialized_bytes=size)
 
     def preflight_result(self) -> PortResult[Unit]:
-        size = len(self.packet.to_json().encode("utf-8")) + sum(
+        item_count, size = self._resource_usage()
+        return self.context.preflight_result(item_count=item_count, serialized_bytes=size)
+
+    def _resource_usage(self) -> tuple[int, int]:
+        proposal_bytes = sum(
             len(value.encode("utf-8"))
             for proposal in self.proposals
             for field_value in (proposal.current_value, proposal.proposed_value)
             if field_value is not None
             for value in field_value.values
         )
-        return self.context.preflight_result(item_count=len(self.proposals) + len(self.packet.details), serialized_bytes=size)
+        loaded_current_bytes = sum(
+            len(value.encode("utf-8"))
+            for current in self.current_fields
+            if current.state is CurrentFieldStateKind.LOADED and current.value is not None
+            for value in current.value.values
+        )
+        return (
+            len(self.packet.details) + len(self.proposals) + len(self.current_fields),
+            len(self.packet.to_json().encode("utf-8")) + proposal_bytes + loaded_current_bytes,
+        )
 
 
 @dataclass(frozen=True, repr=False)

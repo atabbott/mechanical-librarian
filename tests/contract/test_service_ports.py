@@ -280,6 +280,14 @@ class BadProviderParameterShape:
         return PortResult.success(Page((), None))
 
 
+class FusedMetadataCoverProvider:
+    def lookup(self, query: ProviderQuery, page: PageRequest, context: OperationContext) -> PortResult[Page[MetadataCandidate]]:
+        return PortResult.success(Page((), None))
+
+    def lookup_covers(self, query: ProviderQuery, page: PageRequest, context: OperationContext) -> PortResult[Page[CoverCandidate]]:
+        return PortResult.success(Page((), None))
+
+
 class BadCommitParameterShape:
     def commit(self, *, wrong: OperationContext) -> PortResult[Unit]:
         return PortResult.success(Unit.VALUE)
@@ -461,6 +469,9 @@ class ServicePortContractTests(unittest.TestCase):
         metadata_contract = next(item for item in standard_family_contracts() if item.name == "metadata-provider")
         self.contract.reject_family(BadProvider(), metadata_contract)
         self.contract.reject_family(BadProviderParameterShape(), metadata_contract)
+        cover_contract = next(item for item in standard_family_contracts() if item.name == "cover-provider")
+        self.contract.reject_family(FusedMetadataCoverProvider(), metadata_contract)
+        self.contract.reject_family(FusedMetadataCoverProvider(), cover_contract)
         transaction_contract = next(item for item in standard_family_contracts() if item.name == "transaction")
         commit_contract = next(item for item in transaction_contract.methods if item.name == "commit")
         with self.assertRaises(AssertionError):
@@ -470,6 +481,27 @@ class ServicePortContractTests(unittest.TestCase):
         self.contract.reject_family(FusedTransactionRoles(), transaction_contract)
         self.contract.reject_family(MissingBeginManager(), manager_contract)
         self.contract.reject_family(MissingRollbackTransaction(), transaction_contract)
+
+        affected = {
+            "repository": SyntheticSnapshotRepository(),
+            "transaction-manager": SyntheticTransactionManager(),
+            "transaction": SyntheticTransaction(),
+            "supported-writer": SyntheticWriter(),
+            "extractor": SyntheticExtractor(),
+            "reviewer": SyntheticReviewer(),
+            "secret-resolver": SyntheticSecretResolver(),
+        }
+        contracts = {item.name: item for item in standard_family_contracts()}
+        for family_name, conformer in affected.items():
+            family = contracts[family_name]
+            attributes = {
+                method.name: type(conformer).__dict__[method.name]
+                for method in family.methods
+            }
+            attributes["lookup_covers"] = FusedMetadataCoverProvider.__dict__["lookup_covers"]
+            nonconformer = type(f"CoverLookup{type(conformer).__name__}", (), attributes)()
+            with self.subTest(family=family_name, forbidden="lookup_covers"):
+                self.contract.reject_family(nonconformer, family)
 
     def test_provider_empty_success_round_trip_and_boundaries(self) -> None:
         query = ProviderQuery(MediaType.EBOOK, FieldName.TITLE, (ProviderFact(ProviderFactCode.TITLE, ("Synthetic title",)),), SchemaVersion("provider-query-v1"))
@@ -737,6 +769,41 @@ class ServicePortContractTests(unittest.TestCase):
         unavailable = (CurrentFieldState(FieldName.TITLE, CurrentFieldStateKind.UNAVAILABLE),)
         with self.assertRaises(ValueError):
             ReviewerRequest(request.packet, (replacement,), unavailable, request.context)
+
+    def test_reviewer_resource_usage_counts_all_entries_and_loaded_current_bytes(self) -> None:
+        request = _review_request()
+        with self.assertRaises(ValueError):
+            ReviewerRequest(request.packet, request.proposals, request.current_fields, _context(items=2, size=64 * 1024))
+
+        item_count, byte_count = request._resource_usage()
+        self.assertEqual(item_count, 3)
+        exact = ReviewerRequest(request.packet, request.proposals, request.current_fields, _context(items=3, size=byte_count))
+        self.assertEqual(exact._resource_usage(), (3, byte_count))
+        with self.assertRaises(ValueError):
+            ReviewerRequest(request.packet, request.proposals, request.current_fields, _context(items=3, size=byte_count - 1))
+
+        forged = object.__new__(ReviewerRequest)
+        object.__setattr__(forged, "packet", request.packet)
+        object.__setattr__(forged, "proposals", request.proposals)
+        object.__setattr__(forged, "current_fields", request.current_fields)
+        object.__setattr__(forged, "context", _context(items=2, size=byte_count))
+        self.contract.require_failure_result(forged.preflight_result(), FailureKind.RESOURCE_EXHAUSTED)
+
+        existing = FieldValue(("Loaded current value",))
+        replacement = replace(request.proposals[0], current_value=existing, kind=ProposalKind.REPLACE_POPULATED)
+        loaded_state = (CurrentFieldState(FieldName.TITLE, CurrentFieldStateKind.LOADED, existing),)
+        loaded = ReviewerRequest(request.packet, (replacement,), loaded_state, _context(items=3, size=64 * 1024))
+        loaded_items, loaded_bytes = loaded._resource_usage()
+        proposal_only_bytes = (
+            len(request.packet.to_json().encode("utf-8"))
+            + sum(len(value.encode("utf-8")) for value in replacement.current_value.values)  # type: ignore[union-attr]
+            + sum(len(value.encode("utf-8")) for value in replacement.proposed_value.values)
+        )
+        self.assertEqual(loaded_items, 3)
+        self.assertEqual(loaded_bytes - proposal_only_bytes, len("Loaded current value".encode("utf-8")))
+        ReviewerRequest(request.packet, (replacement,), loaded_state, _context(items=3, size=loaded_bytes))
+        with self.assertRaises(ValueError):
+            ReviewerRequest(request.packet, (replacement,), loaded_state, _context(items=3, size=loaded_bytes - 1))
 
     def test_secret_and_provider_shapes_carry_no_cross_family_authority(self) -> None:
         result = SyntheticSecretResolver().resolve(SecretReference("providers/catalogue"), SecretScope.METADATA_PROVIDER)
