@@ -20,6 +20,26 @@ class JobState(StrEnum):
     CANCELLED = "cancelled"
 
 
+class RunState(StrEnum):
+    WAITING = "waiting"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED_TERMINAL = "failed_terminal"
+    CANCELLED = "cancelled"
+    SUPERSEDED = "superseded"
+
+
+class StageState(StrEnum):
+    WAITING = "waiting"
+    READY = "ready"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED_TERMINAL = "failed_terminal"
+    CANCELLED = "cancelled"
+    DEPENDENCY_FAILED = "dependency_failed"
+    DEPENDENCY_CANCELLED = "dependency_cancelled"
+
+
 class ReviewCaseState(StrEnum):
     OPEN = "open"
     AUTO_RESOLVED = "auto_resolved"
@@ -273,10 +293,30 @@ class InvalidTransition(DomainValueError):
 
 
 _JOB: dict[JobState, frozenset[JobState]] = {
-    JobState.PENDING: frozenset({JobState.LEASED, JobState.CANCELLED}),
-    JobState.LEASED: frozenset({JobState.RUNNING, JobState.PENDING, JobState.CANCELLED}),
+    JobState.PENDING: frozenset({JobState.LEASED, JobState.FAILED_TERMINAL, JobState.CANCELLED}),
+    JobState.LEASED: frozenset({JobState.RUNNING, JobState.PENDING, JobState.FAILED_TERMINAL, JobState.CANCELLED}),
     JobState.RUNNING: frozenset({JobState.SUCCEEDED, JobState.RETRY_WAIT, JobState.FAILED_TERMINAL, JobState.CANCELLED, JobState.PENDING}),
-    JobState.RETRY_WAIT: frozenset({JobState.PENDING, JobState.CANCELLED}),
+    JobState.RETRY_WAIT: frozenset({JobState.PENDING, JobState.FAILED_TERMINAL, JobState.CANCELLED}),
+}
+_RUN: dict[RunState, frozenset[RunState]] = {
+    RunState.WAITING: frozenset(
+        {RunState.RUNNING, RunState.SUCCEEDED, RunState.FAILED_TERMINAL, RunState.CANCELLED, RunState.SUPERSEDED}
+    ),
+    RunState.RUNNING: frozenset(
+        {RunState.WAITING, RunState.SUCCEEDED, RunState.FAILED_TERMINAL, RunState.CANCELLED, RunState.SUPERSEDED}
+    ),
+    RunState.SUCCEEDED: frozenset({RunState.SUPERSEDED}),
+}
+_STAGE: dict[StageState, frozenset[StageState]] = {
+    StageState.WAITING: frozenset(
+        {StageState.READY, StageState.SUCCEEDED, StageState.CANCELLED, StageState.DEPENDENCY_FAILED, StageState.DEPENDENCY_CANCELLED}
+    ),
+    StageState.READY: frozenset(
+        {StageState.RUNNING, StageState.CANCELLED, StageState.FAILED_TERMINAL, StageState.DEPENDENCY_FAILED, StageState.DEPENDENCY_CANCELLED}
+    ),
+    StageState.RUNNING: frozenset(
+        {StageState.READY, StageState.SUCCEEDED, StageState.CANCELLED, StageState.FAILED_TERMINAL, StageState.DEPENDENCY_FAILED, StageState.DEPENDENCY_CANCELLED}
+    ),
 }
 _REVIEW: dict[ReviewCaseState, frozenset[ReviewCaseState]] = {
     ReviewCaseState.OPEN: frozenset({ReviewCaseState.AUTO_RESOLVED, ReviewCaseState.NEEDS_REVIEW, ReviewCaseState.UNSUPPORTED, ReviewCaseState.SUPERSEDED}),
@@ -303,6 +343,8 @@ _BREAKER: dict[CircuitBreakerState, frozenset[CircuitBreakerState]] = {
 }
 _STATE_TABLES: dict[type[StrEnum], object] = {
     JobState: _JOB,
+    RunState: _RUN,
+    StageState: _STAGE,
     ReviewCaseState: _REVIEW,
     ProposalDecisionState: _PROPOSAL,
     BulkDecisionBatchState: _BATCH,

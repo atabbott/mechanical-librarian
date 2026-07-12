@@ -65,9 +65,16 @@ class LifecycleTests(unittest.TestCase):
     def test_every_direct_transition_matches_the_complete_legal_edge_table(self) -> None:
         documented_edges = {
             JobState: {
-                JobState.PENDING: frozenset({JobState.LEASED, JobState.CANCELLED}),
+                JobState.PENDING: frozenset(
+                    {JobState.LEASED, JobState.FAILED_TERMINAL, JobState.CANCELLED}
+                ),
                 JobState.LEASED: frozenset(
-                    {JobState.RUNNING, JobState.PENDING, JobState.CANCELLED}
+                    {
+                        JobState.RUNNING,
+                        JobState.PENDING,
+                        JobState.FAILED_TERMINAL,
+                        JobState.CANCELLED,
+                    }
                 ),
                 JobState.RUNNING: frozenset(
                     {
@@ -79,7 +86,7 @@ class LifecycleTests(unittest.TestCase):
                     }
                 ),
                 JobState.RETRY_WAIT: frozenset(
-                    {JobState.PENDING, JobState.CANCELLED}
+                    {JobState.PENDING, JobState.FAILED_TERMINAL, JobState.CANCELLED}
                 ),
             },
             ReviewCaseState: {

@@ -34,6 +34,10 @@ versioning after the first public release.
 
 ### Added
 
+- A report-only `job-heartbeat --database PATH` demonstration with a durable
+  bounded dependency graph, transactional complete-set scheduling,
+  capacity-bounded leased claims, monotonic fencing, finite restart-safe retry,
+  cancellation, validated fan-in, and immutable incompatible replan history.
 - A `state-check --database PATH` operator diagnostic for durable filesystem
   state that creates or opens application state, applies migrations, and
   verifies idempotent audit write/read behavior with fixed path-free success and
