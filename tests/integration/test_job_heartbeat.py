@@ -832,6 +832,183 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
             {"root": True, "left": True, "right": True, "join": True},
         )
 
+    def test_replan_atomically_terminalizes_active_source_work(self) -> None:
+        baseline = synthetic_heartbeat_definition()
+        replacement_definition = synthetic_heartbeat_definition(incompatible=True)
+        for source_state in ("pending", "leased", "running", "retry_wait"):
+            with self.subTest(source_state=source_state):
+                source = self.create_run(f"active-source-{source_state}")
+                self.repository.enqueue_eligible(source, now=NOW)
+                claim = None
+                if source_state != "pending":
+                    claim = self.claim_one(f"worker-{source_state}")
+                if source_state in {"running", "retry_wait"}:
+                    self.repository.start(claim, now=NOW)
+                if source_state == "retry_wait":
+                    self.repository.fail(
+                        claim, FailureKind.SYNTHETIC_RETRYABLE, now=NOW
+                    )
+
+                replanned = self.repository.create_or_resume(
+                    source,
+                    replacement_definition,
+                    changed_stages=frozenset({StageId("left")}),
+                    now=NOW + timedelta(minutes=1),
+                )
+                self.assertTrue(replanned.accepted)
+                snapshot = self.repository.inspect(source).value
+                self.assertEqual(snapshot.state, RunState.SUPERSEDED)
+                self.assertTrue(
+                    all(job.state.value == "cancelled" for job in snapshot.jobs)
+                )
+                self.assertTrue(
+                    all(stage.state.value == "cancelled" for stage in snapshot.stages)
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT count(*) FROM job_attempts a JOIN jobs j "
+                        "ON j.job_id = a.job_id WHERE j.run_id = ? "
+                        "AND a.finished_at IS NULL",
+                        (source.value,),
+                    ).fetchone(),
+                    (0,),
+                )
+                if claim is not None:
+                    self.assertEqual(
+                        self.repository.complete(
+                            claim,
+                            OutcomeKind.COMPLETED,
+                            now=NOW + timedelta(minutes=1),
+                        ).outcome,
+                        RepositoryOutcome.REJECTED,
+                    )
+                self.assertTrue(self.repository.validate_run(source, baseline).accepted)
+                self.assertTrue(
+                    self.repository.validate_run(
+                        replanned.value.id, replacement_definition
+                    ).accepted
+                )
+                before_recovery = tuple(self.connection.iterdump())
+                claimed = self.repository.claim(
+                    WorkerId("worker-after-supersession"),
+                    capacity=4,
+                    now=NOW + timedelta(minutes=2),
+                    lease_duration=LEASE,
+                )
+                self.assertEqual(claimed.value, ())
+                self.assertEqual(tuple(self.connection.iterdump()), before_recovery)
+                self.assertEqual(
+                    self.repository.enqueue_eligible(
+                        replanned.value.id, now=NOW + timedelta(minutes=2)
+                    ).value,
+                    1,
+                )
+                self.assertTrue(
+                    self.repository.cancel_run(
+                        replanned.value.id, now=NOW + timedelta(minutes=3)
+                    ).accepted
+                )
+
+        atomic = self.create_run("active-source-atomic")
+        self.repository.enqueue_eligible(atomic, now=NOW)
+        active_claim = self.claim_one("worker-active-atomic")
+        self.repository.start(active_claim, now=NOW)
+        before_failure = tuple(self.connection.iterdump())
+        self.connection.execute(
+            "CREATE TEMP TRIGGER fail_active_replan BEFORE UPDATE OF superseded_by "
+            "ON workflow_runs WHEN OLD.run_id = 'active-source-atomic' "
+            "BEGIN SELECT RAISE(ABORT, 'injected'); END"
+        )
+        failed = self.repository.create_or_resume(
+            atomic,
+            replacement_definition,
+            changed_stages=frozenset({StageId("left")}),
+            now=NOW + timedelta(minutes=1),
+        )
+        self.connection.execute("DROP TRIGGER fail_active_replan")
+        self.assertEqual(failed.outcome, RepositoryOutcome.UNAVAILABLE)
+        self.assertEqual(tuple(self.connection.iterdump()), before_failure)
+
+    def test_checkpoint_applicability_tampering_fails_closed(self) -> None:
+        baseline = synthetic_heartbeat_definition()
+        source = self.create_run("checkpoint-flags-source")
+        self.complete_run(source)
+        second_definition = synthetic_heartbeat_definition(incompatible=True)
+        second = self.repository.create_or_resume(
+            source,
+            second_definition,
+            changed_stages=frozenset({StageId("left")}),
+            now=NOW + timedelta(minutes=1),
+        ).value
+        third_stages = tuple(
+            StageDefinition(
+                stage.id,
+                stage.kind,
+                StageVersion("stage-v3")
+                if stage.id == StageId("right")
+                else stage.version,
+                stage.expected_outcome,
+            )
+            for stage in second_definition.stages
+        )
+        third_definition = WorkflowDefinition(
+            WorkflowVersion("heartbeat-v3"),
+            third_stages,
+            second_definition.dependencies,
+        )
+
+        corruptions = (
+            (second.id.value, "left", 1, 1),
+            (second.id.value, "root", 0, 0),
+            (source.value, "root", 0, 0),
+        )
+        for tampered_run, stage_id, reuse_eligible, current_applicable in corruptions:
+            with self.subTest(
+                tampered_run=tampered_run,
+                stage_id=stage_id,
+                reuse_eligible=reuse_eligible,
+            ):
+                original = self.connection.execute(
+                    "SELECT reuse_eligible, current_applicable FROM stage_checkpoints "
+                    "WHERE run_id = ? AND stage_id = ?",
+                    (tampered_run, stage_id),
+                ).fetchone()
+                self.connection.execute(
+                    "UPDATE stage_checkpoints SET reuse_eligible = ?, "
+                    "current_applicable = ? WHERE run_id = ? AND stage_id = ?",
+                    (reuse_eligible, current_applicable, tampered_run, stage_id),
+                )
+                definition = baseline if tampered_run == source.value else second_definition
+                self.assertEqual(
+                    self.repository.validate_run(RunId(tampered_run), definition).outcome,
+                    RepositoryOutcome.CORRUPT,
+                )
+                before = tuple(self.connection.iterdump())
+                compatible = self.repository.create_or_resume(
+                    RunId(tampered_run),
+                    definition,
+                    changed_stages=frozenset(),
+                    now=NOW + timedelta(minutes=2),
+                )
+                self.assertEqual(compatible.outcome, RepositoryOutcome.CORRUPT)
+                if tampered_run == second.id.value:
+                    chained = self.repository.create_or_resume(
+                        second.id,
+                        third_definition,
+                        changed_stages=frozenset({StageId("right")}),
+                        now=NOW + timedelta(minutes=2),
+                    )
+                    self.assertEqual(chained.outcome, RepositoryOutcome.CORRUPT)
+                self.assertEqual(tuple(self.connection.iterdump()), before)
+                self.connection.execute(
+                    "UPDATE stage_checkpoints SET reuse_eligible = ?, "
+                    "current_applicable = ? WHERE run_id = ? AND stage_id = ?",
+                    (*original, tampered_run, stage_id),
+                )
+                self.assertTrue(
+                    self.repository.validate_run(RunId(tampered_run), definition).accepted
+                )
+
     def test_repeated_qualification_fails_closed_when_durable_evidence_is_missing(self) -> None:
         self.assertTrue(RunSyntheticJobHeartbeat(self.repository).run().succeeded)
         self.connection.execute("DELETE FROM audit_events WHERE kind = 'job'")

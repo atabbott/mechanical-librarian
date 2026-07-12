@@ -252,12 +252,49 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             )
             if stored_stages != expected_stages or stored_edges != expected_edges:
                 return RepositoryResult(RepositoryOutcome.CORRUPT)
+            stage_states = {
+                row[0]: row[1]
+                for row in self._connection.execute(
+                    "SELECT stage_id, state FROM workflow_stages WHERE run_id = ?",
+                    (run_id.value,),
+                )
+            }
+            inherited_affected: frozenset[StageId] = frozenset()
+            if replanned_from is not None:
+                predecessor = RunId(replanned_from)
+                try:
+                    changed_stages = self._derive_changed_stages(
+                        self._connection, predecessor, definition
+                    )
+                except ValueError:
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
+                inherited_invalid = frozenset(
+                    StageId(row[0])
+                    for row in self._connection.execute(
+                        "SELECT stage_id FROM stage_checkpoints WHERE run_id = ? "
+                        "AND (reuse_eligible = 0 OR current_applicable = 0)",
+                        (predecessor.value,),
+                    )
+                )
+                inherited_affected = definition.descendants(
+                    changed_stages | inherited_invalid
+                )
             checkpoints = self._connection.execute(
                 "SELECT stage_id, source_run_id, source_stage_id, accepting_job_id, "
-                "accepting_fence, outcome FROM stage_checkpoints WHERE run_id = ?",
+                "accepting_fence, outcome, reuse_eligible, current_applicable "
+                "FROM stage_checkpoints WHERE run_id = ?",
                 (run_id.value,),
             ).fetchall()
-            for stage_id, source_run, source_stage, job_id, fence, outcome in checkpoints:
+            for (
+                stage_id,
+                source_run,
+                source_stage,
+                job_id,
+                fence,
+                outcome,
+                reuse_eligible,
+                current_applicable,
+            ) in checkpoints:
                 if source_run is not None:
                     if replanned_from is None or source_run != replanned_from:
                         return RepositoryResult(RepositoryOutcome.CORRUPT)
@@ -267,7 +304,17 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                     ).fetchone()
                     if source_stage != stage_id or source != (outcome,):
                         return RepositoryResult(RepositoryOutcome.CORRUPT)
+                    eligible = StageId(stage_id) not in inherited_affected
+                    if (reuse_eligible, current_applicable) != (
+                        int(eligible),
+                        int(eligible),
+                    ):
+                        return RepositoryResult(RepositoryOutcome.CORRUPT)
+                    if (stage_states[stage_id] == StageState.SUCCEEDED.value) != eligible:
+                        return RepositoryResult(RepositoryOutcome.CORRUPT)
                     continue
+                if (reuse_eligible, current_applicable) != (1, 1):
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
                 accepted = self._connection.execute(
                     "SELECT j.run_id, j.stage_id, j.state, j.fence, a.outcome, a.finished_at "
                     "FROM jobs j JOIN job_attempts a ON a.job_id = j.job_id AND a.fence = ? "
@@ -513,6 +560,7 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
             ).fetchone()
             if row != (definition.version.value, definition.digest):
                 raise ValueError("stored workflow replacement is incompatible")
+            self._terminalize_for_supersession(connection, source, timestamp)
             self._refresh_run_state(connection, replacement, timestamp)
             return replacement
 
@@ -575,6 +623,7 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                     "UPDATE workflow_stages SET state = 'succeeded' WHERE run_id = ? AND stage_id = ?",
                     (replacement.value, stage.id.value),
                 )
+        self._terminalize_for_supersession(connection, source, timestamp)
         source_state = RunState(
             connection.execute(
                 "SELECT state FROM workflow_runs WHERE run_id = ?", (source.value,)
@@ -596,6 +645,61 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
         )
         self._refresh_run_state(connection, replacement, timestamp)
         return replacement
+
+    def _terminalize_for_supersession(
+        self,
+        connection: sqlite3.Connection,
+        run_id: RunId,
+        timestamp: str,
+    ) -> None:
+        jobs = connection.execute(
+            "SELECT job_id, state FROM jobs WHERE run_id = ? "
+            "AND state IN ('pending','leased','running','retry_wait')",
+            (run_id.value,),
+        ).fetchall()
+        for job_id, job_state in jobs:
+            self._record_edge(
+                connection,
+                run_id.value,
+                "job",
+                job_id,
+                JobState(job_state),
+                JobState.CANCELLED,
+                timestamp,
+            )
+        stages = connection.execute(
+            "SELECT stage_id, state FROM workflow_stages WHERE run_id = ? "
+            "AND state IN ('waiting','ready','running')",
+            (run_id.value,),
+        ).fetchall()
+        for stage_id, stage_state in stages:
+            self._record_edge(
+                connection,
+                run_id.value,
+                "stage",
+                stage_id,
+                StageState(stage_state),
+                StageState.CANCELLED,
+                timestamp,
+            )
+        connection.execute(
+            "UPDATE job_attempts SET finished_at = ?, failure = 'dependency_cancelled' "
+            "WHERE finished_at IS NULL AND job_id IN "
+            "(SELECT job_id FROM jobs WHERE run_id = ? AND state = 'running')",
+            (timestamp, run_id.value),
+        )
+        connection.execute(
+            "UPDATE jobs SET state = 'cancelled', cancellation_requested = 1, "
+            "terminal_failure = 'dependency_cancelled', lease_owner = NULL, "
+            "lease_expires_at = NULL, next_eligible_at = NULL, updated_at = ? "
+            "WHERE run_id = ? AND state IN ('pending','leased','running','retry_wait')",
+            (timestamp, run_id.value),
+        )
+        connection.execute(
+            "UPDATE workflow_stages SET state = 'cancelled' WHERE run_id = ? "
+            "AND state IN ('waiting','ready','running')",
+            (run_id.value,),
+        )
 
     def enqueue_eligible(self, run_id: RunId, *, now: datetime) -> RepositoryResult[int]:
         if type(run_id) is not RunId:
