@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import dataclasses
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from mechanical_librarian.adapters.library_services.synthetic import (
     SyntheticLibraryReader,
     synthetic_capabilities,
 )
+from mechanical_librarian.adapters.persistence.inventory import SQLiteInventoryRepository
 from mechanical_librarian.application.job_heartbeat import (
     RepositoryOutcome,
     RepositoryResult,
@@ -45,6 +48,7 @@ from mechanical_librarian.domain.inventory import (
     SecretReference,
     ServiceEndpoint,
 )
+from mechanical_librarian.infrastructure.persistence import sqlite
 
 
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -78,6 +82,7 @@ class MemorySnapshotRepository:
         self.snapshot = None
         self.keys = []
         self.requests = []
+        self.read_requests = []
 
     def store(self, request: SnapshotStoreRequest) -> RepositoryResult:
         self.keys.append(request.idempotency_key)
@@ -88,6 +93,7 @@ class MemorySnapshotRepository:
         return RepositoryResult(RepositoryOutcome.REUSED, self.snapshot)
 
     def read(self, request: LibraryReadRequest) -> RepositoryResult:
+        self.read_requests.append(request)
         if self.snapshot is None or self.snapshot.target != request.target:
             return RepositoryResult(RepositoryOutcome.NOT_FOUND)
         return RepositoryResult(RepositoryOutcome.ACCEPTED, self.snapshot)
@@ -140,6 +146,46 @@ class RepositoryOverride(MemorySnapshotRepository):
         if self.read_result is not None:
             return self.read_result
         return super().read(request)
+
+
+class MutableClock:
+    def __init__(self, now: datetime = _NOW) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
+
+
+class ExpiringRepository:
+    def __init__(self, delegate: SQLiteInventoryRepository, clock: MutableClock, phase: str):
+        self.delegate = delegate
+        self.clock = clock
+        self.phase = phase
+        self.reads = 0
+        self.delayed = False
+        self.delegate_outcomes = []
+
+    def _expire(self, phase: str) -> None:
+        if not self.delayed and self.phase == phase:
+            self.clock.now = _NOW + timedelta(seconds=30)
+            self.delayed = True
+
+    def read(self, request):
+        self.reads += 1
+        phase = "pre-read" if self.reads == 1 else "readback"
+        self._expire(phase)
+        result = self.delegate.read(request)
+        self.delegate_outcomes.append((phase, result.outcome))
+        return result
+
+    def store(self, request):
+        result = self.delegate.store(request)
+        self.delegate_outcomes.append(("store", result.outcome))
+        self._expire("store")
+        return result
+
+    def list(self, request):
+        return self.delegate.list(request)
 
 
 class SyntheticLibraryReaderTests(unittest.TestCase):
@@ -334,6 +380,109 @@ class InspectSyntheticInventoryTests(unittest.TestCase):
                 )
                 self.assertEqual(result.outcome, expected)
                 self.assertEqual(repository.keys, [])
+                self.assertEqual(repository.read_requests, [])
+
+    def test_deadline_equality_and_simultaneous_cancellation_precedence(self) -> None:
+        for cancelled, expected in (
+            (False, SyntheticInventoryOutcome.DEADLINE_EXPIRED),
+            (True, SyntheticInventoryOutcome.CANCELLED),
+        ):
+            with self.subTest(cancelled=cancelled):
+                context = OperationContext(
+                    Deadline(_NOW),
+                    CancellationProbe(
+                        CancellationId("synthetic-equality"), lambda: cancelled
+                    ),
+                    ResourceBounds(1, 64 * 1024),
+                    TimeProbe(lambda: _NOW),
+                )
+                repository = MemorySnapshotRepository()
+                result = InspectSyntheticInventory(self.reader, repository).run(
+                    self.connection, self.library, context
+                )
+                self.assertEqual(result.outcome, expected)
+                self.assertIsNone(result.inspection)
+                self.assertEqual(repository.read_requests, [])
+
+    def test_repository_boundary_expiry_phase_matrix_and_fresh_retry(self) -> None:
+        for phase, expected_initial_counts in (
+            ("pre-read", ((0,), (0,))),
+            ("store", ((1,), (1,))),
+            ("readback", ((1,), (1,))),
+        ):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                state = sqlite.connect(Path(directory) / "state.sqlite")
+                try:
+                    sqlite.migrate(state)
+                    durable = SQLiteInventoryRepository(state)
+                    clock = MutableClock()
+                    repository = ExpiringRepository(durable, clock, phase)
+                    context = OperationContext(
+                        Deadline(_NOW + timedelta(seconds=30)),
+                        CancellationProbe(
+                            CancellationId(f"synthetic-{phase}"), lambda: False
+                        ),
+                        ResourceBounds(1, 64 * 1024),
+                        TimeProbe(clock),
+                    )
+                    use_case = InspectSyntheticInventory(self.reader, repository)
+
+                    expired = use_case.run(self.connection, self.library, context)
+
+                    self.assertEqual(
+                        expired.outcome, SyntheticInventoryOutcome.DEADLINE_EXPIRED
+                    )
+                    self.assertIsNone(expired.inspection)
+                    counts = (
+                        state.execute(
+                            "SELECT count(*) FROM inventory_snapshots"
+                        ).fetchone(),
+                        state.execute(
+                            "SELECT count(*) FROM current_inventory_observations"
+                        ).fetchone(),
+                    )
+                    self.assertEqual(counts, expected_initial_counts)
+                    boundary_outcomes = dict(repository.delegate_outcomes)
+                    if phase in {"pre-read", "readback"}:
+                        self.assertEqual(
+                            boundary_outcomes[phase], RepositoryOutcome.UNAVAILABLE
+                        )
+                    else:
+                        self.assertEqual(
+                            boundary_outcomes["store"], RepositoryOutcome.ACCEPTED
+                        )
+
+                    clock.now = _NOW
+                    retry = use_case.run(self.connection, self.library, context)
+
+                    self.assertTrue(retry.succeeded)
+                    self.assertEqual(
+                        retry.inspection.repository_outcome,
+                        RepositoryOutcome.ACCEPTED
+                        if phase == "pre-read"
+                        else RepositoryOutcome.REUSED,
+                    )
+                    self.assertEqual(
+                        durable.read(
+                            LibraryReadRequest(
+                                self.reader.record.snapshot.target, context
+                            )
+                        ).value,
+                        self.reader.record.snapshot,
+                    )
+                    self.assertEqual(
+                        (
+                            state.execute(
+                                "SELECT count(*) FROM inventory_snapshots"
+                            ).fetchone(),
+                            state.execute(
+                                "SELECT count(*) FROM current_inventory_observations"
+                            ).fetchone(),
+                        ),
+                        ((1,), (1,)),
+                    )
+                finally:
+                    state.close()
 
     def test_rejects_reused_or_readback_results_with_wrong_shape_or_value(self) -> None:
         other = SyntheticLibraryReader(

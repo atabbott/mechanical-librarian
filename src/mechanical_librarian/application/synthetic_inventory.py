@@ -154,6 +154,9 @@ class InspectSyntheticInventory:
             return _failed(_context_outcome(bounded.failure.kind))
 
         before = self._repository.read(LibraryReadRequest(snapshot.target, context))
+        boundary = context.preflight_result(item_count=0, serialized_bytes=0)
+        if boundary.failure is not None:
+            return _failed(_context_outcome(boundary.failure.kind))
         if type(before) is not RepositoryResult:
             return _failed(SyntheticInventoryOutcome.PERSISTENCE_FAILURE)
         if before.outcome is RepositoryOutcome.NOT_FOUND and before.value is None:
@@ -181,11 +184,17 @@ class InspectSyntheticInventory:
         stored = self._repository.store(
             SnapshotStoreRequest(snapshot, key, expected_previous, context)
         )
+        boundary = context.preflight_result(item_count=0, serialized_bytes=0)
+        if boundary.failure is not None:
+            return _failed(_context_outcome(boundary.failure.kind))
         persisted = _persisted_snapshot(stored, snapshot, current_snapshot)
         if persisted is None:
             return _failed(SyntheticInventoryOutcome.PERSISTENCE_FAILURE)
 
         readback = self._repository.read(LibraryReadRequest(snapshot.target, context))
+        boundary = context.preflight_result(item_count=0, serialized_bytes=0)
+        if boundary.failure is not None:
+            return _failed(_context_outcome(boundary.failure.kind))
         if not _valid_readback(readback, persisted):
             return _failed(SyntheticInventoryOutcome.READBACK_MISMATCH)
 

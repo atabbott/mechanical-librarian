@@ -7,12 +7,14 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import mechanical_librarian.bootstrap as bootstrap
 from mechanical_librarian.adapters.library_services.synthetic import SyntheticLibraryReader
 from mechanical_librarian.application.ports import Page, PortResult
+from mechanical_librarian.application.synthetic_inventory import SyntheticInventoryOutcome
 from mechanical_librarian.domain.identifiers import SnapshotId
 
 
@@ -139,6 +141,71 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
                 )
             finally:
                 connection.close()
+
+    def test_live_bootstrap_clock_expires_delayed_reader_without_publication(self) -> None:
+        initial = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        class MutableUtcDateTime:
+            current = initial
+
+            @classmethod
+            def now(cls, selected_timezone):
+                self.assertIs(selected_timezone, timezone.utc)
+                return cls.current
+
+        class DelayedReader:
+            def __init__(self, connection, library) -> None:
+                self.delegate = SyntheticLibraryReader(connection, library)
+
+            def discover_capabilities(self, connection, context):
+                return self.delegate.discover_capabilities(connection, context)
+
+            def list_snapshots(self, request):
+                result = self.delegate.list_snapshots(request)
+                MutableUtcDateTime.current = initial + timedelta(seconds=30)
+                return result
+
+            def read_snapshot(self, request):
+                return self.delegate.read_snapshot(request)
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "private-deadline-state.sqlite"
+            direct_database = Path(directory) / "private-direct-state.sqlite"
+            with (
+                patch.object(bootstrap, "datetime", MutableUtcDateTime),
+                patch.object(bootstrap, "SyntheticLibraryReader", DelayedReader),
+            ):
+                direct = bootstrap._run_synthetic_inventory(
+                    CONFIGURATION, direct_database
+                )
+                MutableUtcDateTime.current = initial
+                result = self.run_inventory(CONFIGURATION, database)
+
+            self.assertEqual(
+                direct.outcome, SyntheticInventoryOutcome.DEADLINE_EXPIRED
+            )
+            self.assertIsNone(direct.inspection)
+            self.assertEqual(
+                result,
+                (
+                    1,
+                    "",
+                    "Synthetic inventory failed: bounded report-only inventory could not be verified.\n",
+                ),
+            )
+            self.assertFalse(database.exists())
+            self.assertFalse(direct_database.exists())
+            combined = result[1] + result[2]
+            self.assertNotIn(str(database), combined)
+            self.assertNotIn("private-deadline", combined)
+            self.assertNotIn("unused-synthetic-reference", combined)
+            for forbidden in (
+                "SupportedWriter",
+                "WriteGrant",
+                "SecretResolver",
+                "MetadataProvider",
+            ):
+                self.assertNotIn(forbidden, vars(bootstrap))
 
     @patch("mechanical_librarian.bootstrap.SQLiteInventoryRepository")
     @patch("mechanical_librarian.bootstrap.SyntheticLibraryReader")

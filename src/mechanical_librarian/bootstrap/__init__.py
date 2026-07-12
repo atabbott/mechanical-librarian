@@ -213,7 +213,7 @@ def _run_synthetic_inventory(
             Deadline(now + timedelta(seconds=30)),
             CancellationProbe(CancellationId("synthetic-inventory"), lambda: False),
             ResourceBounds(1, 524_288),
-            TimeProbe(lambda: now),
+            TimeProbe(lambda: datetime.now(timezone.utc)),
         )
         return InspectSyntheticInventory(
             reader, SQLiteInventoryRepository(state)
