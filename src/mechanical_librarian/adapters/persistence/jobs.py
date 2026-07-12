@@ -285,6 +285,16 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                 "FROM stage_checkpoints WHERE run_id = ?",
                 (run_id.value,),
             ).fetchall()
+            succeeded_stages = {
+                stage_id
+                for stage_id, state in stage_states.items()
+                if state == StageState.SUCCEEDED.value
+            }
+            applicable_checkpoints = {
+                row[0] for row in checkpoints if row[7] == 1
+            }
+            if succeeded_stages != applicable_checkpoints:
+                return RepositoryResult(RepositoryOutcome.CORRUPT)
             for (
                 stage_id,
                 source_run,

@@ -1009,6 +1009,104 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
                     self.repository.validate_run(RunId(tampered_run), definition).accepted
                 )
 
+    def test_succeeded_stage_requires_current_checkpoint(self) -> None:
+        baseline = synthetic_heartbeat_definition()
+        source = self.create_run("missing-succeeded-checkpoint")
+        self.complete_run(source)
+        direct_checkpoint = self.connection.execute(
+            "SELECT run_id, stage_id, source_run_id, source_stage_id, "
+            "accepting_job_id, accepting_fence, outcome, reuse_eligible, "
+            "current_applicable, accepted_at FROM stage_checkpoints "
+            "WHERE run_id = ? AND stage_id = 'right'",
+            (source.value,),
+        ).fetchone()
+        self.connection.execute(
+            "DELETE FROM stage_checkpoints WHERE run_id = ? AND stage_id = 'right'",
+            (source.value,),
+        )
+        before = tuple(self.connection.iterdump())
+        self.assertEqual(
+            self.repository.validate_run(source, baseline).outcome,
+            RepositoryOutcome.CORRUPT,
+        )
+        compatible = self.repository.create_or_resume(
+            source,
+            baseline,
+            changed_stages=frozenset(),
+            now=NOW + timedelta(minutes=1),
+        )
+        incompatible = self.repository.create_or_resume(
+            source,
+            synthetic_heartbeat_definition(incompatible=True),
+            changed_stages=frozenset({StageId("left")}),
+            now=NOW + timedelta(minutes=1),
+        )
+        self.assertEqual(compatible.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(incompatible.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(tuple(self.connection.iterdump()), before)
+        self.connection.execute(
+            "INSERT INTO stage_checkpoints(run_id, stage_id, source_run_id, "
+            "source_stage_id, accepting_job_id, accepting_fence, outcome, "
+            "reuse_eligible, current_applicable, accepted_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            direct_checkpoint,
+        )
+        self.assertTrue(self.repository.validate_run(source, baseline).accepted)
+
+        second_definition = synthetic_heartbeat_definition(incompatible=True)
+        second = self.repository.create_or_resume(
+            source,
+            second_definition,
+            changed_stages=frozenset({StageId("left")}),
+            now=NOW + timedelta(minutes=1),
+        ).value
+        inherited_checkpoint = self.connection.execute(
+            "SELECT run_id, stage_id, source_run_id, source_stage_id, "
+            "accepting_job_id, accepting_fence, outcome, reuse_eligible, "
+            "current_applicable, accepted_at FROM stage_checkpoints "
+            "WHERE run_id = ? AND stage_id = 'right'",
+            (second.id.value,),
+        ).fetchone()
+        self.connection.execute(
+            "DELETE FROM stage_checkpoints WHERE run_id = ? AND stage_id = 'right'",
+            (second.id.value,),
+        )
+        before = tuple(self.connection.iterdump())
+        third_definition = WorkflowDefinition(
+            WorkflowVersion("heartbeat-v3"),
+            second_definition.stages,
+            second_definition.dependencies,
+        )
+        self.assertEqual(
+            self.repository.validate_run(second.id, second_definition).outcome,
+            RepositoryOutcome.CORRUPT,
+        )
+        compatible = self.repository.create_or_resume(
+            second.id,
+            second_definition,
+            changed_stages=frozenset(),
+            now=NOW + timedelta(minutes=2),
+        )
+        chained = self.repository.create_or_resume(
+            second.id,
+            third_definition,
+            changed_stages=frozenset(),
+            now=NOW + timedelta(minutes=2),
+        )
+        self.assertEqual(compatible.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(chained.outcome, RepositoryOutcome.CORRUPT)
+        self.assertEqual(tuple(self.connection.iterdump()), before)
+        self.connection.execute(
+            "INSERT INTO stage_checkpoints(run_id, stage_id, source_run_id, "
+            "source_stage_id, accepting_job_id, accepting_fence, outcome, "
+            "reuse_eligible, current_applicable, accepted_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            inherited_checkpoint,
+        )
+        self.assertTrue(
+            self.repository.validate_run(second.id, second_definition).accepted
+        )
+
     def test_repeated_qualification_fails_closed_when_durable_evidence_is_missing(self) -> None:
         self.assertTrue(RunSyntheticJobHeartbeat(self.repository).run().succeeded)
         self.connection.execute("DELETE FROM audit_events WHERE kind = 'job'")
