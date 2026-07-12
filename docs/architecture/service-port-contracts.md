@@ -46,6 +46,8 @@ and only supplied proposal exactly once. Neither capability
 declarations nor reviewer recommendations can become mutation authorization.
 Secret material is not an application value: application code carries only a
 redacted reference and a role-scoped opaque handle at the resolver boundary.
+Every request that carries both a `TargetId` and `IdempotencyKey` requires their
+targets to match; an operation label is not required to equal a work-kind label.
 Metadata and cover providers return bounded canonical candidates with opaque
 provenance, correlation, and fingerprints; local extractors return canonical
 bounded `EvidenceRecord` values rather than raw payloads.
@@ -117,8 +119,11 @@ bounds, replay, stale-state conflict, grant tampering, reviewer coverage, safe
 diagnostics, and malformed adapter output. Only synthetic data is used.
 Provider pagination tests traverse real opaque cursor values across pages,
 enforce each requested limit, and require termination.
-The repository family requires store, read, and list; the transaction family
-requires begin, commit, and rollback; and durable scheduling includes the full
+The repository family requires store, read, and list. Transaction management
+and transaction execution are separate families: a manager owns only `begin`,
+while the returned transaction owns only `commit` and `rollback`. Implementers
+do not need to fuse these roles, and the reusable suite rejects accidental
+cross-role methods. Durable scheduling includes the full
 existing `JobHeartbeatRepository` method vocabulary plus scheduling. Each
 registered role is exercised with a distinct plausible nonconformer, while
 runtime result checks reject values such as a notifier returning raw text under

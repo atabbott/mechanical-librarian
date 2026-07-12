@@ -461,6 +461,8 @@ class WorkRequest:
         _bounded_code(self.kind, "work kind")
         if type(self.idempotency_key) is not IdempotencyKey or type(self.target) is not TargetId or type(self.context) is not OperationContext:
             raise ValueError("work requests require typed idempotency, target, and context")
+        if self.idempotency_key.target != self.target:
+            raise ValueError("work request idempotency must match the request target")
 
 
 class WorkScheduler(Protocol):

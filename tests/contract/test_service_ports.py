@@ -150,9 +150,6 @@ class SyntheticSnapshotRepository:
 
 
 class SyntheticTransaction:
-    def begin(self, context: OperationContext) -> PortResult[Transaction]:
-        return PortResult.success(self)
-
     def commit(self, context: OperationContext) -> PortResult[Unit]:
         return PortResult.failed(_failure(FailureKind.CANCELLED, False)) if context.cancelled else PortResult.success(Unit.VALUE)
 
@@ -285,6 +282,27 @@ class BadCommitParameterShape:
         return PortResult.success(Unit.VALUE)
 
 
+class FusedTransactionRoles:
+    def begin(self, context: OperationContext) -> PortResult[Transaction]:
+        return PortResult.success(self)
+
+    def commit(self, context: OperationContext) -> PortResult[Unit]:
+        return PortResult.success(Unit.VALUE)
+
+    def rollback(self, context: OperationContext) -> PortResult[Unit]:
+        return PortResult.success(Unit.VALUE)
+
+
+class MissingRollbackTransaction:
+    def commit(self, context: OperationContext) -> PortResult[Unit]:
+        return PortResult.success(Unit.VALUE)
+
+
+class MissingBeginManager:
+    def begin_transaction(self, context: OperationContext) -> PortResult[Transaction]:
+        return PortResult.success(SyntheticTransaction())
+
+
 class BadWriter:
     def apply(self, snapshot: ItemSnapshot) -> PortResult[Unit]:
         raise NotImplementedError
@@ -360,7 +378,8 @@ class ServicePortContractTests(unittest.TestCase):
 
     def test_reusable_parameterized_suite_accepts_and_rejects_every_family(self) -> None:
         conformers = {
-            "repository": SyntheticSnapshotRepository(), "transaction": SyntheticTransaction(),
+            "repository": SyntheticSnapshotRepository(), "transaction-manager": SyntheticTransactionManager(),
+            "transaction": SyntheticTransaction(),
             "durable-scheduler": SyntheticScheduler(), "diagnostics": SyntheticDiagnostics(),
             "library-reader": SyntheticLibraryReader(), "supported-writer": SyntheticWriter(),
             "extractor": SyntheticExtractor(), "metadata-provider": SyntheticProvider(()),
@@ -387,7 +406,7 @@ class ServicePortContractTests(unittest.TestCase):
         repository_result = SyntheticSnapshotRepository().read(read_request)
         self.assertIs(type(repository_result), RepositoryResult)
         self.assertIs(repository_result.outcome, RepositoryOutcome.NOT_FOUND)
-        transaction = self.contract.require_result_value(SyntheticTransaction().begin(context), SyntheticTransaction)
+        transaction = self.contract.require_result_value(SyntheticTransactionManager().begin(context), SyntheticTransaction)
         self.contract.require_unit_result(transaction.commit(context))
         key = IdempotencyKey.from_canonical_input(operation="schedule", target=target, value={"kind": "scan"})
         scheduler = SyntheticScheduler()
@@ -443,6 +462,11 @@ class ServicePortContractTests(unittest.TestCase):
         commit_contract = next(item for item in transaction_contract.methods if item.name == "commit")
         with self.assertRaises(AssertionError):
             self.contract.require_method_contract(BadCommitParameterShape(), commit_contract)
+        manager_contract = next(item for item in standard_family_contracts() if item.name == "transaction-manager")
+        self.contract.reject_family(FusedTransactionRoles(), manager_contract)
+        self.contract.reject_family(FusedTransactionRoles(), transaction_contract)
+        self.contract.reject_family(MissingBeginManager(), manager_contract)
+        self.contract.reject_family(MissingRollbackTransaction(), transaction_contract)
 
     def test_provider_empty_success_round_trip_and_boundaries(self) -> None:
         query = ProviderQuery(MediaType.EBOOK, FieldName.TITLE, (ProviderFact(ProviderFactCode.TITLE, ("Synthetic title",)),), SchemaVersion("provider-query-v1"))
@@ -591,6 +615,16 @@ class ServicePortContractTests(unittest.TestCase):
         self.assertEqual(Page((), None).items, ())
         self.assertIs(RepositoryOutcome.ACCEPTED, RepositoryOutcome("accepted"))
         self.assertIs(JobHeartbeatRepository, DurableWorkRepository)
+
+    def test_work_request_idempotency_is_target_scoped_not_kind_scoped(self) -> None:
+        target = _target("item-one")
+        other = _target("item-two")
+        key = IdempotencyKey.from_canonical_input(operation="schedule", target=target, value={"kind": "scan"})
+        request = WorkRequest("scan", key, target, _context())
+        self.assertEqual(request.target, key.target)
+        self.contract.require_unit_result(SyntheticScheduler().schedule(request))
+        with self.assertRaises(ValueError):
+            WorkRequest("scan", key, other, _context())
 
     def test_reviewer_exact_coverage_and_citations(self) -> None:
         request = _review_request()
