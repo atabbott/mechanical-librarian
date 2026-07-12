@@ -1245,11 +1245,13 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                 if row is None:
                     return RepositoryResult(RepositoryOutcome.REJECTED)
                 attempt = int(row[0])
-                connection.execute(
+                attempt_update = connection.execute(
                     "UPDATE job_attempts SET finished_at = ?, failure = ? WHERE job_id = ? "
                     "AND attempt = ? AND fence = ? AND finished_at IS NULL",
                     (timestamp, failure.value, claim.job_id.value, attempt, claim.fence),
                 )
+                if attempt_update.rowcount != 1:
+                    return RepositoryResult(RepositoryOutcome.CORRUPT)
                 retryable = failure is FailureKind.SYNTHETIC_RETRYABLE and attempt < 2
                 stage_state = StageState(
                     connection.execute(

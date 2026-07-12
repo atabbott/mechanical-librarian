@@ -420,6 +420,52 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
         self.assertEqual(snapshot.state, RunState.FAILED_TERMINAL)
         self.assertEqual(snapshot.jobs[0].attempt, 2)
 
+    def test_failure_requires_current_attempt_evidence(self) -> None:
+        cases = (
+            (FailureKind.SYNTHETIC_RETRYABLE, "retry_wait"),
+            (FailureKind.SYNTHETIC_TERMINAL, "failed_terminal"),
+        )
+        for failure, expected_state in cases:
+            with self.subTest(failure=failure.value):
+                run_id = self.create_run(f"missing-attempt-{failure.value}")
+                self.repository.enqueue_eligible(run_id, now=NOW)
+                claim = self.claim_one(f"worker-{failure.value}")
+                self.repository.start(claim, now=NOW)
+                attempt = self.connection.execute(
+                    "SELECT job_id, attempt, fence, worker_id, started_at, "
+                    "finished_at, outcome, failure FROM job_attempts "
+                    "WHERE job_id = ? AND fence = ?",
+                    (claim.job_id.value, claim.fence),
+                ).fetchone()
+                self.connection.execute(
+                    "DELETE FROM job_attempts WHERE job_id = ? AND fence = ?",
+                    (claim.job_id.value, claim.fence),
+                )
+                before = tuple(self.connection.iterdump())
+                rejected = self.repository.fail(claim, failure, now=NOW)
+                self.assertEqual(rejected.outcome, RepositoryOutcome.CORRUPT)
+                self.assertEqual(tuple(self.connection.iterdump()), before)
+                snapshot = self.repository.inspect(run_id).value
+                self.assertEqual(snapshot.jobs[0].state.value, "running")
+                self.assertEqual(snapshot.stages[0].state, StageState.RUNNING)
+
+                self.connection.execute(
+                    "INSERT INTO job_attempts(job_id, attempt, fence, worker_id, "
+                    "started_at, finished_at, outcome, failure) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    attempt,
+                )
+                accepted = self.repository.fail(claim, failure, now=NOW)
+                self.assertTrue(accepted.accepted)
+                restored = self.repository.inspect(run_id).value
+                self.assertEqual(restored.jobs[0].state.value, expected_state)
+                self.assertEqual(restored.attempt_count, 1)
+                self.assertTrue(
+                    self.repository.validate_run(
+                        run_id, synthetic_heartbeat_definition()
+                    ).accepted
+                )
+
     def test_worker_process_death_recovers_under_a_new_fence(self) -> None:
         script = (
             "import os,sys; from datetime import datetime,timedelta,timezone; "
