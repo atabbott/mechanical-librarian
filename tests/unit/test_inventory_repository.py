@@ -17,8 +17,10 @@ from mechanical_librarian.application.ports import (
     CancellationId,
     CancellationProbe,
     Deadline,
+    LibraryListRequest,
     LibraryReadRequest,
     OperationContext,
+    PageRequest,
     ResourceBounds,
     SnapshotStoreRequest,
     TimeProbe,
@@ -181,11 +183,27 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                         ") VALUES (?, ?, ?, ?, 'corrupt-snapshot')",
                         values,
                     )
-                    result = SQLiteInventoryRepository(connection).read(
+                    repository = SQLiteInventoryRepository(connection)
+                    result = repository.read(
                         LibraryReadRequest(target, _context())
                     )
                     self.assertEqual(result.outcome, RepositoryOutcome.CORRUPT)
                     self.assertIsNone(result.value)
+                    domain_connection = LibraryConnection(
+                        target.connection,
+                        target.adapter,
+                        ServiceEndpoint("https://synthetic.invalid"),
+                        SecretReference("unused-reference"),
+                        self.snapshot.capabilities,
+                    )
+                    listed = repository.list(
+                        LibraryListRequest(
+                            domain_connection, PageRequest(None, 1), _context()
+                        )
+                    )
+                    self.assertEqual(listed.outcome, RepositoryOutcome.CORRUPT)
+                    stored = repository.store(self.request())
+                    self.assertEqual(stored.outcome, RepositoryOutcome.CORRUPT)
                     self.assertEqual(
                         connection.execute(
                             "SELECT count(*) FROM current_inventory_observations"

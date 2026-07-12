@@ -195,6 +195,12 @@ class ConfigurationBoundaryTests(unittest.TestCase):
             with self.assertRaises(ConfigurationError):
                 load_configuration_file(fifo)
 
+            symlink = Path(directory) / "config-link.json"
+            symlink.symlink_to(FIXTURE)
+            with self.assertRaises(ConfigurationError) as raised:
+                load_configuration_file(symlink)
+            self.assertIsNone(raised.exception.__cause__)
+
             huge_integer = Path(directory) / "huge-number.json"
             huge_integer.write_text(
                 '{"schema_version":' + "9" * 5_000 + "}", encoding="utf-8"
