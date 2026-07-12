@@ -814,7 +814,7 @@ class SQLiteJobHeartbeatRepository(JobHeartbeatRepository):
                             FailureKind.INVALID_DEPENDENCY_OUTCOME,
                             timestamp,
                         )
-                        continue
+                        break
                     if prerequisite_rows and not all(
                         row[1] == StageState.SUCCEEDED.value
                         and row[2] == OutcomeKind.COMPLETED.value

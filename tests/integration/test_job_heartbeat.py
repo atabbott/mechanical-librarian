@@ -1519,6 +1519,13 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
         root = self.claim_one("worker-missing-terminal")
         self.repository.start(root, now=NOW)
         self.repository.complete(root, OutcomeKind.COMPLETED, now=NOW)
+        checkpoint = self.connection.execute(
+            "SELECT run_id, stage_id, source_run_id, source_stage_id, "
+            "accepting_job_id, accepting_fence, outcome, reuse_eligible, "
+            "current_applicable, accepted_at FROM stage_checkpoints "
+            "WHERE run_id = ? AND stage_id = 'root'",
+            (run_id.value,),
+        ).fetchone()
         self.connection.execute(
             "DELETE FROM stage_checkpoints WHERE run_id = ? AND stage_id = 'root'",
             (run_id.value,),
@@ -1530,6 +1537,49 @@ class SQLiteJobHeartbeatTests(unittest.TestCase):
         self.assertEqual(states["left"], StageState.DEPENDENCY_FAILED)
         self.assertNotEqual(states["right"], StageState.WAITING)
         self.assertNotEqual(states["join"], StageState.WAITING)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT entity_id, from_state, to_state FROM workflow_transitions "
+                "WHERE run_id = ? AND entity_kind = 'stage' "
+                "AND entity_id IN ('left', 'right', 'join') ORDER BY sequence",
+                (run_id.value,),
+            ).fetchall(),
+            [
+                ("left", "waiting", "dependency_failed"),
+                ("join", "waiting", "dependency_failed"),
+                ("right", "waiting", "cancelled"),
+            ],
+        )
+        self.assertEqual(
+            self.repository.claim(
+                WorkerId("worker-after-invalid-dependency"),
+                capacity=4,
+                now=NOW,
+                lease_duration=LEASE,
+            ).value,
+            (),
+        )
+
+        self.connection.execute(
+            "INSERT INTO stage_checkpoints(run_id, stage_id, source_run_id, "
+            "source_stage_id, accepting_job_id, accepting_fence, outcome, "
+            "reuse_eligible, current_applicable, accepted_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            checkpoint,
+        )
+        definition = synthetic_heartbeat_definition()
+        self.assertTrue(self.repository.validate_run(run_id, definition).accepted)
+        self.connection.close()
+        self.connection = connect(self.path)
+        migrate(self.connection)
+        self.repository = SQLiteJobHeartbeatRepository(self.connection)
+        before = tuple(self.connection.iterdump())
+        self.assertEqual(
+            self.repository.enqueue_eligible(run_id, now=NOW).outcome,
+            RepositoryOutcome.REUSED,
+        )
+        self.assertEqual(tuple(self.connection.iterdump()), before)
+        self.assertTrue(self.repository.validate_run(run_id, definition).accepted)
 
     def test_maximum_domain_values_use_bounded_deduplication_key(self) -> None:
         run_id = RunId("r" * 64)
