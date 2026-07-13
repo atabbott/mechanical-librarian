@@ -19,3 +19,10 @@ Evidence reconciled on 2026-07-13:
 
 Upstream source: <https://github.com/advplyr/audiobookshelf>
 API reference: <https://api.audiobookshelf.org/>
+
+The F05a cohort adds a synthetic libraries response, one two-item page, and
+expanded audiobook/ebook details. Identifiers and paths are invented. The page
+preserves the 2.35.1 controller's string echo of requested `limit` and `page`
+values. The upstream tag object is
+`71764d118a5f12466beeaf8f1d4d5e0370a199dc` and resolves to commit
+`aacdcc47ec0b6fa778b84627c79deb7ee0cecd70`.

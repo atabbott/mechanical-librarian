@@ -1,0 +1,30 @@
+{
+  "adapter_contract": "abs-inventory-v1",
+  "capture": "digest-pinned disposable 2.35.1 mixed synthetic book library",
+  "expanded_item_route": "GET /api/items/{id}?expanded=1",
+  "fixture_revision": "abs-2.35.1-inventory-fixture-v1",
+  "incremental_scan": "unavailable",
+  "inventory_route": "GET /api/libraries/{id}/items",
+  "library_route": "GET /api/libraries",
+  "normalizer_contract": "abs-book-normalizer-v1",
+  "pagination": {
+    "continuation": "zero-indexed numeric page",
+    "maximum_page_size": 500,
+    "stable_snapshot_token": "unavailable"
+  },
+  "pinned_container_digest": "sha256:1eef6716183c52abafe5405e7d6be8390248ecd59c7488c44af871757ac8fc4d",
+  "pinned_upstream_commit": "aacdcc47ec0b6fa778b84627c79deb7ee0cecd70",
+  "pinned_upstream_tag_object": "71764d118a5f12466beeaf8f1d4d5e0370a199dc",
+  "pinned_version": "2.35.1",
+  "reconciliation": "two complete equal passes",
+  "redaction": "generated UUIDs and synthetic text; paths replaced before fixture commit",
+  "snapshot_contract": "inventory-snapshot-v2",
+  "upstream_sources": [
+    "server/controllers/LibraryController.js",
+    "server/controllers/LibraryItemController.js",
+    "server/models/Book.js",
+    "server/models/LibraryItem.js",
+    "server/utils/queries/libraryItemsBookFilters.js"
+  ],
+  "write_routes": []
+}

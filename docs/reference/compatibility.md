@@ -100,6 +100,36 @@ all-tag and explicit-content visibility; narrower content scopes are
 incompatible with the current profile contract. Mutation remains unavailable
 because F04 has no mutation authority.
 
+### Audiobookshelf 2.35.1 inventory contract
+
+F05a freezes the official 2.35.1 tag object
+`71764d118a5f12466beeaf8f1d4d5e0370a199dc`, commit
+`aacdcc47ec0b6fa778b84627c79deb7ee0cecd70`, and the same digest-pinned
+container used by F04. The machine-readable contract is
+[`audiobookshelf-f05a-compatibility.json`](audiobookshelf-f05a-compatibility.json).
+Only the libraries list, zero-indexed numeric library-item pages, and expanded
+item detail routes are used. The upstream API supplies no stable inventory
+cursor, snapshot token, or concurrency token, so no incremental-scan claim is
+made. Equal bounded complete passes are the stability proof; any disagreement
+is an `unstable` scan and cannot publish removals.
+
+The expanded book response is authoritative because the minified page response
+joins contributors and omits complete files and chapters. Mixed book libraries
+are supported: audio-bearing books are audiobooks, ebook-only books are ebooks,
+and a hybrid is an audiobook with supplementary ebook file evidence. File and
+cover source locations are hashed before crossing the adapter boundary.
+
+### Canonical inventory snapshot v2
+
+`inventory-snapshot-v2` is additive to the F03 `snapshot-v1` contract. It
+carries an adapter-neutral target, media/lifecycle, typed source-load states,
+separate bounded raw and normalized structured field values, opaque file/cover identities,
+adapter/normalizer/service lineage, and bounded warning codes. Observation time
+is durable provenance but excluded from semantic fingerprints, so identical
+rescans reuse history. No write capability, credential, endpoint, raw vendor
+payload, playback state, private path, or upstream concurrency token is
+present.
+
 The evidence pins official container digest
 `sha256:1eef6716183c52abafe5405e7d6be8390248ecd59c7488c44af871757ac8fc4d`.
 The endpoint contract follows the tagged implementation's observational

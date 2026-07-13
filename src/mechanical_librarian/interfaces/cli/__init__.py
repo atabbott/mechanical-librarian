@@ -27,12 +27,17 @@ from mechanical_librarian.application.synthetic_inventory import (
     SyntheticInventoryOutcome,
     SyntheticInventoryResult,
 )
+from mechanical_librarian.application.inventory_reconciliation import (
+    InventoryOutcome,
+    InventoryRunResult,
+)
 
 
 StateCheckRunner = Callable[[Path], StateCheckResult]
 JobHeartbeatRunner = Callable[[Path], HeartbeatResult]
 SyntheticInventoryRunner = Callable[[Path, Path], SyntheticInventoryResult]
 ConnectionProbeRunner = Callable[[Path], ConnectionProbeResult]
+AudiobookshelfInventoryRunner = Callable[[Path, Path], InventoryRunResult]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -47,19 +52,22 @@ _FAILURE_MESSAGES = {
     StateCheckOutcome.SETUP_FAILURE: "State check failed: state could not be verified.\n",
     StateCheckOutcome.INTERNAL_FAILURE: "State check failed: internal diagnostic error.\n",
 }
-_HEARTBEAT_FAILURE = "Job heartbeat failed: durable synthetic recovery could not be verified.\n"
+_HEARTBEAT_FAILURE = (
+    "Job heartbeat failed: durable synthetic recovery could not be verified.\n"
+)
 _INVENTORY_FAILURE = (
     "Synthetic inventory failed: bounded report-only inventory could not be verified.\n"
 )
-_CONNECTION_FAILURE = "Connection check failed: configured target could not be verified.\n"
+_CONNECTION_FAILURE = (
+    "Connection check failed: configured target could not be verified.\n"
+)
+_ABS_INVENTORY_FAILURE = "Audiobookshelf inventory failed safely.\n"
 
 
 def _database_path(value: str) -> Path:
     path = Path(value)
     if path == Path(":memory:"):
-        raise argparse.ArgumentTypeError(
-            "database must be a durable filesystem path"
-        )
+        raise argparse.ArgumentTypeError("database must be a durable filesystem path")
     return path
 
 
@@ -96,6 +104,22 @@ def _parser() -> argparse.ArgumentParser:
         help="probe one configured target authorization and compatibility",
     )
     connection.add_argument("--config", required=True, metavar="PATH", type=Path)
+    abs_inventory = commands.add_parser(
+        "audiobookshelf-inventory",
+        help="run one bounded complete-only Audiobookshelf inventory reconciliation",
+    )
+    abs_inventory.add_argument("--config", required=True, metavar="PATH", type=Path)
+    abs_inventory.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
+    inventory_inspect = commands.add_parser(
+        "inventory-inspect",
+        help="inspect durable Audiobookshelf inventory scan state without target access",
+    )
+    inventory_inspect.add_argument("--config", required=True, metavar="PATH", type=Path)
+    inventory_inspect.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
     return parser
 
 
@@ -106,6 +130,8 @@ def main(
     job_heartbeat_runner: JobHeartbeatRunner | None = None,
     synthetic_inventory_runner: SyntheticInventoryRunner | None = None,
     connection_probe_runner: ConnectionProbeRunner | None = None,
+    audiobookshelf_inventory_runner: AudiobookshelfInventoryRunner | None = None,
+    inventory_inspection_runner: AudiobookshelfInventoryRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -114,6 +140,51 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     arguments = _parser().parse_args(argv)
+    if arguments.command in {"audiobookshelf-inventory", "inventory-inspect"}:
+        runner = (
+            audiobookshelf_inventory_runner
+            if arguments.command == "audiobookshelf-inventory"
+            else inventory_inspection_runner
+        )
+        if runner is None:
+            errors.write(_ABS_INVENTORY_FAILURE)
+            return 1
+        try:
+            result = runner(arguments.config, arguments.database)
+        except Exception:
+            errors.write(_ABS_INVENTORY_FAILURE)
+            return 1
+        if (
+            type(result) is not InventoryRunResult
+            or type(result.outcome) is not InventoryOutcome
+        ):
+            errors.write(_ABS_INVENTORY_FAILURE)
+            return 1
+        destination = output if result.succeeded else errors
+        destination.write(
+            "Audiobookshelf inventory passed.\n"
+            if result.succeeded
+            else _ABS_INVENTORY_FAILURE
+        )
+        destination.write("authority=target-inventory-get-only\n")
+        for index, library in enumerate(result.libraries, start=1):
+            inspection = library.inspection
+            if inspection is None:
+                continue
+            failure = (
+                "none" if inspection.failure_kind is None else inspection.failure_kind
+            )
+            destination.write(
+                f"library={index} scope=configured-library "
+                f"state={inspection.state.value} failure={failure}\n"
+            )
+            destination.write(
+                f"items={inspection.item_count} active={inspection.active_count} "
+                f"removed={inspection.removed_count} history={inspection.history_count} "
+                f"moved={inspection.moved_count} pages={inspection.page_count} "
+                f"bytes={inspection.response_bytes}\n"
+            )
+        return 0 if result.succeeded else 1
     if arguments.command == "connection-check":
         if connection_probe_runner is None:
             errors.write(_CONNECTION_FAILURE)
@@ -271,5 +342,6 @@ __all__ = [
     "JobHeartbeatRunner",
     "StateCheckRunner",
     "SyntheticInventoryRunner",
+    "AudiobookshelfInventoryRunner",
     "main",
 ]

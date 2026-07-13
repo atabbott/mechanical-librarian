@@ -59,7 +59,9 @@ from mechanical_librarian.infrastructure.security.target_secrets import (
 
 ROOT = Path(__file__).parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "audiobookshelf" / "2.35.1"
-COMPATIBILITY_MANIFEST = ROOT / "docs" / "reference" / "audiobookshelf-f04-compatibility.json"
+COMPATIBILITY_MANIFEST = (
+    ROOT / "docs" / "reference" / "audiobookshelf-f04-compatibility.json"
+)
 COMPATIBILITY_DOCUMENT = ROOT / "docs" / "reference" / "compatibility.md"
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 LIBRARY_ID = "01234567-89ab-4def-8123-456789abcdef"
@@ -135,7 +137,9 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
             )
         )
 
-    def test_pinned_contract_uses_only_status_and_read_only_authorize_post(self) -> None:
+    def test_pinned_contract_uses_only_status_and_read_only_authorize_post(
+        self,
+    ) -> None:
         requests = []
 
         def handler(request):
@@ -173,9 +177,7 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                 {"libraries", "items", "media", "upload", "update", "delete"},
             )
         self.assertNotIn("authorization", requests[0].headers)
-        self.assertEqual(
-            requests[1].headers["authorization"], "Bearer synthetic-token"
-        )
+        self.assertEqual(requests[1].headers["authorization"], "Bearer synthetic-token")
         self.assertNotIn("cookie", requests[0].headers)
         self.assertNotIn("cookie", requests[1].headers)
 
@@ -221,9 +223,7 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                     requests.append(request)
                     if request.url.path == "/status":
                         return raw_response(
-                            payload=json.dumps(fixture("status.json")).encode(
-                                "utf-8"
-                            ),
+                            payload=json.dumps(fixture("status.json")).encode("utf-8"),
                             headers={"content-type": "application/json"},
                         )
                     return httpx.Response(selected)
@@ -248,6 +248,7 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
             (httpx.ConnectError("private tls/connect"), "unavailable"),
         ):
             with self.subTest(expected=expected):
+
                 def handler(request, selected=error):
                     raise selected
 
@@ -257,11 +258,36 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
 
     def test_hostile_response_matrix_is_bounded(self) -> None:
         cases = (
-            (raw_response(302, headers={"location": "https://private.invalid"}), "invalid_response"),
-            (raw_response(payload=b"{}", headers={"content-type": "text/plain"}), "invalid_response"),
-            (raw_response(payload=b"{", headers={"content-type": "application/json"}), "invalid_response"),
-            (raw_response(payload=b"x" * 65_537, headers={"content-type": "application/json"}), "resource_exhausted"),
-            (raw_response(payload=b"{}", headers={"content-type": "application/json", "content-length": "65537"}), "resource_exhausted"),
+            (
+                raw_response(302, headers={"location": "https://private.invalid"}),
+                "invalid_response",
+            ),
+            (
+                raw_response(payload=b"{}", headers={"content-type": "text/plain"}),
+                "invalid_response",
+            ),
+            (
+                raw_response(
+                    payload=b"{", headers={"content-type": "application/json"}
+                ),
+                "invalid_response",
+            ),
+            (
+                raw_response(
+                    payload=b"x" * 65_537, headers={"content-type": "application/json"}
+                ),
+                "resource_exhausted",
+            ),
+            (
+                raw_response(
+                    payload=b"{}",
+                    headers={
+                        "content-type": "application/json",
+                        "content-length": "65537",
+                    },
+                ),
+                "resource_exhausted",
+            ),
         )
         for response, expected in cases:
             with self.subTest(expected=expected):
@@ -324,9 +350,7 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         cases.append(("missing", missing, (LIBRARY_ID,), False))
         missing_flag_covering = fixture("authorize.json")
         del missing_flag_covering["user"]["permissions"]["accessAllLibraries"]
-        missing_flag_covering["user"]["librariesAccessible"] = [
-            LIBRARY_ID
-        ]
+        missing_flag_covering["user"]["librariesAccessible"] = [LIBRARY_ID]
         cases.append(
             (
                 "missing-flag-covering",
@@ -337,9 +361,7 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         )
         null_flag_covering = fixture("authorize.json")
         null_flag_covering["user"]["permissions"]["accessAllLibraries"] = None
-        null_flag_covering["user"]["librariesAccessible"] = [
-            LIBRARY_ID
-        ]
+        null_flag_covering["user"]["librariesAccessible"] = [LIBRARY_ID]
         cases.append(
             (
                 "null-flag-covering",
@@ -380,18 +402,14 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
             uuid,
             "a1234567-89ab-3def-8123-456789abcdef",
         ]
-        cases.append(
-            ("malformed-letter-uuid", malformed_letter_uuid, (uuid,), False)
-        )
+        cases.append(("malformed-letter-uuid", malformed_letter_uuid, (uuid,), False))
         exact = fixture("authorize.json")
         exact["user"]["permissions"]["accessAllLibraries"] = False
         exact["user"]["librariesAccessible"] = [
             LIBRARY_ID,
             SECOND_LIBRARY_ID,
         ]
-        cases.append(
-            ("exact-multiple", exact, (LIBRARY_ID, SECOND_LIBRARY_ID), True)
-        )
+        cases.append(("exact-multiple", exact, (LIBRARY_ID, SECOND_LIBRARY_ID), True))
         duplicate_covering = fixture("authorize.json")
         duplicate_covering["user"]["permissions"]["accessAllLibraries"] = False
         duplicate_covering["user"]["librariesAccessible"] = [
@@ -470,9 +488,7 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         )
         malformed_download = fixture("authorize.json")
         malformed_download["user"]["permissions"]["download"] = "yes"
-        cases.append(
-            ("malformed-download", malformed_download, (LIBRARY_ID,), False)
-        )
+        cases.append(("malformed-download", malformed_download, (LIBRARY_ID,), False))
         for name, flag in (("list-flag", []), ("dict-flag", {})):
             profile = fixture("authorize.json")
             profile["user"]["permissions"]["accessAllLibraries"] = flag
@@ -481,21 +497,22 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
 
         for name, profile, expected_libraries, expected_complete in cases:
             with self.subTest(name=name):
+
                 def handler(request, selected=profile):
-                    value = fixture("status.json") if request.url.path == "/status" else selected
+                    value = (
+                        fixture("status.json")
+                        if request.url.path == "/status"
+                        else selected
+                    )
                     return raw_response(
                         payload=json.dumps(value).encode("utf-8"),
                         headers={"content-type": "application/json"},
                     )
 
-                result = self.probe(
-                    handler, expected_libraries=expected_libraries
-                )
+                result = self.probe(handler, expected_libraries=expected_libraries)
                 self.assertIsNone(result.failure)
                 self.assertEqual(result.value.profile_complete, expected_complete)
-                self.assertEqual(
-                    result.value.media_download_allowed, expected_complete
-                )
+                self.assertEqual(result.value.media_download_allowed, expected_complete)
                 self.assertEqual(
                     result.value.health.status,
                     HealthStatus.HEALTHY
@@ -545,9 +562,10 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         ):
             profile = fixture("authorize.json")
             profile["user"]["permissions"]["accessAllTags"] = False
-            profile["user"]["permissions"]["selectedTagsNotAccessible"] = (
-                mode in {"denylist", "empty-denylist"}
-            )
+            profile["user"]["permissions"]["selectedTagsNotAccessible"] = mode in {
+                "denylist",
+                "empty-denylist",
+            }
             profile["user"]["itemTagsSelected"] = selected
             cases.append((mode, profile))
 
@@ -559,6 +577,7 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
 
         for name, profile in cases:
             with self.subTest(name=name):
+
                 def handler(request, selected=profile):
                     value = (
                         fixture("status.json")
@@ -597,11 +616,7 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         profile["user"]["permissions"]["download"] = False
 
         def handler(request):
-            value = (
-                fixture("status.json")
-                if request.url.path == "/status"
-                else profile
-            )
+            value = fixture("status.json") if request.url.path == "/status" else profile
             return raw_response(
                 payload=json.dumps(value).encode("utf-8"),
                 headers={"content-type": "application/json"},
@@ -656,7 +671,9 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                 self.assertNotIn("authorization", requests[0].headers)
                 self.assertNotIn("synthetic-token", repr(result))
 
-    def test_unqualified_versions_stop_before_authorization_and_remain_typed(self) -> None:
+    def test_unqualified_versions_stop_before_authorization_and_remain_typed(
+        self,
+    ) -> None:
         cases = (
             (None, CompatibilityState.UNKNOWN, None),
             ("private-version-sentinel", CompatibilityState.UNKNOWN, None),
@@ -722,7 +739,9 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                     CapabilityState.INCOMPATIBLE,
                 )
 
-    def test_encoded_response_is_rejected_and_stream_cancellation_is_typed(self) -> None:
+    def test_encoded_response_is_rejected_and_stream_cancellation_is_typed(
+        self,
+    ) -> None:
         encoded = raw_response(
             payload=b"not-valid-gzip",
             headers={
@@ -809,9 +828,15 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
 
             def construct(*args, **kwargs):
                 captured.update(kwargs)
-                return real_client(transport=httpx.MockTransport(lambda _r: httpx.Response(200)), **kwargs)
+                return real_client(
+                    transport=httpx.MockTransport(lambda _r: httpx.Response(200)),
+                    **kwargs,
+                )
 
-            with patch("mechanical_librarian.infrastructure.security.target_secrets.httpx.Client", side_effect=construct):
+            with patch(
+                "mechanical_librarian.infrastructure.security.target_secrets.httpx.Client",
+                side_effect=construct,
+            ):
                 client = credentials.target_client(
                     handle, ServiceEndpoint("https://synthetic.invalid")
                 )
@@ -843,11 +868,15 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
         credentials = PrivateFileTargetCredentials()
         reference = SecretReference("/private/provider-or-reviewer-secret")
         for scope in (SecretScope.METADATA_PROVIDER, SecretScope.REVIEWER):
-            with self.subTest(scope=scope), patch(
-                "mechanical_librarian.infrastructure.security.target_secrets._read"
-            ) as read, patch(
-                "mechanical_librarian.infrastructure.security.target_secrets.httpx.Client"
-            ) as client:
+            with (
+                self.subTest(scope=scope),
+                patch(
+                    "mechanical_librarian.infrastructure.security.target_secrets._read"
+                ) as read,
+                patch(
+                    "mechanical_librarian.infrastructure.security.target_secrets.httpx.Client"
+                ) as client,
+            ):
                 with self.assertRaises(SecretFileUnavailable):
                     credentials.target_client(
                         SecretHandle(reference, scope),
@@ -855,6 +884,50 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
                     )
                 read.assert_not_called()
                 client.assert_not_called()
+
+    def test_inventory_credential_is_exact_origin_get_route_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "inventory-key"
+            path.write_text("private-inventory-token\n", encoding="utf-8")
+            path.chmod(0o600)
+            credentials = PrivateFileTargetCredentials()
+            handle = SecretHandle(
+                SecretReference(str(path)), SecretScope.TARGET_SERVICE
+            )
+            client = credentials.inventory_client(
+                handle, ServiceEndpoint("https://synthetic.invalid")
+            )
+            try:
+                auth = client.auth
+                allowed = (
+                    f"https://synthetic.invalid/api/libraries/{LIBRARY_ID}/items?page=0",
+                    f"https://synthetic.invalid/api/items/{LIBRARY_ID}?expanded=1",
+                    "https://synthetic.invalid/api/libraries",
+                )
+                for url in allowed:
+                    request = httpx.Request("GET", url)
+                    next(auth.auth_flow(request))
+                    self.assertIn("authorization", request.headers)
+                for method, url in (
+                    ("POST", "https://synthetic.invalid/api/libraries"),
+                    ("GET", "https://other.invalid/api/libraries"),
+                    ("GET", "https://synthetic.invalid/status"),
+                    ("GET", "https://synthetic.invalid/api/authorize"),
+                    ("GET", "https://synthetic.invalid/api/items/not-a-uuid"),
+                ):
+                    request = httpx.Request(method, url)
+                    next(auth.auth_flow(request))
+                    self.assertNotIn("authorization", request.headers)
+            finally:
+                client.close()
+            with self.assertRaises(SecretFileUnavailable):
+                credentials.inventory_client(
+                    handle, ServiceEndpoint("https://synthetic.invalid/prefix")
+                )
+            with self.assertRaises(SecretFileUnavailable):
+                credentials.inventory_client(
+                    handle, ServiceEndpoint("http://synthetic.invalid")
+                )
 
 
 class ApplicationProfileTests(unittest.TestCase):
@@ -875,7 +948,11 @@ class ApplicationProfileTests(unittest.TestCase):
             HealthReport(
                 HealthStatus.HEALTHY if complete else HealthStatus.DEGRADED,
                 NOW,
-                SafeSummary("connection profile verified" if complete else "connection profile degraded"),
+                SafeSummary(
+                    "connection profile verified"
+                    if complete
+                    else "connection profile degraded"
+                ),
             ),
         )
 
@@ -890,20 +967,33 @@ class ApplicationProfileTests(unittest.TestCase):
     def test_supported_older_newer_unknown_and_partial_profiles(self) -> None:
         supported = self.run_probe(self.facts("2.35.1"))
         self.assertEqual(supported.outcome, ConnectionProbeOutcome.READY)
-        self.assertEqual(supported.inspection.compatibility, CompatibilityState.SUPPORTED)
-        states = {item.capability: item.state for item in supported.inspection.capabilities}
-        self.assertEqual(states[ConnectionCapability.AUTHORIZATION], CapabilityState.TESTED)
-        self.assertEqual(states[ConnectionCapability.INCREMENTAL_SCAN], CapabilityState.UNAVAILABLE)
-        self.assertEqual(states[ConnectionCapability.METADATA_FIELDS], CapabilityState.SUPPORTED)
-        self.assertEqual(states[ConnectionCapability.ROLLBACK_READ], CapabilityState.UNAVAILABLE)
-        self.assertEqual(states[ConnectionCapability.RATE_LIMITS], CapabilityState.UNAVAILABLE)
+        self.assertEqual(
+            supported.inspection.compatibility, CompatibilityState.SUPPORTED
+        )
+        states = {
+            item.capability: item.state for item in supported.inspection.capabilities
+        }
+        self.assertEqual(
+            states[ConnectionCapability.AUTHORIZATION], CapabilityState.TESTED
+        )
+        self.assertEqual(
+            states[ConnectionCapability.INCREMENTAL_SCAN], CapabilityState.UNAVAILABLE
+        )
+        self.assertEqual(
+            states[ConnectionCapability.METADATA_FIELDS], CapabilityState.SUPPORTED
+        )
+        self.assertEqual(
+            states[ConnectionCapability.ROLLBACK_READ], CapabilityState.UNAVAILABLE
+        )
+        self.assertEqual(
+            states[ConnectionCapability.RATE_LIMITS], CapabilityState.UNAVAILABLE
+        )
         older = self.run_probe(self.facts("2.25.9"))
         self.assertEqual(older.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
         self.assertEqual(
-            {
-                item.capability: item.state
-                for item in older.inspection.capabilities
-            }[ConnectionCapability.AUTHENTICATION],
+            {item.capability: item.state for item in older.inspection.capabilities}[
+                ConnectionCapability.AUTHENTICATION
+            ],
             CapabilityState.INCOMPATIBLE,
         )
         self.assertIn(
@@ -913,20 +1003,21 @@ class ApplicationProfileTests(unittest.TestCase):
         newer = self.run_probe(self.facts("2.36.0"))
         self.assertEqual(newer.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
         self.assertEqual(newer.inspection.compatibility, CompatibilityState.NEWER)
-        self.assertIn(CapabilityState.INCOMPATIBLE, {item.state for item in newer.inspection.capabilities})
+        self.assertIn(
+            CapabilityState.INCOMPATIBLE,
+            {item.state for item in newer.inspection.capabilities},
+        )
         unknown = self.run_probe(self.facts(None))
         self.assertEqual(unknown.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
         self.assertEqual(unknown.inspection.compatibility, CompatibilityState.UNKNOWN)
-        partial = self.run_probe(
-            self.facts("2.35.1", complete=False, download=False)
-        )
+        partial = self.run_probe(self.facts("2.35.1", complete=False, download=False))
         self.assertEqual(partial.outcome, ConnectionProbeOutcome.AUTHORIZATION_FAILED)
         self.assertIsNone(partial.inspection)
 
-    def test_incomplete_incompatible_profile_retains_compatibility_precedence(self) -> None:
-        result = self.run_probe(
-            self.facts("2.36.0", complete=False, download=False)
-        )
+    def test_incomplete_incompatible_profile_retains_compatibility_precedence(
+        self,
+    ) -> None:
+        result = self.run_probe(self.facts("2.36.0", complete=False, download=False))
 
         self.assertEqual(result.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
         self.assertFalse(result.succeeded)

@@ -7,6 +7,11 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added bounded, GET-only Audiobookshelf 2.35.1 inventory traversal with
+  two-pass stability proof, versioned vendor-neutral snapshots, durable scan
+  recovery, atomic disappearance publication, immutable history, and a
+  credential-free inspection command.
+
 ### Fixed
 
 - Audiobookshelf connection readiness now requires unrestricted configured-

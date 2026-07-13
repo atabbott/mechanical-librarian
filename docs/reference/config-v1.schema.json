@@ -144,6 +144,55 @@
       "title": "EvidenceInput",
       "type": "object"
     },
+    "InventoryInput": {
+      "additionalProperties": false,
+      "properties": {
+        "max_items": {
+          "default": 10000,
+          "maximum": 10000,
+          "minimum": 2,
+          "title": "Max Items",
+          "type": "integer"
+        },
+        "max_pages": {
+          "default": 512,
+          "maximum": 10000,
+          "minimum": 2,
+          "title": "Max Pages",
+          "type": "integer"
+        },
+        "max_response_bytes": {
+          "default": 67108864,
+          "maximum": 67108864,
+          "minimum": 1024,
+          "title": "Max Response Bytes",
+          "type": "integer"
+        },
+        "page_size": {
+          "default": 100,
+          "maximum": 500,
+          "minimum": 1,
+          "title": "Page Size",
+          "type": "integer"
+        },
+        "stability_delay_seconds": {
+          "default": 0,
+          "maximum": 86400,
+          "minimum": 0,
+          "title": "Stability Delay Seconds",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "default": 300,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "InventoryInput",
+      "type": "object"
+    },
     "MediaMountInput": {
       "additionalProperties": false,
       "properties": {
@@ -304,6 +353,17 @@
       "minLength": 1,
       "title": "Instance Name",
       "type": "string"
+    },
+    "inventory": {
+      "$ref": "#/$defs/InventoryInput",
+      "default": {
+        "max_items": 10000,
+        "max_pages": 512,
+        "max_response_bytes": 67108864,
+        "page_size": 100,
+        "stability_delay_seconds": 0,
+        "timeout_seconds": 300
+      }
     },
     "limits": {
       "$ref": "#/$defs/ResourceLimitsInput",

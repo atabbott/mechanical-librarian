@@ -53,6 +53,7 @@ hidden fields or environment behavior.
 | Instance | `instance_name` |
 | Library connections | `id`, `adapter`, `endpoint`, `secret_reference`, `enabled_libraries`, `capability_overrides` |
 | Media mounts | `name`, `library_type`, `container_path`, `service_path`, `read_only` |
+| Inventory traversal | `page_size`, `max_pages`, `max_items`, `max_response_bytes`, `timeout_seconds`, `stability_delay_seconds` |
 | Evidence extraction | `enabled_formats`, `maximum_document_bytes`, `maximum_text_characters`; shared parser limits remain under `limits` |
 | Providers | ordered, unique provider identifiers; an empty list disables providers |
 | Reviewers | ordered, unique reviewer identifiers; an empty list disables reviewers |
@@ -83,6 +84,7 @@ re-evaluation, notification reconfiguration, and backup-readiness revalidation.
 | `media_mounts.name`, `.library_type`, `.container_path`, or `.service_path` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
 | `limits.parser_concurrency` | restart |
 | `limits.parser_timeout_seconds` or `.temporary_bytes` | restart and evidence re-evaluation |
+| `inventory.page_size`, `.max_pages`, `.max_items`, `.max_response_bytes`, `.timeout_seconds`, or `.stability_delay_seconds` | restart and inventory reconciliation |
 | `evidence.enabled_formats` | restart, evidence invalidation and re-evaluation, candidate and review re-evaluation |
 | `evidence.maximum_document_bytes` or `.maximum_text_characters` | restart and evidence re-evaluation |
 | `providers` | restart, candidate and review re-evaluation |
@@ -111,6 +113,12 @@ UUIDv4 values; they are preserved exactly and are never exposed in change-plan
 diagnostics. An adapter may narrow that generic grammar to its documented
 service identity; Audiobookshelf connections require canonical lowercase
 UUIDv4 library identifiers.
+
+Inventory traversal defaults to a page size of 100, 512 cumulative pages,
+10,000 cumulative items, 67,108,864 cumulative response bytes, a 300-second
+deadline, and no stability delay. `max_pages` and `max_items` are at least two
+because F05a requires two complete equal passes. A bound failure publishes
+neither partial current state nor disappearance.
 
 ## Configuration groups
 

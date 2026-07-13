@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import stat
 import ipaddress
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -66,6 +67,36 @@ class PrivateFileTargetCredentials:
             ),
         )
 
+    def inventory_client(
+        self, handle: SecretHandle, endpoint: ServiceEndpoint
+    ) -> httpx.Client:
+        """Create a bearer client whose credential can reach GET inventory routes only."""
+
+        if (
+            type(handle) is not SecretHandle
+            or handle.scope is not SecretScope.TARGET_SERVICE
+            or type(endpoint) is not ServiceEndpoint
+            or not _is_origin(endpoint)
+            or not target_endpoint_allowed(endpoint)
+        ):
+            raise SecretFileUnavailable()
+        material = _read(handle.reference)
+        if material is None:
+            raise SecretFileUnavailable()
+        return httpx.Client(
+            headers={"Accept-Encoding": "identity"},
+            auth=_InventoryBearerAuth(endpoint.value, material.value),
+            trust_env=False,
+            follow_redirects=False,
+            verify=True,
+            timeout=httpx.Timeout(connect=3.0, read=10.0, write=3.0, pool=2.0),
+            limits=httpx.Limits(
+                max_connections=2,
+                max_keepalive_connections=0,
+                keepalive_expiry=0.0,
+            ),
+        )
+
 
 class _AuthorizeBearerAuth(httpx.Auth):
     def __init__(self, authorize_url: str, token: str) -> None:
@@ -76,6 +107,37 @@ class _AuthorizeBearerAuth(httpx.Auth):
         if request.method == "POST" and request.url == self._authorize_url:
             request.headers["Authorization"] = f"Bearer {self._token}"
         yield request
+
+
+_UUID4 = r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
+_INVENTORY_PATH = re.compile(
+    rf"^/api/(?:libraries(?:/{_UUID4}/items)?|items/{_UUID4})$"
+)
+
+
+class _InventoryBearerAuth(httpx.Auth):
+    def __init__(self, origin: str, token: str) -> None:
+        self._origin = httpx.URL(origin)
+        self._token = token
+
+    def auth_flow(self, request):
+        same_origin = (
+            request.url.scheme == self._origin.scheme
+            and request.url.host == self._origin.host
+            and request.url.port == self._origin.port
+        )
+        if (
+            request.method == "GET"
+            and same_origin
+            and _INVENTORY_PATH.fullmatch(request.url.path)
+        ):
+            request.headers["Authorization"] = f"Bearer {self._token}"
+        yield request
+
+
+def _is_origin(endpoint: ServiceEndpoint) -> bool:
+    parsed = urlsplit(endpoint.value)
+    return parsed.path in {"", "/"} and not parsed.query and not parsed.fragment
 
 
 def target_endpoint_allowed(endpoint: ServiceEndpoint) -> bool:
