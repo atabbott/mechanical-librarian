@@ -439,6 +439,47 @@ class InventoryPollingTests(unittest.TestCase):
         self.assertEqual(result.outcome, InventoryPollOutcome.BLOCKED)
         self.assertEqual(result.inspection.compatibility, "contract_drift")
 
+    def test_unsupported_inventory_library_blocks_until_governing_change(
+        self,
+    ) -> None:
+        inventory = InventoryRunResult(
+            InventoryOutcome.INCOMPLETE,
+            (
+                InventoryLibraryResult(
+                    LibraryId("01234567-89ab-4def-8123-456789abcdef"),
+                    InventoryOutcome.INCOMPLETE,
+                    None,
+                    failure=self.failure(
+                        FailureKind.UNSUPPORTED,
+                        retryable=False,
+                    ),
+                ),
+            ),
+            "supported",
+        )
+        service = RunInventoryPoll(self.repository)
+
+        result = service.run(
+            self.request(),
+            "worker_a",
+            NOW,
+            lambda _claim: inventory,
+            lambda: NOW + timedelta(seconds=1),
+        )
+        duplicate = service.run(
+            self.request(poll_id="poll_b", trigger_id="trigger_b"),
+            "worker_b",
+            NOW + timedelta(seconds=2),
+            lambda _claim: self.fail("duplicate delivery performed target I/O"),
+            lambda: NOW + timedelta(seconds=3),
+        )
+
+        self.assertEqual(result.outcome, InventoryPollOutcome.BLOCKED)
+        self.assertEqual(result.inspection.failure_kind, "unsupported")
+        self.assertIsNone(result.inspection.next_eligible_at)
+        self.assertEqual(duplicate.outcome, InventoryPollOutcome.BLOCKED)
+        self.assertEqual(duplicate.inspection.poll_id, "poll_a")
+
 
 if __name__ == "__main__":
     unittest.main()

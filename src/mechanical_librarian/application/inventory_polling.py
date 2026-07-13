@@ -309,6 +309,7 @@ def _failure_kind(result: InventoryRunResult) -> FailureKind:
         FailureKind.CANCELLED,
         FailureKind.AUTHENTICATION,
         FailureKind.AUTHORIZATION,
+        FailureKind.UNSUPPORTED,
         FailureKind.INCOMPATIBLE,
         FailureKind.NOT_FOUND,
         FailureKind.INVALID_REQUEST,
