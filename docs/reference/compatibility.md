@@ -94,8 +94,11 @@ The runtime profile and this human view are drift-tested against it.
 
 These are compatibility declarations; F04 invokes no inventory or content
 route. Media-file support additionally depends on the authorized profile's
-download permission. Mutation remains unavailable because F04 has no mutation
-authority.
+download permission. Supported inventory and metadata declarations require an
+active profile with complete configured-library coverage plus explicit
+all-tag and explicit-content visibility; narrower content scopes are
+incompatible with the current profile contract. Mutation remains unavailable
+because F04 has no mutation authority.
 
 The evidence pins official container digest
 `sha256:1eef6716183c52abafe5405e7d6be8390248ecd59c7488c44af871757ac8fc4d`.

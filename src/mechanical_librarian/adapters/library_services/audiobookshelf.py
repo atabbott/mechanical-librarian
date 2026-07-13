@@ -238,6 +238,16 @@ def _facts(
         if isinstance(permissions, dict)
         else None
     )
+    all_tags = (
+        permissions.get("accessAllTags")
+        if isinstance(permissions, dict)
+        else None
+    )
+    explicit_content = (
+        permissions.get("accessExplicitContent")
+        if isinstance(permissions, dict)
+        else None
+    )
     scoped_libraries: frozenset[LibraryId] | None = None
     if isinstance(libraries, list) and libraries:
         try:
@@ -259,6 +269,8 @@ def _facts(
         isinstance(permissions, dict)
         and type(permissions.get("download")) is bool
         and type(all_libraries) is bool
+        and all_tags is True
+        and explicit_content is True
         and positive_access
     )
     download = bool(permissions.get("download")) if profile_complete else False

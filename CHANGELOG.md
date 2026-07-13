@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- Audiobookshelf connection readiness now requires unrestricted configured-
+  library, tag, and explicit-content visibility so partial content scopes
+  cannot advertise complete inventory and metadata capabilities.
 - The Audiobookshelf connection check now validates anonymous target identity
   and pinned-version evidence before sending a Bearer credential, while
   retaining status-only incompatibility reports for unqualified versions.

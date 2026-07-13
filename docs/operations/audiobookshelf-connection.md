@@ -49,9 +49,13 @@ Every redirect and every other route or method is rejected. The stale upstream
 API reference describing `GET /api/authorize` is not treated as current
 evidence.
 
-Authorization scope is compared only with the configured `enabled_libraries`
-identifiers. A profile is complete when it grants all-library access or its
-fully validated accessible-library list covers every configured library.
+Library scope is compared with the configured `enabled_libraries` identifiers.
+A profile is complete when it grants all-library access or its
+fully validated accessible-library list covers every configured library, and
+it explicitly grants all-tag plus explicit-content visibility. Tag allowlists,
+tag denylists, missing or ambiguous content-scope flags, and explicit-content
+restrictions fail readiness because F04 does not model narrower inventory
+scope. Private tag values are not retained or reported.
 Audiobookshelf library identifiers are canonical lowercase UUIDv4 values and
 are preserved exactly as opaque, adapter-scoped identities.
 Missing, partial, malformed, inactive, or mismatched profiles are degraded and

@@ -10,6 +10,8 @@ Evidence reconciled on 2026-07-13:
 - official Audiobookshelf source for 2.35.1 identifies `GET /status` and
   observational `POST /api/authorize` returning the login-response profile;
 - API keys introduced in 2.26.0 authenticate as Bearer JWTs;
+- a complete profile explicitly grants unrestricted library, tag, and
+  explicit-content visibility; selected private tag values are not retained;
 - the public API reference is explicitly out of date and its authorize GET is
   not used as current contract evidence; and
 - the disposable qualification image is pinned to

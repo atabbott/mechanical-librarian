@@ -522,6 +522,117 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                 else:
                     self.assertIsNone(application_result.inspection)
 
+    def test_profile_requires_unrestricted_content_visibility(self) -> None:
+        cases = []
+        for field in ("accessAllTags", "accessExplicitContent"):
+            for name, value in (
+                ("false", False),
+                ("null", None),
+                ("wrong-type", "yes"),
+            ):
+                profile = fixture("authorize.json")
+                profile["user"]["permissions"][field] = value
+                cases.append((f"{field}-{name}", profile))
+            missing = fixture("authorize.json")
+            del missing["user"]["permissions"][field]
+            cases.append((f"{field}-missing", missing))
+
+        for mode, selected in (
+            ("allowlist", ["private-tag-sentinel"]),
+            ("denylist", ["private-tag-sentinel"]),
+            ("empty-allowlist", []),
+            ("empty-denylist", []),
+        ):
+            profile = fixture("authorize.json")
+            profile["user"]["permissions"]["accessAllTags"] = False
+            profile["user"]["permissions"]["selectedTagsNotAccessible"] = (
+                mode in {"denylist", "empty-denylist"}
+            )
+            profile["user"]["itemTagsSelected"] = selected
+            cases.append((mode, profile))
+
+        combined = fixture("authorize.json")
+        combined["user"]["permissions"]["accessAllTags"] = False
+        combined["user"]["permissions"]["accessExplicitContent"] = False
+        combined["user"]["itemTagsSelected"] = ["private-tag-sentinel"]
+        cases.append(("combined", combined))
+
+        for name, profile in cases:
+            with self.subTest(name=name):
+                def handler(request, selected=profile):
+                    value = (
+                        fixture("status.json")
+                        if request.url.path == "/status"
+                        else selected
+                    )
+                    return raw_response(
+                        payload=json.dumps(value).encode("utf-8"),
+                        headers={"content-type": "application/json"},
+                    )
+
+                result = self.probe(handler)
+
+                self.assertIsNone(result.failure)
+                self.assertFalse(result.value.profile_complete)
+                self.assertFalse(result.value.media_download_allowed)
+                self.assertEqual(
+                    result.value.health.status,
+                    HealthStatus.DEGRADED,
+                )
+                application_result = InspectLibraryConnection(
+                    AdapterId("audiobookshelf"),
+                    ConnectionId("synthetic-connection"),
+                    (LibraryId(LIBRARY_ID),),
+                    ApplicationProfileTests.Probe(result.value),
+                ).run(context())
+                self.assertEqual(
+                    application_result.outcome,
+                    ConnectionProbeOutcome.AUTHORIZATION_FAILED,
+                )
+                self.assertIsNone(application_result.inspection)
+                self.assertNotIn("private-tag-sentinel", repr(result))
+
+    def test_download_permission_only_controls_media_capability(self) -> None:
+        profile = fixture("authorize.json")
+        profile["user"]["permissions"]["download"] = False
+
+        def handler(request):
+            value = (
+                fixture("status.json")
+                if request.url.path == "/status"
+                else profile
+            )
+            return raw_response(
+                payload=json.dumps(value).encode("utf-8"),
+                headers={"content-type": "application/json"},
+            )
+
+        result = self.probe(handler)
+
+        self.assertIsNone(result.failure)
+        self.assertTrue(result.value.profile_complete)
+        self.assertFalse(result.value.media_download_allowed)
+        self.assertEqual(result.value.health.status, HealthStatus.HEALTHY)
+        application_result = InspectLibraryConnection(
+            AdapterId("audiobookshelf"),
+            ConnectionId("synthetic-connection"),
+            (LibraryId(LIBRARY_ID),),
+            ApplicationProfileTests.Probe(result.value),
+        ).run(context())
+        self.assertEqual(application_result.outcome, ConnectionProbeOutcome.READY)
+        states = {
+            item.capability: item.state
+            for item in application_result.inspection.capabilities
+        }
+        self.assertEqual(
+            states[ConnectionCapability.INVENTORY_READ],
+            CapabilityState.SUPPORTED,
+        )
+        self.assertEqual(
+            states[ConnectionCapability.MEDIA_FILE_READ],
+            CapabilityState.UNAVAILABLE,
+        )
+
     def test_wrong_service_identity_stops_before_authorization(self) -> None:
         for status in ({}, {"app": "other", "serverVersion": "2.35.1"}):
             with self.subTest(status=status):
