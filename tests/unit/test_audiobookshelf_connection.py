@@ -262,6 +262,51 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         cases.append(
             ("exact-multiple", exact, ("synthetic-library", "second-library"), True)
         )
+        duplicate_covering = fixture("authorize.json")
+        duplicate_covering["user"]["permissions"]["accessAllLibraries"] = False
+        duplicate_covering["user"]["librariesAccessible"] = [
+            "second-library",
+            "extra-library",
+            "synthetic-library",
+            "second-library",
+        ]
+        cases.append(
+            (
+                "duplicate-covering",
+                duplicate_covering,
+                ("synthetic-library", "second-library"),
+                True,
+            )
+        )
+        duplicate_subset = fixture("authorize.json")
+        duplicate_subset["user"]["permissions"]["accessAllLibraries"] = False
+        duplicate_subset["user"]["librariesAccessible"] = [
+            "synthetic-library",
+            "synthetic-library",
+        ]
+        cases.append(
+            (
+                "duplicate-subset",
+                duplicate_subset,
+                ("synthetic-library", "second-library"),
+                False,
+            )
+        )
+        duplicate_malformed = fixture("authorize.json")
+        duplicate_malformed["user"]["permissions"]["accessAllLibraries"] = False
+        duplicate_malformed["user"]["librariesAccessible"] = [
+            "synthetic-library",
+            "synthetic-library",
+            " bad",
+        ]
+        cases.append(
+            (
+                "duplicate-malformed",
+                duplicate_malformed,
+                ("synthetic-library",),
+                False,
+            )
+        )
         subset = fixture("authorize.json")
         subset["user"]["permissions"]["accessAllLibraries"] = False
         subset["user"]["librariesAccessible"] = ["synthetic-library"]

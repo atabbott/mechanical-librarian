@@ -185,8 +185,7 @@ def _facts(
                 LibraryId(value) if type(value) is str else (_ for _ in ()).throw(ValueError())
                 for value in libraries
             )
-            if len(parsed_libraries) == len(set(parsed_libraries)):
-                scoped_libraries = frozenset(parsed_libraries)
+            scoped_libraries = frozenset(parsed_libraries)
         except ValueError:
             scoped_libraries = None
     positive_access = all_libraries is True or (
