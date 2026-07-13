@@ -57,6 +57,32 @@ class _IncompleteProfileHandler(_FixtureHandler):
         self._respond("authorize-partial.json")
 
 
+_MISSING_FLAG = object()
+
+
+class _AmbiguousPermissionHandler(_FixtureHandler):
+    access_all_libraries = _MISSING_FLAG
+
+    def do_POST(self) -> None:
+        type(self).requests.append(("POST", self.path, dict(self.headers)))
+        if self.path != "/api/authorize":
+            self.send_error(404)
+            return
+        payload = json.loads((FIXTURES / "authorize.json").read_text(encoding="utf-8"))
+        permissions = payload["user"]["permissions"]
+        if self.access_all_libraries is _MISSING_FLAG:
+            del permissions["accessAllLibraries"]
+        else:
+            permissions["accessAllLibraries"] = self.access_all_libraries
+        payload["user"]["librariesAccessible"] = ["synthetic-library"]
+        encoded = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+
 class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
     def test_incomplete_authorization_profile_fails_cli_without_success_report(
         self,
@@ -109,6 +135,75 @@ class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
             errors.getvalue(),
             "Connection check failed: configured target could not be verified.\n",
         )
+
+    def test_ambiguous_scope_flag_fails_cli_with_covering_library_list(
+        self,
+    ) -> None:
+        for name, flag in (("missing", _MISSING_FLAG), ("null", None)):
+            with self.subTest(name=name):
+                _AmbiguousPermissionHandler.access_all_libraries = flag
+                _AmbiguousPermissionHandler.requests = []
+                server = ThreadingHTTPServer(
+                    ("127.0.0.1", 0), _AmbiguousPermissionHandler
+                )
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        secret = root / "private-api-key"
+                        secret.write_text(
+                            "private-token-sentinel\n", encoding="utf-8"
+                        )
+                        secret.chmod(0o600)
+                        configuration = root / "private-config.json"
+                        configuration.write_text(
+                            json.dumps(
+                                {
+                                    "schema_version": "config-v1",
+                                    "instance_name": "ambiguous-authorization",
+                                    "connections": [
+                                        {
+                                            "id": "abs-synthetic",
+                                            "adapter": "audiobookshelf",
+                                            "endpoint": (
+                                                "http://127.0.0.1:"
+                                                f"{server.server_port}"
+                                            ),
+                                            "secret_reference": str(secret),
+                                            "enabled_libraries": [
+                                                "synthetic-library"
+                                            ],
+                                            "capability_overrides": [],
+                                        }
+                                    ],
+                                }
+                            ),
+                            encoding="utf-8",
+                        )
+                        output = io.StringIO()
+                        errors = io.StringIO()
+                        with redirect_stdout(output), redirect_stderr(errors):
+                            result = bootstrap._run_connection_probe(configuration)
+                            exit_code = bootstrap.main(
+                                [
+                                    "connection-check",
+                                    "--config",
+                                    str(configuration),
+                                ]
+                            )
+                finally:
+                    server.shutdown()
+                    server.server_close()
+
+                self.assertEqual(result.outcome.value, "authorization_failed")
+                self.assertIsNone(result.inspection)
+                self.assertEqual(exit_code, 1)
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(
+                    errors.getvalue(),
+                    "Connection check failed: configured target could not be verified.\n",
+                )
 
     def test_non_loopback_http_is_rejected_before_secret_or_http_client(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

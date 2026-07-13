@@ -189,7 +189,7 @@ def _facts(
         except ValueError:
             scoped_libraries = None
     positive_access = all_libraries is True or (
-        (all_libraries is None or all_libraries is False)
+        all_libraries is False
         and scoped_libraries is not None
         and set(expected_libraries).issubset(scoped_libraries)
     )
@@ -198,7 +198,7 @@ def _facts(
         and
         isinstance(permissions, dict)
         and type(permissions.get("download")) is bool
-        and type(all_libraries) in {bool, type(None)}
+        and type(all_libraries) is bool
         and positive_access
     )
     download = bool(permissions.get("download")) if profile_complete else False

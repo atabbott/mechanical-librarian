@@ -245,6 +245,32 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         del missing["user"]["permissions"]["accessAllLibraries"]
         del missing["user"]["librariesAccessible"]
         cases.append(("missing", missing, ("synthetic-library",), False))
+        missing_flag_covering = fixture("authorize.json")
+        del missing_flag_covering["user"]["permissions"]["accessAllLibraries"]
+        missing_flag_covering["user"]["librariesAccessible"] = [
+            "synthetic-library"
+        ]
+        cases.append(
+            (
+                "missing-flag-covering",
+                missing_flag_covering,
+                ("synthetic-library",),
+                False,
+            )
+        )
+        null_flag_covering = fixture("authorize.json")
+        null_flag_covering["user"]["permissions"]["accessAllLibraries"] = None
+        null_flag_covering["user"]["librariesAccessible"] = [
+            "synthetic-library"
+        ]
+        cases.append(
+            (
+                "null-flag-covering",
+                null_flag_covering,
+                ("synthetic-library",),
+                False,
+            )
+        )
         malformed = fixture("authorize.json")
         malformed["user"]["permissions"]["accessAllLibraries"] = False
         malformed["user"]["librariesAccessible"] = [1]
