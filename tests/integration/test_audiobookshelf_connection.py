@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import mechanical_librarian.bootstrap as bootstrap
+import mechanical_librarian.infrastructure.security.target_secrets as target_secrets
 
 
 ROOT = Path(__file__).parents[2]
@@ -112,6 +113,155 @@ class _MalformedScopeHandler(_ScopedUuidHandler):
 
 
 class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
+    def test_unrelated_valid_sections_do_not_block_or_widen_probe(self) -> None:
+        sentinels = (
+            "private-provider-sentinel",
+            "private-reviewer-sentinel",
+            "private-notifier-sentinel",
+        )
+        _FixtureHandler.requests = []
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _FixtureHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secret = root / "private-api-key"
+            secret.write_text("private-token-sentinel\n", encoding="utf-8")
+            secret.chmod(0o600)
+            configuration = root / "private-config.json"
+            configuration.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "config-v1",
+                        "instance_name": "full-application-config",
+                        "connections": [
+                            {
+                                "id": "abs-synthetic",
+                                "adapter": "audiobookshelf",
+                                "endpoint": f"http://127.0.0.1:{server.server_port}",
+                                "secret_reference": str(secret),
+                                "enabled_libraries": [LIBRARY_ID],
+                                "capability_overrides": [
+                                    "inventory-read",
+                                    "notifications",
+                                ],
+                            }
+                        ],
+                        "providers": [sentinels[0]],
+                        "reviewers": [sentinels[1]],
+                        "notifications": [sentinels[2]],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            errors = io.StringIO()
+            with (
+                redirect_stdout(output),
+                redirect_stderr(errors),
+                patch.object(
+                    bootstrap,
+                    "SQLiteAuditRepository",
+                    side_effect=AssertionError("persistence forbidden"),
+                ),
+                patch.object(
+                    bootstrap,
+                    "SQLiteJobHeartbeatRepository",
+                    side_effect=AssertionError("persistence forbidden"),
+                ),
+                patch.object(
+                    bootstrap,
+                    "SQLiteInventoryRepository",
+                    side_effect=AssertionError("persistence forbidden"),
+                ),
+                patch.object(
+                    bootstrap,
+                    "SyntheticLibraryReader",
+                    side_effect=AssertionError("inventory forbidden"),
+                ),
+                patch(
+                    "mechanical_librarian.infrastructure.security.target_secrets._read",
+                    wraps=target_secrets._read,
+                ) as read_secret,
+            ):
+                result = bootstrap._run_connection_probe(configuration)
+                _FixtureHandler.requests = []
+                exit_code = bootstrap.main(
+                    ["connection-check", "--config", str(configuration)]
+                )
+
+        self.assertEqual(result.outcome.value, "ready")
+        self.assertEqual(exit_code, 0, errors.getvalue())
+        self.assertEqual(errors.getvalue(), "")
+        self.assertIn("Connection check passed.\n", output.getvalue())
+        self.assertEqual(
+            {call.args[0].value for call in read_secret.call_args_list},
+            {str(secret)},
+        )
+        self.assertEqual(
+            [(method, path) for method, path, _headers in _FixtureHandler.requests],
+            [("GET", "/status"), ("POST", "/api/authorize")],
+        )
+        self.assertNotIn("Authorization", _FixtureHandler.requests[0][2])
+        self.assertEqual(
+            _FixtureHandler.requests[1][2].get("Authorization"),
+            "Bearer private-token-sentinel",
+        )
+        exposed = output.getvalue() + errors.getvalue() + repr(result)
+        for sentinel in sentinels:
+            self.assertNotIn(sentinel, exposed)
+        for _method, path, headers in _FixtureHandler.requests:
+            self.assertFalse(any(sentinel in path for sentinel in sentinels))
+            self.assertFalse(
+                any(
+                    sentinel in str(value)
+                    for sentinel in sentinels
+                    for value in headers.values()
+                )
+            )
+
+    def test_invalid_unrelated_sections_stop_before_secret_or_network(self) -> None:
+        cases = (
+            ("providers", ["duplicate", "duplicate"]),
+            ("reviewers", ["duplicate", "duplicate"]),
+            ("notifications", ["duplicate", "duplicate"]),
+            ("capability_overrides", ["metadata-write"]),
+        )
+        for field, value in cases:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                connection = {
+                    "id": "abs-synthetic",
+                    "adapter": "audiobookshelf",
+                    "endpoint": "https://private-target.invalid",
+                    "secret_reference": "/private/never-read",
+                    "enabled_libraries": [LIBRARY_ID],
+                    "capability_overrides": [],
+                }
+                source = {
+                    "schema_version": "config-v1",
+                    "instance_name": "invalid-unrelated-section",
+                    "connections": [connection],
+                }
+                if field == "capability_overrides":
+                    connection[field] = value
+                else:
+                    source[field] = value
+                configuration = Path(directory) / "private-config.json"
+                configuration.write_text(json.dumps(source), encoding="utf-8")
+
+                with patch(
+                    "mechanical_librarian.infrastructure.security.target_secrets._read"
+                ) as read, patch(
+                    "mechanical_librarian.infrastructure.security.target_secrets.httpx.Client"
+                ) as client:
+                    result = bootstrap._run_connection_probe(configuration)
+
+                self.assertEqual(result.outcome.value, "configuration_failure")
+                read.assert_not_called()
+                client.assert_not_called()
+
     def test_scoped_uuid_library_is_configured_and_verified_end_to_end(self) -> None:
         _ScopedUuidHandler.requests = []
         server = ThreadingHTTPServer(("127.0.0.1", 0), _ScopedUuidHandler)

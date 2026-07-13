@@ -272,10 +272,6 @@ def _run_connection_probe(configuration_path: Path) -> ConnectionProbeResult:
             len(configuration.connections) != 1
             or configuration.connections[0].adapter != "audiobookshelf"
             or configuration.connections[0].connection_id is None
-            or configuration.connections[0].capability_overrides
-            or configuration.providers
-            or configuration.reviewers
-            or configuration.notifications
         ):
             return ConnectionProbeResult(ConnectionProbeOutcome.CONFIGURATION_FAILURE)
         configured = configuration.connections[0]

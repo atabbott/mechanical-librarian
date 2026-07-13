@@ -7,6 +7,12 @@ compatibility and capability states. It does not open application state, list a
 library, read an item or content, construct provider/reviewer clients, or obtain
 mutation authority.
 
+The command validates the complete `config-v1` document but consumes only the
+single configured Audiobookshelf connection. Validated provider, reviewer, and
+notification settings may coexist without constructing those components, and
+configured read-only capability overrides do not replace the capability
+evidence observed by this report.
+
 Create the credential file with owner-only permissions and place its absolute
 path in the existing `connections.secret_reference` field:
 

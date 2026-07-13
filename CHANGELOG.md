@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- The Audiobookshelf connection check now accepts unrelated validated provider,
+  reviewer, notification, and read-only capability-override settings without
+  constructing those components or widening target authority.
 - Audiobookshelf connection scope now accepts and preserves canonical lowercase
   UUIDv4 library identifiers while continuing to reject malformed identities.
 - Evidence values, references, readiness, and persistence/reviewer/API
