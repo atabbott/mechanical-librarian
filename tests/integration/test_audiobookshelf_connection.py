@@ -83,7 +83,72 @@ class _AmbiguousPermissionHandler(_FixtureHandler):
         self.wfile.write(encoded)
 
 
+class _ScopedUuidHandler(_FixtureHandler):
+    library_id = "01234567-89ab-4def-8123-456789abcdef"
+
+    def do_POST(self) -> None:
+        type(self).requests.append(("POST", self.path, dict(self.headers)))
+        if self.path != "/api/authorize":
+            self.send_error(404)
+            return
+        payload = json.loads((FIXTURES / "authorize.json").read_text(encoding="utf-8"))
+        payload["user"]["permissions"]["accessAllLibraries"] = False
+        payload["user"]["librariesAccessible"] = [self.library_id]
+        encoded = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+
 class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
+    def test_scoped_uuid_library_is_configured_and_verified_end_to_end(self) -> None:
+        _ScopedUuidHandler.requests = []
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _ScopedUuidHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secret = root / "private-api-key"
+            secret.write_text("private-token-sentinel\n", encoding="utf-8")
+            secret.chmod(0o600)
+            configuration = root / "private-config.json"
+            configuration.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "config-v1",
+                        "instance_name": "scoped-uuid",
+                        "connections": [
+                            {
+                                "id": "abs-synthetic",
+                                "adapter": "audiobookshelf",
+                                "endpoint": f"http://127.0.0.1:{server.server_port}",
+                                "secret_reference": str(secret),
+                                "enabled_libraries": [_ScopedUuidHandler.library_id],
+                                "capability_overrides": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            errors = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(errors):
+                result = bootstrap._run_connection_probe(configuration)
+                exit_code = bootstrap.main(
+                    ["connection-check", "--config", str(configuration)]
+                )
+
+        self.assertEqual(result.outcome.value, "ready")
+        self.assertEqual(exit_code, 0, errors.getvalue())
+        self.assertEqual(errors.getvalue(), "")
+        self.assertIn("Connection check passed.\n", output.getvalue())
+        self.assertNotIn(_ScopedUuidHandler.library_id, output.getvalue())
+
     def test_incomplete_authorization_profile_fails_cli_without_success_report(
         self,
     ) -> None:

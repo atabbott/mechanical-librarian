@@ -41,6 +41,8 @@ not treated as current evidence.
 Authorization scope is compared only with the configured `enabled_libraries`
 identifiers. A profile is complete when it grants all-library access or its
 fully validated accessible-library list covers every configured library.
+Audiobookshelf library identifiers are canonical lowercase UUIDv4 values and
+are preserved exactly as opaque, adapter-scoped identities.
 Missing, partial, malformed, inactive, or mismatched profiles are degraded and
 cannot declare supported read capabilities; the check still performs no
 library or item request.

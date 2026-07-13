@@ -9,6 +9,8 @@ versioning after the first public release.
 
 ### Fixed
 
+- Audiobookshelf connection scope now accepts and preserves canonical lowercase
+  UUIDv4 library identifiers while continuing to reject malformed identities.
 - Evidence values, references, readiness, and persistence/reviewer/API
   projections now enforce deterministic size, privacy, target-scope, and
   versioned cross-target policy bounds before untrusted data crosses a boundary.

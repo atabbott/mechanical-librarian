@@ -72,6 +72,14 @@ class ConfigurationBoundaryTests(unittest.TestCase):
                 "uniqueItems"
             ]
         )
+        library_pattern = definitions["ConnectionInput"]["properties"][
+            "enabled_libraries"
+        ]["items"]["pattern"]
+        self.assertIn("[0-9][0-9a-f]{7}", library_pattern)
+        self.assertEqual(
+            definitions["ConnectionInput"]["properties"]["adapter"]["pattern"],
+            "^[a-z][a-z0-9_-]{0,63}$",
+        )
 
     def test_checked_in_synthetic_file_maps_to_immutable_secret_free_values(self) -> None:
         configuration = load_configuration_file(FIXTURE)
@@ -137,6 +145,41 @@ class ConfigurationBoundaryTests(unittest.TestCase):
             ("inventory-read", "metadata-read"),
         )
         self.assertEqual(validate_configuration(base), validate_configuration(self.source()))
+
+    def test_enabled_libraries_accept_exact_uuidv4_without_widening_identifiers(
+        self,
+    ) -> None:
+        uuid = "01234567-89ab-4def-8123-456789abcdef"
+        source = self.source()
+        source["connections"][0]["enabled_libraries"] = [uuid, "synthetic-library"]
+
+        loaded = validate_configuration(source)
+
+        self.assertEqual(
+            loaded.connections[0].enabled_libraries,
+            (uuid, "synthetic-library"),
+        )
+        for value in (
+            "1library",
+            "01234567-89ab-3def-8123-456789abcdef",
+            "01234567-89ab-4def-7123-456789abcdef",
+            "01234567-89AB-4def-8123-456789abcdef",
+        ):
+            with self.subTest(value=value):
+                invalid = self.source()
+                invalid["connections"][0]["enabled_libraries"] = [value]
+                with self.assertRaises(ConfigurationError):
+                    validate_configuration(invalid)
+
+        invalid_connection = self.source()
+        invalid_connection["connections"][0]["id"] = uuid
+        with self.assertRaises(ConfigurationError):
+            validate_configuration(invalid_connection)
+
+        duplicate = self.source()
+        duplicate["connections"][0]["enabled_libraries"] = [uuid, uuid]
+        with self.assertRaises(ConfigurationError):
+            validate_configuration(duplicate)
 
     def test_new_field_bounds_unknowns_and_import_differential_are_exhaustive(self) -> None:
         invalid_updates = (

@@ -62,7 +62,7 @@ def _context(*, max_items: int = 1, max_bytes: int = 524_288) -> OperationContex
     )
 
 
-def _fixture():
+def _fixture(library: LibraryId | None = None):
     connection = LibraryConnection(
         ConnectionId("synthetic-connection"),
         AdapterId("synthetic"),
@@ -70,7 +70,9 @@ def _fixture():
         SecretReference("unused-reference"),
         synthetic_capabilities(),
     )
-    return SyntheticLibraryReader(connection, LibraryId("synthetic-library")).record.snapshot
+    return SyntheticLibraryReader(
+        connection, library or LibraryId("synthetic-library")
+    ).record.snapshot
 
 
 class SQLiteInventoryRepositoryTests(unittest.TestCase):
@@ -115,6 +117,19 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         return SnapshotStoreRequest(
             snapshot, selected_key, expected_previous, context or _context()
         )
+
+    def test_uuid_library_identity_round_trips_through_canonical_storage(self) -> None:
+        library = LibraryId("01234567-89ab-4def-8123-456789abcdef")
+        snapshot = _fixture(library)
+        repository = SQLiteInventoryRepository(self.connection)
+
+        stored = repository.store(self.request_for(snapshot))
+        read = repository.read(LibraryReadRequest(snapshot.target, _context()))
+
+        self.assertEqual(stored.outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(read.value, snapshot)
+        self.assertEqual(read.value.target.library, library)
+        self.assertIn(library.value, snapshot.canonical_input.serialized)
 
     def large_snapshot(self) -> ItemSnapshot:
         return ItemSnapshot.create(

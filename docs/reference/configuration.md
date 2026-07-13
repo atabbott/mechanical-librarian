@@ -105,6 +105,11 @@ notification ordering is significant in `config-v1`. Enabled-library and
 capability-override ordering is not significant and is canonicalized before
 comparison.
 
+Enabled-library values are opaque, adapter-scoped service identifiers. They
+accept the existing bounded lowercase identifier form and canonical lowercase
+UUIDv4 values; they are preserved exactly and are never exposed in change-plan
+diagnostics.
+
 ## Configuration groups
 
 ### Instance

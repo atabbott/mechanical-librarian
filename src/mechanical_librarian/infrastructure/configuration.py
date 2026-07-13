@@ -26,6 +26,7 @@ from mechanical_librarian.application.configuration import (
     plan_projected_import,
     project_configuration,
 )
+from mechanical_librarian.domain.identifiers import LIBRARY_ID_PATTERN
 
 
 _MAX_CONFIGURATION_BYTES = 1_048_576
@@ -42,6 +43,15 @@ IdentifierText = Annotated[
         min_length=1,
         max_length=64,
         pattern=r"^[a-z][a-z0-9_-]{0,63}$",
+    ),
+]
+LibraryIdentifierText = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        min_length=1,
+        max_length=64,
+        pattern=LIBRARY_ID_PATTERN,
     ),
 ]
 VersionText = Annotated[
@@ -84,7 +94,7 @@ class ConnectionInput(BaseModel):
     endpoint: EndpointText
     secret_reference: SecretReferenceText
     enabled_libraries: Annotated[
-        list[IdentifierText],
+        list[LibraryIdentifierText],
         Field(min_length=1, max_length=64, json_schema_extra={"uniqueItems": True}),
     ]
     capability_overrides: Annotated[

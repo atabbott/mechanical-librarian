@@ -279,6 +279,24 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         scoped["user"]["permissions"]["accessAllLibraries"] = False
         scoped["user"]["librariesAccessible"] = ["synthetic-library"]
         cases.append(("scoped", scoped, ("synthetic-library",), True))
+        uuid = "01234567-89ab-4def-8123-456789abcdef"
+        scoped_uuid = fixture("authorize.json")
+        scoped_uuid["user"]["permissions"]["accessAllLibraries"] = False
+        scoped_uuid["user"]["librariesAccessible"] = [uuid, uuid]
+        cases.append(("scoped-uuid", scoped_uuid, (uuid,), True))
+        mismatched_uuid = fixture("authorize.json")
+        mismatched_uuid["user"]["permissions"]["accessAllLibraries"] = False
+        mismatched_uuid["user"]["librariesAccessible"] = [
+            "11234567-89ab-4def-8123-456789abcdef"
+        ]
+        cases.append(("mismatched-uuid", mismatched_uuid, (uuid,), False))
+        malformed_uuid = fixture("authorize.json")
+        malformed_uuid["user"]["permissions"]["accessAllLibraries"] = False
+        malformed_uuid["user"]["librariesAccessible"] = [
+            uuid,
+            "01234567-89ab-3def-8123-456789abcdef",
+        ]
+        cases.append(("malformed-uuid", malformed_uuid, (uuid,), False))
         exact = fixture("authorize.json")
         exact["user"]["permissions"]["accessAllLibraries"] = False
         exact["user"]["librariesAccessible"] = [
