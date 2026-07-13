@@ -9,6 +9,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- The Audiobookshelf connection check now validates anonymous target identity
+  and pinned-version evidence before sending a Bearer credential, while
+  retaining status-only incompatibility reports for unqualified versions.
 - The Audiobookshelf connection check now accepts unrelated validated provider,
   reviewer, notification, and read-only capability-override settings without
   constructing those components or widening target authority.

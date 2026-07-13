@@ -247,8 +247,16 @@ def _capabilities(
     else:
         declared = CapabilityState.UNAVAILABLE
     states = {
-        ConnectionCapability.AUTHENTICATION: CapabilityState.TESTED,
-        ConnectionCapability.AUTHORIZATION: CapabilityState.TESTED,
+        ConnectionCapability.AUTHENTICATION: (
+            CapabilityState.TESTED
+            if compatibility is CompatibilityState.SUPPORTED
+            else CapabilityState.INCOMPATIBLE
+        ),
+        ConnectionCapability.AUTHORIZATION: (
+            CapabilityState.TESTED
+            if compatibility is CompatibilityState.SUPPORTED
+            else CapabilityState.INCOMPATIBLE
+        ),
         ConnectionCapability.VERSION_DISCOVERY: (
             CapabilityState.TESTED
             if facts.service_version is not None

@@ -179,7 +179,33 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         self.assertNotIn("cookie", requests[0].headers)
         self.assertNotIn("cookie", requests[1].headers)
 
-    def test_authentication_authorization_and_incompatible_endpoint_are_typed(self) -> None:
+    def test_status_failures_stop_before_authorization(self) -> None:
+        for status, expected in (
+            (401, "invalid_response"),
+            (403, "invalid_response"),
+            (404, "incompatible"),
+            (405, "incompatible"),
+            (408, "timeout"),
+            (429, "rate_limited"),
+        ):
+            with self.subTest(status=status):
+                requests = []
+
+                def handler(request, selected=status):
+                    requests.append(request)
+                    return httpx.Response(selected)
+
+                result = self.probe(handler)
+
+                self.assertEqual(result.failure.kind.value, expected)
+                self.assertEqual(
+                    [(request.method, request.url.path) for request in requests],
+                    [("GET", "/status")],
+                )
+                self.assertNotIn("authorization", requests[0].headers)
+                self.assertNotIn("synthetic-token", repr(result))
+
+    def test_authorization_route_failures_are_typed_after_pinned_status(self) -> None:
         for status, expected in (
             (401, "authentication"),
             (403, "authorization"),
@@ -189,8 +215,31 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
             (429, "rate_limited"),
         ):
             with self.subTest(status=status):
-                result = self.probe(lambda _request: httpx.Response(status))
+                requests = []
+
+                def handler(request, selected=status):
+                    requests.append(request)
+                    if request.url.path == "/status":
+                        return raw_response(
+                            payload=json.dumps(fixture("status.json")).encode(
+                                "utf-8"
+                            ),
+                            headers={"content-type": "application/json"},
+                        )
+                    return httpx.Response(selected)
+
+                result = self.probe(handler)
+
                 self.assertEqual(result.failure.kind.value, expected)
+                self.assertEqual(
+                    [(request.method, request.url.path) for request in requests],
+                    [("GET", "/status"), ("POST", "/api/authorize")],
+                )
+                self.assertNotIn("authorization", requests[0].headers)
+                self.assertEqual(
+                    requests[1].headers["authorization"],
+                    "Bearer synthetic-token",
+                )
                 self.assertNotIn("synthetic-token", repr(result))
 
     def test_transport_timeout_and_connect_failure_are_safe(self) -> None:
@@ -473,9 +522,43 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                 else:
                     self.assertIsNone(application_result.inspection)
 
-    def test_version_must_be_strict_pinned_semver_before_projection(self) -> None:
-        for version in (None, "private-version-sentinel", "v2.35.1", "2.35.1-beta", "02.35.1"):
+    def test_wrong_service_identity_stops_before_authorization(self) -> None:
+        for status in ({}, {"app": "other", "serverVersion": "2.35.1"}):
+            with self.subTest(status=status):
+                requests = []
+
+                def handler(request):
+                    requests.append(request)
+                    return raw_response(
+                        payload=json.dumps(status).encode("utf-8"),
+                        headers={"content-type": "application/json"},
+                    )
+
+                result = self.probe(handler)
+
+                self.assertEqual(result.failure.kind, FailureKind.INVALID_RESPONSE)
+                self.assertIsNone(result.value)
+                self.assertEqual(
+                    [(request.method, request.url.path) for request in requests],
+                    [("GET", "/status")],
+                )
+                self.assertNotIn("authorization", requests[0].headers)
+                self.assertNotIn("synthetic-token", repr(result))
+
+    def test_unqualified_versions_stop_before_authorization_and_remain_typed(self) -> None:
+        cases = (
+            (None, CompatibilityState.UNKNOWN, None),
+            ("private-version-sentinel", CompatibilityState.UNKNOWN, None),
+            ("v2.35.1", CompatibilityState.UNKNOWN, None),
+            ("2.35.1-beta", CompatibilityState.UNKNOWN, None),
+            ("02.35.1", CompatibilityState.UNKNOWN, None),
+            ("2.25.9", CompatibilityState.OLDER, ServiceVersion("2.25.9")),
+            ("2.34.0", CompatibilityState.OLDER, ServiceVersion("2.34.0")),
+            ("2.36.0", CompatibilityState.NEWER, ServiceVersion("2.36.0")),
+        )
+        for version, expected_compatibility, expected_version in cases:
             with self.subTest(version=version):
+                requests = []
                 status = fixture("status.json")
                 if version is None:
                     status.pop("serverVersion")
@@ -483,17 +566,50 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                     status["serverVersion"] = version
 
                 def handler(request):
-                    value = status if request.url.path == "/status" else fixture("authorize.json")
+                    requests.append(request)
                     return raw_response(
-                        payload=json.dumps(value).encode("utf-8"),
+                        payload=json.dumps(status).encode("utf-8"),
                         headers={"content-type": "application/json"},
                     )
 
                 result = self.probe(handler)
                 self.assertIsNone(result.failure)
-                self.assertIsNone(result.value.service_version)
+                self.assertEqual(result.value.service_version, expected_version)
                 self.assertEqual(result.value.health.status, HealthStatus.DEGRADED)
+                self.assertFalse(result.value.profile_complete)
+                self.assertEqual(
+                    [(request.method, request.url.path) for request in requests],
+                    [("GET", "/status")],
+                )
+                self.assertNotIn("authorization", requests[0].headers)
                 self.assertNotIn("private-version-sentinel", repr(result))
+
+                application_result = InspectLibraryConnection(
+                    AdapterId("audiobookshelf"),
+                    ConnectionId("synthetic-connection"),
+                    (LibraryId(LIBRARY_ID),),
+                    ApplicationProfileTests.Probe(result.value),
+                ).run(context())
+                self.assertEqual(
+                    application_result.outcome,
+                    ConnectionProbeOutcome.INCOMPATIBLE,
+                )
+                self.assertEqual(
+                    application_result.inspection.compatibility,
+                    expected_compatibility,
+                )
+                states = {
+                    item.capability: item.state
+                    for item in application_result.inspection.capabilities
+                }
+                self.assertEqual(
+                    states[ConnectionCapability.AUTHENTICATION],
+                    CapabilityState.INCOMPATIBLE,
+                )
+                self.assertEqual(
+                    states[ConnectionCapability.AUTHORIZATION],
+                    CapabilityState.INCOMPATIBLE,
+                )
 
     def test_encoded_response_is_rejected_and_stream_cancellation_is_typed(self) -> None:
         encoded = raw_response(
@@ -672,6 +788,13 @@ class ApplicationProfileTests(unittest.TestCase):
         self.assertEqual(states[ConnectionCapability.RATE_LIMITS], CapabilityState.UNAVAILABLE)
         older = self.run_probe(self.facts("2.25.9"))
         self.assertEqual(older.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
+        self.assertEqual(
+            {
+                item.capability: item.state
+                for item in older.inspection.capabilities
+            }[ConnectionCapability.AUTHENTICATION],
+            CapabilityState.INCOMPATIBLE,
+        )
         self.assertIn(
             CapabilityState.INCOMPATIBLE,
             {item.state for item in older.inspection.capabilities},

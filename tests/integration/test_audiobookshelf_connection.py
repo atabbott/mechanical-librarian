@@ -112,7 +112,122 @@ class _MalformedScopeHandler(_ScopedUuidHandler):
     ]
 
 
+class _StatusOnlyHandler(_FixtureHandler):
+    status_payload = {}
+
+    def do_GET(self) -> None:
+        type(self).requests.append(("GET", self.path, dict(self.headers)))
+        if self.path != "/status":
+            self.send_error(404)
+            return
+        payload = json.dumps(type(self).status_payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self) -> None:
+        type(self).requests.append(("POST", self.path, dict(self.headers)))
+        self.send_error(500)
+
+
 class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
+    def test_unqualified_status_never_receives_bearer_or_authorize_request(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "wrong-service",
+                {"app": "other", "serverVersion": "2.35.1"},
+                "invalid_response",
+                None,
+            ),
+            ("missing-version", {"app": "audiobookshelf"}, "incompatible", "unknown"),
+            (
+                "older-version",
+                {"app": "audiobookshelf", "serverVersion": "2.34.0"},
+                "incompatible",
+                "older",
+            ),
+            (
+                "newer-version",
+                {"app": "audiobookshelf", "serverVersion": "2.36.0"},
+                "incompatible",
+                "newer",
+            ),
+        )
+        for name, status, expected_outcome, expected_compatibility in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                _StatusOnlyHandler.status_payload = status
+                _StatusOnlyHandler.requests = []
+                server = ThreadingHTTPServer(("127.0.0.1", 0), _StatusOnlyHandler)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                self.addCleanup(server.server_close)
+                self.addCleanup(server.shutdown)
+                root = Path(directory)
+                secret = root / "private-api-key"
+                secret.write_text("private-token-sentinel\n", encoding="utf-8")
+                secret.chmod(0o600)
+                configuration = root / "private-config.json"
+                configuration.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": "config-v1",
+                            "instance_name": "status-only",
+                            "connections": [
+                                {
+                                    "id": "abs-synthetic",
+                                    "adapter": "audiobookshelf",
+                                    "endpoint": f"http://127.0.0.1:{server.server_port}",
+                                    "secret_reference": str(secret),
+                                    "enabled_libraries": [LIBRARY_ID],
+                                    "capability_overrides": [],
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                result = bootstrap._run_connection_probe(configuration)
+                self.assertEqual(result.outcome.value, expected_outcome)
+                if expected_compatibility is None:
+                    self.assertIsNone(result.inspection)
+                else:
+                    self.assertEqual(
+                        result.inspection.compatibility.value,
+                        expected_compatibility,
+                    )
+
+                _StatusOnlyHandler.requests = []
+                output = io.StringIO()
+                errors = io.StringIO()
+                with redirect_stdout(output), redirect_stderr(errors):
+                    exit_code = bootstrap.main(
+                        ["connection-check", "--config", str(configuration)]
+                    )
+
+                self.assertEqual(exit_code, 1)
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(
+                    errors.getvalue(),
+                    "Connection check failed: configured target could not be verified.\n",
+                )
+                self.assertEqual(
+                    [
+                        (method, path)
+                        for method, path, _headers in _StatusOnlyHandler.requests
+                    ],
+                    [("GET", "/status")],
+                )
+                self.assertNotIn(
+                    "Authorization", _StatusOnlyHandler.requests[0][2]
+                )
+                exposed = output.getvalue() + errors.getvalue() + repr(result)
+                self.assertNotIn("private-token-sentinel", exposed)
+
     def test_unrelated_valid_sections_do_not_block_or_widen_probe(self) -> None:
         sentinels = (
             "private-provider-sentinel",

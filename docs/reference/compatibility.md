@@ -63,7 +63,9 @@ The F04 connection contract is `abs-connection-v1`, backed by fixture revision
 2.26.0 or newer, but only the pinned 2.35.1 contract is currently `supported`.
 Older, newer, missing, malformed, and otherwise unknown versions are
 `incompatible` until separately qualified; authentication success does not
-widen compatibility evidence.
+widen compatibility evidence. F04 does not send a credential or claim tested
+authentication/authorization for those unqualified versions; only anonymous
+status evidence from the pinned version may reach the authorization probe.
 
 The reviewed machine source is
 [`audiobookshelf-f04-compatibility.json`](audiobookshelf-f04-compatibility.json).

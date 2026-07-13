@@ -32,6 +32,7 @@ from mechanical_librarian.domain.inventory import ServiceEndpoint
 
 _MAX_RESPONSE_BYTES = 65_536
 _VERSION = re.compile(r"^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$")
+_PINNED_VERSION = "2.35.1"
 
 
 class AudiobookshelfConnectionProbe:
@@ -74,6 +75,16 @@ class AudiobookshelfConnectionProbe:
                 )
                 if status.failure is not None:
                     return PortResult.failed(status.failure)
+                identified, version = _status_version(status.value)
+                if not identified:
+                    return _failed(
+                        FailureKind.INVALID_RESPONSE,
+                        "connection response invalid",
+                    )
+                if version is None or version.value != _PINNED_VERSION:
+                    return PortResult.success(
+                        _incompatible_facts(version, context.observed_at)
+                    )
                 client.cookies.clear()
                 authorize = self._request_json(
                     client,
@@ -81,6 +92,7 @@ class AudiobookshelfConnectionProbe:
                     self._endpoint.value + "/api/authorize",
                     headers,
                     context,
+                    authenticated=True,
                 )
                 if authorize.failure is not None:
                     return PortResult.failed(authorize.failure)
@@ -90,7 +102,7 @@ class AudiobookshelfConnectionProbe:
             return _failed(FailureKind.UNAVAILABLE, "connection target unavailable", retryable=True)
 
         return _facts(
-            status.value,
+            version,
             authorize.value,
             context.observed_at,
             request.expected_libraries,
@@ -103,15 +115,39 @@ class AudiobookshelfConnectionProbe:
         url: str,
         headers: dict[str, str],
         context: OperationContext,
+        *,
+        authenticated: bool = False,
     ) -> PortResult[object]:
         checkpoint = context.preflight_result(item_count=1, serialized_bytes=0)
         if checkpoint.failure is not None:
             return PortResult.failed(checkpoint.failure)
         with client.stream(method, url, headers=headers) as response:
             if response.status_code == 401:
-                return _failed(FailureKind.AUTHENTICATION, "connection authentication failed")
+                return _failed(
+                    (
+                        FailureKind.AUTHENTICATION
+                        if authenticated
+                        else FailureKind.INVALID_RESPONSE
+                    ),
+                    (
+                        "connection authentication failed"
+                        if authenticated
+                        else "connection response invalid"
+                    ),
+                )
             if response.status_code == 403:
-                return _failed(FailureKind.AUTHORIZATION, "connection authorization failed")
+                return _failed(
+                    (
+                        FailureKind.AUTHORIZATION
+                        if authenticated
+                        else FailureKind.INVALID_RESPONSE
+                    ),
+                    (
+                        "connection authorization failed"
+                        if authenticated
+                        else "connection response invalid"
+                    ),
+                )
             if response.status_code == 408:
                 return _failed(FailureKind.TIMEOUT, "connection probe timed out", retryable=True)
             if response.status_code == 429:
@@ -159,20 +195,38 @@ class AudiobookshelfConnectionProbe:
             return PortResult.success(value)
 
 
+def _status_version(status: object) -> tuple[bool, ServiceVersion | None]:
+    if not isinstance(status, dict) or status.get("app") != "audiobookshelf":
+        return False, None
+    raw_version = status.get("serverVersion")
+    if type(raw_version) is not str or _VERSION.fullmatch(raw_version) is None:
+        return True, None
+    return True, ServiceVersion(raw_version)
+
+
+def _incompatible_facts(
+    version: ServiceVersion | None, checked_at
+) -> LibraryConnectionFacts:
+    return LibraryConnectionFacts(
+        version,
+        False,
+        False,
+        AdapterVersion("abs-connection-v1"),
+        CompatibilityVersion("abs-2.35.1-fixture-v1"),
+        HealthReport(
+            HealthStatus.DEGRADED,
+            checked_at,
+            SafeSummary("connection compatibility unsupported"),
+        ),
+    )
+
+
 def _facts(
-    status: object,
+    version: ServiceVersion,
     authorize: object,
     checked_at,
     expected_libraries: tuple[LibraryId, ...],
 ) -> PortResult[LibraryConnectionFacts]:
-    if not isinstance(status, dict) or status.get("app") != "audiobookshelf":
-        return _failed(FailureKind.INVALID_RESPONSE, "connection response invalid")
-    raw_version = status.get("serverVersion")
-    version = (
-        ServiceVersion(raw_version)
-        if isinstance(raw_version, str) and _VERSION.fullmatch(raw_version)
-        else None
-    )
     if not isinstance(authorize, dict) or not isinstance(authorize.get("user"), dict):
         return _failed(FailureKind.INVALID_RESPONSE, "connection response invalid")
     user = authorize["user"]

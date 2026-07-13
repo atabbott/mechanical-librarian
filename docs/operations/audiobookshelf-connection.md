@@ -38,11 +38,16 @@ version/compatibility, adapter-contract and fixture revisions, closed
 capability states, and `authority=target-connection-read-only`. Failure output
 is one fixed value-free line.
 
-The 2.35.1 fixture contract permits exactly `GET /status` and observational
-`POST /api/authorize` with Bearer authentication. The authorization POST has no
-body or mutation semantics. Every redirect and every other route or method is
-rejected. The stale upstream API reference describing `GET /api/authorize` is
-not treated as current evidence.
+The anonymous status response must identify Audiobookshelf and report the exact
+pinned 2.35.1 version before any credential-bearing request is made. Wrong,
+missing, malformed, older, and newer identity/version evidence stops after
+`GET /status`; unsupported versions remain typed as incompatible without
+claiming that authentication or authorization was tested. The 2.35.1 fixture
+contract then permits observational `POST /api/authorize` with Bearer
+authentication. The authorization POST has no body or mutation semantics.
+Every redirect and every other route or method is rejected. The stale upstream
+API reference describing `GET /api/authorize` is not treated as current
+evidence.
 
 Authorization scope is compared only with the configured `enabled_libraries`
 identifiers. A profile is complete when it grants all-library access or its
