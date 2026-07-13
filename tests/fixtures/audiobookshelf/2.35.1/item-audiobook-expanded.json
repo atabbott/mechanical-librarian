@@ -1,1 +1,55 @@
-{"id":"11234567-89ab-4def-8123-456789abcdef","isInvalid":false,"isMissing":false,"libraryId":"01234567-89ab-4def-8123-456789abcdef","media":{"audioFiles":[{"duration":60.0,"ino":"synthetic/audio.m4b","size":123}],"coverPath":"synthetic/cover.jpg","duration":60.0,"metadata":{"authors":[{"id":"author-1","name":"Example Author"}],"genres":["Fiction"],"language":"eng","narrators":["Example Narrator"],"series":[{"id":"series-1","name":"Example Series","sequence":"1"}],"title":"Synthetic audiobook"}},"mediaType":"book","updatedAt":1767225600000}
+{
+  "id": "11234567-89ab-4def-8123-456789abcdef",
+  "isInvalid": false,
+  "isMissing": false,
+  "libraryId": "01234567-89ab-4def-8123-456789abcdef",
+  "media": {
+    "audioFiles": [
+      {
+        "bitRate": 64000,
+        "codec": "aac",
+        "duration": 60.0,
+        "exclude": false,
+        "format": "M4B",
+        "index": 0,
+        "ino": "synthetic-audio-inode",
+        "metadata": {
+          "birthtimeMs": 1767225500000,
+          "ctimeMs": 1767225550000,
+          "ext": ".m4b",
+          "filename": "audio.m4b",
+          "mtimeMs": 1767225600000,
+          "path": "synthetic/audio.m4b",
+          "relPath": "audio.m4b",
+          "size": 123
+        },
+        "mimeType": "audio/mp4"
+      }
+    ],
+    "coverPath": "synthetic/cover.jpg",
+    "duration": 60.0,
+    "metadata": {
+      "asin": null,
+      "authors": [
+        {
+          "id": "author-1",
+          "name": "Example Author"
+        }
+      ],
+      "genres": ["Fiction"],
+      "isbn": "9780000000001",
+      "language": "eng",
+      "narrators": ["Example Narrator"],
+      "series": [
+        {
+          "id": "series-1",
+          "name": "Example Series",
+          "sequence": "1"
+        }
+      ],
+      "title": "Synthetic audiobook"
+    }
+  },
+  "mediaType": "book",
+  "updatedAt": 1767225600000
+}

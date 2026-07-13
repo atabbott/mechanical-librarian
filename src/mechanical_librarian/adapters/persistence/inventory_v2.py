@@ -27,7 +27,7 @@ from mechanical_librarian.domain.identifiers import (
     SnapshotId,
     canonical_json,
 )
-from mechanical_librarian.domain.inventory import ItemLifecycle, LibraryConnection
+from mechanical_librarian.domain.inventory import LibraryConnection
 from mechanical_librarian.domain.inventory_v2 import (
     InventoryInspection,
     InventoryObservation,
@@ -60,9 +60,26 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
     ) -> RepositoryResult[int]:
         if not _valid_time(finished_at) or type(context) is not OperationContext:
             return RepositoryResult(RepositoryOutcome.REJECTED)
+        if (
+            context.preflight_result(item_count=1, serialized_bytes=0).failure
+            is not None
+        ):
+            return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
         try:
             recovered = 0
             with _transaction(self._connection):
+                running_count = int(
+                    self._connection.execute(
+                        "SELECT COUNT(*) FROM inventory_scans WHERE state='running'"
+                    ).fetchone()[0]
+                )
+                if (
+                    context.preflight_result(
+                        item_count=running_count, serialized_bytes=0
+                    ).failure
+                    is not None
+                ):
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
                 rows = self._connection.execute(
                     "SELECT scan_id,owner_id FROM inventory_scans WHERE state='running'"
                 ).fetchall()
@@ -105,8 +122,26 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         ):
             return RepositoryResult(RepositoryOutcome.REJECTED)
         effective_cohort = scan_id.value if cohort_id is None else cohort_id
+        if (
+            context.preflight_result(item_count=1, serialized_bytes=0).failure
+            is not None
+        ):
+            return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
         try:
             with _transaction(self._connection):
+                item_count, serialized_bytes = self._current_stats(
+                    connection.adapter.value, connection.id.value, library.value
+                )
+                if item_count > bounds.max_items or serialized_bytes > bounds.max_bytes:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                if (
+                    context.preflight_result(
+                        item_count=item_count,
+                        serialized_bytes=serialized_bytes,
+                    ).failure
+                    is not None
+                ):
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
                 current = self._current(connection, library)
                 current_digest = _current_digest(current)
                 self._connection.execute(
@@ -186,7 +221,14 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                 )
                 if cursor.rowcount != 1:
                     return RepositoryResult(RepositoryOutcome.REJECTED)
-                inspection = self._inspection_for(scan_id, row[0], row[1], row[2])
+                inspection = self._inspection_for(
+                    scan_id,
+                    row[0],
+                    row[1],
+                    row[2],
+                    context,
+                    terminalizing=True,
+                )
             return RepositoryResult(RepositoryOutcome.ACCEPTED, inspection)
         except sqlite3.IntegrityError:
             return RepositoryResult(RepositoryOutcome.REJECTED)
@@ -214,7 +256,8 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         try:
             with _transaction(self._connection):
                 row = self._connection.execute(
-                    "SELECT adapter_id,connection_id,library_id,state,base_digest "
+                    "SELECT adapter_id,connection_id,library_id,state,base_digest,"
+                    "max_items,max_bytes "
                     "FROM inventory_scans WHERE scan_id=?",
                     (start.scan_id.value,),
                 ).fetchone()
@@ -222,6 +265,18 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                     return RepositoryResult(RepositoryOutcome.NOT_FOUND)
                 if row[3] != ScanState.RUNNING.value or row[4] != start.current_digest:
                     return RepositoryResult(RepositoryOutcome.REJECTED)
+                checkpoint = context.preflight_result(item_count=1, serialized_bytes=0)
+                if checkpoint.failure is not None:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                current_count, current_bytes = self._current_stats(
+                    str(row[0]), str(row[1]), str(row[2])
+                )
+                checkpoint = context.preflight_result(
+                    item_count=current_count,
+                    serialized_bytes=current_bytes,
+                )
+                if checkpoint.failure is not None:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
                 current = self._current_values(row[0], row[1], row[2])
                 if _current_digest(current) != start.current_digest:
                     return RepositoryResult(RepositoryOutcome.REJECTED)
@@ -238,13 +293,20 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                     len(snapshot.observation.canonical.encode("utf-8"))
                     for snapshot in snapshots
                 )
+                if len(snapshots) > int(row[5]) or serialized_bytes > int(row[6]):
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
                 checkpoint = context.preflight_result(
-                    item_count=max(1, len(snapshots)),
+                    item_count=len(snapshots),
                     serialized_bytes=serialized_bytes,
                 )
                 if checkpoint.failure is not None:
                     return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
 
+                self._connection.execute(
+                    "DELETE FROM current_inventory_v2 WHERE adapter_id=? AND "
+                    "connection_id=? AND library_id=?",
+                    (row[0], row[1], row[2]),
+                )
                 for snapshot in snapshots:
                     target = snapshot.observation.target
                     persisted_id = self._persist_or_reuse(snapshot)
@@ -268,8 +330,26 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                         (start.scan_id.value, *values),
                     )
 
+                current_count = int(
+                    self._connection.execute(
+                        "SELECT COUNT(*) FROM current_inventory_v2 WHERE adapter_id=? "
+                        "AND connection_id=? AND library_id=?",
+                        (row[0], row[1], row[2]),
+                    ).fetchone()[0]
+                )
+                membership_count = int(
+                    self._connection.execute(
+                        "SELECT COUNT(*) FROM inventory_scan_items WHERE scan_id=?",
+                        (start.scan_id.value,),
+                    ).fetchone()[0]
+                )
+                if current_count != len(snapshots) or membership_count != len(
+                    snapshots
+                ):
+                    raise _PublicationAborted
+
                 checkpoint = context.preflight_result(
-                    item_count=max(1, len(snapshots)),
+                    item_count=len(snapshots),
                     serialized_bytes=serialized_bytes,
                 )
                 if checkpoint.failure is not None:
@@ -288,14 +368,16 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                 if cursor.rowcount != 1:
                     raise _PublicationAborted
                 checkpoint = context.preflight_result(
-                    item_count=max(1, len(snapshots)),
+                    item_count=len(snapshots),
                     serialized_bytes=serialized_bytes,
                 )
                 if checkpoint.failure is not None:
                     raise _PublicationAborted
-                inspection = self._inspection_for(start.scan_id, row[0], row[1], row[2])
+                inspection = self._inspection_for(
+                    start.scan_id, row[0], row[1], row[2], context
+                )
                 checkpoint = context.preflight_result(
-                    item_count=max(1, len(snapshots)),
+                    item_count=len(snapshots),
                     serialized_bytes=serialized_bytes,
                 )
                 if checkpoint.failure is not None:
@@ -320,6 +402,11 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             or type(context) is not OperationContext
         ):
             return RepositoryResult(RepositoryOutcome.REJECTED)
+        if (
+            context.preflight_result(item_count=1, serialized_bytes=0).failure
+            is not None
+        ):
+            return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
         try:
             row = self._connection.execute(
                 "SELECT scan_id FROM inventory_scans WHERE adapter_id=? AND connection_id=? "
@@ -336,6 +423,7 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                     connection.adapter.value,
                     connection.id.value,
                     library.value,
+                    context,
                 ),
             )
         except (sqlite3.Error, ValueError):
@@ -348,6 +436,11 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
     ) -> RepositoryResult[InventoryInspection]:
         if type(scan_id) is not ScanId or type(context) is not OperationContext:
             return RepositoryResult(RepositoryOutcome.REJECTED)
+        if (
+            context.preflight_result(item_count=1, serialized_bytes=0).failure
+            is not None
+        ):
+            return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
         try:
             row = self._connection.execute(
                 "SELECT adapter_id,connection_id,library_id FROM inventory_scans "
@@ -358,7 +451,9 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                 return RepositoryResult(RepositoryOutcome.NOT_FOUND)
             return RepositoryResult(
                 RepositoryOutcome.ACCEPTED,
-                self._inspection_for(scan_id, str(row[0]), str(row[1]), str(row[2])),
+                self._inspection_for(
+                    scan_id, str(row[0]), str(row[1]), str(row[2]), context
+                ),
             )
         except (sqlite3.Error, ValueError):
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
@@ -395,6 +490,18 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             values.append(snapshot)
         return tuple(values)
 
+    def _current_stats(
+        self, adapter: str, connection: str, library: str
+    ) -> tuple[int, int]:
+        row = self._connection.execute(
+            "SELECT COUNT(*),COALESCE(SUM(length(CAST(s.canonical_observation AS BLOB))),0) "
+            "FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
+            "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+            "WHERE c.adapter_id=? AND c.connection_id=? AND c.library_id=?",
+            (adapter, connection, library),
+        ).fetchone()
+        return int(row[0]), int(row[1])
+
     def _persist_or_reuse(self, snapshot: InventorySnapshotV2) -> SnapshotId:
         target = snapshot.observation.target
         identity = (
@@ -430,43 +537,61 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         return snapshot.id
 
     def _inspection_for(
-        self, scan_id: ScanId, adapter: str, connection: str, library: str
+        self,
+        scan_id: ScanId,
+        adapter: str,
+        connection: str,
+        library: str,
+        context: OperationContext,
+        *,
+        terminalizing: bool = False,
     ) -> InventoryInspection:
         scan = self._connection.execute(
-            "SELECT state,failure_kind,page_count,response_bytes FROM inventory_scans "
+            "SELECT state,failure_kind,page_count,response_bytes,max_items,max_bytes "
+            "FROM inventory_scans "
             "WHERE scan_id=?",
             (scan_id.value,),
         ).fetchone()
         if scan is None:
             raise ValueError("inventory scan disappeared")
         if str(scan[0]) == ScanState.COMPLETE.value:
-            counts = dict(
-                self._connection.execute(
-                    "SELECT s.canonical_observation,COUNT(*) FROM inventory_scan_items i "
-                    "JOIN inventory_v2_snapshots s USING "
-                    "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-                    "WHERE i.scan_id=? GROUP BY s.canonical_observation",
-                    (scan_id.value,),
-                ).fetchall()
+            counts = self._connection.execute(
+                "SELECT COUNT(*),COALESCE(SUM(length(CAST(s.canonical_observation AS BLOB))),0),"
+                "COALESCE(SUM(CASE WHEN instr(s.canonical_observation, "
+                '\'"lifecycle":"removed"\')>0 THEN 1 ELSE 0 END),0) '
+                "FROM inventory_scan_items i JOIN inventory_v2_snapshots s USING "
+                "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+                "WHERE i.scan_id=?",
+                (scan_id.value,),
+            ).fetchone()
+        else:
+            counts = self._connection.execute(
+                "SELECT COUNT(*),COALESCE(SUM(length(CAST(s.canonical_observation AS BLOB))),0),"
+                "COALESCE(SUM(CASE WHEN instr(s.canonical_observation, "
+                '\'"lifecycle":"removed"\')>0 THEN 1 ELSE 0 END),0) '
+                "FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
+                "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+                "WHERE c.adapter_id=? AND c.connection_id=? AND c.library_id=?",
+                (adapter, connection, library),
+            ).fetchone()
+        item_count, serialized_bytes, removed = map(int, counts)
+        if item_count > int(scan[4]) or serialized_bytes > int(scan[5]):
+            raise _InspectionAborted
+        if terminalizing:
+            bounded = (
+                item_count <= context.resources.max_items
+                and serialized_bytes <= context.resources.max_bytes
             )
         else:
-            counts = dict(
-                self._connection.execute(
-                    "SELECT s.canonical_observation,COUNT(*) FROM current_inventory_v2 c "
-                    "JOIN inventory_v2_snapshots s USING "
-                    "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-                    "WHERE c.adapter_id=? AND c.connection_id=? AND c.library_id=? "
-                    "GROUP BY s.canonical_observation",
-                    (adapter, connection, library),
-                ).fetchall()
+            bounded = (
+                context.preflight_result(
+                    item_count=item_count, serialized_bytes=serialized_bytes
+                ).failure
+                is None
             )
-        active = 0
-        removed = 0
-        for canonical, count in counts.items():
-            if f'"lifecycle":"{ItemLifecycle.REMOVED.value}"' in str(canonical):
-                removed += int(count)
-            else:
-                active += int(count)
+        if not bounded:
+            raise _InspectionAborted
+        active = item_count - removed
         history = int(
             self._connection.execute(
                 "SELECT COUNT(*) FROM inventory_v2_snapshots WHERE adapter_id=? "
@@ -479,7 +604,7 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             scan_id,
             ScanState(str(scan[0])),
             None if scan[1] is None else str(scan[1]),
-            active + removed,
+            item_count,
             active,
             removed,
             history,
@@ -499,41 +624,50 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             return 0
         cohort_id, cohort_size = str(cohort[0]), int(cohort[1])
         scans = self._connection.execute(
-            "SELECT scan_id,library_id,state FROM inventory_scans WHERE adapter_id=? "
-            "AND connection_id=? AND cohort_id=?",
+            "SELECT COUNT(*),COUNT(DISTINCT library_id),"
+            "COALESCE(SUM(CASE WHEN state='complete' THEN 1 ELSE 0 END),0) "
+            "FROM inventory_scans WHERE adapter_id=? AND connection_id=? AND cohort_id=?",
             (adapter, connection, cohort_id),
-        ).fetchall()
+        ).fetchone()
         if (
-            len(scans) != cohort_size
-            or len({str(row[1]) for row in scans}) != cohort_size
-            or any(str(row[2]) != ScanState.COMPLETE.value for row in scans)
+            int(scans[0]) != cohort_size
+            or int(scans[1]) != cohort_size
+            or int(scans[2]) != cohort_size
         ):
             return 0
-        rows = self._connection.execute(
-            "SELECT i.library_id,i.external_item,s.canonical_observation FROM "
-            "inventory_scan_items i JOIN inventory_scans r USING (scan_id) "
-            "JOIN inventory_v2_snapshots s USING "
-            "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-            "WHERE r.adapter_id=? AND r.connection_id=? AND r.cohort_id=?",
-            (adapter, connection, cohort_id),
-        ).fetchall()
-        removed = {
-            str(external)
-            for row_library, external, canonical in rows
-            if row_library == library
-            and f'"lifecycle":"{ItemLifecycle.REMOVED.value}"' in str(canonical)
-        }
-        active_elsewhere = {
-            str(external)
-            for row_library, external, canonical in rows
-            if row_library != library
-            and f'"lifecycle":"{ItemLifecycle.REMOVED.value}"' not in str(canonical)
-        }
-        return len(removed & active_elsewhere)
+        return int(
+            self._connection.execute(
+                "SELECT COUNT(DISTINCT source.external_item) FROM inventory_scan_items source "
+                "JOIN inventory_scans source_scan ON source_scan.scan_id=source.scan_id "
+                "JOIN inventory_v2_snapshots source_snapshot USING "
+                "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+                "WHERE source_scan.adapter_id=? AND source_scan.connection_id=? "
+                "AND source_scan.cohort_id=? AND source.library_id=? "
+                "AND instr(source_snapshot.canonical_observation, "
+                '\'"lifecycle":"removed"\')>0 AND EXISTS ('
+                "SELECT 1 FROM inventory_scan_items destination "
+                "JOIN inventory_scans destination_scan ON "
+                "destination_scan.scan_id=destination.scan_id "
+                "JOIN inventory_v2_snapshots destination_snapshot USING "
+                "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+                "WHERE destination_scan.adapter_id=source_scan.adapter_id "
+                "AND destination_scan.connection_id=source_scan.connection_id "
+                "AND destination_scan.cohort_id=source_scan.cohort_id "
+                "AND destination.library_id<>source.library_id "
+                "AND destination.external_item=source.external_item "
+                "AND instr(destination_snapshot.canonical_observation, "
+                '\'"lifecycle":"removed"\')=0)',
+                (adapter, connection, cohort_id, library),
+            ).fetchone()[0]
+        )
 
 
 class _PublicationAborted(Exception):
     """Force transaction rollback when publication becomes unsafe."""
+
+
+class _InspectionAborted(ValueError):
+    """Stop before a bounded inspection materializes an unsafe result."""
 
 
 _OWNER = re.compile(r"^pid-(0|[1-9][0-9]*)-start-([0-9a-f]{16})$")

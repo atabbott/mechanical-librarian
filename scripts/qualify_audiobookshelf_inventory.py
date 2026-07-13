@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import subprocess
 import tempfile
@@ -15,6 +16,11 @@ import uuid
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from mechanical_librarian.adapters.library_services.audiobookshelf_inventory import (
+    _file_descriptor,
+    _file_identity,
+)
 
 
 IMAGE = (
@@ -235,22 +241,42 @@ def set_scenario(name: str) -> None:
     TraceProxy.page_zero_payload = None
 
 
+def expanded_file_facts(detail: dict[str, object], *, audio: bool) -> dict[str, object]:
+    media = detail.get("media", {})
+    if not isinstance(media, dict):
+        return {}
+    if audio:
+        files = media.get("audioFiles", [])
+        file = files[0] if isinstance(files, list) and files else None
+        top_level = ("ino", "index", "format", "duration", "codec", "bitRate")
+    else:
+        file = media.get("ebookFile")
+        top_level = ("ino", "ebookFormat")
+    if not isinstance(file, dict):
+        return {}
+    facts = {key: file[key] for key in top_level if key in file}
+    metadata = file.get("metadata")
+    if isinstance(metadata, dict):
+        facts["metadata"] = {
+            key: metadata[key]
+            for key in ("ext", "size", "mtimeMs", "ctimeMs", "birthtimeMs")
+            if key in metadata
+        }
+    return facts
+
+
 def wait_for_file_change(
-    base: str, token: str, item: str, prior: dict[str, object]
+    base: str,
+    token: str,
+    item: str,
+    prior: dict[str, object],
+    *,
+    audio: bool,
 ) -> None:
     deadline = time.monotonic() + 90
     while time.monotonic() < deadline:
         _, detail = request(base + f"/api/items/{item}?expanded=1", token=token)
-        files = detail.get("media", {}).get("audioFiles", [])
-        current = (
-            {
-                key: files[0].get(key)
-                for key in ("ino", "size", "mtimeMs", "duration")
-                if key in files[0]
-            }
-            if files
-            else {}
-        )
+        current = expanded_file_facts(detail, audio=audio)
         if current and current != prior:
             return
         time.sleep(0.25)
@@ -447,11 +473,7 @@ def main() -> int:
             _, audio_detail = request(
                 base + f"/api/items/{audiobook_item['id']}?expanded=1", token=token
             )
-            prior_file = {
-                key: audio_detail["media"]["audioFiles"][0].get(key)
-                for key in ("ino", "size", "mtimeMs", "duration")
-                if key in audio_detail["media"]["audioFiles"][0]
-            }
+            prior_file = expanded_file_facts(audio_detail, audio=True)
             if not prior_file:
                 raise RuntimeError("disposable audiobook file identity was unavailable")
             audio_path = (
@@ -486,7 +508,9 @@ def main() -> int:
                 "POST",
                 token=token,
             )
-            wait_for_file_change(base, token, audiobook_item["id"], prior_file)
+            wait_for_file_change(
+                base, token, audiobook_item["id"], prior_file, audio=True
+            )
             changed = run_inventory(configuration, database)
             if changed.returncode != 0:
                 raise RuntimeError("F05a changed-observation reconciliation failed")
@@ -504,6 +528,49 @@ def main() -> int:
                 ebook_item.get("id"), str
             ):
                 raise RuntimeError("disposable ebook item was not identifiable")
+            _, ebook_detail = request(
+                base + f"/api/items/{ebook_item['id']}?expanded=1", token=token
+            )
+            ebook_file = ebook_detail.get("media", {}).get("ebookFile")
+            if not isinstance(ebook_file, dict) or not isinstance(
+                ebook_file.get("metadata"), dict
+            ):
+                raise RuntimeError("disposable ebook file shape was unavailable")
+            ebook_metadata = ebook_file["metadata"]
+            if "ebookFormat" not in ebook_file or any(
+                key not in ebook_metadata for key in ("ext", "path", "size", "mtimeMs")
+            ):
+                raise RuntimeError("disposable ebook file contract was incomplete")
+            if type(ebook_metadata["size"]) not in {int, float} or type(
+                ebook_metadata["mtimeMs"]
+            ) not in {int, float}:
+                raise RuntimeError("disposable ebook stat contract was malformed")
+            changed_ebook_file = copy.deepcopy(ebook_file)
+            changed_ebook_file["metadata"]["size"] += 1
+            changed_ebook_file["metadata"]["mtimeMs"] += 1
+            original_identity = _file_identity(ebook_file)
+            changed_identity = _file_identity(changed_ebook_file)
+            original_descriptor = _file_descriptor(ebook_file)
+            changed_descriptor = _file_descriptor(changed_ebook_file)
+            if (
+                original_identity == changed_identity
+                or original_descriptor == changed_descriptor
+            ):
+                raise RuntimeError(
+                    "disposable ebook nested facts did not affect identity"
+                )
+            safe_diagnostic = " ".join(
+                (
+                    original_identity,
+                    changed_identity,
+                    original_descriptor,
+                    changed_descriptor,
+                )
+            )
+            for private_key in ("path", "relPath"):
+                private_value = ebook_metadata.get(private_key)
+                if isinstance(private_value, str) and private_value in safe_diagnostic:
+                    raise RuntimeError("disposable ebook private path escaped hashing")
             ebook = (
                 root / "media" / "ebook" / "Synthetic Ebook" / "Synthetic Ebook.epub"
             )
@@ -517,6 +584,9 @@ def main() -> int:
             disappeared = run_inventory(configuration, database)
             if disappeared.returncode != 0:
                 raise RuntimeError("F05a disappearance reconciliation failed")
+            stable_absence = run_inventory(configuration, database)
+            if stable_absence.returncode != 0:
+                raise RuntimeError("F05a retained-removal reconciliation failed")
             inspected = inspect_inventory(configuration, database)
             if (
                 inspected.returncode != 0
@@ -554,7 +624,8 @@ def main() -> int:
             print(completed.stdout, end="")
             print(
                 "qualification=abs-2.35.1 mixed=audio,ebook pages=multi-pass "
-                "restart=duplicate update=changed disappearance=removed "
+                "restart=duplicate update=audio ebook=nested-contract "
+                "disappearance=removed,retained "
                 "failures=partial,repeated,cyclic,malformed,unstable authority=get-only"
             )
             return 0

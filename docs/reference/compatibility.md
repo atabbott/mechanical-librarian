@@ -119,6 +119,20 @@ are supported: audio-bearing books are audiobooks, ebook-only books are ebooks,
 and a hybrid is an audiobook with supplementary ebook file evidence. File and
 cover source locations are hashed before crossing the adapter boundary.
 
+The frozen `Book` serializer establishes independent `isbn` and `asin` keys;
+ordinary null, empty, or malformed sibling state cannot discard the other
+valid bounded key. Invalid sibling values are omitted and represented only by
+a bounded warning. No additional identifier namespace is claimed by F05a.
+
+The file contract follows `AudioFile`, `EBookFile`, `LibraryFile`, and
+`FileMetadata`: inode and audio/ebook format facts are top-level, while
+filename, extension, private path, relative path, size, and timestamps are
+nested below `metadata`. All of these allowlisted facts contribute to the
+opaque file identity. Safe format/stat facts may appear in the descriptor;
+filenames and paths never appear unhashed. Audio entries marked `exclude=true`
+do not establish audiobook classification or file evidence. Missing or false
+`exclude` values are included, while null and other types are malformed.
+
 ### Canonical inventory snapshot v2
 
 `inventory-snapshot-v2` is additive to the F03 `snapshot-v1` contract. It

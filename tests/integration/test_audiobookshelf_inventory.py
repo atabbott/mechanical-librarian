@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import os
 import sqlite3
@@ -14,9 +15,11 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_inventory imp
     AudiobookshelfInventoryReader,
     _cover_field,
     _cover_value,
+    _file_descriptor,
     _file_identity,
     _file_objects,
     _identifiers,
+    _normalize,
     _number,
     _page,
     _scalar,
@@ -42,6 +45,10 @@ from mechanical_librarian.application.inventory_reconciliation import (
     InventoryOutcome,
     ReconcileInventory,
 )
+from mechanical_librarian.application.job_heartbeat import (
+    RepositoryOutcome,
+    RepositoryResult,
+)
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     AdapterVersion,
@@ -63,6 +70,7 @@ from mechanical_librarian.domain.inventory import (
 )
 from mechanical_librarian.domain.inventory_v2 import (
     FieldObservation,
+    InventoryInspection,
     InventoryObservation,
     InventoryPass,
     InventorySnapshotV2,
@@ -172,6 +180,8 @@ class AudiobookshelfInventoryReaderTests(unittest.TestCase):
         )
         self.assertNotIn("private/audio.m4b", canonical)
         self.assertNotIn("private/book.epub", canonical)
+        self.assertNotIn("synthetic/audio.m4b", canonical)
+        self.assertNotIn("synthetic/book.epub", canonical)
         self.assertTrue(all(method == "GET" for method, _ in requests))
         self.assertEqual(result.value.usage.pages, 1)
         title = next(
@@ -247,16 +257,16 @@ class AudiobookshelfInventoryReaderTests(unittest.TestCase):
         )
         for value, state in (
             ({}, ObservationState.MISSING),
-            ({"isbn": None}, ObservationState.NULL),
-            ({"isbn": ""}, ObservationState.EMPTY),
-            ({"isbn": 12}, ObservationState.MALFORMED),
+            ({"isbn": None, "asin": None}, ObservationState.NULL),
+            ({"isbn": "", "asin": "  "}, ObservationState.EMPTY),
+            ({"isbn": 12, "asin": object()}, ObservationState.MALFORMED),
         ):
             with self.subTest(state=state):
                 self.assertEqual(_identifiers(value).state, state)
         objects, state = _file_objects(
             {"audioFiles": [{"ino": "a"}, "malformed"], "ebookFile": None}
         )
-        self.assertEqual(state, ObservationState.MALFORMED)
+        self.assertEqual(state, ObservationState.PRESENT)
         self.assertEqual(len(objects), 1)
         for malformed_file in ({}, {"unknown": "value"}):
             objects, state = _file_objects(
@@ -264,12 +274,17 @@ class AudiobookshelfInventoryReaderTests(unittest.TestCase):
             )
             self.assertEqual(objects, [])
             self.assertEqual(state, ObservationState.MALFORMED)
-        base = {"ino": "private/file.m4b", "size": 12}
+        base = {
+            "ino": "private-inode",
+            "metadata": {"path": "private/file.m4b", "size": 12},
+        }
         self.assertEqual(
             _file_identity(base),
             _file_identity(base | {"unknownPrivateKey": "/private/sentinel"}),
         )
-        self.assertNotEqual(_file_identity(base), _file_identity(base | {"size": 13}))
+        changed = base | {"metadata": base["metadata"] | {"size": 13}}
+        self.assertNotEqual(_file_identity(base), _file_identity(changed))
+        self.assertNotIn("private/file.m4b", _file_descriptor(base))
         infinite = float("inf")
         self.assertEqual(
             _number(
@@ -303,6 +318,228 @@ class AudiobookshelfInventoryReaderTests(unittest.TestCase):
             ({"coverPath": 1}, ObservationState.MALFORMED),
         ):
             self.assertEqual(_cover_field({}, media).state, state)
+
+    def test_identifier_namespaces_are_independent_and_invalid_siblings_are_safe(
+        self,
+    ) -> None:
+        for sibling in (None, "", 12, "x\x00y"):
+            with self.subTest(sibling=sibling):
+                observed = _identifiers({"isbn": " 9780000000001 ", "asin": sibling})
+                self.assertEqual(observed.state, ObservationState.PRESENT)
+                self.assertEqual(
+                    observed.values,
+                    ('{"kind":"isbn","value":"9780000000001"}',),
+                )
+                self.assertEqual(
+                    observed.raw_values,
+                    ('{"kind":"isbn","value":" 9780000000001 "}',),
+                )
+        self.assertEqual(
+            _identifiers({"isbn13": "9780000000001"}).state,
+            ObservationState.MISSING,
+        )
+        detail = self._detail(
+            AUDIO,
+            {
+                "audioFiles": [{"ino": "included", "exclude": False}],
+            },
+        )
+        detail["media"]["metadata"].update(
+            {"isbn": "9780000000001", "asin": "private-invalid-identifier\x00"}
+        )
+        summary = {
+            key: detail[key]
+            for key in (
+                "id",
+                "libraryId",
+                "mediaType",
+                "updatedAt",
+                "isMissing",
+                "isInvalid",
+            )
+        }
+        normalized = _normalize(
+            detail, summary, connection(), LIBRARY, operation_context()
+        )
+        self.assertIsNone(normalized.failure)
+        self.assertIn(
+            "identifiers_quarantined", normalized.value[0].observation.warnings
+        )
+        self.assertNotIn(
+            "private-invalid-identifier", normalized.value[0].observation.canonical
+        )
+
+    def test_excluded_audio_does_not_classify_or_contribute_file_evidence(self) -> None:
+        summary_keys = (
+            "id",
+            "libraryId",
+            "mediaType",
+            "updatedAt",
+            "isMissing",
+            "isInvalid",
+        )
+        ebook = {"ino": "ebook", "ebookFormat": "epub"}
+        cases = (
+            ([{"ino": "excluded", "exclude": True}], MediaType.EBOOK, 1),
+            ([{"ino": "included"}], MediaType.AUDIOBOOK, 2),
+            ([{"ino": "included", "exclude": False}], MediaType.AUDIOBOOK, 2),
+            ([{"ino": "invalid", "exclude": None}], MediaType.EBOOK, 1),
+            ([{"ino": "invalid", "exclude": "false"}], MediaType.EBOOK, 1),
+        )
+        for audio_files, expected_type, identity_count in cases:
+            with self.subTest(audio_files=audio_files):
+                detail = self._detail(
+                    AUDIO,
+                    {"audioFiles": audio_files, "ebookFile": ebook},
+                )
+                summary = {key: detail[key] for key in summary_keys}
+                normalized = _normalize(
+                    detail, summary, connection(), LIBRARY, operation_context()
+                )
+                self.assertIsNone(normalized.failure)
+                observation = normalized.value[0].observation
+                self.assertEqual(observation.media_type, expected_type)
+                self.assertEqual(len(observation.file_identities), identity_count)
+                if "exclude" in audio_files[0] and audio_files[0]["exclude"] not in {
+                    True,
+                    False,
+                }:
+                    self.assertIn("files_quarantined", observation.warnings)
+
+    def test_nested_file_stat_changes_change_snapshot_without_exposing_paths(
+        self,
+    ) -> None:
+        for fixture_name, file_key in (
+            ("item-audiobook-expanded.json", "audioFiles"),
+            ("item-ebook-expanded.json", "ebookFile"),
+        ):
+            with self.subTest(fixture=fixture_name):
+                before = fixture(fixture_name)
+                after = fixture(fixture_name)
+                before_file = before["media"][file_key]
+                after_file = after["media"][file_key]
+                if isinstance(before_file, list):
+                    before_file = before_file[0]
+                    after_file = after_file[0]
+                after_file["metadata"]["size"] += 1
+                after_file["metadata"]["mtimeMs"] += 1
+                summary = {
+                    key: before[key]
+                    for key in (
+                        "id",
+                        "libraryId",
+                        "mediaType",
+                        "updatedAt",
+                        "isMissing",
+                        "isInvalid",
+                    )
+                }
+                first = _normalize(
+                    before, summary, connection(), LIBRARY, operation_context()
+                ).value[0]
+                second = _normalize(
+                    after, summary, connection(), LIBRARY, operation_context()
+                ).value[0]
+                self.assertNotEqual(first.fingerprint, second.fingerprint)
+                self.assertNotEqual(
+                    first.observation.file_identities,
+                    second.observation.file_identities,
+                )
+                self.assertNotIn(
+                    before_file["metadata"]["path"], first.observation.canonical
+                )
+                self.assertNotIn(
+                    before_file["metadata"]["relPath"], first.observation.canonical
+                )
+
+    def test_optional_file_facts_are_quarantined_without_discarding_stable_identity(
+        self,
+    ) -> None:
+        shapes = (
+            (
+                "audioFiles",
+                {
+                    "ino": "stable-audio-inode",
+                    "format": "M4B",
+                    "metadata": {"path": "private/audio.m4b", "size": 123},
+                },
+                {
+                    "codec": None,
+                    "bitRate": None,
+                    "metadata": {"ctimeMs": None, "birthtimeMs": None},
+                },
+                {"codec": [], "metadata": {"ext": {}}},
+            ),
+            (
+                "ebookFile",
+                {
+                    "ino": "stable-ebook-inode",
+                    "metadata": {"path": "private/book.epub", "size": 456},
+                },
+                {
+                    "ebookFormat": None,
+                    "metadata": {
+                        "ctimeMs": None,
+                        "birthtimeMs": None,
+                        "ext": None,
+                    },
+                },
+                {"ebookFormat": [], "metadata": {"mtimeMs": []}},
+            ),
+        )
+        for field_name, base, null_optional, invalid_optional in shapes:
+            for label, optional_value in (
+                ("absent", {}),
+                ("null", null_optional),
+                ("wrong_type", invalid_optional),
+            ):
+                with self.subTest(file=field_name, partition=label):
+                    file = copy.deepcopy(base)
+                    optional = copy.deepcopy(optional_value)
+                    nested = optional.pop("metadata", None)
+                    file.update(optional)
+                    if nested is not None:
+                        file["metadata"].update(nested)
+                    self.assertEqual(_file_identity(file), _file_identity(base))
+                    media_values = (
+                        {"audioFiles": [file]}
+                        if field_name == "audioFiles"
+                        else {"ebookFile": file}
+                    )
+                    detail = self._detail(AUDIO, media_values)
+                    summary = {
+                        key: detail[key]
+                        for key in (
+                            "id",
+                            "libraryId",
+                            "mediaType",
+                            "updatedAt",
+                            "isMissing",
+                            "isInvalid",
+                        )
+                    }
+                    first = _normalize(
+                        detail, summary, connection(), LIBRARY, operation_context()
+                    ).value[0]
+                    second = _normalize(
+                        detail, summary, connection(), LIBRARY, operation_context()
+                    ).value[0]
+                    self.assertEqual(first.fingerprint, second.fingerprint)
+                    self.assertEqual(len(first.observation.file_identities), 1)
+                    self.assertNotIn("private/", first.observation.canonical)
+                    if label != "absent":
+                        self.assertIn("files_quarantined", first.observation.warnings)
+
+        for insufficient in (
+            {"format": "M4B", "codec": "aac"},
+            {"ebookFormat": "epub", "metadata": {"size": 456}},
+            {"ino": None, "metadata": {"path": None, "size": 1}},
+        ):
+            objects, state = _file_objects(
+                {"audioFiles": [insufficient], "ebookFile": None}
+            )
+            self.assertEqual(objects, [])
+            self.assertEqual(state, ObservationState.MALFORMED)
 
     def test_page_numbers_reject_boolean_and_float_substitutes(self) -> None:
         for page_value, limit_value in ((False, 1), (0.0, 1), (0, True), (0, 1.0)):
@@ -529,6 +766,128 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
             ("running",),
         )
 
+    def test_mid_source_liveness_failure_terminalizes_and_immediately_retries(
+        self,
+    ) -> None:
+        current = self._snapshot("Stable")
+        self._publish("scan-mid-source-seed", current)
+        for index, kind in enumerate((FailureKind.CANCELLED, FailureKind.TIMEOUT)):
+            with self.subTest(kind=kind):
+                observed = NOW + timedelta(minutes=20 + index * 20)
+                clock = [observed]
+                cancellation = {"requested": False}
+                deadline = observed + timedelta(minutes=5)
+
+                def trigger(selected=kind) -> None:
+                    if selected is FailureKind.CANCELLED:
+                        cancellation["requested"] = True
+                    else:
+                        clock[0] = deadline
+
+                context = OperationContext(
+                    Deadline(deadline),
+                    CancellationProbe(
+                        CancellationId(f"mid-source-{kind.value}"),
+                        lambda: cancellation["requested"],
+                    ),
+                    ResourceBounds(100, 1_000_000),
+                    TimeProbe(lambda: clock[0]),
+                )
+                before_current = self.database.execute(
+                    "SELECT external_item,snapshot_id FROM current_inventory_v2"
+                ).fetchall()
+                before_history = self.database.execute(
+                    "SELECT COUNT(*) FROM inventory_v2_snapshots"
+                ).fetchone()[0]
+                result = ReconcileInventory(
+                    _LivenessFailureSource(trigger, kind), self.repository
+                ).run(connection(), (LIBRARY,), self.bounds, context)
+
+                self.assertEqual(result.outcome, InventoryOutcome.INCOMPLETE)
+                inspection = result.libraries[0].inspection
+                self.assertEqual(inspection.state, ScanState.INCOMPLETE)
+                self.assertEqual(inspection.failure_kind, kind.value)
+                self._assert_terminal_failure_preserved_state(
+                    inspection.scan_id, before_current, before_history
+                )
+
+                retry = ReconcileInventory(
+                    _PassSource((InventoryPass((current,), ScanUsage(1, 1, 10)),) * 2),
+                    self.repository,
+                ).run(
+                    connection(),
+                    (LIBRARY,),
+                    self.bounds,
+                    self._later_context(30 + index * 20),
+                )
+                self.assertEqual(retry.outcome, InventoryOutcome.READY)
+
+    def test_late_publication_liveness_failure_rolls_back_terminalizes_and_retries(
+        self,
+    ) -> None:
+        current = self._snapshot("Stable")
+        self._publish("scan-late-publication-seed", current)
+        for index, kind in enumerate((FailureKind.CANCELLED, FailureKind.TIMEOUT)):
+            with self.subTest(kind=kind):
+                observed = NOW + timedelta(minutes=70 + index * 20)
+                clock = [observed]
+                cancellation = {"requested": False}
+                deadline = observed + timedelta(minutes=5)
+                context = OperationContext(
+                    Deadline(deadline),
+                    CancellationProbe(
+                        CancellationId(f"late-publication-{kind.value}"),
+                        lambda: cancellation["requested"],
+                    ),
+                    ResourceBounds(100, 1_000_000),
+                    TimeProbe(lambda: clock[0]),
+                )
+                before_current = self.database.execute(
+                    "SELECT external_item,snapshot_id FROM current_inventory_v2"
+                ).fetchall()
+                before_history = self.database.execute(
+                    "SELECT COUNT(*) FROM inventory_v2_snapshots"
+                ).fetchone()[0]
+                persist = self.repository._persist_or_reuse
+
+                def fail_after_persist(snapshot, selected=kind):
+                    value = persist(snapshot)
+                    if selected is FailureKind.CANCELLED:
+                        cancellation["requested"] = True
+                    else:
+                        clock[0] = deadline
+                    return value
+
+                self.repository._persist_or_reuse = fail_after_persist
+                try:
+                    result = ReconcileInventory(
+                        _PassSource(
+                            (InventoryPass((current,), ScanUsage(1, 1, 10)),) * 2
+                        ),
+                        self.repository,
+                    ).run(connection(), (LIBRARY,), self.bounds, context)
+                finally:
+                    self.repository._persist_or_reuse = persist
+
+                self.assertEqual(result.outcome, InventoryOutcome.INCOMPLETE)
+                inspection = result.libraries[0].inspection
+                self.assertEqual(inspection.state, ScanState.INCOMPLETE)
+                self.assertEqual(inspection.failure_kind, kind.value)
+                self._assert_terminal_failure_preserved_state(
+                    inspection.scan_id, before_current, before_history
+                )
+
+                retry = ReconcileInventory(
+                    _PassSource((InventoryPass((current,), ScanUsage(1, 1, 10)),) * 2),
+                    self.repository,
+                ).run(
+                    connection(),
+                    (LIBRARY,),
+                    self.bounds,
+                    self._later_context(80 + index * 20),
+                )
+                self.assertEqual(retry.outcome, InventoryOutcome.READY)
+
     def test_interrupted_scan_recovers_without_publishing_removals(self) -> None:
         begun = self.repository.begin(
             ScanId("scan-running"),
@@ -675,8 +1034,36 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
         )
         self.assertEqual(result.outcome, InventoryOutcome.READY)
         self.assertEqual(result.libraries[0].inspection.removed_count, 1)
+        removed_history = result.libraries[0].inspection.history_count
+
+        restarted = SQLiteInventoryV2Repository(self.database)
+        clock[0] += timedelta(minutes=1)
+        retained = ReconcileInventory(
+            _PassSource((InventoryPass((), ScanUsage(1, 0, 10)),) * 2), restarted
+        ).run(connection(), (LIBRARY,), self.bounds, context)
+        self.assertEqual(retained.outcome, InventoryOutcome.READY)
+        self.assertEqual(retained.libraries[0].inspection.item_count, 1)
+        self.assertEqual(retained.libraries[0].inspection.removed_count, 1)
+        self.assertEqual(
+            retained.libraries[0].inspection.history_count, removed_history
+        )
+        membership = self.database.execute(
+            "SELECT external_item,snapshot_id FROM inventory_scan_items "
+            "WHERE scan_id=?",
+            (retained.libraries[0].inspection.scan_id.value,),
+        ).fetchall()
+        current = self.database.execute(
+            "SELECT external_item,snapshot_id FROM current_inventory_v2"
+        ).fetchall()
+        self.assertEqual(membership, current)
 
         clock[0] += timedelta(minutes=10)
+        context = OperationContext(
+            Deadline(clock[0] + timedelta(minutes=10)),
+            CancellationProbe(CancellationId("reconcile-test-later"), lambda: False),
+            ResourceBounds(100, 1_000_000),
+            TimeProbe(lambda: clock[0]),
+        )
         unstable = _PassSource(
             (
                 InventoryPass((first,), ScanUsage(1, 1, 10)),
@@ -688,6 +1075,209 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
         )
         self.assertEqual(result.outcome, InventoryOutcome.UNSTABLE)
         self.assertEqual(result.libraries[0].inspection.removed_count, 1)
+
+    def test_reappearance_and_mixed_retained_removal_publish_complete_membership(
+        self,
+    ) -> None:
+        active = self._snapshot("Active")
+        other = self._snapshot_for_item("31234567-89ab-4def-8123-456789abcdef")
+        self._publish_many("scan-mixed-seed", (active, other))
+        removed_other = other.removed(observed_at=NOW + timedelta(minutes=1))
+        self._publish_many("scan-mixed-removed", (active, removed_other))
+
+        source = _PassSource((InventoryPass((active,), ScanUsage(1, 1, 10)),) * 2)
+        retained = ReconcileInventory(source, self.repository).run(
+            connection(), (LIBRARY,), self.bounds, self._later_context()
+        )
+        self.assertEqual(retained.libraries[0].inspection.item_count, 2)
+        self.assertEqual(retained.libraries[0].inspection.removed_count, 1)
+
+        reappeared = ReconcileInventory(
+            _PassSource((InventoryPass((active, other), ScanUsage(1, 2, 10)),) * 2),
+            self.repository,
+        ).run(connection(), (LIBRARY,), self.bounds, self._later_context(20))
+        self.assertEqual(reappeared.outcome, InventoryOutcome.READY)
+        self.assertEqual(reappeared.libraries[0].inspection.item_count, 2)
+        self.assertEqual(reappeared.libraries[0].inspection.active_count, 2)
+
+    def test_publication_repository_outcomes_keep_their_failure_identity(self) -> None:
+        source = _PassSource(
+            (InventoryPass((self._snapshot("Title"),), ScanUsage(1, 1, 10)),) * 8
+        )
+        original = self.repository.publish_complete
+        cases = (
+            (
+                RepositoryResult(RepositoryOutcome.UNAVAILABLE),
+                InventoryOutcome.PERSISTENCE_FAILURE,
+                ScanState.INCOMPLETE,
+                FailureKind.UNAVAILABLE,
+            ),
+            (
+                RepositoryResult(RepositoryOutcome.REJECTED),
+                InventoryOutcome.UNSTABLE,
+                ScanState.UNSTABLE,
+                FailureKind.CONFLICT,
+            ),
+            (
+                RepositoryResult(RepositoryOutcome.NOT_FOUND),
+                InventoryOutcome.PERSISTENCE_FAILURE,
+                ScanState.INCOMPLETE,
+                FailureKind.UNAVAILABLE,
+            ),
+            (
+                RepositoryResult(RepositoryOutcome.ACCEPTED, "malformed"),
+                InventoryOutcome.PERSISTENCE_FAILURE,
+                ScanState.INCOMPLETE,
+                FailureKind.UNAVAILABLE,
+            ),
+        )
+        for index, (repository_result, expected, state, failure_kind) in enumerate(
+            cases
+        ):
+            with self.subTest(outcome=repository_result.outcome):
+                self.repository.publish_complete = (
+                    lambda *_args, selected=repository_result, **_kwargs: selected
+                )
+                result = ReconcileInventory(source, self.repository).run(
+                    connection(),
+                    (LIBRARY,),
+                    self.bounds,
+                    self._later_context(30 + index * 10),
+                )
+                self.assertEqual(result.outcome, expected)
+                self.assertEqual(result.libraries[0].inspection.state, state)
+                self.assertEqual(
+                    result.libraries[0].inspection.failure_kind, failure_kind.value
+                )
+        self.repository.publish_complete = original
+
+    def test_final_membership_resource_overflow_is_typed_and_atomic(self) -> None:
+        active = self._snapshot("Title")
+        self._publish("scan-overflow-seed", active)
+        removed = active.removed(observed_at=NOW + timedelta(minutes=10))
+        current_bytes = len(active.observation.canonical.encode("utf-8"))
+        final_bytes = len(removed.observation.canonical.encode("utf-8"))
+        self.assertGreater(final_bytes, current_bytes)
+        observed = NOW + timedelta(minutes=10)
+        context = OperationContext(
+            Deadline(observed + timedelta(minutes=5)),
+            CancellationProbe(CancellationId("membership-overflow"), lambda: False),
+            ResourceBounds(10, final_bytes - 1),
+            TimeProbe(lambda: observed),
+        )
+        before = self.database.execute(
+            "SELECT external_item,snapshot_id FROM current_inventory_v2"
+        ).fetchall()
+        result = ReconcileInventory(
+            _PassSource((InventoryPass((), ScanUsage(1, 0, 10)),) * 2),
+            self.repository,
+        ).run(connection(), (LIBRARY,), self.bounds, context)
+        self.assertEqual(result.outcome, InventoryOutcome.INCOMPLETE)
+        self.assertEqual(
+            result.libraries[0].inspection.failure_kind,
+            FailureKind.RESOURCE_EXHAUSTED.value,
+        )
+        self.assertEqual(
+            self.database.execute(
+                "SELECT external_item,snapshot_id FROM current_inventory_v2"
+            ).fetchall(),
+            before,
+        )
+
+    def test_begin_and_inspect_preflight_current_before_hydration(self) -> None:
+        seeded = self._publish("scan-bounded-seed", self._snapshot("T" * 2_048))
+        context = OperationContext(
+            Deadline(NOW + timedelta(minutes=5)),
+            CancellationProbe(CancellationId("bounded-current"), lambda: False),
+            ResourceBounds(10, 1),
+            TimeProbe(lambda: NOW),
+        )
+        original = self.repository._current_values
+        self.repository._current_values = lambda *_args: (_ for _ in ()).throw(
+            AssertionError("current canonical rows were hydrated")
+        )
+        try:
+            begun = self.repository.begin(
+                ScanId("scan-bounded-refused"),
+                connection(),
+                LIBRARY,
+                self.bounds,
+                NOW,
+                context,
+            )
+            inspected = self.repository.inspect(connection(), LIBRARY, context)
+            inspected_scan = self.repository.inspect_scan(seeded.scan_id, context)
+            scan_bounded = self.repository.begin(
+                ScanId("scan-scan-bounded-refused"),
+                connection(),
+                LIBRARY,
+                ScanBounds(2, 4, 10, 1_024, 300, 0),
+                NOW,
+                operation_context(),
+            )
+        finally:
+            self.repository._current_values = original
+        self.assertEqual(begun.outcome, RepositoryOutcome.UNAVAILABLE)
+        self.assertEqual(inspected.outcome, RepositoryOutcome.UNAVAILABLE)
+        self.assertEqual(inspected_scan.outcome, RepositoryOutcome.UNAVAILABLE)
+        self.assertEqual(scan_bounded.outcome, RepositoryOutcome.UNAVAILABLE)
+        self.assertIsNone(
+            self.database.execute(
+                "SELECT 1 FROM inventory_scans WHERE scan_id='scan-bounded-refused'"
+            ).fetchone()
+        )
+
+    def test_begin_and_inspect_stop_on_cancellation_or_deadline_before_hydration(
+        self,
+    ) -> None:
+        self._publish("scan-preflight-seed", self._snapshot("Title"))
+        original_current = self.repository._current_values
+        original_inspection = self.repository._inspection_for
+        self.repository._current_values = lambda *_args: (_ for _ in ()).throw(
+            AssertionError("current canonical rows were hydrated")
+        )
+        self.repository._inspection_for = lambda *_args: (_ for _ in ()).throw(
+            AssertionError("inspection materialization was entered")
+        )
+        try:
+            for label, cancelled, deadline, observed in (
+                (
+                    "cancelled",
+                    True,
+                    NOW + timedelta(minutes=5),
+                    NOW,
+                ),
+                (
+                    "deadline",
+                    False,
+                    NOW,
+                    NOW,
+                ),
+            ):
+                with self.subTest(label=label):
+                    context = OperationContext(
+                        Deadline(deadline),
+                        CancellationProbe(
+                            CancellationId(f"preflight-{label}"),
+                            lambda selected=cancelled: selected,
+                        ),
+                        ResourceBounds(10, 1_000_000),
+                        TimeProbe(lambda selected=observed: selected),
+                    )
+                    begun = self.repository.begin(
+                        ScanId(f"scan-preflight-{label}"),
+                        connection(),
+                        LIBRARY,
+                        self.bounds,
+                        observed,
+                        context,
+                    )
+                    inspected = self.repository.inspect(connection(), LIBRARY, context)
+                    self.assertEqual(begun.outcome, RepositoryOutcome.UNAVAILABLE)
+                    self.assertEqual(inspected.outcome, RepositoryOutcome.UNAVAILABLE)
+        finally:
+            self.repository._current_values = original_current
+            self.repository._inspection_for = original_inspection
 
     def test_residual_byte_floor_terminalizes_resource_exhaustion(self) -> None:
         result = ReconcileInventory(
@@ -733,6 +1323,68 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
         self.assertTrue(result.accepted)
         return result.value
 
+    def _assert_terminal_failure_preserved_state(
+        self,
+        scan_id: ScanId,
+        before_current: list[tuple[object, ...]],
+        before_history: int,
+    ) -> None:
+        state, failure_kind, finished_at = self.database.execute(
+            "SELECT state,failure_kind,finished_at FROM inventory_scans WHERE scan_id=?",
+            (scan_id.value,),
+        ).fetchone()
+        self.assertEqual(state, ScanState.INCOMPLETE.value)
+        self.assertIn(
+            failure_kind, {FailureKind.CANCELLED.value, FailureKind.TIMEOUT.value}
+        )
+        self.assertIsNotNone(finished_at)
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM inventory_scan_items WHERE scan_id=?",
+                (scan_id.value,),
+            ).fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.database.execute(
+                "SELECT external_item,snapshot_id FROM current_inventory_v2"
+            ).fetchall(),
+            before_current,
+        )
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM inventory_v2_snapshots"
+            ).fetchone()[0],
+            before_history,
+        )
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM inventory_scans WHERE state='running'"
+            ).fetchone(),
+            (0,),
+        )
+
+    def _publish_many(
+        self, scan_id: str, snapshots: tuple[InventorySnapshotV2, ...]
+    ) -> InventoryInspection:
+        start = self.repository.begin(
+            ScanId(scan_id),
+            connection(),
+            LIBRARY,
+            self.bounds,
+            NOW,
+            operation_context(),
+        ).value
+        result = self.repository.publish_complete(
+            start,
+            snapshots,
+            ScanUsage(2, len(snapshots), 100),
+            NOW + timedelta(seconds=1),
+            operation_context(),
+        )
+        self.assertTrue(result.accepted)
+        return result.value
+
     def _assert_reconciled_movement(self, order: tuple[LibraryId, ...]) -> None:
         other = self._other_library()
         original = self._snapshot("Title")
@@ -761,8 +1413,8 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
         return LibraryId("31234567-89ab-4def-8123-456789abcdef")
 
     @staticmethod
-    def _later_context() -> OperationContext:
-        observed = NOW + timedelta(minutes=10)
+    def _later_context(minutes: int = 10) -> OperationContext:
+        observed = NOW + timedelta(minutes=minutes)
         return OperationContext(
             Deadline(observed + timedelta(minutes=5)),
             CancellationProbe(CancellationId("later-context"), lambda: False),
@@ -794,6 +1446,29 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
             service_version=ServiceVersion("2.35.1"),
             warnings=(),
             observed_at=NOW,
+        )
+        return InventorySnapshotV2.create(observation)
+
+    @staticmethod
+    def _snapshot_for_item(external_item: str) -> InventorySnapshotV2:
+        snapshot = SQLiteInventoryV2RepositoryTests._snapshot("Other")
+        observation = InventoryObservation.create(
+            target=TargetId(
+                snapshot.observation.target.adapter,
+                snapshot.observation.target.connection,
+                snapshot.observation.target.library,
+                ExternalItemId(external_item),
+            ),
+            media_type=snapshot.observation.media_type,
+            lifecycle=snapshot.observation.lifecycle,
+            fields=snapshot.observation.fields,
+            file_identities=snapshot.observation.file_identities,
+            cover_identity=snapshot.observation.cover_identity,
+            adapter_version=snapshot.observation.adapter_version,
+            normalizer_version=snapshot.observation.normalizer_version,
+            service_version=snapshot.observation.service_version,
+            warnings=snapshot.observation.warnings,
+            observed_at=snapshot.observation.observed_at,
         )
         return InventorySnapshotV2.create(observation)
 
@@ -850,6 +1525,25 @@ class _UsageSource:
 
     def read_pass(self, connection, library, bounds, context):
         raise AssertionError("resource exhaustion must stop before inventory I/O")
+
+
+class _LivenessFailureSource:
+    def __init__(self, trigger, kind: FailureKind) -> None:
+        self._trigger = trigger
+        self._kind = kind
+
+    def verify_library(self, connection, library, bounds, context):
+        return PortResult.success(ScanUsage(response_bytes=1))
+
+    def read_pass(self, connection, library, bounds, context):
+        self._trigger()
+        return PortResult.failed(
+            PortFailure(
+                self._kind,
+                RetryAdvice(self._kind is FailureKind.TIMEOUT),
+                SafeSummary("inventory test liveness failure"),
+            )
+        )
 
 
 if __name__ == "__main__":

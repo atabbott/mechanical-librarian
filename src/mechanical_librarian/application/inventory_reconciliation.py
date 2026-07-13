@@ -170,7 +170,11 @@ class ReconcileInventory:
         ):
             return InventoryRunResult(InventoryOutcome.INVALID_REQUEST, ())
         recovered = self._repository.recover_interrupted(context.time.now(), context)
-        if not _accepted(recovered):
+        if (
+            not _accepted(recovered)
+            or type(recovered.value) is not int
+            or recovered.value < 0
+        ):
             return InventoryRunResult(InventoryOutcome.PERSISTENCE_FAILURE, ())
 
         cohort_id = _cohort_id(connection, libraries, context.time.now())
@@ -336,9 +340,31 @@ class ReconcileInventory:
                 _inspection(finished),
             )
 
+        seen = {snapshot.observation.target for snapshot in second.value.snapshots}
+        removals = tuple(
+            snapshot.removed(observed_at=context.time.now())
+            for snapshot in start.current
+            if snapshot.observation.target not in seen
+            and snapshot.observation.lifecycle.value != "removed"
+        )
+        retained_removals = tuple(
+            snapshot
+            for snapshot in start.current
+            if snapshot.observation.target not in seen
+            and snapshot.observation.lifecycle.value == "removed"
+        )
+        final_snapshots = (
+            *second.value.snapshots,
+            *removals,
+            *retained_removals,
+        )
+        final_bytes = sum(
+            len(snapshot.observation.canonical.encode("utf-8"))
+            for snapshot in final_snapshots
+        )
         checkpoint = context.preflight_result(
-            item_count=max(1, len(second.value.snapshots)),
-            serialized_bytes=0,
+            item_count=len(final_snapshots),
+            serialized_bytes=final_bytes,
         )
         if checkpoint.failure is not None:
             return self._terminal_failure(
@@ -349,31 +375,32 @@ class ReconcileInventory:
                 context,
             )
 
-        seen = {snapshot.observation.target for snapshot in second.value.snapshots}
-        removals = tuple(
-            snapshot.removed(observed_at=context.time.now())
-            for snapshot in start.current
-            if snapshot.observation.target not in seen
-            and snapshot.observation.lifecycle.value != "removed"
-        )
         published = self._repository.publish_complete(
             start,
-            (*second.value.snapshots, *removals),
+            final_snapshots,
             usage,
             context.time.now(),
             context,
         )
         inspection = _inspection(published)
-        if inspection is None:
+        if inspection is None or inspection.state is not ScanState.COMPLETE:
             checkpoint = context.preflight_result(
-                item_count=max(1, len(second.value.snapshots)),
-                serialized_bytes=0,
+                item_count=len(final_snapshots),
+                serialized_bytes=final_bytes,
             )
-            failure_kind = (
-                checkpoint.failure.kind
-                if checkpoint.failure is not None
-                else FailureKind.CONFLICT
+            rejected = (
+                type(published) is RepositoryResult
+                and published.outcome is RepositoryOutcome.REJECTED
             )
+            persistence_failure = not rejected
+            if checkpoint.failure is not None:
+                failure_kind = checkpoint.failure.kind
+                if failure_kind in {FailureKind.CANCELLED, FailureKind.TIMEOUT}:
+                    persistence_failure = False
+            elif rejected:
+                failure_kind = FailureKind.CONFLICT
+            else:
+                failure_kind = FailureKind.UNAVAILABLE
             terminal_state = (
                 ScanState.UNSTABLE
                 if failure_kind is FailureKind.CONFLICT
@@ -391,13 +418,13 @@ class ReconcileInventory:
             return InventoryLibraryResult(
                 library,
                 (
-                    (
+                    InventoryOutcome.PERSISTENCE_FAILURE
+                    if persistence_failure or conflicted_inspection is None
+                    else (
                         InventoryOutcome.UNSTABLE
                         if terminal_state is ScanState.UNSTABLE
                         else InventoryOutcome.INCOMPLETE
                     )
-                    if conflicted_inspection is not None
-                    else InventoryOutcome.PERSISTENCE_FAILURE
                 ),
                 conflicted_inspection,
             )

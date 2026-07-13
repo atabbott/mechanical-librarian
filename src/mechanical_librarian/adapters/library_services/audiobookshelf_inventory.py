@@ -377,9 +377,9 @@ def _normalize(
     metadata = media.get("metadata")
     if not isinstance(metadata, dict):
         return _failed(FailureKind.INVALID_RESPONSE, "inventory item metadata invalid")
-    audio_files = media.get("audioFiles")
+    included_audio, _ = _included_audio_files(media)
     ebook_file = media.get("ebookFile")
-    if isinstance(audio_files, list) and audio_files:
+    if included_audio:
         media_type = MediaType.AUDIOBOOK
     elif isinstance(ebook_file, dict):
         media_type = MediaType.EBOOK
@@ -423,6 +423,10 @@ def _normalize(
         for item in fields
         if item.state in {ObservationState.MALFORMED, ObservationState.UNSUPPORTED}
     )
+    if _identifiers_quarantined(metadata):
+        warnings += ("identifiers_quarantined",)
+    if file_state is ObservationState.PRESENT and _files_quarantined(media):
+        warnings += ("files_quarantined",)
     files = _file_identities(file_objects)
     cover = _cover_identity(detail, media)
     target = TargetId(
@@ -607,36 +611,58 @@ def _structured(
 
 
 def _identifiers(metadata: Mapping[str, object]) -> FieldObservation:
-    names = ("asin", "isbn", "isbn10", "isbn13", "google", "audible")
+    # Book.toJSON() in the frozen 2.35.1 contract establishes only these keys.
+    names = ("asin", "isbn")
     present = [(name, metadata[name]) for name in names if name in metadata]
     if not present:
         return FieldObservation(ObservationField.IDENTIFIERS, ObservationState.MISSING)
-    if all(value is None for _, value in present):
-        return FieldObservation(ObservationField.IDENTIFIERS, ObservationState.NULL)
-    if all(type(value) is str and not value.strip() for _, value in present):
-        return FieldObservation(ObservationField.IDENTIFIERS, ObservationState.EMPTY)
-    if any(
-        type(value) is not str
-        or not value.strip()
-        or len(value) > 4_096
-        or "\x00" in value
-        for _, value in present
-    ):
-        return FieldObservation(
-            ObservationField.IDENTIFIERS, ObservationState.MALFORMED
+    states = tuple(_identifier_state(value) for _, value in present)
+    valid: list[tuple[str, str]] = [
+        (name, str(value))
+        for (name, value), state in zip(present, states, strict=True)
+        if state is ObservationState.PRESENT
+    ]
+    if valid:
+        values = tuple(
+            canonical_json({"kind": name, "value": value.strip()})
+            for name, value in valid
         )
-    values = tuple(
-        canonical_json({"kind": name, "value": value.strip()})
-        for name, value in present
+        raw = tuple(
+            canonical_json({"kind": name, "value": value}) for name, value in valid
+        )
+        return FieldObservation(
+            ObservationField.IDENTIFIERS,
+            ObservationState.PRESENT,
+            values,
+            raw,
+        )
+    if all(state is ObservationState.NULL for state in states):
+        return FieldObservation(ObservationField.IDENTIFIERS, ObservationState.NULL)
+    if all(state is ObservationState.EMPTY for state in states):
+        return FieldObservation(ObservationField.IDENTIFIERS, ObservationState.EMPTY)
+    return FieldObservation(ObservationField.IDENTIFIERS, ObservationState.MALFORMED)
+
+
+def _identifier_state(value: object) -> ObservationState:
+    if value is None:
+        return ObservationState.NULL
+    if type(value) is not str:
+        return ObservationState.MALFORMED
+    if not value.strip():
+        return ObservationState.EMPTY
+    if len(value) > 4_096 or "\x00" in value:
+        return ObservationState.MALFORMED
+    return ObservationState.PRESENT
+
+
+def _identifiers_quarantined(metadata: Mapping[str, object]) -> bool:
+    states = tuple(
+        _identifier_state(metadata[name])
+        for name in ("asin", "isbn")
+        if name in metadata
     )
-    raw = tuple(
-        canonical_json({"kind": name, "value": value}) for name, value in present
-    )
-    return FieldObservation(
-        ObservationField.IDENTIFIERS,
-        ObservationState.PRESENT,
-        values,
-        raw,
+    return ObservationState.PRESENT in states and any(
+        state is not ObservationState.PRESENT for state in states
     )
 
 
@@ -644,18 +670,14 @@ def _file_objects(
     media: Mapping[str, object],
 ) -> tuple[list[Mapping[str, object]], ObservationState]:
     values: list[Mapping[str, object]] = []
-    malformed = False
+    audio, malformed = _included_audio_files(media)
     audio_present = "audioFiles" in media
     ebook_present = "ebookFile" in media
-    audio = media.get("audioFiles")
-    if isinstance(audio, list):
-        for item in audio:
-            if not isinstance(item, dict) or not _has_file_identity(item):
-                malformed = True
-            else:
-                values.append(item)
-    elif audio is not None:
-        malformed = True
+    for item in audio:
+        if not _has_file_identity(item):
+            malformed = True
+        else:
+            values.append(item)
     ebook = media.get("ebookFile")
     if isinstance(ebook, dict):
         if _has_file_identity(ebook):
@@ -664,19 +686,54 @@ def _file_objects(
             malformed = True
     elif ebook is not None:
         malformed = True
-    if malformed:
-        state = ObservationState.MALFORMED
-    elif values:
+    if values:
         state = ObservationState.PRESENT
+    elif malformed:
+        state = ObservationState.MALFORMED
     elif not audio_present and not ebook_present:
         state = ObservationState.MISSING
-    elif audio is None and ebook is None:
+    elif media.get("audioFiles") is None and ebook is None:
         state = ObservationState.NULL
-    elif audio == [] and ebook is None:
+    elif media.get("audioFiles") == [] and ebook is None:
         state = ObservationState.EMPTY
     else:
         state = ObservationState.UNSUPPORTED
     return values, state
+
+
+def _files_quarantined(media: Mapping[str, object]) -> bool:
+    audio, malformed = _included_audio_files(media)
+    if any(_file_has_invalid_optional_fact(item) for item in audio):
+        malformed = True
+    ebook = media.get("ebookFile")
+    if isinstance(ebook, dict):
+        malformed = malformed or _file_has_invalid_optional_fact(ebook)
+    elif ebook is not None:
+        malformed = True
+    return malformed
+
+
+def _included_audio_files(
+    media: Mapping[str, object],
+) -> tuple[list[Mapping[str, object]], bool]:
+    if "audioFiles" not in media or media["audioFiles"] is None:
+        return [], False
+    raw = media["audioFiles"]
+    if not isinstance(raw, list):
+        return [], True
+    included: list[Mapping[str, object]] = []
+    malformed = False
+    for item in raw:
+        if not isinstance(item, dict):
+            malformed = True
+            continue
+        if item.get("exclude") is True:
+            continue
+        if "exclude" in item and item["exclude"] is not False:
+            malformed = True
+            continue
+        included.append(item)
+    return included, malformed
 
 
 def _files_field(
@@ -687,23 +744,38 @@ def _files_field(
     return FieldObservation(
         ObservationField.FILES,
         ObservationState.PRESENT,
-        tuple(_file_descriptor(item) for item in values),
+        tuple(sorted({_file_descriptor(item) for item in values})),
     )
 
 
 def _file_descriptor(item: Mapping[str, object]) -> str:
     descriptor: dict[str, object] = {"identity": _file_identity(item)}
     aliases = {
-        "ext": "format",
-        "mime": "media_type",
-        "size": "size_bytes",
+        "index": "index",
+        "format": "format",
         "duration": "duration_seconds",
         "codec": "codec",
+        "bitRate": "bit_rate",
+        "mimeType": "media_type",
+        "ebookFormat": "format",
     }
     for source, destination in aliases.items():
         value = item.get(source)
         if _finite_scalar(value) and len(str(value)) <= 256:
             descriptor[destination] = value
+    metadata = item.get("metadata")
+    if isinstance(metadata, Mapping):
+        nested_aliases = {
+            "ext": "extension",
+            "size": "size_bytes",
+            "mtimeMs": "modified_ms",
+            "ctimeMs": "changed_ms",
+            "birthtimeMs": "created_ms",
+        }
+        for source, destination in nested_aliases.items():
+            value = metadata.get(source)
+            if _finite_scalar(value) and len(str(value)) <= 256:
+                descriptor[destination] = value
     return canonical_json(descriptor)
 
 
@@ -713,34 +785,83 @@ def _file_identities(values: list[Mapping[str, object]]) -> tuple[str, ...]:
 
 _FILE_IDENTITY_FIELDS = (
     "ino",
+    "index",
+    "format",
+    "duration",
+    "codec",
+    "bitRate",
+    "mimeType",
+    "ebookFormat",
+)
+
+_FILE_METADATA_IDENTITY_FIELDS = (
+    "filename",
+    "ext",
     "path",
     "relPath",
-    "index",
     "size",
     "mtimeMs",
     "ctimeMs",
     "birthtimeMs",
-    "ext",
-    "duration",
-    "codec",
-    "bitRate",
 )
+
+_STABLE_FILE_IDENTITY_FIELDS = ("ino",)
+_STABLE_FILE_METADATA_FIELDS = ("filename", "path", "relPath")
 
 
 def _file_identity(item: Mapping[str, object]) -> str:
-    projected = {
+    projected: dict[str, object] = {
         name: item[name]
         for name in _FILE_IDENTITY_FIELDS
         if name in item and _finite_scalar(item[name])
     }
+    metadata = item.get("metadata")
+    if isinstance(metadata, Mapping):
+        nested = {
+            name: metadata[name]
+            for name in _FILE_METADATA_IDENTITY_FIELDS
+            if name in metadata and _finite_scalar(metadata[name])
+        }
+        if nested:
+            projected["metadata"] = nested
     if not projected:
         raise ValueError("inventory file identity is unsupported")
     return _identity(projected)
 
 
 def _has_file_identity(item: Mapping[str, object]) -> bool:
-    return any(
-        name in item and _finite_scalar(item[name]) for name in _FILE_IDENTITY_FIELDS
+    metadata = item.get("metadata")
+    stable = any(
+        name in item and _finite_scalar(item[name]) and str(item[name])
+        for name in _STABLE_FILE_IDENTITY_FIELDS
+    ) or (
+        isinstance(metadata, Mapping)
+        and any(
+            name in metadata and _finite_scalar(metadata[name]) and str(metadata[name])
+            for name in _STABLE_FILE_METADATA_FIELDS
+        )
+    )
+    if not stable:
+        return False
+    try:
+        _file_identity(item)
+    except ValueError:
+        return False
+    return True
+
+
+def _file_has_invalid_optional_fact(item: Mapping[str, object]) -> bool:
+    if "metadata" in item and not isinstance(item["metadata"], Mapping):
+        return True
+    if any(
+        name in item and not _finite_scalar(item[name])
+        for name in _FILE_IDENTITY_FIELDS
+    ):
+        return True
+    metadata = item.get("metadata")
+    return isinstance(metadata, Mapping) and any(
+        name in metadata and not _finite_scalar(metadata[name])
+        for name in _FILE_METADATA_IDENTITY_FIELDS
     )
 
 

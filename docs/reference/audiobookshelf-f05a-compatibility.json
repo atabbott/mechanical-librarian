@@ -18,12 +18,22 @@
   "pinned_version": "2.35.1",
   "reconciliation": "two complete equal passes",
   "redaction": "generated UUIDs and synthetic text; paths replaced before fixture commit",
+  "decision_matrix": {
+    "audio_exclusion": "audioFiles entries with exclude=true are omitted from classification and file evidence; missing/false are included; null and other types are malformed",
+    "file_projection": "ino/index/format/duration/codec/bitRate/mimeType/ebookFormat plus metadata filename/ext/path/relPath/size/mtimeMs/ctimeMs/birthtimeMs; private names and paths appear only through SHA-256 identity",
+    "identifiers": "Book serializer isbn and asin are independent; valid bounded values survive null/empty/malformed siblings and invalid sibling values are omitted with a bounded warning",
+    "omissions": "non-Book identifier namespaces and non-allowlisted file properties are not established by the frozen serializers and cannot change F05a decisions"
+  },
   "snapshot_contract": "inventory-snapshot-v2",
   "upstream_sources": [
     "server/controllers/LibraryController.js",
     "server/controllers/LibraryItemController.js",
     "server/models/Book.js",
     "server/models/LibraryItem.js",
+    "server/objects/files/AudioFile.js",
+    "server/objects/files/EBookFile.js",
+    "server/objects/files/LibraryFile.js",
+    "server/objects/metadata/FileMetadata.js",
     "server/utils/queries/libraryItemsBookFilters.js"
   ],
   "write_routes": []
