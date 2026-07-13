@@ -958,7 +958,12 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
         source = _ConnectionVerificationSource(
             verify,
             InventoryConnectionVerification(
-                ScanUsage(response_bytes=19), FailureKind.AUTHENTICATION
+                ScanUsage(response_bytes=19),
+                PortFailure(
+                    FailureKind.AUTHENTICATION,
+                    RetryAdvice(False),
+                    SafeSummary("inventory authentication failed"),
+                ),
             ),
         )
         result = ReconcileInventory(source, self.repository).run(
@@ -1269,6 +1274,73 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
             ).fetchone(),
             ("incomplete", FailureKind.UNAVAILABLE.value),
         )
+
+    def test_poll_exception_usage_includes_terminal_and_running_siblings(self) -> None:
+        polling = SQLiteInventoryPollingRepository(
+            self.database, now=lambda: NOW
+        )
+        polling.schedule(
+            PollRequest(
+                "poll_mixed_exception",
+                "trigger_mixed_exception",
+                "e" * 64,
+                "f" * 64,
+                PollPolicy(3, 300, 30, 1, 10, 30, 300, 30_000),
+            ),
+            NOW,
+        )
+        claim = polling.claim(
+            "poll_mixed_exception", "worker_mixed_exception", NOW
+        ).value
+        other = self._other_library()
+        first = self.repository.begin(
+            ScanId("scan-mixed-terminal"),
+            connection(),
+            LIBRARY,
+            self.bounds,
+            NOW,
+            operation_context(),
+            claim=claim,
+        ).value
+        second = self.repository.begin(
+            ScanId("scan-mixed-running"),
+            connection(),
+            other,
+            self.bounds,
+            NOW,
+            operation_context(),
+            claim=claim,
+        ).value
+        self.repository.finish(
+            first.scan_id,
+            ScanState.INCOMPLETE,
+            FailureKind.UNAVAILABLE.value,
+            ScanUsage(2, 3, 400),
+            NOW + timedelta(seconds=1),
+            operation_context(),
+            claim=claim,
+        )
+        self.repository.checkpoint(
+            second.scan_id,
+            ScanUsage(1, 2, 300),
+            NOW + timedelta(seconds=1),
+            operation_context(),
+            claim=claim,
+        )
+
+        failed = polling.fail(
+            claim,
+            PortFailure(
+                FailureKind.UNAVAILABLE,
+                RetryAdvice(True),
+                SafeSummary("inventory operation failed safely"),
+            ),
+            ScanUsage(),
+            NOW + timedelta(seconds=2),
+            compatibility="supported",
+        )
+
+        self.assertEqual(failed.value.usage, ScanUsage(3, 5, 700))
 
     def test_failed_pass_usage_is_durable_and_not_reset(self) -> None:
         result = ReconcileInventory(

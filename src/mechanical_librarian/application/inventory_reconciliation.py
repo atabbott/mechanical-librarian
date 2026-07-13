@@ -143,13 +143,13 @@ class InventoryConnectionVerification:
     """Run-scoped compatibility evidence gathered after durable cohort start."""
 
     usage: ScanUsage
-    failure: FailureKind | None = None
+    failure: PortFailure | None = None
     compatibility: str = "unknown"
 
     def __post_init__(self) -> None:
         if (
             type(self.usage) is not ScanUsage
-            or (self.failure is not None and type(self.failure) is not FailureKind)
+            or (self.failure is not None and type(self.failure) is not PortFailure)
             or self.compatibility
             not in {"supported", "incompatible", "unknown", "contract_drift"}
         ):
@@ -295,17 +295,17 @@ class ReconcileInventory:
             )
         except Exception:
             connection_verification = InventoryConnectionVerification(
-                ScanUsage(), FailureKind.INVALID_RESPONSE
+                ScanUsage(), _port_failure(FailureKind.INVALID_RESPONSE)
             )
         if type(connection_verification) is not InventoryConnectionVerification:
             connection_verification = InventoryConnectionVerification(
-                ScanUsage(), FailureKind.INVALID_RESPONSE
+                ScanUsage(), _port_failure(FailureKind.INVALID_RESPONSE)
             )
         live_failure = _liveness_failure(context)
         if live_failure is not None:
             connection_verification = InventoryConnectionVerification(
                 connection_verification.usage,
-                live_failure,
+                _port_failure(live_failure),
                 connection_verification.compatibility,
             )
         if connection_verification.failure is not None:
@@ -871,6 +871,21 @@ def _failure_usage(failure) -> ScanUsage:
         failure.usage.pages,
         failure.usage.items,
         failure.usage.response_bytes,
+    )
+
+
+def _port_failure(kind: FailureKind) -> PortFailure:
+    return PortFailure(
+        kind,
+        RetryAdvice(
+            kind
+            in {
+                FailureKind.UNAVAILABLE,
+                FailureKind.RATE_LIMITED,
+                FailureKind.TIMEOUT,
+            }
+        ),
+        SafeSummary("inventory reconciliation failed safely"),
     )
 
 

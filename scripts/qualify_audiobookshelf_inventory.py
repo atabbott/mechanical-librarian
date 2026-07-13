@@ -122,7 +122,7 @@ class TraceProxy(BaseHTTPRequestHandler):
             content_type = "application/json"
         if (
             self.command == "GET"
-            and route == "/api/libraries"
+            and route == "/status"
             and type(self).scenario == "rate"
         ):
             status = 429
@@ -705,9 +705,17 @@ def main() -> int:
                 failed = run_poll(
                     configuration, database, f"qualification-{scenario}"
                 )
+                failed_output = failed.stdout + failed.stderr
                 if failed.returncode == 0:
                     raise RuntimeError(
                         f"F05b {scenario} sequence unexpectedly completed"
+                    )
+                if (
+                    scenario == "malformed"
+                    and "compatibility=contract_drift" not in failed_output
+                ):
+                    raise RuntimeError(
+                        "F05b malformed sequence did not record contract drift"
                     )
                 preserved = inspect_inventory(configuration, database)
                 if (

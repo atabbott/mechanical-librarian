@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 import httpx
 
@@ -182,6 +184,9 @@ class AudiobookshelfConnectionProbe:
                     FailureKind.RATE_LIMITED,
                     "connection probe rate limited",
                     retryable=True,
+                    retry_after=_retry_after(
+                        response.headers.get("retry-after"), context.time.now()
+                    ),
                 )
             if response.status_code in {404, 405}:
                 return _failed(FailureKind.INCOMPATIBLE, "connection probe unsupported")
@@ -387,15 +392,54 @@ def _library_id(value: object) -> LibraryId:
 
 
 def _failure(
-    kind: FailureKind, summary: str, *, retryable: bool = False
+    kind: FailureKind,
+    summary: str,
+    *,
+    retryable: bool = False,
+    retry_after: timedelta | None = None,
 ) -> PortFailure:
-    return PortFailure(kind, RetryAdvice(retryable), SafeSummary(summary))
+    return PortFailure(
+        kind, RetryAdvice(retryable, retry_after), SafeSummary(summary)
+    )
 
 
 def _failed(
-    kind: FailureKind, summary: str, *, retryable: bool = False
+    kind: FailureKind,
+    summary: str,
+    *,
+    retryable: bool = False,
+    retry_after: timedelta | None = None,
 ) -> PortResult[LibraryConnectionFacts]:
-    return PortResult.failed(_failure(kind, summary, retryable=retryable))
+    return PortResult.failed(
+        _failure(
+            kind,
+            summary,
+            retryable=retryable,
+            retry_after=retry_after,
+        )
+    )
+
+
+def _retry_after(value: str | None, now: datetime) -> timedelta | None:
+    if value is None or now.tzinfo is None or now.utcoffset() is None:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if candidate.isascii() and candidate.isdecimal():
+        try:
+            delay = timedelta(seconds=int(candidate))
+        except OverflowError:
+            return None
+    else:
+        try:
+            parsed = parsedate_to_datetime(candidate)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        delay = parsed.astimezone(timezone.utc) - now.astimezone(timezone.utc)
+    return delay if timedelta(0) < delay <= timedelta(days=1) else None
 
 
 __all__ = ["AudiobookshelfConnectionProbe"]

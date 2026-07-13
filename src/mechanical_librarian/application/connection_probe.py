@@ -12,6 +12,7 @@ from mechanical_librarian.application.ports import (
     LibraryConnectionDiagnosticsRequest,
     LibraryConnectionFacts,
     OperationContext,
+    PortFailure,
     PortResult,
 )
 from mechanical_librarian.domain.identifiers import (
@@ -128,12 +129,15 @@ class ConnectionInspection:
 class ConnectionProbeResult:
     outcome: ConnectionProbeOutcome
     inspection: ConnectionInspection | None = None
+    failure: PortFailure | None = None
 
     def __post_init__(self) -> None:
         if type(self.outcome) is not ConnectionProbeOutcome:
             raise ValueError("connection probe outcome is malformed")
+        if self.failure is not None and type(self.failure) is not PortFailure:
+            raise ValueError("connection probe failure is malformed")
         if self.outcome is ConnectionProbeOutcome.READY:
-            if type(self.inspection) is not ConnectionInspection:
+            if type(self.inspection) is not ConnectionInspection or self.failure is not None:
                 raise ValueError("ready connection probes require an inspection")
         elif self.outcome is ConnectionProbeOutcome.INCOMPATIBLE:
             if (
@@ -169,7 +173,9 @@ class InspectLibraryConnection:
             return ConnectionProbeResult(ConnectionProbeOutcome.CONFIGURATION_FAILURE)
         bounded = context.preflight_result(item_count=1, serialized_bytes=0)
         if bounded.failure is not None:
-            return ConnectionProbeResult(_failure_outcome(bounded.failure.kind))
+            return ConnectionProbeResult(
+                _failure_outcome(bounded.failure.kind), failure=bounded.failure
+            )
         try:
             request = LibraryConnectionDiagnosticsRequest(
                 self._expected_libraries, context
@@ -179,11 +185,15 @@ class InspectLibraryConnection:
         observed = self._probe.probe(request)
         boundary = context.preflight_result(item_count=0, serialized_bytes=0)
         if boundary.failure is not None:
-            return ConnectionProbeResult(_failure_outcome(boundary.failure.kind))
+            return ConnectionProbeResult(
+                _failure_outcome(boundary.failure.kind), failure=boundary.failure
+            )
         if type(observed) is not PortResult:
             return ConnectionProbeResult(ConnectionProbeOutcome.INVALID_RESPONSE)
         if observed.failure is not None:
-            return ConnectionProbeResult(_failure_outcome(observed.failure.kind))
+            return ConnectionProbeResult(
+                _failure_outcome(observed.failure.kind), failure=observed.failure
+            )
         if type(observed.value) is not LibraryConnectionFacts:
             return ConnectionProbeResult(ConnectionProbeOutcome.INVALID_RESPONSE)
 

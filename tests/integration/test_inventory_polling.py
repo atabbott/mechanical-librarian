@@ -319,6 +319,20 @@ class InventoryPollingTests(unittest.TestCase):
         self.assertNotIn("title", fields)
         self.assertNotIn("path", fields)
 
+        telemetry.record(
+            InventoryPollEvent(
+                AdapterId("fixture"),
+                "poll_fixture",
+                InventoryPollStage.FAILED,
+                3,
+                failure="lease_expired",
+            )
+        )
+        self.assertEqual(counters[("fixture", "deferred", "rate_limited")], 1)
+        self.assertEqual(
+            telemetry.counters()[("fixture", "failed", "lease_expired")], 1
+        )
+
     def test_application_preserves_retry_after_from_inventory_failure(self) -> None:
         failure = self.failure(
             FailureKind.RATE_LIMITED,
@@ -354,6 +368,76 @@ class InventoryPollingTests(unittest.TestCase):
         )
         self.assertEqual(result.inspection.usage, ScanUsage(1, 2, 300))
         self.assertEqual(result.inspection.compatibility, "supported")
+
+    def test_application_uses_longest_retry_guidance_across_libraries(self) -> None:
+        first = LibraryId("01234567-89ab-4def-8123-456789abcdef")
+        second = LibraryId("11234567-89ab-4def-8123-456789abcdef")
+        inventory = InventoryRunResult(
+            InventoryOutcome.INCOMPLETE,
+            (
+                InventoryLibraryResult(
+                    first,
+                    InventoryOutcome.INCOMPLETE,
+                    None,
+                    failure=self.failure(
+                        FailureKind.TIMEOUT,
+                        retryable=True,
+                        retry_after=timedelta(seconds=5),
+                    ),
+                ),
+                InventoryLibraryResult(
+                    second,
+                    InventoryOutcome.INCOMPLETE,
+                    None,
+                    failure=self.failure(
+                        FailureKind.RATE_LIMITED,
+                        retryable=True,
+                        retry_after=timedelta(seconds=17),
+                    ),
+                ),
+            ),
+            "supported",
+        )
+
+        result = RunInventoryPoll(self.repository).run(
+            self.request(),
+            "worker_a",
+            NOW,
+            lambda _claim: inventory,
+            lambda: NOW + timedelta(seconds=1),
+        )
+
+        self.assertEqual(result.outcome, InventoryPollOutcome.DEFERRED)
+        self.assertEqual(
+            result.inspection.next_eligible_at,
+            NOW + timedelta(seconds=18),
+        )
+
+    def test_invalid_inventory_response_records_contract_drift(self) -> None:
+        failure = self.failure(FailureKind.INVALID_RESPONSE, retryable=False)
+        inventory = InventoryRunResult(
+            InventoryOutcome.INCOMPLETE,
+            (
+                InventoryLibraryResult(
+                    LibraryId("01234567-89ab-4def-8123-456789abcdef"),
+                    InventoryOutcome.INCOMPLETE,
+                    None,
+                    failure=failure,
+                ),
+            ),
+            "supported",
+        )
+
+        result = RunInventoryPoll(self.repository).run(
+            self.request(),
+            "worker_a",
+            NOW,
+            lambda _claim: inventory,
+            lambda: NOW + timedelta(seconds=1),
+        )
+
+        self.assertEqual(result.outcome, InventoryPollOutcome.BLOCKED)
+        self.assertEqual(result.inspection.compatibility, "contract_drift")
 
 
 if __name__ == "__main__":

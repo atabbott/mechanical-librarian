@@ -111,7 +111,6 @@ from urllib.parse import urlsplit
 
 
 T = TypeVar("T")
-_INVENTORY_POLL_TELEMETRY = LoggingInventoryPollTelemetry()
 
 
 def _run_existing_state_check(database: Path) -> StateCheckResult:
@@ -445,10 +444,12 @@ def _inventory_poll_context(
     )
 
 
-def _inventory_probe_failure(outcome: ConnectionProbeOutcome) -> FailureKind | None:
-    if outcome is ConnectionProbeOutcome.READY:
+def _inventory_probe_failure(probe: ConnectionProbeResult) -> PortFailure | None:
+    if probe.outcome is ConnectionProbeOutcome.READY:
         return None
-    return {
+    if probe.failure is not None:
+        return probe.failure
+    kind = {
         ConnectionProbeOutcome.CANCELLED: FailureKind.CANCELLED,
         ConnectionProbeOutcome.DEADLINE_EXPIRED: FailureKind.TIMEOUT,
         ConnectionProbeOutcome.RESOURCE_EXHAUSTED: FailureKind.RESOURCE_EXHAUSTED,
@@ -461,7 +462,19 @@ def _inventory_probe_failure(outcome: ConnectionProbeOutcome) -> FailureKind | N
         ConnectionProbeOutcome.INVALID_RESPONSE: FailureKind.INVALID_RESPONSE,
         ConnectionProbeOutcome.CONFIGURATION_FAILURE: FailureKind.INVALID_REQUEST,
         ConnectionProbeOutcome.INTERNAL_FAILURE: FailureKind.UNAVAILABLE,
-    }[outcome]
+    }[probe.outcome]
+    return PortFailure(
+        kind,
+        RetryAdvice(
+            kind
+            in {
+                FailureKind.UNAVAILABLE,
+                FailureKind.RATE_LIMITED,
+                FailureKind.TIMEOUT,
+            }
+        ),
+        SafeSummary("inventory connection verification failed safely"),
+    )
 
 
 def _inventory_probe_compatibility(outcome: ConnectionProbeOutcome) -> str:
@@ -529,7 +542,7 @@ def _run_audiobookshelf_inventory(
             )
             return InventoryConnectionVerification(
                 ScanUsage(response_bytes=response_bytes),
-                _inventory_probe_failure(probe.outcome),
+                _inventory_probe_failure(probe),
                 _inventory_probe_compatibility(probe.outcome),
             )
 
@@ -669,7 +682,7 @@ def _run_audiobookshelf_poll(
                 )
                 return InventoryConnectionVerification(
                     ScanUsage(response_bytes=response_bytes),
-                    _inventory_probe_failure(probe.outcome),
+                    _inventory_probe_failure(probe),
                     _inventory_probe_compatibility(probe.outcome),
                 )
 
@@ -680,7 +693,7 @@ def _run_audiobookshelf_poll(
             polling = SQLiteInventoryPollingRepository(state)
             return RunInventoryPoll(
                 polling,
-                telemetry=_INVENTORY_POLL_TELEMETRY,
+                telemetry=LoggingInventoryPollTelemetry(),
                 adapter=connection.adapter,
             ).run(
                 request,

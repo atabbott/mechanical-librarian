@@ -76,6 +76,15 @@ class InventoryPollStage(StrEnum):
     SUCCEEDED = "succeeded"
 
 
+_SCHEDULER_FAILURES = frozenset(
+    {
+        "attempt_budget_exhausted",
+        "elapsed_budget_exhausted",
+        "lease_expired",
+    }
+)
+
+
 @dataclass(frozen=True)
 class InventoryPollEvent:
     adapter: AdapterId
@@ -83,7 +92,7 @@ class InventoryPollEvent:
     stage: InventoryPollStage
     attempt: int
     usage: ScanUsage = ScanUsage()
-    failure: FailureKind | None = None
+    failure: FailureKind | str | None = None
     compatibility: str = "unknown"
 
     def __post_init__(self) -> None:
@@ -96,7 +105,11 @@ class InventoryPollEvent:
             or type(self.attempt) is not int
             or self.attempt < 0
             or type(self.usage) is not ScanUsage
-            or (self.failure is not None and type(self.failure) is not FailureKind)
+            or (
+                self.failure is not None
+                and type(self.failure) is not FailureKind
+                and self.failure not in _SCHEDULER_FAILURES
+            )
             or self.compatibility
             not in {"supported", "incompatible", "unknown", "contract_drift"}
         ):
@@ -201,12 +214,17 @@ class RunInventoryPoll:
             )
         failure = _poll_failure(inventory)
         kind = failure.kind
+        compatibility = (
+            "contract_drift"
+            if kind is FailureKind.INVALID_RESPONSE
+            else inventory.compatibility
+        )
         failed = self._repository.fail(
             claim,
             failure,
             usage,
             ended,
-            compatibility=inventory.compatibility,
+            compatibility=compatibility,
         )
         if not failed.accepted or type(failed.value) is not PollInspection:
             return InventoryPollResult(InventoryPollOutcome.FAILED, None, inventory)
@@ -249,11 +267,7 @@ class RunInventoryPoll:
                     stage,
                     inspection.attempt,
                     inspection.usage,
-                    (
-                        FailureKind(inspection.failure_kind)
-                        if inspection.failure_kind is not None
-                        else None
-                    ),
+                    _event_failure(inspection.failure_kind),
                     inspection.compatibility or "unknown",
                 )
             )
@@ -269,6 +283,15 @@ def _usage(result: InventoryRunResult) -> ScanUsage:
         ),
         ScanUsage(),
     )
+
+
+def _event_failure(value: str | None) -> FailureKind | str | None:
+    if value is None:
+        return None
+    try:
+        return FailureKind(value)
+    except ValueError:
+        return value if value in _SCHEDULER_FAILURES else None
 
 
 def _failure_kind(result: InventoryRunResult) -> FailureKind:
@@ -308,9 +331,27 @@ def _failure_kind(result: InventoryRunResult) -> FailureKind:
 
 def _poll_failure(result: InventoryRunResult) -> PortFailure:
     kind = _failure_kind(result)
+    selected = None
     for item in result.libraries:
         if item.failure is not None and item.failure.kind is kind:
-            return item.failure
+            selected = item.failure
+            break
+    if selected is not None:
+        advised = tuple(
+            item.failure.retry.retry_after
+            for item in result.libraries
+            if item.failure is not None
+            and item.failure.retry.retry_after is not None
+        )
+        return PortFailure(
+            selected.kind,
+            RetryAdvice(
+                selected.retry.retryable,
+                max(advised) if advised and selected.retry.retryable else None,
+            ),
+            selected.safe_summary,
+            selected.usage,
+        )
     return PortFailure(
         kind,
         RetryAdvice(kind in {

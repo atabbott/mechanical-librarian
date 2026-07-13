@@ -212,6 +212,26 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                 self.assertNotIn("authorization", requests[0].headers)
                 self.assertNotIn("synthetic-token", repr(result))
 
+    def test_rate_limit_guidance_survives_connection_orchestration(self) -> None:
+        probe = AudiobookshelfConnectionProbe(
+            ServiceEndpoint("https://synthetic.invalid"),
+            client_factory=client_factory(
+                lambda _request: httpx.Response(
+                    429, headers={"Retry-After": "17"}
+                )
+            ),
+        )
+
+        result = InspectLibraryConnection(
+            AdapterId("audiobookshelf"),
+            ConnectionId("synthetic-connection"),
+            (LibraryId(LIBRARY_ID),),
+            probe,
+        ).run(context())
+
+        self.assertEqual(result.outcome, ConnectionProbeOutcome.RATE_LIMITED)
+        self.assertEqual(result.failure.retry.retry_after, timedelta(seconds=17))
+
     def test_status_json_rejects_duplicate_keys_and_nonfinite_numbers(self) -> None:
         for payload in (
             b'{"app":"audiobookshelf","app":"audiobookshelf","serverVersion":"2.35.1"}',

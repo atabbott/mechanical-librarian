@@ -18,7 +18,11 @@ class LoggingInventoryPollTelemetry:
         self._lock = Lock()
 
     def record(self, event: InventoryPollEvent) -> None:
-        failure = event.failure.value if event.failure is not None else "none"
+        failure = (
+            event.failure.value
+            if hasattr(event.failure, "value")
+            else event.failure or "none"
+        )
         labels = (event.adapter.value, event.stage.value, failure)
         with self._lock:
             self._counters[labels] += 1

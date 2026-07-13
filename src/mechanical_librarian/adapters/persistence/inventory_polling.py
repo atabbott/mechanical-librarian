@@ -211,10 +211,15 @@ class SQLiteInventoryPollingRepository:
                     "COALESCE(SUM(s.item_count),0),"
                     "COALESCE(SUM(s.response_bytes),0) FROM inventory_scans s JOIN "
                     "inventory_scan_poll_claims c USING(scan_id) WHERE c.poll_id=? "
-                    "AND c.attempt=? AND c.fence=? AND s.state='running'",
+                    "AND c.attempt=? AND c.fence=?",
                     (claim.poll_id, claim.attempt, claim.fence),
                 ).fetchone()
-                usage = usage + ScanUsage(*(int(value) for value in linked))
+                linked_usage = ScanUsage(*(int(value) for value in linked))
+                usage = ScanUsage(
+                    max(usage.pages, linked_usage.pages),
+                    max(usage.items, linked_usage.items),
+                    max(usage.response_bytes, linked_usage.response_bytes),
+                )
                 self._connection.execute(
                     "UPDATE inventory_scans SET state='incomplete',failure_kind=?,"
                     "finished_at=? WHERE state='running' AND scan_id IN (SELECT scan_id "

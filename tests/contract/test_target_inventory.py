@@ -141,7 +141,12 @@ class _CwaShapedInventoryFake:
         del libraries, bounds, context
         if connection.adapter != AdapterId("cwa-shaped"):
             return InventoryConnectionVerification(
-                ScanUsage(), FailureKind.INVALID_REQUEST
+                ScanUsage(),
+                PortFailure(
+                    FailureKind.INVALID_REQUEST,
+                    RetryAdvice(False),
+                    SafeSummary("inventory request invalid"),
+                ),
             )
         return InventoryConnectionVerification(ScanUsage())
 
