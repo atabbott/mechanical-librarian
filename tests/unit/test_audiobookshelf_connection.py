@@ -62,6 +62,11 @@ FIXTURES = ROOT / "tests" / "fixtures" / "audiobookshelf" / "2.35.1"
 COMPATIBILITY_MANIFEST = ROOT / "docs" / "reference" / "audiobookshelf-f04-compatibility.json"
 COMPATIBILITY_DOCUMENT = ROOT / "docs" / "reference" / "compatibility.md"
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+LIBRARY_ID = "01234567-89ab-4def-8123-456789abcdef"
+LETTER_LIBRARY_ID = "a1234567-89ab-4def-8123-456789abcdef"
+SECOND_LIBRARY_ID = "11234567-89ab-4def-8123-456789abcdef"
+EXTRA_LIBRARY_ID = "21234567-89ab-4def-8123-456789abcdef"
+OTHER_LIBRARY_ID = "31234567-89ab-4def-8123-456789abcdef"
 
 
 def context(*, cancelled=lambda: False, max_bytes: int = 65_536) -> OperationContext:
@@ -118,7 +123,7 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         handler,
         *,
         selected_context=None,
-        expected_libraries=("synthetic-library",),
+        expected_libraries=(LIBRARY_ID,),
     ):
         return AudiobookshelfConnectionProbe(
             ServiceEndpoint("https://synthetic.invalid"),
@@ -232,54 +237,77 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         )
         self.assertEqual(result.failure.kind.value, "resource_exhausted")
 
+    def test_invalid_expected_library_stops_before_client_or_network(self) -> None:
+        for value in (
+            "synthetic-library",
+            "a1234567-89ab-3def-8123-456789abcdef",
+            "a1234567-89ab-4def-7123-456789abcdef",
+        ):
+            with self.subTest(value=value):
+                clients = []
+                probe = AudiobookshelfConnectionProbe(
+                    ServiceEndpoint("https://synthetic.invalid"),
+                    client_factory=lambda: clients.append(True),  # type: ignore[arg-type,return-value]
+                )
+
+                result = probe.probe(
+                    LibraryConnectionDiagnosticsRequest(
+                        (LibraryId(value),),
+                        context(),
+                    )
+                )
+
+                self.assertEqual(result.failure.kind, FailureKind.INVALID_REQUEST)
+                self.assertEqual(clients, [])
+
     def test_profile_requires_active_user_and_positive_library_access(self) -> None:
         cases = []
         inactive = fixture("authorize.json")
         inactive["user"]["isActive"] = False
-        cases.append(("inactive", inactive, ("synthetic-library",), False))
+        cases.append(("inactive", inactive, (LIBRARY_ID,), False))
         empty = fixture("authorize.json")
         empty["user"]["permissions"]["accessAllLibraries"] = False
         empty["user"]["librariesAccessible"] = []
-        cases.append(("empty", empty, ("synthetic-library",), False))
+        cases.append(("empty", empty, (LIBRARY_ID,), False))
         missing = fixture("authorize.json")
         del missing["user"]["permissions"]["accessAllLibraries"]
         del missing["user"]["librariesAccessible"]
-        cases.append(("missing", missing, ("synthetic-library",), False))
+        cases.append(("missing", missing, (LIBRARY_ID,), False))
         missing_flag_covering = fixture("authorize.json")
         del missing_flag_covering["user"]["permissions"]["accessAllLibraries"]
         missing_flag_covering["user"]["librariesAccessible"] = [
-            "synthetic-library"
+            LIBRARY_ID
         ]
         cases.append(
             (
                 "missing-flag-covering",
                 missing_flag_covering,
-                ("synthetic-library",),
+                (LIBRARY_ID,),
                 False,
             )
         )
         null_flag_covering = fixture("authorize.json")
         null_flag_covering["user"]["permissions"]["accessAllLibraries"] = None
         null_flag_covering["user"]["librariesAccessible"] = [
-            "synthetic-library"
+            LIBRARY_ID
         ]
         cases.append(
             (
                 "null-flag-covering",
                 null_flag_covering,
-                ("synthetic-library",),
+                (LIBRARY_ID,),
                 False,
             )
         )
         malformed = fixture("authorize.json")
         malformed["user"]["permissions"]["accessAllLibraries"] = False
         malformed["user"]["librariesAccessible"] = [1]
-        cases.append(("malformed", malformed, ("synthetic-library",), False))
+        cases.append(("malformed", malformed, (LIBRARY_ID,), False))
         scoped = fixture("authorize.json")
         scoped["user"]["permissions"]["accessAllLibraries"] = False
-        scoped["user"]["librariesAccessible"] = ["synthetic-library"]
-        cases.append(("scoped", scoped, ("synthetic-library",), True))
-        uuid = "01234567-89ab-4def-8123-456789abcdef"
+        scoped["user"]["librariesAccessible"] = [LETTER_LIBRARY_ID]
+        cases.append(("scoped", scoped, (LETTER_LIBRARY_ID,), True))
+        uuid = LIBRARY_ID
         scoped_uuid = fixture("authorize.json")
         scoped_uuid["user"]["permissions"]["accessAllLibraries"] = False
         scoped_uuid["user"]["librariesAccessible"] = [uuid, uuid]
@@ -297,101 +325,110 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
             "01234567-89ab-3def-8123-456789abcdef",
         ]
         cases.append(("malformed-uuid", malformed_uuid, (uuid,), False))
+        malformed_letter_uuid = fixture("authorize.json")
+        malformed_letter_uuid["user"]["permissions"]["accessAllLibraries"] = False
+        malformed_letter_uuid["user"]["librariesAccessible"] = [
+            uuid,
+            "a1234567-89ab-3def-8123-456789abcdef",
+        ]
+        cases.append(
+            ("malformed-letter-uuid", malformed_letter_uuid, (uuid,), False)
+        )
         exact = fixture("authorize.json")
         exact["user"]["permissions"]["accessAllLibraries"] = False
         exact["user"]["librariesAccessible"] = [
-            "synthetic-library",
-            "second-library",
+            LIBRARY_ID,
+            SECOND_LIBRARY_ID,
         ]
         cases.append(
-            ("exact-multiple", exact, ("synthetic-library", "second-library"), True)
+            ("exact-multiple", exact, (LIBRARY_ID, SECOND_LIBRARY_ID), True)
         )
         duplicate_covering = fixture("authorize.json")
         duplicate_covering["user"]["permissions"]["accessAllLibraries"] = False
         duplicate_covering["user"]["librariesAccessible"] = [
-            "second-library",
-            "extra-library",
-            "synthetic-library",
-            "second-library",
+            SECOND_LIBRARY_ID,
+            EXTRA_LIBRARY_ID,
+            LIBRARY_ID,
+            SECOND_LIBRARY_ID,
         ]
         cases.append(
             (
                 "duplicate-covering",
                 duplicate_covering,
-                ("synthetic-library", "second-library"),
+                (LIBRARY_ID, SECOND_LIBRARY_ID),
                 True,
             )
         )
         duplicate_subset = fixture("authorize.json")
         duplicate_subset["user"]["permissions"]["accessAllLibraries"] = False
         duplicate_subset["user"]["librariesAccessible"] = [
-            "synthetic-library",
-            "synthetic-library",
+            LIBRARY_ID,
+            LIBRARY_ID,
         ]
         cases.append(
             (
                 "duplicate-subset",
                 duplicate_subset,
-                ("synthetic-library", "second-library"),
+                (LIBRARY_ID, SECOND_LIBRARY_ID),
                 False,
             )
         )
         duplicate_malformed = fixture("authorize.json")
         duplicate_malformed["user"]["permissions"]["accessAllLibraries"] = False
         duplicate_malformed["user"]["librariesAccessible"] = [
-            "synthetic-library",
-            "synthetic-library",
+            LIBRARY_ID,
+            LIBRARY_ID,
             " bad",
         ]
         cases.append(
             (
                 "duplicate-malformed",
                 duplicate_malformed,
-                ("synthetic-library",),
+                (LIBRARY_ID,),
                 False,
             )
         )
         subset = fixture("authorize.json")
         subset["user"]["permissions"]["accessAllLibraries"] = False
-        subset["user"]["librariesAccessible"] = ["synthetic-library"]
-        cases.append(("subset", subset, ("synthetic-library", "second-library"), False))
+        subset["user"]["librariesAccessible"] = [LIBRARY_ID]
+        cases.append(("subset", subset, (LIBRARY_ID, SECOND_LIBRARY_ID), False))
         mismatch = fixture("authorize.json")
         mismatch["user"]["permissions"]["accessAllLibraries"] = False
-        mismatch["user"]["librariesAccessible"] = ["other-library"]
-        cases.append(("mismatch", mismatch, ("synthetic-library",), False))
+        mismatch["user"]["librariesAccessible"] = [OTHER_LIBRARY_ID]
+        cases.append(("mismatch", mismatch, (LIBRARY_ID,), False))
         for name, invalid in (
-            ("whitespace", " synthetic-library"),
-            ("control", "synthetic\nlibrary"),
+            ("whitespace", f" {LIBRARY_ID}"),
+            ("control", LIBRARY_ID + "\n"),
             ("oversized", "a" * 65),
         ):
             profile = fixture("authorize.json")
             profile["user"]["permissions"]["accessAllLibraries"] = False
             profile["user"]["librariesAccessible"] = [invalid]
-            cases.append((name, profile, ("synthetic-library",), False))
+            cases.append((name, profile, (LIBRARY_ID,), False))
         mixed = fixture("authorize.json")
         mixed["user"]["permissions"]["accessAllLibraries"] = False
-        mixed["user"]["librariesAccessible"] = ["synthetic-library", " bad"]
-        cases.append(("mixed", mixed, ("synthetic-library",), False))
+        mixed["user"]["librariesAccessible"] = [LIBRARY_ID, " bad"]
+        cases.append(("mixed", mixed, (LIBRARY_ID,), False))
         malformed_permissions = fixture("authorize.json")
         malformed_permissions["user"]["permissions"] = []
         cases.append(
             (
                 "malformed-permissions",
                 malformed_permissions,
-                ("synthetic-library",),
+                (LIBRARY_ID,),
                 False,
             )
         )
         malformed_download = fixture("authorize.json")
         malformed_download["user"]["permissions"]["download"] = "yes"
         cases.append(
-            ("malformed-download", malformed_download, ("synthetic-library",), False)
+            ("malformed-download", malformed_download, (LIBRARY_ID,), False)
         )
         for name, flag in (("list-flag", []), ("dict-flag", {})):
             profile = fixture("authorize.json")
             profile["user"]["permissions"]["accessAllLibraries"] = flag
-            profile["user"]["librariesAccessible"] = ["synthetic-library"]
-            cases.append((name, profile, ("synthetic-library",), False))
+            profile["user"]["librariesAccessible"] = [LIBRARY_ID]
+            cases.append((name, profile, (LIBRARY_ID,), False))
 
         for name, profile, expected_libraries, expected_complete in cases:
             with self.subTest(name=name):
@@ -700,7 +737,7 @@ class ApplicationProfileTests(unittest.TestCase):
                 result = InspectLibraryConnection(
                     AdapterId("audiobookshelf"),
                     ConnectionId("synthetic-connection"),
-                    (LibraryId("synthetic-library"),),
+                    (LibraryId(LIBRARY_ID),),
                     probe,
                 ).run(context())
 

@@ -25,6 +25,7 @@ from mechanical_librarian.domain.identifiers import (
     CompatibilityVersion,
     LibraryId,
     ServiceVersion,
+    is_canonical_uuid4,
 )
 from mechanical_librarian.domain.inventory import ServiceEndpoint
 
@@ -49,6 +50,11 @@ class AudiobookshelfConnectionProbe:
         self, request: LibraryConnectionDiagnosticsRequest
     ) -> PortResult[LibraryConnectionFacts]:
         if type(request) is not LibraryConnectionDiagnosticsRequest:
+            return _failed(FailureKind.INVALID_REQUEST, "connection request invalid")
+        if any(
+            not is_canonical_uuid4(library.value)
+            for library in request.expected_libraries
+        ):
             return _failed(FailureKind.INVALID_REQUEST, "connection request invalid")
         context = request.context
         checkpoint = context.preflight_result(item_count=1, serialized_bytes=0)
@@ -182,7 +188,7 @@ def _facts(
     if isinstance(libraries, list) and libraries:
         try:
             parsed_libraries = tuple(
-                LibraryId(value) if type(value) is str else (_ for _ in ()).throw(ValueError())
+                _library_id(value)
                 for value in libraries
             )
             scoped_libraries = frozenset(parsed_libraries)
@@ -224,6 +230,12 @@ def _facts(
             ),
         )
     )
+
+
+def _library_id(value: object) -> LibraryId:
+    if not is_canonical_uuid4(value):
+        raise ValueError("Audiobookshelf library identifier is invalid")
+    return LibraryId(value)
 
 
 def _failure(kind: FailureKind, summary: str, *, retryable: bool = False) -> PortFailure:

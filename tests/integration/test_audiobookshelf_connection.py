@@ -15,6 +15,7 @@ import mechanical_librarian.bootstrap as bootstrap
 
 ROOT = Path(__file__).parents[2]
 FIXTURES = ROOT / "tests" / "fixtures" / "audiobookshelf" / "2.35.1"
+LIBRARY_ID = "01234567-89ab-4def-8123-456789abcdef"
 
 
 class _FixtureHandler(BaseHTTPRequestHandler):
@@ -74,7 +75,7 @@ class _AmbiguousPermissionHandler(_FixtureHandler):
             del permissions["accessAllLibraries"]
         else:
             permissions["accessAllLibraries"] = self.access_all_libraries
-        payload["user"]["librariesAccessible"] = ["synthetic-library"]
+        payload["user"]["librariesAccessible"] = [LIBRARY_ID]
         encoded = json.dumps(payload).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -84,7 +85,8 @@ class _AmbiguousPermissionHandler(_FixtureHandler):
 
 
 class _ScopedUuidHandler(_FixtureHandler):
-    library_id = "01234567-89ab-4def-8123-456789abcdef"
+    library_id = LIBRARY_ID
+    accessible_libraries = [library_id]
 
     def do_POST(self) -> None:
         type(self).requests.append(("POST", self.path, dict(self.headers)))
@@ -93,13 +95,20 @@ class _ScopedUuidHandler(_FixtureHandler):
             return
         payload = json.loads((FIXTURES / "authorize.json").read_text(encoding="utf-8"))
         payload["user"]["permissions"]["accessAllLibraries"] = False
-        payload["user"]["librariesAccessible"] = [self.library_id]
+        payload["user"]["librariesAccessible"] = list(self.accessible_libraries)
         encoded = json.dumps(payload).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+
+
+class _MalformedScopeHandler(_ScopedUuidHandler):
+    accessible_libraries = [
+        LIBRARY_ID,
+        "a1234567-89ab-3def-8123-456789abcdef",
+    ]
 
 
 class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
@@ -149,6 +158,93 @@ class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
         self.assertIn("Connection check passed.\n", output.getvalue())
         self.assertNotIn(_ScopedUuidHandler.library_id, output.getvalue())
 
+    def test_malformed_scoped_uuid_fails_cli_without_success_report(self) -> None:
+        _MalformedScopeHandler.requests = []
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _MalformedScopeHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secret = root / "private-api-key"
+            secret.write_text("private-token-sentinel\n", encoding="utf-8")
+            secret.chmod(0o600)
+            configuration = root / "private-config.json"
+            configuration.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "config-v1",
+                        "instance_name": "malformed-scope",
+                        "connections": [
+                            {
+                                "id": "abs-synthetic",
+                                "adapter": "audiobookshelf",
+                                "endpoint": f"http://127.0.0.1:{server.server_port}",
+                                "secret_reference": str(secret),
+                                "enabled_libraries": [LIBRARY_ID],
+                                "capability_overrides": [],
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = io.StringIO()
+            errors = io.StringIO()
+            with redirect_stdout(output), redirect_stderr(errors):
+                result = bootstrap._run_connection_probe(configuration)
+                exit_code = bootstrap.main(
+                    ["connection-check", "--config", str(configuration)]
+                )
+
+        self.assertEqual(result.outcome.value, "authorization_failed")
+        self.assertIsNone(result.inspection)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(
+            errors.getvalue(),
+            "Connection check failed: configured target could not be verified.\n",
+        )
+
+    def test_malformed_config_stops_before_secret_or_network(self) -> None:
+        for value in (
+            "synthetic-library",
+            "a1234567-89ab-3def-8123-456789abcdef",
+            "a1234567-89ab-4def-7123-456789abcdef",
+        ):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                configuration = Path(directory) / "private-config.json"
+                configuration.write_text(
+                    json.dumps(
+                        {
+                            "schema_version": "config-v1",
+                            "instance_name": "malformed-library",
+                            "connections": [
+                                {
+                                    "id": "abs-synthetic",
+                                    "adapter": "audiobookshelf",
+                                    "endpoint": "https://private-target.invalid",
+                                    "secret_reference": "/private/never-read",
+                                    "enabled_libraries": [value],
+                                    "capability_overrides": [],
+                                }
+                            ],
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                with patch(
+                    "mechanical_librarian.infrastructure.security.target_secrets._read"
+                ) as read, patch(
+                    "mechanical_librarian.infrastructure.security.target_secrets.httpx.Client"
+                ) as client:
+                    result = bootstrap._run_connection_probe(configuration)
+
+                self.assertEqual(result.outcome.value, "configuration_failure")
+                read.assert_not_called()
+                client.assert_not_called()
+
     def test_incomplete_authorization_profile_fails_cli_without_success_report(
         self,
     ) -> None:
@@ -175,7 +271,7 @@ class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
                                 "adapter": "audiobookshelf",
                                 "endpoint": f"http://127.0.0.1:{server.server_port}",
                                 "secret_reference": str(secret),
-                                "enabled_libraries": ["synthetic-library"],
+                                "enabled_libraries": [LIBRARY_ID],
                                 "capability_overrides": [],
                             }
                         ],
@@ -237,7 +333,7 @@ class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
                                             ),
                                             "secret_reference": str(secret),
                                             "enabled_libraries": [
-                                                "synthetic-library"
+                                                LIBRARY_ID
                                             ],
                                             "capability_overrides": [],
                                         }
@@ -282,7 +378,7 @@ class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
                         "adapter": "audiobookshelf",
                         "endpoint": "http://example.invalid",
                         "secret_reference": "/private/never-read",
-                        "enabled_libraries": ["synthetic-library"],
+                        "enabled_libraries": [LIBRARY_ID],
                         "capability_overrides": [],
                     }],
                 }),
@@ -313,7 +409,7 @@ class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
                             "adapter": "audiobookshelf",
                             "endpoint": "https://private-target.invalid",
                             "secret_reference": str(missing),
-                            "enabled_libraries": ["synthetic-library"],
+                            "enabled_libraries": [LIBRARY_ID],
                             "capability_overrides": [],
                         }],
                     }
@@ -362,7 +458,7 @@ class ComposedAudiobookshelfConnectionTests(unittest.TestCase):
                                 "adapter": "audiobookshelf",
                                 "endpoint": f"http://127.0.0.1:{server.server_port}",
                                 "secret_reference": str(secret),
-                                "enabled_libraries": ["synthetic-library"],
+                                "enabled_libraries": [LIBRARY_ID],
                                 "capability_overrides": [],
                             }
                         ],

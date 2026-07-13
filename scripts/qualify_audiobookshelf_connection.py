@@ -171,7 +171,9 @@ def main() -> int:
                             "adapter": "audiobookshelf",
                             "endpoint": f"http://127.0.0.1:{proxy.server_port}",
                             "secret_reference": str(secret),
-                            "enabled_libraries": ["synthetic-library"],
+                            "enabled_libraries": [
+                                "01234567-89ab-4def-8123-456789abcdef"
+                            ],
                             "capability_overrides": [],
                         }],
                     }

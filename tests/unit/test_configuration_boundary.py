@@ -54,6 +54,17 @@ class ConfigurationBoundaryTests(unittest.TestCase):
         definitions = schema["$defs"]
         self.assertEqual(schema["properties"]["schema_version"]["const"], "config-v1")
         self.assertEqual(schema["properties"]["connections"]["minItems"], 1)
+        connection_condition = definitions["ConnectionInput"]["allOf"][0]
+        self.assertEqual(
+            connection_condition["if"]["properties"]["adapter"]["const"],
+            "audiobookshelf",
+        )
+        self.assertIn(
+            "-4",
+            connection_condition["then"]["properties"]["enabled_libraries"][
+                "items"
+            ]["pattern"],
+        )
         self.assertEqual(
             definitions["ResourceLimitsInput"]["properties"]["parser_concurrency"],
             {
@@ -180,6 +191,33 @@ class ConfigurationBoundaryTests(unittest.TestCase):
         duplicate["connections"][0]["enabled_libraries"] = [uuid, uuid]
         with self.assertRaises(ConfigurationError):
             validate_configuration(duplicate)
+
+    def test_audiobookshelf_libraries_require_canonical_uuidv4(self) -> None:
+        valid = (
+            "01234567-89ab-4def-8123-456789abcdef",
+            "a1234567-89ab-4def-8123-456789abcdef",
+        )
+        source = self.source()
+        source["connections"][0]["adapter"] = "audiobookshelf"
+        source["connections"][0]["enabled_libraries"] = list(valid)
+
+        loaded = validate_configuration(source)
+
+        self.assertEqual(loaded.connections[0].enabled_libraries, valid)
+        for value in (
+            "synthetic-library",
+            "01234567-89ab-3def-8123-456789abcdef",
+            "a1234567-89ab-3def-8123-456789abcdef",
+            "01234567-89ab-4def-7123-456789abcdef",
+            "a1234567-89ab-4def-7123-456789abcdef",
+            "A1234567-89ab-4def-8123-456789abcdef",
+        ):
+            with self.subTest(value=value):
+                invalid = self.source()
+                invalid["connections"][0]["adapter"] = "audiobookshelf"
+                invalid["connections"][0]["enabled_libraries"] = [value]
+                with self.assertRaises(ConfigurationError):
+                    validate_configuration(invalid)
 
     def test_new_field_bounds_unknowns_and_import_differential_are_exhaustive(self) -> None:
         invalid_updates = (

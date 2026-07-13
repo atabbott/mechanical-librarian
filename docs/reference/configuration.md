@@ -108,7 +108,9 @@ comparison.
 Enabled-library values are opaque, adapter-scoped service identifiers. They
 accept the existing bounded lowercase identifier form and canonical lowercase
 UUIDv4 values; they are preserved exactly and are never exposed in change-plan
-diagnostics.
+diagnostics. An adapter may narrow that generic grammar to its documented
+service identity; Audiobookshelf connections require canonical lowercase
+UUIDv4 library identifiers.
 
 ## Configuration groups
 
