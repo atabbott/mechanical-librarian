@@ -13,7 +13,9 @@ from mechanical_librarian.adapters.library_services.synthetic import (
     SyntheticLibraryReader,
     synthetic_capabilities,
 )
-from mechanical_librarian.adapters.persistence.inventory import SQLiteInventoryRepository
+from mechanical_librarian.adapters.persistence.inventory import (
+    SQLiteInventoryRepository,
+)
 from mechanical_librarian.application.job_heartbeat import RepositoryOutcome
 from mechanical_librarian.application.ports import (
     CancellationId,
@@ -47,7 +49,10 @@ from mechanical_librarian.domain.inventory import (
     ServiceEndpoint,
 )
 from mechanical_librarian.infrastructure.persistence import sqlite
-from mechanical_librarian.infrastructure.persistence.sqlite import Migration, SchemaError
+from mechanical_librarian.infrastructure.persistence.sqlite import (
+    Migration,
+    SchemaError,
+)
 
 
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -200,7 +205,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             self.snapshot.capabilities,
         )
 
-    def test_store_duplicate_restart_and_scoped_read_preserve_exact_cardinality(self) -> None:
+    def test_store_duplicate_restart_and_scoped_read_preserve_exact_cardinality(
+        self,
+    ) -> None:
         repository = SQLiteInventoryRepository(self.connection)
         first = repository.store(self.request())
         second = repository.store(self.request())
@@ -210,7 +217,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         self.assertEqual(first.value, self.snapshot)
         self.assertEqual(second.value, self.snapshot)
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (1,),
         )
         self.assertEqual(
@@ -224,13 +233,17 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         self.connection = sqlite.connect_existing(self.path)
         sqlite.migrate(self.connection)
         restarted = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(restarted.store(self.request()).outcome, RepositoryOutcome.REUSED)
+        self.assertEqual(
+            restarted.store(self.request()).outcome, RepositoryOutcome.REUSED
+        )
         self.assertEqual(
             restarted.read(LibraryReadRequest(self.snapshot.target, _context())).value,
             self.snapshot,
         )
 
-    def test_large_domain_snapshot_obeys_exact_context_and_restarts_reused(self) -> None:
+    def test_large_domain_snapshot_obeys_exact_context_and_restarts_reused(
+        self,
+    ) -> None:
         snapshot = self.large_snapshot()
         size = len(snapshot.canonical_input.serialized.encode("utf-8"))
         self.assertGreater(size, 524_288)
@@ -306,7 +319,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         )
 
         with patch.object(
-            inventory_adapter, "_snapshot_from_row", wraps=inventory_adapter._snapshot_from_row
+            inventory_adapter,
+            "_snapshot_from_row",
+            wraps=inventory_adapter._snapshot_from_row,
         ) as hydrate:
             result = repository.read(
                 LibraryReadRequest(snapshot.target, _context(max_bytes=size - 1))
@@ -369,7 +384,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(missing.outcome, RepositoryOutcome.NOT_FOUND)
         self.assertIsNone(missing.value)
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         changes_before_inspect = self.connection.total_changes
         first = repository.inspect(
             SnapshotInspectionRequest(
@@ -383,7 +400,11 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         self.assertEqual(first.outcome, RepositoryOutcome.ACCEPTED)
         self.assertEqual(first.value.snapshot, self.snapshot)
         self.assertEqual(
-            (first.value.item_count, first.value.history_count, first.value.current_count),
+            (
+                first.value.item_count,
+                first.value.history_count,
+                first.value.current_count,
+            ),
             (1, 1, 1),
         )
         self.assertEqual(self.connection.total_changes, changes_before_inspect)
@@ -459,7 +480,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
 
     def test_inspect_uses_one_wal_snapshot_for_measurement_and_detail(self) -> None:
         writer = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(writer.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            writer.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         reader_connection = sqlite.connect_existing(self.path)
         self.addCleanup(reader_connection.close)
         reader = SQLiteInventoryRepository(reader_connection)
@@ -537,11 +560,14 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             ),
         )
         for name, request, expected in cases:
-            with self.subTest(name=name), patch.object(
-                inventory_adapter,
-                "_snapshot_from_selected_row",
-                wraps=inventory_adapter._snapshot_from_selected_row,
-            ) as hydrate:
+            with (
+                self.subTest(name=name),
+                patch.object(
+                    inventory_adapter,
+                    "_snapshot_from_selected_row",
+                    wraps=inventory_adapter._snapshot_from_selected_row,
+                ) as hydrate,
+            ):
                 result = repository.list(request)
                 self.assertEqual(result.outcome, expected)
                 hydrate.assert_not_called()
@@ -571,7 +597,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         incoming_size = len(incoming.canonical_input.serialized.encode("utf-8"))
 
         with patch.object(
-            inventory_adapter, "_snapshot_from_row", wraps=inventory_adapter._snapshot_from_row
+            inventory_adapter,
+            "_snapshot_from_row",
+            wraps=inventory_adapter._snapshot_from_row,
         ) as hydrate:
             result = repository.store(
                 self.request_for(
@@ -612,13 +640,17 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         self.assertEqual(result.outcome, RepositoryOutcome.REJECTED)
         self.assertFalse(self.connection.in_transaction)
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (0,),
         )
 
     def test_read_snapshot_remains_stable_while_writer_advances_wal_state(self) -> None:
         writer = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(writer.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            writer.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         reader_connection = sqlite.connect_existing(self.path)
         self.addCleanup(reader_connection.close)
         reader = SQLiteInventoryRepository(reader_connection)
@@ -632,7 +664,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                 ).outcome,
                 RepositoryOutcome.ACCEPTED,
             )
-            self.assertEqual(reader._read_current_row(self.snapshot.target), self.snapshot)
+            self.assertEqual(
+                reader._read_current_row(self.snapshot.target), self.snapshot
+            )
 
         self.assertFalse(reader_connection.in_transaction)
         self.assertEqual(
@@ -640,16 +674,22 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             advanced,
         )
 
-    def test_interruption_between_history_and_current_rolls_back_then_retries_cleanly(self) -> None:
+    def test_interruption_between_history_and_current_rolls_back_then_retries_cleanly(
+        self,
+    ) -> None:
         repository = SQLiteInventoryRepository(
             self.connection,
             after_history_insert=lambda: (_ for _ in ()).throw(
                 sqlite3.OperationalError("injected interruption")
             ),
         )
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.UNAVAILABLE)
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            repository.store(self.request()).outcome, RepositoryOutcome.UNAVAILABLE
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (0,),
         )
         self.assertEqual(
@@ -670,7 +710,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
 
         self.assertEqual(result.outcome, RepositoryOutcome.REJECTED)
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (0,),
         )
         self.assertEqual(
@@ -680,11 +722,15 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             (0,),
         )
 
-    def test_retry_of_superseded_snapshot_is_rejected_without_changing_state(self) -> None:
+    def test_retry_of_superseded_snapshot_is_rejected_without_changing_state(
+        self,
+    ) -> None:
         repository = SQLiteInventoryRepository(self.connection)
         next_snapshot = self.next_snapshot()
 
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         self.assertEqual(
             repository.store(
                 self.request_for(next_snapshot, self.snapshot.fingerprint)
@@ -695,7 +741,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
 
         self.assertEqual(retry.outcome, RepositoryOutcome.REJECTED)
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (2,),
         )
         self.assertEqual(
@@ -705,16 +753,16 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
 
     def test_exact_history_with_changed_snapshot_or_key_is_corrupt(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         changed_key = IdempotencyKey.from_canonical_input(
             operation="snapshot-store",
             target=self.snapshot.target,
             value={"changed": True},
         )
 
-        changed_snapshot = replace(
-            self.next_snapshot(), id=self.snapshot.id
-        )
+        changed_snapshot = replace(self.next_snapshot(), id=self.snapshot.id)
         cases = (
             ("changed-key", self.request_for(self.snapshot, key=changed_key)),
             (
@@ -728,13 +776,17 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                     repository.store(request).outcome, RepositoryOutcome.CORRUPT
                 )
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (1,),
         )
 
     def test_exact_current_retry_does_not_materialize_unrelated_history(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         target = self.snapshot.target
         self.connection.execute(
             "INSERT INTO inventory_snapshots("
@@ -758,20 +810,26 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         self.assertEqual(result.outcome, RepositoryOutcome.REUSED)
         self.assertEqual(result.value, self.snapshot)
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (2,),
         )
 
     def test_exact_history_without_current_pointer_is_corrupt(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         self.connection.execute("DELETE FROM current_inventory_observations")
 
         result = repository.store(self.request())
 
         self.assertEqual(result.outcome, RepositoryOutcome.CORRUPT)
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (1,),
         )
         self.assertEqual(
@@ -790,7 +848,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         )
         changed = self.next_snapshot()
 
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         cases = (
             ("exact-current-matching-key", self.request(), RepositoryOutcome.REUSED),
             (
@@ -839,17 +899,19 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
 
     def test_fresh_id_unchanged_state_reuses_durable_current_row(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         fresh = replace(self.snapshot, id=SnapshotId("synthetic-snapshot-fresh"))
 
-        result = repository.store(
-            self.request_for(fresh, self.snapshot.fingerprint)
-        )
+        result = repository.store(self.request_for(fresh, self.snapshot.fingerprint))
 
         self.assertEqual(result.outcome, RepositoryOutcome.REUSED)
         self.assertEqual(result.value, self.snapshot)
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (1,),
         )
         self.assertEqual(
@@ -862,7 +924,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
     def test_historical_fingerprint_never_repoints_current(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
         advanced = self.next_snapshot()
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         self.assertEqual(
             repository.store(
                 self.request_for(advanced, self.snapshot.fingerprint)
@@ -883,13 +947,17 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             advanced,
         )
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (2,),
         )
 
     def test_idempotency_identity_bound_to_another_snapshot_is_corrupt(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
 
         result = repository.store(
             self.request_for(
@@ -899,13 +967,17 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
 
         self.assertEqual(result.outcome, RepositoryOutcome.CORRUPT)
         self.assertEqual(
-            self.connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+            self.connection.execute(
+                "SELECT count(*) FROM inventory_snapshots"
+            ).fetchone(),
             (1,),
         )
 
     def test_orphan_history_matrix_is_corrupt_and_never_mutates(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         self.connection.execute("DELETE FROM current_inventory_observations")
         fresh = replace(self.snapshot, id=SnapshotId("synthetic-snapshot-fresh"))
         changed = self.next_snapshot()
@@ -942,7 +1014,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
 
     def test_read_and_list_report_orphan_only_in_exact_connection_scope(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         self.connection.execute("DELETE FROM current_inventory_observations")
         target = self.snapshot.target
 
@@ -970,16 +1044,16 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             ).outcome,
             RepositoryOutcome.CORRUPT,
         )
-        other_connection = replace(
-            own_connection, id=ConnectionId("other-connection")
-        )
+        other_connection = replace(own_connection, id=ConnectionId("other-connection"))
         listed = repository.list(
             LibraryListRequest(other_connection, PageRequest(None, 1), _context())
         )
         self.assertEqual(listed.outcome, RepositoryOutcome.ACCEPTED)
         self.assertEqual(listed.value.items, ())
 
-    def test_inverse_orphan_pointer_matrix_is_corrupt_and_connection_scoped(self) -> None:
+    def test_inverse_orphan_pointer_matrix_is_corrupt_and_connection_scoped(
+        self,
+    ) -> None:
         target = self.snapshot.target
         values = (
             target.adapter.value,
@@ -1064,9 +1138,7 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             ).outcome,
             RepositoryOutcome.CORRUPT,
         )
-        other_connection = replace(
-            own_connection, id=ConnectionId("other-connection")
-        )
+        other_connection = replace(own_connection, id=ConnectionId("other-connection"))
         other = repository.list(
             LibraryListRequest(other_connection, PageRequest(None, 1), _context())
         )
@@ -1086,7 +1158,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
 
     def test_history_is_append_only_and_cross_scope_reads_do_not_match(self) -> None:
         repository = SQLiteInventoryRepository(self.connection)
-        self.assertEqual(repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED)
+        self.assertEqual(
+            repository.store(self.request()).outcome, RepositoryOutcome.ACCEPTED
+        )
         with self.assertRaises(sqlite3.IntegrityError):
             self.connection.execute(
                 "UPDATE inventory_snapshots SET canonical_input = '{}'"
@@ -1095,7 +1169,12 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
             self.connection.execute("DELETE FROM inventory_snapshots")
 
         other = _fixture().target
-        other = type(other)(other.adapter, other.connection, LibraryId("other-library"), other.external_item)
+        other = type(other)(
+            other.adapter,
+            other.connection,
+            LibraryId("other-library"),
+            other.external_item,
+        )
         self.assertEqual(
             repository.read(LibraryReadRequest(other, _context())).outcome,
             RepositoryOutcome.NOT_FOUND,
@@ -1103,7 +1182,10 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
 
     def test_missing_nested_and_deep_canonical_rows_return_typed_corrupt(self) -> None:
         for serialized in ("{}", '{"target":[]}', "[" * 1_000):
-            with self.subTest(serialized=serialized[:20]), tempfile.TemporaryDirectory() as directory:
+            with (
+                self.subTest(serialized=serialized[:20]),
+                tempfile.TemporaryDirectory() as directory,
+            ):
                 connection = sqlite.connect(Path(directory) / "state.sqlite")
                 try:
                     sqlite.migrate(connection)
@@ -1130,9 +1212,7 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
                         values,
                     )
                     repository = SQLiteInventoryRepository(connection)
-                    result = repository.read(
-                        LibraryReadRequest(target, _context())
-                    )
+                    result = repository.read(LibraryReadRequest(target, _context()))
                     self.assertEqual(result.outcome, RepositoryOutcome.CORRUPT)
                     self.assertIsNone(result.value)
                     changes_before_inspect = connection.total_changes
@@ -1233,9 +1313,7 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(listed.outcome, RepositoryOutcome.CORRUPT)
         self.assertIsNone(listed.value)
-        stored = repository.store(
-            self.request_for(self.snapshot, context=context)
-        )
+        stored = repository.store(self.request_for(self.snapshot, context=context))
         self.assertEqual(stored.outcome, RepositoryOutcome.CORRUPT)
         self.assertIsNone(stored.value)
         self.assertEqual(
@@ -1330,7 +1408,9 @@ class SQLiteInventoryRepositoryTests(unittest.TestCase):
 
 
 class InventoryMigrationTests(unittest.TestCase):
-    def test_inventory_canonical_sql_constraint_uses_utf8_bytes_and_text_only(self) -> None:
+    def test_inventory_canonical_sql_constraint_uses_utf8_bytes_and_text_only(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = sqlite.connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
@@ -1346,7 +1426,13 @@ class InventoryMigrationTests(unittest.TestCase):
                     ") VALUES ('synthetic', 'boundary', 'library', ?, ?, "
                     "'snapshot-store', ?, 'sha256', 'snapshot-v1', ?, ?, "
                     "'2026-01-01T00:00:00.000000Z')",
-                    (f"item-{sequence}", f"snapshot-{sequence}", digest, digest, canonical),
+                    (
+                        f"item-{sequence}",
+                        f"snapshot-{sequence}",
+                        digest,
+                        digest,
+                        canonical,
+                    ),
                 )
 
             insert(1, "x" * 1_048_576)
@@ -1371,7 +1457,9 @@ class InventoryMigrationTests(unittest.TestCase):
             self.assertIn("length(CAST(canonical_input AS BLOB))", definition)
             self.assertIn("1048576", definition)
 
-    def test_old_unreleased_f03_bound_fails_closed_against_corrected_checksum(self) -> None:
+    def test_old_unreleased_f03_bound_fails_closed_against_corrected_checksum(
+        self,
+    ) -> None:
         current = sqlite.MIGRATIONS[2]
         old_statements = tuple(
             statement.replace(
@@ -1384,14 +1472,14 @@ class InventoryMigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             connection = sqlite.connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
-            with patch.object(
-                sqlite, "MIGRATIONS", (*sqlite.MIGRATIONS[:2], old)
-            ):
+            with patch.object(sqlite, "MIGRATIONS", (*sqlite.MIGRATIONS[:2], old)):
                 self.assertEqual(sqlite.migrate(connection), 3)
             with self.assertRaises(SchemaError):
                 sqlite.migrate(connection)
 
-    def test_genuine_f02_state_survives_f03_migration_and_idempotent_reopen(self) -> None:
+    def test_genuine_f02_state_survives_f03_migration_and_idempotent_reopen(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.sqlite"
             connection = sqlite.connect(path)
@@ -1404,7 +1492,11 @@ class InventoryMigrationTests(unittest.TestCase):
                 "INSERT INTO workflow_runs(run_id, definition_version, graph_digest, state, "
                 "cancellation_requested, created_at, updated_at) VALUES "
                 "('f02-sentinel', 'heartbeat-v1', ?, 'waiting', 0, ?, ?)",
-                ("a" * 64, "2026-01-01T00:00:00.000000Z", "2026-01-01T00:00:00.000000Z"),
+                (
+                    "a" * 64,
+                    "2026-01-01T00:00:00.000000Z",
+                    "2026-01-01T00:00:00.000000Z",
+                ),
             )
             connection.execute(
                 "INSERT INTO workflow_stages(run_id, stage_id, position, kind, version, "
@@ -1422,8 +1514,8 @@ class InventoryMigrationTests(unittest.TestCase):
                 "('f02-audit', 'discovery', '2026-01-01T00:00:00.000000Z', 'discovered item')"
             )
 
-            self.assertEqual(sqlite.migrate(connection), 3)
-            self.assertEqual(sqlite.migrate(connection), 3)
+            self.assertEqual(sqlite.migrate(connection), 4)
+            self.assertEqual(sqlite.migrate(connection), 4)
             self.assertEqual(
                 connection.execute(
                     "SELECT value FROM instance_metadata WHERE key = 'f02-sentinel'"
@@ -1450,7 +1542,9 @@ class InventoryMigrationTests(unittest.TestCase):
             )
             connection.close()
 
-    def test_interrupted_f03_ddl_leaves_exact_f02_state_then_clean_retry_succeeds(self) -> None:
+    def test_interrupted_f03_ddl_leaves_exact_f02_state_then_clean_retry_succeeds(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.sqlite"
             connection = sqlite.connect(path)
@@ -1484,7 +1578,7 @@ class InventoryMigrationTests(unittest.TestCase):
                 ).fetchone(),
                 ("preserved",),
             )
-            self.assertEqual(sqlite.migrate(connection), 3)
+            self.assertEqual(sqlite.migrate(connection), 4)
             snapshot = _fixture()
             key = IdempotencyKey.from_canonical_input(
                 operation="snapshot-store",
@@ -1497,10 +1591,16 @@ class InventoryMigrationTests(unittest.TestCase):
             )
             request = SnapshotStoreRequest(snapshot, key, None, _context())
             repository = SQLiteInventoryRepository(connection)
-            self.assertEqual(repository.store(request).outcome, RepositoryOutcome.ACCEPTED)
-            self.assertEqual(repository.store(request).outcome, RepositoryOutcome.REUSED)
             self.assertEqual(
-                connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+                repository.store(request).outcome, RepositoryOutcome.ACCEPTED
+            )
+            self.assertEqual(
+                repository.store(request).outcome, RepositoryOutcome.REUSED
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT count(*) FROM inventory_snapshots"
+                ).fetchone(),
                 (1,),
             )
             self.assertEqual(
@@ -1514,6 +1614,61 @@ class InventoryMigrationTests(unittest.TestCase):
                     "SELECT value FROM instance_metadata WHERE key = 'f02-sentinel'"
                 ).fetchone(),
                 ("preserved",),
+            )
+            connection.close()
+
+    def test_interrupted_f05a_migration_rolls_back_and_preserves_v1_readability(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = sqlite.connect(Path(directory) / "state.sqlite")
+            with patch.object(sqlite, "MIGRATIONS", sqlite.MIGRATIONS[:3]):
+                self.assertEqual(sqlite.migrate(connection), 3)
+            snapshot = _fixture()
+            key = IdempotencyKey.from_canonical_input(
+                operation="snapshot-store",
+                target=snapshot.target,
+                value={
+                    "fingerprint": snapshot.fingerprint.digest,
+                    "schema": snapshot.fingerprint.schema.value,
+                    "snapshot": snapshot.id.value,
+                },
+            )
+            repository = SQLiteInventoryRepository(connection)
+            self.assertEqual(
+                repository.store(
+                    SnapshotStoreRequest(snapshot, key, None, _context())
+                ).outcome,
+                RepositoryOutcome.ACCEPTED,
+            )
+            failed = Migration(
+                4,
+                (sqlite.MIGRATIONS[3].statements[0], "CREATE TABLE broken ("),
+                frozenset({"inventory_v2_snapshots", "broken"}),
+            )
+            with patch.object(sqlite, "MIGRATIONS", (*sqlite.MIGRATIONS[:3], failed)):
+                with self.assertRaises(SchemaError):
+                    sqlite.migrate(connection)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall(),
+                [(1,), (2,), (3,)],
+            )
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT name FROM sqlite_master WHERE name='inventory_v2_snapshots'"
+                ).fetchone()
+            )
+            self.assertEqual(
+                repository.read(LibraryReadRequest(snapshot.target, _context())).value,
+                snapshot,
+            )
+            self.assertEqual(sqlite.migrate(connection), 4)
+            self.assertEqual(sqlite.migrate(connection), 4)
+            self.assertEqual(
+                repository.read(LibraryReadRequest(snapshot.target, _context())).value,
+                snapshot,
             )
             connection.close()
 

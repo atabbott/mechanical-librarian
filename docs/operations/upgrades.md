@@ -80,6 +80,17 @@ job, attempt, checkpoint, and transition data. A clean retry applies migration
 3 once. Downgrade requires restoring a verified pre-F03 copy; an F02 binary
 must not open F03 state.
 
+The F05a inventory-v2 migration is additive and forward-only from genuine F03
+state. Migration 4 leaves every `snapshot-v1` history row and current pointer
+unchanged, then adds immutable inventory-v2 history, current pointers, durable
+scan state, and scan membership. Fault injection after its first object proves
+the entire migration and version row roll back, the v1 reader remains usable,
+and a clean retry applies migration 4 exactly once. Downgrade requires stopping
+the service and restoring a verified pre-F05a backup; operators must not delete
+v2 tables or edit `schema_migrations`. After upgrade or restore, run
+`state-check`, a v1 synthetic inventory readback, and `inventory-inspect` before
+resuming normal operation.
+
 ## Verification
 
 After upgrade:

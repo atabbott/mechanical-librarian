@@ -1,0 +1,37 @@
+{
+  "id": "21234567-89ab-4def-8123-456789abcdef",
+  "isInvalid": false,
+  "isMissing": false,
+  "libraryId": "01234567-89ab-4def-8123-456789abcdef",
+  "media": {
+    "ebookFile": {
+      "ebookFormat": "epub",
+      "ino": "synthetic-ebook-inode",
+      "metadata": {
+        "birthtimeMs": 1767225500000,
+        "ctimeMs": 1767225550000,
+        "ext": ".epub",
+        "filename": "book.epub",
+        "mtimeMs": 1767225600000,
+        "path": "synthetic/book.epub",
+        "relPath": "book.epub",
+        "size": 456
+      }
+    },
+    "metadata": {
+      "asin": "B000000001",
+      "authors": [
+        {
+          "id": "author-2",
+          "name": "Example Author"
+        }
+      ],
+      "genres": ["Reference"],
+      "isbn": null,
+      "language": "eng",
+      "title": "Synthetic ebook"
+    }
+  },
+  "mediaType": "book",
+  "updatedAt": 1767225600000
+}

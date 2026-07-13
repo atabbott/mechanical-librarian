@@ -55,6 +55,28 @@ external item value crosses the adapter boundary only as an uninterpreted
 `ExternalItemId` inside its fully scoped canonical `TargetId`; application and
 domain APIs never accept or persist it as a free, unscoped identity.
 
+### InventoryObservation and InventoryScan
+
+F05a adds the separately versioned `inventory-snapshot-v2` read model without
+changing or replacing `snapshot-v1`. An `InventoryObservation` contains the
+fully scoped target, canonical media and lifecycle, separate bounded raw and
+normalized values for each supported generic field, typed source-load state,
+opaque file/cover identities, controlled warnings, and adapter, normalizer,
+schema, and service lineage. Observation time is durable provenance but is not
+semantic fingerprint input. Private paths may contribute transiently to a
+one-way identity at the adapter boundary; their source value never enters the
+domain record.
+
+An `InventoryScan` is scoped to one adapter, connection, and library and freezes
+its page, item, byte, deadline, and stability-delay bounds. It is durable before
+target I/O and transitions from `running` to exactly one of `complete`,
+`incomplete`, or `unstable`. Only two equal complete bounded passes can publish
+the v2 current pointers and disappearance snapshots. Publication validates the
+current-set fingerprint observed at scan start and commits snapshots, current
+pointers, scan membership, and terminal completeness atomically. Incomplete or
+unstable scans retain their diagnostic state but grant no write authority and
+cannot make absence authoritative.
+
 ### EvidenceRecord
 
 Immutable bounded evidence such as:

@@ -6,13 +6,136 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from mechanical_librarian.bootstrap import main
+import mechanical_librarian.bootstrap as bootstrap
+from mechanical_librarian.application.connection_probe import (
+    ConnectionProbeOutcome,
+    ConnectionProbeResult,
+)
+from mechanical_librarian.application.inventory_reconciliation import InventoryOutcome
+from mechanical_librarian.domain.identifiers import (
+    AdapterId,
+    ConnectionId,
+    LibraryId,
+)
+from mechanical_librarian.domain.inventory import (
+    AdapterCapabilities,
+    LibraryConnection,
+    MediaType,
+    SecretReference,
+    ServiceEndpoint,
+)
+from mechanical_librarian.domain.inventory_v2 import ScanBounds
 from mechanical_librarian.infrastructure.persistence.sqlite import SchemaError
+from mechanical_librarian.infrastructure.persistence.sqlite import migrate
+
+main = bootstrap.main
 
 
 class BootstrapTests(unittest.TestCase):
+    @staticmethod
+    def inventory_fixture():
+        library = LibraryId("01234567-89ab-4def-8123-456789abcdef")
+        endpoint = ServiceEndpoint("https://example.invalid")
+        secret = SecretReference("/tmp/synthetic-secret")
+        configured = SimpleNamespace(
+            endpoint=endpoint,
+            secret=secret,
+            adapter="audiobookshelf",
+            connection_id=ConnectionId("primary"),
+            enabled_libraries=(library.value,),
+        )
+        connection = LibraryConnection(
+            configured.connection_id,
+            AdapterId("audiobookshelf"),
+            endpoint,
+            secret,
+            AdapterCapabilities(
+                inventory_read=True,
+                metadata_read=True,
+                media_file_read=False,
+                notifications=False,
+                pagination=True,
+                concurrency_tokens=False,
+                cover_read=True,
+                writable_fields=frozenset(),
+                cover_write=False,
+                supported_media_types=frozenset({MediaType.AUDIOBOOK, MediaType.EBOOK}),
+            ),
+        )
+        return (
+            None,
+            configured,
+            connection,
+            (library,),
+            ScanBounds(2, 4, 10, 1_000_000, 300, 0),
+        )
+
+    def test_inventory_database_failure_precedes_target_probe(self) -> None:
+        with (
+            patch.object(
+                bootstrap,
+                "_inventory_connection",
+                return_value=self.inventory_fixture(),
+            ),
+            patch.object(bootstrap, "preflight", side_effect=SchemaError("synthetic")),
+            patch.object(bootstrap, "_probe_configured_connection") as probe,
+        ):
+            result = bootstrap._run_audiobookshelf_inventory(
+                Path("configuration.json"), Path("state.sqlite")
+            )
+
+        self.assertEqual(result.outcome, InventoryOutcome.INVALID_REQUEST)
+        probe.assert_not_called()
+
+    def test_inventory_probe_runs_after_durable_begin_and_terminalizes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = sqlite3.connect(Path(directory) / "state.sqlite")
+            database.execute("PRAGMA foreign_keys=ON")
+            migrate(database)
+
+            def probe_after_begin(*_args, **_kwargs):
+                self.assertEqual(
+                    database.execute(
+                        "SELECT COUNT(*) FROM inventory_scans WHERE state='running'"
+                    ).fetchone(),
+                    (1,),
+                )
+                return ConnectionProbeResult(
+                    ConnectionProbeOutcome.AUTHENTICATION_FAILED
+                )
+
+            try:
+                with (
+                    patch.object(
+                        bootstrap,
+                        "_inventory_connection",
+                        return_value=self.inventory_fixture(),
+                    ),
+                    patch.object(bootstrap, "preflight"),
+                    patch.object(bootstrap, "path_entry_exists", return_value=True),
+                    patch.object(
+                        bootstrap,
+                        "_run_existing_operation",
+                        side_effect=lambda _path, operation: operation(database),
+                    ),
+                    patch.object(
+                        bootstrap,
+                        "_probe_configured_connection",
+                        side_effect=probe_after_begin,
+                    ),
+                ):
+                    result = bootstrap._run_audiobookshelf_inventory(
+                        Path("configuration.json"), Path("state.sqlite")
+                    )
+            finally:
+                database.close()
+
+        self.assertEqual(result.outcome, InventoryOutcome.INCOMPLETE)
+        self.assertEqual(result.libraries[0].inspection.failure_kind, "authentication")
+
     def test_composed_job_heartbeat_is_restart_safe_and_path_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hostile-sentinel.sqlite"
@@ -21,9 +144,7 @@ class BootstrapTests(unittest.TestCase):
                 output = io.StringIO()
                 errors = io.StringIO()
                 with redirect_stdout(output), redirect_stderr(errors):
-                    exit_code = main(
-                        ["job-heartbeat", "--database", str(path)]
-                    )
+                    exit_code = main(["job-heartbeat", "--database", str(path)])
                 outputs.append((exit_code, output.getvalue(), errors.getvalue()))
 
         for exit_code, output, errors in outputs:
@@ -34,9 +155,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(errors, "")
 
     @patch("socket.socket", side_effect=AssertionError("network is forbidden"))
-    def test_job_heartbeat_constructs_no_network_authority(
-        self, _socket: Mock
-    ) -> None:
+    def test_job_heartbeat_constructs_no_network_authority(self, _socket: Mock) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()
             errors = io.StringIO()

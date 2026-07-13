@@ -81,6 +81,10 @@ class SnapshotId(Identifier):
     kind = "snapshot ID"
 
 
+class ScanId(Identifier):
+    kind = "inventory scan ID"
+
+
 class EvidenceId(Identifier):
     kind = "evidence ID"
 
@@ -139,7 +143,9 @@ class ExternalItemId:
         if not self.value or len(self.value) > _EXTERNAL_VALUE_MAX_LENGTH:
             raise DomainValueError("external item ID must be 1-512 characters")
         if self.value.strip() != self.value or "\x00" in self.value:
-            raise DomainValueError("external item ID must be trimmed and contain no NUL")
+            raise DomainValueError(
+                "external item ID must be trimmed and contain no NUL"
+            )
 
     def __str__(self) -> str:
         return self.value
@@ -234,7 +240,9 @@ class Fingerprint:
         if self.algorithm != "sha256":
             raise DomainValueError("fingerprint algorithm must be 'sha256'")
         if not _DIGEST_PATTERN.fullmatch(self.digest):
-            raise DomainValueError("fingerprint digest must be a lowercase SHA-256 digest")
+            raise DomainValueError(
+                "fingerprint digest must be a lowercase SHA-256 digest"
+            )
 
     @classmethod
     def from_canonical_value(cls, value: Any, *, schema: SchemaVersion) -> Self:
@@ -261,7 +269,9 @@ class IdempotencyKey:
         if not _IDENTIFIER_PATTERN.fullmatch(self.operation):
             raise DomainValueError("idempotency operation must be a bounded identifier")
         if not _DIGEST_PATTERN.fullmatch(self.digest):
-            raise DomainValueError("idempotency digest must be a lowercase SHA-256 digest")
+            raise DomainValueError(
+                "idempotency digest must be a lowercase SHA-256 digest"
+            )
 
     @classmethod
     def from_canonical_input(
@@ -316,4 +326,6 @@ def canonical_json(value: Any) -> str:
             sort_keys=True,
         )
     except (TypeError, ValueError) as error:
-        raise DomainValueError("canonical input must be finite JSON-compatible data") from error
+        raise DomainValueError(
+            "canonical input must be finite JSON-compatible data"
+        ) from error

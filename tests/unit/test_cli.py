@@ -22,10 +22,64 @@ from mechanical_librarian.application.state_check import (
     StateCheckOutcome,
     StateCheckResult,
 )
+from mechanical_librarian.application.inventory_reconciliation import (
+    InventoryLibraryResult,
+    InventoryOutcome,
+    InventoryRunResult,
+)
+from mechanical_librarian.domain.identifiers import LibraryId, ScanId
+from mechanical_librarian.domain.inventory_v2 import InventoryInspection, ScanState
 from mechanical_librarian.interfaces.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_incomplete_inventory_is_inspectable_without_external_identity(
+        self,
+    ) -> None:
+        result = InventoryRunResult(
+            InventoryOutcome.INCOMPLETE,
+            (
+                InventoryLibraryResult(
+                    LibraryId("01234567-89ab-4def-8123-456789abcdef"),
+                    InventoryOutcome.INCOMPLETE,
+                    InventoryInspection(
+                        ScanId("scan-private-scope"),
+                        ScanState.INCOMPLETE,
+                        "timeout",
+                        2,
+                        2,
+                        0,
+                        3,
+                        4,
+                        512,
+                        0,
+                    ),
+                ),
+            ),
+        )
+        output = io.StringIO()
+        errors = io.StringIO()
+        exit_code = main(
+            [
+                "audiobookshelf-inventory",
+                "--config",
+                "/private/config.json",
+                "--database",
+                "/private/state.sqlite",
+            ],
+            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+            audiobookshelf_inventory_runner=lambda _config, _database: result,
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("state=incomplete failure=timeout", errors.getvalue())
+        self.assertIn("items=2 active=2 removed=0 history=3", errors.getvalue())
+        self.assertNotIn("01234567", errors.getvalue())
+        self.assertNotIn("scan-private", errors.getvalue())
+        self.assertNotIn("/private", errors.getvalue())
+
     def test_heartbeat_projection_rejects_unknown_or_private_values(self) -> None:
         with self.assertRaises(ValueError):
             HeartbeatResult(HeartbeatOutcome.PASSED, ("/private/sentinel",))
@@ -157,7 +211,9 @@ class CliTests(unittest.TestCase):
                 errors = io.StringIO()
                 exit_code = main(
                     ["state-check", "--database", "/private/sentinel.sqlite"],
-                    state_check_runner=lambda _path, value=outcome: StateCheckResult(value),
+                    state_check_runner=lambda _path, value=outcome: StateCheckResult(
+                        value
+                    ),
                     stdout=output,
                     stderr=errors,
                 )

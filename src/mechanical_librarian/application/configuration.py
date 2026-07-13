@@ -113,21 +113,37 @@ class ConnectionConfiguration:
 
     def __post_init__(self) -> None:
         _text(self.adapter, "connection adapter", 64)
-        if type(self.endpoint) is not ServiceEndpoint or type(self.secret) is not SecretReference:
-            raise ConfigurationError("connection endpoint or secret reference is malformed")
+        if (
+            type(self.endpoint) is not ServiceEndpoint
+            or type(self.secret) is not SecretReference
+        ):
+            raise ConfigurationError(
+                "connection endpoint or secret reference is malformed"
+            )
         if (
             type(self.enabled_libraries) is not tuple
             or not self.enabled_libraries
             or self.enabled_libraries != tuple(sorted(self.enabled_libraries))
         ):
-            raise ConfigurationError("enabled libraries must be a canonical non-empty tuple")
-        if _text_tuple(self.enabled_libraries, "enabled libraries", required=True) != self.enabled_libraries:
+            raise ConfigurationError(
+                "enabled libraries must be a canonical non-empty tuple"
+            )
+        if (
+            _text_tuple(self.enabled_libraries, "enabled libraries", required=True)
+            != self.enabled_libraries
+        ):
             raise ConfigurationError("enabled libraries are malformed")
         if type(self.capability_overrides) is not tuple:
             raise ConfigurationError("capability overrides must be a canonical tuple")
-        if _capability_overrides(self.capability_overrides) != self.capability_overrides:
+        if (
+            _capability_overrides(self.capability_overrides)
+            != self.capability_overrides
+        ):
             raise ConfigurationError("capability overrides must be a canonical tuple")
-        if self.connection_id is not None and type(self.connection_id) is not ConnectionId:
+        if (
+            self.connection_id is not None
+            and type(self.connection_id) is not ConnectionId
+        ):
             raise ConfigurationError("connection ID is malformed")
 
     def __repr__(self) -> str:
@@ -149,8 +165,12 @@ class MediaMountConfiguration:
         _text(self.service_path, "media mount service path", 1024)
         if type(self.read_only) is not bool or not self.read_only:
             raise ConfigurationError("media mounts must be read-only")
-        if not self.container_path.startswith("/") or not self.service_path.startswith("/"):
-            raise ConfigurationError("media mount paths must be absolute container/service paths")
+        if not self.container_path.startswith("/") or not self.service_path.startswith(
+            "/"
+        ):
+            raise ConfigurationError(
+                "media mount paths must be absolute container/service paths"
+            )
 
     def __repr__(self) -> str:
         return "MediaMountConfiguration(<redacted>)"
@@ -163,13 +183,18 @@ class ResourceLimits:
     temporary_bytes: int = 1_073_741_824
 
     def __post_init__(self) -> None:
-        if type(self.parser_concurrency) is not int or not 1 <= self.parser_concurrency <= 8:
+        if (
+            type(self.parser_concurrency) is not int
+            or not 1 <= self.parser_concurrency <= 8
+        ):
             raise ConfigurationError("parser concurrency must be between 1 and 8")
         if (
             type(self.parser_timeout_seconds) is not int
             or not 1 <= self.parser_timeout_seconds <= 3_600
         ):
-            raise ConfigurationError("parser timeout must be between 1 and 3600 seconds")
+            raise ConfigurationError(
+                "parser timeout must be between 1 and 3600 seconds"
+            )
         if (
             type(self.temporary_bytes) is not int
             or not 1_048_576 <= self.temporary_bytes <= 17_179_869_184
@@ -191,14 +216,18 @@ class EvidenceConfiguration:
             or _text_tuple(self.enabled_formats, "evidence formats", required=True)
             != self.enabled_formats
         ):
-            raise ConfigurationError("evidence formats must be a canonical non-empty tuple")
+            raise ConfigurationError(
+                "evidence formats must be a canonical non-empty tuple"
+            )
         if not all(value in {"epub", "m4b", "mp3"} for value in self.enabled_formats):
             raise ConfigurationError("evidence format is unsupported")
         if (
             type(self.maximum_document_bytes) is not int
             or not 1_048_576 <= self.maximum_document_bytes <= 536_870_912
         ):
-            raise ConfigurationError("evidence document byte limit is outside safe bounds")
+            raise ConfigurationError(
+                "evidence document byte limit is outside safe bounds"
+            )
         if (
             type(self.maximum_text_characters) is not int
             or not 1_024 <= self.maximum_text_characters <= 4_194_304
@@ -237,6 +266,31 @@ class PolicyConfiguration:
             raise ConfigurationError("policy version is malformed") from None
 
 
+@dataclass(frozen=True)
+class InventoryConfiguration:
+    page_size: int = 100
+    max_pages: int = 512
+    max_items: int = 10_000
+    max_response_bytes: int = 67_108_864
+    timeout_seconds: int = 300
+    stability_delay_seconds: int = 0
+
+    def __post_init__(self) -> None:
+        bounds = (
+            (self.page_size, 1, 500),
+            (self.max_pages, 2, 10_000),
+            (self.max_items, 2, 10_000),
+            (self.max_response_bytes, 1_024, 67_108_864),
+            (self.timeout_seconds, 1, 3_600),
+            (self.stability_delay_seconds, 0, 86_400),
+        )
+        if any(
+            type(value) is not int or not minimum <= value <= maximum
+            for value, minimum, maximum in bounds
+        ):
+            raise ConfigurationError("inventory bounds are invalid")
+
+
 @dataclass(frozen=True, repr=False)
 class ApplicationConfiguration:
     schema_version: SchemaVersion
@@ -244,6 +298,7 @@ class ApplicationConfiguration:
     connections: tuple[ConnectionConfiguration, ...]
     media_mounts: tuple[MediaMountConfiguration, ...]
     limits: ResourceLimits
+    inventory: InventoryConfiguration = field(default_factory=InventoryConfiguration)
     evidence: EvidenceConfiguration = field(default_factory=EvidenceConfiguration)
     providers: tuple[str, ...] = ()
     reviewers: tuple[str, ...] = ()
@@ -254,15 +309,17 @@ class ApplicationConfiguration:
     destructive_actions_enabled: bool = False
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not SchemaVersion or self.schema_version != SchemaVersion(
-            "config-v1"
-        ):
+        if type(
+            self.schema_version
+        ) is not SchemaVersion or self.schema_version != SchemaVersion("config-v1"):
             raise ConfigurationError("unsupported configuration schema version")
         _text(self.instance_name, "instance name", 64)
         if (
             type(self.connections) is not tuple
             or not self.connections
-            or any(type(value) is not ConnectionConfiguration for value in self.connections)
+            or any(
+                type(value) is not ConnectionConfiguration for value in self.connections
+            )
         ):
             raise ConfigurationError("configuration requires typed connections")
         if type(self.media_mounts) is not tuple or any(
@@ -271,6 +328,7 @@ class ApplicationConfiguration:
             raise ConfigurationError("configuration requires typed media mounts")
         if (
             type(self.limits) is not ResourceLimits
+            or type(self.inventory) is not InventoryConfiguration
             or type(self.evidence) is not EvidenceConfiguration
             or type(self.policy) is not PolicyConfiguration
             or type(self.retention) is not RetentionConfiguration
@@ -285,8 +343,13 @@ class ApplicationConfiguration:
                 raise ConfigurationError(f"{label} must be an immutable typed tuple")
         if type(self.backups_enabled) is not bool:
             raise ConfigurationError("backups enabled must be a boolean")
-        if type(self.destructive_actions_enabled) is not bool or self.destructive_actions_enabled:
-            raise ConfigurationError("destructive actions are not configurable in this release")
+        if (
+            type(self.destructive_actions_enabled) is not bool
+            or self.destructive_actions_enabled
+        ):
+            raise ConfigurationError(
+                "destructive actions are not configurable in this release"
+            )
 
     def __repr__(self) -> str:
         return "ApplicationConfiguration(<redacted>)"
@@ -324,6 +387,14 @@ class ApplicationConfiguration:
                 "parser_timeout_seconds": self.limits.parser_timeout_seconds,
                 "temporary_bytes": self.limits.temporary_bytes,
             },
+            "inventory": {
+                "page_size": self.inventory.page_size,
+                "max_pages": self.inventory.max_pages,
+                "max_items": self.inventory.max_items,
+                "max_response_bytes": self.inventory.max_response_bytes,
+                "timeout_seconds": self.inventory.timeout_seconds,
+                "stability_delay_seconds": self.inventory.stability_delay_seconds,
+            },
             "evidence": {
                 "enabled_formats": list(self.evidence.enabled_formats),
                 "maximum_document_bytes": self.evidence.maximum_document_bytes,
@@ -343,34 +414,49 @@ class ApplicationConfiguration:
         }
 
 
-_CONFIGURATION_FIELDS = frozenset({
-    "schema_version",
-    "instance_name",
-    "connections",
-    "media_mounts",
-    "limits",
-    "evidence",
-    "providers",
-    "reviewers",
-    "policy",
-    "notifications",
-    "backups_enabled",
-    "retention",
-    "destructive_actions_enabled",
-})
-_CONNECTION_FIELDS = frozenset({
-    "id",
-    "adapter",
-    "endpoint",
-    "secret_reference",
-    "enabled_libraries",
-    "capability_overrides",
-})
+_CONFIGURATION_FIELDS = frozenset(
+    {
+        "schema_version",
+        "instance_name",
+        "connections",
+        "media_mounts",
+        "limits",
+        "inventory",
+        "evidence",
+        "providers",
+        "reviewers",
+        "policy",
+        "notifications",
+        "backups_enabled",
+        "retention",
+        "destructive_actions_enabled",
+    }
+)
+_CONNECTION_FIELDS = frozenset(
+    {
+        "id",
+        "adapter",
+        "endpoint",
+        "secret_reference",
+        "enabled_libraries",
+        "capability_overrides",
+    }
+)
 _MOUNT_FIELDS = frozenset(
     {"name", "library_type", "container_path", "service_path", "read_only"}
 )
 _LIMIT_FIELDS = frozenset(
     {"parser_concurrency", "parser_timeout_seconds", "temporary_bytes"}
+)
+_INVENTORY_FIELDS = frozenset(
+    {
+        "page_size",
+        "max_pages",
+        "max_items",
+        "max_response_bytes",
+        "timeout_seconds",
+        "stability_delay_seconds",
+    }
 )
 _POLICY_FIELDS = frozenset({"policy_version"})
 _EVIDENCE_FIELDS = frozenset(
@@ -379,15 +465,17 @@ _EVIDENCE_FIELDS = frozenset(
 _RETENTION_FIELDS = frozenset(
     {"evidence_days", "job_log_days", "maximum_artifact_bytes"}
 )
-_READ_ONLY_CAPABILITY_OVERRIDES = frozenset({
-    "inventory-read",
-    "metadata-read",
-    "media-file-read",
-    "notifications",
-    "pagination",
-    "concurrency-tokens",
-    "cover-read",
-})
+_READ_ONLY_CAPABILITY_OVERRIDES = frozenset(
+    {
+        "inventory-read",
+        "metadata-read",
+        "media-file-read",
+        "notifications",
+        "pagination",
+        "concurrency-tokens",
+        "cover-read",
+    }
+)
 
 
 def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
@@ -401,14 +489,20 @@ def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration
         instance_name = _required_text(source, "instance_name", 64)
         connections = tuple(
             _connection(value)
-            for value in _sequence(source.get("connections"), "connections", required=True)
+            for value in _sequence(
+                source.get("connections"), "connections", required=True
+            )
         )
         mounts = tuple(
-            _mount(value) for value in _sequence(source.get("media_mounts", ()), "media mounts")
+            _mount(value)
+            for value in _sequence(source.get("media_mounts", ()), "media mounts")
         )
         limits_source = source.get("limits", {})
         _only(limits_source, _LIMIT_FIELDS, "limits")
         limits = ResourceLimits(**limits_source)
+        inventory_source = source.get("inventory", {})
+        _only(inventory_source, _INVENTORY_FIELDS, "inventory")
+        inventory = InventoryConfiguration(**inventory_source)
         evidence_source = source.get("evidence", {})
         _only(evidence_source, _EVIDENCE_FIELDS, "evidence")
         evidence = EvidenceConfiguration(
@@ -427,14 +521,21 @@ def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration
         policy_source = source.get("policy", {})
         _only(policy_source, _POLICY_FIELDS, "policy")
         policy = PolicyConfiguration(
-            policy_version=_text(policy_source.get("policy_version", "policy-v1"), "policy version", 64)
+            policy_version=_text(
+                policy_source.get("policy_version", "policy-v1"), "policy version", 64
+            )
         )
-        backups_enabled = _boolean(source.get("backups_enabled", True), "backups enabled")
+        backups_enabled = _boolean(
+            source.get("backups_enabled", True), "backups enabled"
+        )
         destructive = _boolean(
-            source.get("destructive_actions_enabled", False), "destructive actions enabled"
+            source.get("destructive_actions_enabled", False),
+            "destructive actions enabled",
         )
         if destructive:
-            raise ConfigurationError("destructive actions are not configurable in this release")
+            raise ConfigurationError(
+                "destructive actions are not configurable in this release"
+            )
         retention_source = source.get("retention", {})
         _only(retention_source, _RETENTION_FIELDS, "retention")
         retention = RetentionConfiguration(**retention_source)
@@ -444,6 +545,7 @@ def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration
             connections=connections,
             media_mounts=mounts,
             limits=limits,
+            inventory=inventory,
             evidence=evidence,
             providers=_text_tuple(source.get("providers", ()), "providers"),
             reviewers=_text_tuple(source.get("reviewers", ()), "reviewers"),
@@ -473,7 +575,9 @@ def _projection(attribute: str) -> Callable[[ApplicationConfiguration], object]:
     return lambda configuration: getattr(configuration, attribute)
 
 
-def _connection_projection(attribute: str) -> Callable[[ApplicationConfiguration], object]:
+def _connection_projection(
+    attribute: str,
+) -> Callable[[ApplicationConfiguration], object]:
     return lambda configuration: tuple(
         getattr(connection, attribute) for connection in configuration.connections
     )
@@ -489,16 +593,27 @@ def _limit_projection(attribute: str) -> Callable[[ApplicationConfiguration], ob
     return lambda configuration: getattr(configuration.limits, attribute)
 
 
-def _evidence_projection(attribute: str) -> Callable[[ApplicationConfiguration], object]:
+def _inventory_projection(
+    attribute: str,
+) -> Callable[[ApplicationConfiguration], object]:
+    return lambda configuration: getattr(configuration.inventory, attribute)
+
+
+def _evidence_projection(
+    attribute: str,
+) -> Callable[[ApplicationConfiguration], object]:
     return lambda configuration: getattr(configuration.evidence, attribute)
 
 
-def _retention_projection(attribute: str) -> Callable[[ApplicationConfiguration], object]:
+def _retention_projection(
+    attribute: str,
+) -> Callable[[ApplicationConfiguration], object]:
     return lambda configuration: getattr(configuration.retention, attribute)
 
 
 _IMPACT_MATRIX: tuple[
-    tuple[str, Callable[[ApplicationConfiguration], object], tuple[ChangeImpact, ...]], ...
+    tuple[str, Callable[[ApplicationConfiguration], object], tuple[ChangeImpact, ...]],
+    ...,
 ] = (
     ("instance.instance_name", _projection("instance_name"), (_R,)),
     ("connections.id", _connection_projection("connection_id"), (_R, _I, _X, _C, _V)),
@@ -542,6 +657,20 @@ _IMPACT_MATRIX: tuple[
         (_R, _E),
     ),
     ("limits.temporary_bytes", _limit_projection("temporary_bytes"), (_R, _E)),
+    ("inventory.page_size", _inventory_projection("page_size"), (_R, _I)),
+    ("inventory.max_pages", _inventory_projection("max_pages"), (_R, _I)),
+    ("inventory.max_items", _inventory_projection("max_items"), (_R, _I)),
+    (
+        "inventory.max_response_bytes",
+        _inventory_projection("max_response_bytes"),
+        (_R, _I),
+    ),
+    ("inventory.timeout_seconds", _inventory_projection("timeout_seconds"), (_R, _I)),
+    (
+        "inventory.stability_delay_seconds",
+        _inventory_projection("stability_delay_seconds"),
+        (_R, _I),
+    ),
     (
         "evidence.enabled_formats",
         _evidence_projection("enabled_formats"),
@@ -559,7 +688,11 @@ _IMPACT_MATRIX: tuple[
     ),
     ("providers", _projection("providers"), (_R, _C, _V)),
     ("reviewers", _projection("reviewers"), (_R, _V)),
-    ("policy.policy_version", lambda configuration: configuration.policy.policy_version, (_R, _V)),
+    (
+        "policy.policy_version",
+        lambda configuration: configuration.policy.policy_version,
+        (_R, _V),
+    ),
     ("notifications", _projection("notifications"), (_R, _N)),
     ("backups_enabled", _projection("backups_enabled"), (_R, _B, _V)),
     ("retention.evidence_days", _retention_projection("evidence_days"), (_R,)),
@@ -577,7 +710,10 @@ def plan_projected_import(
 ) -> ConfigurationImportPlan:
     """Compare two strictly validated immutable configurations."""
 
-    if type(current) is not ApplicationConfiguration or type(proposed) is not ApplicationConfiguration:
+    if (
+        type(current) is not ApplicationConfiguration
+        or type(proposed) is not ApplicationConfiguration
+    ):
         raise ConfigurationError("configuration import requires validated projections")
     changes = tuple(
         ConfigurationChange(path, impacts)
@@ -596,7 +732,9 @@ def _connection(value: object) -> ConnectionConfiguration:
         enabled_libraries=_set_text_tuple(
             value.get("enabled_libraries"), "enabled libraries", required=True
         ),
-        capability_overrides=_capability_overrides(value.get("capability_overrides", ())),
+        capability_overrides=_capability_overrides(
+            value.get("capability_overrides", ())
+        ),
         connection_id=(
             None
             if value.get("id") is None
@@ -615,8 +753,12 @@ def _mount(value: object) -> MediaMountConfiguration:
     if not read_only:
         raise ConfigurationError("media mounts must be read-only")
     if not container_path.startswith("/") or not service_path.startswith("/"):
-        raise ConfigurationError("media mount paths must be absolute container/service paths")
-    return MediaMountConfiguration(name, library_type, container_path, service_path, True)
+        raise ConfigurationError(
+            "media mount paths must be absolute container/service paths"
+        )
+    return MediaMountConfiguration(
+        name, library_type, container_path, service_path, True
+    )
 
 
 def _only(value: object, allowed: frozenset[str], location: str) -> None:
@@ -640,7 +782,10 @@ def _text(value: object, label: str, maximum: int = 128) -> str:
         or not value
         or value.strip() != value
         or len(value) > maximum
-        or any(ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F for character in value)
+        or any(
+            ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
+            for character in value
+        )
     ):
         raise ConfigurationError(f"{label} is malformed")
     return value
@@ -654,14 +799,20 @@ def _sequence(value: object, label: str, *, required: bool = False) -> Sequence[
     return value
 
 
-def _text_tuple(value: object, label: str, *, required: bool = False) -> tuple[str, ...]:
-    values = tuple(_text(item, label) for item in _sequence(value, label, required=required))
+def _text_tuple(
+    value: object, label: str, *, required: bool = False
+) -> tuple[str, ...]:
+    values = tuple(
+        _text(item, label) for item in _sequence(value, label, required=required)
+    )
     if len(set(values)) != len(values):
         raise ConfigurationError(f"{label} must not contain duplicates")
     return values
 
 
-def _set_text_tuple(value: object, label: str, *, required: bool = False) -> tuple[str, ...]:
+def _set_text_tuple(
+    value: object, label: str, *, required: bool = False
+) -> tuple[str, ...]:
     return tuple(sorted(_text_tuple(value, label, required=required)))
 
 

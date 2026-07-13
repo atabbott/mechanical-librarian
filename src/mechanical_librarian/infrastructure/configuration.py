@@ -68,7 +68,9 @@ VersionText = Annotated[
         pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$",
     ),
 ]
-BoundedText64 = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=64)]
+BoundedText64 = Annotated[
+    str, StringConstraints(strict=True, min_length=1, max_length=64)
+]
 EndpointText = Annotated[
     str,
     StringConstraints(strict=True, min_length=8, max_length=256, pattern=r"^https?://"),
@@ -152,9 +154,22 @@ class ResourceLimitsInput(BaseModel):
 
     parser_concurrency: Annotated[StrictInt, Field(ge=1, le=8)] = 1
     parser_timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 60
-    temporary_bytes: Annotated[
-        StrictInt, Field(ge=1_048_576, le=17_179_869_184)
-    ] = 1_073_741_824
+    temporary_bytes: Annotated[StrictInt, Field(ge=1_048_576, le=17_179_869_184)] = (
+        1_073_741_824
+    )
+
+
+class InventoryInput(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    page_size: Annotated[StrictInt, Field(ge=1, le=500)] = 100
+    max_pages: Annotated[StrictInt, Field(ge=2, le=10_000)] = 512
+    max_items: Annotated[StrictInt, Field(ge=2, le=10_000)] = 10_000
+    max_response_bytes: Annotated[StrictInt, Field(ge=1_024, le=67_108_864)] = (
+        67_108_864
+    )
+    timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 300
+    stability_delay_seconds: Annotated[StrictInt, Field(ge=0, le=86_400)] = 0
 
 
 class EvidenceInput(BaseModel):
@@ -167,9 +182,9 @@ class EvidenceInput(BaseModel):
     maximum_document_bytes: Annotated[
         StrictInt, Field(ge=1_048_576, le=536_870_912)
     ] = 67_108_864
-    maximum_text_characters: Annotated[
-        StrictInt, Field(ge=1_024, le=4_194_304)
-    ] = 262_144
+    maximum_text_characters: Annotated[StrictInt, Field(ge=1_024, le=4_194_304)] = (
+        262_144
+    )
 
 
 class PolicyInput(BaseModel):
@@ -198,16 +213,20 @@ class ConfigurationInput(BaseModel):
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=64)]
     media_mounts: Annotated[list[MediaMountInput], Field(max_length=64)] = []
     limits: ResourceLimitsInput = ResourceLimitsInput()
+    inventory: InventoryInput = InventoryInput()
     evidence: EvidenceInput = EvidenceInput()
     providers: Annotated[
-        list[IdentifierText], Field(max_length=64, json_schema_extra={"uniqueItems": True})
+        list[IdentifierText],
+        Field(max_length=64, json_schema_extra={"uniqueItems": True}),
     ] = []
     reviewers: Annotated[
-        list[IdentifierText], Field(max_length=64, json_schema_extra={"uniqueItems": True})
+        list[IdentifierText],
+        Field(max_length=64, json_schema_extra={"uniqueItems": True}),
     ] = []
     policy: PolicyInput = PolicyInput()
     notifications: Annotated[
-        list[IdentifierText], Field(max_length=64, json_schema_extra={"uniqueItems": True})
+        list[IdentifierText],
+        Field(max_length=64, json_schema_extra={"uniqueItems": True}),
     ] = []
     backups_enabled: StrictBool = True
     retention: RetentionInput = RetentionInput()
@@ -264,12 +283,15 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
 def configuration_schema_json() -> str:
     """Return the deterministic generated config-v1 JSON Schema artifact."""
 
-    return json.dumps(
-        ConfigurationInput.model_json_schema(),
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-    ) + "\n"
+    return (
+        json.dumps(
+            ConfigurationInput.model_json_schema(),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 def _read_bounded_regular_file(path: Path) -> bytes:
@@ -282,7 +304,10 @@ def _read_bounded_regular_file(path: Path) -> bytes:
     descriptor = os.open(path, flags)
     try:
         information = os.fstat(descriptor)
-        if not stat.S_ISREG(information.st_mode) or information.st_size > _MAX_CONFIGURATION_BYTES:
+        if (
+            not stat.S_ISREG(information.st_mode)
+            or information.st_size > _MAX_CONFIGURATION_BYTES
+        ):
             raise ConfigurationError("configuration document is invalid")
         chunks: list[bytes] = []
         remaining = _MAX_CONFIGURATION_BYTES + 1
@@ -304,7 +329,9 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
-            raise ConfigurationError("configuration document contains a duplicate field")
+            raise ConfigurationError(
+                "configuration document contains a duplicate field"
+            )
         result[key] = value
     return result
 

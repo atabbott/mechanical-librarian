@@ -12,9 +12,13 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import mechanical_librarian.bootstrap as bootstrap
-from mechanical_librarian.adapters.library_services.synthetic import SyntheticLibraryReader
+from mechanical_librarian.adapters.library_services.synthetic import (
+    SyntheticLibraryReader,
+)
 from mechanical_librarian.application.ports import Page, PortResult
-from mechanical_librarian.application.synthetic_inventory import SyntheticInventoryOutcome
+from mechanical_librarian.application.synthetic_inventory import (
+    SyntheticInventoryOutcome,
+)
 from mechanical_librarian.domain.identifiers import SnapshotId
 from mechanical_librarian.domain.inventory import ItemLifecycle, ItemSnapshot
 
@@ -24,7 +28,9 @@ CONFIGURATION = ROOT / "docs" / "examples" / "synthetic-config.json"
 
 
 class ComposedSyntheticInventoryTests(unittest.TestCase):
-    def run_inventory(self, configuration: Path, database: Path) -> tuple[int, str, str]:
+    def run_inventory(
+        self, configuration: Path, database: Path
+    ) -> tuple[int, str, str]:
         output = io.StringIO()
         errors = io.StringIO()
         with redirect_stdout(output), redirect_stderr(errors):
@@ -39,7 +45,9 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
             )
         return exit_code, output.getvalue(), errors.getvalue()
 
-    def test_first_duplicate_and_process_style_restart_keep_one_history_and_current(self) -> None:
+    def test_first_duplicate_and_process_style_restart_keep_one_history_and_current(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "state.sqlite"
             first = self.run_inventory(CONFIGURATION, database)
@@ -61,11 +69,15 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
             connection = sqlite3.connect(database)
             self.addCleanup(connection.close)
             self.assertEqual(
-                connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall(),
-                [(1,), (2,), (3,)],
+                connection.execute(
+                    "SELECT version FROM schema_migrations ORDER BY version"
+                ).fetchall(),
+                [(1,), (2,), (3,), (4,)],
             )
             self.assertEqual(
-                connection.execute("SELECT count(*) FROM inventory_snapshots").fetchone(),
+                connection.execute(
+                    "SELECT count(*) FROM inventory_snapshots"
+                ).fetchone(),
                 (1,),
             )
             self.assertEqual(
@@ -94,7 +106,9 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
             ):
                 self.assertNotIn(private, persisted)
 
-    def test_restart_with_fresh_id_for_unchanged_state_reuses_durable_original(self) -> None:
+    def test_restart_with_fresh_id_for_unchanged_state_reuses_durable_original(
+        self,
+    ) -> None:
         class FreshIdReader:
             def __init__(self, connection, library) -> None:
                 self.delegate = SyntheticLibraryReader(connection, library)
@@ -204,7 +218,9 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
             finally:
                 connection.close()
 
-    def test_live_bootstrap_clock_expires_delayed_reader_without_publication(self) -> None:
+    def test_live_bootstrap_clock_expires_delayed_reader_without_publication(
+        self,
+    ) -> None:
         initial = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
         class MutableUtcDateTime:
@@ -243,9 +259,7 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
                 MutableUtcDateTime.current = initial
                 result = self.run_inventory(CONFIGURATION, database)
 
-            self.assertEqual(
-                direct.outcome, SyntheticInventoryOutcome.DEADLINE_EXPIRED
-            )
+            self.assertEqual(direct.outcome, SyntheticInventoryOutcome.DEADLINE_EXPIRED)
             self.assertIsNone(direct.inspection)
             self.assertEqual(
                 result,
@@ -303,9 +317,7 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
         self, _socket: Mock
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            result = self.run_inventory(
-                CONFIGURATION, Path(directory) / "state.sqlite"
-            )
+            result = self.run_inventory(CONFIGURATION, Path(directory) / "state.sqlite")
         self.assertEqual(result[0], 0, result[2])
         module_names = set(vars(bootstrap))
         for forbidden in (

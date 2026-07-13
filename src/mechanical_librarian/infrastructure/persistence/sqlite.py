@@ -32,7 +32,11 @@ class Migration:
 
     @property
     def checksum(self) -> str:
-        source = self.checksum_source if self.checksum_source is not None else "\n".join(self.statements)
+        source = (
+            self.checksum_source
+            if self.checksum_source is not None
+            else "\n".join(self.statements)
+        )
         return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
@@ -74,6 +78,7 @@ def _timestamp_constraint(column: str, *, nullable: bool = False) -> str:
         f"AND strftime('%Y-%m-%dT%H:%M:%S', {column}) = substr({column}, 1, 19)"
     )
     return f"{column} IS NULL OR ({required})" if nullable else required
+
 
 _WORKFLOW_RUNS_TABLE_SQL = (
     "CREATE TABLE workflow_runs ("
@@ -216,6 +221,73 @@ _INVENTORY_SNAPSHOTS_NO_DELETE_SQL = (
     "BEGIN SELECT RAISE(ABORT, 'inventory snapshots are append-only'); END"
 )
 
+_INVENTORY_V2_SNAPSHOTS_TABLE_SQL = (
+    "CREATE TABLE inventory_v2_snapshots ("
+    "adapter_id TEXT NOT NULL CHECK (typeof(adapter_id) = 'text' AND length(adapter_id) BETWEEN 1 AND 64), "
+    "connection_id TEXT NOT NULL CHECK (typeof(connection_id) = 'text' AND length(connection_id) BETWEEN 1 AND 64), "
+    "library_id TEXT NOT NULL CHECK (typeof(library_id) = 'text' AND length(library_id) BETWEEN 1 AND 64), "
+    "external_item TEXT NOT NULL CHECK (typeof(external_item) = 'text' AND length(external_item) BETWEEN 1 AND 512), "
+    "snapshot_id TEXT NOT NULL CHECK (typeof(snapshot_id) = 'text' AND length(snapshot_id) BETWEEN 1 AND 64), "
+    "fingerprint_algorithm TEXT NOT NULL CHECK (fingerprint_algorithm = 'sha256'), "
+    "fingerprint_schema TEXT NOT NULL CHECK (fingerprint_schema = 'inventory-snapshot-v2'), "
+    "fingerprint_digest TEXT NOT NULL CHECK (length(fingerprint_digest) = 64 AND fingerprint_digest NOT GLOB '*[^0-9a-f]*'), "
+    "canonical_observation TEXT NOT NULL CHECK (typeof(canonical_observation) = 'text' AND length(CAST(canonical_observation AS BLOB)) BETWEEN 2 AND 1048576), "
+    f"observed_at TEXT NOT NULL CHECK ({_timestamp_constraint('observed_at')}), "
+    "PRIMARY KEY (adapter_id, connection_id, library_id, external_item, snapshot_id), "
+    "UNIQUE (adapter_id, connection_id, library_id, external_item, fingerprint_schema, fingerprint_digest))"
+)
+_CURRENT_INVENTORY_V2_TABLE_SQL = (
+    "CREATE TABLE current_inventory_v2 ("
+    "adapter_id TEXT NOT NULL, connection_id TEXT NOT NULL, library_id TEXT NOT NULL, "
+    "external_item TEXT NOT NULL, snapshot_id TEXT NOT NULL, "
+    "PRIMARY KEY (adapter_id, connection_id, library_id, external_item), "
+    "FOREIGN KEY (adapter_id, connection_id, library_id, external_item, snapshot_id) "
+    "REFERENCES inventory_v2_snapshots(adapter_id, connection_id, library_id, external_item, snapshot_id))"
+)
+_INVENTORY_SCANS_TABLE_SQL = (
+    "CREATE TABLE inventory_scans ("
+    "scan_id TEXT PRIMARY KEY CHECK (typeof(scan_id) = 'text' AND length(scan_id) BETWEEN 1 AND 64), "
+    "owner_id TEXT NOT NULL CHECK (typeof(owner_id) = 'text' AND length(owner_id) BETWEEN 1 AND 64), "
+    "cohort_id TEXT NOT NULL CHECK (typeof(cohort_id) = 'text' AND length(cohort_id) BETWEEN 1 AND 64), "
+    "cohort_size INTEGER NOT NULL CHECK (cohort_size BETWEEN 1 AND 100000), "
+    "adapter_id TEXT NOT NULL CHECK (typeof(adapter_id) = 'text' AND length(adapter_id) BETWEEN 1 AND 64), "
+    "connection_id TEXT NOT NULL CHECK (typeof(connection_id) = 'text' AND length(connection_id) BETWEEN 1 AND 64), "
+    "library_id TEXT NOT NULL CHECK (typeof(library_id) = 'text' AND length(library_id) BETWEEN 1 AND 64), "
+    "state TEXT NOT NULL CHECK (state IN ('running','complete','incomplete','unstable')), "
+    "failure_kind TEXT CHECK (failure_kind IS NULL OR failure_kind IN ('authentication','authorization','unavailable','rate_limited','timeout','cancelled','unsupported','incompatible','invalid_request','invalid_response','conflict','not_found','resource_exhausted','integrity_failure','interrupted')), "
+    "base_digest TEXT NOT NULL CHECK (length(base_digest) = 64 AND base_digest NOT GLOB '*[^0-9a-f]*'), "
+    "page_size INTEGER NOT NULL CHECK (page_size BETWEEN 1 AND 1000), "
+    "max_pages INTEGER NOT NULL CHECK (max_pages BETWEEN 1 AND 10000), "
+    "max_items INTEGER NOT NULL CHECK (max_items BETWEEN 1 AND 1000000), "
+    "max_bytes INTEGER NOT NULL CHECK (max_bytes BETWEEN 1024 AND 1073741824), "
+    "max_seconds INTEGER NOT NULL CHECK (max_seconds BETWEEN 1 AND 3600), "
+    "stability_delay_seconds INTEGER NOT NULL CHECK (stability_delay_seconds BETWEEN 0 AND 86400), "
+    "page_count INTEGER NOT NULL DEFAULT 0 CHECK (page_count >= 0), "
+    "item_count INTEGER NOT NULL DEFAULT 0 CHECK (item_count >= 0), "
+    "response_bytes INTEGER NOT NULL DEFAULT 0 CHECK (response_bytes >= 0), "
+    f"started_at TEXT NOT NULL CHECK ({_timestamp_constraint('started_at')}), "
+    f"finished_at TEXT CHECK ({_timestamp_constraint('finished_at', nullable=True)}), "
+    "CHECK ((state = 'running') = (finished_at IS NULL)), "
+    "CHECK ((state IN ('running','complete')) = (failure_kind IS NULL)))"
+)
+_INVENTORY_SCAN_ITEMS_TABLE_SQL = (
+    "CREATE TABLE inventory_scan_items ("
+    "scan_id TEXT NOT NULL REFERENCES inventory_scans(scan_id), "
+    "adapter_id TEXT NOT NULL, connection_id TEXT NOT NULL, library_id TEXT NOT NULL, "
+    "external_item TEXT NOT NULL, snapshot_id TEXT NOT NULL, "
+    "PRIMARY KEY (scan_id, external_item), "
+    "FOREIGN KEY (adapter_id, connection_id, library_id, external_item, snapshot_id) "
+    "REFERENCES inventory_v2_snapshots(adapter_id, connection_id, library_id, external_item, snapshot_id))"
+)
+_INVENTORY_V2_SNAPSHOTS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER inventory_v2_snapshots_no_update BEFORE UPDATE ON inventory_v2_snapshots "
+    "BEGIN SELECT RAISE(ABORT, 'inventory v2 snapshots are append-only'); END"
+)
+_INVENTORY_V2_SNAPSHOTS_NO_DELETE_SQL = (
+    "CREATE TRIGGER inventory_v2_snapshots_no_delete BEFORE DELETE ON inventory_v2_snapshots "
+    "BEGIN SELECT RAISE(ABORT, 'inventory v2 snapshots are append-only'); END"
+)
+
 
 MIGRATIONS = (
     Migration(
@@ -269,6 +341,28 @@ MIGRATIONS = (
             "CREATE INDEX inventory_snapshots_by_target ON inventory_snapshots(adapter_id, connection_id, library_id, external_item, observed_at, snapshot_id)",
         ),
         frozenset({"inventory_snapshots", "current_inventory_observations"}),
+    ),
+    Migration(
+        4,
+        (
+            _INVENTORY_V2_SNAPSHOTS_TABLE_SQL,
+            _CURRENT_INVENTORY_V2_TABLE_SQL,
+            _INVENTORY_SCANS_TABLE_SQL,
+            _INVENTORY_SCAN_ITEMS_TABLE_SQL,
+            _INVENTORY_V2_SNAPSHOTS_NO_UPDATE_SQL,
+            _INVENTORY_V2_SNAPSHOTS_NO_DELETE_SQL,
+            "CREATE INDEX inventory_v2_snapshots_by_target ON inventory_v2_snapshots(adapter_id, connection_id, library_id, external_item, observed_at, snapshot_id)",
+            "CREATE INDEX inventory_scans_by_scope ON inventory_scans(adapter_id, connection_id, library_id, started_at DESC, scan_id DESC)",
+            "CREATE UNIQUE INDEX inventory_scans_one_running_scope ON inventory_scans(adapter_id, connection_id, library_id) WHERE state = 'running'",
+        ),
+        frozenset(
+            {
+                "inventory_v2_snapshots",
+                "current_inventory_v2",
+                "inventory_scans",
+                "inventory_scan_items",
+            }
+        ),
     ),
 )
 
@@ -337,16 +431,26 @@ def _user_schema_objects(connection: sqlite3.Connection) -> set[tuple[str, str]]
 
 def _known_migrations() -> dict[int, Migration]:
     known = {migration.version: migration for migration in MIGRATIONS}
-    if len(known) != len(MIGRATIONS) or tuple(sorted(known)) != tuple(range(1, len(known) + 1)):
-        raise SchemaError("application migrations are not a contiguous ordered sequence")
+    if len(known) != len(MIGRATIONS) or tuple(sorted(known)) != tuple(
+        range(1, len(known) + 1)
+    ):
+        raise SchemaError(
+            "application migrations are not a contiguous ordered sequence"
+        )
     return known
 
 
 def _expected_tables(known: dict[int, Migration], versions: set[int]) -> set[str]:
-    return set().union(*(known[version].expected_tables for version in versions)) if versions else set()
+    return (
+        set().union(*(known[version].expected_tables for version in versions))
+        if versions
+        else set()
+    )
 
 
-def _expected_schema_objects(known: dict[int, Migration], versions: set[int]) -> set[tuple[str, str]]:
+def _expected_schema_objects(
+    known: dict[int, Migration], versions: set[int]
+) -> set[tuple[str, str]]:
     objects: set[tuple[str, str]] = set()
     for version in sorted(versions):
         migration = known[version]
@@ -363,7 +467,9 @@ def _expected_schema_objects(known: dict[int, Migration], versions: set[int]) ->
     return objects
 
 
-def _expected_non_table_definitions(known: dict[int, Migration], versions: set[int]) -> dict[tuple[str, str], str]:
+def _expected_non_table_definitions(
+    known: dict[int, Migration], versions: set[int]
+) -> dict[tuple[str, str], str]:
     definitions: dict[tuple[str, str], str] = {}
     for version in sorted(versions):
         for statement in known[version].statements:
@@ -427,7 +533,11 @@ def _normalise_schema_sql(sql: str) -> str:
                 position += 1
                 if quoted_character != closing:
                     continue
-                if closing != "]" and position < len(without_idempotency_clause) and without_idempotency_clause[position] == closing:
+                if (
+                    closing != "]"
+                    and position < len(without_idempotency_clause)
+                    and without_idempotency_clause[position] == closing
+                ):
                     canonical.append(closing)
                     position += 1
                     continue
@@ -438,16 +548,24 @@ def _normalise_schema_sql(sql: str) -> str:
     return "".join(canonical).rstrip().removesuffix(";").rstrip()
 
 
-def _expected_table_definitions(known: dict[int, Migration], versions: set[int]) -> dict[str, str]:
+def _expected_table_definitions(
+    known: dict[int, Migration], versions: set[int]
+) -> dict[str, str]:
     definitions: dict[str, str] = {}
     for version in sorted(versions):
         migration = known[version]
         declared = migration.expected_table_definitions
         if declared is not None:
-            definitions.update({name: _normalise_schema_sql(sql) for name, sql in declared.items()})
+            definitions.update(
+                {name: _normalise_schema_sql(sql) for name, sql in declared.items()}
+            )
             continue
         for statement in migration.statements:
-            match = re.match(r"\s*CREATE\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)\b", statement, re.IGNORECASE)
+            match = re.match(
+                r"\s*CREATE\s+TABLE\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+                statement,
+                re.IGNORECASE,
+            )
             if match is not None:
                 definitions[match.group(1)] = _normalise_schema_sql(statement)
     if set(definitions) != _expected_tables(known, versions):
@@ -485,11 +603,25 @@ def _contains_sql_comment(statement: str) -> bool:
 def _validate_statement(statement: str) -> None:
     if _contains_sql_comment(statement):
         raise SchemaError("migration contains unsupported SQL comments")
-    operation = statement.lstrip().split(maxsplit=1)[0].upper() if statement.strip() else ""
-    if operation not in {"ALTER", "CREATE", "DELETE", "DROP", "INSERT", "UPDATE", "WITH"}:
-        raise SchemaError("migration contains a transaction-control or unsupported statement")
+    operation = (
+        statement.lstrip().split(maxsplit=1)[0].upper() if statement.strip() else ""
+    )
+    if operation not in {
+        "ALTER",
+        "CREATE",
+        "DELETE",
+        "DROP",
+        "INSERT",
+        "UPDATE",
+        "WITH",
+    }:
+        raise SchemaError(
+            "migration contains a transaction-control or unsupported statement"
+        )
     if re.match(r"\s*CREATE\s+(?:TEMP|TEMPORARY)\b", statement, re.IGNORECASE):
-        raise SchemaError("migration contains an unsupported temporary schema declaration")
+        raise SchemaError(
+            "migration contains an unsupported temporary schema declaration"
+        )
     quoted_name = r'(?:[A-Za-z_][A-Za-z0-9_]*|"(?:[^"]|"")*"|`(?:[^`]|``)*`|\[[^\]]*\])'
     qualified = re.match(
         rf"\s*(?:CREATE|DROP)\s+(?:UNIQUE\s+)?(?:INDEX|TRIGGER|VIEW)\s+"
@@ -498,17 +630,23 @@ def _validate_statement(statement: str) -> None:
         re.IGNORECASE,
     )
     if qualified is not None:
-        raise SchemaError("migration contains an unsupported schema-qualified declaration")
+        raise SchemaError(
+            "migration contains an unsupported schema-qualified declaration"
+        )
 
 
-def _validate_existing_schema(connection: sqlite3.Connection, known: dict[int, Migration]) -> dict[int, str]:
+def _validate_existing_schema(
+    connection: sqlite3.Connection, known: dict[int, Migration]
+) -> dict[int, str]:
     attached_schemas = {
         name
         for _, name, _ in connection.execute("PRAGMA database_list")
         if name not in {"main", "temp"}
     }
     if attached_schemas:
-        raise SchemaError("migration connection contains an unsupported attached schema")
+        raise SchemaError(
+            "migration connection contains an unsupported attached schema"
+        )
     temporary_objects = connection.execute(
         "SELECT 1 FROM sqlite_temp_master "
         "WHERE type IN ('table', 'index', 'trigger', 'view') "
@@ -522,35 +660,53 @@ def _validate_existing_schema(connection: sqlite3.Connection, known: dict[int, M
     if "schema_migrations" not in tables:
         if objects:
             if objects & known_objects:
-                raise SchemaError("database schema is partially applied; restore from a verified backup")
-            raise SchemaError("database schema contains unrecognized objects; inspect it before retrying")
+                raise SchemaError(
+                    "database schema is partially applied; restore from a verified backup"
+                )
+            raise SchemaError(
+                "database schema contains unrecognized objects; inspect it before retrying"
+            )
         return {}
 
-    applied = dict(connection.execute("SELECT version, checksum FROM schema_migrations"))
+    applied = dict(
+        connection.execute("SELECT version, checksum FROM schema_migrations")
+    )
     versions = set(applied)
     if versions - set(known):
         raise SchemaError("database schema is newer than this application")
     if versions != set(range(1, len(versions) + 1)):
-        raise SchemaError("database schema is partially applied; restore from a verified backup")
+        raise SchemaError(
+            "database schema is partially applied; restore from a verified backup"
+        )
     if not versions and objects:
-        raise SchemaError("database schema is partially applied; restore from a verified backup")
+        raise SchemaError(
+            "database schema is partially applied; restore from a verified backup"
+        )
     for version, checksum in applied.items():
         if known[version].checksum != checksum:
             raise SchemaError("database migration checksum does not match")
 
     expected = _expected_schema_objects(known, versions)
     if not expected.issubset(objects):
-        raise SchemaError("database schema is partially applied; restore from a verified backup")
+        raise SchemaError(
+            "database schema is partially applied; restore from a verified backup"
+        )
     if objects - expected:
-        raise SchemaError("database schema contains unrecognized objects; inspect it before retrying")
+        raise SchemaError(
+            "database schema contains unrecognized objects; inspect it before retrying"
+        )
     expected_definitions = _expected_table_definitions(known, versions)
     actual_definitions = {
         name: _normalise_schema_sql(sql)
-        for name, sql in connection.execute("SELECT name, sql FROM sqlite_master WHERE type = 'table'")
+        for name, sql in connection.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'table'"
+        )
         if name in expected_definitions and sql is not None
     }
     if actual_definitions != expected_definitions:
-        raise SchemaError("database schema definition does not match its recorded migration")
+        raise SchemaError(
+            "database schema definition does not match its recorded migration"
+        )
     expected_non_table = _expected_non_table_definitions(known, versions)
     actual_non_table = {
         (kind, name): _normalise_schema_sql(sql)
@@ -560,7 +716,9 @@ def _validate_existing_schema(connection: sqlite3.Connection, known: dict[int, M
         if (kind, name) in expected_non_table and sql is not None
     }
     if actual_non_table != expected_non_table:
-        raise SchemaError("database schema object definition does not match its recorded migration")
+        raise SchemaError(
+            "database schema object definition does not match its recorded migration"
+        )
     return applied
 
 
@@ -651,7 +809,9 @@ def publish_staged_state(staged: Path, target: Path) -> bool:
         raise SchemaError("prepared state is not an exclusive regular file")
     if stat.S_IMODE(staged_status.st_mode) & 0o077:
         raise SchemaError("prepared state permissions are too broad")
-    if any(path_entry_exists(Path(f"{staged}{suffix}")) for suffix in _STATE_SUFFIXES[1:]):
+    if any(
+        path_entry_exists(Path(f"{staged}{suffix}")) for suffix in _STATE_SUFFIXES[1:]
+    ):
         raise SchemaError("prepared state still requires recovery sidecars")
 
     _fsync_file(staged)
@@ -795,7 +955,9 @@ def preflight(path: Path) -> None:
                 probe.close()
                 probe = None
             if not applied:
-                raise SchemaError("existing database has no recorded application schema")
+                raise SchemaError(
+                    "existing database has no recorded application schema"
+                )
     except SchemaError:
         raise
     except (OSError, sqlite3.Error):
@@ -844,7 +1006,10 @@ def migrate(connection: sqlite3.Connection) -> int:
                 for statement in migration.statements:
                     _validate_statement(statement)
                     connection.execute(statement)
-                connection.execute("INSERT INTO schema_migrations(version, checksum) VALUES (?, ?)", (migration.version, migration.checksum))
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, checksum) VALUES (?, ?)",
+                    (migration.version, migration.checksum),
+                )
                 applied[migration.version] = migration.checksum
                 _validate_existing_schema(connection, known)
         connection.commit()
