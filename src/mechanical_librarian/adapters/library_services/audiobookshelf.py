@@ -424,12 +424,12 @@ def _retry_after(value: str | None, now: datetime) -> timedelta | None:
     if value is None or now.tzinfo is None or now.utcoffset() is None:
         return None
     candidate = value.strip()
-    if not candidate:
+    if not candidate or len(candidate) > 128:
         return None
     if candidate.isascii() and candidate.isdecimal():
         try:
             delay = timedelta(seconds=int(candidate))
-        except OverflowError:
+        except (ValueError, OverflowError):
             return None
     else:
         try:

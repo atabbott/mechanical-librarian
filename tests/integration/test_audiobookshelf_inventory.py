@@ -342,6 +342,9 @@ class AudiobookshelfInventoryReaderTests(unittest.TestCase):
         oversized = _status_failure(
             429, path="/api/libraries", retry_after="9" * 128, now=now
         )
+        excessive = _status_failure(
+            429, path="/api/libraries", retry_after="9" * 5_000, now=now
+        )
         library_missing = _status_failure(404, path="/api/libraries")
         item_race = _status_failure(404, path=f"/api/items/{AUDIO}")
 
@@ -349,6 +352,7 @@ class AudiobookshelfInventoryReaderTests(unittest.TestCase):
         self.assertEqual(dated.retry.retry_after, timedelta(seconds=23))
         self.assertIsNone(malformed.retry.retry_after)
         self.assertIsNone(oversized.retry.retry_after)
+        self.assertIsNone(excessive.retry.retry_after)
         self.assertEqual(library_missing.kind, FailureKind.NOT_FOUND)
         self.assertEqual(item_race.kind, FailureKind.CONFLICT)
 
