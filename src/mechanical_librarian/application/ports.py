@@ -167,13 +167,30 @@ class RetryAdvice:
 
 
 @dataclass(frozen=True)
+class OperationUsage:
+    """Bounded vendor-neutral resource evidence retained on failed operations."""
+
+    pages: int = 0
+    items: int = 0
+    response_bytes: int = 0
+
+    def __post_init__(self) -> None:
+        if any(
+            type(value) is not int or value < 0
+            for value in (self.pages, self.items, self.response_bytes)
+        ):
+            raise ValueError("operation usage is invalid")
+
+
+@dataclass(frozen=True)
 class PortFailure:
     kind: FailureKind
     retry: RetryAdvice
     safe_summary: SafeSummary
+    usage: OperationUsage = OperationUsage()
 
     def __post_init__(self) -> None:
-        if type(self.kind) is not FailureKind or type(self.retry) is not RetryAdvice or type(self.safe_summary) is not SafeSummary:
+        if type(self.kind) is not FailureKind or type(self.retry) is not RetryAdvice or type(self.safe_summary) is not SafeSummary or type(self.usage) is not OperationUsage:
             raise ValueError("port failures require typed kind, retry advice, and safe summary")
         if self.kind in {FailureKind.INVALID_REQUEST, FailureKind.AUTHORIZATION, FailureKind.UNSUPPORTED, FailureKind.INCOMPATIBLE, FailureKind.CONFLICT} and self.retry.retryable:
             raise ValueError("deterministic failures cannot be marked retryable")
@@ -1176,7 +1193,7 @@ __all__ = [
     "ExpectedState", "ExtractorRequest", "FailureKind", "HealthReport", "HealthStatus",
     "IdentifierGenerator", "JobHeartbeatRepository", "LibraryListRequest", "LibraryReadRequest",
     "LibraryConnectionDiagnostics", "LibraryConnectionDiagnosticsRequest", "LibraryConnectionFacts", "LibraryReader", "LibraryService", "MetadataCandidate", "MetadataMutation", "MetadataProvider", "Notification",
-    "Notifier", "OperationContext", "Page", "PageRequest", "PortFailure", "PortResult",
+    "Notifier", "OperationContext", "OperationUsage", "Page", "PageRequest", "PortFailure", "PortResult",
     "ProviderFact", "ProviderFactCode", "ProviderProvenance", "ProviderQuery", "RepositoryOutcome",
     "RepositoryResult", "ResourceBounds", "RetryAdvice", "Reviewer", "ReviewerAction",
     "ReviewerDecision", "ReviewerRequest", "ReviewerResponse", "SafeSummary", "SecretHandle",

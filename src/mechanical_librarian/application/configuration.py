@@ -274,6 +274,14 @@ class InventoryConfiguration:
     max_response_bytes: int = 67_108_864
     timeout_seconds: int = 300
     stability_delay_seconds: int = 0
+    poll_generation: int = 0
+    max_attempts: int = 3
+    max_elapsed_seconds: int = 900
+    initial_backoff_seconds: int = 5
+    max_backoff_seconds: int = 300
+    connect_timeout_seconds: int = 10
+    read_timeout_seconds: int = 30
+    max_in_flight_requests: int = 1
 
     def __post_init__(self) -> None:
         bounds = (
@@ -283,11 +291,21 @@ class InventoryConfiguration:
             (self.max_response_bytes, 1_024, 67_108_864),
             (self.timeout_seconds, 1, 3_600),
             (self.stability_delay_seconds, 0, 86_400),
+            (self.poll_generation, 0, 1_000_000),
+            (self.max_attempts, 1, 16),
+            (self.max_elapsed_seconds, 1, 86_400),
+            (self.initial_backoff_seconds, 1, 3_600),
+            (self.max_backoff_seconds, 1, 86_400),
+            (self.connect_timeout_seconds, 1, 300),
+            (self.read_timeout_seconds, 1, 3_600),
+            (self.max_in_flight_requests, 1, 1),
         )
         if any(
             type(value) is not int or not minimum <= value <= maximum
             for value, minimum, maximum in bounds
         ):
+            raise ConfigurationError("inventory bounds are invalid")
+        if self.max_backoff_seconds < self.initial_backoff_seconds:
             raise ConfigurationError("inventory bounds are invalid")
 
 
@@ -456,6 +474,14 @@ _INVENTORY_FIELDS = frozenset(
         "max_response_bytes",
         "timeout_seconds",
         "stability_delay_seconds",
+        "poll_generation",
+        "max_attempts",
+        "max_elapsed_seconds",
+        "initial_backoff_seconds",
+        "max_backoff_seconds",
+        "connect_timeout_seconds",
+        "read_timeout_seconds",
+        "max_in_flight_requests",
     }
 )
 _POLICY_FIELDS = frozenset({"policy_version"})

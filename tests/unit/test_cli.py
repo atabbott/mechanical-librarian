@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import unittest
+from datetime import datetime, timezone
 from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import Mock
@@ -27,12 +28,64 @@ from mechanical_librarian.application.inventory_reconciliation import (
     InventoryOutcome,
     InventoryRunResult,
 )
+from mechanical_librarian.application.inventory_polling import (
+    InventoryPollOutcome,
+    InventoryPollResult,
+)
+from mechanical_librarian.domain.inventory_polling import PollInspection, PollState
 from mechanical_librarian.domain.identifiers import LibraryId, ScanId
-from mechanical_librarian.domain.inventory_v2 import InventoryInspection, ScanState
+from mechanical_librarian.domain.inventory_v2 import (
+    InventoryInspection,
+    ScanState,
+    ScanUsage,
+)
 from mechanical_librarian.interfaces.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_poll_inspection_needs_no_config_or_target_access(self) -> None:
+        result = InventoryPollResult(
+            InventoryPollOutcome.DEFERRED,
+            PollInspection(
+                "poll_public_evidence",
+                PollState.RETRY_WAIT,
+                1,
+                3,
+                1,
+                ScanUsage(2, 3, 400),
+                datetime(2026, 7, 13, tzinfo=timezone.utc),
+                "unavailable",
+                "supported",
+                False,
+            ),
+        )
+        output = io.StringIO()
+        errors = io.StringIO()
+        runner = Mock(return_value=result)
+
+        exit_code = main(
+            [
+                "inventory-poll-inspect",
+                "--database",
+                "/private/state.sqlite",
+                "--poll-id",
+                "poll_public_evidence",
+            ],
+            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+            inventory_poll_inspection_runner=runner,
+            stdout=output,
+            stderr=errors,
+        )
+
+        self.assertEqual(exit_code, 1)
+        runner.assert_called_once_with(
+            Path("/private/state.sqlite"), "poll_public_evidence"
+        )
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("state=retry_wait attempt=1/3 fence=1", errors.getvalue())
+        self.assertIn("pages=2 items=3 bytes=400", errors.getvalue())
+        self.assertNotIn("/private", errors.getvalue())
+
     def test_incomplete_inventory_is_inspectable_without_external_identity(
         self,
     ) -> None:

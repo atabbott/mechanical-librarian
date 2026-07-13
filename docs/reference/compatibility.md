@@ -155,6 +155,14 @@ The evidence pins official container digest
 The endpoint contract follows the tagged implementation's observational
 authorization POST, not the out-of-date API-reference GET.
 
+F05b retains that exact upstream and container baseline. Its machine-readable
+operational profile is
+[`audiobookshelf-f05b-compatibility.json`](audiobookshelf-f05b-compatibility.json).
+Polling is numeric-page, two-pass, GET-only reconciliation with durable bounded
+retry; it does not claim an upstream rate-limit contract, stable cursor,
+concurrency token, incremental scan, or Socket.IO notification support. A
+controlled 429 and validated `Retry-After` exercise generic HTTP recovery only.
+
 Audiobookshelf remains the first production target adapter. A future CWA adapter
 may be declared supported only after its target-service contract, capability
 matrix, and supported service API have passed qualification. A CWA-shaped fake

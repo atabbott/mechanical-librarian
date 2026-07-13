@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qualify F05a against a disposable digest-pinned Audiobookshelf container."""
+"""Qualify F05a/F05b against a disposable digest-pinned Audiobookshelf container."""
 
 from __future__ import annotations
 
@@ -235,6 +235,44 @@ def inspect_inventory(
     )
 
 
+def run_poll(
+    configuration: Path, database: Path, trigger: str
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            str(ROOT / ".venv" / "bin" / "mechanical-librarian"),
+            "audiobookshelf-poll",
+            "--trigger",
+            trigger,
+            "--config",
+            str(configuration),
+            "--database",
+            str(database),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def inspect_poll(database: Path, poll_id: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            str(ROOT / ".venv" / "bin" / "mechanical-librarian"),
+            "inventory-poll-inspect",
+            "--poll-id",
+            poll_id,
+            "--database",
+            str(database),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
 def set_scenario(name: str) -> None:
     TraceProxy.scenario = name
     TraceProxy.page_zero_count = 0
@@ -457,6 +495,32 @@ def main() -> int:
             if duplicate.returncode != 0:
                 raise RuntimeError("F05a restart/duplicate scan failed")
 
+            poll = run_poll(configuration, database, "qualification-poll")
+            if poll.returncode != 0 or "state=succeeded" not in poll.stdout:
+                raise RuntimeError("F05b durable poll failed")
+            poll_id = next(
+                (
+                    part.split("=", 1)[1]
+                    for part in poll.stdout.split()
+                    if part.startswith("poll=")
+                ),
+                None,
+            )
+            if not isinstance(poll_id, str):
+                raise RuntimeError("F05b poll evidence was unavailable")
+            trace_count = len(TraceProxy.trace)
+            poll_duplicate = run_poll(
+                configuration, database, "qualification-poll"
+            )
+            if poll_duplicate.returncode != 0 or len(TraceProxy.trace) != trace_count:
+                raise RuntimeError("F05b duplicate poll performed target I/O")
+            poll_inspection = inspect_poll(database, poll_id)
+            if (
+                poll_inspection.returncode != 0
+                or "state=succeeded" not in poll_inspection.stdout
+            ):
+                raise RuntimeError("F05b credential-free poll inspection failed")
+
             audiobook_item = next(
                 (
                     item
@@ -624,7 +688,7 @@ def main() -> int:
             print(completed.stdout, end="")
             print(
                 "qualification=abs-2.35.1 mixed=audio,ebook pages=multi-pass "
-                "restart=duplicate update=audio ebook=nested-contract "
+                "restart=duplicate poll=durable,fenced,deduplicated update=audio ebook=nested-contract "
                 "disappearance=removed,retained "
                 "failures=partial,repeated,cyclic,malformed,unstable authority=get-only"
             )

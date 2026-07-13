@@ -212,6 +212,20 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                 self.assertNotIn("authorization", requests[0].headers)
                 self.assertNotIn("synthetic-token", repr(result))
 
+    def test_status_json_rejects_duplicate_keys_and_nonfinite_numbers(self) -> None:
+        for payload in (
+            b'{"app":"audiobookshelf","app":"audiobookshelf","serverVersion":"2.35.1"}',
+            b'{"app":"audiobookshelf","serverVersion":NaN}',
+        ):
+            with self.subTest(payload=payload):
+                result = self.probe(
+                    lambda _request, selected=payload: raw_response(
+                        payload=selected,
+                        headers={"content-type": "application/json"},
+                    )
+                )
+                self.assertEqual(result.failure.kind, FailureKind.INVALID_RESPONSE)
+
     def test_authorization_route_failures_are_typed_after_pinned_status(self) -> None:
         for status, expected in (
             (401, "authentication"),
@@ -982,6 +996,24 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
                     self.assertNotIn("authorization", request.headers)
             finally:
                 client.close()
+            bounded = credentials.inventory_client(
+                handle,
+                ServiceEndpoint("https://synthetic.invalid"),
+                connect_timeout_seconds=7,
+                read_timeout_seconds=19,
+                max_in_flight_requests=1,
+            )
+            try:
+                self.assertEqual(bounded.timeout.connect, 7.0)
+                self.assertEqual(bounded.timeout.read, 19.0)
+            finally:
+                bounded.close()
+            with self.assertRaises(SecretFileUnavailable):
+                credentials.inventory_client(
+                    handle,
+                    ServiceEndpoint("https://synthetic.invalid"),
+                    max_in_flight_requests=2,
+                )
             with self.assertRaises(SecretFileUnavailable):
                 credentials.inventory_client(
                     handle, ServiceEndpoint("https://synthetic.invalid/prefix")

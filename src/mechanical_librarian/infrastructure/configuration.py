@@ -170,6 +170,20 @@ class InventoryInput(BaseModel):
     )
     timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 300
     stability_delay_seconds: Annotated[StrictInt, Field(ge=0, le=86_400)] = 0
+    poll_generation: Annotated[StrictInt, Field(ge=0, le=1_000_000)] = 0
+    max_attempts: Annotated[StrictInt, Field(ge=1, le=16)] = 3
+    max_elapsed_seconds: Annotated[StrictInt, Field(ge=1, le=86_400)] = 900
+    initial_backoff_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 5
+    max_backoff_seconds: Annotated[StrictInt, Field(ge=1, le=86_400)] = 300
+    connect_timeout_seconds: Annotated[StrictInt, Field(ge=1, le=300)] = 10
+    read_timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 30
+    max_in_flight_requests: Literal[1] = 1
+
+    @model_validator(mode="after")
+    def validate_poll_backoff(self) -> Self:
+        if self.max_backoff_seconds < self.initial_backoff_seconds:
+            raise ValueError("inventory poll backoff is invalid")
+        return self
 
 
 class EvidenceInput(BaseModel):

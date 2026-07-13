@@ -31,6 +31,10 @@ from mechanical_librarian.application.inventory_reconciliation import (
     InventoryOutcome,
     InventoryRunResult,
 )
+from mechanical_librarian.application.inventory_polling import (
+    InventoryPollOutcome,
+    InventoryPollResult,
+)
 
 
 StateCheckRunner = Callable[[Path], StateCheckResult]
@@ -38,6 +42,8 @@ JobHeartbeatRunner = Callable[[Path], HeartbeatResult]
 SyntheticInventoryRunner = Callable[[Path, Path], SyntheticInventoryResult]
 ConnectionProbeRunner = Callable[[Path], ConnectionProbeResult]
 AudiobookshelfInventoryRunner = Callable[[Path, Path], InventoryRunResult]
+AudiobookshelfPollRunner = Callable[[Path, Path, str], InventoryPollResult]
+InventoryPollInspectionRunner = Callable[[Path, str], InventoryPollResult]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -62,6 +68,7 @@ _CONNECTION_FAILURE = (
     "Connection check failed: configured target could not be verified.\n"
 )
 _ABS_INVENTORY_FAILURE = "Audiobookshelf inventory failed safely.\n"
+_ABS_POLL_FAILURE = "Audiobookshelf poll failed safely.\n"
 
 
 def _database_path(value: str) -> Path:
@@ -69,6 +76,19 @@ def _database_path(value: str) -> Path:
     if path == Path(":memory:"):
         raise argparse.ArgumentTypeError("database must be a durable filesystem path")
     return path
+
+
+def _bounded_identifier(value: str) -> str:
+    if (
+        not 1 <= len(value) <= 64
+        or not value[0].islower()
+        or any(
+            not (character.islower() or character.isdigit() or character in "_-")
+            for character in value
+        )
+    ):
+        raise argparse.ArgumentTypeError("identifier is invalid")
+    return value
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -120,6 +140,27 @@ def _parser() -> argparse.ArgumentParser:
     inventory_inspect.add_argument(
         "--database", required=True, metavar="PATH", type=_database_path
     )
+    poll = commands.add_parser(
+        "audiobookshelf-poll",
+        help="run or resume one durable bounded Audiobookshelf poll trigger",
+    )
+    poll.add_argument("--config", required=True, metavar="PATH", type=Path)
+    poll.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
+    poll.add_argument(
+        "--trigger", required=True, metavar="ID", type=_bounded_identifier
+    )
+    poll_inspect = commands.add_parser(
+        "inventory-poll-inspect",
+        help="inspect durable poll state without configuration, credentials, or target access",
+    )
+    poll_inspect.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
+    poll_inspect.add_argument(
+        "--poll-id", required=True, metavar="ID", type=_bounded_identifier
+    )
     return parser
 
 
@@ -132,6 +173,8 @@ def main(
     connection_probe_runner: ConnectionProbeRunner | None = None,
     audiobookshelf_inventory_runner: AudiobookshelfInventoryRunner | None = None,
     inventory_inspection_runner: AudiobookshelfInventoryRunner | None = None,
+    audiobookshelf_poll_runner: AudiobookshelfPollRunner | None = None,
+    inventory_poll_inspection_runner: InventoryPollInspectionRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -140,6 +183,51 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     arguments = _parser().parse_args(argv)
+    if arguments.command in {"audiobookshelf-poll", "inventory-poll-inspect"}:
+        runner = (
+            audiobookshelf_poll_runner
+            if arguments.command == "audiobookshelf-poll"
+            else inventory_poll_inspection_runner
+        )
+        if runner is None:
+            errors.write(_ABS_POLL_FAILURE)
+            return 1
+        try:
+            result = (
+                runner(arguments.config, arguments.database, arguments.trigger)
+                if arguments.command == "audiobookshelf-poll"
+                else runner(arguments.database, arguments.poll_id)
+            )
+        except Exception:
+            errors.write(_ABS_POLL_FAILURE)
+            return 1
+        if (
+            type(result) is not InventoryPollResult
+            or type(result.outcome) is not InventoryPollOutcome
+            or result.inspection is None
+        ):
+            errors.write(_ABS_POLL_FAILURE)
+            return 1
+        inspection = result.inspection
+        destination = output if result.succeeded else errors
+        destination.write(
+            "Audiobookshelf poll passed.\n"
+            if result.succeeded
+            else _ABS_POLL_FAILURE
+        )
+        destination.write("authority=target-inventory-get-only\n")
+        destination.write(
+            f"poll={inspection.poll_id} state={inspection.state.value} "
+            f"attempt={inspection.attempt}/{inspection.max_attempts} "
+            f"fence={inspection.fence}\n"
+        )
+        destination.write(
+            f"pages={inspection.usage.pages} items={inspection.usage.items} "
+            f"bytes={inspection.usage.response_bytes} "
+            f"compatibility={inspection.compatibility or 'unknown'} "
+            f"failure={inspection.failure_kind or 'none'}\n"
+        )
+        return 0 if result.succeeded else 1
     if arguments.command in {"audiobookshelf-inventory", "inventory-inspect"}:
         runner = (
             audiobookshelf_inventory_runner

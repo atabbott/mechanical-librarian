@@ -1,4 +1,4 @@
-# Audiobookshelf Inventory
+# Audiobookshelf Inventory and Polling
 
 F05a adds a report-only inventory command for one configured Audiobookshelf
 2.35.1 connection. It authenticates through the F04 compatibility check, then
@@ -7,6 +7,28 @@ expanded `GET /api/items/{id}` requests. Redirects, cookies, proxy environment
 variables, compressed responses, unknown service versions, and non-origin
 endpoints fail closed. The bearer credential is attached only to those GET
 inventory routes.
+
+F05b adds durable trigger scheduling around the same least-authority reader.
+An operator or external scheduler supplies a stable bounded trigger ID; intent,
+policy, total budgets, and elapsed deadline are committed before the credential
+is resolved or any target request begins:
+
+```console
+mechanical-librarian audiobookshelf-poll \
+  --trigger nightly-2026-07-13 \
+  --config /run/secrets/config-v1.json \
+  --database /var/lib/mechanical-librarian/state.sqlite
+```
+
+Retry-wait, blocked, or completed delivery of the same trigger performs no
+target I/O. Inspect the opaque poll ID printed by the command without loading
+configuration or credentials:
+
+```console
+mechanical-librarian inventory-poll-inspect \
+  --poll-id poll_0123456789abcdef0123456789abcdef \
+  --database /var/lib/mechanical-librarian/state.sqlite
+```
 
 Run a reconciliation with:
 
@@ -48,6 +70,13 @@ completed and the same connection-scoped external identity is removed in one
 member and active in another. Older or disabled-library observations cannot be
 reported as movement, and a partial cohort reports none.
 
+Complete library results remain process-local until every configured library
+is stable. Current pointers, removals, immutable history, and scan completion
+then publish in one cohort transaction. A later library failure discards the
+prepared observations, terminalizes all cohort scans, and leaves both current
+state and history unchanged. This prevents an item move between libraries from
+appearing as a disappearance during a partial poll.
+
 Expanded responses are normalized at the adapter boundary. The durable
 `inventory-snapshot-v2` representation keeps vendor-neutral typed states for
 present, missing, null, empty, malformed, and unsupported fields. File and
@@ -60,9 +89,25 @@ adds immutable v2 history, current pointers, scan state, and per-scan items.
 The snapshot history tables reject updates and deletes. A scan publication is
 fenced against the current set observed when the scan began.
 
-F05a deliberately does not implement event subscriptions, polling schedules,
-automatic retry/backoff, or compatibility-drift recovery. Those remain in the
-separately tracked F05b outcome.
+Migration 5 is also additive. It adds poll intent and attempt records plus the
+scan-to-claim binding. Claims use monotonic fences and bounded leases. Every
+scan mutation validates the live poll, attempt, worker, fence, lease, backward-
+clock guard, and cancellation state in the same SQLite write transaction. A
+reclaimed stale worker cannot finish or publish. Abrupt death marks only scans
+linked to the expired attempt incomplete; cooperative cancellation is durable
+and never acknowledged as success.
+
+Transport, timeout, 408, 429, 5xx, and scan-instability failures use bounded
+restart-safe backoff. A valid `Retry-After` delta or HTTP date may extend local
+backoff only within the frozen elapsed window. Authentication, authorization,
+missing configuration, incompatible version, and contract-drift failures are
+blocked until governing configuration changes. A missing item detail is scan
+instability; it is never interpreted as a configured-library absence.
+
+Socket.IO remains unavailable: Audiobookshelf 2.35.1 socket authorization does
+not accept the supported API key and successful socket authentication mutates
+`lastSeen`. No JWT login or socket client is constructed. Recurring cadence is
+owned by the caller; each supplied trigger becomes one bounded durable poll.
 
 The disposable qualification changes a file observation, reconciles a
 disappearance, and drives partial, repeated, cyclic, malformed, and unstable

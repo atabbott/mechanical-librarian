@@ -15,6 +15,7 @@ from mechanical_librarian.application.connection_probe import (
     ConnectionProbeResult,
 )
 from mechanical_librarian.application.inventory_reconciliation import InventoryOutcome
+from mechanical_librarian.application.inventory_polling import InventoryPollOutcome
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
@@ -65,8 +66,20 @@ class BootstrapTests(unittest.TestCase):
                 supported_media_types=frozenset({MediaType.AUDIOBOOK, MediaType.EBOOK}),
             ),
         )
+        configuration = SimpleNamespace(
+            inventory=SimpleNamespace(
+                poll_generation=0,
+                max_attempts=3,
+                max_elapsed_seconds=900,
+                initial_backoff_seconds=5,
+                max_backoff_seconds=300,
+                connect_timeout_seconds=10,
+                read_timeout_seconds=30,
+                max_in_flight_requests=1,
+            )
+        )
         return (
-            None,
+            configuration,
             configured,
             connection,
             (library,),
@@ -135,6 +148,74 @@ class BootstrapTests(unittest.TestCase):
 
         self.assertEqual(result.outcome, InventoryOutcome.INCOMPLETE)
         self.assertEqual(result.libraries[0].inspection.failure_kind, "authentication")
+
+    def test_poll_intent_and_claim_are_durable_before_target_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = sqlite3.connect(Path(directory) / "state.sqlite")
+            database.execute("PRAGMA foreign_keys=ON")
+            migrate(database)
+
+            def probe_after_claim(*_args, **_kwargs):
+                self.assertEqual(
+                    database.execute(
+                        "SELECT state,attempt,fence FROM inventory_polls"
+                    ).fetchone(),
+                    ("running", 1, 1),
+                )
+                self.assertEqual(
+                    database.execute(
+                        "SELECT COUNT(*) FROM inventory_scan_poll_claims"
+                    ).fetchone(),
+                    (1,),
+                )
+                return ConnectionProbeResult(
+                    ConnectionProbeOutcome.AUTHENTICATION_FAILED
+                )
+
+            try:
+                with (
+                    patch.object(
+                        bootstrap,
+                        "_inventory_connection",
+                        return_value=self.inventory_fixture(),
+                    ),
+                    patch.object(bootstrap, "preflight"),
+                    patch.object(bootstrap, "path_entry_exists", return_value=True),
+                    patch.object(
+                        bootstrap,
+                        "_run_existing_operation",
+                        side_effect=lambda _path, operation: operation(database),
+                    ),
+                    patch.object(
+                        bootstrap,
+                        "_probe_configured_connection",
+                        side_effect=probe_after_claim,
+                    ),
+                ):
+                    result = bootstrap._run_audiobookshelf_poll(
+                        Path("configuration.json"),
+                        Path("state.sqlite"),
+                        "test-trigger",
+                    )
+                operational = repr(
+                    database.execute(
+                        "SELECT * FROM inventory_polls"
+                    ).fetchall()
+                    + database.execute(
+                        "SELECT * FROM inventory_poll_attempts"
+                    ).fetchall()
+                    + database.execute(
+                        "SELECT * FROM inventory_scan_poll_claims"
+                    ).fetchall()
+                )
+            finally:
+                database.close()
+
+        self.assertEqual(result.outcome, InventoryPollOutcome.BLOCKED)
+        self.assertEqual(result.inspection.state.value, "blocked")
+        self.assertNotIn("example.invalid", operational)
+        self.assertNotIn("synthetic-secret", operational)
+        self.assertNotIn("01234567-89ab", operational)
 
     def test_composed_job_heartbeat_is_restart_safe_and_path_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

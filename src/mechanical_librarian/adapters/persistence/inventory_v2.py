@@ -28,6 +28,7 @@ from mechanical_librarian.domain.identifiers import (
     canonical_json,
 )
 from mechanical_librarian.domain.inventory import LibraryConnection
+from mechanical_librarian.domain.inventory_polling import PollClaim
 from mechanical_librarian.domain.inventory_v2 import (
     InventoryInspection,
     InventoryObservation,
@@ -54,6 +55,15 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         self._owner_alive = _owner_alive if owner_alive is None else owner_alive
         if not self._owner_id or len(self._owner_id) > 64:
             raise ValueError("inventory scan owner is invalid")
+        self._prepared: dict[
+            str,
+            tuple[
+                ScanStart,
+                tuple[InventorySnapshotV2, ...],
+                ScanUsage,
+                datetime,
+            ],
+        ] = {}
 
     def recover_interrupted(
         self, finished_at: datetime, context: OperationContext
@@ -108,6 +118,7 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         *,
         cohort_id: str | None = None,
         cohort_size: int = 1,
+        claim: PollClaim | None = None,
     ) -> RepositoryResult[ScanStart]:
         if (
             type(scan_id) is not ScanId
@@ -119,6 +130,7 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             or (cohort_id is not None and (not cohort_id or len(cohort_id) > 64))
             or type(cohort_size) is not int
             or cohort_size < 1
+            or (claim is not None and type(claim) is not PollClaim)
         ):
             return RepositoryResult(RepositoryOutcome.REJECTED)
         effective_cohort = scan_id.value if cohort_id is None else cohort_id
@@ -129,6 +141,8 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
         try:
             with _transaction(self._connection):
+                if claim is not None and not self._claim_is_live(claim, started_at):
+                    return RepositoryResult(RepositoryOutcome.REJECTED)
                 item_count, serialized_bytes = self._current_stats(
                     connection.adapter.value, connection.id.value, library.value
                 )
@@ -168,6 +182,12 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                         _format_timestamp(started_at),
                     ),
                 )
+                if claim is not None:
+                    self._connection.execute(
+                        "INSERT INTO inventory_scan_poll_claims(scan_id,poll_id,attempt,fence) "
+                        "VALUES (?,?,?,?)",
+                        (scan_id.value, claim.poll_id, claim.attempt, claim.fence),
+                    )
             return RepositoryResult(
                 RepositoryOutcome.ACCEPTED,
                 ScanStart(scan_id, current, current_digest),
@@ -185,6 +205,8 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         usage: ScanUsage,
         finished_at: datetime,
         context: OperationContext,
+        *,
+        claim: PollClaim | None = None,
     ) -> RepositoryResult[InventoryInspection]:
         if (
             type(scan_id) is not ScanId
@@ -193,10 +215,15 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             or type(usage) is not ScanUsage
             or not _valid_time(finished_at)
             or type(context) is not OperationContext
+            or (claim is not None and type(claim) is not PollClaim)
         ):
             return RepositoryResult(RepositoryOutcome.REJECTED)
         try:
             with _transaction(self._connection):
+                if claim is not None and not self._scan_claim_is_live(
+                    scan_id.value, claim, finished_at
+                ):
+                    return RepositoryResult(RepositoryOutcome.REJECTED)
                 row = self._connection.execute(
                     "SELECT adapter_id,connection_id,library_id,state FROM inventory_scans "
                     "WHERE scan_id=?",
@@ -206,6 +233,7 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                     return RepositoryResult(RepositoryOutcome.NOT_FOUND)
                 if row[3] != ScanState.RUNNING.value:
                     return RepositoryResult(RepositoryOutcome.REJECTED)
+                self._prepared.pop(scan_id.value, None)
                 cursor = self._connection.execute(
                     "UPDATE inventory_scans SET state=?,failure_kind=?,page_count=?,"
                     "item_count=?,response_bytes=?,finished_at=? WHERE scan_id=? AND state='running'",
@@ -235,6 +263,54 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         except (sqlite3.Error, ValueError):
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
 
+    def checkpoint(
+        self,
+        scan_id: ScanId,
+        usage: ScanUsage,
+        observed_at: datetime,
+        context: OperationContext,
+        *,
+        claim: PollClaim | None = None,
+    ) -> RepositoryResult[InventoryInspection]:
+        if (
+            type(scan_id) is not ScanId
+            or type(usage) is not ScanUsage
+            or not _valid_time(observed_at)
+            or type(context) is not OperationContext
+            or (claim is not None and type(claim) is not PollClaim)
+        ):
+            return RepositoryResult(RepositoryOutcome.REJECTED)
+        try:
+            with _transaction(self._connection):
+                if claim is not None and not self._scan_claim_is_live(
+                    scan_id.value, claim, observed_at
+                ):
+                    return RepositoryResult(RepositoryOutcome.REJECTED)
+                row = self._connection.execute(
+                    "SELECT adapter_id,connection_id,library_id,state,page_count,"
+                    "item_count,response_bytes FROM inventory_scans WHERE scan_id=?",
+                    (scan_id.value,),
+                ).fetchone()
+                if (
+                    row is None
+                    or row[3] != ScanState.RUNNING.value
+                    or usage.pages < int(row[4])
+                    or usage.items < int(row[5])
+                    or usage.response_bytes < int(row[6])
+                ):
+                    return RepositoryResult(RepositoryOutcome.REJECTED)
+                self._connection.execute(
+                    "UPDATE inventory_scans SET page_count=?,item_count=?,response_bytes=? "
+                    "WHERE scan_id=? AND state='running'",
+                    (usage.pages, usage.items, usage.response_bytes, scan_id.value),
+                )
+                inspection = self._inspection_for(
+                    scan_id, str(row[0]), str(row[1]), str(row[2]), context
+                )
+            return RepositoryResult(RepositoryOutcome.ACCEPTED, inspection)
+        except (sqlite3.Error, ValueError):
+            return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+
     def publish_complete(
         self,
         start: ScanStart,
@@ -242,6 +318,8 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         usage: ScanUsage,
         finished_at: datetime,
         context: OperationContext,
+        *,
+        claim: PollClaim | None = None,
     ) -> RepositoryResult[InventoryInspection]:
         if (
             type(start) is not ScanStart
@@ -251,10 +329,23 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             or type(usage) is not ScanUsage
             or not _valid_time(finished_at)
             or type(context) is not OperationContext
+            or (claim is not None and type(claim) is not PollClaim)
         ):
             return RepositoryResult(RepositoryOutcome.REJECTED)
         try:
+            cohort = self._connection.execute(
+                "SELECT cohort_size FROM inventory_scans WHERE scan_id=?",
+                (start.scan_id.value,),
+            ).fetchone()
+            if cohort is not None and int(cohort[0]) > 1:
+                return self._publish_cohort_part(
+                    start, snapshots, usage, finished_at, context, claim
+                )
             with _transaction(self._connection):
+                if claim is not None and not self._scan_claim_is_live(
+                    start.scan_id.value, claim, finished_at
+                ):
+                    return RepositoryResult(RepositoryOutcome.REJECTED)
                 row = self._connection.execute(
                     "SELECT adapter_id,connection_id,library_id,state,base_digest,"
                     "max_items,max_bytes "
@@ -390,6 +481,183 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         except (sqlite3.Error, ValueError):
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
 
+    def _publish_cohort_part(
+        self,
+        start: ScanStart,
+        snapshots: tuple[InventorySnapshotV2, ...],
+        usage: ScanUsage,
+        finished_at: datetime,
+        context: OperationContext,
+        claim: PollClaim | None,
+    ) -> RepositoryResult[InventoryInspection]:
+        """Hold complete libraries in memory and publish the whole cohort atomically."""
+
+        try:
+            with _transaction(self._connection):
+                row = self._connection.execute(
+                    "SELECT adapter_id,connection_id,library_id,state,base_digest,"
+                    "max_items,max_bytes,cohort_id,cohort_size FROM inventory_scans "
+                    "WHERE scan_id=?",
+                    (start.scan_id.value,),
+                ).fetchone()
+                if row is None:
+                    return RepositoryResult(RepositoryOutcome.NOT_FOUND)
+                if (
+                    row[3] != ScanState.RUNNING.value
+                    or row[4] != start.current_digest
+                    or (claim is not None and not self._scan_claim_is_live(
+                        start.scan_id.value, claim, finished_at
+                    ))
+                    or _current_digest(
+                        self._current_values(str(row[0]), str(row[1]), str(row[2]))
+                    )
+                    != start.current_digest
+                ):
+                    return RepositoryResult(RepositoryOutcome.REJECTED)
+                for snapshot in snapshots:
+                    target = snapshot.observation.target
+                    if (
+                        target.adapter.value != row[0]
+                        or target.connection.value != row[1]
+                        or target.library.value != row[2]
+                    ):
+                        return RepositoryResult(RepositoryOutcome.REJECTED)
+                serialized_bytes = sum(
+                    len(snapshot.observation.canonical.encode("utf-8"))
+                    for snapshot in snapshots
+                )
+                if len(snapshots) > int(row[5]) or serialized_bytes > int(row[6]):
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                if context.preflight_result(
+                    item_count=len(snapshots), serialized_bytes=serialized_bytes
+                ).failure is not None:
+                    return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                self._connection.execute(
+                    "UPDATE inventory_scans SET page_count=?,item_count=?,response_bytes=? "
+                    "WHERE scan_id=? AND state='running'",
+                    (
+                        usage.pages,
+                        usage.items,
+                        usage.response_bytes,
+                        start.scan_id.value,
+                    ),
+                )
+                cohort_id = str(row[7])
+                cohort_size = int(row[8])
+                inspection = self._inspection_for(
+                    start.scan_id, str(row[0]), str(row[1]), str(row[2]), context
+                )
+            self._prepared[start.scan_id.value] = (
+                start,
+                snapshots,
+                usage,
+                finished_at,
+            )
+            cohort_rows = self._connection.execute(
+                "SELECT scan_id FROM inventory_scans WHERE cohort_id=? ORDER BY scan_id",
+                (cohort_id,),
+            ).fetchall()
+            cohort_scans = tuple(str(value[0]) for value in cohort_rows)
+            if (
+                len(cohort_scans) != cohort_size
+                or any(scan_id not in self._prepared for scan_id in cohort_scans)
+            ):
+                return RepositoryResult(RepositoryOutcome.ACCEPTED, inspection)
+
+            with _transaction(self._connection):
+                total_items = sum(
+                    len(self._prepared[scan_id][1]) for scan_id in cohort_scans
+                )
+                total_bytes = sum(
+                    len(snapshot.observation.canonical.encode("utf-8"))
+                    for scan_id in cohort_scans
+                    for snapshot in self._prepared[scan_id][1]
+                )
+                if context.preflight_result(
+                    item_count=total_items, serialized_bytes=total_bytes
+                ).failure is not None:
+                    raise _PublicationAborted
+                for scan_id in cohort_scans:
+                    prepared_start, prepared_snapshots, prepared_usage, prepared_at = (
+                        self._prepared[scan_id]
+                    )
+                    scan_row = self._connection.execute(
+                        "SELECT adapter_id,connection_id,library_id,state,base_digest "
+                        "FROM inventory_scans WHERE scan_id=? AND cohort_id=?",
+                        (scan_id, cohort_id),
+                    ).fetchone()
+                    if (
+                        scan_row is None
+                        or scan_row[3] != ScanState.RUNNING.value
+                        or scan_row[4] != prepared_start.current_digest
+                        or _current_digest(
+                            self._current_values(
+                                str(scan_row[0]), str(scan_row[1]), str(scan_row[2])
+                            )
+                        )
+                        != prepared_start.current_digest
+                        or (claim is not None and not self._scan_claim_is_live(
+                            scan_id, claim, finished_at
+                        ))
+                    ):
+                        return RepositoryResult(RepositoryOutcome.REJECTED)
+                    self._connection.execute(
+                        "DELETE FROM current_inventory_v2 WHERE adapter_id=? AND "
+                        "connection_id=? AND library_id=?",
+                        (scan_row[0], scan_row[1], scan_row[2]),
+                    )
+                    for snapshot in prepared_snapshots:
+                        target = snapshot.observation.target
+                        persisted_id = self._persist_or_reuse(snapshot)
+                        values = (
+                            target.adapter.value,
+                            target.connection.value,
+                            target.library.value,
+                            target.external_item.value,
+                            persisted_id.value,
+                        )
+                        self._connection.execute(
+                            "INSERT INTO current_inventory_v2(adapter_id,connection_id,"
+                            "library_id,external_item,snapshot_id) VALUES (?,?,?,?,?)",
+                            values,
+                        )
+                        self._connection.execute(
+                            "INSERT INTO inventory_scan_items(scan_id,adapter_id,connection_id,"
+                            "library_id,external_item,snapshot_id) VALUES (?,?,?,?,?,?)",
+                            (scan_id, *values),
+                        )
+                    cursor = self._connection.execute(
+                        "UPDATE inventory_scans SET state='complete',failure_kind=NULL,"
+                        "page_count=?,item_count=?,response_bytes=?,finished_at=? "
+                        "WHERE scan_id=? AND state='running'",
+                        (
+                            prepared_usage.pages,
+                            prepared_usage.items,
+                            prepared_usage.response_bytes,
+                            _format_timestamp(prepared_at),
+                            scan_id,
+                        ),
+                    )
+                    if cursor.rowcount != 1:
+                        raise _PublicationAborted
+                final = self._connection.execute(
+                    "SELECT adapter_id,connection_id,library_id FROM inventory_scans "
+                    "WHERE scan_id=?",
+                    (start.scan_id.value,),
+                ).fetchone()
+                inspection = self._inspection_for(
+                    start.scan_id, str(final[0]), str(final[1]), str(final[2]), context
+                )
+            for scan_id in cohort_scans:
+                self._prepared.pop(scan_id, None)
+            return RepositoryResult(RepositoryOutcome.ACCEPTED, inspection)
+        except _PublicationAborted:
+            return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+        except sqlite3.IntegrityError:
+            return RepositoryResult(RepositoryOutcome.REJECTED)
+        except (sqlite3.Error, ValueError, KeyError):
+            return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+
     def inspect(
         self,
         connection: LibraryConnection,
@@ -457,6 +725,33 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             )
         except (sqlite3.Error, ValueError):
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+
+    def _claim_is_live(self, claim: PollClaim, now: datetime) -> bool:
+        row = self._connection.execute(
+            "SELECT state,attempt,fence,lease_owner,lease_expires_at,"
+            "cancellation_requested,updated_at FROM inventory_polls WHERE poll_id=?",
+            (claim.poll_id,),
+        ).fetchone()
+        return bool(
+            row is not None
+            and row[0] == "running"
+            and int(row[1]) == claim.attempt
+            and int(row[2]) == claim.fence
+            and row[3] == claim.worker_id
+            and not bool(row[5])
+            and _parse_timestamp(str(row[4])) > now
+            and _parse_timestamp(str(row[6])) <= now
+        )
+
+    def _scan_claim_is_live(
+        self, scan_id: str, claim: PollClaim, now: datetime
+    ) -> bool:
+        linked = self._connection.execute(
+            "SELECT 1 FROM inventory_scan_poll_claims WHERE scan_id=? AND poll_id=? "
+            "AND attempt=? AND fence=?",
+            (scan_id, claim.poll_id, claim.attempt, claim.fence),
+        ).fetchone()
+        return linked is not None and self._claim_is_live(claim, now)
 
     def _current(
         self, connection: LibraryConnection, library: LibraryId

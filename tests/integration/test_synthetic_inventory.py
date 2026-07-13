@@ -21,6 +21,7 @@ from mechanical_librarian.application.synthetic_inventory import (
 )
 from mechanical_librarian.domain.identifiers import SnapshotId
 from mechanical_librarian.domain.inventory import ItemLifecycle, ItemSnapshot
+from mechanical_librarian.infrastructure.persistence.sqlite import MIGRATIONS
 
 
 ROOT = Path(__file__).parents[2]
@@ -72,7 +73,7 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
                 connection.execute(
                     "SELECT version FROM schema_migrations ORDER BY version"
                 ).fetchall(),
-                [(1,), (2,), (3,), (4,)],
+                [(version,) for version in range(1, len(MIGRATIONS) + 1)],
             )
             self.assertEqual(
                 connection.execute(

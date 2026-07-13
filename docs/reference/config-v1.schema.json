@@ -147,6 +147,47 @@
     "InventoryInput": {
       "additionalProperties": false,
       "properties": {
+        "connect_timeout_seconds": {
+          "default": 10,
+          "maximum": 300,
+          "minimum": 1,
+          "title": "Connect Timeout Seconds",
+          "type": "integer"
+        },
+        "initial_backoff_seconds": {
+          "default": 5,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Initial Backoff Seconds",
+          "type": "integer"
+        },
+        "max_attempts": {
+          "default": 3,
+          "maximum": 16,
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "max_backoff_seconds": {
+          "default": 300,
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Max Backoff Seconds",
+          "type": "integer"
+        },
+        "max_elapsed_seconds": {
+          "default": 900,
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Max Elapsed Seconds",
+          "type": "integer"
+        },
+        "max_in_flight_requests": {
+          "const": 1,
+          "default": 1,
+          "title": "Max In Flight Requests",
+          "type": "integer"
+        },
         "max_items": {
           "default": 10000,
           "maximum": 10000,
@@ -173,6 +214,20 @@
           "maximum": 500,
           "minimum": 1,
           "title": "Page Size",
+          "type": "integer"
+        },
+        "poll_generation": {
+          "default": 0,
+          "maximum": 1000000,
+          "minimum": 0,
+          "title": "Poll Generation",
+          "type": "integer"
+        },
+        "read_timeout_seconds": {
+          "default": 30,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Read Timeout Seconds",
           "type": "integer"
         },
         "stability_delay_seconds": {
@@ -357,10 +412,18 @@
     "inventory": {
       "$ref": "#/$defs/InventoryInput",
       "default": {
+        "connect_timeout_seconds": 10,
+        "initial_backoff_seconds": 5,
+        "max_attempts": 3,
+        "max_backoff_seconds": 300,
+        "max_elapsed_seconds": 900,
+        "max_in_flight_requests": 1,
         "max_items": 10000,
         "max_pages": 512,
         "max_response_bytes": 67108864,
         "page_size": 100,
+        "poll_generation": 0,
+        "read_timeout_seconds": 30,
         "stability_delay_seconds": 0,
         "timeout_seconds": 300
       }

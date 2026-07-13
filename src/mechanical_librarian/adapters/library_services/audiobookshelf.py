@@ -252,7 +252,11 @@ class AudiobookshelfConnectionProbe:
                     )
                 payload.extend(chunk)
             try:
-                value = json.loads(bytes(payload).decode("utf-8"))
+                value = json.loads(
+                    bytes(payload).decode("utf-8"),
+                    object_pairs_hook=_unique_object,
+                    parse_constant=_reject_json_constant,
+                )
             except (UnicodeError, ValueError, RecursionError):
                 return _failed(
                     FailureKind.INVALID_RESPONSE, "connection response invalid"
@@ -266,6 +270,19 @@ class AudiobookshelfConnectionProbe:
 
 def _clipped_timeout(configured: float | None, remaining: float) -> float:
     return remaining if configured is None else min(configured, remaining)
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
+
+
+def _reject_json_constant(_value: str) -> None:
+    raise ValueError("non-finite JSON number")
 
 
 def _status_version(status: object) -> tuple[bool, ServiceVersion | None]:

@@ -68,7 +68,13 @@ class PrivateFileTargetCredentials:
         )
 
     def inventory_client(
-        self, handle: SecretHandle, endpoint: ServiceEndpoint
+        self,
+        handle: SecretHandle,
+        endpoint: ServiceEndpoint,
+        *,
+        connect_timeout_seconds: int = 10,
+        read_timeout_seconds: int = 30,
+        max_in_flight_requests: int = 1,
     ) -> httpx.Client:
         """Create a bearer client whose credential can reach GET inventory routes only."""
 
@@ -78,6 +84,11 @@ class PrivateFileTargetCredentials:
             or type(endpoint) is not ServiceEndpoint
             or not _is_origin(endpoint)
             or not target_endpoint_allowed(endpoint)
+            or type(connect_timeout_seconds) is not int
+            or not 1 <= connect_timeout_seconds <= 300
+            or type(read_timeout_seconds) is not int
+            or not 1 <= read_timeout_seconds <= 3_600
+            or max_in_flight_requests != 1
         ):
             raise SecretFileUnavailable()
         material = _read(handle.reference)
@@ -89,9 +100,14 @@ class PrivateFileTargetCredentials:
             trust_env=False,
             follow_redirects=False,
             verify=True,
-            timeout=httpx.Timeout(connect=3.0, read=10.0, write=3.0, pool=2.0),
+            timeout=httpx.Timeout(
+                connect=float(connect_timeout_seconds),
+                read=float(read_timeout_seconds),
+                write=float(connect_timeout_seconds),
+                pool=float(connect_timeout_seconds),
+            ),
             limits=httpx.Limits(
-                max_connections=2,
+                max_connections=max_in_flight_requests,
                 max_keepalive_connections=0,
                 keepalive_expiry=0.0,
             ),
