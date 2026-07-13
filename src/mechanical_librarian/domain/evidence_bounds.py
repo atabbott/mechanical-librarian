@@ -264,6 +264,8 @@ def _credential_label_shaped(
     ).casefold()
     parts = tuple(part for part in label.split("_") if part)
     compact = "".join(character for character in label if character.isalnum())
+    if compact in {"credential", "credentials"}:
+        return True
     if compact == "secret":
         return reject_exact_secret
     if compact in {"authorization", "password", "passwd", "token"}:

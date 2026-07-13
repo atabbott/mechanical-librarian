@@ -14,6 +14,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- Evidence persistence now rejects exact normalized `credential` and
+  `credentials` labels before construction or strict deserialization while
+  preserving non-credential near misses.
 - Audiobookshelf inventory now prepares and recovers durable cohort scan state
   before resolving target credentials or performing compatibility,
   authorization, library, or item requests.

@@ -330,6 +330,88 @@ class EvidenceTypeTests(unittest.TestCase):
         persisted = json.loads(self._record(facts=(private_path,)).to_persistence_json())
         self.assertEqual(persisted["facts"][0]["value"], private_path.value)
 
+    def test_generic_credential_labels_fail_closed_across_persistence_boundaries(
+        self,
+    ) -> None:
+        credential_labels = (
+            "credential",
+            "credentials",
+            "Credential",
+            "CREDENTIALS",
+        )
+        for credential_label in credential_labels:
+            assignments = (
+                f"{credential_label}=synthetic-marker-174",
+                f"{credential_label}: synthetic-marker-174",
+            )
+            with self.subTest(label=credential_label, boundary="fact-code"):
+                with self.assertRaises(EvidenceValueError) as raised:
+                    ConfidenceFact(credential_label, "ordinary-looking-value")
+                self.assertEqual(
+                    str(raised.exception),
+                    "confidence fact code must not use a credential label",
+                )
+
+            for assignment in assignments:
+                with self.subTest(assignment=assignment, boundary="fact-value"):
+                    with self.assertRaises(EvidenceValueError) as raised:
+                        ConfidenceFact("title", assignment)
+                    self.assertEqual(
+                        str(raised.exception),
+                        "confidence fact value must not contain credential-shaped text",
+                    )
+                    self.assertNotIn("synthetic-marker-174", repr(raised.exception))
+                with self.subTest(assignment=assignment, boundary="lineage"):
+                    with self.assertRaises(EvidenceValueError) as raised:
+                        self._record(lineage=assignment)
+                    self.assertEqual(
+                        str(raised.exception),
+                        "evidence lineage must not contain credential-shaped text",
+                    )
+                    self.assertNotIn("synthetic-marker-174", repr(raised.exception))
+
+            persisted = json.loads(
+                self._record(
+                    facts=(ConfidenceFact("title", "ordinary-looking-value"),),
+                    lineage="ordinary-lineage",
+                ).to_persistence_json()
+            )
+            persisted["facts"][0]["code"] = credential_label
+            with self.subTest(label=credential_label, boundary="persisted-code"):
+                with self.assertRaisesRegex(EvidenceValueError, "credential label"):
+                    EvidenceRecord.from_persistence_json(_canonical(persisted))
+
+            for assignment in assignments:
+                persisted["facts"][0]["code"] = "title"
+                persisted["facts"][0]["value"] = assignment
+                persisted["lineage"] = "ordinary-lineage"
+                with self.subTest(assignment=assignment, boundary="persisted-value"):
+                    with self.assertRaises(EvidenceValueError) as raised:
+                        EvidenceRecord.from_persistence_json(_canonical(persisted))
+                    self.assertNotIn("synthetic-marker-174", repr(raised.exception))
+
+                persisted["facts"][0]["value"] = "ordinary-looking-value"
+                persisted["lineage"] = assignment
+                with self.subTest(assignment=assignment, boundary="persisted-lineage"):
+                    with self.assertRaises(EvidenceValueError) as raised:
+                        EvidenceRecord.from_persistence_json(_canonical(persisted))
+                    self.assertNotIn("synthetic-marker-174", repr(raised.exception))
+
+        for near_miss in (
+            "credential-status",
+            "credentials-count",
+            "credentialed",
+        ):
+            with self.subTest(near_miss=near_miss):
+                record = self._record(
+                    facts=(ConfidenceFact(near_miss, f"{near_miss}=ordinary"),),
+                    lineage=f"{near_miss}: ordinary",
+                )
+                self.assertEqual(
+                    EvidenceRecord.from_persistence_json(record.to_persistence_json()),
+                    record,
+                )
+
     def test_cross_target_references_require_versioned_policy(self) -> None:
         with self.assertRaises(EvidenceValueError):
             EvidenceReference(
