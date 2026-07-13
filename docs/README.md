@@ -46,6 +46,7 @@ release standards as code.
 - [Repository structure](development/repository-structure.md)
 - [Prototype extraction policy](development/prototype-extraction.md)
 - [DUX prototype extraction record](development/dux-extraction.md)
+- [DUX fixture and regression corpus](development/dux-fixture-corpus.md)
 
 ## Operations
 

@@ -24,6 +24,11 @@ dependencies = [
   "pydantic==2.13.4",
 ]
 
+[dependency-groups]
+dev = [
+  "setuptools==83.0.0",
+]
+
 [project.scripts]
 mechanical-librarian = "mechanical_librarian.bootstrap:main"
 
