@@ -20,9 +20,12 @@ mechanical-librarian audiobookshelf-poll \
   --database /var/lib/mechanical-librarian/state.sqlite
 ```
 
-Retry-wait, blocked, or completed delivery of the same trigger performs no
-target I/O. Inspect the opaque poll ID printed by the command without loading
-configuration or credentials:
+A retry-wait delivery before its persisted eligibility time, or a blocked or
+completed delivery of the same trigger, performs no target I/O. Once a
+retry-wait poll becomes eligible, redelivery claims the next fenced attempt and
+may perform target I/O under the original cumulative budgets. Inspect the
+opaque poll ID printed by the command without loading configuration or
+credentials:
 
 ```console
 mechanical-librarian inventory-poll-inspect \
@@ -76,6 +79,11 @@ then publish in one cohort transaction. A later library failure discards the
 prepared observations, terminalizes all cohort scans, and leaves both current
 state and history unchanged. This prevents an item move between libraries from
 appearing as a disappearance during a partial poll.
+
+Each poll lifecycle transition emits a fixed-schema structured event and
+bounded counters for adapter, stage, attempt, pages, items, response bytes,
+typed failure, and compatibility state. These diagnostics never include
+titles, authors, endpoints, paths, response bodies, or credentials.
 
 Expanded responses are normalized at the adapter boundary. The durable
 `inventory-snapshot-v2` representation keeps vendor-neutral typed states for

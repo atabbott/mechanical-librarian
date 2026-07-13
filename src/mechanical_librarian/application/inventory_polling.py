@@ -24,6 +24,7 @@ from mechanical_librarian.domain.inventory_polling import (
     PollRequest,
     PollState,
 )
+from mechanical_librarian.domain.identifiers import AdapterId
 from mechanical_librarian.domain.inventory_v2 import ScanUsage
 
 
@@ -66,6 +67,51 @@ class InventoryPollOutcome(StrEnum):
     INVALID = "invalid"
 
 
+class InventoryPollStage(StrEnum):
+    SCHEDULED = "scheduled"
+    CLAIMED = "claimed"
+    DEFERRED = "deferred"
+    BLOCKED = "blocked"
+    FAILED = "failed"
+    SUCCEEDED = "succeeded"
+
+
+@dataclass(frozen=True)
+class InventoryPollEvent:
+    adapter: AdapterId
+    poll_id: str
+    stage: InventoryPollStage
+    attempt: int
+    usage: ScanUsage = ScanUsage()
+    failure: FailureKind | None = None
+    compatibility: str = "unknown"
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.adapter) is not AdapterId
+            or type(self.poll_id) is not str
+            or not self.poll_id
+            or len(self.poll_id) > 96
+            or type(self.stage) is not InventoryPollStage
+            or type(self.attempt) is not int
+            or self.attempt < 0
+            or type(self.usage) is not ScanUsage
+            or (self.failure is not None and type(self.failure) is not FailureKind)
+            or self.compatibility
+            not in {"supported", "incompatible", "unknown", "contract_drift"}
+        ):
+            raise ValueError("inventory poll event is malformed")
+
+
+class InventoryPollTelemetry(Protocol):
+    def record(self, event: InventoryPollEvent) -> None: ...
+
+
+class _NullInventoryPollTelemetry:
+    def record(self, _event: InventoryPollEvent) -> None:
+        return None
+
+
 @dataclass(frozen=True)
 class InventoryPollResult:
     outcome: InventoryPollOutcome
@@ -80,8 +126,16 @@ class InventoryPollResult:
 class RunInventoryPoll:
     """Persist intent before I/O and record exactly one bounded attempt."""
 
-    def __init__(self, repository: InventoryPollingRepository) -> None:
+    def __init__(
+        self,
+        repository: InventoryPollingRepository,
+        *,
+        telemetry: InventoryPollTelemetry | None = None,
+        adapter: AdapterId | None = None,
+    ) -> None:
         self._repository = repository
+        self._telemetry = _NullInventoryPollTelemetry() if telemetry is None else telemetry
+        self._adapter = adapter
 
     def run(
         self,
@@ -103,20 +157,27 @@ class RunInventoryPoll:
         if not scheduled.accepted or type(scheduled.value) is not PollInspection:
             return InventoryPollResult(InventoryPollOutcome.FAILED, None)
         inspection = scheduled.value
+        self._record(inspection, InventoryPollStage.SCHEDULED)
         if inspection.state is PollState.SUCCEEDED:
+            self._record(inspection, InventoryPollStage.SUCCEEDED)
             return InventoryPollResult(InventoryPollOutcome.SUCCEEDED, inspection)
         if inspection.state is PollState.BLOCKED:
+            self._record(inspection, InventoryPollStage.BLOCKED)
             return InventoryPollResult(InventoryPollOutcome.BLOCKED, inspection)
         if inspection.state in {PollState.FAILED_TERMINAL, PollState.CANCELLED}:
+            self._record(inspection, InventoryPollStage.FAILED)
             return InventoryPollResult(InventoryPollOutcome.FAILED, inspection)
         claimed = self._repository.claim(inspection.poll_id, worker_id, now)
         if not claimed.accepted or type(claimed.value) is not PollClaim:
             inspected = self._repository.inspect(inspection.poll_id)
+            deferred = inspected.value if inspected.accepted else inspection
+            self._record(deferred, InventoryPollStage.DEFERRED)
             return InventoryPollResult(
                 InventoryPollOutcome.DEFERRED,
-                inspected.value if inspected.accepted else inspection,
+                deferred,
             )
         claim = claimed.value
+        self._record_claim(claim)
         try:
             inventory = operation(claim)
         except Exception:
@@ -124,8 +185,11 @@ class RunInventoryPoll:
         ended = finished_at()
         usage = _usage(inventory)
         if inventory.succeeded:
-            completed = self._repository.complete(claim, usage, ended)
+            completed = self._repository.complete(
+                claim, usage, ended, compatibility="supported"
+            )
             if completed.accepted and type(completed.value) is PollInspection:
+                self._record(completed.value, InventoryPollStage.SUCCEEDED)
                 return InventoryPollResult(
                     InventoryPollOutcome.SUCCEEDED, completed.value, inventory
                 )
@@ -135,25 +199,14 @@ class RunInventoryPoll:
                 inspected.value if inspected.accepted else None,
                 inventory,
             )
-        kind = _failure_kind(inventory)
-        failure = PortFailure(
-            kind,
-            RetryAdvice(kind in {
-                FailureKind.UNAVAILABLE,
-                FailureKind.RATE_LIMITED,
-                FailureKind.TIMEOUT,
-            }),
-            SafeSummary("inventory poll attempt failed safely"),
-        )
-        compatibility = (
-            "incompatible"
-            if kind is FailureKind.INCOMPATIBLE
-            else "contract_drift"
-            if kind is FailureKind.INVALID_RESPONSE
-            else "supported"
-        )
+        failure = _poll_failure(inventory)
+        kind = failure.kind
         failed = self._repository.fail(
-            claim, failure, usage, ended, compatibility=compatibility
+            claim,
+            failure,
+            usage,
+            ended,
+            compatibility=inventory.compatibility,
         )
         if not failed.accepted or type(failed.value) is not PollInspection:
             return InventoryPollResult(InventoryPollOutcome.FAILED, None, inventory)
@@ -163,7 +216,49 @@ class RunInventoryPoll:
             PollState.CANCELLED: InventoryPollOutcome.FAILED,
             PollState.FAILED_TERMINAL: InventoryPollOutcome.FAILED,
         }.get(failed.value.state, InventoryPollOutcome.FAILED)
+        stage = {
+            InventoryPollOutcome.DEFERRED: InventoryPollStage.DEFERRED,
+            InventoryPollOutcome.BLOCKED: InventoryPollStage.BLOCKED,
+        }.get(outcome, InventoryPollStage.FAILED)
+        self._record(failed.value, stage)
         return InventoryPollResult(outcome, failed.value, inventory)
+
+    def _record_claim(self, claim: PollClaim) -> None:
+        if self._adapter is None:
+            return
+        try:
+            self._telemetry.record(
+                InventoryPollEvent(
+                    self._adapter,
+                    claim.poll_id,
+                    InventoryPollStage.CLAIMED,
+                    claim.attempt,
+                )
+            )
+        except Exception:
+            return
+
+    def _record(self, inspection: PollInspection, stage: InventoryPollStage) -> None:
+        if self._adapter is None:
+            return
+        try:
+            self._telemetry.record(
+                InventoryPollEvent(
+                    self._adapter,
+                    inspection.poll_id,
+                    stage,
+                    inspection.attempt,
+                    inspection.usage,
+                    (
+                        FailureKind(inspection.failure_kind)
+                        if inspection.failure_kind is not None
+                        else None
+                    ),
+                    inspection.compatibility or "unknown",
+                )
+            )
+        except Exception:
+            return
 
 
 def _usage(result: InventoryRunResult) -> ScanUsage:
@@ -182,6 +277,11 @@ def _failure_kind(result: InventoryRunResult) -> FailureKind:
         for item in result.libraries
         if item.inspection is not None and item.inspection.failure_kind is not None
     ]
+    values.extend(
+        item.failure.kind.value
+        for item in result.libraries
+        if item.failure is not None
+    )
     priority = (
         FailureKind.CANCELLED,
         FailureKind.AUTHENTICATION,
@@ -206,9 +306,28 @@ def _failure_kind(result: InventoryRunResult) -> FailureKind:
     )
 
 
+def _poll_failure(result: InventoryRunResult) -> PortFailure:
+    kind = _failure_kind(result)
+    for item in result.libraries:
+        if item.failure is not None and item.failure.kind is kind:
+            return item.failure
+    return PortFailure(
+        kind,
+        RetryAdvice(kind in {
+            FailureKind.UNAVAILABLE,
+            FailureKind.RATE_LIMITED,
+            FailureKind.TIMEOUT,
+        }),
+        SafeSummary("inventory poll attempt failed safely"),
+    )
+
+
 __all__ = [
     "InventoryPollOutcome",
+    "InventoryPollEvent",
     "InventoryPollResult",
+    "InventoryPollStage",
+    "InventoryPollTelemetry",
     "InventoryPollingRepository",
     "RunInventoryPoll",
 ]

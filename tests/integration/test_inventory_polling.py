@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import Mock
 
 from mechanical_librarian.adapters.persistence.inventory_polling import (
     SQLiteInventoryPollingRepository,
@@ -15,13 +16,17 @@ from mechanical_librarian.application.ports import (
     SafeSummary,
 )
 from mechanical_librarian.application.inventory_polling import (
+    InventoryPollEvent,
+    InventoryPollStage,
     InventoryPollOutcome,
     RunInventoryPoll,
 )
 from mechanical_librarian.application.inventory_reconciliation import (
+    InventoryLibraryResult,
     InventoryOutcome,
     InventoryRunResult,
 )
+from mechanical_librarian.domain.identifiers import AdapterId, LibraryId
 from mechanical_librarian.domain.inventory_polling import (
     PollPolicy,
     PollRequest,
@@ -29,6 +34,9 @@ from mechanical_librarian.domain.inventory_polling import (
 )
 from mechanical_librarian.domain.inventory_v2 import ScanUsage
 from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate
+from mechanical_librarian.infrastructure.observability.inventory_polling import (
+    LoggingInventoryPollTelemetry,
+)
 
 
 NOW = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
@@ -41,7 +49,9 @@ class InventoryPollingTests(unittest.TestCase):
         self.connection = connect(Path(self.directory.name) / "state.sqlite")
         self.addCleanup(self.connection.close)
         migrate(self.connection)
-        self.repository = SQLiteInventoryPollingRepository(self.connection)
+        self.repository = SQLiteInventoryPollingRepository(
+            self.connection, now=lambda: NOW
+        )
 
     def request(
         self,
@@ -99,7 +109,9 @@ class InventoryPollingTests(unittest.TestCase):
 
         self.assertEqual(failed.value.state, PollState.RETRY_WAIT)
         self.assertEqual(failed.value.usage, ScanUsage(3, 7, 900))
-        reopened = SQLiteInventoryPollingRepository(self.connection)
+        reopened = SQLiteInventoryPollingRepository(
+            self.connection, now=lambda: NOW
+        )
         self.assertFalse(
             reopened.claim("poll_a", "worker_b", NOW + timedelta(seconds=5)).accepted
         )
@@ -147,6 +159,8 @@ class InventoryPollingTests(unittest.TestCase):
             NOW + timedelta(seconds=2),
         )
         self.assertEqual(suppressed.value.poll_id, "poll_a")
+        self.assertEqual(suppressed.value.usage, ScanUsage())
+        self.assertEqual(suppressed.value.compatibility, "supported")
         self.assertEqual(changed.value.poll_id, "poll_c")
         self.assertEqual(changed.value.state, PollState.PENDING)
 
@@ -179,6 +193,21 @@ class InventoryPollingTests(unittest.TestCase):
             claim, ScanUsage(), NOW + timedelta(seconds=2)
         )
         self.assertTrue(cancelled.value.cancellation_requested)
+        self.assertFalse(completed.accepted)
+
+    def test_repository_clock_rejects_completion_after_real_lease_expiry(self) -> None:
+        clock = [NOW]
+        repository = SQLiteInventoryPollingRepository(
+            self.connection, now=lambda: clock[0]
+        )
+        repository.schedule(self.request(), NOW)
+        claim = repository.claim("poll_a", "worker_a", NOW).value
+
+        clock[0] = NOW + timedelta(seconds=31)
+        completed = repository.complete(
+            claim, ScanUsage(1, 1, 10), NOW + timedelta(seconds=1)
+        )
+
         self.assertFalse(completed.accepted)
 
     def test_cumulative_resource_exhaustion_is_terminal(self) -> None:
@@ -231,6 +260,100 @@ class InventoryPollingTests(unittest.TestCase):
         self.assertEqual(first.outcome, InventoryPollOutcome.SUCCEEDED)
         self.assertEqual(duplicate.outcome, InventoryPollOutcome.SUCCEEDED)
         self.assertEqual(len(calls), 1)
+
+    def test_application_emits_only_bounded_poll_telemetry(self) -> None:
+        events = []
+
+        class Telemetry:
+            def record(self, event):
+                events.append(event)
+
+        result = RunInventoryPoll(
+            self.repository,
+            telemetry=Telemetry(),
+            adapter=AdapterId("fixture"),
+        ).run(
+            self.request(),
+            "worker_a",
+            NOW,
+            lambda _claim: InventoryRunResult(
+                InventoryOutcome.READY, (), "supported"
+            ),
+            lambda: NOW + timedelta(seconds=1),
+        )
+
+        self.assertEqual(result.outcome, InventoryPollOutcome.SUCCEEDED)
+        self.assertEqual(
+            [event.stage for event in events],
+            [
+                InventoryPollStage.SCHEDULED,
+                InventoryPollStage.CLAIMED,
+                InventoryPollStage.SUCCEEDED,
+            ],
+        )
+        self.assertEqual(events[-1].compatibility, "supported")
+        self.assertNotIn("private", repr(events))
+
+    def test_logging_telemetry_records_fixed_fields_and_resource_counters(self) -> None:
+        logger = Mock()
+        telemetry = LoggingInventoryPollTelemetry(logger)
+        telemetry.record(
+            InventoryPollEvent(
+                AdapterId("fixture"),
+                "poll_fixture",
+                InventoryPollStage.DEFERRED,
+                2,
+                ScanUsage(3, 4, 500),
+                FailureKind.RATE_LIMITED,
+                "supported",
+            )
+        )
+
+        counters = telemetry.counters()
+        self.assertEqual(counters[("fixture", "deferred", "rate_limited")], 1)
+        self.assertEqual(counters[("fixture", "pages", "deferred")], 3)
+        self.assertEqual(counters[("fixture", "items", "deferred")], 4)
+        self.assertEqual(counters[("fixture", "bytes", "deferred")], 500)
+        fields = logger.info.call_args.kwargs["extra"]["inventory_poll"]
+        self.assertEqual(fields["failure_kind"], "rate_limited")
+        self.assertNotIn("title", fields)
+        self.assertNotIn("path", fields)
+
+    def test_application_preserves_retry_after_from_inventory_failure(self) -> None:
+        failure = self.failure(
+            FailureKind.RATE_LIMITED,
+            retryable=True,
+            retry_after=timedelta(seconds=17),
+        )
+        inventory = InventoryRunResult(
+            InventoryOutcome.INCOMPLETE,
+            (
+                InventoryLibraryResult(
+                    LibraryId("01234567-89ab-4def-8123-456789abcdef"),
+                    InventoryOutcome.INCOMPLETE,
+                    None,
+                    ScanUsage(1, 2, 300),
+                    failure,
+                ),
+            ),
+            "supported",
+        )
+
+        result = RunInventoryPoll(self.repository).run(
+            self.request(),
+            "worker_a",
+            NOW,
+            lambda _claim: inventory,
+            lambda: NOW + timedelta(seconds=1),
+        )
+
+        self.assertEqual(result.outcome, InventoryPollOutcome.DEFERRED)
+        self.assertEqual(
+            result.inspection.next_eligible_at,
+            NOW + timedelta(seconds=18),
+        )
+        self.assertEqual(result.inspection.usage, ScanUsage(1, 2, 300))
+        self.assertEqual(result.inspection.compatibility, "supported")
 
 
 if __name__ == "__main__":

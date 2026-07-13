@@ -929,6 +929,18 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
                 self.assertEqual(captured["timeout"].pool, 2.0)
             finally:
                 client.close()
+            bounded = credentials.target_client(
+                handle,
+                ServiceEndpoint("https://synthetic.invalid"),
+                connect_timeout_seconds=7,
+                read_timeout_seconds=19,
+                max_in_flight_requests=1,
+            )
+            try:
+                self.assertEqual(bounded.timeout.connect, 7.0)
+                self.assertEqual(bounded.timeout.read, 19.0)
+            finally:
+                bounded.close()
 
     def test_missing_and_overpermissive_files_are_safe(self) -> None:
         credentials = PrivateFileTargetCredentials()

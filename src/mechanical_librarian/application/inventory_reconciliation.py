@@ -15,7 +15,10 @@ from mechanical_librarian.application.job_heartbeat import (
 from mechanical_librarian.application.ports import (
     FailureKind,
     OperationContext,
+    PortFailure,
     PortResult,
+    RetryAdvice,
+    SafeSummary,
 )
 from mechanical_librarian.domain.identifiers import LibraryId, ScanId, canonical_json
 from mechanical_librarian.domain.inventory import LibraryConnection
@@ -141,10 +144,14 @@ class InventoryConnectionVerification:
 
     usage: ScanUsage
     failure: FailureKind | None = None
+    compatibility: str = "unknown"
 
     def __post_init__(self) -> None:
-        if type(self.usage) is not ScanUsage or (
-            self.failure is not None and type(self.failure) is not FailureKind
+        if (
+            type(self.usage) is not ScanUsage
+            or (self.failure is not None and type(self.failure) is not FailureKind)
+            or self.compatibility
+            not in {"supported", "incompatible", "unknown", "contract_drift"}
         ):
             raise ValueError("inventory connection verification is malformed")
 
@@ -155,6 +162,7 @@ class InventoryLibraryResult:
     outcome: InventoryOutcome
     inspection: InventoryInspection | None
     usage: ScanUsage = ScanUsage()
+    failure: PortFailure | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -165,6 +173,7 @@ class InventoryLibraryResult:
                 and type(self.inspection) is not InventoryInspection
             )
             or type(self.usage) is not ScanUsage
+            or (self.failure is not None and type(self.failure) is not PortFailure)
         ):
             raise ValueError("inventory library result is malformed")
         if self.outcome is InventoryOutcome.READY and self.inspection is None:
@@ -175,6 +184,16 @@ class InventoryLibraryResult:
 class InventoryRunResult:
     outcome: InventoryOutcome
     libraries: tuple[InventoryLibraryResult, ...]
+    compatibility: str = "unknown"
+
+    def __post_init__(self) -> None:
+        if self.compatibility not in {
+            "supported",
+            "incompatible",
+            "unknown",
+            "contract_drift",
+        }:
+            raise ValueError("inventory compatibility state is malformed")
 
     @property
     def succeeded(self) -> bool:
@@ -285,7 +304,9 @@ class ReconcileInventory:
         live_failure = _liveness_failure(context)
         if live_failure is not None:
             connection_verification = InventoryConnectionVerification(
-                connection_verification.usage, live_failure
+                connection_verification.usage,
+                live_failure,
+                connection_verification.compatibility,
             )
         if connection_verification.failure is not None:
             results = tuple(
@@ -380,6 +401,7 @@ class ReconcileInventory:
                     ),
                     inspection,
                     result.usage,
+                    result.failure,
                 )
             )
         results = tuple(refreshed)
@@ -393,7 +415,9 @@ class ReconcileInventory:
             outcome = InventoryOutcome.UNSTABLE
         else:
             outcome = InventoryOutcome.INCOMPLETE
-        return InventoryRunResult(outcome, results)
+        return InventoryRunResult(
+            outcome, results, connection_verification.compatibility
+        )
 
     def _run_library(
         self,
@@ -463,7 +487,7 @@ class ReconcileInventory:
                 library,
                 start,
                 usage,
-                verified.failure.kind
+                verified.failure
                 if verified.failure is not None
                 else FailureKind.INVALID_RESPONSE,
                 context,
@@ -507,7 +531,7 @@ class ReconcileInventory:
                 library,
                 start,
                 usage,
-                first.failure.kind
+                first.failure
                 if first.failure is not None
                 else FailureKind.INVALID_RESPONSE,
                 context,
@@ -551,7 +575,7 @@ class ReconcileInventory:
                 library,
                 start,
                 usage,
-                second.failure.kind
+                second.failure
                 if second.failure is not None
                 else FailureKind.INVALID_RESPONSE,
                 context,
@@ -731,9 +755,25 @@ class ReconcileInventory:
         library: LibraryId,
         start: ScanStart,
         usage: ScanUsage,
-        kind: FailureKind,
+        failure: FailureKind | PortFailure,
         context: OperationContext,
     ) -> InventoryLibraryResult:
+        port_failure = (
+            failure
+            if type(failure) is PortFailure
+            else PortFailure(
+                failure,
+                RetryAdvice(
+                    failure in {
+                        FailureKind.UNAVAILABLE,
+                        FailureKind.RATE_LIMITED,
+                        FailureKind.TIMEOUT,
+                    }
+                ),
+                SafeSummary("inventory reconciliation failed safely"),
+            )
+        )
+        kind = port_failure.kind
         state = (
             ScanState.UNSTABLE if kind is FailureKind.CONFLICT else ScanState.INCOMPLETE
         )
@@ -759,6 +799,7 @@ class ReconcileInventory:
             ),
             inspection,
             usage,
+            port_failure,
         )
 
     def _checkpoint(

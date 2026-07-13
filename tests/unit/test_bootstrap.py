@@ -213,6 +213,7 @@ class BootstrapTests(unittest.TestCase):
 
         self.assertEqual(result.outcome, InventoryPollOutcome.BLOCKED)
         self.assertEqual(result.inspection.state.value, "blocked")
+        self.assertEqual(result.inspection.compatibility, "unknown")
         self.assertNotIn("example.invalid", operational)
         self.assertNotIn("synthetic-secret", operational)
         self.assertNotIn("01234567-89ab", operational)

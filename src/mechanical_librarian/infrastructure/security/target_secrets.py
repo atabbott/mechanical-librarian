@@ -35,12 +35,24 @@ class PrivateFileTargetCredentials:
         return _read(reference) is not None
 
     def target_client(
-        self, handle: SecretHandle, endpoint: ServiceEndpoint
+        self,
+        handle: SecretHandle,
+        endpoint: ServiceEndpoint,
+        *,
+        connect_timeout_seconds: int = 3,
+        read_timeout_seconds: int = 5,
+        max_in_flight_requests: int = 2,
     ) -> httpx.Client:
         if (
             type(handle) is not SecretHandle
             or handle.scope is not SecretScope.TARGET_SERVICE
             or type(endpoint) is not ServiceEndpoint
+            or type(connect_timeout_seconds) is not int
+            or not 1 <= connect_timeout_seconds <= 300
+            or type(read_timeout_seconds) is not int
+            or not 1 <= read_timeout_seconds <= 3_600
+            or type(max_in_flight_requests) is not int
+            or not 1 <= max_in_flight_requests <= 2
         ):
             raise SecretFileUnavailable()
         material = _read(handle.reference)
@@ -55,13 +67,13 @@ class PrivateFileTargetCredentials:
             follow_redirects=False,
             verify=True,
             timeout=httpx.Timeout(
-                connect=3.0,
-                read=5.0,
-                write=3.0,
-                pool=2.0,
+                connect=float(connect_timeout_seconds),
+                read=float(read_timeout_seconds),
+                write=float(connect_timeout_seconds),
+                pool=float(min(connect_timeout_seconds, 2)),
             ),
             limits=httpx.Limits(
-                max_connections=2,
+                max_connections=max_in_flight_requests,
                 max_keepalive_connections=0,
                 keepalive_expiry=0.0,
             ),

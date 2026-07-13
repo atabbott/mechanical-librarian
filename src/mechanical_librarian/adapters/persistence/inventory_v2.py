@@ -49,10 +49,12 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         *,
         owner_id: str | None = None,
         owner_alive: Callable[[str], bool] | None = None,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self._connection = connection
         self._owner_id = _default_owner_id() if owner_id is None else owner_id
         self._owner_alive = _owner_alive if owner_alive is None else owner_alive
+        self._now = now
         if not self._owner_id or len(self._owner_id) > 64:
             raise ValueError("inventory scan owner is invalid")
         self._prepared: dict[
@@ -565,18 +567,11 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                 return RepositoryResult(RepositoryOutcome.ACCEPTED, inspection)
 
             with _transaction(self._connection):
-                total_items = sum(
-                    len(self._prepared[scan_id][1]) for scan_id in cohort_scans
-                )
-                total_bytes = sum(
-                    len(snapshot.observation.canonical.encode("utf-8"))
-                    for scan_id in cohort_scans
-                    for snapshot in self._prepared[scan_id][1]
-                )
                 if context.preflight_result(
-                    item_count=total_items, serialized_bytes=total_bytes
+                    item_count=0, serialized_bytes=0
                 ).failure is not None:
                     raise _PublicationAborted
+                validated = []
                 for scan_id in cohort_scans:
                     prepared_start, prepared_snapshots, prepared_usage, prepared_at = (
                         self._prepared[scan_id]
@@ -600,7 +595,23 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                             scan_id, claim, finished_at
                         ))
                     ):
-                        return RepositoryResult(RepositoryOutcome.REJECTED)
+                        raise _PublicationRejected
+                    validated.append(
+                        (
+                            scan_id,
+                            scan_row,
+                            prepared_snapshots,
+                            prepared_usage,
+                            prepared_at,
+                        )
+                    )
+                for (
+                    scan_id,
+                    scan_row,
+                    prepared_snapshots,
+                    prepared_usage,
+                    prepared_at,
+                ) in validated:
                     self._connection.execute(
                         "DELETE FROM current_inventory_v2 WHERE adapter_id=? AND "
                         "connection_id=? AND library_id=?",
@@ -653,6 +664,8 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             return RepositoryResult(RepositoryOutcome.ACCEPTED, inspection)
         except _PublicationAborted:
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+        except _PublicationRejected:
+            return RepositoryResult(RepositoryOutcome.REJECTED)
         except sqlite3.IntegrityError:
             return RepositoryResult(RepositoryOutcome.REJECTED)
         except (sqlite3.Error, ValueError, KeyError):
@@ -727,6 +740,7 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
 
     def _claim_is_live(self, claim: PollClaim, now: datetime) -> bool:
+        now = max(now, self._now())
         row = self._connection.execute(
             "SELECT state,attempt,fence,lease_owner,lease_expires_at,"
             "cancellation_requested,updated_at FROM inventory_polls WHERE poll_id=?",
@@ -959,6 +973,10 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
 
 class _PublicationAborted(Exception):
     """Force transaction rollback when publication becomes unsafe."""
+
+
+class _PublicationRejected(Exception):
+    """Force rollback when an optimistic cohort precondition changed."""
 
 
 class _InspectionAborted(ValueError):

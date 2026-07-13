@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Iterator
+from typing import Callable, Iterator
 
 from mechanical_librarian.application.job_heartbeat import (
     RepositoryOutcome,
@@ -44,8 +44,14 @@ _RETRYABLE_FAILURES = {
 class SQLiteInventoryPollingRepository:
     """Persist poll intent, cumulative budgets, claims, and terminal evidence."""
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    ) -> None:
         self._connection = connection
+        self._now = now
 
     def schedule(
         self, request: PollRequest, now: datetime
@@ -55,21 +61,25 @@ class SQLiteInventoryPollingRepository:
         try:
             with _transaction(self._connection):
                 duplicate = self._connection.execute(
-                    "SELECT * FROM inventory_polls WHERE trigger_id=? AND governing_digest=?",
+                    "SELECT poll_id FROM inventory_polls "
+                    "WHERE trigger_id=? AND governing_digest=?",
                     (request.trigger_id, request.governing_digest),
                 ).fetchone()
                 if duplicate is not None:
                     return RepositoryResult(
-                        RepositoryOutcome.ACCEPTED, _inspection(duplicate)
+                        RepositoryOutcome.ACCEPTED,
+                        _inspection(self._row(str(duplicate[0]))),
                     )
                 blocked = self._connection.execute(
-                    "SELECT * FROM inventory_polls WHERE scope_digest=? AND governing_digest=? "
+                    "SELECT poll_id FROM inventory_polls "
+                    "WHERE scope_digest=? AND governing_digest=? "
                     "AND state='blocked' ORDER BY updated_at DESC,poll_id DESC LIMIT 1",
                     (request.scope_digest, request.governing_digest),
                 ).fetchone()
                 if blocked is not None:
                     return RepositoryResult(
-                        RepositoryOutcome.ACCEPTED, _inspection(blocked)
+                        RepositoryOutcome.ACCEPTED,
+                        _inspection(self._row(str(blocked[0]))),
                     )
                 policy = request.policy
                 self._connection.execute(
@@ -110,6 +120,7 @@ class SQLiteInventoryPollingRepository:
             return RepositoryResult(RepositoryOutcome.REJECTED)
         try:
             with _transaction(self._connection):
+                now = max(now, self._now())
                 row = self._row(poll_id)
                 if row is None:
                     return RepositoryResult(RepositoryOutcome.NOT_FOUND)
@@ -191,9 +202,31 @@ class SQLiteInventoryPollingRepository:
             return RepositoryResult(RepositoryOutcome.REJECTED)
         try:
             with _transaction(self._connection):
+                now = max(now, self._now())
                 row = self._claimed_row(claim, now)
                 if row is None:
                     return RepositoryResult(RepositoryOutcome.REJECTED)
+                linked = self._connection.execute(
+                    "SELECT COALESCE(SUM(s.page_count),0),"
+                    "COALESCE(SUM(s.item_count),0),"
+                    "COALESCE(SUM(s.response_bytes),0) FROM inventory_scans s JOIN "
+                    "inventory_scan_poll_claims c USING(scan_id) WHERE c.poll_id=? "
+                    "AND c.attempt=? AND c.fence=? AND s.state='running'",
+                    (claim.poll_id, claim.attempt, claim.fence),
+                ).fetchone()
+                usage = usage + ScanUsage(*(int(value) for value in linked))
+                self._connection.execute(
+                    "UPDATE inventory_scans SET state='incomplete',failure_kind=?,"
+                    "finished_at=? WHERE state='running' AND scan_id IN (SELECT scan_id "
+                    "FROM inventory_scan_poll_claims WHERE poll_id=? AND attempt=? AND fence=?)",
+                    (
+                        failure.kind.value,
+                        _format(now),
+                        claim.poll_id,
+                        claim.attempt,
+                        claim.fence,
+                    ),
+                )
                 pages = int(row[13]) + usage.pages
                 items = int(row[14]) + usage.items
                 response_bytes = int(row[15]) + usage.response_bytes
@@ -280,6 +313,7 @@ class SQLiteInventoryPollingRepository:
             return RepositoryResult(RepositoryOutcome.REJECTED)
         try:
             with _transaction(self._connection):
+                now = max(now, self._now())
                 row = self._claimed_row(claim, now)
                 if row is None:
                     return RepositoryResult(RepositoryOutcome.REJECTED)
@@ -321,6 +355,7 @@ class SQLiteInventoryPollingRepository:
             return RepositoryResult(RepositoryOutcome.REJECTED)
         try:
             with _transaction(self._connection):
+                now = max(now, self._now())
                 row = self._row(poll_id)
                 if row is None:
                     return RepositoryResult(RepositoryOutcome.NOT_FOUND)
@@ -357,7 +392,7 @@ class SQLiteInventoryPollingRepository:
 
     def claim_is_live(self, claim: PollClaim, now: datetime) -> bool:
         try:
-            return self._claimed_row(claim, now) is not None
+            return self._claimed_row(claim, max(now, self._now())) is not None
         except (sqlite3.Error, ValueError, TypeError):
             return False
 

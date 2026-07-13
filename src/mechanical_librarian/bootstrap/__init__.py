@@ -87,6 +87,9 @@ from mechanical_librarian.domain.inventory import (
 from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanUsage
 from mechanical_librarian.domain.inventory_polling import PollPolicy, PollRequest
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.observability.inventory_polling import (
+    LoggingInventoryPollTelemetry,
+)
 from mechanical_librarian.infrastructure.security.target_secrets import (
     PrivateFileTargetCredentials,
     SecretFileUnavailable,
@@ -108,6 +111,7 @@ from urllib.parse import urlsplit
 
 
 T = TypeVar("T")
+_INVENTORY_POLL_TELEMETRY = LoggingInventoryPollTelemetry()
 
 
 def _run_existing_state_check(database: Path) -> StateCheckResult:
@@ -315,6 +319,9 @@ def _probe_configured_connection(
     *,
     context: OperationContext | None = None,
     response_meter: Callable[[int], bool] | None = None,
+    connect_timeout_seconds: int = 3,
+    read_timeout_seconds: int = 5,
+    max_in_flight_requests: int = 2,
 ) -> ConnectionProbeResult:
     try:
         if not target_endpoint_allowed(configured.endpoint):
@@ -327,7 +334,13 @@ def _probe_configured_connection(
         def client_factory():
             try:
                 return PortResult.success(
-                    credentials.target_client(handle, configured.endpoint)
+                    credentials.target_client(
+                        handle,
+                        configured.endpoint,
+                        connect_timeout_seconds=connect_timeout_seconds,
+                        read_timeout_seconds=read_timeout_seconds,
+                        max_in_flight_requests=max_in_flight_requests,
+                    )
                 )
             except SecretFileUnavailable:
                 return PortResult.failed(
@@ -451,6 +464,16 @@ def _inventory_probe_failure(outcome: ConnectionProbeOutcome) -> FailureKind | N
     }[outcome]
 
 
+def _inventory_probe_compatibility(outcome: ConnectionProbeOutcome) -> str:
+    if outcome is ConnectionProbeOutcome.READY:
+        return "supported"
+    if outcome is ConnectionProbeOutcome.INCOMPATIBLE:
+        return "incompatible"
+    if outcome is ConnectionProbeOutcome.INVALID_RESPONSE:
+        return "contract_drift"
+    return "unknown"
+
+
 def _run_audiobookshelf_inventory(
     configuration_path: Path, database: Path
 ) -> InventoryRunResult:
@@ -500,10 +523,14 @@ def _run_audiobookshelf_inventory(
                 configured,
                 context=context,
                 response_meter=meter,
+                connect_timeout_seconds=configuration.inventory.connect_timeout_seconds,
+                read_timeout_seconds=configuration.inventory.read_timeout_seconds,
+                max_in_flight_requests=configuration.inventory.max_in_flight_requests,
             )
             return InventoryConnectionVerification(
                 ScanUsage(response_bytes=response_bytes),
                 _inventory_probe_failure(probe.outcome),
+                _inventory_probe_compatibility(probe.outcome),
             )
 
         source = AudiobookshelfInventoryReader(
@@ -633,11 +660,17 @@ def _run_audiobookshelf_poll(
                     return response_bytes <= bounds.max_bytes
 
                 probe = _probe_configured_connection(
-                    configured, context=context, response_meter=meter
+                    configured,
+                    context=context,
+                    response_meter=meter,
+                    connect_timeout_seconds=configuration.inventory.connect_timeout_seconds,
+                    read_timeout_seconds=configuration.inventory.read_timeout_seconds,
+                    max_in_flight_requests=configuration.inventory.max_in_flight_requests,
                 )
                 return InventoryConnectionVerification(
                     ScanUsage(response_bytes=response_bytes),
                     _inventory_probe_failure(probe.outcome),
+                    _inventory_probe_compatibility(probe.outcome),
                 )
 
             source = AudiobookshelfInventoryReader(
@@ -645,7 +678,11 @@ def _run_audiobookshelf_poll(
                 connection_verifier=verify_connection,
             )
             polling = SQLiteInventoryPollingRepository(state)
-            return RunInventoryPoll(polling).run(
+            return RunInventoryPoll(
+                polling,
+                telemetry=_INVENTORY_POLL_TELEMETRY,
+                adapter=connection.adapter,
+            ).run(
                 request,
                 "inventory_worker",
                 datetime.now(timezone.utc),
