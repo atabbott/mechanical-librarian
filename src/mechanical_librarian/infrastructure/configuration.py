@@ -7,7 +7,7 @@ import os
 import stat
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -17,6 +17,7 @@ from pydantic import (
     StrictInt,
     StringConstraints,
     ValidationError,
+    model_validator,
 )
 
 from mechanical_librarian.application.configuration import (
@@ -25,6 +26,11 @@ from mechanical_librarian.application.configuration import (
     ConfigurationImportPlan,
     plan_projected_import,
     project_configuration,
+)
+from mechanical_librarian.domain.identifiers import (
+    CANONICAL_UUID4_PATTERN,
+    LIBRARY_ID_PATTERN,
+    is_canonical_uuid4,
 )
 
 
@@ -42,6 +48,15 @@ IdentifierText = Annotated[
         min_length=1,
         max_length=64,
         pattern=r"^[a-z][a-z0-9_-]{0,63}$",
+    ),
+]
+LibraryIdentifierText = Annotated[
+    str,
+    StringConstraints(
+        strict=True,
+        min_length=1,
+        max_length=64,
+        pattern=LIBRARY_ID_PATTERN,
     ),
 ]
 VersionText = Annotated[
@@ -77,20 +92,49 @@ EvidenceFormat = Literal["epub", "m4b", "mp3"]
 
 
 class ConnectionInput(BaseModel):
-    model_config = _MODEL_CONFIG
+    model_config = ConfigDict(
+        strict=True,
+        extra="forbid",
+        frozen=True,
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"adapter": {"const": "audiobookshelf"}},
+                        "required": ["adapter"],
+                    },
+                    "then": {
+                        "properties": {
+                            "enabled_libraries": {
+                                "items": {"pattern": CANONICAL_UUID4_PATTERN}
+                            }
+                        }
+                    },
+                }
+            ]
+        },
+    )
 
     id: IdentifierText | None = None
     adapter: IdentifierText
     endpoint: EndpointText
     secret_reference: SecretReferenceText
     enabled_libraries: Annotated[
-        list[IdentifierText],
+        list[LibraryIdentifierText],
         Field(min_length=1, max_length=64, json_schema_extra={"uniqueItems": True}),
     ]
     capability_overrides: Annotated[
         list[ReadCapability],
         Field(max_length=7, json_schema_extra={"uniqueItems": True}),
     ] = []
+
+    @model_validator(mode="after")
+    def validate_adapter_library_ids(self) -> Self:
+        if self.adapter == "audiobookshelf" and any(
+            not is_canonical_uuid4(value) for value in self.enabled_libraries
+        ):
+            raise ValueError("Audiobookshelf library identifiers are invalid")
+        return self
 
 
 class MediaMountInput(BaseModel):

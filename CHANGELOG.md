@@ -9,6 +9,17 @@ versioning after the first public release.
 
 ### Fixed
 
+- Audiobookshelf connection readiness now requires unrestricted configured-
+  library, tag, and explicit-content visibility so partial content scopes
+  cannot advertise complete inventory and metadata capabilities.
+- The Audiobookshelf connection check now validates anonymous target identity
+  and pinned-version evidence before sending a Bearer credential, while
+  retaining status-only incompatibility reports for unqualified versions.
+- The Audiobookshelf connection check now accepts unrelated validated provider,
+  reviewer, notification, and read-only capability-override settings without
+  constructing those components or widening target authority.
+- Audiobookshelf connection scope now accepts and preserves canonical lowercase
+  UUIDv4 library identifiers while continuing to reject malformed identities.
 - Evidence values, references, readiness, and persistence/reviewer/API
   projections now enforce deterministic size, privacy, target-scope, and
   versioned cross-target policy bounds before untrusted data crosses a boundary.
@@ -34,6 +45,10 @@ versioning after the first public release.
 
 ### Added
 
+- A target-scoped `connection-check --config PATH` report for a configured
+  Audiobookshelf instance, with bounded Bearer authorization, version and
+  capability compatibility, redacted output, and no library/content reads,
+  persistence, provider/reviewer access, or mutation authority.
 - A report-only `synthetic-inventory --config PATH --database PATH` round trip
   with strict config-v1 JSON validation, additive migration-3 persistence,
   restart-safe inspection, and executable mutation-authority isolation.

@@ -1,0 +1,144 @@
+"""Scoped file-secret resolution and credential-bearing target HTTP clients."""
+
+from __future__ import annotations
+
+import os
+import stat
+import ipaddress
+from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlsplit
+
+import httpx
+
+from mechanical_librarian.domain.inventory import SecretReference, ServiceEndpoint
+from mechanical_librarian.domain.security import SecretHandle, SecretScope
+
+
+@dataclass(frozen=True, repr=False)
+class _SecretMaterial:
+    value: str
+
+    def __repr__(self) -> str:
+        return "_SecretMaterial(<redacted>)"
+
+
+class SecretFileUnavailable(Exception):
+    """Safe fixed failure for unavailable target credential material."""
+
+
+class PrivateFileTargetCredentials:
+    """Infrastructure-only credential material and target-client construction."""
+
+    def configured(self, reference: SecretReference) -> bool:
+        return _read(reference) is not None
+
+    def target_client(
+        self, handle: SecretHandle, endpoint: ServiceEndpoint
+    ) -> httpx.Client:
+        if (
+            type(handle) is not SecretHandle
+            or handle.scope is not SecretScope.TARGET_SERVICE
+            or type(endpoint) is not ServiceEndpoint
+        ):
+            raise SecretFileUnavailable()
+        material = _read(handle.reference)
+        if material is None:
+            raise SecretFileUnavailable()
+        return httpx.Client(
+            headers={"Accept-Encoding": "identity"},
+            auth=_AuthorizeBearerAuth(
+                endpoint.value + "/api/authorize", material.value
+            ),
+            trust_env=False,
+            follow_redirects=False,
+            verify=True,
+            timeout=httpx.Timeout(
+                connect=3.0,
+                read=5.0,
+                write=3.0,
+                pool=2.0,
+            ),
+            limits=httpx.Limits(
+                max_connections=2,
+                max_keepalive_connections=0,
+                keepalive_expiry=0.0,
+            ),
+        )
+
+
+class _AuthorizeBearerAuth(httpx.Auth):
+    def __init__(self, authorize_url: str, token: str) -> None:
+        self._authorize_url = httpx.URL(authorize_url)
+        self._token = token
+
+    def auth_flow(self, request):
+        if request.method == "POST" and request.url == self._authorize_url:
+            request.headers["Authorization"] = f"Bearer {self._token}"
+        yield request
+
+
+def target_endpoint_allowed(endpoint: ServiceEndpoint) -> bool:
+    """Require HTTPS except literal loopback hosts used for disposable qualification."""
+
+    if type(endpoint) is not ServiceEndpoint:
+        return False
+    parsed = urlsplit(endpoint.value)
+    if parsed.scheme == "https":
+        return True
+    if parsed.scheme != "http" or parsed.hostname is None:
+        return False
+    if parsed.hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _read(reference: SecretReference) -> _SecretMaterial | None:
+    descriptor: int | None = None
+    try:
+        path = Path(reference.value)
+        if not path.is_absolute():
+            return None
+        descriptor = os.open(
+            path,
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+        )
+        information = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(information.st_mode)
+            or not 1 <= information.st_size <= 2_048
+            or information.st_mode & 0o077
+        ):
+            return None
+        payload = os.read(descriptor, information.st_size + 1)
+        if len(payload) != information.st_size:
+            return None
+        value = payload.decode("utf-8").strip()
+        if (
+            not value
+            or len(value.encode("utf-8")) > 2_048
+            or any(
+                character.isspace() or not 0x21 <= ord(character) <= 0x7E
+                for character in value
+            )
+        ):
+            return None
+        return _SecretMaterial(value)
+    except (OSError, UnicodeError, ValueError):
+        return None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+__all__ = [
+    "PrivateFileTargetCredentials",
+    "SecretFileUnavailable",
+    "target_endpoint_allowed",
+]

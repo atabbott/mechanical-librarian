@@ -45,6 +45,7 @@ from mechanical_librarian.domain.identifiers import (
     IdempotencyKey,
     Identifier,
     IdentifierGenerator,
+    LibraryId,
     ProposalId,
     SchemaVersion,
     ServiceVersion,
@@ -63,6 +64,7 @@ from mechanical_librarian.domain.inventory import (
     MetadataField,
     SecretReference,
 )
+from mechanical_librarian.domain.security import SecretHandle, SecretScope
 
 
 MAX_PAGE_SIZE = 500
@@ -407,6 +409,56 @@ class HealthReport:
         if type(self.status) is not HealthStatus or type(self.summary) is not SafeSummary:
             raise ValueError("health reports require typed status and summary")
         _aware_datetime(self.checked_at, "health check time")
+
+
+@dataclass(frozen=True)
+class LibraryConnectionFacts:
+    """Vendor-neutral authorization/profile facts returned by connection diagnostics."""
+
+    service_version: ServiceVersion | None
+    profile_complete: bool
+    media_download_allowed: bool
+    adapter_contract: AdapterVersion
+    fixture_revision: CompatibilityVersion
+    health: HealthReport
+
+    def __post_init__(self) -> None:
+        if self.service_version is not None and type(self.service_version) is not ServiceVersion:
+            raise ValueError("connection diagnostic version is malformed")
+        if type(self.profile_complete) is not bool or type(self.media_download_allowed) is not bool:
+            raise ValueError("connection diagnostic profile is malformed")
+        if not self.profile_complete and self.media_download_allowed:
+            raise ValueError("partial connection profiles cannot declare download support")
+        if (
+            type(self.adapter_contract) is not AdapterVersion
+            or type(self.fixture_revision) is not CompatibilityVersion
+            or type(self.health) is not HealthReport
+        ):
+            raise ValueError("connection diagnostic lineage or health is malformed")
+
+
+@dataclass(frozen=True)
+class LibraryConnectionDiagnosticsRequest:
+    expected_libraries: tuple[LibraryId, ...]
+    context: OperationContext
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.expected_libraries) is not tuple
+            or not self.expected_libraries
+            or any(type(value) is not LibraryId for value in self.expected_libraries)
+            or len(self.expected_libraries) != len(set(self.expected_libraries))
+            or type(self.context) is not OperationContext
+        ):
+            raise ValueError("connection diagnostics request is malformed")
+
+
+class LibraryConnectionDiagnostics(Protocol):
+    """Authorization/version/profile diagnostics without inventory or mutation methods."""
+
+    def probe(
+        self, request: LibraryConnectionDiagnosticsRequest
+    ) -> PortResult[LibraryConnectionFacts]: ...
 
 
 class AdapterDiagnostics(Protocol):
@@ -1056,29 +1108,6 @@ class Reviewer(Protocol):
     def review(self, request: ReviewerRequest) -> PortResult[ReviewerResponse]: ...
 
 
-class SecretScope(StrEnum):
-    TARGET_SERVICE = "target_service"
-    METADATA_PROVIDER = "metadata_provider"
-    COVER_PROVIDER = "cover_provider"
-    REVIEWER = "reviewer"
-    NOTIFICATION = "notification"
-
-
-@dataclass(frozen=True, repr=False)
-class SecretHandle:
-    """Opaque role-scoped handle; secret material never becomes an application value."""
-
-    reference: SecretReference
-    scope: SecretScope
-
-    def __post_init__(self) -> None:
-        if type(self.reference) is not SecretReference or type(self.scope) is not SecretScope:
-            raise ValueError("secret handles require typed reference and role scope")
-
-    def __repr__(self) -> str:
-        return "SecretHandle(reference=<redacted>, scope=<typed>)"
-
-
 class SecretResolver(Protocol):
     def configured(self, reference: SecretReference, scope: SecretScope) -> bool: ...
     def resolve(self, reference: SecretReference, scope: SecretScope) -> PortResult[SecretHandle]: ...
@@ -1146,7 +1175,7 @@ __all__ = [
     "CompatibilityStatus", "CoverCandidate", "CoverMutation", "CoverProvider", "CurrentFieldState", "CurrentFieldStateKind", "Deadline", "EvidenceExtractor",
     "ExpectedState", "ExtractorRequest", "FailureKind", "HealthReport", "HealthStatus",
     "IdentifierGenerator", "JobHeartbeatRepository", "LibraryListRequest", "LibraryReadRequest",
-    "LibraryReader", "LibraryService", "MetadataCandidate", "MetadataMutation", "MetadataProvider", "Notification",
+    "LibraryConnectionDiagnostics", "LibraryConnectionDiagnosticsRequest", "LibraryConnectionFacts", "LibraryReader", "LibraryService", "MetadataCandidate", "MetadataMutation", "MetadataProvider", "Notification",
     "Notifier", "OperationContext", "Page", "PageRequest", "PortFailure", "PortResult",
     "ProviderFact", "ProviderFactCode", "ProviderProvenance", "ProviderQuery", "RepositoryOutcome",
     "RepositoryResult", "ResourceBounds", "RetryAdvice", "Reviewer", "ReviewerAction",

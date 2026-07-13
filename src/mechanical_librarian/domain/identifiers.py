@@ -15,6 +15,17 @@ from typing import Any, ClassVar, Protocol, Self, TypeVar
 
 
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+LIBRARY_ID_PATTERN = (
+    r"^(?:[a-z][a-z0-9_-]{0,63}|"
+    r"[0-9][0-9a-f]{7}-[0-9a-f]{4}-4[0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+)
+_LIBRARY_ID_PATTERN = re.compile(LIBRARY_ID_PATTERN)
+CANONICAL_UUID4_PATTERN = (
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+)
+_CANONICAL_UUID4_PATTERN = re.compile(CANONICAL_UUID4_PATTERN)
 _VERSION_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _EXTERNAL_VALUE_MAX_LENGTH = 512
@@ -22,6 +33,12 @@ _EXTERNAL_VALUE_MAX_LENGTH = 512
 
 class DomainValueError(ValueError):
     """Raised when untrusted input cannot become a domain value."""
+
+
+def is_canonical_uuid4(value: object) -> bool:
+    """Return whether a value is an exact lowercase UUIDv4 token."""
+
+    return type(value) is str and _CANONICAL_UUID4_PATTERN.fullmatch(value) is not None
 
 
 @dataclass(frozen=True, repr=False)
@@ -49,7 +66,15 @@ class ConnectionId(Identifier):
 
 
 class LibraryId(Identifier):
+    """An opaque adapter-scoped library identity."""
+
     kind = "library ID"
+
+    def __post_init__(self) -> None:
+        if not _LIBRARY_ID_PATTERN.fullmatch(self.value):
+            raise DomainValueError(
+                "library ID must be a bounded lowercase identifier or UUIDv4"
+            )
 
 
 class SnapshotId(Identifier):

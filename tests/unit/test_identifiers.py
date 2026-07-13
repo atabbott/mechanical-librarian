@@ -25,10 +25,41 @@ class IdentifierTests(unittest.TestCase):
         )
 
     def test_internal_identifiers_reject_unsafe_or_ambiguous_values(self) -> None:
-        for value in ("", "UPPER", "has space", "-starts-with-dash", "a" * 65):
+        for value in (
+            "",
+            "1starts-with-digit",
+            "UPPER",
+            "has space",
+            "-starts-with-dash",
+            "a" * 65,
+        ):
             with self.subTest(value=value):
                 with self.assertRaises(DomainValueError):
                     ConnectionId(value)
+
+    def test_library_identifiers_accept_scoped_names_and_canonical_uuidv4(self) -> None:
+        uuid = "01234567-89ab-4def-8123-456789abcdef"
+        letter_leading_uuid = "a1234567-89ab-4def-8123-456789abcdef"
+
+        self.assertEqual(LibraryId("synthetic-library").value, "synthetic-library")
+        self.assertEqual(LibraryId(uuid).value, uuid)
+        self.assertEqual(LibraryId(letter_leading_uuid).value, letter_leading_uuid)
+        with self.assertRaises(DomainValueError):
+            ConnectionId(uuid)
+
+        for value in (
+            "1library",
+            "01234567-89ab-3def-8123-456789abcdef",
+            "01234567-89ab-4def-7123-456789abcdef",
+            "01234567-89AB-4def-8123-456789abcdef",
+            "0123456789ab4def8123456789abcdef",
+            "01234567-89ab-4def-8123-456789abcde/",
+            "01234567-89ab-4def-8123-456789abcde\n",
+            "0" * 65,
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(DomainValueError):
+                    LibraryId(value)
 
     def test_external_identifiers_are_scoped_and_redacted(self) -> None:
         other_target = TargetId(

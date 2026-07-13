@@ -13,6 +13,11 @@ from mechanical_librarian.application.job_heartbeat import (
     HeartbeatOutcome,
     HeartbeatResult,
 )
+from mechanical_librarian.application.connection_probe import (
+    ConnectionInspection,
+    ConnectionProbeOutcome,
+    ConnectionProbeResult,
+)
 from mechanical_librarian.application.state_check import (
     StateCheckOutcome,
     StateCheckResult,
@@ -27,6 +32,7 @@ from mechanical_librarian.application.synthetic_inventory import (
 StateCheckRunner = Callable[[Path], StateCheckResult]
 JobHeartbeatRunner = Callable[[Path], HeartbeatResult]
 SyntheticInventoryRunner = Callable[[Path, Path], SyntheticInventoryResult]
+ConnectionProbeRunner = Callable[[Path], ConnectionProbeResult]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -45,6 +51,7 @@ _HEARTBEAT_FAILURE = "Job heartbeat failed: durable synthetic recovery could not
 _INVENTORY_FAILURE = (
     "Synthetic inventory failed: bounded report-only inventory could not be verified.\n"
 )
+_CONNECTION_FAILURE = "Connection check failed: configured target could not be verified.\n"
 
 
 def _database_path(value: str) -> Path:
@@ -84,6 +91,11 @@ def _parser() -> argparse.ArgumentParser:
     inventory.add_argument(
         "--database", required=True, metavar="PATH", type=_database_path
     )
+    connection = commands.add_parser(
+        "connection-check",
+        help="probe one configured target authorization and compatibility",
+    )
+    connection.add_argument("--config", required=True, metavar="PATH", type=Path)
     return parser
 
 
@@ -93,6 +105,7 @@ def main(
     state_check_runner: StateCheckRunner,
     job_heartbeat_runner: JobHeartbeatRunner | None = None,
     synthetic_inventory_runner: SyntheticInventoryRunner | None = None,
+    connection_probe_runner: ConnectionProbeRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -101,6 +114,49 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     arguments = _parser().parse_args(argv)
+    if arguments.command == "connection-check":
+        if connection_probe_runner is None:
+            errors.write(_CONNECTION_FAILURE)
+            return 1
+        try:
+            result = connection_probe_runner(arguments.config)
+        except Exception:
+            errors.write(_CONNECTION_FAILURE)
+            return 1
+        if (
+            type(result) is not ConnectionProbeResult
+            or type(result.outcome) is not ConnectionProbeOutcome
+            or not result.succeeded
+            or type(result.inspection) is not ConnectionInspection
+        ):
+            errors.write(_CONNECTION_FAILURE)
+            return 1
+        inspection = result.inspection
+        version = (
+            "unknown"
+            if inspection.service_version is None
+            else inspection.service_version.value
+        )
+        output.write("Connection check passed.\n")
+        output.write("authority=target-connection-read-only\n")
+        output.write("adapter=audiobookshelf scope=configured-target\n")
+        output.write(
+            f"compatibility={inspection.compatibility.value} version={version}\n"
+        )
+        output.write(f"health={inspection.health.status.value}\n")
+        output.write(
+            f"lineage={inspection.adapter_contract.value}/"
+            f"{inspection.fixture_revision.value}\n"
+        )
+        output.write(
+            "capabilities="
+            + ",".join(
+                f"{item.capability.value}:{item.state.value}"
+                for item in inspection.capabilities
+            )
+            + "\n"
+        )
+        return 0
     if arguments.command == "synthetic-inventory":
         if synthetic_inventory_runner is None:
             errors.write(_INVENTORY_FAILURE)

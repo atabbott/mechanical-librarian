@@ -35,7 +35,8 @@ recoverable synthetic job heartbeat, and a persisted synthetic inventory round
 trip exist, but no production image or supported release exists yet. See the
 [durable state check](docs/operations/state-check.md),
 [synthetic job heartbeat](docs/operations/job-heartbeat.md), and
-[synthetic inventory](docs/operations/synthetic-inventory.md) for the current
+[synthetic inventory](docs/operations/synthetic-inventory.md), and
+[Audiobookshelf connection check](docs/operations/audiobookshelf-connection.md) for the current
 executable operator surface.
 
 The earlier Ebook Management workspace is a prototype and evidence source. Its

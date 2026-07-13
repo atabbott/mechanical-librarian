@@ -24,6 +24,10 @@ C = ChangeImpact.CANDIDATE_REEVALUATION_REQUIRED
 V = ChangeImpact.REVIEW_REEVALUATION_REQUIRED
 N = ChangeImpact.NOTIFICATION_RECONFIGURATION_REQUIRED
 B = ChangeImpact.BACKUP_READINESS_REVALIDATION_REQUIRED
+LIBRARY_ID = "01234567-89ab-4def-8123-456789abcdef"
+SECOND_LIBRARY_ID = "11234567-89ab-4def-8123-456789abcdef"
+REPLACEMENT_LIBRARY_ID = "21234567-89ab-4def-8123-456789abcdef"
+PRIVATE_LIBRARY_ID = "31234567-89ab-4def-8123-456789abcdef"
 
 
 class ConfigurationTests(unittest.TestCase):
@@ -36,7 +40,7 @@ class ConfigurationTests(unittest.TestCase):
                     "adapter": "audiobookshelf",
                     "endpoint": "https://library.example",
                     "secret_reference": "docker-secret/abs",
-                    "enabled_libraries": ["books"],
+                    "enabled_libraries": [LIBRARY_ID],
                     "capability_overrides": ["inventory-read"],
                 }
             ],
@@ -115,7 +119,7 @@ class ConfigurationTests(unittest.TestCase):
             ),
             (
                 "enabled_libraries",
-                ["replacement-library"],
+                [REPLACEMENT_LIBRARY_ID],
                 "connections.enabled_libraries",
                 (R, I, X, C, V),
             ),
@@ -212,7 +216,10 @@ class ConfigurationTests(unittest.TestCase):
 
     def test_set_like_connection_values_are_canonical_noops(self) -> None:
         current = self.proposed()
-        current["connections"][0]["enabled_libraries"] = ["books", "audio"]
+        current["connections"][0]["enabled_libraries"] = [
+            LIBRARY_ID,
+            SECOND_LIBRARY_ID,
+        ]
         current["connections"][0]["capability_overrides"] = [
             "metadata-read",
             "inventory-read",
@@ -347,7 +354,7 @@ class ConfigurationTests(unittest.TestCase):
         private_values = (
             "replacement.example",
             "private-secret-reference",
-            "private-library-id",
+            PRIVATE_LIBRARY_ID,
             "/private/container/path",
             "/private/service/path",
         )
@@ -355,7 +362,7 @@ class ConfigurationTests(unittest.TestCase):
             {
                 "endpoint": "https://replacement.example",
                 "secret_reference": "private-secret-reference",
-                "enabled_libraries": ["private-library-id"],
+                "enabled_libraries": [PRIVATE_LIBRARY_ID],
             }
         )
         proposed["media_mounts"][0].update(

@@ -58,6 +58,53 @@ Audiobookshelf compatibility is verified with:
 
 When an upstream release changes undocumented behavior, the project may mark that version experimental or unsupported until the adapter is verified. Direct writes to the Audiobookshelf database are not a compatibility strategy.
 
+The F04 connection contract is `abs-connection-v1`, backed by fixture revision
+`abs-2.35.1-fixture-v1`. Bearer API-key authentication requires Audiobookshelf
+2.26.0 or newer, but only the pinned 2.35.1 contract is currently `supported`.
+Older, newer, missing, malformed, and otherwise unknown versions are
+`incompatible` until separately qualified; authentication success does not
+widen compatibility evidence. F04 does not send a credential or claim tested
+authentication/authorization for those unqualified versions; only anonymous
+status evidence from the pinned version may reach the authorization probe.
+
+The reviewed machine source is
+[`audiobookshelf-f04-compatibility.json`](audiobookshelf-f04-compatibility.json).
+The runtime profile and this human view are drift-tested against it.
+
+<!-- f04-capabilities:start -->
+| Capability | Exact 2.35.1 state |
+| --- | --- |
+| authentication | tested |
+| authorization | tested |
+| version_discovery | tested |
+| inventory_read | supported |
+| metadata_read | supported |
+| cover_read | supported |
+| media_file_read | supported |
+| pagination | supported |
+| incremental_scan | unavailable |
+| metadata_fields | supported |
+| cover_behavior | supported |
+| rollback_read | unavailable |
+| rate_limits | unavailable |
+| notifications | experimental |
+| concurrency_tokens | unavailable |
+| mutation | unavailable |
+<!-- f04-capabilities:end -->
+
+These are compatibility declarations; F04 invokes no inventory or content
+route. Media-file support additionally depends on the authorized profile's
+download permission. Supported inventory and metadata declarations require an
+active profile with complete configured-library coverage plus explicit
+all-tag and explicit-content visibility; narrower content scopes are
+incompatible with the current profile contract. Mutation remains unavailable
+because F04 has no mutation authority.
+
+The evidence pins official container digest
+`sha256:1eef6716183c52abafe5405e7d6be8390248ecd59c7488c44af871757ac8fc4d`.
+The endpoint contract follows the tagged implementation's observational
+authorization POST, not the out-of-date API-reference GET.
+
 Audiobookshelf remains the first production target adapter. A future CWA adapter
 may be declared supported only after its target-service contract, capability
 matrix, and supported service API have passed qualification. A CWA-shaped fake
