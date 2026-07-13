@@ -20,6 +20,7 @@ from mechanical_librarian.application.connection_probe import (
     CompatibilityState,
     ConnectionCapability,
     ConnectionProbeOutcome,
+    ConnectionProbeResult,
     InspectLibraryConnection,
     TargetProbeFacts,
 )
@@ -27,12 +28,15 @@ from mechanical_librarian.application.ports import (
     CancellationId,
     CancellationProbe,
     Deadline,
+    FailureKind,
     HealthReport,
     HealthStatus,
     LibraryConnectionDiagnosticsRequest,
     OperationContext,
+    PortFailure,
     PortResult,
     ResourceBounds,
+    RetryAdvice,
     SafeSummary,
     SecretHandle,
     SecretScope,
@@ -279,6 +283,21 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
         mixed["user"]["permissions"]["accessAllLibraries"] = False
         mixed["user"]["librariesAccessible"] = ["synthetic-library", " bad"]
         cases.append(("mixed", mixed, ("synthetic-library",), False))
+        malformed_permissions = fixture("authorize.json")
+        malformed_permissions["user"]["permissions"] = []
+        cases.append(
+            (
+                "malformed-permissions",
+                malformed_permissions,
+                ("synthetic-library",),
+                False,
+            )
+        )
+        malformed_download = fixture("authorize.json")
+        malformed_download["user"]["permissions"]["download"] = "yes"
+        cases.append(
+            ("malformed-download", malformed_download, ("synthetic-library",), False)
+        )
         for name, flag in (("list-flag", []), ("dict-flag", {})):
             profile = fixture("authorize.json")
             profile["user"]["permissions"]["accessAllLibraries"] = flag
@@ -308,6 +327,25 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                     if expected_complete
                     else HealthStatus.DEGRADED,
                 )
+                application_result = InspectLibraryConnection(
+                    AdapterId("audiobookshelf"),
+                    ConnectionId("synthetic-connection"),
+                    tuple(LibraryId(value) for value in expected_libraries),
+                    ApplicationProfileTests.Probe(result.value),
+                ).run(context())
+                self.assertEqual(
+                    application_result.outcome,
+                    (
+                        ConnectionProbeOutcome.READY
+                        if expected_complete
+                        else ConnectionProbeOutcome.AUTHORIZATION_FAILED
+                    ),
+                )
+                self.assertEqual(application_result.succeeded, expected_complete)
+                if expected_complete:
+                    self.assertIsNotNone(application_result.inspection)
+                else:
+                    self.assertIsNone(application_result.inspection)
 
     def test_version_must_be_strict_pinned_semver_before_projection(self) -> None:
         for version in (None, "private-version-sentinel", "v2.35.1", "2.35.1-beta", "02.35.1"):
@@ -488,7 +526,7 @@ class ApplicationProfileTests(unittest.TestCase):
             ),
         )
 
-    def run(self, facts):
+    def run_probe(self, facts):
         return InspectLibraryConnection(
             AdapterId("audiobookshelf"),
             ConnectionId("synthetic-connection"),
@@ -497,7 +535,7 @@ class ApplicationProfileTests(unittest.TestCase):
         ).run(context())
 
     def test_supported_older_newer_unknown_and_partial_profiles(self) -> None:
-        supported = self.run(self.facts("2.35.1"))
+        supported = self.run_probe(self.facts("2.35.1"))
         self.assertEqual(supported.outcome, ConnectionProbeOutcome.READY)
         self.assertEqual(supported.inspection.compatibility, CompatibilityState.SUPPORTED)
         states = {item.capability: item.state for item in supported.inspection.capabilities}
@@ -506,27 +544,106 @@ class ApplicationProfileTests(unittest.TestCase):
         self.assertEqual(states[ConnectionCapability.METADATA_FIELDS], CapabilityState.SUPPORTED)
         self.assertEqual(states[ConnectionCapability.ROLLBACK_READ], CapabilityState.UNAVAILABLE)
         self.assertEqual(states[ConnectionCapability.RATE_LIMITS], CapabilityState.UNAVAILABLE)
-        older = self.run(self.facts("2.25.9"))
+        older = self.run_probe(self.facts("2.25.9"))
         self.assertEqual(older.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
         self.assertIn(
             CapabilityState.INCOMPATIBLE,
             {item.state for item in older.inspection.capabilities},
         )
-        newer = self.run(self.facts("2.36.0"))
+        newer = self.run_probe(self.facts("2.36.0"))
         self.assertEqual(newer.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
         self.assertEqual(newer.inspection.compatibility, CompatibilityState.NEWER)
         self.assertIn(CapabilityState.INCOMPATIBLE, {item.state for item in newer.inspection.capabilities})
-        unknown = self.run(self.facts(None))
+        unknown = self.run_probe(self.facts(None))
         self.assertEqual(unknown.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
         self.assertEqual(unknown.inspection.compatibility, CompatibilityState.UNKNOWN)
-        partial = self.run(self.facts("2.35.1", complete=False, download=False))
-        partial_states = {item.capability: item.state for item in partial.inspection.capabilities}
-        self.assertEqual(partial_states[ConnectionCapability.INVENTORY_READ], CapabilityState.UNAVAILABLE)
-        self.assertEqual(partial.inspection.adapter_contract, AdapterVersion("abs-connection-v1"))
+        partial = self.run_probe(
+            self.facts("2.35.1", complete=False, download=False)
+        )
+        self.assertEqual(partial.outcome, ConnectionProbeOutcome.AUTHORIZATION_FAILED)
+        self.assertIsNone(partial.inspection)
+
+    def test_incomplete_incompatible_profile_retains_compatibility_precedence(self) -> None:
+        result = self.run_probe(
+            self.facts("2.36.0", complete=False, download=False)
+        )
+
+        self.assertEqual(result.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
+        self.assertFalse(result.succeeded)
+        self.assertIsNotNone(result.inspection)
+        self.assertEqual(result.inspection.compatibility, CompatibilityState.NEWER)
+        self.assertIn(
+            CapabilityState.INCOMPATIBLE,
+            {item.state for item in result.inspection.capabilities},
+        )
+
+    def test_failure_sourced_incompatible_result_requires_no_inspection(self) -> None:
+        class FailedProbe:
+            def probe(self, _request):
+                return PortResult.failed(
+                    PortFailure(
+                        FailureKind.INCOMPATIBLE,
+                        RetryAdvice(False),
+                        SafeSummary("connection probe unsupported"),
+                    )
+                )
+
+        result = InspectLibraryConnection(
+            AdapterId("audiobookshelf"),
+            ConnectionId("synthetic-connection"),
+            (LibraryId("synthetic-library"),),
+            FailedProbe(),
+        ).run(context())
+
+        self.assertEqual(result.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
+        self.assertFalse(result.succeeded)
+        self.assertIsNone(result.inspection)
+
+    def test_adapter_incompatible_endpoints_project_without_raising(self) -> None:
+        for status in (404, 405):
+            with self.subTest(status=status):
+                probe = AudiobookshelfConnectionProbe(
+                    ServiceEndpoint("https://synthetic.invalid"),
+                    client_factory=client_factory(
+                        lambda _request, selected=status: httpx.Response(selected)
+                    ),
+                )
+                result = InspectLibraryConnection(
+                    AdapterId("audiobookshelf"),
+                    ConnectionId("synthetic-connection"),
+                    (LibraryId("synthetic-library"),),
+                    probe,
+                ).run(context())
+
+                self.assertEqual(result.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
+                self.assertFalse(result.succeeded)
+                self.assertIsNone(result.inspection)
+
+    def test_connection_probe_result_rejects_invalid_cardinality(self) -> None:
+        inspection = self.run_probe(self.facts("2.35.1")).inspection
+        self.assertIsNotNone(inspection)
+
+        with self.assertRaises(ValueError):
+            ConnectionProbeResult(ConnectionProbeOutcome.READY)
+        with self.assertRaises(ValueError):
+            ConnectionProbeResult(
+                ConnectionProbeOutcome.AUTHORIZATION_FAILED,
+                inspection,
+            )
+        with self.assertRaises(ValueError):
+            ConnectionProbeResult(
+                ConnectionProbeOutcome.INCOMPATIBLE,
+                object(),  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(
+            ConnectionProbeResult(ConnectionProbeOutcome.INCOMPATIBLE).outcome,
+            ConnectionProbeOutcome.INCOMPATIBLE,
+        )
 
     def test_machine_runtime_and_human_compatibility_views_cannot_drift(self) -> None:
         manifest = json.loads(COMPATIBILITY_MANIFEST.read_text(encoding="utf-8"))
-        supported = self.run(self.facts(manifest["pinned_version"]))
+        supported = self.run_probe(self.facts(manifest["pinned_version"]))
         runtime = {
             item.capability.value: item.state.value
             for item in supported.inspection.capabilities

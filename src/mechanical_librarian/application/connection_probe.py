@@ -132,12 +132,15 @@ class ConnectionProbeResult:
     def __post_init__(self) -> None:
         if type(self.outcome) is not ConnectionProbeOutcome:
             raise ValueError("connection probe outcome is malformed")
-        if self.outcome in {
-            ConnectionProbeOutcome.READY,
-            ConnectionProbeOutcome.INCOMPATIBLE,
-        }:
+        if self.outcome is ConnectionProbeOutcome.READY:
             if type(self.inspection) is not ConnectionInspection:
-                raise ValueError("diagnostic connection outcomes require an inspection")
+                raise ValueError("ready connection probes require an inspection")
+        elif self.outcome is ConnectionProbeOutcome.INCOMPATIBLE:
+            if (
+                self.inspection is not None
+                and type(self.inspection) is not ConnectionInspection
+            ):
+                raise ValueError("incompatible connection probe inspection is malformed")
         elif self.inspection is not None:
             raise ValueError("failed connection probes cannot expose an inspection")
 
@@ -195,14 +198,13 @@ class InspectLibraryConnection:
             observed.value.fixture_revision,
             observed.value.health,
         )
-        return ConnectionProbeResult(
-            (
-                ConnectionProbeOutcome.READY
-                if compatibility is CompatibilityState.SUPPORTED
-                else ConnectionProbeOutcome.INCOMPATIBLE
-            ),
-            inspection,
-        )
+        if compatibility is not CompatibilityState.SUPPORTED:
+            return ConnectionProbeResult(
+                ConnectionProbeOutcome.INCOMPATIBLE, inspection
+            )
+        if not observed.value.profile_complete:
+            return ConnectionProbeResult(ConnectionProbeOutcome.AUTHORIZATION_FAILED)
+        return ConnectionProbeResult(ConnectionProbeOutcome.READY, inspection)
 
 
 def _version_tuple(version: ServiceVersion | None) -> tuple[int, int, int] | None:
