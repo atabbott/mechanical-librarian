@@ -53,7 +53,7 @@ hidden fields or environment behavior.
 | Instance | `instance_name` |
 | Library connections | `id`, `adapter`, `endpoint`, `secret_reference`, `enabled_libraries`, `capability_overrides` |
 | Media mounts | `name`, `library_type`, `container_path`, `service_path`, `read_only` |
-| Inventory traversal | `page_size`, `max_pages`, `max_items`, `max_response_bytes`, `timeout_seconds`, `stability_delay_seconds` |
+| Inventory traversal and polling | `page_size`, `max_pages`, `max_items`, `max_response_bytes`, `timeout_seconds`, `stability_delay_seconds`, `poll_generation`, `max_attempts`, `max_elapsed_seconds`, `initial_backoff_seconds`, `max_backoff_seconds`, `connect_timeout_seconds`, `read_timeout_seconds`, `max_in_flight_requests` |
 | Evidence extraction | `enabled_formats`, `maximum_document_bytes`, `maximum_text_characters`; shared parser limits remain under `limits` |
 | Providers | ordered, unique provider identifiers; an empty list disables providers |
 | Reviewers | ordered, unique reviewer identifiers; an empty list disables reviewers |
@@ -84,7 +84,7 @@ re-evaluation, notification reconfiguration, and backup-readiness revalidation.
 | `media_mounts.name`, `.library_type`, `.container_path`, or `.service_path` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
 | `limits.parser_concurrency` | restart |
 | `limits.parser_timeout_seconds` or `.temporary_bytes` | restart and evidence re-evaluation |
-| `inventory.page_size`, `.max_pages`, `.max_items`, `.max_response_bytes`, `.timeout_seconds`, or `.stability_delay_seconds` | restart and inventory reconciliation |
+| Any `inventory` field | restart and inventory reconciliation |
 | `evidence.enabled_formats` | restart, evidence invalidation and re-evaluation, candidate and review re-evaluation |
 | `evidence.maximum_document_bytes` or `.maximum_text_characters` | restart and evidence re-evaluation |
 | `providers` | restart, candidate and review re-evaluation |
@@ -119,6 +119,17 @@ Inventory traversal defaults to a page size of 100, 512 cumulative pages,
 deadline, and no stability delay. `max_pages` and `max_items` are at least two
 because F05a requires two complete equal passes. A bound failure publishes
 neither partial current state nor disappearance.
+
+Durable polling defaults to three attempts within 900 elapsed seconds, with
+5-second exponential backoff capped at 300 seconds. Connect and read timeouts
+default to 10 and 30 seconds. Inventory transport concurrency is fixed at one
+in-flight request. Attempt, elapsed, page, item, and byte consumption is
+persisted cumulatively and does not reset after restart or duplicate delivery.
+`poll_generation` defaults to zero and is the explicit operator-controlled
+governing revision: increment it after a credential or authority change when a
+previous authentication, authorization, configuration, or compatibility
+failure is intentionally eligible for a new trigger. No credential material or
+secret-reference digest is stored in poll state.
 
 ## Configuration groups
 

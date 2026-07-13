@@ -87,7 +87,7 @@ The runtime profile and this human view are drift-tested against it.
 | cover_behavior | supported |
 | rollback_read | unavailable |
 | rate_limits | unavailable |
-| notifications | experimental |
+| notifications | unavailable |
 | concurrency_tokens | unavailable |
 | mutation | unavailable |
 <!-- f04-capabilities:end -->
@@ -99,6 +99,12 @@ active profile with complete configured-library coverage plus explicit
 all-tag and explicit-content visibility; narrower content scopes are
 incompatible with the current profile contract. Mutation remains unavailable
 because F04 has no mutation authority.
+
+Socket.IO notifications are unavailable at the API-key-only trust boundary.
+Audiobookshelf 2.35.1 routes socket authorization through its `SocketAuthority`
+and `TokenManager`, which do not accept API keys. Mechanical Librarian does not
+request login credentials, mint a session JWT, or construct a socket client;
+polling remains the supported inventory observation path.
 
 ### Audiobookshelf 2.35.1 inventory contract
 
@@ -148,6 +154,14 @@ The evidence pins official container digest
 `sha256:1eef6716183c52abafe5405e7d6be8390248ecd59c7488c44af871757ac8fc4d`.
 The endpoint contract follows the tagged implementation's observational
 authorization POST, not the out-of-date API-reference GET.
+
+F05b retains that exact upstream and container baseline. Its machine-readable
+operational profile is
+[`audiobookshelf-f05b-compatibility.json`](audiobookshelf-f05b-compatibility.json).
+Polling is numeric-page, two-pass, GET-only reconciliation with durable bounded
+retry; it does not claim an upstream rate-limit contract, stable cursor,
+concurrency token, incremental scan, or Socket.IO notification support. A
+controlled 429 and validated `Retry-After` exercise generic HTTP recovery only.
 
 Audiobookshelf remains the first production target adapter. A future CWA adapter
 may be declared supported only after its target-service contract, capability

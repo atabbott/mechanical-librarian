@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import hashlib
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,6 +16,9 @@ from mechanical_librarian.adapters.persistence.inventory import (
 )
 from mechanical_librarian.adapters.persistence.inventory_v2 import (
     SQLiteInventoryV2Repository,
+)
+from mechanical_librarian.adapters.persistence.inventory_polling import (
+    SQLiteInventoryPollingRepository,
 )
 from mechanical_librarian.adapters.library_services.synthetic import (
     SyntheticLibraryReader,
@@ -44,6 +48,11 @@ from mechanical_librarian.application.inventory_reconciliation import (
     InventoryRunResult,
     ReconcileInventory,
 )
+from mechanical_librarian.application.inventory_polling import (
+    InventoryPollOutcome,
+    InventoryPollResult,
+    RunInventoryPoll,
+)
 from mechanical_librarian.application.state_check import (
     CheckDurableState,
     StateCheckOutcome,
@@ -69,14 +78,18 @@ from mechanical_librarian.application.synthetic_inventory import (
     SyntheticInventoryOutcome,
     SyntheticInventoryResult,
 )
-from mechanical_librarian.domain.identifiers import AdapterId, LibraryId
+from mechanical_librarian.domain.identifiers import AdapterId, LibraryId, canonical_json
 from mechanical_librarian.domain.inventory import (
     AdapterCapabilities,
     LibraryConnection,
     MediaType,
 )
-from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanUsage
+from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanState, ScanUsage
+from mechanical_librarian.domain.inventory_polling import PollPolicy, PollRequest
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.observability.inventory_polling import (
+    LoggingInventoryPollTelemetry,
+)
 from mechanical_librarian.infrastructure.security.target_secrets import (
     PrivateFileTargetCredentials,
     SecretFileUnavailable,
@@ -305,6 +318,9 @@ def _probe_configured_connection(
     *,
     context: OperationContext | None = None,
     response_meter: Callable[[int], bool] | None = None,
+    connect_timeout_seconds: int = 3,
+    read_timeout_seconds: int = 5,
+    max_in_flight_requests: int = 2,
 ) -> ConnectionProbeResult:
     try:
         if not target_endpoint_allowed(configured.endpoint):
@@ -317,7 +333,13 @@ def _probe_configured_connection(
         def client_factory():
             try:
                 return PortResult.success(
-                    credentials.target_client(handle, configured.endpoint)
+                    credentials.target_client(
+                        handle,
+                        configured.endpoint,
+                        connect_timeout_seconds=connect_timeout_seconds,
+                        read_timeout_seconds=read_timeout_seconds,
+                        max_in_flight_requests=max_in_flight_requests,
+                    )
                 )
             except SecretFileUnavailable:
                 return PortResult.failed(
@@ -405,10 +427,29 @@ def _inventory_context(bounds: ScanBounds, cancellation: str) -> OperationContex
     )
 
 
-def _inventory_probe_failure(outcome: ConnectionProbeOutcome) -> FailureKind | None:
-    if outcome is ConnectionProbeOutcome.READY:
+def _inventory_poll_context(
+    bounds: ScanBounds,
+    polling: SQLiteInventoryPollingRepository,
+    claim,
+) -> OperationContext:
+    now = datetime.now(timezone.utc)
+    return OperationContext(
+        Deadline(min(now + timedelta(seconds=bounds.max_seconds), claim.lease_expires_at)),
+        CancellationProbe(
+            CancellationId("inventory-poll"),
+            lambda: not polling.claim_is_live(claim, datetime.now(timezone.utc)),
+        ),
+        ResourceBounds(bounds.max_items, min(bounds.max_bytes, 67_108_864)),
+        TimeProbe(lambda: datetime.now(timezone.utc)),
+    )
+
+
+def _inventory_probe_failure(probe: ConnectionProbeResult) -> PortFailure | None:
+    if probe.outcome is ConnectionProbeOutcome.READY:
         return None
-    return {
+    if probe.failure is not None:
+        return probe.failure
+    kind = {
         ConnectionProbeOutcome.CANCELLED: FailureKind.CANCELLED,
         ConnectionProbeOutcome.DEADLINE_EXPIRED: FailureKind.TIMEOUT,
         ConnectionProbeOutcome.RESOURCE_EXHAUSTED: FailureKind.RESOURCE_EXHAUSTED,
@@ -421,7 +462,29 @@ def _inventory_probe_failure(outcome: ConnectionProbeOutcome) -> FailureKind | N
         ConnectionProbeOutcome.INVALID_RESPONSE: FailureKind.INVALID_RESPONSE,
         ConnectionProbeOutcome.CONFIGURATION_FAILURE: FailureKind.INVALID_REQUEST,
         ConnectionProbeOutcome.INTERNAL_FAILURE: FailureKind.UNAVAILABLE,
-    }[outcome]
+    }[probe.outcome]
+    return PortFailure(
+        kind,
+        RetryAdvice(
+            kind
+            in {
+                FailureKind.UNAVAILABLE,
+                FailureKind.RATE_LIMITED,
+                FailureKind.TIMEOUT,
+            }
+        ),
+        SafeSummary("inventory connection verification failed safely"),
+    )
+
+
+def _inventory_probe_compatibility(outcome: ConnectionProbeOutcome) -> str:
+    if outcome is ConnectionProbeOutcome.READY:
+        return "supported"
+    if outcome is ConnectionProbeOutcome.INCOMPATIBLE:
+        return "incompatible"
+    if outcome is ConnectionProbeOutcome.INVALID_RESPONSE:
+        return "contract_drift"
+    return "unknown"
 
 
 def _run_audiobookshelf_inventory(
@@ -430,7 +493,7 @@ def _run_audiobookshelf_inventory(
     """Execute one durable, compatibility-gated GET-only inventory scan."""
 
     try:
-        _, configured, connection, libraries, bounds = _inventory_connection(
+        configuration, configured, connection, libraries, bounds = _inventory_connection(
             configuration_path
         )
         credentials = PrivateFileTargetCredentials()
@@ -439,7 +502,13 @@ def _run_audiobookshelf_inventory(
         def client_factory():
             try:
                 return PortResult.success(
-                    credentials.inventory_client(handle, configured.endpoint)
+                    credentials.inventory_client(
+                        handle,
+                        configured.endpoint,
+                        connect_timeout_seconds=configuration.inventory.connect_timeout_seconds,
+                        read_timeout_seconds=configuration.inventory.read_timeout_seconds,
+                        max_in_flight_requests=configuration.inventory.max_in_flight_requests,
+                    )
                 )
             except SecretFileUnavailable:
                 return PortResult.failed(
@@ -467,10 +536,14 @@ def _run_audiobookshelf_inventory(
                 configured,
                 context=context,
                 response_meter=meter,
+                connect_timeout_seconds=configuration.inventory.connect_timeout_seconds,
+                read_timeout_seconds=configuration.inventory.read_timeout_seconds,
+                max_in_flight_requests=configuration.inventory.max_in_flight_requests,
             )
             return InventoryConnectionVerification(
                 ScanUsage(response_bytes=response_bytes),
-                _inventory_probe_failure(probe.outcome),
+                _inventory_probe_failure(probe),
+                _inventory_probe_compatibility(probe.outcome),
             )
 
         source = AudiobookshelfInventoryReader(
@@ -503,6 +576,180 @@ def _run_audiobookshelf_inventory(
         return InventoryRunResult(InventoryOutcome.PERSISTENCE_FAILURE, ())
 
 
+def _run_audiobookshelf_poll(
+    configuration_path: Path, database: Path, trigger_id: str
+) -> InventoryPollResult:
+    """Persist one poll trigger, then run at most one eligible GET-only attempt."""
+
+    try:
+        configuration, configured, connection, libraries, bounds = (
+            _inventory_connection(configuration_path)
+        )
+        scope_digest = hashlib.sha256(
+            canonical_json(
+                {
+                    "adapter": connection.adapter.value,
+                    "connection": connection.id.value,
+                    "libraries": sorted(value.value for value in libraries),
+                }
+            ).encode("utf-8")
+        ).hexdigest()
+        governing_digest = hashlib.sha256(
+            canonical_json(
+                {
+                    "contract": "abs-inventory-v1",
+                    "generation": configuration.inventory.poll_generation,
+                    "page_size": bounds.page_size,
+                    "max_pages": bounds.max_pages,
+                    "max_items": bounds.max_items,
+                    "max_bytes": bounds.max_bytes,
+                    "timeout_seconds": bounds.max_seconds,
+                    "stability_delay_seconds": bounds.stability_delay_seconds,
+                    "max_attempts": configuration.inventory.max_attempts,
+                    "max_elapsed_seconds": configuration.inventory.max_elapsed_seconds,
+                    "initial_backoff_seconds": configuration.inventory.initial_backoff_seconds,
+                    "max_backoff_seconds": configuration.inventory.max_backoff_seconds,
+                    "connect_timeout_seconds": configuration.inventory.connect_timeout_seconds,
+                    "read_timeout_seconds": configuration.inventory.read_timeout_seconds,
+                    "max_in_flight_requests": configuration.inventory.max_in_flight_requests,
+                }
+            ).encode("utf-8")
+        ).hexdigest()
+        poll_digest = hashlib.sha256(
+            f"{trigger_id}:{governing_digest}".encode("utf-8")
+        ).hexdigest()
+        multiplier = configuration.inventory.max_attempts * len(libraries)
+        request = PollRequest(
+            "poll_" + poll_digest[:32],
+            trigger_id,
+            scope_digest,
+            governing_digest,
+            PollPolicy(
+                configuration.inventory.max_attempts,
+                configuration.inventory.max_elapsed_seconds,
+                min(bounds.max_seconds, 3_600),
+                configuration.inventory.initial_backoff_seconds,
+                configuration.inventory.max_backoff_seconds,
+                bounds.max_pages * multiplier,
+                bounds.max_items * multiplier,
+                bounds.max_bytes * multiplier,
+            ),
+        )
+        credentials = PrivateFileTargetCredentials()
+        handle = SecretHandle(configured.secret, SecretScope.TARGET_SERVICE)
+
+        def operation(state: sqlite3.Connection) -> InventoryPollResult:
+            def client_factory():
+                try:
+                    return PortResult.success(
+                        credentials.inventory_client(
+                            handle,
+                            configured.endpoint,
+                            connect_timeout_seconds=configuration.inventory.connect_timeout_seconds,
+                            read_timeout_seconds=configuration.inventory.read_timeout_seconds,
+                            max_in_flight_requests=configuration.inventory.max_in_flight_requests,
+                        )
+                    )
+                except SecretFileUnavailable:
+                    return PortResult.failed(
+                        PortFailure(
+                            FailureKind.NOT_FOUND,
+                            RetryAdvice(False),
+                            SafeSummary("inventory credential unavailable"),
+                        )
+                    )
+
+            def verify_connection(
+                _connection: LibraryConnection,
+                _libraries: tuple[LibraryId, ...],
+                _bounds: ScanBounds,
+                context: OperationContext,
+            ) -> InventoryConnectionVerification:
+                response_bytes = 0
+
+                def meter(amount: int) -> bool:
+                    nonlocal response_bytes
+                    response_bytes += amount
+                    return response_bytes <= bounds.max_bytes
+
+                probe = _probe_configured_connection(
+                    configured,
+                    context=context,
+                    response_meter=meter,
+                    connect_timeout_seconds=configuration.inventory.connect_timeout_seconds,
+                    read_timeout_seconds=configuration.inventory.read_timeout_seconds,
+                    max_in_flight_requests=configuration.inventory.max_in_flight_requests,
+                )
+                return InventoryConnectionVerification(
+                    ScanUsage(response_bytes=response_bytes),
+                    _inventory_probe_failure(probe),
+                    _inventory_probe_compatibility(probe.outcome),
+                )
+
+            source = AudiobookshelfInventoryReader(
+                client_factory=client_factory,
+                connection_verifier=verify_connection,
+            )
+            polling = SQLiteInventoryPollingRepository(state)
+            return RunInventoryPoll(
+                polling,
+                telemetry=LoggingInventoryPollTelemetry(),
+                adapter=connection.adapter,
+            ).run(
+                request,
+                "inventory_worker",
+                datetime.now(timezone.utc),
+                lambda claim: ReconcileInventory(
+                    source, SQLiteInventoryV2Repository(state)
+                ).run(
+                    connection,
+                    libraries,
+                    bounds,
+                    _inventory_poll_context(bounds, polling, claim),
+                    claim=claim,
+                ),
+                lambda: datetime.now(timezone.utc),
+            )
+
+        preflight(database)
+        if not path_entry_exists(database):
+            with staged_state(database) as staged:
+                _prepare_staged_operation(staged, lambda _state: True, lambda value: value)
+                publish_staged_state(staged, database)
+            preflight(database)
+        return _run_existing_operation(database, operation)
+    except (ConfigurationError, SchemaError, ValueError):
+        return InventoryPollResult(InventoryPollOutcome.INVALID, None)
+    except Exception:
+        return InventoryPollResult(InventoryPollOutcome.FAILED, None)
+
+
+def _inspect_audiobookshelf_poll(database: Path, poll_id: str) -> InventoryPollResult:
+    """Inspect poll evidence without configuration, credential, or network access."""
+
+    try:
+        def operation(state: sqlite3.Connection) -> InventoryPollResult:
+            inspected = SQLiteInventoryPollingRepository(state).inspect(poll_id)
+            if not inspected.accepted or inspected.value is None:
+                return InventoryPollResult(InventoryPollOutcome.FAILED, None)
+            poll_state = inspected.value.state
+            outcome = (
+                InventoryPollOutcome.SUCCEEDED
+                if poll_state.value == "succeeded"
+                else InventoryPollOutcome.BLOCKED
+                if poll_state.value == "blocked"
+                else InventoryPollOutcome.DEFERRED
+                if poll_state.value in {"pending", "running", "retry_wait"}
+                else InventoryPollOutcome.FAILED
+            )
+            return InventoryPollResult(outcome, inspected.value)
+
+        preflight(database)
+        return _run_existing_operation(database, operation)
+    except Exception:
+        return InventoryPollResult(InventoryPollOutcome.FAILED, None)
+
+
 def _inspect_audiobookshelf_inventory(
     configuration_path: Path, database: Path
 ) -> InventoryRunResult:
@@ -521,10 +768,20 @@ def _inspect_audiobookshelf_inventory(
                     return InventoryRunResult(InventoryOutcome.PERSISTENCE_FAILURE, ())
                 results.append(
                     InventoryLibraryResult(
-                        library, InventoryOutcome.READY, inspected.value
+                        library,
+                        _inventory_inspection_outcome(inspected.value.state),
+                        inspected.value,
                     )
                 )
-            return InventoryRunResult(InventoryOutcome.READY, tuple(results))
+            outcomes = tuple(result.outcome for result in results)
+            outcome = (
+                InventoryOutcome.READY
+                if all(value is InventoryOutcome.READY for value in outcomes)
+                else InventoryOutcome.UNSTABLE
+                if any(value is InventoryOutcome.UNSTABLE for value in outcomes)
+                else InventoryOutcome.INCOMPLETE
+            )
+            return InventoryRunResult(outcome, tuple(results))
 
         preflight(database)
         return _run_existing_operation(database, operation)
@@ -532,6 +789,15 @@ def _inspect_audiobookshelf_inventory(
         return InventoryRunResult(InventoryOutcome.INVALID_REQUEST, ())
     except Exception:
         return InventoryRunResult(InventoryOutcome.PERSISTENCE_FAILURE, ())
+
+
+def _inventory_inspection_outcome(state: ScanState) -> InventoryOutcome:
+    return {
+        ScanState.RUNNING: InventoryOutcome.INCOMPLETE,
+        ScanState.COMPLETE: InventoryOutcome.READY,
+        ScanState.INCOMPLETE: InventoryOutcome.INCOMPLETE,
+        ScanState.UNSTABLE: InventoryOutcome.UNSTABLE,
+    }[state]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -545,6 +811,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         connection_probe_runner=_run_connection_probe,
         audiobookshelf_inventory_runner=_run_audiobookshelf_inventory,
         inventory_inspection_runner=_inspect_audiobookshelf_inventory,
+        audiobookshelf_poll_runner=_run_audiobookshelf_poll,
+        inventory_poll_inspection_runner=_inspect_audiobookshelf_poll,
     )
 
 

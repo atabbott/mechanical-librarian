@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qualify F05a against a disposable digest-pinned Audiobookshelf container."""
+"""Qualify F05a/F05b against a disposable digest-pinned Audiobookshelf container."""
 
 from __future__ import annotations
 
@@ -120,6 +120,27 @@ class TraceProxy(BaseHTTPRequestHandler):
             status = 503
             payload = b'{"error":"synthetic partial item"}'
             content_type = "application/json"
+        if (
+            self.command == "GET"
+            and route == "/status"
+            and type(self).scenario == "rate"
+        ):
+            status = 429
+            payload = b'{"error":"synthetic rate limit"}'
+            content_type = "application/json"
+        if (
+            self.command == "GET"
+            and route.startswith("/api/items/")
+            and type(self).scenario == "transport"
+        ):
+            partial = payload[: max(1, len(payload) // 2)]
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload) + 10))
+            self.end_headers()
+            self.wfile.write(partial)
+            self.close_connection = True
+            return
         if self.command == "GET" and route.endswith("/items") and status == 200:
             parameters = urllib.parse.parse_qs(query, keep_blank_values=True)
             page = parameters.get("page", [""])[0]
@@ -153,6 +174,8 @@ class TraceProxy(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        if type(self).scenario == "rate" and status == 429:
+            self.send_header("Retry-After", "2")
         self.end_headers()
         self.wfile.write(payload)
 
@@ -225,6 +248,44 @@ def inspect_inventory(
             "inventory-inspect",
             "--config",
             str(configuration),
+            "--database",
+            str(database),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def run_poll(
+    configuration: Path, database: Path, trigger: str
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            str(ROOT / ".venv" / "bin" / "mechanical-librarian"),
+            "audiobookshelf-poll",
+            "--trigger",
+            trigger,
+            "--config",
+            str(configuration),
+            "--database",
+            str(database),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def inspect_poll(database: Path, poll_id: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [
+            str(ROOT / ".venv" / "bin" / "mechanical-librarian"),
+            "inventory-poll-inspect",
+            "--poll-id",
+            poll_id,
             "--database",
             str(database),
         ],
@@ -423,7 +484,12 @@ def main() -> int:
                                 "capability_overrides": [],
                             }
                         ],
-                        "inventory": {"page_size": 1, "stability_delay_seconds": 0},
+                        "inventory": {
+                            "page_size": 1,
+                            "stability_delay_seconds": 0,
+                            "initial_backoff_seconds": 1,
+                            "max_backoff_seconds": 2,
+                        },
                     }
                 )
             )
@@ -456,6 +522,32 @@ def main() -> int:
             duplicate = run_inventory(configuration, database)
             if duplicate.returncode != 0:
                 raise RuntimeError("F05a restart/duplicate scan failed")
+
+            poll = run_poll(configuration, database, "qualification-poll")
+            if poll.returncode != 0 or "state=succeeded" not in poll.stdout:
+                raise RuntimeError("F05b durable poll failed")
+            poll_id = next(
+                (
+                    part.split("=", 1)[1]
+                    for part in poll.stdout.split()
+                    if part.startswith("poll=")
+                ),
+                None,
+            )
+            if not isinstance(poll_id, str):
+                raise RuntimeError("F05b poll evidence was unavailable")
+            trace_count = len(TraceProxy.trace)
+            poll_duplicate = run_poll(
+                configuration, database, "qualification-poll"
+            )
+            if poll_duplicate.returncode != 0 or len(TraceProxy.trace) != trace_count:
+                raise RuntimeError("F05b duplicate poll performed target I/O")
+            poll_inspection = inspect_poll(database, poll_id)
+            if (
+                poll_inspection.returncode != 0
+                or "state=succeeded" not in poll_inspection.stdout
+            ):
+                raise RuntimeError("F05b credential-free poll inspection failed")
 
             audiobook_item = next(
                 (
@@ -595,38 +687,110 @@ def main() -> int:
             ):
                 raise RuntimeError("F05a credential-free inspection failed")
 
+            def advance_poll_generation() -> None:
+                config_value = json.loads(configuration.read_text())
+                config_value["inventory"]["poll_generation"] = (
+                    config_value["inventory"].get("poll_generation", 0) + 1
+                )
+                configuration.write_text(json.dumps(config_value))
+
             for scenario, expected_state in (
-                ("partial", "incomplete"),
                 ("repeated", "incomplete"),
                 ("cyclic", "unstable"),
                 ("malformed", "incomplete"),
                 ("unstable", "unstable"),
             ):
+                advance_poll_generation()
                 set_scenario(scenario)
-                failed = run_inventory(configuration, database)
+                failed = run_poll(
+                    configuration, database, f"qualification-{scenario}"
+                )
+                failed_output = failed.stdout + failed.stderr
                 if failed.returncode == 0:
                     raise RuntimeError(
-                        f"F05a {scenario} sequence unexpectedly completed"
+                        f"F05b {scenario} sequence unexpectedly completed"
                     )
-                preserved = inspect_inventory(configuration, database)
                 if (
-                    preserved.returncode != 0
-                    or f"state={expected_state}" not in preserved.stdout
-                    or "items=2 active=1 removed=1" not in preserved.stdout
-                    or "history=4" not in preserved.stdout
+                    scenario == "malformed"
+                    and "compatibility=contract_drift" not in failed_output
                 ):
                     raise RuntimeError(
-                        f"F05a {scenario} sequence did not preserve durable current state"
+                        "F05b malformed sequence did not record contract drift"
                     )
+                preserved = inspect_inventory(configuration, database)
+                preserved_output = preserved.stdout + preserved.stderr
+                if (
+                    preserved.returncode == 0
+                    or f"state={expected_state}" not in preserved_output
+                    or "items=2 active=1 removed=1" not in preserved_output
+                    or "history=4" not in preserved_output
+                ):
+                    raise RuntimeError(
+                        f"F05b {scenario} sequence did not preserve durable current state: "
+                        f"rc={preserved.returncode} out={preserved.stdout.strip()} "
+                        f"err={preserved.stderr.strip()}"
+                    )
+
+            for scenario in ("partial", "transport", "rate"):
+                trigger = f"qualification-{scenario}-recovery"
+                advance_poll_generation()
+                set_scenario(scenario)
+                failed = run_poll(configuration, database, trigger)
+                failed_output = failed.stdout + failed.stderr
+                if failed.returncode == 0 or "state=retry_wait" not in failed_output:
+                    raise RuntimeError(
+                        f"F05b {scenario} failure did not persist retry-wait: "
+                        f"rc={failed.returncode} out={failed.stdout.strip()} "
+                        f"err={failed.stderr.strip()}"
+                    )
+                trace_count = len(TraceProxy.trace)
+                deferred = run_poll(configuration, database, trigger)
+                if deferred.returncode == 0 or len(TraceProxy.trace) != trace_count:
+                    raise RuntimeError(
+                        f"F05b {scenario} early redelivery performed target I/O"
+                    )
+                set_scenario("pass")
+                time.sleep(2.1 if scenario == "rate" else 1.1)
+                repaired = run_poll(configuration, database, trigger)
+                if repaired.returncode != 0 or "state=succeeded" not in repaired.stdout:
+                    raise RuntimeError(
+                        f"F05b {scenario} persisted retry did not recover"
+                    )
+
+            original_secret = secret.read_text()
+            advance_poll_generation()
+            secret.write_text("invalid-disposable-key\n")
+            secret.chmod(0o600)
+            authentication = run_poll(
+                configuration, database, "qualification-authentication-loss"
+            )
+            authentication_output = authentication.stdout + authentication.stderr
+            if (
+                authentication.returncode == 0
+                or "state=blocked" not in authentication_output
+                or "compatibility=unknown" not in authentication_output
+            ):
+                raise RuntimeError("F05b authentication loss did not block safely")
+            secret.write_text(original_secret)
+            secret.chmod(0o600)
+            advance_poll_generation()
+            restored = run_poll(
+                configuration, database, "qualification-authentication-restored"
+            )
+            if restored.returncode != 0 or "state=succeeded" not in restored.stdout:
+                raise RuntimeError(
+                    "F05b governing credential repair did not restore polling"
+                )
             set_scenario("pass")
             if any(not _allowed(entry, library_id) for entry in TraceProxy.trace):
-                raise RuntimeError("F05a failure cohort exceeded route/method contract")
+                raise RuntimeError("F05b failure cohort exceeded route/method contract")
             print(completed.stdout, end="")
             print(
                 "qualification=abs-2.35.1 mixed=audio,ebook pages=multi-pass "
-                "restart=duplicate update=audio ebook=nested-contract "
+                "restart=duplicate,persisted-retry poll=durable,fenced,deduplicated update=audio ebook=nested-contract "
                 "disappearance=removed,retained "
-                "failures=partial,repeated,cyclic,malformed,unstable authority=get-only"
+                "failures=authentication,rate,transport,partial,repeated,cyclic,malformed,unstable "
+                "repair=governing-change,backoff authority=get-only"
             )
             return 0
         finally:

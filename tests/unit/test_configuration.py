@@ -76,6 +76,49 @@ class ConfigurationTests(unittest.TestCase):
             self.assertNotIn(private_value, exported)
             self.assertNotIn(private_value, diagnostics)
 
+    def test_f05b_inventory_controls_are_exported_and_change_impacts_are_complete(
+        self,
+    ) -> None:
+        source = self.proposed()
+        source["inventory"] = {
+            "poll_generation": 7,
+            "max_attempts": 4,
+            "max_elapsed_seconds": 901,
+            "initial_backoff_seconds": 6,
+            "max_backoff_seconds": 301,
+            "connect_timeout_seconds": 11,
+            "read_timeout_seconds": 31,
+            "max_in_flight_requests": 1,
+        }
+        exported = load_configuration(source).export()["inventory"]
+        self.assertEqual(
+            {key: exported[key] for key in source["inventory"]},
+            source["inventory"],
+        )
+
+        changeable = (
+            ("poll_generation", 1),
+            ("max_attempts", 4),
+            ("max_elapsed_seconds", 901),
+            ("initial_backoff_seconds", 6),
+            ("max_backoff_seconds", 301),
+            ("connect_timeout_seconds", 11),
+            ("read_timeout_seconds", 31),
+        )
+        for field, value in changeable:
+            with self.subTest(field=field):
+                proposed = self.proposed()
+                proposed["inventory"] = {field: value}
+                self.assertEqual(
+                    plan_import(self.source, proposed).changes,
+                    (ConfigurationChange(f"inventory.{field}", (R, I)),),
+                )
+
+        fixed = self.proposed()
+        fixed["inventory"] = {"max_in_flight_requests": 2}
+        with self.assertRaises(ConfigurationError):
+            plan_import(self.source, fixed)
+
     def test_noop_and_one_change_per_top_level_group_follow_matrix(self) -> None:
         self.assertTrue(plan_import(self.source, self.source).is_noop)
         cases = (

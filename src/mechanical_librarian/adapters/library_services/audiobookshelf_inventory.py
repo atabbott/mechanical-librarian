@@ -6,7 +6,8 @@ import hashlib
 import json
 import math
 from collections.abc import Callable, Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 import httpx
@@ -17,6 +18,7 @@ from mechanical_librarian.application.inventory_reconciliation import (
 )
 from mechanical_librarian.application.ports import (
     FailureKind,
+    OperationUsage,
     OperationContext,
     PortFailure,
     PortResult,
@@ -105,33 +107,44 @@ class AudiobookshelfInventoryReader(InventorySource):
         if response.failure is not None:
             return PortResult.failed(response.failure)
         value, size = response.value
+        usage = ScanUsage(response_bytes=size)
         if not isinstance(value, dict) or not isinstance(value.get("libraries"), list):
             return _failed(
-                FailureKind.INVALID_RESPONSE, "inventory library response invalid"
+                FailureKind.INVALID_RESPONSE,
+                "inventory library response invalid",
+                usage=usage,
             )
         matches = []
         seen: set[str] = set()
         for item in value["libraries"]:
             if not isinstance(item, dict) or not is_canonical_uuid4(item.get("id")):
                 return _failed(
-                    FailureKind.INVALID_RESPONSE, "inventory library response invalid"
+                    FailureKind.INVALID_RESPONSE,
+                    "inventory library response invalid",
+                    usage=usage,
                 )
             if item["id"] in seen:
                 return _failed(
-                    FailureKind.CONFLICT, "inventory library response unstable"
+                    FailureKind.CONFLICT,
+                    "inventory library response unstable",
+                    usage=usage,
                 )
             seen.add(item["id"])
             if item["id"] == library.value:
                 matches.append(item)
         if len(matches) != 1:
             return _failed(
-                FailureKind.NOT_FOUND, "configured inventory library unavailable"
+                FailureKind.NOT_FOUND,
+                "configured inventory library unavailable",
+                usage=usage,
             )
         if matches[0].get("mediaType") != "book":
             return _failed(
-                FailureKind.UNSUPPORTED, "configured inventory library unsupported"
+                FailureKind.UNSUPPORTED,
+                "configured inventory library unsupported",
+                usage=usage,
             )
-        return PortResult.success(ScanUsage(response_bytes=size))
+        return PortResult.success(usage)
 
     def read_pass(
         self,
@@ -151,9 +164,22 @@ class AudiobookshelfInventoryReader(InventorySource):
         expected_total: int | None = None
         recent_item = False
 
+        def failed(
+            kind: FailureKind,
+            summary: str,
+            *,
+            retryable: bool = False,
+        ) -> PortResult[InventoryPass]:
+            return _failed(
+                kind,
+                summary,
+                retryable=retryable,
+                usage=ScanUsage(page_number, len(snapshots), response_bytes),
+            )
+
         while True:
             if page_number >= bounds.max_pages:
-                return _failed(
+                return failed(
                     FailureKind.RESOURCE_EXHAUSTED, "inventory page bound exhausted"
                 )
             query = {
@@ -172,39 +198,44 @@ class AudiobookshelfInventoryReader(InventorySource):
                 context,
             )
             if page.failure is not None:
-                return PortResult.failed(page.failure)
+                return PortResult.failed(
+                    _add_usage(
+                        page.failure,
+                        ScanUsage(page_number, len(snapshots), response_bytes),
+                    )
+                )
             payload, size = page.value
             response_bytes += size
-            parsed = _page(payload, page_number, bounds.page_size)
+            page_number += 1
+            parsed = _page(payload, page_number - 1, bounds.page_size)
             if parsed is None:
-                return _failed(
+                return failed(
                     FailureKind.INVALID_RESPONSE, "inventory page response invalid"
                 )
             results, total = parsed
             if expected_total is None:
                 expected_total = total
             elif total != expected_total:
-                return _failed(FailureKind.CONFLICT, "inventory page response unstable")
+                return failed(FailureKind.CONFLICT, "inventory page response unstable")
             signature = hashlib.sha256(
                 canonical_json([item.get("id") for item in results]).encode("utf-8")
             ).hexdigest()
             if results and signature in page_signatures:
-                return _failed(FailureKind.CONFLICT, "inventory page cycle detected")
+                return failed(FailureKind.CONFLICT, "inventory page cycle detected")
             page_signatures.add(signature)
-            page_number += 1
 
             for summary in results:
                 if len(seen) >= bounds.max_items:
-                    return _failed(
+                    return failed(
                         FailureKind.RESOURCE_EXHAUSTED, "inventory item bound exhausted"
                     )
                 identity = _summary_identity(summary, library)
                 if identity is None:
-                    return _failed(
+                    return failed(
                         FailureKind.INVALID_RESPONSE, "inventory item summary invalid"
                     )
                 if identity in seen:
-                    return _failed(FailureKind.CONFLICT, "inventory item duplicated")
+                    return failed(FailureKind.CONFLICT, "inventory item duplicated")
                 seen.add(identity)
                 detail = self._get(
                     connection,
@@ -214,7 +245,12 @@ class AudiobookshelfInventoryReader(InventorySource):
                     context,
                 )
                 if detail.failure is not None:
-                    return PortResult.failed(detail.failure)
+                    return PortResult.failed(
+                        _add_usage(
+                            detail.failure,
+                            ScanUsage(page_number, len(snapshots), response_bytes),
+                        )
+                    )
                 detail_value, detail_size = detail.value
                 response_bytes += detail_size
                 try:
@@ -226,12 +262,17 @@ class AudiobookshelfInventoryReader(InventorySource):
                         context,
                     )
                 except (ValueError, TypeError, RecursionError, OverflowError):
-                    return _failed(
+                    return failed(
                         FailureKind.INVALID_RESPONSE,
                         "inventory item normalization invalid",
                     )
                 if normalized.failure is not None:
-                    return PortResult.failed(normalized.failure)
+                    return PortResult.failed(
+                        _add_usage(
+                            normalized.failure,
+                            ScanUsage(page_number, len(snapshots), response_bytes),
+                        )
+                    )
                 snapshot, updated_millis = normalized.value
                 snapshots.append(snapshot)
                 threshold = context.time.now() - timedelta(
@@ -244,16 +285,16 @@ class AudiobookshelfInventoryReader(InventorySource):
                     recent_item = True
 
             if len(seen) > total:
-                return _failed(FailureKind.CONFLICT, "inventory page response unstable")
+                return failed(FailureKind.CONFLICT, "inventory page response unstable")
             if not results or len(seen) == total:
                 break
             if len(results) != bounds.page_size:
-                return _failed(
+                return failed(
                     FailureKind.INVALID_RESPONSE, "inventory page response incomplete"
                 )
 
         if expected_total != len(seen):
-            return _failed(
+            return failed(
                 FailureKind.INVALID_RESPONSE, "inventory page response incomplete"
             )
         return PortResult.success(
@@ -288,9 +329,15 @@ class AudiobookshelfInventoryReader(InventorySource):
                 if client_result.failure is not None
                 else _failed(FailureKind.UNAVAILABLE, "inventory client unavailable")
             )
+        consumed_bytes = 0
         try:
             with client_result.value as client:
                 client.cookies.clear()
+                remaining_seconds = max(
+                    0.001,
+                    (context.deadline.at - context.time.now()).total_seconds(),
+                )
+                configured_timeout = client.timeout
                 with client.stream(
                     "GET",
                     connection.endpoint.value + path,
@@ -300,15 +347,18 @@ class AudiobookshelfInventoryReader(InventorySource):
                         "Accept-Encoding": "identity",
                     },
                     timeout=httpx.Timeout(
-                        max(
-                            0.001,
-                            min(
-                                10.0,
-                                (
-                                    context.deadline.at - context.time.now()
-                                ).total_seconds(),
-                            ),
-                        )
+                        connect=_clipped_timeout(
+                            configured_timeout.connect, remaining_seconds
+                        ),
+                        read=_clipped_timeout(
+                            configured_timeout.read, remaining_seconds
+                        ),
+                        write=_clipped_timeout(
+                            configured_timeout.write, remaining_seconds
+                        ),
+                        pool=_clipped_timeout(
+                            configured_timeout.pool, remaining_seconds
+                        ),
                     ),
                 ) as response:
                     checkpoint = context.preflight_result(
@@ -316,7 +366,12 @@ class AudiobookshelfInventoryReader(InventorySource):
                     )
                     if checkpoint.failure is not None:
                         return PortResult.failed(checkpoint.failure)
-                    status_failure = _status_failure(response.status_code)
+                    status_failure = _status_failure(
+                        response.status_code,
+                        path=path,
+                        retry_after=response.headers.get("retry-after"),
+                        now=context.time.now(),
+                    )
                     if status_failure is not None:
                         return PortResult.failed(status_failure)
                     if (
@@ -352,16 +407,23 @@ class AudiobookshelfInventoryReader(InventorySource):
                             )
                     payload = bytearray()
                     for chunk in response.iter_raw():
+                        consumed_bytes += len(chunk)
                         if len(payload) + len(chunk) > remaining_bytes:
                             return _failed(
                                 FailureKind.RESOURCE_EXHAUSTED,
                                 "inventory response bound exhausted",
+                                usage=ScanUsage(response_bytes=consumed_bytes),
                             )
                         checkpoint = context.preflight_result(
                             item_count=1, serialized_bytes=len(payload) + len(chunk)
                         )
                         if checkpoint.failure is not None:
-                            return PortResult.failed(checkpoint.failure)
+                            return PortResult.failed(
+                                _add_usage(
+                                    checkpoint.failure,
+                                    ScanUsage(response_bytes=consumed_bytes),
+                                )
+                            )
                         payload.extend(chunk)
                     try:
                         value = json.loads(
@@ -371,16 +433,24 @@ class AudiobookshelfInventoryReader(InventorySource):
                         )
                     except (UnicodeError, ValueError, RecursionError):
                         return _failed(
-                            FailureKind.INVALID_RESPONSE, "inventory response invalid"
+                            FailureKind.INVALID_RESPONSE,
+                            "inventory response invalid",
+                            usage=ScanUsage(response_bytes=consumed_bytes),
                         )
                     return PortResult.success((value, len(payload)))
         except httpx.TimeoutException:
             return _failed(
-                FailureKind.TIMEOUT, "inventory read timed out", retryable=True
+                FailureKind.TIMEOUT,
+                "inventory read timed out",
+                retryable=True,
+                usage=ScanUsage(response_bytes=consumed_bytes),
             )
         except (httpx.RequestError, httpx.StreamError, OSError):
             return _failed(
-                FailureKind.UNAVAILABLE, "inventory target unavailable", retryable=True
+                FailureKind.UNAVAILABLE,
+                "inventory target unavailable",
+                retryable=True,
+                usage=ScanUsage(response_bytes=consumed_bytes),
             )
 
 
@@ -940,6 +1010,10 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return value
 
 
+def _clipped_timeout(configured: float | None, remaining: float) -> float:
+    return remaining if configured is None else min(configured, remaining)
+
+
 def _reject_json_constant(_value: str) -> None:
     raise ValueError("non-finite JSON number")
 
@@ -959,7 +1033,13 @@ def _validate_request(
     return None
 
 
-def _status_failure(status: int) -> PortFailure | None:
+def _status_failure(
+    status: int,
+    *,
+    path: str = "",
+    retry_after: str | None = None,
+    now: datetime | None = None,
+) -> PortFailure | None:
     if status == 200:
         return None
     if status == 401:
@@ -967,12 +1047,20 @@ def _status_failure(status: int) -> PortFailure | None:
     if status == 403:
         return _failure(FailureKind.AUTHORIZATION, "inventory authorization failed")
     if status == 404:
+        if path.startswith("/api/items/"):
+            return _failure(
+                FailureKind.CONFLICT,
+                "inventory item changed during scan",
+            )
         return _failure(FailureKind.NOT_FOUND, "inventory resource unavailable")
     if status == 408:
         return _failure(FailureKind.TIMEOUT, "inventory read timed out", retryable=True)
     if status == 429:
         return _failure(
-            FailureKind.RATE_LIMITED, "inventory read rate limited", retryable=True
+            FailureKind.RATE_LIMITED,
+            "inventory read rate limited",
+            retryable=True,
+            retry_after=_retry_after(retry_after, now),
         )
     if 300 <= status < 400:
         return _failure(FailureKind.INVALID_RESPONSE, "inventory redirect rejected")
@@ -984,15 +1072,68 @@ def _status_failure(status: int) -> PortFailure | None:
 
 
 def _failure(
-    kind: FailureKind, summary: str, *, retryable: bool = False
+    kind: FailureKind,
+    summary: str,
+    *,
+    retryable: bool = False,
+    retry_after: timedelta | None = None,
+    usage: ScanUsage = ScanUsage(),
 ) -> PortFailure:
-    return PortFailure(kind, RetryAdvice(retryable), SafeSummary(summary))
+    return PortFailure(
+        kind,
+        RetryAdvice(retryable, retry_after),
+        SafeSummary(summary),
+        OperationUsage(usage.pages, usage.items, usage.response_bytes),
+    )
+
+
+def _retry_after(value: str | None, now: datetime | None) -> timedelta | None:
+    if value is None or len(value) > 128:
+        return None
+    candidate = value.strip()
+    if not candidate or len(candidate) > 128:
+        return None
+    if candidate.isascii() and candidate.isdecimal():
+        try:
+            delay = timedelta(seconds=int(candidate))
+        except (ValueError, OverflowError):
+            return None
+    else:
+        if now is None or now.tzinfo is None or now.utcoffset() is None:
+            return None
+        try:
+            parsed = parsedate_to_datetime(candidate)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            return None
+        delay = parsed.astimezone(timezone.utc) - now.astimezone(timezone.utc)
+    return delay if timedelta(0) < delay <= timedelta(days=1) else None
 
 
 def _failed(
-    kind: FailureKind, summary: str, *, retryable: bool = False
+    kind: FailureKind,
+    summary: str,
+    *,
+    retryable: bool = False,
+    usage: ScanUsage = ScanUsage(),
 ) -> PortResult[Any]:
-    return PortResult.failed(_failure(kind, summary, retryable=retryable))
+    return PortResult.failed(
+        _failure(kind, summary, retryable=retryable, usage=usage)
+    )
+
+
+def _add_usage(failure: PortFailure, usage: ScanUsage) -> PortFailure:
+    return PortFailure(
+        failure.kind,
+        failure.retry,
+        failure.safe_summary,
+        OperationUsage(
+            failure.usage.pages + usage.pages,
+            failure.usage.items + usage.items,
+            failure.usage.response_bytes + usage.response_bytes,
+        ),
+    )
 
 
 __all__ = ["AudiobookshelfInventoryReader"]

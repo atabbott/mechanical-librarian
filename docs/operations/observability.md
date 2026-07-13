@@ -24,12 +24,19 @@ Logs exclude:
 - reviewer authentication content;
 - unbounded HTML, metadata, or exception payloads.
 
+Audiobookshelf reconciliation emits the fixed `inventory_poll` event for
+scheduled, claimed, deferred, blocked, failed, and succeeded stages. Its fields
+are limited to adapter, opaque poll ID, attempt, resource totals, typed failure,
+and compatibility state.
+
 ## Metrics
 
 Initial metrics include:
 
 - discovered, changed, skipped, and unresolved items;
 - job queue depth, age, retries, and terminal failures;
+- inventory poll stage and failure counts plus cumulative pages, items, and
+  response bytes;
 - evidence outcomes and cache reuse;
 - EPUB package and opening-matter coverage, selected-resource counts, bounded
   bytes/text, identifier and edition outcomes, contradictions, parser failures,

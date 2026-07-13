@@ -7,6 +7,10 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added durable duplicate-safe Audiobookshelf polling with persisted cumulative
+  budgets, bounded retry/backoff, governing-state suppression, monotonic lease
+  fencing, credential-free poll inspection, and cohort-atomic removal
+  publication. Socket.IO remains unavailable at the API-key trust boundary.
 - Added bounded, GET-only Audiobookshelf 2.35.1 inventory traversal with
   two-pass stability proof, versioned vendor-neutral snapshots, durable scan
   recovery, atomic disappearance publication, immutable history, and a

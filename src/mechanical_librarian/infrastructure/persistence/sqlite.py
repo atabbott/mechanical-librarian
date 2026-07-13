@@ -288,7 +288,61 @@ _INVENTORY_V2_SNAPSHOTS_NO_DELETE_SQL = (
     "BEGIN SELECT RAISE(ABORT, 'inventory v2 snapshots are append-only'); END"
 )
 
-
+_INVENTORY_POLLS_TABLE_SQL = (
+    "CREATE TABLE inventory_polls ("
+    "poll_id TEXT PRIMARY KEY CHECK (typeof(poll_id) = 'text' AND length(poll_id) BETWEEN 1 AND 64 AND poll_id GLOB '[a-z]*' AND poll_id NOT GLOB '*[^a-z0-9_-]*'), "
+    "trigger_id TEXT NOT NULL CHECK (typeof(trigger_id) = 'text' AND length(trigger_id) BETWEEN 1 AND 64 AND trigger_id GLOB '[a-z]*' AND trigger_id NOT GLOB '*[^a-z0-9_-]*'), "
+    "scope_digest TEXT NOT NULL CHECK (length(scope_digest) = 64 AND scope_digest NOT GLOB '*[^0-9a-f]*'), "
+    "governing_digest TEXT NOT NULL CHECK (length(governing_digest) = 64 AND governing_digest NOT GLOB '*[^0-9a-f]*'), "
+    "state TEXT NOT NULL CHECK (state IN ('pending','running','retry_wait','succeeded','blocked','failed_terminal','cancelled')), "
+    "attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt BETWEEN 0 AND 16), "
+    "max_attempts INTEGER NOT NULL CHECK (max_attempts BETWEEN 1 AND 16), "
+    "max_elapsed_seconds INTEGER NOT NULL CHECK (max_elapsed_seconds BETWEEN 1 AND 86400), "
+    "lease_seconds INTEGER NOT NULL CHECK (lease_seconds BETWEEN 1 AND 3600), "
+    "initial_backoff_seconds INTEGER NOT NULL CHECK (initial_backoff_seconds BETWEEN 1 AND 3600), "
+    "max_backoff_seconds INTEGER NOT NULL CHECK (max_backoff_seconds BETWEEN initial_backoff_seconds AND 86400), "
+    "max_pages INTEGER NOT NULL CHECK (max_pages BETWEEN 1 AND 10240000), "
+    "max_items INTEGER NOT NULL CHECK (max_items BETWEEN 1 AND 10240000), "
+    "max_bytes INTEGER NOT NULL CHECK (max_bytes BETWEEN 1024 AND 68719476736), "
+    "used_pages INTEGER NOT NULL DEFAULT 0 CHECK (used_pages BETWEEN 0 AND max_pages), "
+    "used_items INTEGER NOT NULL DEFAULT 0 CHECK (used_items BETWEEN 0 AND max_items), "
+    "used_bytes INTEGER NOT NULL DEFAULT 0 CHECK (used_bytes BETWEEN 0 AND max_bytes), "
+    "lease_owner TEXT CHECK (lease_owner IS NULL OR (length(lease_owner) BETWEEN 1 AND 64 AND lease_owner GLOB '[a-z]*' AND lease_owner NOT GLOB '*[^a-z0-9_-]*')), "
+    f"lease_expires_at TEXT CHECK ({_timestamp_constraint('lease_expires_at', nullable=True)}), "
+    "fence INTEGER NOT NULL DEFAULT 0 CHECK (fence >= 0), "
+    "cancellation_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancellation_requested IN (0,1)), "
+    f"next_eligible_at TEXT CHECK ({_timestamp_constraint('next_eligible_at', nullable=True)}), "
+    "failure_kind TEXT CHECK (failure_kind IS NULL OR (length(failure_kind) BETWEEN 1 AND 64 AND failure_kind NOT GLOB '*[^a-z0-9_]*')), "
+    "compatibility TEXT CHECK (compatibility IS NULL OR compatibility IN ('supported','incompatible','unknown','contract_drift')), "
+    f"created_at TEXT NOT NULL CHECK ({_timestamp_constraint('created_at')}), "
+    f"elapsed_deadline TEXT NOT NULL CHECK ({_timestamp_constraint('elapsed_deadline')}), "
+    f"updated_at TEXT NOT NULL CHECK ({_timestamp_constraint('updated_at')}), "
+    "UNIQUE (trigger_id, governing_digest), "
+    "CHECK ((state = 'running') = (lease_owner IS NOT NULL)), "
+    "CHECK ((lease_owner IS NULL) = (lease_expires_at IS NULL)))"
+)
+_INVENTORY_POLL_ATTEMPTS_TABLE_SQL = (
+    "CREATE TABLE inventory_poll_attempts ("
+    "poll_id TEXT NOT NULL REFERENCES inventory_polls(poll_id), "
+    "attempt INTEGER NOT NULL CHECK (attempt BETWEEN 1 AND 16), "
+    "fence INTEGER NOT NULL CHECK (fence > 0), "
+    "worker_id TEXT NOT NULL CHECK (length(worker_id) BETWEEN 1 AND 64), "
+    "state TEXT NOT NULL CHECK (state IN ('running','retry_wait','succeeded','blocked','failed_terminal','cancelled','lease_expired')), "
+    "page_count INTEGER NOT NULL DEFAULT 0 CHECK (page_count >= 0), "
+    "item_count INTEGER NOT NULL DEFAULT 0 CHECK (item_count >= 0), "
+    "response_bytes INTEGER NOT NULL DEFAULT 0 CHECK (response_bytes >= 0), "
+    "failure_kind TEXT CHECK (failure_kind IS NULL OR (length(failure_kind) BETWEEN 1 AND 64 AND failure_kind NOT GLOB '*[^a-z0-9_]*')), "
+    "compatibility TEXT CHECK (compatibility IS NULL OR compatibility IN ('supported','incompatible','unknown','contract_drift')), "
+    f"started_at TEXT NOT NULL CHECK ({_timestamp_constraint('started_at')}), "
+    f"finished_at TEXT CHECK ({_timestamp_constraint('finished_at', nullable=True)}), "
+    "PRIMARY KEY (poll_id, attempt), UNIQUE (poll_id, fence), UNIQUE (poll_id, attempt, fence))"
+)
+_INVENTORY_SCAN_POLL_CLAIMS_TABLE_SQL = (
+    "CREATE TABLE inventory_scan_poll_claims ("
+    "scan_id TEXT PRIMARY KEY REFERENCES inventory_scans(scan_id), "
+    "poll_id TEXT NOT NULL, attempt INTEGER NOT NULL, fence INTEGER NOT NULL CHECK (fence > 0), "
+    "FOREIGN KEY (poll_id, attempt, fence) REFERENCES inventory_poll_attempts(poll_id, attempt, fence))"
+)
 MIGRATIONS = (
     Migration(
         1,
@@ -361,6 +415,24 @@ MIGRATIONS = (
                 "current_inventory_v2",
                 "inventory_scans",
                 "inventory_scan_items",
+            }
+        ),
+    ),
+    Migration(
+        5,
+        (
+            _INVENTORY_POLLS_TABLE_SQL,
+            _INVENTORY_POLL_ATTEMPTS_TABLE_SQL,
+            _INVENTORY_SCAN_POLL_CLAIMS_TABLE_SQL,
+            "CREATE INDEX inventory_polls_by_claim ON inventory_polls(state, next_eligible_at, created_at, poll_id)",
+            "CREATE INDEX inventory_polls_by_scope ON inventory_polls(scope_digest, governing_digest, state, updated_at)",
+            "CREATE INDEX inventory_poll_attempts_by_poll ON inventory_poll_attempts(poll_id, attempt, fence)",
+        ),
+        frozenset(
+            {
+                "inventory_polls",
+                "inventory_poll_attempts",
+                "inventory_scan_poll_claims",
             }
         ),
     ),

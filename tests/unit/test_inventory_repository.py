@@ -1514,8 +1514,8 @@ class InventoryMigrationTests(unittest.TestCase):
                 "('f02-audit', 'discovery', '2026-01-01T00:00:00.000000Z', 'discovered item')"
             )
 
-            self.assertEqual(sqlite.migrate(connection), 4)
-            self.assertEqual(sqlite.migrate(connection), 4)
+            self.assertEqual(sqlite.migrate(connection), len(sqlite.MIGRATIONS))
+            self.assertEqual(sqlite.migrate(connection), len(sqlite.MIGRATIONS))
             self.assertEqual(
                 connection.execute(
                     "SELECT value FROM instance_metadata WHERE key = 'f02-sentinel'"
@@ -1578,7 +1578,7 @@ class InventoryMigrationTests(unittest.TestCase):
                 ).fetchone(),
                 ("preserved",),
             )
-            self.assertEqual(sqlite.migrate(connection), 4)
+            self.assertEqual(sqlite.migrate(connection), len(sqlite.MIGRATIONS))
             snapshot = _fixture()
             key = IdempotencyKey.from_canonical_input(
                 operation="snapshot-store",
@@ -1664,8 +1664,8 @@ class InventoryMigrationTests(unittest.TestCase):
                 repository.read(LibraryReadRequest(snapshot.target, _context())).value,
                 snapshot,
             )
-            self.assertEqual(sqlite.migrate(connection), 4)
-            self.assertEqual(sqlite.migrate(connection), 4)
+            self.assertEqual(sqlite.migrate(connection), len(sqlite.MIGRATIONS))
+            self.assertEqual(sqlite.migrate(connection), len(sqlite.MIGRATIONS))
             self.assertEqual(
                 repository.read(LibraryReadRequest(snapshot.target, _context())).value,
                 snapshot,

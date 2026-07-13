@@ -33,3 +33,16 @@ extension, path, relative path, size, and timestamps live under
 `FileMetadata`. The mixed-null `isbn`/`asin` pairs reproduce ordinary Book JSON
 where one supported identifier is valid and its sibling is null. All identities,
 names, paths, sizes, timestamps, and metadata values are synthetic.
+
+The F05b shared target-inventory contract reuses this generated Audiobookshelf
+family and pairs it with an independently authored CWA-shaped in-memory fake.
+That fake emits only the application-owned canonical inventory types and has no
+database, UI, maintenance-container, media-write, mutation, or production
+adapter path. It is contract portability evidence, not a CWA response fixture
+or a production-support claim.
+
+Notification compatibility was checked against `SocketAuthority` and
+`TokenManager` at the same frozen 2.35.1 source revision. Those socket
+authorization paths explicitly reject API keys. No socket payload fixture is
+retained because the supported API-key-only boundary constructs no socket
+client and supplies no login credential or session JWT.

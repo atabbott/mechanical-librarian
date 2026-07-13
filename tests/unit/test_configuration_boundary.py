@@ -337,6 +337,48 @@ class ConfigurationBoundaryTests(unittest.TestCase):
                 ),
                 -1,
             ),
+            (
+                "inventory-poll-generation",
+                lambda source, value: source.__setitem__(
+                    "inventory", {"poll_generation": value}
+                ),
+                -1,
+            ),
+            (
+                "inventory-attempts",
+                lambda source, value: source.__setitem__(
+                    "inventory", {"max_attempts": value}
+                ),
+                17,
+            ),
+            (
+                "inventory-elapsed",
+                lambda source, value: source.__setitem__(
+                    "inventory", {"max_elapsed_seconds": value}
+                ),
+                0,
+            ),
+            (
+                "inventory-connect-timeout",
+                lambda source, value: source.__setitem__(
+                    "inventory", {"connect_timeout_seconds": value}
+                ),
+                301,
+            ),
+            (
+                "inventory-read-timeout",
+                lambda source, value: source.__setitem__(
+                    "inventory", {"read_timeout_seconds": value}
+                ),
+                0,
+            ),
+            (
+                "inventory-in-flight",
+                lambda source, value: source.__setitem__(
+                    "inventory", {"max_in_flight_requests": value}
+                ),
+                2,
+            ),
         )
         for label, update, value in invalid_updates:
             with self.subTest(label=label):
@@ -344,6 +386,14 @@ class ConfigurationBoundaryTests(unittest.TestCase):
                 update(source, value)
                 with self.assertRaises(ConfigurationError):
                     validate_configuration(source)
+
+        invalid_backoff = self.source()
+        invalid_backoff["inventory"] = {
+            "initial_backoff_seconds": 10,
+            "max_backoff_seconds": 9,
+        }
+        with self.assertRaises(ConfigurationError):
+            validate_configuration(invalid_backoff)
 
         for evidence_days in (1, 3_650):
             source = self.source()

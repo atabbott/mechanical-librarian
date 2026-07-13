@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import unittest
 from pathlib import Path
 
@@ -28,6 +29,28 @@ ALLOWED_LAYER_IMPORTS = {
     "interfaces": {"interfaces", "application", "domain"},
     "bootstrap": PRODUCTION_LAYERS,
 }
+VENDOR_NEUTRAL_CONTRACT_ROOTS = (
+    PACKAGE_ROOT / "domain",
+    PACKAGE_ROOT / "application",
+    PACKAGE_ROOT / "adapters" / "reviewers",
+)
+FORBIDDEN_VENDOR_NAMES = frozenset(
+    {"audiobookshelf", "calibrewebautomated", "cwa"}
+)
+FORBIDDEN_VENDOR_PAYLOAD_FIELDS = frozenset(
+    {
+        "accessAllLibraries",
+        "audioFiles",
+        "coverPath",
+        "ebookFile",
+        "isInvalid",
+        "isMissing",
+        "librariesAccessible",
+        "libraryId",
+        "serverVersion",
+        "updatedAt",
+    }
+)
 
 
 def _module_name(path: Path) -> str:
@@ -110,6 +133,45 @@ def _imports(path: Path) -> list[str]:
                 if alias.name != "*"
             )
     return imported_modules
+
+
+def _vendor_contract_terms(source: str) -> set[str]:
+    tree = ast.parse(source)
+    violations: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id.lower() in FORBIDDEN_VENDOR_NAMES:
+            violations.add(node.id)
+        elif (
+            isinstance(node, ast.Attribute)
+            and node.attr.lower() in FORBIDDEN_VENDOR_NAMES
+        ):
+            violations.add(node.attr)
+        elif isinstance(node, ast.Constant) and type(node.value) is str:
+            if node.value in FORBIDDEN_VENDOR_PAYLOAD_FIELDS:
+                violations.add(node.value)
+            words = {word.lower() for word in re.findall(r"[A-Za-z]+", node.value)}
+            violations.update(words.intersection(FORBIDDEN_VENDOR_NAMES))
+    return violations
+
+
+def _concrete_adapter_imports() -> list[str]:
+    adapter_root = PACKAGE_ROOT / "adapters"
+    modules = {
+        _module_name(path): path
+        for path in adapter_root.rglob("*.py")
+        if path.name != "__init__.py"
+    }
+    violations: list[str] = []
+    for origin, path in modules.items():
+        for imported in _imports(path):
+            targets = [
+                module
+                for module in modules
+                if imported == module or imported.startswith(f"{module}.")
+            ]
+            if targets and origin not in targets:
+                violations.append(f"{origin} imports {max(targets, key=len)}")
+    return sorted(set(violations))
 
 
 class ImportBoundaryTests(unittest.TestCase):
@@ -243,6 +305,29 @@ class ImportBoundaryTests(unittest.TestCase):
                 "tests.fixtures.items",
             )
         )
+
+    def test_vendor_neutral_contract_surfaces_exclude_vendor_names_and_fields(
+        self,
+    ) -> None:
+        violations: list[str] = []
+        for root in VENDOR_NEUTRAL_CONTRACT_ROOTS:
+            for path in sorted(root.rglob("*.py")):
+                terms = _vendor_contract_terms(path.read_text(encoding="utf-8"))
+                if terms:
+                    violations.append(
+                        f"{path.relative_to(PACKAGE_ROOT)}: {', '.join(sorted(terms))}"
+                    )
+
+        self.assertEqual(violations, [])
+        self.assertEqual(
+            _vendor_contract_terms(
+                'payload = {"libraryId": "opaque"}\nbackend = "Audiobookshelf"\n'
+            ),
+            {"libraryId", "audiobookshelf"},
+        )
+
+    def test_concrete_adapters_cannot_import_each_other(self) -> None:
+        self.assertEqual(_concrete_adapter_imports(), [])
 
 
 if __name__ == "__main__":

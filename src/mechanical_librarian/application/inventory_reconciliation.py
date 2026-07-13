@@ -15,10 +15,14 @@ from mechanical_librarian.application.job_heartbeat import (
 from mechanical_librarian.application.ports import (
     FailureKind,
     OperationContext,
+    PortFailure,
     PortResult,
+    RetryAdvice,
+    SafeSummary,
 )
 from mechanical_librarian.domain.identifiers import LibraryId, ScanId, canonical_json
 from mechanical_librarian.domain.inventory import LibraryConnection
+from mechanical_librarian.domain.inventory_polling import PollClaim
 from mechanical_librarian.domain.inventory_v2 import (
     InventoryInspection,
     InventoryPass,
@@ -76,6 +80,7 @@ class InventoryScanRepository(Protocol):
         *,
         cohort_id: str | None = None,
         cohort_size: int = 1,
+        claim: PollClaim | None = None,
     ) -> RepositoryResult[ScanStart]: ...
 
     def finish(
@@ -86,6 +91,18 @@ class InventoryScanRepository(Protocol):
         usage: ScanUsage,
         finished_at: datetime,
         context: OperationContext,
+        *,
+        claim: PollClaim | None = None,
+    ) -> RepositoryResult[InventoryInspection]: ...
+
+    def checkpoint(
+        self,
+        scan_id: ScanId,
+        usage: ScanUsage,
+        observed_at: datetime,
+        context: OperationContext,
+        *,
+        claim: PollClaim | None = None,
     ) -> RepositoryResult[InventoryInspection]: ...
 
     def publish_complete(
@@ -95,6 +112,8 @@ class InventoryScanRepository(Protocol):
         usage: ScanUsage,
         finished_at: datetime,
         context: OperationContext,
+        *,
+        claim: PollClaim | None = None,
     ) -> RepositoryResult[InventoryInspection]: ...
 
     def inspect(
@@ -124,11 +143,15 @@ class InventoryConnectionVerification:
     """Run-scoped compatibility evidence gathered after durable cohort start."""
 
     usage: ScanUsage
-    failure: FailureKind | None = None
+    failure: PortFailure | None = None
+    compatibility: str = "unknown"
 
     def __post_init__(self) -> None:
-        if type(self.usage) is not ScanUsage or (
-            self.failure is not None and type(self.failure) is not FailureKind
+        if (
+            type(self.usage) is not ScanUsage
+            or (self.failure is not None and type(self.failure) is not PortFailure)
+            or self.compatibility
+            not in {"supported", "incompatible", "unknown", "contract_drift"}
         ):
             raise ValueError("inventory connection verification is malformed")
 
@@ -138,6 +161,8 @@ class InventoryLibraryResult:
     library: LibraryId
     outcome: InventoryOutcome
     inspection: InventoryInspection | None
+    usage: ScanUsage = ScanUsage()
+    failure: PortFailure | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -147,6 +172,8 @@ class InventoryLibraryResult:
                 self.inspection is not None
                 and type(self.inspection) is not InventoryInspection
             )
+            or type(self.usage) is not ScanUsage
+            or (self.failure is not None and type(self.failure) is not PortFailure)
         ):
             raise ValueError("inventory library result is malformed")
         if self.outcome is InventoryOutcome.READY and self.inspection is None:
@@ -157,6 +184,16 @@ class InventoryLibraryResult:
 class InventoryRunResult:
     outcome: InventoryOutcome
     libraries: tuple[InventoryLibraryResult, ...]
+    compatibility: str = "unknown"
+
+    def __post_init__(self) -> None:
+        if self.compatibility not in {
+            "supported",
+            "incompatible",
+            "unknown",
+            "contract_drift",
+        }:
+            raise ValueError("inventory compatibility state is malformed")
 
     @property
     def succeeded(self) -> bool:
@@ -180,6 +217,8 @@ class ReconcileInventory:
         libraries: tuple[LibraryId, ...],
         bounds: ScanBounds,
         context: OperationContext,
+        *,
+        claim: PollClaim | None = None,
     ) -> InventoryRunResult:
         if (
             type(connection) is not LibraryConnection
@@ -189,8 +228,14 @@ class ReconcileInventory:
             or len(set(libraries)) != len(libraries)
             or type(bounds) is not ScanBounds
             or type(context) is not OperationContext
+            or (claim is not None and type(claim) is not PollClaim)
         ):
             return InventoryRunResult(InventoryOutcome.INVALID_REQUEST, ())
+        if claim is not None:
+            return ReconcileInventory(
+                self._source,
+                _ClaimBoundInventoryRepository(self._repository, claim),
+            ).run(connection, libraries, bounds, context)
         recovered = self._repository.recover_interrupted(context.time.now(), context)
         if (
             not _accepted(recovered)
@@ -250,16 +295,18 @@ class ReconcileInventory:
             )
         except Exception:
             connection_verification = InventoryConnectionVerification(
-                ScanUsage(), FailureKind.INVALID_RESPONSE
+                ScanUsage(), _port_failure(FailureKind.INVALID_RESPONSE)
             )
         if type(connection_verification) is not InventoryConnectionVerification:
             connection_verification = InventoryConnectionVerification(
-                ScanUsage(), FailureKind.INVALID_RESPONSE
+                ScanUsage(), _port_failure(FailureKind.INVALID_RESPONSE)
             )
         live_failure = _liveness_failure(context)
         if live_failure is not None:
             connection_verification = InventoryConnectionVerification(
-                connection_verification.usage, live_failure
+                connection_verification.usage,
+                _port_failure(live_failure),
+                connection_verification.compatibility,
             )
         if connection_verification.failure is not None:
             results = tuple(
@@ -309,6 +356,31 @@ class ReconcileInventory:
                     )
                     for library in libraries
                 )
+        if not all(result.outcome is InventoryOutcome.READY for result in results):
+            discarded: list[InventoryLibraryResult] = []
+            for result in results:
+                inspection = result.inspection
+                if (
+                    result.outcome is InventoryOutcome.READY
+                    and inspection is not None
+                    and inspection.state is ScanState.RUNNING
+                ):
+                    discarded.append(
+                        self._terminal_failure(
+                            result.library,
+                            starts[result.library],
+                            ScanUsage(
+                                inspection.page_count,
+                                inspection.item_count,
+                                inspection.response_bytes,
+                            ),
+                            FailureKind.CONFLICT,
+                            context,
+                        )
+                    )
+                else:
+                    discarded.append(result)
+            results = tuple(discarded)
         refreshed: list[InventoryLibraryResult] = []
         for result in results:
             if result.outcome is not InventoryOutcome.READY:
@@ -328,6 +400,8 @@ class ReconcileInventory:
                         else InventoryOutcome.PERSISTENCE_FAILURE
                     ),
                     inspection,
+                    result.usage,
+                    result.failure,
                 )
             )
         results = tuple(refreshed)
@@ -341,7 +415,9 @@ class ReconcileInventory:
             outcome = InventoryOutcome.UNSTABLE
         else:
             outcome = InventoryOutcome.INCOMPLETE
-        return InventoryRunResult(outcome, results)
+        return InventoryRunResult(
+            outcome, results, connection_verification.compatibility
+        )
 
     def _run_library(
         self,
@@ -387,6 +463,10 @@ class ReconcileInventory:
         )
         if verified_usage is not None:
             usage += verified_usage
+            if not self._checkpoint(start, usage, context):
+                return self._terminal_failure(
+                    library, start, usage, FailureKind.UNAVAILABLE, context
+                )
         live_failure = _liveness_failure(context)
         if live_failure is not None:
             return self._terminal_failure(
@@ -401,11 +481,13 @@ class ReconcileInventory:
                 library, start, usage, FailureKind.INVALID_RESPONSE, context
             )
         if verified.failure is not None or type(verified.value) is not ScanUsage:
+            if verified.failure is not None:
+                usage += _failure_usage(verified.failure)
             return self._terminal_failure(
                 library,
                 start,
                 usage,
-                verified.failure.kind
+                verified.failure
                 if verified.failure is not None
                 else FailureKind.INVALID_RESPONSE,
                 context,
@@ -425,6 +507,10 @@ class ReconcileInventory:
         )
         if first_usage is not None:
             usage += first_usage
+            if not self._checkpoint(start, usage, context):
+                return self._terminal_failure(
+                    library, start, usage, FailureKind.UNAVAILABLE, context
+                )
         live_failure = _liveness_failure(context)
         if live_failure is not None:
             return self._terminal_failure(
@@ -439,11 +525,13 @@ class ReconcileInventory:
                 library, start, usage, FailureKind.INVALID_RESPONSE, context
             )
         if first.failure is not None or type(first.value) is not InventoryPass:
+            if first.failure is not None:
+                usage += _failure_usage(first.failure)
             return self._terminal_failure(
                 library,
                 start,
                 usage,
-                first.failure.kind
+                first.failure
                 if first.failure is not None
                 else FailureKind.INVALID_RESPONSE,
                 context,
@@ -463,6 +551,10 @@ class ReconcileInventory:
         )
         if second_usage is not None:
             usage += second_usage
+            if not self._checkpoint(start, usage, context):
+                return self._terminal_failure(
+                    library, start, usage, FailureKind.UNAVAILABLE, context
+                )
         live_failure = _liveness_failure(context)
         if live_failure is not None:
             return self._terminal_failure(
@@ -477,11 +569,13 @@ class ReconcileInventory:
                 library, start, usage, FailureKind.INVALID_RESPONSE, context
             )
         if second.failure is not None or type(second.value) is not InventoryPass:
+            if second.failure is not None:
+                usage += _failure_usage(second.failure)
             return self._terminal_failure(
                 library,
                 start,
                 usage,
-                second.failure.kind
+                second.failure
                 if second.failure is not None
                 else FailureKind.INVALID_RESPONSE,
                 context,
@@ -513,6 +607,7 @@ class ReconcileInventory:
                     else InventoryOutcome.PERSISTENCE_FAILURE
                 ),
                 _inspection(finished),
+                usage,
             )
 
         seen = {snapshot.observation.target for snapshot in second.value.snapshots}
@@ -558,7 +653,10 @@ class ReconcileInventory:
             context,
         )
         inspection = _inspection(published)
-        if inspection is None or inspection.state is not ScanState.COMPLETE:
+        if inspection is None or inspection.state not in {
+            ScanState.RUNNING,
+            ScanState.COMPLETE,
+        }:
             checkpoint = context.preflight_result(
                 item_count=len(final_snapshots),
                 serialized_bytes=final_bytes,
@@ -602,6 +700,7 @@ class ReconcileInventory:
                     )
                 ),
                 conflicted_inspection,
+                usage,
             )
         return InventoryLibraryResult(
             library,
@@ -611,7 +710,9 @@ class ReconcileInventory:
                 else InventoryOutcome.PERSISTENCE_FAILURE
             ),
             inspection,
+            usage,
         )
+
 
     def _read_pass(
         self,
@@ -654,9 +755,25 @@ class ReconcileInventory:
         library: LibraryId,
         start: ScanStart,
         usage: ScanUsage,
-        kind: FailureKind,
+        failure: FailureKind | PortFailure,
         context: OperationContext,
     ) -> InventoryLibraryResult:
+        port_failure = (
+            failure
+            if type(failure) is PortFailure
+            else PortFailure(
+                failure,
+                RetryAdvice(
+                    failure in {
+                        FailureKind.UNAVAILABLE,
+                        FailureKind.RATE_LIMITED,
+                        FailureKind.TIMEOUT,
+                    }
+                ),
+                SafeSummary("inventory reconciliation failed safely"),
+            )
+        )
+        kind = port_failure.kind
         state = (
             ScanState.UNSTABLE if kind is FailureKind.CONFLICT else ScanState.INCOMPLETE
         )
@@ -681,7 +798,56 @@ class ReconcileInventory:
                 )
             ),
             inspection,
+            usage,
+            port_failure,
         )
+
+    def _checkpoint(
+        self, start: ScanStart, usage: ScanUsage, context: OperationContext
+    ) -> bool:
+        if _liveness_failure(context) is not None:
+            return True
+        checkpoint = getattr(self._repository, "checkpoint", None)
+        if checkpoint is None:
+            return True
+        result = checkpoint(
+            start.scan_id,
+            usage,
+            context.time.now(),
+            context,
+        )
+        return _accepted(result) and _inspection(result) is not None
+
+
+class _ClaimBoundInventoryRepository:
+    """Bind every scan mutation to one durable poll claim without global state."""
+
+    def __init__(self, repository: InventoryScanRepository, claim: PollClaim) -> None:
+        self._repository = repository
+        self._claim = claim
+
+    def recover_interrupted(
+        self, _finished_at: datetime, _context: OperationContext
+    ) -> RepositoryResult[int]:
+        return RepositoryResult(RepositoryOutcome.ACCEPTED, 0)
+
+    def begin(self, *args, **kwargs):
+        return self._repository.begin(*args, **kwargs, claim=self._claim)
+
+    def finish(self, *args, **kwargs):
+        return self._repository.finish(*args, **kwargs, claim=self._claim)
+
+    def checkpoint(self, *args, **kwargs):
+        return self._repository.checkpoint(*args, **kwargs, claim=self._claim)
+
+    def publish_complete(self, *args, **kwargs):
+        return self._repository.publish_complete(*args, **kwargs, claim=self._claim)
+
+    def inspect(self, *args, **kwargs):
+        return self._repository.inspect(*args, **kwargs)
+
+    def inspect_scan(self, *args, **kwargs):
+        return self._repository.inspect_scan(*args, **kwargs)
 
 
 def _scan_id(
@@ -698,6 +864,29 @@ def _scan_id(
         ).encode("utf-8")
     ).hexdigest()
     return ScanId("scan-" + digest[:32])
+
+
+def _failure_usage(failure) -> ScanUsage:
+    return ScanUsage(
+        failure.usage.pages,
+        failure.usage.items,
+        failure.usage.response_bytes,
+    )
+
+
+def _port_failure(kind: FailureKind) -> PortFailure:
+    return PortFailure(
+        kind,
+        RetryAdvice(
+            kind
+            in {
+                FailureKind.UNAVAILABLE,
+                FailureKind.RATE_LIMITED,
+                FailureKind.TIMEOUT,
+            }
+        ),
+        SafeSummary("inventory reconciliation failed safely"),
+    )
 
 
 def _cohort_id(

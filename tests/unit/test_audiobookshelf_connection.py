@@ -212,6 +212,59 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                 self.assertNotIn("authorization", requests[0].headers)
                 self.assertNotIn("synthetic-token", repr(result))
 
+    def test_rate_limit_guidance_survives_connection_orchestration(self) -> None:
+        probe = AudiobookshelfConnectionProbe(
+            ServiceEndpoint("https://synthetic.invalid"),
+            client_factory=client_factory(
+                lambda _request: httpx.Response(
+                    429, headers={"Retry-After": "17"}
+                )
+            ),
+        )
+
+        result = InspectLibraryConnection(
+            AdapterId("audiobookshelf"),
+            ConnectionId("synthetic-connection"),
+            (LibraryId(LIBRARY_ID),),
+            probe,
+        ).run(context())
+
+        self.assertEqual(result.outcome, ConnectionProbeOutcome.RATE_LIMITED)
+        self.assertEqual(result.failure.retry.retry_after, timedelta(seconds=17))
+
+        oversized = AudiobookshelfConnectionProbe(
+            ServiceEndpoint("https://synthetic.invalid"),
+            client_factory=client_factory(
+                lambda _request: httpx.Response(
+                    429, headers={"Retry-After": "9" * 5_000}
+                )
+            ),
+        )
+        oversized_result = InspectLibraryConnection(
+            AdapterId("audiobookshelf"),
+            ConnectionId("synthetic-connection"),
+            (LibraryId(LIBRARY_ID),),
+            oversized,
+        ).run(context())
+        self.assertEqual(
+            oversized_result.outcome, ConnectionProbeOutcome.RATE_LIMITED
+        )
+        self.assertIsNone(oversized_result.failure.retry.retry_after)
+
+    def test_status_json_rejects_duplicate_keys_and_nonfinite_numbers(self) -> None:
+        for payload in (
+            b'{"app":"audiobookshelf","app":"audiobookshelf","serverVersion":"2.35.1"}',
+            b'{"app":"audiobookshelf","serverVersion":NaN}',
+        ):
+            with self.subTest(payload=payload):
+                result = self.probe(
+                    lambda _request, selected=payload: raw_response(
+                        payload=selected,
+                        headers={"content-type": "application/json"},
+                    )
+                )
+                self.assertEqual(result.failure.kind, FailureKind.INVALID_RESPONSE)
+
     def test_authorization_route_failures_are_typed_after_pinned_status(self) -> None:
         for status, expected in (
             (401, "authentication"),
@@ -915,6 +968,18 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
                 self.assertEqual(captured["timeout"].pool, 2.0)
             finally:
                 client.close()
+            bounded = credentials.target_client(
+                handle,
+                ServiceEndpoint("https://synthetic.invalid"),
+                connect_timeout_seconds=7,
+                read_timeout_seconds=19,
+                max_in_flight_requests=1,
+            )
+            try:
+                self.assertEqual(bounded.timeout.connect, 7.0)
+                self.assertEqual(bounded.timeout.read, 19.0)
+            finally:
+                bounded.close()
 
     def test_missing_and_overpermissive_files_are_safe(self) -> None:
         credentials = PrivateFileTargetCredentials()
@@ -982,6 +1047,24 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
                     self.assertNotIn("authorization", request.headers)
             finally:
                 client.close()
+            bounded = credentials.inventory_client(
+                handle,
+                ServiceEndpoint("https://synthetic.invalid"),
+                connect_timeout_seconds=7,
+                read_timeout_seconds=19,
+                max_in_flight_requests=1,
+            )
+            try:
+                self.assertEqual(bounded.timeout.connect, 7.0)
+                self.assertEqual(bounded.timeout.read, 19.0)
+            finally:
+                bounded.close()
+            with self.assertRaises(SecretFileUnavailable):
+                credentials.inventory_client(
+                    handle,
+                    ServiceEndpoint("https://synthetic.invalid"),
+                    max_in_flight_requests=2,
+                )
             with self.assertRaises(SecretFileUnavailable):
                 credentials.inventory_client(
                     handle, ServiceEndpoint("https://synthetic.invalid/prefix")
@@ -1049,6 +1132,9 @@ class ApplicationProfileTests(unittest.TestCase):
         )
         self.assertEqual(
             states[ConnectionCapability.RATE_LIMITS], CapabilityState.UNAVAILABLE
+        )
+        self.assertEqual(
+            states[ConnectionCapability.NOTIFICATIONS], CapabilityState.UNAVAILABLE
         )
         older = self.run_probe(self.facts("2.25.9"))
         self.assertEqual(older.outcome, ConnectionProbeOutcome.INCOMPATIBLE)

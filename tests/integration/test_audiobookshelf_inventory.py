@@ -24,9 +24,13 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_inventory imp
     _page,
     _scalar,
     _structured,
+    _status_failure,
 )
 from mechanical_librarian.adapters.persistence.inventory_v2 import (
     SQLiteInventoryV2Repository,
+)
+from mechanical_librarian.adapters.persistence.inventory_polling import (
+    SQLiteInventoryPollingRepository,
 )
 from mechanical_librarian.application.ports import (
     CancellationId,
@@ -34,6 +38,7 @@ from mechanical_librarian.application.ports import (
     Deadline,
     FailureKind,
     OperationContext,
+    OperationUsage,
     PortResult,
     PortFailure,
     RetryAdvice,
@@ -81,6 +86,7 @@ from mechanical_librarian.domain.inventory_v2 import (
     ScanState,
     ScanUsage,
 )
+from mechanical_librarian.domain.inventory_polling import PollPolicy, PollRequest
 from mechanical_librarian.infrastructure.persistence.sqlite import migrate
 
 
@@ -89,6 +95,7 @@ LIBRARY = LibraryId("01234567-89ab-4def-8123-456789abcdef")
 AUDIO = "11234567-89ab-4def-8123-456789abcdef"
 EBOOK = "21234567-89ab-4def-8123-456789abcdef"
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "audiobookshelf" / "2.35.1"
+ROOT = Path(__file__).parents[2]
 
 
 def fixture(name: str) -> dict[str, object]:
@@ -148,6 +155,25 @@ def json_response(value: object) -> httpx.Response:
 
 
 class AudiobookshelfInventoryReaderTests(unittest.TestCase):
+    def test_f05b_machine_profile_keeps_unavailable_capabilities_explicit(self) -> None:
+        profile = json.loads(
+            (
+                ROOT
+                / "docs"
+                / "reference"
+                / "audiobookshelf-f05b-compatibility.json"
+            ).read_text(encoding="utf-8")
+        )
+        human = (ROOT / "docs" / "reference" / "compatibility.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(profile["pinned_version"], "2.35.1")
+        self.assertEqual(profile["notifications"], "unavailable")
+        self.assertEqual(profile["rate_limits"], "unavailable")
+        self.assertEqual(profile["concurrency_tokens"], "unavailable")
+        self.assertEqual(profile["write_routes"], [])
+        self.assertIn("audiobookshelf-f05b-compatibility.json", human)
+
     def test_mixed_library_traversal_is_deterministic_and_path_free(self) -> None:
         requests: list[tuple[str, str]] = []
 
@@ -217,6 +243,23 @@ class AudiobookshelfInventoryReaderTests(unittest.TestCase):
         )
         self.assertEqual(result.failure.kind, FailureKind.INVALID_RESPONSE)
 
+    def test_post_io_validation_failure_keeps_consumed_resource_usage(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return json_response({"unexpected": "page"})
+
+        result = AudiobookshelfInventoryReader(
+            client_factory=factory(handler)
+        ).read_pass(
+            connection(),
+            LIBRARY,
+            ScanBounds(2, 4, 10, 1_000_000, 300, 0),
+            operation_context(),
+        )
+
+        self.assertEqual(result.failure.kind, FailureKind.INVALID_RESPONSE)
+        self.assertEqual(result.failure.usage.pages, 1)
+        self.assertGreater(result.failure.usage.response_bytes, 0)
+
     def test_nonfinite_json_and_http_failures_are_typed(self) -> None:
         bounds = ScanBounds(2, 4, 10, 1_000_000, 300, 0)
         for status, kind in (
@@ -281,6 +324,37 @@ class AudiobookshelfInventoryReaderTests(unittest.TestCase):
             client_factory=factory(nonfinite)
         ).verify_library(connection(), LIBRARY, bounds, operation_context())
         self.assertEqual(result.failure.kind, FailureKind.INVALID_RESPONSE)
+
+    def test_retry_after_and_route_sensitive_not_found_are_bounded(self) -> None:
+        now = datetime(2026, 7, 13, 12, tzinfo=timezone.utc)
+        delta = _status_failure(
+            429, path="/api/libraries", retry_after="17", now=now
+        )
+        dated = _status_failure(
+            429,
+            path="/api/libraries",
+            retry_after="Mon, 13 Jul 2026 12:00:23 GMT",
+            now=now,
+        )
+        malformed = _status_failure(
+            429, path="/api/libraries", retry_after="private-invalid", now=now
+        )
+        oversized = _status_failure(
+            429, path="/api/libraries", retry_after="9" * 128, now=now
+        )
+        excessive = _status_failure(
+            429, path="/api/libraries", retry_after="9" * 5_000, now=now
+        )
+        library_missing = _status_failure(404, path="/api/libraries")
+        item_race = _status_failure(404, path=f"/api/items/{AUDIO}")
+
+        self.assertEqual(delta.retry.retry_after, timedelta(seconds=17))
+        self.assertEqual(dated.retry.retry_after, timedelta(seconds=23))
+        self.assertIsNone(malformed.retry.retry_after)
+        self.assertIsNone(oversized.retry.retry_after)
+        self.assertIsNone(excessive.retry.retry_after)
+        self.assertEqual(library_missing.kind, FailureKind.NOT_FOUND)
+        self.assertEqual(item_race.kind, FailureKind.CONFLICT)
 
     def test_source_states_and_file_identity_are_allowlisted(self) -> None:
         self.assertEqual(
@@ -670,7 +744,9 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
         self.database = sqlite3.connect(f"{self.temporary.name}/state.sqlite")
         self.database.execute("PRAGMA foreign_keys=ON")
         migrate(self.database)
-        self.repository = SQLiteInventoryV2Repository(self.database)
+        self.repository = SQLiteInventoryV2Repository(
+            self.database, now=lambda: NOW
+        )
         self.bounds = ScanBounds(2, 4, 10, 1_000_000, 300, 0)
 
     def tearDown(self) -> None:
@@ -886,7 +962,12 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
         source = _ConnectionVerificationSource(
             verify,
             InventoryConnectionVerification(
-                ScanUsage(response_bytes=19), FailureKind.AUTHENTICATION
+                ScanUsage(response_bytes=19),
+                PortFailure(
+                    FailureKind.AUTHENTICATION,
+                    RetryAdvice(False),
+                    SafeSummary("inventory authentication failed"),
+                ),
             ),
         )
         result = ReconcileInventory(source, self.repository).run(
@@ -908,6 +989,374 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
             ).fetchone(),
             (0,),
         )
+
+    def test_cohort_failure_cannot_publish_removal_until_later_complete_poll(self) -> None:
+        other = self._other_library()
+        original = self._snapshot("Still authoritative")
+        self._publish("scan-cohort-removal-seed", original)
+        before = self.database.execute(
+            "SELECT external_item,snapshot_id FROM current_inventory_v2 "
+            "WHERE library_id=?",
+            (LIBRARY.value,),
+        ).fetchall()
+
+        partial = ReconcileInventory(
+            _LibrarySource({LIBRARY: (), other: None}), self.repository
+        ).run(
+            connection(),
+            (LIBRARY, other),
+            self.bounds,
+            self._later_context(40),
+        )
+
+        self.assertFalse(partial.succeeded)
+        self.assertEqual(
+            self.database.execute(
+                "SELECT external_item,snapshot_id FROM current_inventory_v2 "
+                "WHERE library_id=?",
+                (LIBRARY.value,),
+            ).fetchall(),
+            before,
+        )
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM inventory_v2_snapshots"
+            ).fetchone(),
+            (1,),
+        )
+
+        repaired = ReconcileInventory(
+            _LibrarySource({LIBRARY: (), other: ()}), self.repository
+        ).run(
+            connection(),
+            (LIBRARY, other),
+            self.bounds,
+            self._later_context(50),
+        )
+        self.assertTrue(repaired.succeeded)
+        inspected = self.repository.inspect(
+            connection(), LIBRARY, self._later_context(51)
+        )
+        self.assertEqual(inspected.value.removed_count, 1)
+
+    def test_changed_late_cohort_precondition_rolls_back_earlier_members(self) -> None:
+        other = self._other_library()
+        cohort = "cohort-atomic-preconditions"
+        first = self.repository.begin(
+            ScanId("scan-cohort-atomic-a"),
+            connection(),
+            LIBRARY,
+            self.bounds,
+            NOW,
+            operation_context(),
+            cohort_id=cohort,
+            cohort_size=2,
+        ).value
+        second = self.repository.begin(
+            ScanId("scan-cohort-atomic-b"),
+            connection(),
+            other,
+            self.bounds,
+            NOW,
+            operation_context(),
+            cohort_id=cohort,
+            cohort_size=2,
+        ).value
+        self.repository.publish_complete(
+            first,
+            (self._snapshot("First"),),
+            ScanUsage(1, 1, 10),
+            NOW + timedelta(seconds=1),
+            operation_context(),
+        )
+        original = self.repository._current_values
+        calls = [0]
+
+        def changed_on_final_validation(adapter, target_connection, library):
+            if library == other.value:
+                calls[0] += 1
+                if calls[0] == 2:
+                    return (self._snapshot("Concurrent", library=other),)
+            return original(adapter, target_connection, library)
+
+        self.repository._current_values = changed_on_final_validation
+        try:
+            result = self.repository.publish_complete(
+                second,
+                (self._snapshot("Second", library=other),),
+                ScanUsage(1, 1, 10),
+                NOW + timedelta(seconds=1),
+                operation_context(),
+            )
+        finally:
+            self.repository._current_values = original
+
+        self.assertEqual(result.outcome, RepositoryOutcome.REJECTED)
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM current_inventory_v2"
+            ).fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM inventory_v2_snapshots"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_cohort_applies_operation_bounds_per_library_not_to_aggregate(self) -> None:
+        other = self._other_library()
+        context = OperationContext(
+            Deadline(NOW + timedelta(minutes=5)),
+            CancellationProbe(CancellationId("cohort-member-bounds"), lambda: False),
+            ResourceBounds(1, 1_000_000),
+            TimeProbe(lambda: NOW),
+        )
+        cohort = "cohort-member-bounds"
+        first = self.repository.begin(
+            ScanId("scan-member-bounds-a"),
+            connection(),
+            LIBRARY,
+            self.bounds,
+            NOW,
+            context,
+            cohort_id=cohort,
+            cohort_size=2,
+        ).value
+        second = self.repository.begin(
+            ScanId("scan-member-bounds-b"),
+            connection(),
+            other,
+            self.bounds,
+            NOW,
+            context,
+            cohort_id=cohort,
+            cohort_size=2,
+        ).value
+
+        held = self.repository.publish_complete(
+            first,
+            (self._snapshot("First"),),
+            ScanUsage(1, 1, 10),
+            NOW + timedelta(seconds=1),
+            context,
+        )
+        completed = self.repository.publish_complete(
+            second,
+            (self._snapshot("Second", library=other),),
+            ScanUsage(1, 1, 10),
+            NOW + timedelta(seconds=1),
+            context,
+        )
+
+        self.assertTrue(held.accepted)
+        self.assertTrue(completed.accepted)
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM current_inventory_v2"
+            ).fetchone(),
+            (2,),
+        )
+
+    def test_stale_poll_fence_cannot_publish_after_reclaim(self) -> None:
+        polling = SQLiteInventoryPollingRepository(
+            self.database, now=lambda: NOW
+        )
+        request = PollRequest(
+            "poll_stale",
+            "trigger_stale",
+            "a" * 64,
+            "b" * 64,
+            PollPolicy(3, 300, 30, 1, 10, 30, 300, 30_000),
+        )
+        polling.schedule(request, NOW)
+        stale = polling.claim("poll_stale", "worker_old", NOW).value
+        started = self.repository.begin(
+            ScanId("scan-stale-fence"),
+            connection(),
+            LIBRARY,
+            self.bounds,
+            NOW,
+            operation_context(),
+            claim=stale,
+        )
+        self.assertTrue(started.accepted)
+        checkpointed = self.repository.checkpoint(
+            started.value.scan_id,
+            ScanUsage(2, 3, 400),
+            NOW + timedelta(seconds=1),
+            operation_context(),
+            claim=stale,
+        )
+        self.assertTrue(checkpointed.accepted)
+
+        replacement = polling.claim(
+            "poll_stale", "worker_new", NOW + timedelta(seconds=31)
+        )
+        self.assertTrue(replacement.accepted)
+        self.assertEqual(
+            polling.inspect("poll_stale").value.usage,
+            ScanUsage(2, 3, 400),
+        )
+        late_context = self._later_context(1)
+        published = self.repository.publish_complete(
+            started.value,
+            (self._snapshot("Too late"),),
+            ScanUsage(1, 1, 10),
+            NOW + timedelta(seconds=31),
+            late_context,
+            claim=stale,
+        )
+
+        self.assertFalse(published.accepted)
+        self.assertEqual(
+            self.database.execute(
+                "SELECT state,failure_kind FROM inventory_scans WHERE scan_id=?",
+                ("scan-stale-fence",),
+            ).fetchone(),
+            ("incomplete", "interrupted"),
+        )
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM current_inventory_v2"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_poll_failure_terminalizes_linked_scan_and_keeps_checkpoint_usage(
+        self,
+    ) -> None:
+        polling = SQLiteInventoryPollingRepository(
+            self.database, now=lambda: NOW
+        )
+        polling.schedule(
+            PollRequest(
+                "poll_exception",
+                "trigger_exception",
+                "c" * 64,
+                "d" * 64,
+                PollPolicy(3, 300, 30, 1, 10, 30, 300, 30_000),
+            ),
+            NOW,
+        )
+        claim = polling.claim("poll_exception", "worker_exception", NOW).value
+        started = self.repository.begin(
+            ScanId("scan-exception-cleanup"),
+            connection(),
+            LIBRARY,
+            self.bounds,
+            NOW,
+            operation_context(),
+            claim=claim,
+        ).value
+        self.repository.checkpoint(
+            started.scan_id,
+            ScanUsage(2, 3, 400),
+            NOW + timedelta(seconds=1),
+            operation_context(),
+            claim=claim,
+        )
+
+        failed = polling.fail(
+            claim,
+            PortFailure(
+                FailureKind.UNAVAILABLE,
+                RetryAdvice(True),
+                SafeSummary("inventory operation failed safely"),
+            ),
+            ScanUsage(),
+            NOW + timedelta(seconds=2),
+            compatibility="supported",
+        )
+
+        self.assertEqual(failed.value.usage, ScanUsage(2, 3, 400))
+        self.assertEqual(
+            self.database.execute(
+                "SELECT state,failure_kind FROM inventory_scans WHERE scan_id=?",
+                (started.scan_id.value,),
+            ).fetchone(),
+            ("incomplete", FailureKind.UNAVAILABLE.value),
+        )
+
+    def test_poll_exception_usage_includes_terminal_and_running_siblings(self) -> None:
+        polling = SQLiteInventoryPollingRepository(
+            self.database, now=lambda: NOW
+        )
+        polling.schedule(
+            PollRequest(
+                "poll_mixed_exception",
+                "trigger_mixed_exception",
+                "e" * 64,
+                "f" * 64,
+                PollPolicy(3, 300, 30, 1, 10, 30, 300, 30_000),
+            ),
+            NOW,
+        )
+        claim = polling.claim(
+            "poll_mixed_exception", "worker_mixed_exception", NOW
+        ).value
+        other = self._other_library()
+        first = self.repository.begin(
+            ScanId("scan-mixed-terminal"),
+            connection(),
+            LIBRARY,
+            self.bounds,
+            NOW,
+            operation_context(),
+            claim=claim,
+        ).value
+        second = self.repository.begin(
+            ScanId("scan-mixed-running"),
+            connection(),
+            other,
+            self.bounds,
+            NOW,
+            operation_context(),
+            claim=claim,
+        ).value
+        self.repository.finish(
+            first.scan_id,
+            ScanState.INCOMPLETE,
+            FailureKind.UNAVAILABLE.value,
+            ScanUsage(2, 3, 400),
+            NOW + timedelta(seconds=1),
+            operation_context(),
+            claim=claim,
+        )
+        self.repository.checkpoint(
+            second.scan_id,
+            ScanUsage(1, 2, 300),
+            NOW + timedelta(seconds=1),
+            operation_context(),
+            claim=claim,
+        )
+
+        failed = polling.fail(
+            claim,
+            PortFailure(
+                FailureKind.UNAVAILABLE,
+                RetryAdvice(True),
+                SafeSummary("inventory operation failed safely"),
+            ),
+            ScanUsage(),
+            NOW + timedelta(seconds=2),
+            compatibility="supported",
+        )
+
+        self.assertEqual(failed.value.usage, ScanUsage(3, 5, 700))
+
+    def test_failed_pass_usage_is_durable_and_not_reset(self) -> None:
+        result = ReconcileInventory(
+            _FailedUsageSource(), self.repository
+        ).run(connection(), (LIBRARY,), self.bounds, operation_context())
+
+        inspection = result.libraries[0].inspection
+        usage = result.libraries[0].usage
+        self.assertEqual(result.outcome, InventoryOutcome.INCOMPLETE)
+        self.assertEqual(usage, ScanUsage(2, 3, 401))
+        self.assertEqual(inspection.page_count, 2)
+        self.assertEqual(inspection.response_bytes, 401)
 
     def test_cohort_begin_failure_stops_before_connection_verification(self) -> None:
         other = self._other_library()
@@ -1705,6 +2154,24 @@ class _UsageSource:
 
     def read_pass(self, connection, library, bounds, context):
         raise AssertionError("resource exhaustion must stop before inventory I/O")
+
+
+class _FailedUsageSource:
+    def verify_connection(self, connection, libraries, bounds, context):
+        return InventoryConnectionVerification(ScanUsage())
+
+    def verify_library(self, connection, library, bounds, context):
+        return PortResult.success(ScanUsage(response_bytes=1))
+
+    def read_pass(self, connection, library, bounds, context):
+        return PortResult.failed(
+            PortFailure(
+                FailureKind.UNAVAILABLE,
+                RetryAdvice(True),
+                SafeSummary("inventory test source unavailable"),
+                OperationUsage(2, 3, 400),
+            )
+        )
 
 
 class _LivenessFailureSource:
