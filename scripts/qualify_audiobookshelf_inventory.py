@@ -718,15 +718,17 @@ def main() -> int:
                         "F05b malformed sequence did not record contract drift"
                     )
                 preserved = inspect_inventory(configuration, database)
+                preserved_output = preserved.stdout + preserved.stderr
                 if (
-                    preserved.returncode != 0
-                    or f"state={expected_state}" not in preserved.stdout
-                    or "items=2 active=1 removed=1" not in preserved.stdout
-                    or "history=4" not in preserved.stdout
+                    preserved.returncode == 0
+                    or f"state={expected_state}" not in preserved_output
+                    or "items=2 active=1 removed=1" not in preserved_output
+                    or "history=4" not in preserved_output
                 ):
                     raise RuntimeError(
                         f"F05b {scenario} sequence did not preserve durable current state: "
-                        f"{preserved.stdout.strip()}"
+                        f"rc={preserved.returncode} out={preserved.stdout.strip()} "
+                        f"err={preserved.stderr.strip()}"
                     )
 
             for scenario in ("partial", "transport", "rate"):

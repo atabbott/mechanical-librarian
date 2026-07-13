@@ -84,7 +84,7 @@ from mechanical_librarian.domain.inventory import (
     LibraryConnection,
     MediaType,
 )
-from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanUsage
+from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanState, ScanUsage
 from mechanical_librarian.domain.inventory_polling import PollPolicy, PollRequest
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.observability.inventory_polling import (
@@ -768,10 +768,20 @@ def _inspect_audiobookshelf_inventory(
                     return InventoryRunResult(InventoryOutcome.PERSISTENCE_FAILURE, ())
                 results.append(
                     InventoryLibraryResult(
-                        library, InventoryOutcome.READY, inspected.value
+                        library,
+                        _inventory_inspection_outcome(inspected.value.state),
+                        inspected.value,
                     )
                 )
-            return InventoryRunResult(InventoryOutcome.READY, tuple(results))
+            outcomes = tuple(result.outcome for result in results)
+            outcome = (
+                InventoryOutcome.READY
+                if all(value is InventoryOutcome.READY for value in outcomes)
+                else InventoryOutcome.UNSTABLE
+                if any(value is InventoryOutcome.UNSTABLE for value in outcomes)
+                else InventoryOutcome.INCOMPLETE
+            )
+            return InventoryRunResult(outcome, tuple(results))
 
         preflight(database)
         return _run_existing_operation(database, operation)
@@ -779,6 +789,15 @@ def _inspect_audiobookshelf_inventory(
         return InventoryRunResult(InventoryOutcome.INVALID_REQUEST, ())
     except Exception:
         return InventoryRunResult(InventoryOutcome.PERSISTENCE_FAILURE, ())
+
+
+def _inventory_inspection_outcome(state: ScanState) -> InventoryOutcome:
+    return {
+        ScanState.RUNNING: InventoryOutcome.INCOMPLETE,
+        ScanState.COMPLETE: InventoryOutcome.READY,
+        ScanState.INCOMPLETE: InventoryOutcome.INCOMPLETE,
+        ScanState.UNSTABLE: InventoryOutcome.UNSTABLE,
+    }[state]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
