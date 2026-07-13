@@ -236,6 +236,62 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 self.assertEqual(raised.exception.rule, rule)
                 self.assertNotIn(sentinel, str(raised.exception))
 
+    def test_recursive_audit_rejects_generic_uri_schemes_without_echoing(self) -> None:
+        sentinels = (
+            "urn:generated:item",
+            "data:text/plain,generated",
+            "javascript:generated",
+            "mailto:generated-local",
+            "file:relative/generated-item",
+            "about:generated",
+            "blob:generated-item",
+            "tel:generated-number",
+            "custom:generated-value",
+            "URN:generated:item",
+            "git+ssh:generated-item",
+            "custom+v1:generated-item",
+            "custom:",
+            "`urn:generated:item`",
+            "(data:text/plain,generated)",
+            "generated_value=javascript:generated",
+            "Generated—mailto:generated-local",
+        )
+        for sentinel in sentinels:
+            with self.subTest(sentinel=sentinel), _corpus_copy() as root:
+                _rewrite(
+                    root,
+                    "dux-synthetic-01.json",
+                    lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
+                )
+                with self.assertRaises(CorpusValidationError) as raised:
+                    load_registry(root)
+                self.assertEqual(raised.exception.rule, "DUX023_DOMAIN_OR_URL")
+                self.assertNotIn(sentinel, str(raised.exception))
+
+    def test_recursive_audit_preserves_specific_uri_overlap_diagnostics(self) -> None:
+        sentinels = (
+            ("file:/home/generated/private-item", "DUX022_PROHIBITED_PATH"),
+            ("urn:access_token", "DUX021_SECRET_SHAPE"),
+            ("custom:saved_browser_state", "DUX025_PRODUCTION_STATE"),
+            ("about:browser_local", "DUX027_SOURCE_LITERAL"),
+            ("2001:db8::8a2e:370:7334", "DUX024_NETWORK_ADDRESS"),
+            (
+                "urn:123e4567-e89b-42d3-a456-426614174000",
+                "DUX026_PRODUCTION_ID",
+            ),
+        )
+        for sentinel, rule in sentinels:
+            with self.subTest(rule=rule), _corpus_copy() as root:
+                _rewrite(
+                    root,
+                    "dux-synthetic-01.json",
+                    lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
+                )
+                with self.assertRaises(CorpusValidationError) as raised:
+                    load_registry(root)
+                self.assertEqual(raised.exception.rule, rule)
+                self.assertNotIn(sentinel, str(raised.exception))
+
     def test_recursive_audit_allows_safe_near_misses(self) -> None:
         for sentinel in (
             "Generated credentialing behavior.",
@@ -247,6 +303,16 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             "Generated copy right-sized behavior.",
             "Generated source marked behavior.",
             "Generated browser locality behavior.",
+            "Generated note: synthetic behavior.",
+            "Generated label: value remains synthetic.",
+            "Generated time 12:30 remains synthetic.",
+            "Generated ratio 2:1 remains synthetic.",
+            "Generated 1custom:value remains synthetic.",
+            "Generated +custom:value remains synthetic.",
+            "Generated .custom:value remains synthetic.",
+            "Generated -custom:value remains synthetic.",
+            "Generated custom :value remains synthetic.",
+            "Generated custom: value remains synthetic.",
             "Generated scheme//without-address behavior.",
             "Generated prose/fragment remains synthetic.",
         ):

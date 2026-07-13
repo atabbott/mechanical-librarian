@@ -87,6 +87,10 @@ _URL_EMAIL_DOMAIN = re.compile(
     r"\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}\b)",
     re.IGNORECASE,
 )
+_GENERIC_URI_SCHEME = re.compile(
+    r"(?<![\w+.-])[a-z][a-z0-9+.-]*:(?!\s)",
+    re.IGNORECASE,
+)
 _IP = re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b|(?:^|[^0-9a-f:])(?:[0-9a-f]{0,4}:){2,}[0-9a-f:]{0,4}", re.IGNORECASE)
 _SECRET = re.compile(
     r"\b(?:authorization|bearer|cookie|credential|header|key|password|passwd|secret|api key|apikey|private key|privatekey|access key(?: id)?|accesskey(?:id)?|secret key|secretkey|access token|accesstoken|refresh token|refreshtoken|client secret|clientsecret)\b",
@@ -271,6 +275,8 @@ def _audit(value: Any, *, scenario: str, ordinal: int, path: tuple[str, ...] = (
         rule, pattern, *selected = item
         if pattern.search(selected[0] if selected else value):
             _fail(rule, scenario=scenario, ordinal=ordinal)
+    if _GENERIC_URI_SCHEME.search(value):
+        _fail("DUX023_DOMAIN_OR_URL", scenario=scenario, ordinal=ordinal)
 
 
 def _freeze(value: Any) -> Any:
