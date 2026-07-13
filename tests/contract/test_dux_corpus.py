@@ -263,6 +263,53 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 self.assertEqual(raised.exception.rule, rule)
                 self.assertNotIn(sentinel, str(raised.exception))
 
+    def test_recursive_audit_rejects_token_labels_without_rejecting_safe_prose(self) -> None:
+        rejected_values = (
+            "token",
+            "--token--",
+            "sessiontoken",
+            "idtoken",
+            *(f"session{delimiter}token" for delimiter in (".", "_", "-", " ", ":", "/")),
+            *(f"id{delimiter}token" for delimiter in (".", "_", "-", " ", ":", "/")),
+            "session%2Etoken",
+        )
+        for sentinel in rejected_values:
+            with self.subTest(location="value", sentinel=sentinel), _corpus_copy() as root:
+                _rewrite(
+                    root,
+                    "dux-synthetic-01.json",
+                    lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
+                )
+                with self.assertRaises(CorpusValidationError) as raised:
+                    load_registry(root)
+                self.assertEqual(raised.exception.rule, "DUX021_SECRET_SHAPE")
+                self.assertNotIn(sentinel, str(raised.exception))
+
+        with self.subTest(location="nested-key"), _corpus_copy() as root:
+            _rewrite(
+                root,
+                "dux-synthetic-01.json",
+                lambda item: item["contract"]["input"].__setitem__("token", "synthetic-value"),
+            )
+            with self.assertRaises(CorpusValidationError) as raised:
+                load_registry(root)
+            self.assertEqual(raised.exception.rule, "DUX021_SECRET_SHAPE")
+            self.assertNotIn("token", str(raised.exception))
+
+        for sentinel in (
+            "token bucket behavior",
+            "purpose tokens remain synthetic",
+            "tokenized value remains synthetic",
+            "tokenization remains synthetic",
+        ):
+            with self.subTest(location="safe-value", sentinel=sentinel), _corpus_copy() as root:
+                _rewrite(
+                    root,
+                    "dux-synthetic-01.json",
+                    lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
+                )
+                self.assertEqual(len(load_registry(root).scenarios), len(CATEGORIES))
+
     def test_recursive_audit_rejects_generic_uri_schemes_without_echoing(self) -> None:
         sentinels = (
             "urn:generated:item",

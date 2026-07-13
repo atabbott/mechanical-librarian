@@ -93,7 +93,7 @@ _GENERIC_URI_SCHEME = re.compile(
 )
 _IP = re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b|(?:^|[^0-9a-f:])(?:[0-9a-f]{0,4}:){2,}[0-9a-f:]{0,4}", re.IGNORECASE)
 _SECRET = re.compile(
-    r"\b(?:authorization|bearer|cookie|credential|header|key|password|passwd|secret|api key|apikey|private key|privatekey|access key(?: id)?|accesskey(?:id)?|secret key|secretkey|access token|accesstoken|refresh token|refreshtoken|client secret|clientsecret)\b",
+    r"(?:\b(?:authorization|bearer|cookie|credential|header|key|password|passwd|secret|api key|apikey|private key|privatekey|access key(?: id)?|accesskey(?:id)?|secret key|secretkey|access token|accesstoken|refresh token|refreshtoken|session token|sessiontoken|id token|idtoken|client secret|clientsecret)\b|^\s*token\s*$)",
     re.IGNORECASE,
 )
 _STATE = re.compile(
