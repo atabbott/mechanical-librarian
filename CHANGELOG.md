@@ -14,6 +14,9 @@ versioning after the first public release.
 
 ### Fixed
 
+- Audiobookshelf inventory now prepares and recovers durable cohort scan state
+  before resolving target credentials or performing compatibility,
+  authorization, library, or item requests.
 - Audiobookshelf connection readiness now requires unrestricted configured-
   library, tag, and explicit-content visibility so partial content scopes
   cannot advertise complete inventory and metadata capabilities.

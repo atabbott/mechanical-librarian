@@ -38,6 +38,7 @@ from mechanical_librarian.application.job_heartbeat import (
     RunSyntheticJobHeartbeat,
 )
 from mechanical_librarian.application.inventory_reconciliation import (
+    InventoryConnectionVerification,
     InventoryLibraryResult,
     InventoryOutcome,
     InventoryRunResult,
@@ -74,7 +75,7 @@ from mechanical_librarian.domain.inventory import (
     LibraryConnection,
     MediaType,
 )
-from mechanical_librarian.domain.inventory_v2 import ScanBounds
+from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanUsage
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.security.target_secrets import (
     PrivateFileTargetCredentials,
@@ -299,7 +300,12 @@ def _run_connection_probe(configuration_path: Path) -> ConnectionProbeResult:
         return ConnectionProbeResult(ConnectionProbeOutcome.INTERNAL_FAILURE)
 
 
-def _probe_configured_connection(configured) -> ConnectionProbeResult:
+def _probe_configured_connection(
+    configured,
+    *,
+    context: OperationContext | None = None,
+    response_meter: Callable[[int], bool] | None = None,
+) -> ConnectionProbeResult:
     try:
         if not target_endpoint_allowed(configured.endpoint):
             return ConnectionProbeResult(ConnectionProbeOutcome.CONFIGURATION_FAILURE)
@@ -325,14 +331,16 @@ def _probe_configured_connection(configured) -> ConnectionProbeResult:
         probe = AudiobookshelfConnectionProbe(
             configured.endpoint,
             client_factory=client_factory,
+            response_meter=response_meter,
         )
-        now = datetime.now(timezone.utc)
-        context = OperationContext(
-            Deadline(now + timedelta(seconds=30)),
-            CancellationProbe(CancellationId("connection-check"), lambda: False),
-            ResourceBounds(1, 65_536),
-            TimeProbe(lambda: datetime.now(timezone.utc)),
-        )
+        if context is None:
+            now = datetime.now(timezone.utc)
+            context = OperationContext(
+                Deadline(now + timedelta(seconds=30)),
+                CancellationProbe(CancellationId("connection-check"), lambda: False),
+                ResourceBounds(1, 65_536),
+                TimeProbe(lambda: datetime.now(timezone.utc)),
+            )
         return InspectLibraryConnection(
             AdapterId(configured.adapter),
             configured.connection_id,
@@ -397,21 +405,35 @@ def _inventory_context(bounds: ScanBounds, cancellation: str) -> OperationContex
     )
 
 
+def _inventory_probe_failure(outcome: ConnectionProbeOutcome) -> FailureKind | None:
+    if outcome is ConnectionProbeOutcome.READY:
+        return None
+    return {
+        ConnectionProbeOutcome.CANCELLED: FailureKind.CANCELLED,
+        ConnectionProbeOutcome.DEADLINE_EXPIRED: FailureKind.TIMEOUT,
+        ConnectionProbeOutcome.RESOURCE_EXHAUSTED: FailureKind.RESOURCE_EXHAUSTED,
+        ConnectionProbeOutcome.AUTHENTICATION_FAILED: FailureKind.AUTHENTICATION,
+        ConnectionProbeOutcome.AUTHORIZATION_FAILED: FailureKind.AUTHORIZATION,
+        ConnectionProbeOutcome.SECRET_UNAVAILABLE: FailureKind.NOT_FOUND,
+        ConnectionProbeOutcome.RATE_LIMITED: FailureKind.RATE_LIMITED,
+        ConnectionProbeOutcome.UNAVAILABLE: FailureKind.UNAVAILABLE,
+        ConnectionProbeOutcome.INCOMPATIBLE: FailureKind.INCOMPATIBLE,
+        ConnectionProbeOutcome.INVALID_RESPONSE: FailureKind.INVALID_RESPONSE,
+        ConnectionProbeOutcome.CONFIGURATION_FAILURE: FailureKind.INVALID_REQUEST,
+        ConnectionProbeOutcome.INTERNAL_FAILURE: FailureKind.UNAVAILABLE,
+    }[outcome]
+
+
 def _run_audiobookshelf_inventory(
     configuration_path: Path, database: Path
 ) -> InventoryRunResult:
-    """Probe compatibility, then execute one durable GET-only inventory scan."""
+    """Execute one durable, compatibility-gated GET-only inventory scan."""
 
     try:
         _, configured, connection, libraries, bounds = _inventory_connection(
             configuration_path
         )
-        probe = _probe_configured_connection(configured)
-        if not probe.succeeded:
-            return InventoryRunResult(InventoryOutcome.INVALID_REQUEST, ())
         credentials = PrivateFileTargetCredentials()
-        if not credentials.configured(configured.secret):
-            return InventoryRunResult(InventoryOutcome.INVALID_REQUEST, ())
         handle = SecretHandle(configured.secret, SecretScope.TARGET_SERVICE)
 
         def client_factory():
@@ -428,7 +450,33 @@ def _run_audiobookshelf_inventory(
                     )
                 )
 
-        source = AudiobookshelfInventoryReader(client_factory=client_factory)
+        def verify_connection(
+            _connection: LibraryConnection,
+            _libraries: tuple[LibraryId, ...],
+            _bounds: ScanBounds,
+            context: OperationContext,
+        ) -> InventoryConnectionVerification:
+            response_bytes = 0
+
+            def meter(amount: int) -> bool:
+                nonlocal response_bytes
+                response_bytes += amount
+                return response_bytes <= bounds.max_bytes
+
+            probe = _probe_configured_connection(
+                configured,
+                context=context,
+                response_meter=meter,
+            )
+            return InventoryConnectionVerification(
+                ScanUsage(response_bytes=response_bytes),
+                _inventory_probe_failure(probe.outcome),
+            )
+
+        source = AudiobookshelfInventoryReader(
+            client_factory=client_factory,
+            connection_verifier=verify_connection,
+        )
 
         def operation(state: sqlite3.Connection) -> InventoryRunResult:
             return ReconcileInventory(source, SQLiteInventoryV2Repository(state)).run(

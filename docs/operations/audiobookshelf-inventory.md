@@ -25,9 +25,13 @@ mechanical-librarian inventory-inspect \
   --database /var/lib/mechanical-librarian/state.sqlite
 ```
 
-The scan is persisted as `running` before target I/O. Its owner combines the
-process ID with an operating-system process-start discriminator, so even a
-container restart that reuses PID 1 changes an abandoned scan to
+Every configured-library row in the reconciliation cohort is persisted as
+`running` before the shared compatibility and authorization probe resolves the
+target credential or performs target I/O. Probe time and response bytes use the
+same inventory operation bounds, and a failed probe terminalizes every begun
+row with its typed failure before any library or item request. Its owner
+combines the process ID with an operating-system process-start discriminator,
+so even a container restart that reuses PID 1 changes an abandoned scan to
 `incomplete/interrupted` without treating a genuinely live process as dead.
 Each pass has cumulative page,
 item, response-byte, deadline, and stability-delay bounds. Because the pinned

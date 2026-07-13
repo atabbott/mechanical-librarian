@@ -42,6 +42,7 @@ from mechanical_librarian.application.ports import (
     TimeProbe,
 )
 from mechanical_librarian.application.inventory_reconciliation import (
+    InventoryConnectionVerification,
     InventoryOutcome,
     ReconcileInventory,
 )
@@ -235,6 +236,37 @@ class AudiobookshelfInventoryReaderTests(unittest.TestCase):
                 result = reader.verify_library(
                     connection(), LIBRARY, bounds, operation_context()
                 )
+                self.assertEqual(result.failure.kind, kind)
+
+    def test_liveness_takes_precedence_when_http_status_arrives(self) -> None:
+        bounds = ScanBounds(2, 4, 10, 1_000_000, 300, 0)
+        for kind in (FailureKind.CANCELLED, FailureKind.TIMEOUT):
+            with self.subTest(kind=kind):
+                observed = NOW + timedelta(hours=1)
+                clock = [observed]
+                cancelled = [False]
+                deadline = observed + timedelta(minutes=5)
+
+                def handler(_request, selected=kind):
+                    if selected is FailureKind.CANCELLED:
+                        cancelled[0] = True
+                    else:
+                        clock[0] = deadline
+                    return httpx.Response(401)
+
+                context = OperationContext(
+                    Deadline(deadline),
+                    CancellationProbe(
+                        CancellationId(f"inventory-status-{kind.value}"),
+                        lambda: cancelled[0],
+                    ),
+                    ResourceBounds(100, 1_000_000),
+                    TimeProbe(lambda: clock[0]),
+                )
+                result = AudiobookshelfInventoryReader(
+                    client_factory=factory(handler)
+                ).verify_library(connection(), LIBRARY, bounds, context)
+
                 self.assertEqual(result.failure.kind, kind)
 
         def nonfinite(_request: httpx.Request) -> httpx.Response:
@@ -771,8 +803,14 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
     ) -> None:
         current = self._snapshot("Stable")
         self._publish("scan-mid-source-seed", current)
-        for index, kind in enumerate((FailureKind.CANCELLED, FailureKind.TIMEOUT)):
-            with self.subTest(kind=kind):
+        cases = tuple(
+            (kind, stage, mode)
+            for kind in (FailureKind.CANCELLED, FailureKind.TIMEOUT)
+            for stage in ("verify", "first", "second")
+            for mode in ("failure", "exception", "success")
+        )
+        for index, (kind, stage, mode) in enumerate(cases):
+            with self.subTest(kind=kind, stage=stage, mode=mode):
                 observed = NOW + timedelta(minutes=20 + index * 20)
                 clock = [observed]
                 cancellation = {"requested": False}
@@ -787,7 +825,7 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
                 context = OperationContext(
                     Deadline(deadline),
                     CancellationProbe(
-                        CancellationId(f"mid-source-{kind.value}"),
+                        CancellationId(f"mid-source-{kind.value}-{stage}-{mode}"),
                         lambda: cancellation["requested"],
                     ),
                     ResourceBounds(100, 1_000_000),
@@ -800,13 +838,22 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
                     "SELECT COUNT(*) FROM inventory_v2_snapshots"
                 ).fetchone()[0]
                 result = ReconcileInventory(
-                    _LivenessFailureSource(trigger, kind), self.repository
+                    _LivenessFailureSource(trigger, stage, mode, (current,)),
+                    self.repository,
                 ).run(connection(), (LIBRARY,), self.bounds, context)
 
                 self.assertEqual(result.outcome, InventoryOutcome.INCOMPLETE)
                 inspection = result.libraries[0].inspection
                 self.assertEqual(inspection.state, ScanState.INCOMPLETE)
                 self.assertEqual(inspection.failure_kind, kind.value)
+                prior_bytes = {"verify": 0, "first": 1, "second": 11}[stage]
+                prior_pages = {"verify": 0, "first": 0, "second": 1}[stage]
+                added_bytes = (
+                    (13 if stage == "verify" else 17) if mode == "success" else 0
+                )
+                added_pages = 1 if mode == "success" and stage != "verify" else 0
+                self.assertEqual(inspection.response_bytes, prior_bytes + added_bytes)
+                self.assertEqual(inspection.page_count, prior_pages + added_pages)
                 self._assert_terminal_failure_preserved_state(
                     inspection.scan_id, before_current, before_history
                 )
@@ -821,6 +868,130 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
                     self._later_context(30 + index * 20),
                 )
                 self.assertEqual(retry.outcome, InventoryOutcome.READY)
+
+    def test_connection_verification_follows_all_cohort_begins_and_terminalizes(
+        self,
+    ) -> None:
+        other = self._other_library()
+
+        def verify() -> None:
+            rows = self.database.execute(
+                "SELECT library_id,state FROM inventory_scans ORDER BY library_id"
+            ).fetchall()
+            self.assertEqual(
+                rows,
+                sorted([(LIBRARY.value, "running"), (other.value, "running")]),
+            )
+
+        source = _ConnectionVerificationSource(
+            verify,
+            InventoryConnectionVerification(
+                ScanUsage(response_bytes=19), FailureKind.AUTHENTICATION
+            ),
+        )
+        result = ReconcileInventory(source, self.repository).run(
+            connection(), (LIBRARY, other), self.bounds, operation_context()
+        )
+
+        self.assertEqual(result.outcome, InventoryOutcome.INCOMPLETE)
+        self.assertEqual(source.library_calls, 0)
+        self.assertEqual(
+            [item.inspection.failure_kind for item in result.libraries],
+            [FailureKind.AUTHENTICATION.value] * 2,
+        )
+        self.assertEqual(
+            [item.inspection.response_bytes for item in result.libraries], [19, 19]
+        )
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM inventory_scans WHERE state='running'"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_cohort_begin_failure_stops_before_connection_verification(self) -> None:
+        other = self._other_library()
+        source = _ConnectionVerificationSource(
+            lambda: None, InventoryConnectionVerification(ScanUsage())
+        )
+        begin = self.repository.begin
+
+        def reject_second(scan_id, connection_value, library, *args, **kwargs):
+            if library == other:
+                return RepositoryResult(RepositoryOutcome.REJECTED)
+            return begin(scan_id, connection_value, library, *args, **kwargs)
+
+        self.repository.begin = reject_second
+        try:
+            result = ReconcileInventory(source, self.repository).run(
+                connection(), (LIBRARY, other), self.bounds, operation_context()
+            )
+        finally:
+            self.repository.begin = begin
+
+        self.assertEqual(result.outcome, InventoryOutcome.PERSISTENCE_FAILURE)
+        self.assertEqual(source.connection_calls, 0)
+        self.assertEqual(source.library_calls, 0)
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM inventory_scans WHERE state='running'"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_cohort_begin_liveness_failure_preserves_exact_terminal_kind(self) -> None:
+        other = self._other_library()
+        for index, kind in enumerate((FailureKind.CANCELLED, FailureKind.TIMEOUT)):
+            with self.subTest(kind=kind):
+                source = _ConnectionVerificationSource(
+                    lambda: None, InventoryConnectionVerification(ScanUsage())
+                )
+                observed = NOW + timedelta(hours=8 + index)
+                clock = [observed]
+                cancelled = [False]
+                deadline = observed + timedelta(minutes=5)
+                selected_context = OperationContext(
+                    Deadline(deadline),
+                    CancellationProbe(
+                        CancellationId(f"cohort-begin-{kind.value}"),
+                        lambda: cancelled[0],
+                    ),
+                    ResourceBounds(100, 1_000_000),
+                    TimeProbe(lambda: clock[0]),
+                )
+                begin = self.repository.begin
+
+                def fail_second(scan_id, connection_value, library, *args, **kwargs):
+                    if library == other:
+                        if kind is FailureKind.CANCELLED:
+                            cancelled[0] = True
+                        else:
+                            clock[0] = deadline
+                        return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
+                    return begin(scan_id, connection_value, library, *args, **kwargs)
+
+                self.repository.begin = fail_second
+                try:
+                    result = ReconcileInventory(source, self.repository).run(
+                        connection(),
+                        (LIBRARY, other),
+                        self.bounds,
+                        selected_context,
+                    )
+                finally:
+                    self.repository.begin = begin
+
+                self.assertEqual(result.outcome, InventoryOutcome.PERSISTENCE_FAILURE)
+                self.assertEqual(source.connection_calls, 0)
+                inspection = result.libraries[0].inspection
+                self.assertIsNotNone(inspection)
+                self.assertEqual(inspection.failure_kind, kind.value)
+                self.assertEqual(
+                    self.database.execute(
+                        "SELECT COUNT(*) FROM inventory_scans WHERE state='running'"
+                    ).fetchone(),
+                    (0,),
+                )
 
     def test_late_publication_liveness_failure_rolls_back_terminalizes_and_retries(
         self,
@@ -1477,6 +1648,9 @@ class _PassSource:
     def __init__(self, passes: tuple[InventoryPass, ...]) -> None:
         self._passes = list(passes)
 
+    def verify_connection(self, connection, libraries, bounds, context):
+        return InventoryConnectionVerification(ScanUsage())
+
     def verify_library(self, connection, library, bounds, context):
         return PortResult.success(ScanUsage(response_bytes=1))
 
@@ -1497,6 +1671,9 @@ class _LibrarySource:
         self, snapshots: dict[LibraryId, tuple[InventorySnapshotV2, ...] | None]
     ) -> None:
         self._snapshots = snapshots
+
+    def verify_connection(self, connection, libraries, bounds, context):
+        return InventoryConnectionVerification(ScanUsage())
 
     def verify_library(self, connection, library, bounds, context):
         return PortResult.success(ScanUsage(response_bytes=1))
@@ -1520,6 +1697,9 @@ class _UsageSource:
     def __init__(self, usage: ScanUsage) -> None:
         self._usage = usage
 
+    def verify_connection(self, connection, libraries, bounds, context):
+        return InventoryConnectionVerification(ScanUsage())
+
     def verify_library(self, connection, library, bounds, context):
         return PortResult.success(self._usage)
 
@@ -1528,22 +1708,70 @@ class _UsageSource:
 
 
 class _LivenessFailureSource:
-    def __init__(self, trigger, kind: FailureKind) -> None:
+    def __init__(self, trigger, stage, mode, snapshots) -> None:
         self._trigger = trigger
-        self._kind = kind
+        self._stage = stage
+        self._mode = mode
+        self._snapshots = snapshots
+        self._pass = 0
+
+    def _result(self, success):
+        self._trigger()
+        if self._mode == "exception":
+            raise RuntimeError("synthetic source failure")
+        if self._mode == "failure":
+            return PortResult.failed(
+                PortFailure(
+                    FailureKind.AUTHENTICATION,
+                    RetryAdvice(False),
+                    SafeSummary("inventory test source failure"),
+                )
+            )
+        return PortResult.success(success)
+
+    def verify_connection(self, connection, libraries, bounds, context):
+        return InventoryConnectionVerification(ScanUsage())
 
     def verify_library(self, connection, library, bounds, context):
+        if self._stage == "verify":
+            return self._result(ScanUsage(response_bytes=13))
         return PortResult.success(ScanUsage(response_bytes=1))
 
     def read_pass(self, connection, library, bounds, context):
-        self._trigger()
-        return PortResult.failed(
-            PortFailure(
-                self._kind,
-                RetryAdvice(self._kind is FailureKind.TIMEOUT),
-                SafeSummary("inventory test liveness failure"),
+        self._pass += 1
+        if self._stage == "first" or (self._stage == "second" and self._pass == 2):
+            return self._result(
+                InventoryPass(
+                    self._snapshots,
+                    ScanUsage(1, len(self._snapshots), 17),
+                )
+            )
+        return PortResult.success(
+            InventoryPass(
+                self._snapshots,
+                ScanUsage(1, len(self._snapshots), 10),
             )
         )
+
+
+class _ConnectionVerificationSource:
+    def __init__(self, assertion, verification) -> None:
+        self._assertion = assertion
+        self._verification = verification
+        self.connection_calls = 0
+        self.library_calls = 0
+
+    def verify_connection(self, connection, libraries, bounds, context):
+        self.connection_calls += 1
+        self._assertion()
+        return self._verification
+
+    def verify_library(self, connection, library, bounds, context):
+        self.library_calls += 1
+        raise AssertionError("failed connection verification must stop library I/O")
+
+    def read_pass(self, connection, library, bounds, context):
+        raise AssertionError("failed connection verification must stop inventory I/O")
 
 
 if __name__ == "__main__":

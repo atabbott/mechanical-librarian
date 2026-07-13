@@ -71,9 +71,14 @@ EXTRA_LIBRARY_ID = "21234567-89ab-4def-8123-456789abcdef"
 OTHER_LIBRARY_ID = "31234567-89ab-4def-8123-456789abcdef"
 
 
-def context(*, cancelled=lambda: False, max_bytes: int = 65_536) -> OperationContext:
+def context(
+    *,
+    cancelled=lambda: False,
+    max_bytes: int = 65_536,
+    deadline: datetime | None = None,
+) -> OperationContext:
     return OperationContext(
-        Deadline(NOW + timedelta(seconds=30)),
+        Deadline(deadline or NOW + timedelta(seconds=30)),
         CancellationProbe(CancellationId("abs-probe"), cancelled),
         ResourceBounds(1, max_bytes),
         TimeProbe(lambda: NOW),
@@ -256,6 +261,36 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
                 self.assertEqual(result.failure.kind.value, expected)
                 self.assertNotIn("private", repr(result))
 
+    def test_transport_timeouts_are_clipped_to_remaining_operation_deadline(
+        self,
+    ) -> None:
+        observed = []
+
+        def handler(request):
+            observed.append(request.extensions["timeout"])
+            payload = (
+                fixture("status.json")
+                if request.url.path == "/status"
+                else fixture("authorize.json")
+            )
+            return raw_response(
+                payload=json.dumps(payload).encode("utf-8"),
+                headers={"content-type": "application/json"},
+            )
+
+        result = self.probe(
+            handler,
+            selected_context=context(deadline=NOW + timedelta(seconds=1)),
+        )
+
+        self.assertIsNone(result.failure)
+        self.assertEqual(len(observed), 2)
+        for timeout in observed:
+            self.assertEqual(
+                timeout,
+                {"connect": 1.0, "read": 1.0, "write": 1.0, "pool": 1.0},
+            )
+
     def test_hostile_response_matrix_is_bounded(self) -> None:
         cases = (
             (
@@ -311,6 +346,33 @@ class AudiobookshelfAdapterTests(unittest.TestCase):
             selected_context=context(max_bytes=1),
         )
         self.assertEqual(result.failure.kind.value, "resource_exhausted")
+
+    def test_inventory_response_meter_bounds_combined_probe_bodies(self) -> None:
+        status = json.dumps(fixture("status.json")).encode("utf-8")
+        authorize = json.dumps(fixture("authorize.json")).encode("utf-8")
+        observed = 0
+
+        def meter(amount: int) -> bool:
+            nonlocal observed
+            observed += amount
+            return observed <= len(status)
+
+        def handler(request):
+            payload = status if request.url.path == "/status" else authorize
+            return raw_response(
+                payload=payload, headers={"content-type": "application/json"}
+            )
+
+        result = AudiobookshelfConnectionProbe(
+            ServiceEndpoint("https://synthetic.invalid"),
+            client_factory=client_factory(handler),
+            response_meter=meter,
+        ).probe(
+            LibraryConnectionDiagnosticsRequest((LibraryId(LIBRARY_ID),), context())
+        )
+
+        self.assertEqual(result.failure.kind, FailureKind.RESOURCE_EXHAUSTED)
+        self.assertEqual(observed, len(status) + len(authorize))
 
     def test_invalid_expected_library_stops_before_client_or_network(self) -> None:
         for value in (

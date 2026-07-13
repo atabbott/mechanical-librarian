@@ -11,7 +11,10 @@ from typing import Any
 
 import httpx
 
-from mechanical_librarian.application.inventory_reconciliation import InventorySource
+from mechanical_librarian.application.inventory_reconciliation import (
+    InventoryConnectionVerification,
+    InventorySource,
+)
 from mechanical_librarian.application.ports import (
     FailureKind,
     OperationContext,
@@ -61,8 +64,30 @@ class AudiobookshelfInventoryReader(InventorySource):
         self,
         *,
         client_factory: Callable[[], PortResult[httpx.Client]],
+        connection_verifier: Callable[
+            [
+                LibraryConnection,
+                tuple[LibraryId, ...],
+                ScanBounds,
+                OperationContext,
+            ],
+            InventoryConnectionVerification,
+        ]
+        | None = None,
     ) -> None:
         self._client_factory = client_factory
+        self._connection_verifier = connection_verifier
+
+    def verify_connection(
+        self,
+        connection: LibraryConnection,
+        libraries: tuple[LibraryId, ...],
+        bounds: ScanBounds,
+        context: OperationContext,
+    ) -> InventoryConnectionVerification:
+        if self._connection_verifier is None:
+            return InventoryConnectionVerification(ScanUsage())
+        return self._connection_verifier(connection, libraries, bounds, context)
 
     def verify_library(
         self,
@@ -286,6 +311,11 @@ class AudiobookshelfInventoryReader(InventorySource):
                         )
                     ),
                 ) as response:
+                    checkpoint = context.preflight_result(
+                        item_count=1, serialized_bytes=0
+                    )
+                    if checkpoint.failure is not None:
+                        return PortResult.failed(checkpoint.failure)
                     status_failure = _status_failure(response.status_code)
                     if status_failure is not None:
                         return PortResult.failed(status_failure)

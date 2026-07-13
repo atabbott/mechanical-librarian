@@ -33,6 +33,14 @@ from mechanical_librarian.domain.inventory_v2 import (
 class InventorySource(Protocol):
     """Read-only canonical inventory source with no mutation methods."""
 
+    def verify_connection(
+        self,
+        connection: LibraryConnection,
+        libraries: tuple[LibraryId, ...],
+        bounds: ScanBounds,
+        context: OperationContext,
+    ) -> InventoryConnectionVerification: ...
+
     def verify_library(
         self,
         connection: LibraryConnection,
@@ -112,6 +120,20 @@ class InventoryOutcome(StrEnum):
 
 
 @dataclass(frozen=True)
+class InventoryConnectionVerification:
+    """Run-scoped compatibility evidence gathered after durable cohort start."""
+
+    usage: ScanUsage
+    failure: FailureKind | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.usage) is not ScanUsage or (
+            self.failure is not None and type(self.failure) is not FailureKind
+        ):
+            raise ValueError("inventory connection verification is malformed")
+
+
+@dataclass(frozen=True)
 class InventoryLibraryResult:
     library: LibraryId
     outcome: InventoryOutcome
@@ -178,17 +200,115 @@ class ReconcileInventory:
             return InventoryRunResult(InventoryOutcome.PERSISTENCE_FAILURE, ())
 
         cohort_id = _cohort_id(connection, libraries, context.time.now())
-        results = tuple(
-            self._run_library(
+        starts: dict[LibraryId, ScanStart] = {}
+        for library in libraries:
+            started_at = context.time.now()
+            begun = self._repository.begin(
+                _scan_id(connection, library, started_at),
                 connection,
                 library,
                 bounds,
+                started_at,
                 context,
-                cohort_id,
-                len(libraries),
+                cohort_id=cohort_id,
+                cohort_size=len(libraries),
             )
-            for library in libraries
-        )
+            if not _accepted(begun) or type(begun.value) is not ScanStart:
+                live = context.preflight_result(item_count=0, serialized_bytes=0)
+                if live.failure is not None and live.failure.kind in {
+                    FailureKind.CANCELLED,
+                    FailureKind.TIMEOUT,
+                }:
+                    failure = live.failure.kind
+                else:
+                    failure = (
+                        FailureKind.CONFLICT
+                        if type(begun) is RepositoryResult
+                        and begun.outcome is RepositoryOutcome.REJECTED
+                        else FailureKind.UNAVAILABLE
+                    )
+                failed: list[InventoryLibraryResult] = []
+                for candidate in libraries:
+                    start = starts.get(candidate)
+                    failed.append(
+                        self._terminal_failure(
+                            candidate, start, ScanUsage(), failure, context
+                        )
+                        if start is not None
+                        else InventoryLibraryResult(
+                            candidate, InventoryOutcome.PERSISTENCE_FAILURE, None
+                        )
+                    )
+                return InventoryRunResult(
+                    InventoryOutcome.PERSISTENCE_FAILURE, tuple(failed)
+                )
+            starts[library] = begun.value
+
+        try:
+            connection_verification = self._source.verify_connection(
+                connection, libraries, bounds, context
+            )
+        except Exception:
+            connection_verification = InventoryConnectionVerification(
+                ScanUsage(), FailureKind.INVALID_RESPONSE
+            )
+        if type(connection_verification) is not InventoryConnectionVerification:
+            connection_verification = InventoryConnectionVerification(
+                ScanUsage(), FailureKind.INVALID_RESPONSE
+            )
+        live_failure = _liveness_failure(context)
+        if live_failure is not None:
+            connection_verification = InventoryConnectionVerification(
+                connection_verification.usage, live_failure
+            )
+        if connection_verification.failure is not None:
+            results = tuple(
+                self._terminal_failure(
+                    library,
+                    starts[library],
+                    connection_verification.usage,
+                    connection_verification.failure,
+                    context,
+                )
+                for library in libraries
+            )
+        else:
+            checkpoint = context.preflight_result(
+                item_count=connection_verification.usage.items,
+                serialized_bytes=connection_verification.usage.response_bytes,
+            )
+            failure = (
+                checkpoint.failure.kind
+                if checkpoint.failure is not None
+                else (
+                    FailureKind.RESOURCE_EXHAUSTED
+                    if connection_verification.usage.response_bytes > bounds.max_bytes
+                    else None
+                )
+            )
+            if failure is not None:
+                results = tuple(
+                    self._terminal_failure(
+                        library,
+                        starts[library],
+                        connection_verification.usage,
+                        failure,
+                        context,
+                    )
+                    for library in libraries
+                )
+            else:
+                results = tuple(
+                    self._run_library(
+                        connection,
+                        library,
+                        bounds,
+                        context,
+                        starts[library],
+                        connection_verification.usage,
+                    )
+                    for library in libraries
+                )
         refreshed: list[InventoryLibraryResult] = []
         for result in results:
             if result.outcome is not InventoryOutcome.READY:
@@ -229,37 +349,56 @@ class ReconcileInventory:
         library: LibraryId,
         bounds: ScanBounds,
         context: OperationContext,
-        cohort_id: str,
-        cohort_size: int,
+        start: ScanStart,
+        initial_usage: ScanUsage,
     ) -> InventoryLibraryResult:
-        started_at = context.time.now()
-        scan_id = _scan_id(connection, library, started_at)
-        begun = self._repository.begin(
-            scan_id,
-            connection,
-            library,
-            bounds,
-            started_at,
-            context,
-            cohort_id=cohort_id,
-            cohort_size=cohort_size,
-        )
-        if not _accepted(begun) or type(begun.value) is not ScanStart:
-            return InventoryLibraryResult(
-                library, InventoryOutcome.PERSISTENCE_FAILURE, None
-            )
-        start = begun.value
-        usage = ScanUsage()
+        usage = initial_usage
 
-        try:
-            verified = self._source.verify_library(connection, library, bounds, context)
-        except Exception:
+        if bounds.max_bytes - usage.response_bytes < 1_024:
             return self._terminal_failure(
                 library,
                 start,
                 usage,
-                FailureKind.INVALID_RESPONSE,
+                FailureKind.RESOURCE_EXHAUSTED,
                 context,
+            )
+        verification_bounds = ScanBounds(
+            bounds.page_size,
+            bounds.max_pages,
+            bounds.max_items,
+            bounds.max_bytes - usage.response_bytes,
+            bounds.max_seconds,
+            bounds.stability_delay_seconds,
+        )
+
+        verified = None
+        try:
+            verified = self._source.verify_library(
+                connection, library, verification_bounds, context
+            )
+        except Exception:
+            pass
+        verified_usage = (
+            verified.value
+            if verified is not None
+            and verified.failure is None
+            and type(verified.value) is ScanUsage
+            else None
+        )
+        if verified_usage is not None:
+            usage += verified_usage
+        live_failure = _liveness_failure(context)
+        if live_failure is not None:
+            return self._terminal_failure(
+                library,
+                start,
+                usage,
+                live_failure,
+                context,
+            )
+        if verified is None:
+            return self._terminal_failure(
+                library, start, usage, FailureKind.INVALID_RESPONSE, context
             )
         if verified.failure is not None or type(verified.value) is not ScanUsage:
             return self._terminal_failure(
@@ -271,17 +410,33 @@ class ReconcileInventory:
                 else FailureKind.INVALID_RESPONSE,
                 context,
             )
-        usage += verified.value
 
+        first = None
         try:
             first = self._read_pass(connection, library, bounds, usage, context)
         except Exception:
+            pass
+        first_usage = (
+            first.value.usage
+            if first is not None
+            and first.failure is None
+            and type(first.value) is InventoryPass
+            else None
+        )
+        if first_usage is not None:
+            usage += first_usage
+        live_failure = _liveness_failure(context)
+        if live_failure is not None:
             return self._terminal_failure(
                 library,
                 start,
                 usage,
-                FailureKind.INVALID_RESPONSE,
+                live_failure,
                 context,
+            )
+        if first is None:
+            return self._terminal_failure(
+                library, start, usage, FailureKind.INVALID_RESPONSE, context
             )
         if first.failure is not None or type(first.value) is not InventoryPass:
             return self._terminal_failure(
@@ -293,17 +448,33 @@ class ReconcileInventory:
                 else FailureKind.INVALID_RESPONSE,
                 context,
             )
-        usage += first.value.usage
 
+        second = None
         try:
             second = self._read_pass(connection, library, bounds, usage, context)
         except Exception:
+            pass
+        second_usage = (
+            second.value.usage
+            if second is not None
+            and second.failure is None
+            and type(second.value) is InventoryPass
+            else None
+        )
+        if second_usage is not None:
+            usage += second_usage
+        live_failure = _liveness_failure(context)
+        if live_failure is not None:
             return self._terminal_failure(
                 library,
                 start,
                 usage,
-                FailureKind.INVALID_RESPONSE,
+                live_failure,
                 context,
+            )
+        if second is None:
+            return self._terminal_failure(
+                library, start, usage, FailureKind.INVALID_RESPONSE, context
             )
         if second.failure is not None or type(second.value) is not InventoryPass:
             return self._terminal_failure(
@@ -315,13 +486,17 @@ class ReconcileInventory:
                 else FailureKind.INVALID_RESPONSE,
                 context,
             )
-        usage += second.value.usage
 
         if (
             first.value.digest != second.value.digest
             or first.value.recent_item
             or second.value.recent_item
         ):
+            live_failure = _liveness_failure(context)
+            if live_failure is not None:
+                return self._terminal_failure(
+                    library, start, usage, live_failure, context
+                )
             finished = self._repository.finish(
                 start.scan_id,
                 ScanState.UNSTABLE,
@@ -556,7 +731,18 @@ def _inspection(result: object) -> InventoryInspection | None:
     return result.value
 
 
+def _liveness_failure(context: OperationContext) -> FailureKind | None:
+    checkpoint = context.preflight_result(item_count=0, serialized_bytes=0)
+    if checkpoint.failure is not None and checkpoint.failure.kind in {
+        FailureKind.CANCELLED,
+        FailureKind.TIMEOUT,
+    }:
+        return checkpoint.failure.kind
+    return None
+
+
 __all__ = [
+    "InventoryConnectionVerification",
     "InventoryLibraryResult",
     "InventoryOutcome",
     "InventoryRunResult",
