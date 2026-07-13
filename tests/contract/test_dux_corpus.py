@@ -198,6 +198,11 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             ("access:token", "DUX021_SECRET_SHAPE"),
             ("refresh/token", "DUX021_SECRET_SHAPE"),
             ("client%3Asecret", "DUX021_SECRET_SHAPE"),
+            ("access%09token", "DUX021_SECRET_SHAPE"),
+            ("access%0Atoken", "DUX021_SECRET_SHAPE"),
+            ("access%0Btoken", "DUX021_SECRET_SHAPE"),
+            ("access%0Ctoken", "DUX021_SECRET_SHAPE"),
+            ("access%0Dtoken", "DUX021_SECRET_SHAPE"),
             ("apikey", "DUX021_SECRET_SHAPE"),
             ("privatekey", "DUX021_SECRET_SHAPE"),
             ("accesskey", "DUX021_SECRET_SHAPE"),
@@ -211,6 +216,8 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             ("saved:browser:state", "DUX025_PRODUCTION_STATE"),
             ("support/bundle", "DUX025_PRODUCTION_STATE"),
             ("support%2Fbundle", "DUX025_PRODUCTION_STATE"),
+            ("saved%09browser%09state", "DUX025_PRODUCTION_STATE"),
+            ("saved%0Abrowser%0Astate", "DUX025_PRODUCTION_STATE"),
             ("123e4567-e89b-42d3-a456-426614174000", "DUX026_PRODUCTION_ID"),
             ("123E4567-E89B-42D3-A456-426614174000", "DUX026_PRODUCTION_ID"),
             ("generated-source-marker", "DUX027_SOURCE_LITERAL"),
@@ -295,6 +302,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
     def test_recursive_audit_allows_safe_near_misses(self) -> None:
         for sentinel in (
             "Generated credentialing behavior.",
+            "Generated%09credentialing behavior.",
             "Generated apikeyed behavior.",
             "Generated privatekeys behavior.",
             "Generated clientsecretary behavior.",
@@ -403,6 +411,29 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 )
                 self.assertEqual(record["contract"]["expected"], contract["expected"])
                 self.assertEqual(record["future_owner"]["criterion"], owner_criterion)
+
+    def test_series_scenario_preserves_membership_and_sequence_independently(self) -> None:
+        scenario = load_scenario("dux-synthetic-09")
+        record = _mutable(scenario.record)
+        inputs = record["contract"]["input"]
+        expected = record["contract"]["expected"]
+
+        self.assertEqual(
+            record["dux_behavior"],
+            "Series membership and sequence remain independently represented.",
+        )
+        self.assertEqual(
+            record["preserved_invariant"],
+            "Series choices preserve membership and sequence independently.",
+        )
+        self.assertEqual(
+            record["future_owner"]["criterion"],
+            "Represent series membership and sequence independently, including numeric, "
+            "decimal, labelled, conflicting-order, and unknown values.",
+        )
+        self.assertEqual(expected["membership"], inputs["raw_membership"])
+        self.assertEqual(expected["sequence"], inputs["raw_sequence"])
+        self.assertEqual(expected["outcome"], "independent_series_parts")
 
     def test_evidence_only_contract_requires_a_typed_evidence_reference_id(self) -> None:
         with _corpus_copy() as root:

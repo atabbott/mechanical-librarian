@@ -232,7 +232,7 @@ def _exact_keys(value: object, keys: frozenset[str], rule: str, *, scenario: str
 
 def _normalized_labels(value: str) -> str:
     decoded_delimiters = re.sub(
-        r"%(?:20|2d|2e|3a|5f|2f)", " ", value, flags=re.IGNORECASE
+        r"%(?:0[9a-d]|20|2d|2e|3a|5f|2f)", " ", value, flags=re.IGNORECASE
     )
     return re.sub(r"[_.\-\s:/]+", " ", decoded_delimiters)
 
