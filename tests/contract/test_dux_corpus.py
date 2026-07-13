@@ -295,6 +295,72 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 with self.assertRaisesRegex(CorpusValidationError, "DUX016_CONTRACT"):
                     load_registry(root)
 
+    def test_candidate_agreement_scenarios_remain_semantically_distinct(self) -> None:
+        owner_criterion = (
+            "Agreement is counted across independent evidence families, so correlated or "
+            "repeated rows cannot manufacture consensus; policy-defined decisive "
+            "single-family evidence remains possible."
+        )
+        expected = {
+            "dux-synthetic-01": {
+                "dux_behavior": (
+                    "Repeated candidate observations from one evidence family remain correlated."
+                ),
+                "preserved_invariant": (
+                    "Repeated observations from one evidence family remain non-consensus."
+                ),
+                "family_count": 1,
+                "expected": {"agreement_families": 1, "outcome": "not_consensus"},
+            },
+            "dux-synthetic-03": {
+                "dux_behavior": (
+                    "Equal candidates from independent evidence families may establish agreement."
+                ),
+                "preserved_invariant": (
+                    "Identical choices retain consensus without appearing multiple times."
+                ),
+                "family_count": 2,
+                "expected": {"agreement_families": 2, "outcome": "consensus"},
+            },
+        }
+        for scenario_id, contract in expected.items():
+            with self.subTest(scenario=scenario_id):
+                scenario = load_scenario(scenario_id)
+                record = _mutable(scenario.record)
+                inputs = record["contract"]["input"]
+                self.assertEqual(record["dux_behavior"], contract["dux_behavior"])
+                self.assertEqual(
+                    record["preserved_invariant"], contract["preserved_invariant"]
+                )
+                self.assertEqual(
+                    len(set(inputs["evidence_families"])), contract["family_count"]
+                )
+                self.assertEqual(record["contract"]["expected"], contract["expected"])
+                self.assertEqual(record["future_owner"]["criterion"], owner_criterion)
+
+    def test_evidence_only_contract_requires_a_typed_evidence_reference_id(self) -> None:
+        with _corpus_copy() as root:
+            _rewrite(
+                root,
+                "dux-synthetic-02.json",
+                lambda item: item["contract"]["input"].pop("evidence_id"),
+            )
+            with self.assertRaisesRegex(CorpusValidationError, "DUX016_CONTRACT"):
+                load_registry(root)
+
+        overlength = "dux-synthetic-" + ("e" * 52)
+        self.assertGreater(len(overlength), 64)
+        with _corpus_copy() as root:
+            _rewrite(
+                root,
+                "dux-synthetic-02.json",
+                lambda item: item["contract"]["input"].__setitem__(
+                    "evidence_id", overlength
+                ),
+            )
+            with self.assertRaisesRegex(CorpusValidationError, "DUX016_CONTRACT"):
+                load_registry(root)
+
     def test_current_internal_identifiers_use_exact_domain_bounds(self) -> None:
         overlength = "dux-synthetic-" + ("x" * 52)
         invalid_changes = {
@@ -333,6 +399,16 @@ class DuxCurrentContractTests(unittest.TestCase):
         data = _mutable(load_scenario("dux-synthetic-02").contract)
         inputs = data["input"]
         target = _target(inputs["target"])
+        reference = EvidenceReference(
+            EvidenceId(inputs["evidence_id"]),
+            target,
+            target,
+            EvidenceRelationship.SAME_TARGET,
+        )
+        evidence = (reference,)
+        self.assertEqual(reference.evidence, EvidenceId(inputs["evidence_id"]))
+        self.assertEqual(inputs["proposals"], [])
+        self.assertEqual(len(evidence), 1)
         observed_outcome = None
         with self.assertRaises(ValueError) as raised:
             ReviewCase(
@@ -344,6 +420,7 @@ class DuxCurrentContractTests(unittest.TestCase):
                 tuple(inputs["proposals"]),
                 ReviewCaseState.OPEN,
                 Disposition.NEEDS_REVIEW,
+                evidence=evidence,
             )
         observed_outcome = "reject_empty_case"
         self.assertEqual(type(raised.exception).__name__, data["expected"]["exception"])

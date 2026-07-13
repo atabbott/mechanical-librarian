@@ -130,7 +130,7 @@ _SCENARIO_KEYS = frozenset(
 _CONTRACT_SHAPES = MappingProxyType(
     {
         "repeated_candidates": ("future_contract_fact", {"candidate_values": list, "evidence_families": list}, {"agreement_families": int, "outcome": str}),
-        "evidence_only_input": ("review_case_empty_rejection", {"case_id": str, "proposals": list, "snapshot_id": str, "target": dict}, {"exception": str, "outcome": str}),
+        "evidence_only_input": ("review_case_empty_rejection", {"case_id": str, "evidence_id": str, "proposals": list, "snapshot_id": str, "target": dict}, {"exception": str, "outcome": str}),
         "consensus": ("future_contract_fact", {"candidate_values": list, "evidence_families": list}, {"agreement_families": int, "outcome": str}),
         "conflicts": ("future_contract_fact", {"candidate_identity": str, "current_identity": str, "field": str}, {"outcome": str}),
         "no_ops": ("field_proposal_no_change", {"current": list, "evidence_id": str, "field": str, "proposal_id": str, "proposed": list, "snapshot_id": str, "target": dict}, {"current_equals_proposed": bool, "kind": str}),
@@ -348,6 +348,7 @@ def _validate_contract_shape(category: str, contract: dict[str, Any], *, scenari
         require(expected == {"agreement_families": 1, "outcome": "not_consensus"})
     elif category == "evidence_only_input":
         require(current_identifier(inputs["case_id"], ReviewCaseId))
+        require(current_identifier(inputs["evidence_id"], EvidenceId))
         require(current_identifier(inputs["snapshot_id"], SnapshotId))
         require(inputs["proposals"] == [])
         require(expected == {"exception": "ValueError", "outcome": "reject_empty_case"})
