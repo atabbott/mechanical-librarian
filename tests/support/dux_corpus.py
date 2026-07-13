@@ -424,7 +424,7 @@ def _validate_scenario(value: dict[str, Any], raw: bytes, *, filename: str, ordi
     _exact_keys(value, _SCENARIO_KEYS, "DUX010_SCENARIO_SCHEMA", scenario=scenario_id, ordinal=ordinal)
     if value["schema"] != SCHEMA_VERSION or scenario_id is None:
         _fail("DUX010_SCENARIO_SCHEMA", scenario=scenario_id, ordinal=ordinal)
-    if value["category"] not in CATEGORIES:
+    if type(value["category"]) is not str or value["category"] not in CATEGORIES:
         _fail("DUX012_CATEGORY", scenario=scenario_id, ordinal=ordinal)
     for key in ("dux_behavior", "preserved_invariant"):
         if type(value[key]) is not str or not value[key]:
@@ -477,6 +477,7 @@ def _validate_scenario(value: dict[str, Any], raw: bytes, *, filename: str, ordi
         if (
             type(owner_value["issue"]) is not int
             or owner_value["state"] != "open"
+            or type(owner_value["criterion"]) is not str
             or owner_value["criterion"] not in _FUTURE_CRITERIA.get(owner_value["issue"], ())
         ):
             _fail("DUX015_OWNERSHIP", scenario=scenario_id, ordinal=ordinal)

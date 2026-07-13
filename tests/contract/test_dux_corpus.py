@@ -156,6 +156,26 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.assertRaisesRegex(CorpusValidationError, "DUX009_ORPHAN_FILE"):
                 load_registry(root)
 
+    def test_membership_fields_reject_json_containers_with_stable_diagnostics(self) -> None:
+        cases = (
+            ("category", ["sensitive-category-list"], "DUX012_CATEGORY"),
+            ("category", {"sensitive-category-object": True}, "DUX012_CATEGORY"),
+            ("criterion", ["sensitive-criterion-list"], "DUX015_OWNERSHIP"),
+            ("criterion", {"sensitive-criterion-object": True}, "DUX015_OWNERSHIP"),
+        )
+        for field, rejected, rule in cases:
+            with self.subTest(field=field, rejected_type=type(rejected).__name__), _corpus_copy() as root:
+                if field == "category":
+                    mutate = lambda item, value=rejected: item.__setitem__(field, value)
+                else:
+                    mutate = lambda item, value=rejected: item["future_owner"].__setitem__(field, value)
+                _rewrite(root, "dux-synthetic-01.json", mutate)
+                with self.assertRaises(CorpusValidationError) as raised:
+                    load_registry(root)
+                self.assertEqual(raised.exception.rule, rule)
+                for sensitive_value in rejected:
+                    self.assertNotIn(str(sensitive_value), str(raised.exception))
+
     def test_prohibited_source_markers_and_mandated_values_outside_provenance_fail(self) -> None:
         for sentinel in (
             "generated-source-marker",
