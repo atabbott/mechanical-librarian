@@ -1050,6 +1050,9 @@ class ApplicationProfileTests(unittest.TestCase):
         self.assertEqual(
             states[ConnectionCapability.RATE_LIMITS], CapabilityState.UNAVAILABLE
         )
+        self.assertEqual(
+            states[ConnectionCapability.NOTIFICATIONS], CapabilityState.UNAVAILABLE
+        )
         older = self.run_probe(self.facts("2.25.9"))
         self.assertEqual(older.outcome, ConnectionProbeOutcome.INCOMPATIBLE)
         self.assertEqual(

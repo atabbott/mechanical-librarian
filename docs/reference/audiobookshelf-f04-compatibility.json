@@ -12,7 +12,7 @@
     "metadata_fields": "supported",
     "metadata_read": "supported",
     "mutation": "unavailable",
-    "notifications": "experimental",
+    "notifications": "unavailable",
     "pagination": "supported",
     "rate_limits": "unavailable",
     "rollback_read": "unavailable",

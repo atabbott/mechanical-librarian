@@ -87,7 +87,7 @@ The runtime profile and this human view are drift-tested against it.
 | cover_behavior | supported |
 | rollback_read | unavailable |
 | rate_limits | unavailable |
-| notifications | experimental |
+| notifications | unavailable |
 | concurrency_tokens | unavailable |
 | mutation | unavailable |
 <!-- f04-capabilities:end -->
@@ -99,6 +99,12 @@ active profile with complete configured-library coverage plus explicit
 all-tag and explicit-content visibility; narrower content scopes are
 incompatible with the current profile contract. Mutation remains unavailable
 because F04 has no mutation authority.
+
+Socket.IO notifications are unavailable at the API-key-only trust boundary.
+Audiobookshelf 2.35.1 routes socket authorization through its `SocketAuthority`
+and `TokenManager`, which do not accept API keys. Mechanical Librarian does not
+request login credentials, mint a session JWT, or construct a socket client;
+polling remains the supported inventory observation path.
 
 ### Audiobookshelf 2.35.1 inventory contract
 

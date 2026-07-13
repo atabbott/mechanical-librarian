@@ -274,11 +274,7 @@ def _capabilities(
         ConnectionCapability.COVER_BEHAVIOR: declared,
         ConnectionCapability.ROLLBACK_READ: CapabilityState.UNAVAILABLE,
         ConnectionCapability.RATE_LIMITS: CapabilityState.UNAVAILABLE,
-        ConnectionCapability.NOTIFICATIONS: (
-            CapabilityState.EXPERIMENTAL
-            if compatibility is CompatibilityState.SUPPORTED
-            else CapabilityState.INCOMPATIBLE
-        ),
+        ConnectionCapability.NOTIFICATIONS: CapabilityState.UNAVAILABLE,
         ConnectionCapability.CONCURRENCY_TOKENS: CapabilityState.UNAVAILABLE,
         ConnectionCapability.MUTATION: CapabilityState.UNAVAILABLE,
     }
