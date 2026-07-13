@@ -61,11 +61,13 @@ class SQLiteInventoryPollingRepository:
         try:
             with _transaction(self._connection):
                 duplicate = self._connection.execute(
-                    "SELECT poll_id FROM inventory_polls "
+                    "SELECT poll_id,scope_digest FROM inventory_polls "
                     "WHERE trigger_id=? AND governing_digest=?",
                     (request.trigger_id, request.governing_digest),
                 ).fetchone()
                 if duplicate is not None:
+                    if str(duplicate[1]) != request.scope_digest:
+                        return RepositoryResult(RepositoryOutcome.REJECTED)
                     return RepositoryResult(
                         RepositoryOutcome.ACCEPTED,
                         _inspection(self._row(str(duplicate[0]))),

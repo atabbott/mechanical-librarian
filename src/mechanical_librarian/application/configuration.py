@@ -412,6 +412,14 @@ class ApplicationConfiguration:
                 "max_response_bytes": self.inventory.max_response_bytes,
                 "timeout_seconds": self.inventory.timeout_seconds,
                 "stability_delay_seconds": self.inventory.stability_delay_seconds,
+                "poll_generation": self.inventory.poll_generation,
+                "max_attempts": self.inventory.max_attempts,
+                "max_elapsed_seconds": self.inventory.max_elapsed_seconds,
+                "initial_backoff_seconds": self.inventory.initial_backoff_seconds,
+                "max_backoff_seconds": self.inventory.max_backoff_seconds,
+                "connect_timeout_seconds": self.inventory.connect_timeout_seconds,
+                "read_timeout_seconds": self.inventory.read_timeout_seconds,
+                "max_in_flight_requests": self.inventory.max_in_flight_requests,
             },
             "evidence": {
                 "enabled_formats": list(self.evidence.enabled_formats),
@@ -695,6 +703,38 @@ _IMPACT_MATRIX: tuple[
     (
         "inventory.stability_delay_seconds",
         _inventory_projection("stability_delay_seconds"),
+        (_R, _I),
+    ),
+    ("inventory.poll_generation", _inventory_projection("poll_generation"), (_R, _I)),
+    ("inventory.max_attempts", _inventory_projection("max_attempts"), (_R, _I)),
+    (
+        "inventory.max_elapsed_seconds",
+        _inventory_projection("max_elapsed_seconds"),
+        (_R, _I),
+    ),
+    (
+        "inventory.initial_backoff_seconds",
+        _inventory_projection("initial_backoff_seconds"),
+        (_R, _I),
+    ),
+    (
+        "inventory.max_backoff_seconds",
+        _inventory_projection("max_backoff_seconds"),
+        (_R, _I),
+    ),
+    (
+        "inventory.connect_timeout_seconds",
+        _inventory_projection("connect_timeout_seconds"),
+        (_R, _I),
+    ),
+    (
+        "inventory.read_timeout_seconds",
+        _inventory_projection("read_timeout_seconds"),
+        (_R, _I),
+    ),
+    (
+        "inventory.max_in_flight_requests",
+        _inventory_projection("max_in_flight_requests"),
         (_R, _I),
     ),
     (

@@ -105,6 +105,15 @@ reclaimed stale worker cannot finish or publish. Abrupt death marks only scans
 linked to the expired attempt incomplete; cooperative cancellation is durable
 and never acknowledged as success.
 
+Migration 5 is forward-only and has no down migration. To roll back to a
+pre-F05b image after migration 5 has run, stop Mechanical Librarian, restore a
+verified pre-F05b database backup taken before migration 5, and only then start
+the prior image. Never start the prior image against migration-5 state or edit
+`schema_migrations` by hand. Before resuming normal operation, run the
+documented readback checks: `state-check`, the v1 synthetic inventory readback,
+and `inventory-inspect`, following the backup and rollback procedure in
+[Upgrades and migrations](upgrades.md).
+
 Transport, timeout, 408, 429, 5xx, and scan-instability failures use bounded
 restart-safe backoff. A valid `Retry-After` delta or HTTP date may extend local
 backoff only within the frozen elapsed window. Authentication, authorization,

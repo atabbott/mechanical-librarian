@@ -171,23 +171,19 @@ class RunInventoryPoll:
             return InventoryPollResult(InventoryPollOutcome.FAILED, None)
         inspection = scheduled.value
         self._record(inspection, InventoryPollStage.SCHEDULED)
-        if inspection.state is PollState.SUCCEEDED:
-            self._record(inspection, InventoryPollStage.SUCCEEDED)
-            return InventoryPollResult(InventoryPollOutcome.SUCCEEDED, inspection)
-        if inspection.state is PollState.BLOCKED:
-            self._record(inspection, InventoryPollStage.BLOCKED)
-            return InventoryPollResult(InventoryPollOutcome.BLOCKED, inspection)
-        if inspection.state in {PollState.FAILED_TERMINAL, PollState.CANCELLED}:
-            self._record(inspection, InventoryPollStage.FAILED)
-            return InventoryPollResult(InventoryPollOutcome.FAILED, inspection)
+        projected_outcome, projected_stage = _inspection_projection(inspection)
+        if projected_outcome is not InventoryPollOutcome.DEFERRED:
+            self._record(inspection, projected_stage)
+            return InventoryPollResult(projected_outcome, inspection)
         claimed = self._repository.claim(inspection.poll_id, worker_id, now)
         if not claimed.accepted or type(claimed.value) is not PollClaim:
             inspected = self._repository.inspect(inspection.poll_id)
-            deferred = inspected.value if inspected.accepted else inspection
-            self._record(deferred, InventoryPollStage.DEFERRED)
+            refreshed = inspected.value if inspected.accepted else inspection
+            projected_outcome, projected_stage = _inspection_projection(refreshed)
+            self._record(refreshed, projected_stage)
             return InventoryPollResult(
-                InventoryPollOutcome.DEFERRED,
-                deferred,
+                projected_outcome,
+                refreshed,
             )
         claim = claimed.value
         self._record_claim(claim)
@@ -283,6 +279,41 @@ def _usage(result: InventoryRunResult) -> ScanUsage:
         ),
         ScanUsage(),
     )
+
+
+def _inspection_projection(
+    inspection: PollInspection,
+) -> tuple[InventoryPollOutcome, InventoryPollStage]:
+    return {
+        PollState.SUCCEEDED: (
+            InventoryPollOutcome.SUCCEEDED,
+            InventoryPollStage.SUCCEEDED,
+        ),
+        PollState.BLOCKED: (
+            InventoryPollOutcome.BLOCKED,
+            InventoryPollStage.BLOCKED,
+        ),
+        PollState.FAILED_TERMINAL: (
+            InventoryPollOutcome.FAILED,
+            InventoryPollStage.FAILED,
+        ),
+        PollState.CANCELLED: (
+            InventoryPollOutcome.FAILED,
+            InventoryPollStage.FAILED,
+        ),
+        PollState.PENDING: (
+            InventoryPollOutcome.DEFERRED,
+            InventoryPollStage.DEFERRED,
+        ),
+        PollState.RUNNING: (
+            InventoryPollOutcome.DEFERRED,
+            InventoryPollStage.DEFERRED,
+        ),
+        PollState.RETRY_WAIT: (
+            InventoryPollOutcome.DEFERRED,
+            InventoryPollStage.DEFERRED,
+        ),
+    }[inspection.state]
 
 
 def _event_failure(value: str | None) -> FailureKind | str | None:

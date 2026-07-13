@@ -26,9 +26,14 @@ from mechanical_librarian.application.inventory_reconciliation import (
     InventoryOutcome,
     InventoryRunResult,
 )
+from mechanical_librarian.application.job_heartbeat import (
+    RepositoryOutcome,
+    RepositoryResult,
+)
 from mechanical_librarian.domain.identifiers import AdapterId, LibraryId
 from mechanical_librarian.domain.inventory_polling import (
     PollPolicy,
+    PollInspection,
     PollRequest,
     PollState,
 )
@@ -59,15 +64,26 @@ class InventoryPollingTests(unittest.TestCase):
         poll_id: str = "poll_a",
         trigger_id: str = "trigger_a",
         governing: str = "b" * 64,
+        scope: str = "a" * 64,
         max_attempts: int = 3,
+        max_elapsed_seconds: int = 300,
         max_pages: int = 30,
     ) -> PollRequest:
         return PollRequest(
             poll_id,
             trigger_id,
-            "a" * 64,
+            scope,
             governing,
-            PollPolicy(max_attempts, 300, 30, 5, 20, max_pages, 300, 30_000),
+            PollPolicy(
+                max_attempts,
+                max_elapsed_seconds,
+                30,
+                5,
+                20,
+                max_pages,
+                300,
+                30_000,
+            ),
         )
 
     def failure(
@@ -96,6 +112,52 @@ class InventoryPollingTests(unittest.TestCase):
             "SELECT state,attempt,max_attempts,max_pages FROM inventory_polls"
         ).fetchone()
         self.assertEqual(row, ("pending", 0, 3, 30))
+
+    def test_pending_duplicate_identity_rejects_scope_mismatch_before_io(self) -> None:
+        self.repository.schedule(self.request(), NOW)
+
+        result = RunInventoryPoll(self.repository).run(
+            self.request(poll_id="poll_b", scope="c" * 64),
+            "worker_b",
+            NOW + timedelta(seconds=1),
+            lambda _claim: self.fail("scope mismatch performed target I/O"),
+            lambda: NOW + timedelta(seconds=2),
+        )
+
+        self.assertEqual(result.outcome, InventoryPollOutcome.FAILED)
+        self.assertIsNone(result.inspection)
+        rows = self.connection.execute(
+            "SELECT poll_id,scope_digest,state,attempt FROM inventory_polls"
+        ).fetchall()
+        self.assertEqual(rows, [("poll_a", "a" * 64, "pending", 0)])
+
+    def test_succeeded_duplicate_identity_rejects_scope_mismatch_before_io(
+        self,
+    ) -> None:
+        service = RunInventoryPoll(self.repository)
+        succeeded = service.run(
+            self.request(),
+            "worker_a",
+            NOW,
+            lambda _claim: InventoryRunResult(InventoryOutcome.READY, ()),
+            lambda: NOW + timedelta(seconds=1),
+        )
+
+        mismatched = service.run(
+            self.request(poll_id="poll_b", scope="c" * 64),
+            "worker_b",
+            NOW + timedelta(seconds=2),
+            lambda _claim: self.fail("scope mismatch performed target I/O"),
+            lambda: NOW + timedelta(seconds=3),
+        )
+
+        self.assertEqual(succeeded.outcome, InventoryPollOutcome.SUCCEEDED)
+        self.assertEqual(mismatched.outcome, InventoryPollOutcome.FAILED)
+        self.assertIsNone(mismatched.inspection)
+        rows = self.connection.execute(
+            "SELECT poll_id,scope_digest,state,attempt FROM inventory_polls"
+        ).fetchall()
+        self.assertEqual(rows, [("poll_a", "a" * 64, "succeeded", 1)])
 
     def test_retry_wait_survives_restart_and_does_not_reset_usage(self) -> None:
         self.repository.schedule(self.request(), NOW)
@@ -260,6 +322,147 @@ class InventoryPollingTests(unittest.TestCase):
         self.assertEqual(first.outcome, InventoryPollOutcome.SUCCEEDED)
         self.assertEqual(duplicate.outcome, InventoryPollOutcome.SUCCEEDED)
         self.assertEqual(len(calls), 1)
+
+    def test_rejected_claim_projects_every_refreshed_state_and_telemetry(
+        self,
+    ) -> None:
+        cases = (
+            (PollState.SUCCEEDED, InventoryPollOutcome.SUCCEEDED, InventoryPollStage.SUCCEEDED),
+            (PollState.BLOCKED, InventoryPollOutcome.BLOCKED, InventoryPollStage.BLOCKED),
+            (PollState.FAILED_TERMINAL, InventoryPollOutcome.FAILED, InventoryPollStage.FAILED),
+            (PollState.CANCELLED, InventoryPollOutcome.FAILED, InventoryPollStage.FAILED),
+            (PollState.PENDING, InventoryPollOutcome.DEFERRED, InventoryPollStage.DEFERRED),
+            (PollState.RUNNING, InventoryPollOutcome.DEFERRED, InventoryPollStage.DEFERRED),
+            (PollState.RETRY_WAIT, InventoryPollOutcome.DEFERRED, InventoryPollStage.DEFERRED),
+        )
+        scheduled = PollInspection(
+            "poll_a",
+            PollState.PENDING,
+            0,
+            3,
+            0,
+            ScanUsage(),
+            None,
+            None,
+            None,
+            False,
+        )
+
+        for state, expected_outcome, expected_stage in cases:
+            with self.subTest(state=state):
+                failure = {
+                    PollState.BLOCKED: FailureKind.UNSUPPORTED.value,
+                    PollState.FAILED_TERMINAL: "lease_expired",
+                    PollState.CANCELLED: FailureKind.CANCELLED.value,
+                }.get(state)
+                refreshed = PollInspection(
+                    "poll_a",
+                    state,
+                    1,
+                    3,
+                    1,
+                    ScanUsage(),
+                    None,
+                    failure,
+                    "supported",
+                    state is PollState.CANCELLED,
+                )
+
+                class ClaimRejectedRepository:
+                    def schedule(self, _request, _now):
+                        return RepositoryResult(RepositoryOutcome.ACCEPTED, scheduled)
+
+                    def claim(self, _poll_id, _worker_id, _now):
+                        return RepositoryResult(RepositoryOutcome.REJECTED)
+
+                    def inspect(self, _poll_id):
+                        return RepositoryResult(RepositoryOutcome.ACCEPTED, refreshed)
+
+                events = []
+
+                class Telemetry:
+                    def record(self, event):
+                        events.append(event)
+
+                result = RunInventoryPoll(
+                    ClaimRejectedRepository(),
+                    telemetry=Telemetry(),
+                    adapter=AdapterId("fixture"),
+                ).run(
+                    self.request(),
+                    "worker_a",
+                    NOW,
+                    lambda _claim: self.fail("rejected claim performed target I/O"),
+                    lambda: NOW + timedelta(seconds=1),
+                )
+
+                self.assertEqual(result.outcome, expected_outcome)
+                self.assertIs(result.inspection, refreshed)
+                self.assertEqual(
+                    [event.stage for event in events],
+                    [InventoryPollStage.SCHEDULED, expected_stage],
+                )
+
+    def test_rejected_claim_projects_repository_terminalization_without_io(
+        self,
+    ) -> None:
+        service = RunInventoryPoll(self.repository)
+
+        elapsed_request = self.request(
+            poll_id="poll_elapsed",
+            trigger_id="trigger_elapsed",
+            governing="c" * 64,
+        )
+        self.repository.schedule(elapsed_request, NOW)
+        elapsed = service.run(
+            elapsed_request,
+            "worker_elapsed",
+            NOW + timedelta(seconds=301),
+            lambda _claim: self.fail("elapsed poll performed target I/O"),
+            lambda: NOW + timedelta(seconds=302),
+        )
+
+        cancelled_request = self.request(
+            poll_id="poll_cancelled",
+            trigger_id="trigger_cancelled",
+            governing="d" * 64,
+        )
+        self.repository.schedule(cancelled_request, NOW)
+        self.repository.claim("poll_cancelled", "worker_first", NOW)
+        self.repository.cancel("poll_cancelled", NOW + timedelta(seconds=1))
+        cancelled = service.run(
+            cancelled_request,
+            "worker_second",
+            NOW + timedelta(seconds=31),
+            lambda _claim: self.fail("cancelled poll performed target I/O"),
+            lambda: NOW + timedelta(seconds=32),
+        )
+
+        final_request = self.request(
+            poll_id="poll_final",
+            trigger_id="trigger_final",
+            governing="e" * 64,
+            max_attempts=1,
+        )
+        self.repository.schedule(final_request, NOW)
+        self.repository.claim("poll_final", "worker_first", NOW)
+        final_attempt = service.run(
+            final_request,
+            "worker_second",
+            NOW + timedelta(seconds=31),
+            lambda _claim: self.fail("expired final attempt performed target I/O"),
+            lambda: NOW + timedelta(seconds=32),
+        )
+
+        self.assertEqual(elapsed.outcome, InventoryPollOutcome.FAILED)
+        self.assertEqual(elapsed.inspection.state, PollState.FAILED_TERMINAL)
+        self.assertEqual(elapsed.inspection.failure_kind, "elapsed_budget_exhausted")
+        self.assertEqual(cancelled.outcome, InventoryPollOutcome.FAILED)
+        self.assertEqual(cancelled.inspection.state, PollState.CANCELLED)
+        self.assertEqual(cancelled.inspection.failure_kind, "cancelled")
+        self.assertEqual(final_attempt.outcome, InventoryPollOutcome.FAILED)
+        self.assertEqual(final_attempt.inspection.state, PollState.FAILED_TERMINAL)
+        self.assertEqual(final_attempt.inspection.failure_kind, "lease_expired")
 
     def test_application_emits_only_bounded_poll_telemetry(self) -> None:
         events = []
