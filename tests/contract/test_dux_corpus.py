@@ -263,15 +263,54 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 self.assertEqual(raised.exception.rule, rule)
                 self.assertNotIn(sentinel, str(raised.exception))
 
-    def test_recursive_audit_rejects_token_labels_without_rejecting_safe_prose(self) -> None:
-        rejected_values = (
+    def test_recursive_audit_rejects_finite_credential_label_matrix(self) -> None:
+        nouns = (
+            "authorization",
+            "authorizations",
+            "bearer",
+            "bearers",
+            "cookie",
+            "cookies",
+            "credential",
+            "credentials",
+            "header",
+            "headers",
+            "key",
+            "keys",
+            "password",
+            "passwords",
+            "secret",
+            "secrets",
             "token",
             "--token--",
-            "sessiontoken",
-            "idtoken",
-            *(f"session{delimiter}token" for delimiter in (".", "_", "-", " ", ":", "/")),
-            *(f"id{delimiter}token" for delimiter in (".", "_", "-", " ", ":", "/")),
-            "session%2Etoken",
+        )
+        compounds = (
+            ("api", "key"),
+            ("private", "key"),
+            ("access", "key"),
+            ("secret", "key"),
+            ("access", "token"),
+            ("refresh", "token"),
+            ("session", "token"),
+            ("id", "token"),
+            ("auth", "token"),
+            ("session", "cookie"),
+            ("client", "secret"),
+        )
+        delimiters = ("", ".", "_", "-", " ", ":", "/", "%2E")
+        rejected_values = (
+            *nouns,
+            *(
+                f"{prefix}{delimiter}{noun}{suffix}"
+                for prefix, noun in compounds
+                for suffix in ("", "s")
+                for delimiter in delimiters
+            ),
+            "accesskeyid",
+            "accesskeyids",
+            "access key id",
+            "access key ids",
+            "access%2Ekey%2Eids",
         )
         for sentinel in rejected_values:
             with self.subTest(location="value", sentinel=sentinel), _corpus_copy() as root:
@@ -282,25 +321,87 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 )
                 with self.assertRaises(CorpusValidationError) as raised:
                     load_registry(root)
-                self.assertEqual(raised.exception.rule, "DUX021_SECRET_SHAPE")
+                expected_rule = (
+                    "DUX022_PROHIBITED_PATH"
+                    if sentinel in {"private/key", "private/keys"}
+                    else "DUX021_SECRET_SHAPE"
+                )
+                self.assertEqual(raised.exception.rule, expected_rule)
                 self.assertNotIn(sentinel, str(raised.exception))
 
-        with self.subTest(location="nested-key"), _corpus_copy() as root:
-            _rewrite(
-                root,
-                "dux-synthetic-01.json",
-                lambda item: item["contract"]["input"].__setitem__("token", "synthetic-value"),
-            )
-            with self.assertRaises(CorpusValidationError) as raised:
-                load_registry(root)
-            self.assertEqual(raised.exception.rule, "DUX021_SECRET_SHAPE")
-            self.assertNotIn("token", str(raised.exception))
+        for sentinel in ("credentials", "api_keys", "session%2Ecookies", "authtokens"):
+            with self.subTest(location="nested-key", sentinel=sentinel), _corpus_copy() as root:
+                _rewrite(
+                    root,
+                    "dux-synthetic-01.json",
+                    lambda item, value=sentinel: item["contract"]["input"].__setitem__(
+                        value, "synthetic-value"
+                    ),
+                )
+                with self.assertRaises(CorpusValidationError) as raised:
+                    load_registry(root)
+                self.assertEqual(raised.exception.rule, "DUX021_SECRET_SHAPE")
+                self.assertNotIn(sentinel, str(raised.exception))
 
         for sentinel in (
             "token bucket behavior",
             "purpose tokens remain synthetic",
             "tokenized value remains synthetic",
             "tokenization remains synthetic",
+            "credentials policy remains synthetic",
+            "keys remain synthetic labels in this sentence",
+        ):
+            with self.subTest(location="safe-value", sentinel=sentinel), _corpus_copy() as root:
+                _rewrite(
+                    root,
+                    "dux-synthetic-01.json",
+                    lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
+                )
+                self.assertEqual(len(load_registry(root).scenarios), len(CATEGORIES))
+
+    def test_recursive_audit_rejects_browser_storage_label_matrix(self) -> None:
+        delimiters = ("", ".", "_", "-", " ", ":", "/", "%2E")
+        rejected_values = tuple(
+            f"{scope}{delimiter}storage"
+            for scope in ("local", "session")
+            for delimiter in delimiters
+        )
+        for sentinel in rejected_values:
+            with self.subTest(location="value", sentinel=sentinel), _corpus_copy() as root:
+                _rewrite(
+                    root,
+                    "dux-synthetic-01.json",
+                    lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
+                )
+                with self.assertRaises(CorpusValidationError) as raised:
+                    load_registry(root)
+                expected_rule = (
+                    "DUX023_DOMAIN_OR_URL"
+                    if sentinel in {"local.storage", "session.storage"}
+                    else "DUX027_SOURCE_LITERAL"
+                )
+                self.assertEqual(raised.exception.rule, expected_rule)
+                self.assertNotIn(sentinel, str(raised.exception))
+
+        for sentinel in ("local_storage", "session%2Estorage"):
+            with self.subTest(location="nested-key", sentinel=sentinel), _corpus_copy() as root:
+                _rewrite(
+                    root,
+                    "dux-synthetic-01.json",
+                    lambda item, value=sentinel: item["contract"]["input"].__setitem__(
+                        value, "synthetic-value"
+                    ),
+                )
+                with self.assertRaises(CorpusValidationError) as raised:
+                    load_registry(root)
+                self.assertEqual(raised.exception.rule, "DUX027_SOURCE_LITERAL")
+                self.assertNotIn(sentinel, str(raised.exception))
+
+        for sentinel in (
+            "local generated storage remains synthetic",
+            "storage local remains synthetic",
+            "locality storage remains synthetic",
+            "sessionized storage remains synthetic",
         ):
             with self.subTest(location="safe-value", sentinel=sentinel), _corpus_copy() as root:
                 _rewrite(
@@ -371,7 +472,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             "Generated credentialing behavior.",
             "Generated%09credentialing behavior.",
             "Generated apikeyed behavior.",
-            "Generated privatekeys behavior.",
+            "Generated privatekeyed behavior.",
             "Generated clientsecretary behavior.",
             "Generated productionist behavior.",
             "Generated supportive bundle behavior.",

@@ -93,7 +93,12 @@ _GENERIC_URI_SCHEME = re.compile(
 )
 _IP = re.compile(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b|(?:^|[^0-9a-f:])(?:[0-9a-f]{0,4}:){2,}[0-9a-f:]{0,4}", re.IGNORECASE)
 _SECRET = re.compile(
-    r"(?:\b(?:authorization|bearer|cookie|credential|header|key|password|passwd|secret|api key|apikey|private key|privatekey|access key(?: id)?|accesskey(?:id)?|secret key|secretkey|access token|accesstoken|refresh token|refreshtoken|session token|sessiontoken|id token|idtoken|client secret|clientsecret)\b|^\s*token\s*$)",
+    r"(?:\b(?:authorization|bearer|cookie|credential|header|key|password|passwd|secret|"
+    r"api keys?|apikeys?|private keys?|privatekeys?|access keys?|accesskeys?|access key ids?|accesskeyids?|"
+    r"secret keys?|secretkeys?|access tokens?|accesstokens?|refresh tokens?|refreshtokens?|"
+    r"session tokens?|sessiontokens?|id tokens?|idtokens?|auth tokens?|authtokens?|"
+    r"session cookies?|sessioncookies?|client secrets?|clientsecrets?)\b|"
+    r"^\s*(?:authorizations|bearers|cookies|credentials|headers|keys|passwords|secrets|token)\s*$)",
     re.IGNORECASE,
 )
 _STATE = re.compile(
@@ -106,7 +111,7 @@ _PRODUCTION_ID = re.compile(
     re.IGNORECASE,
 )
 _PROTOTYPE = re.compile(
-    r"(?:<html|\blocalstorage\b|\bsessionstorage\b|\bdashboard\b|\bgenerated source marker\b|\bprototype\b|\brenderer\b|\bbrowser local\b)",
+    r"(?:<html|\b(?:local storage|localstorage|session storage|sessionstorage)\b|\bdashboard\b|\bgenerated source marker\b|\bprototype\b|\brenderer\b|\bbrowser local\b)",
     re.IGNORECASE,
 )
 _COPYRIGHT = re.compile(
@@ -242,8 +247,11 @@ def _audit(value: Any, *, scenario: str, ordinal: int, path: tuple[str, ...] = (
         for key, child in value.items():
             if type(key) is not str:
                 _fail("DUX020_UNSAFE_TEXT", scenario=scenario, ordinal=ordinal)
-            if _SECRET.search(_normalized_labels(key)):
+            normalized_key = _normalized_labels(key)
+            if _SECRET.search(normalized_key):
                 _fail("DUX021_SECRET_SHAPE", scenario=scenario, ordinal=ordinal)
+            if _PROTOTYPE.search(normalized_key):
+                _fail("DUX027_SOURCE_LITERAL", scenario=scenario, ordinal=ordinal)
             _audit(child, scenario=scenario, ordinal=ordinal, path=(*path, key))
         return
     if type(value) is list:
