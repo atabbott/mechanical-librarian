@@ -34,6 +34,10 @@ versioning after the first public release.
 
 ### Added
 
+- A target-scoped `connection-check --config PATH` report for a configured
+  Audiobookshelf instance, with bounded Bearer authorization, version and
+  capability compatibility, redacted output, and no library/content reads,
+  persistence, provider/reviewer access, or mutation authority.
 - A report-only `synthetic-inventory --config PATH --database PATH` round trip
   with strict config-v1 JSON validation, additive migration-3 persistence,
   restart-safe inspection, and executable mutation-authority isolation.

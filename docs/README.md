@@ -52,6 +52,7 @@ release standards as code.
 - [Durable state check](operations/state-check.md)
 - [Recoverable synthetic job heartbeat](operations/job-heartbeat.md)
 - [Synthetic inventory round trip](operations/synthetic-inventory.md)
+- [Audiobookshelf connection check](operations/audiobookshelf-connection.md)
 - [Deployment model](operations/deployment.md)
 - [Backups and recovery](operations/backups-and-recovery.md)
 - [Observability and supportability](operations/observability.md)

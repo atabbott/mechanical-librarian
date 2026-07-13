@@ -15,6 +15,14 @@ from mechanical_librarian.adapters.library_services.synthetic import (
     SyntheticLibraryReader,
     synthetic_capabilities,
 )
+from mechanical_librarian.adapters.library_services.audiobookshelf import (
+    AudiobookshelfConnectionProbe,
+)
+from mechanical_librarian.application.connection_probe import (
+    ConnectionProbeOutcome,
+    ConnectionProbeResult,
+    InspectLibraryConnection,
+)
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.job_heartbeat import (
     HeartbeatOutcome,
@@ -31,7 +39,14 @@ from mechanical_librarian.application.ports import (
     CancellationProbe,
     Deadline,
     OperationContext,
+    FailureKind,
+    PortFailure,
+    PortResult,
     ResourceBounds,
+    RetryAdvice,
+    SafeSummary,
+    SecretHandle,
+    SecretScope,
     TimeProbe,
 )
 from mechanical_librarian.application.synthetic_inventory import (
@@ -42,6 +57,11 @@ from mechanical_librarian.application.synthetic_inventory import (
 from mechanical_librarian.domain.identifiers import AdapterId, LibraryId
 from mechanical_librarian.domain.inventory import LibraryConnection
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.security.target_secrets import (
+    PrivateFileTargetCredentials,
+    SecretFileUnavailable,
+    target_endpoint_allowed,
+)
 from mechanical_librarian.infrastructure.persistence.sqlite import (
     SchemaError,
     connect,
@@ -243,6 +263,66 @@ def _run_synthetic_inventory(
         return SyntheticInventoryResult(SyntheticInventoryOutcome.INTERNAL_FAILURE)
 
 
+def _run_connection_probe(configuration_path: Path) -> ConnectionProbeResult:
+    """Compose one isolated target-only probe without durable or mutation authority."""
+
+    try:
+        configuration = load_configuration_file(configuration_path)
+        if (
+            len(configuration.connections) != 1
+            or configuration.connections[0].adapter != "audiobookshelf"
+            or configuration.connections[0].connection_id is None
+            or configuration.connections[0].capability_overrides
+            or configuration.providers
+            or configuration.reviewers
+            or configuration.notifications
+        ):
+            return ConnectionProbeResult(ConnectionProbeOutcome.CONFIGURATION_FAILURE)
+        configured = configuration.connections[0]
+        if not target_endpoint_allowed(configured.endpoint):
+            return ConnectionProbeResult(ConnectionProbeOutcome.CONFIGURATION_FAILURE)
+        credentials = PrivateFileTargetCredentials()
+        if not credentials.configured(configured.secret):
+            return ConnectionProbeResult(ConnectionProbeOutcome.SECRET_UNAVAILABLE)
+        handle = SecretHandle(configured.secret, SecretScope.TARGET_SERVICE)
+
+        def client_factory():
+            try:
+                return PortResult.success(
+                    credentials.target_client(handle, configured.endpoint)
+                )
+            except SecretFileUnavailable:
+                return PortResult.failed(
+                    PortFailure(
+                        FailureKind.NOT_FOUND,
+                        RetryAdvice(False),
+                        SafeSummary("connection credential unavailable"),
+                    )
+                )
+
+        probe = AudiobookshelfConnectionProbe(
+            configured.endpoint,
+            client_factory=client_factory,
+        )
+        now = datetime.now(timezone.utc)
+        context = OperationContext(
+            Deadline(now + timedelta(seconds=30)),
+            CancellationProbe(CancellationId("connection-check"), lambda: False),
+            ResourceBounds(1, 65_536),
+            TimeProbe(lambda: datetime.now(timezone.utc)),
+        )
+        return InspectLibraryConnection(
+            AdapterId(configured.adapter),
+            configured.connection_id,
+            tuple(LibraryId(value) for value in configured.enabled_libraries),
+            probe,
+        ).run(context)
+    except ConfigurationError:
+        return ConnectionProbeResult(ConnectionProbeOutcome.CONFIGURATION_FAILURE)
+    except Exception:
+        return ConnectionProbeResult(ConnectionProbeOutcome.INTERNAL_FAILURE)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Assemble the current process and delegate to its CLI interface."""
 
@@ -251,6 +331,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         state_check_runner=_run_state_check,
         job_heartbeat_runner=_run_job_heartbeat,
         synthetic_inventory_runner=_run_synthetic_inventory,
+        connection_probe_runner=_run_connection_probe,
     )
 
 
