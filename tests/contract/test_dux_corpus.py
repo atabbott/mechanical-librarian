@@ -359,6 +359,113 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 )
                 self.assertEqual(len(load_registry(root).scenarios), len(CATEGORIES))
 
+    def test_recursive_audit_rejects_finite_state_marker_matrix(self) -> None:
+        nouns = ("database", "report", "runtime")
+        compounds = (
+            ("production", "state"),
+            ("browser", "state"),
+            ("saved", "browser", "state"),
+            ("support", "bundle"),
+        )
+        delimiters = ("", ".", "_", "-", " ", ":", "/")
+        encoded_delimiters = ("%2E", "%5F", "%2D", "%20", "%3A", "%2F", "%09")
+        rejected = (
+            "production",
+            *(noun + suffix for noun in nouns for suffix in ("", "s")),
+            *(
+                delimiter.join((*prefix, noun + suffix))
+                for *prefix, noun in compounds
+                for suffix in ("", "s")
+                for delimiter in (*delimiters, *encoded_delimiters)
+            ),
+        )
+        embedded = (
+            "prefix_browserstate_suffix",
+            "fixture/supportbundle/value",
+            "fixture%5Fproductionstate%5Fvalue",
+            "prefix_savedbrowserstates_suffix",
+            "prefix_browser_states_suffix",
+            "prefix_reports_suffix",
+        )
+        legacy_overlaps = (
+            ("/home/generated/reports", "DUX022_PROHIBITED_PATH"),
+            ("secret.report", "DUX021_SECRET_SHAPE"),
+            ("generated.production-report", "DUX025_PRODUCTION_STATE"),
+            ("report:copyright", "DUX025_PRODUCTION_STATE"),
+            ("report:123e4567-e89b-42d3-a456-426614174000", "DUX025_PRODUCTION_STATE"),
+            ("report:192.0.2.44", "DUX025_PRODUCTION_STATE"),
+            ("report.example.invalid", "DUX025_PRODUCTION_STATE"),
+            ("report:prototype", "DUX025_PRODUCTION_STATE"),
+            ("custom:report", "DUX025_PRODUCTION_STATE"),
+            ("custom:saved_browser_state", "DUX025_PRODUCTION_STATE"),
+        )
+        specific_overlaps = (
+            ("/home/generated/browser_states", "DUX022_PROHIBITED_PATH"),
+            ("secret.browser_states", "DUX021_SECRET_SHAPE"),
+            ("databases:copyright", "DUX028_COPYRIGHT"),
+            ("reports.example.invalid", "DUX023_DOMAIN_OR_URL"),
+            ("runtimes:192.0.2.44", "DUX024_NETWORK_ADDRESS"),
+            ("reports:123e4567-e89b-42d3-a456-426614174000", "DUX026_PRODUCTION_ID"),
+            ("prototype.browser_state", "DUX027_SOURCE_LITERAL"),
+            ("custom:browser_states", "DUX023_DOMAIN_OR_URL"),
+            ("prefix.savedbrowserstates.suffix", "DUX023_DOMAIN_OR_URL"),
+        )
+        benign = (
+            "databases remain synthetic prose",
+            "reports remain synthetic prose",
+            "reporting remains synthetic",
+            "runtimes remain synthetic prose",
+            "runtimeish-neutrality remains synthetic",
+            "productionized states remain synthetic prose",
+            "browser state remains synthetic prose",
+            "browser states remain synthetic prose",
+            "saved browser states remain synthetic prose",
+            "support bundles remain synthetic prose",
+            "supportive bundles remain synthetic",
+            "databaseish label remains synthetic",
+        )
+        benign_keys = (
+            "database migration remains synthetic",
+            "report remains synthetic prose",
+            "runtime neutrality remains synthetic",
+            "saved browser state remains synthetic prose",
+            "support bundle remains synthetic prose",
+        )
+        cases = (
+            *(("value", marker, "DUX025_PRODUCTION_STATE") for marker in rejected),
+            *(("nested-key", marker, "DUX025_PRODUCTION_STATE") for marker in rejected),
+            *(("value", marker, "DUX025_PRODUCTION_STATE") for marker in embedded),
+            *(("nested-key", marker, "DUX025_PRODUCTION_STATE") for marker in embedded),
+            *(("value", marker, rule) for marker, rule in legacy_overlaps),
+            *(("value", marker, rule) for marker, rule in specific_overlaps),
+            *(("nested-key", marker, rule) for marker, rule in specific_overlaps),
+            *(("safe-value", marker, None) for marker in benign),
+            *(("benign-nested-key", marker, "DUX016_CONTRACT") for marker in benign_keys),
+        )
+        for location, sentinel, expected_rule in cases:
+            with self.subTest(location=location, sentinel=sentinel), _corpus_copy() as root:
+                if location in {"nested-key", "benign-nested-key"}:
+                    _rewrite(
+                        root,
+                        "dux-synthetic-01.json",
+                        lambda item, value=sentinel: item["contract"]["input"].__setitem__(
+                            value, "synthetic-value"
+                        ),
+                    )
+                else:
+                    _rewrite(
+                        root,
+                        "dux-synthetic-01.json",
+                        lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
+                    )
+                if expected_rule is None:
+                    self.assertEqual(len(load_registry(root).scenarios), len(CATEGORIES))
+                    continue
+                with self.assertRaises(CorpusValidationError) as raised:
+                    load_registry(root)
+                self.assertEqual(raised.exception.rule, expected_rule)
+                self.assertNotIn(sentinel, str(raised.exception))
+
     def test_recursive_audit_rejects_browser_storage_label_matrix(self) -> None:
         delimiters = ("", ".", "_", "-", " ", ":", "/", "%2E")
         rejected_values = tuple(

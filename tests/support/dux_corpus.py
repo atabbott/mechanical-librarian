@@ -101,9 +101,38 @@ _SECRET = re.compile(
     r"^\s*(?:authorizations|bearers|cookies|credentials|headers|keys|passwords|secrets|token)\s*$)",
     re.IGNORECASE,
 )
-_STATE = re.compile(
+_LEGACY_STATE = re.compile(
     r"\b(?:database|report|runtime|production|saved browser state|support bundle)\b",
     re.IGNORECASE,
+)
+_STATE_NOUNS = frozenset(
+    {
+        "database",
+        "databases",
+        "production",
+        "report",
+        "reports",
+        "runtime",
+        "runtimes",
+    }
+)
+_STATE_COMPOUNDS = frozenset(
+    {
+        "browser state",
+        "browser states",
+        "production state",
+        "production states",
+        "saved browser state",
+        "saved browser states",
+        "support bundle",
+        "support bundles",
+    }
+)
+_STATE_COMPOUND_PARTS = tuple(tuple(item.split()) for item in _STATE_COMPOUNDS)
+_STATE_COMPACT = frozenset(item.replace(" ", "") for item in _STATE_COMPOUNDS)
+_STRUCTURED_LABEL = re.compile(r"^[a-z0-9%._:/-]+$", re.IGNORECASE)
+_STRUCTURED_DELIMITER = re.compile(
+    r"[._:/-]|%(?:0[9a-d]|20|2d|2e|3a|5f|2f)", re.IGNORECASE
 )
 _PRODUCTION_ID = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b|"
@@ -242,6 +271,42 @@ def _normalized_labels(value: str) -> str:
     return re.sub(r"[_.\-\s:/]+", " ", decoded_delimiters)
 
 
+def _normalized_state_label(value: str) -> str:
+    return " ".join(_normalized_labels(value).casefold().split())
+
+
+def _is_exact_state_marker(value: str) -> bool:
+    normalized = _normalized_state_label(value)
+    return (
+        normalized in _STATE_NOUNS
+        or normalized in _STATE_COMPOUNDS
+        or normalized.replace(" ", "") in _STATE_COMPACT
+    )
+
+
+def _structured_state_parts(value: str) -> tuple[str, ...]:
+    if not _STRUCTURED_LABEL.fullmatch(value) or not _STRUCTURED_DELIMITER.search(value):
+        return ()
+    return tuple(_normalized_state_label(value).split())
+
+
+def _has_embedded_state_marker(value: str) -> bool:
+    parts = _structured_state_parts(value)
+    if not parts:
+        return False
+    if any(part in _STATE_NOUNS or part in _STATE_COMPACT for part in parts):
+        return True
+    return any(
+        parts[index : index + len(marker)] == marker
+        for marker in _STATE_COMPOUND_PARTS
+        for index in range(len(parts) - len(marker) + 1)
+    )
+
+
+def _is_legacy_state_marker(value: str) -> bool:
+    return _LEGACY_STATE.search(_normalized_labels(value)) is not None
+
+
 def _audit(value: Any, *, scenario: str, ordinal: int, path: tuple[str, ...] = ()) -> None:
     if type(value) is dict:
         for key, child in value.items():
@@ -252,6 +317,22 @@ def _audit(value: Any, *, scenario: str, ordinal: int, path: tuple[str, ...] = (
                 _fail("DUX021_SECRET_SHAPE", scenario=scenario, ordinal=ordinal)
             if _PROTOTYPE.search(normalized_key):
                 _fail("DUX027_SOURCE_LITERAL", scenario=scenario, ordinal=ordinal)
+            if _is_exact_state_marker(key):
+                _fail("DUX025_PRODUCTION_STATE", scenario=scenario, ordinal=ordinal)
+            if _has_embedded_state_marker(key):
+                state_overlap_checks = (
+                    ("DUX022_PROHIBITED_PATH", _PATH, key),
+                    ("DUX028_COPYRIGHT", _COPYRIGHT, normalized_key),
+                    ("DUX023_DOMAIN_OR_URL", _URL_EMAIL_DOMAIN, key),
+                    ("DUX024_NETWORK_ADDRESS", _IP, key),
+                    ("DUX026_PRODUCTION_ID", _PRODUCTION_ID, key),
+                )
+                for rule, pattern, selected in state_overlap_checks:
+                    if pattern.search(selected):
+                        _fail(rule, scenario=scenario, ordinal=ordinal)
+                if _GENERIC_URI_SCHEME.search(key):
+                    _fail("DUX023_DOMAIN_OR_URL", scenario=scenario, ordinal=ordinal)
+                _fail("DUX025_PRODUCTION_STATE", scenario=scenario, ordinal=ordinal)
             _audit(child, scenario=scenario, ordinal=ordinal, path=(*path, key))
         return
     if type(value) is list:
@@ -269,22 +350,31 @@ def _audit(value: Any, *, scenario: str, ordinal: int, path: tuple[str, ...] = (
     if SOURCE_COMMIT in value or SOURCE_TAG in value:
         _fail("DUX027_SOURCE_LITERAL", scenario=scenario, ordinal=ordinal)
     normalized = _normalized_labels(value)
-    checks = (
+    checks_before_state = (
         ("DUX022_PROHIBITED_PATH", _PATH),
         ("DUX021_SECRET_SHAPE", _SECRET, normalized),
-        ("DUX025_PRODUCTION_STATE", _STATE, normalized),
+    )
+    for item in checks_before_state:
+        rule, pattern, *selected = item
+        if pattern.search(selected[0] if selected else value):
+            _fail(rule, scenario=scenario, ordinal=ordinal)
+    if _is_legacy_state_marker(value) or _is_exact_state_marker(value):
+        _fail("DUX025_PRODUCTION_STATE", scenario=scenario, ordinal=ordinal)
+    checks_after_state = (
         ("DUX028_COPYRIGHT", _COPYRIGHT, normalized),
         ("DUX023_DOMAIN_OR_URL", _URL_EMAIL_DOMAIN),
         ("DUX024_NETWORK_ADDRESS", _IP),
         ("DUX026_PRODUCTION_ID", _PRODUCTION_ID),
         ("DUX027_SOURCE_LITERAL", _PROTOTYPE, normalized),
     )
-    for item in checks:
+    for item in checks_after_state:
         rule, pattern, *selected = item
         if pattern.search(selected[0] if selected else value):
             _fail(rule, scenario=scenario, ordinal=ordinal)
     if _GENERIC_URI_SCHEME.search(value):
         _fail("DUX023_DOMAIN_OR_URL", scenario=scenario, ordinal=ordinal)
+    if _has_embedded_state_marker(value):
+        _fail("DUX025_PRODUCTION_STATE", scenario=scenario, ordinal=ordinal)
 
 
 def _freeze(value: Any) -> Any:
