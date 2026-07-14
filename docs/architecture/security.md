@@ -66,6 +66,60 @@ main-database repository, or mutation port. When providers are disabled,
 composition constructs no provider adapter or network client, resolves no
 provider secret, and permits no provider egress.
 
+### 0.2 title technical-preview boundary
+
+The planned 0.2 path remains report-only. F06 parses one generated EPUB using
+bounded read-only input and has no network client, credential, application
+repository, or persistence authority; only its bounded canonical package-title
+outcome may later enter the title join. F09a substitutes a deterministic fake
+provider. F09b uses the same application-owned provider port and supplies the
+Hardcover adapter only the minimum bounded title-query facts, its own
+account-capable provider token, and a dedicated outbound client.
+
+Before F09b can be marked Ready or implementation begins, its supported
+contract must freeze the exact outbound field allowlist and record the
+disclosure purpose for each field. This threat model does not invent that list.
+Any undeclared field is denied rather than sent.
+
+That client is fixed to HTTPS POST at
+`https://api.hardcover.app/v1/graphql` and one fixed read-only GraphQL query.
+Neither endpoint nor query is operator-controlled. It sends no target-service
+credential, cookies, raw service rows, external item identifiers, private
+paths, media, or mutation capability. TLS validation is mandatory; redirects
+are not followed; DNS results resolving to loopback, link-local, multicast,
+private, or reserved space are rejected. Request bytes, response bytes, content
+type, JSON depth, collection count, retained title length, per-attempt and total
+deadline, attempt count, and retry backoff have fixed finite limits; concurrency
+is one in-flight provider request. Cancellation stops further attempts. Logs,
+diagnostics, exceptions, and test fixtures redact the provider token and
+authorization headers.
+
+Provider responses remain untrusted. The adapter validates a closed response
+shape and retains only a bounded canonical title candidate with opaque
+provider provenance. That canonical candidate/evidence and provenance are
+classified as retained evidence and follow the documented evidence-retention,
+owner inspection, export, and deletion behavior. Raw responses, upstream
+provider identifiers, headers, and request bodies are neither persisted nor
+cached. Disabled configuration constructs no provider adapter or client,
+resolves no provider secret, performs no DNS lookup, and permits no egress.
+
+The current target snapshot, F06 result, provider result, normalization policy,
+candidate, and proposal set are joined by explicit versions and scope. Each
+evaluated combination has one immutable versioned set, including typed
+zero-proposal outcomes. `title-normalization-v1` derives only the conservative
+comparison key documented in the compatibility contract using frozen Unicode
+16.0.0 `PropList.txt` and `CaseFolding.txt` tables rather than host-runtime
+Unicode data. Provider data only corroborates; the retained proposal value is
+always the bounded original F06 package title, never the provider spelling or
+comparison key. Missing, failed, unsupported, stale, duplicate, or unjoinable
+input cannot create a proposal; local/provider disagreement creates a typed
+conflict set. Identical replay resolves to the same
+semantic set and case identity without duplication. Current-state drift
+supersedes applicability of the set and any derived case while preserving
+immutable history. No outcome in this path grants automatic approval, a human
+or AI decision, cover or rich-field processing, multi-provider fusion, or
+production write authority. Future writes still require every gate below.
+
 ## Primary threats and mitigations
 
 ### Prompt injection in books or provider metadata

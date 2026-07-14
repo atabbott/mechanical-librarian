@@ -169,6 +169,20 @@ Exit criteria:
 - media-health diagnostics remain distinct from metadata evidence and never
   quarantine an otherwise consumable item solely because curation is pending.
 
+### Delivery staging for WP5 and WP6
+
+The 0.2 technical preview implements only the current Audiobookshelf title plus
+current successful F06 package title plus one provider title path, ending at
+one persistent, undecided `needs_review` case. F09a proves an immutable,
+version-bound proposal-set contract—including typed zero-proposal sets—with a
+fake; F09b substitutes a bounded disabled-by-default Hardcover adapter; and F10
+binds only the current set containing exactly one current `needs_review`
+proposal while proving persistence, restart, identity-preserving replay, and
+supersession without mutating history. The remaining breadth of WP5 and all WP6
+AI-review work are 1.0 scope. The detailed
+contracts below remain the intended long-term architecture and are not implied
+0.2 exit criteria.
+
 ## WP5: candidate and policy engine
 
 Deliverables:

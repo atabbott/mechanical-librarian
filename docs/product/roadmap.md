@@ -25,21 +25,44 @@ Exit: a contributor can build, test, and understand the empty product shell.
 
 Exit: restarts and duplicate events cannot lose or duplicate inventory work.
 
-## M2: Evidence and candidates
+## M2: Title-curation technical preview (0.2.0)
 
-- Extract bounded EPUB package, opening-matter, navigation, structural, and
-  audio evidence.
-- Use applicable mined identifiers and edition facts to seed candidates and
-  distinguish work-level from edition-level matches.
-- Normalize provider candidates with provenance.
-- Produce field-level proposals without production writes.
-- Cache provider results and classify systemic provider failures.
-- Qualify generic-title, initial-aware author, contributor-role, correlated-
+- Preserve the F06 bounded EPUB package-title evidence outcome unchanged.
+- Join one current Audiobookshelf title, one current successful F06 title, and
+  one provider title under explicit target, snapshot, and contract versions.
+- Prove one provider-neutral, immutable, version-bound proposal set containing
+  at most one title proposal with a deterministic fake provider, then substitute
+  a disabled-by-default bounded Hardcover adapter behind the same provider
+  port. Typed zero-proposal outcomes are durable proposal sets too.
+- Persist, restart, replay, and supersede only the current proposal set
+  containing exactly one current `needs_review` title proposal as one undecided
+  review case; identical replay preserves semantic set and case identity.
+- Keep the preview report-only: no automatic approval, human or AI decision,
+  production write, cover, rich-field, or multi-provider workflow.
+
+Exit: the supported title agreement matrix is deterministic, bounded,
+explainable, and durable through one undecided review case.
+
+### 1.0 expansion of evidence and candidates
+
+The remaining evidence-and-candidate goals retain their long-term scope but are
+not 0.2 exit criteria:
+
+- integrate and use the already delivered F07 opening-matter and navigation
+  evidence and F08 structural and audio evidence in candidate policy;
+- use applicable mined identifiers and edition facts to seed candidates and
+  distinguish work-level from edition-level matches;
+- normalize broader provider candidates with provenance;
+- produce field-level proposals without production writes;
+- cache provider results only under a separately reviewed compatibility and
+  retention contract, while classifying systemic provider failures; and
+- qualify generic-title, initial-aware author, contributor-role, correlated-
   source, and same-title/different-author behavior against synthetic cohorts.
 
-Exit: candidate generation is repeatable, bounded, and explainable.
+Exit: broader candidate generation is repeatable, bounded, and explainable for
+1.0 qualification.
 
-## M3: AI review in shadow mode
+## M3: AI review in shadow mode (1.0.0, after the technical preview)
 
 - Add isolated Codex CLI reviewer.
 - Enforce schema-constrained decisions.

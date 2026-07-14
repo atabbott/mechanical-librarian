@@ -157,20 +157,92 @@ Separate scenarios cover reviewer failure, provider outage, backup failure,
 stale state, partial apply, verification disagreement, rollback, and circuit
 breaker behavior.
 
-A report-only end-to-end scenario disables every external metadata provider and
-still completes inventory, local evidence extraction, deterministic no-op and
-rejection handling, bounded proposal creation, and human-review projection. A
-paired configured-provider scenario may improve evidence but must preserve the
-same canonical proposal identity rules. Versioned per-field sufficiency
+#### 0.2 title technical-preview cohort
+
+The 0.2 cohort stops at one persistent, undecided title review case and runs
+without production credentials or writes. F09a uses a deterministic fake
+provider. F09b runs the bounded Hardcover adapter against a fake transport; CI
+never uses a live provider token. Both variants exercise the same immutable,
+versioned, provider-neutral candidate and proposal-set contracts. Each evaluated
+input combination persists one proposal-set version bound to the exact target,
+snapshot, F06 evidence, provider candidate, normalization, and policy versions,
+including typed zero-proposal outcomes.
+
+The `title-normalization-v1` cohort uses frozen Unicode 16.0.0 tables. It proves
+the exact sequence: NFC under Unicode 16.0.0; map each maximal run of code
+points with `White_Space=Yes` in Unicode 16.0.0 `PropList.txt` to U+0020 and
+remove leading/trailing U+0020; apply Unicode 16.0.0 Default Case Folding status
+C/F mappings from `CaseFolding.txt`; apply NFC under Unicode 16.0.0 again; and
+compare resulting keys byte-for-byte. Golden fixtures prove implementations use
+the frozen tables rather than host-runtime Unicode data.
+
+The cohort also proves punctuation, diacritics, subtitle separators and content,
+series/order text, words, and token order are neither stripped nor replaced.
+Provider data only corroborates. Every eligible proposal retains the bounded
+original F06 package title, never the provider spelling or comparison key.
+
+The decision matrix binds the current Audiobookshelf title, a current successful
+F06 package title, and one provider title to the same target and snapshot:
+
+- equal local and provider comparison keys plus an empty or materially
+  different current key produce a set with exactly one `needs_review` proposal;
+- an equivalent current key produces a typed zero-proposal set;
+- local/provider key disagreement produces a typed conflict zero-proposal set;
+- missing, failed, unsupported, stale, or unjoinable required evidence produces
+  a typed zero-proposal set; and
+- provider disablement, timeout, malformed response, empty result, or no match
+  leaves inventory and F06 evidence visible and creates a typed zero-proposal
+  set.
+
+Duplicate and unjoinable input tests create no current proposal. Identical
+replay resolves to the same semantic proposal-set identity and, where
+applicable, the same case identity without a duplicate. Changed or stale input
+supersedes current applicability while preserving every prior set, proposal,
+case, and typed outcome.
+
+F10 tests prove that only a current set containing exactly one current
+`needs_review` proposal creates one case, and that persistence, restart,
+idempotent replay, immutable history, and stale-input supersession create
+neither duplicates nor empty cases. Negative spies prove the cohort invokes no
+AI reviewer, human-decision path, apply path,
+cover path, rich-field policy, multi-provider fusion, raw-response cache, or
+production network service.
+
+Before F09b can become Ready or implementation begins, its supported contract
+freezes the exact outbound field allowlist and a disclosure purpose for every
+field; tests assert that the adapter sends exactly that allowlist and no
+undeclared field. Fake-transport qualification covers:
+
+- the fixed HTTPS origin, `/v1/graphql` path, POST method, fixed read-only query,
+  frozen outbound fields, TLS validation, redirect denial, DNS and SSRF
+  rejection, and a dedicated client isolated from target credentials, cookies,
+  endpoints, and write transports;
+- request bytes, response bytes, JSON nesting, retained text, result count,
+  per-attempt and total deadline, one-request concurrency, attempt count,
+  backoff, and retry bounds, including cancellation without unbounded retry;
+- typed authentication, rate-limit, cancellation, outage, GraphQL error,
+  malformed JSON, oversized response, incompatible schema, successful-empty,
+  and no-match outcomes; and
+- token and authorization-header redaction plus evidence-retention tests proving
+  that only bounded canonical candidate/evidence and opaque provenance are
+  inspectable, exportable, and deletable by the owner, while raw requests,
+  responses, headers, and upstream identifiers are never cached or persisted.
+
+The broader 1.0 report-only cohort disables every external metadata provider
+and still completes inventory, local evidence extraction, deterministic no-op
+and rejection handling, bounded proposal creation, and human-review projection.
+A paired configured-provider scenario may improve evidence but must preserve
+the same canonical proposal identity rules. Versioned per-field sufficiency
 fixtures span media type, operation, and change class—including fill-empty,
 replace-populated, no-op, rejection, and edition-sensitive work—and prove
 provider-required cases route to review or explicit unsupported outcomes rather
-than disappearing.
+than disappearing. These broader field, providerless-proposal, multi-target,
+and AI-review scenarios are not 0.2 release gates.
 
 The provider-disabled variant asserts that composition constructs no provider
 adapter or provider network client, resolves no provider secret, and performs no
-provider network request. It is a configuration variant against the same target
-fake, never a substitute providerless target adapter.
+provider DNS lookup or network request. It is a configuration variant against
+the same target fake, never a substitute providerless target adapter.
 
 ### Container security tests
 
@@ -190,6 +262,18 @@ read-only media mounts, and preserves state across upgrade/restart tests.
 
 Fixture families include:
 
+- the exact 0.2 title matrix: current title empty, different, and equivalent;
+  agreeing and disagreeing `title-normalization-v1` keys with preservation of
+  the bounded original F06 package title; missing, failed,
+  unsupported, stale, and unjoinable F06 input; and provider disabled, timed
+  out, malformed, empty, unmatched, stale, and successful through a fake
+  Hardcover transport;
+- immutable proposal-set fixtures covering typed zero-proposal outcomes,
+  duplicate/unjoinable input, identical replay identity, and changed-input
+  supersession without history mutation;
+- F10 case creation, restart, idempotent replay, and supersession fixtures that
+  retain immutable set, proposal, and case history and reject zero-proposal-set
+  or stale case creation;
 - valid and malformed EPUB packages;
 - EPUB package and opening-matter variants covering title, copyright, imprint,
   edition, contributor, identifier, series, translation, illustration,

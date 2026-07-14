@@ -147,7 +147,20 @@ observed to contain and for no-op detection, optimistic concurrency, planning,
 and verification. It is one versioned bibliographic observation, not privileged
 bibliographic truth. Providerless report-only operation remains a planned valid
 flow: inventory, local evidence, deterministic no-op and rejection handling,
-bounded proposals, and human review do not require a catalogue provider.
+bounded proposals, and human review need not require a catalogue provider in
+the long-term architecture.
+
+The narrower 0.2 title technical preview deliberately does require
+`title-normalization-v1` agreement between the current successful F06 package
+title and one provider title before its immutable proposal set contains a
+proposal. The current Audiobookshelf title determines whether that agreed value
+is a typed zero-proposal no-op or one `needs_review` proposal. Every evaluated
+combination has a version-bound proposal set. Provider disablement, failure,
+disagreement, duplicate input, or stale or unjoinable evidence produces a typed
+zero-proposal set while unrelated inventory and F06 evidence remain visible.
+Providerless proposal policy, additional fields, covers, multiple providers,
+and AI review remain 1.0 scope; this staging choice does not narrow the
+application-owned ports or long-term adapter model.
 
 ### Apply
 

@@ -194,14 +194,42 @@ Configuration allowlists query capabilities and bounds; it does not contain a
 raw target row or reusable provider request. The application builds each minimal
 bounded `ProviderQuery` from canonical allowlisted facts at execution time.
 
+For F09b, a versioned schema extension is planned to add one structured
+Hardcover provider configuration. It is disabled by default and contains only
+its enabled state, a provider-scoped secret reference, and bounded transport
+controls where the fixed adapter policy permits them. The endpoint remains
+`https://api.hardcover.app/v1/graphql`, the method remains POST, and the adapter
+owns one fixed read-only GraphQL query. Arbitrary endpoints, query text,
+operation names, headers, or redirect policy are not configuration. Enabling,
+disabling, changing the secret reference, or changing a permitted bound
+requires restart and candidate and review re-evaluation; it never grants write
+authority. F09b exposes no raw response-cache setting.
+
+The supported F09b contract must freeze the exact outbound field allowlist and
+per-field disclosure purpose before F09b can be marked Ready or implementation
+begins. That allowlist is adapter policy, not operator configuration, and is not
+invented by this planning contract. Permitted transport controls remain finite
+and may only tighten or select within the supported request-byte, response,
+nesting, text, result-count, deadline, single-request concurrency, attempt, and
+retry-backoff bounds; they cannot widen the fixed origin, path, method, query,
+or field list.
+
+Until that extension and its generated schema are delivered, current
+`config-v1` still accepts only the aggregate ordered provider identifiers above
+and rejects detailed Hardcover or provider-secret fields as unknown. This
+document does not define a hidden environment-variable or runtime shortcut.
+
 Under the planned provider contract, configuration state, declared capability,
 connection availability, execution outcome, candidate count, and evidence
 assessment are orthogonal. An entry may be absent or explicitly disabled
 without creating a failed job; unsupported, unavailable, degraded, failed, and
 successful-empty are distinct typed scoped states. A provider-disabled
 configuration is valid for report-only inventory, local evidence, deterministic
-policy, bounded proposals, and human review, subject to the active sufficiency
-matrix keyed by field, media type, operation, and change class.
+policy, bounded proposals, and human review under the broader 1.0 sufficiency
+model. In the narrower 0.2 title technical preview, provider-disabled state
+retains inventory and F06 evidence but produces a typed zero-proposal set;
+composition constructs no adapter or client, resolves no provider secret, and
+performs no DNS lookup or egress.
 
 ### AI reviewers
 
@@ -214,6 +242,9 @@ current aggregate `reviewers` impact path:
 - timeout and concurrency;
 - allowed prompt, evidence, and output schema versions;
 - shadow or production eligibility.
+
+AI reviewer configuration and invocation are 1.0 work and do not enter the 0.2
+title technical preview.
 
 ### Policy
 

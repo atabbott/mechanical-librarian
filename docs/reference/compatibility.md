@@ -47,6 +47,63 @@ remain orthogonal. Unconfigured, unsupported, unavailable, degraded, failed,
 and successful-empty states are not interchangeable and cannot block unrelated
 capable lanes.
 
+## 0.2 title technical-preview contract
+
+The planned 0.2 path defines one provider-neutral title contract before the
+broader candidate program. It version-binds the canonical target and current
+Audiobookshelf snapshot, the current successful F06 package-title outcome, the
+provider-query and provider-response contracts, the conservative normalization
+policy, and the resulting candidate and proposal set. Every evaluated input
+combination has one immutable proposal-set version, including a typed
+zero-proposal outcome. A stale, mismatched, missing, failed, unsupported,
+duplicated, or otherwise unjoinable input cannot be interpreted as a current
+proposal.
+
+`title-normalization-v1` derives only a comparison key from frozen Unicode
+16.0.0 data. It first applies NFC under Unicode 16.0.0, maps each maximal run of
+code points whose Unicode 16.0.0 `PropList.txt` property is
+`White_Space=Yes` to U+0020, removes leading and trailing U+0020, applies the
+Unicode 16.0.0 Default Case Folding mappings with status C or F from
+`CaseFolding.txt`, and applies NFC under Unicode 16.0.0 again. Resulting keys
+are compared byte-for-byte. Implementations must use these frozen tables rather
+than host-runtime Unicode data; changing a table requires a new normalization
+version.
+
+Normalization does not strip or replace punctuation, diacritics, subtitle
+separators or content, series/order text, or words, and it does not reorder
+tokens. Equal keys are equivalent and different keys are materially different.
+The provider only corroborates. An eligible proposal always retains the bounded
+original F06 package title, never the provider spelling or comparison key.
+
+F09a supplies a deterministic fake provider candidate. F09b substitutes a
+bounded Hardcover adapter behind the same application-owned provider port.
+Provider name is provenance, not part of the semantic identity of a canonical
+title candidate, proposal, or proposal set: the same target, snapshot, field,
+comparison key, and contract versions produce the same identity regardless of
+those two sources. The proposal-set version binds the exact target, snapshot,
+F06 evidence, provider candidate, normalization, and policy versions. Source
+observations and assessments remain distinct so agreement, contradiction, and
+supersession can be explained without overwriting history.
+
+Identical replay resolves to the same semantic set identity and cannot create a
+duplicate proposal or case. Changed or stale input records a superseding
+applicability result without mutating prior set or case history. F10 accepts only
+the current set containing exactly one current `needs_review` proposal; every
+zero-proposal set creates no case.
+
+Only bounded canonical title evidence and opaque provenance cross the provider
+boundary. Raw provider responses, raw provider identifiers, headers, and
+requests are not compatibility artifacts and are not cached or persisted. The
+0.2 schema has no cover, rich-field, cross-target, multi-provider-fusion,
+reviewer, decision, or apply-plan semantics.
+
+Future providers and fields extend the contracts additively through declared
+schema and policy versions. They must not reinterpret existing title identity,
+change preserved set, proposal, or case history, or silently make an old
+zero-proposal outcome current. The broader providerless-proposal, candidate-lane, reviewer,
+CWA-shaped target, cover, and rich-field cohorts remain 1.0 qualification, not
+0.2 release criteria.
+
 ## Audiobookshelf support
 
 Audiobookshelf compatibility is verified with:
