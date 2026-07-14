@@ -49,8 +49,6 @@ Production metadata and cover writes remain disabled throughout these slices.
 | F05a Persisted Audiobookshelf inventory | #141 | One real isolated Audiobookshelf book library is boundedly paged twice through the pinned 2.35.1 API, translated at the adapter boundary into canonical vendor-neutral inventory, fingerprinted, persisted, safely reconciled, restarted, and inspected. | #62-#64 | `slice/f05a-audiobookshelf-inventory` |
 | F05b Audiobookshelf reconciliation | #215 | Persisted polling triggers duplicate-safe reconciliation with bounded retry/backoff, restart recovery, and explicit compatibility-drift states; Socket.IO notifications remain excluded. | #66, #67 | `slice/f05b-audiobookshelf-reconciliation` |
 | F06 EPUB package evidence report | #142 | Ordinary, noncanonical, and partially defective EPUBs are parsed within hostile-input bounds through the supported CLI; every trustworthy package-metadata fact is cited and bounded, optional defects warn and are omitted without silent resolution, and an external private-corpus shadow qualification records aggregate compatibility without retaining copyrighted content or private reports. | #26-#29; #13 and #21 are non-closing inputs | `slice/f06-epub-package-evidence` |
-| F07 EPUB opening-matter evidence report | #143 | The same isolated workflow selects bounded opening matter, extracts edition-aware claims with exact provenance, persists them, and explains unsupported or rejected input. | #25, #26, #30-#32, #188 | `slice/f07-epub-opening-evidence` |
-| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
 
 ### 0.1.0 release exit
 
@@ -62,55 +60,80 @@ Production metadata and cover writes remain disabled throughout these slices.
   unsupported capability behavior are bounded and visible; and
 - no development or CI path points at a contributor's production library.
 
-## Release 0.2.0: explainable decisions and shadow review
+## Release 0.2.0: title-curation technical preview
 
-These slices produce proposals and reviewer recommendations but still grant no
-production write authority.
+This release proves one deliberately narrow, report-only path from local and
+provider title evidence to one persistent undecided review case. It grants no
+human or AI decision, approval, production write, or destructive authority.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
-| F09 Candidate and proposal report | #145 | A provider-disabled configuration turns canonical current-state and local evidence into target- and work-identified, evidence-family-aware independent proposals, deterministic no-ops/rejections, and bounded human-review work under a versioned sufficiency matrix keyed by field, media, operation, and change class; a configured-provider variant improves evidence without making provider name part of semantic proposal identity. Manifests derive each role from only its relevant dimensions—inventory from target/scope, local evidence from target/media/field/extractor, provider evidence from target/media/field/provider/query/configuration, and candidates from completed relevant evidence/policy—then record applicability for every derived lane, typed execution outcome for applicable lanes, and candidate count plus validated `executed` or `reused` mode only for successfully completed applicable lanes, with missing lanes treated as coverage failures; identical normalized values retain per-source assessments, generic adapter/provider provenance, correlation, and contradictions for deterministic aggregation; title cleanup preserves meaningful structure and removes meaningful series/order text only with independently supported structured sibling capture; identifier comparison retains raw lineage, uses canonical compatible namespaces including ISBN-10/ISBN-13 equivalence, applies the two-family replacement gate only to validated current comparable identifiers, and accepts one distinct checksum-valid content ISBN as strong edition evidence only with typed format- and edition-applicable provenance, a materially independent format-appropriate provider match, and agreeing target, work, and media identity, leaving multiple ISBNs, unrelated previews or other-work claims, correlated providers, edition, format, narration, abridgement, dramatization, omnibus, and cross-media conflicts unresolved; qualified versioned series-label mappings preserve raw lineage and unknown labels; projected source AI recommendations remain provenance only while destination evidence and policy are independently requalified; deterministic cleanup or degradation resolves through policy without erasing sibling proposals or requiring AI `manual`. | #16, #46, #68-#73 | `slice/f09-candidate-proposals` |
-| F10 Persistent review case | #146 | One proposal set becomes a snapshot-aware review case whose typed, target-scoped coverage readiness, durable stage checkpoints, blocker facts naming the required scope, stage, target, and outcome, history, supersession, and authorization guards survive restart without blocking unrelated ingestion. | #50 and slice-specific implementation tickets | `slice/f10-persistent-review-case` |
-| F11 AI shadow recommendation | #147 | An isolated reviewer receives a complete bounded vendor-neutral packet carrying the exact normalized current snapshot and explicit field-load state only after required authoritative inputs join successfully, without target-service or provider credentials or vendor payloads, then returns one direct closed-schema `AIDecision` for every proposal; its required `problems` list contains adverse or unresolved problem codes, with `problems: []` for a clean approval. Malformed output, unknown fields, missing required fields, duplicate or partial decisions, trailing content, or semantic repair becomes a typed failure without authorizing apply. A zero-proposal selection terminates without invocation, and optional provider failure remains operational. | #74-#80 | `slice/f11-ai-shadow-review` |
+| F09a Provider-neutral title proposal | #145 | The current Audiobookshelf title, exactly one eligible title from a current successful unambiguous applicable F06 `TITLE` observation, and one deterministic fake candidate supplied through an application-owned provider-neutral port produce one immutable versioned title proposal set containing at most one `needs_review` proposal. The F06 `normalized_value` must be non-empty, bounded, and usable rather than an unsafe, oversized, or redaction marker; selector-less titles remain valid. Agreement creates a proposal only when the current title field is present and loaded with an empty value or the current title is materially different. Its value is the exact F06 `normalized_value`; F06 `raw_value` remains evidence/provenance and provider evidence only corroborates. A missing, unloaded, or unavailable current title, current equivalence, disagreement, an empty or unusable F06/provider title, or another failed, unsupported, disabled, no-match, stale, duplicate, or unjoinable input produces an exact typed no-proposal result. | #222 | `slice/f09a-title-proposal` |
+| F09b Bounded Hardcover title evidence | #204 | A disabled-by-default bounded Hardcover adapter replaces the fake behind the same provider-neutral port. It uses one fixed read-only query at one fixed HTTPS endpoint through a dedicated bounded client, keeps its account-capable token isolated and redacted, and retains only bounded canonical title evidence plus minimal provenance. It never caches raw provider traffic or turns provider failure or disagreement into negative local evidence. | #223 | `slice/f09b-hardcover-title` |
+| F10 Persistent title review case | #146 | One current immutable proposal set containing exactly one current `needs_review` title proposal becomes one durable undecided review case; no other proposal or set creates a case. Persistence, restart, identical replay, inspection, immutable history, and changed-input supersession are demonstrable; zero-proposal results create no empty case. | #224 | `slice/f10-title-review-case` |
+
+The only active delivery chain is:
+
+```text
+completed F06 #142 + planning #221 -> F09a #145/#222
+                                      -> F09b #204/#223
+                                      -> F10 #146/#224
+```
+
+F09a derives a conservative deterministic comparison key in this exact order:
+supported-runtime NFC normalization, Unicode default case folding, final NFC
+normalization, then trimming leading/trailing Unicode whitespace and collapsing
+each internal Unicode-whitespace run to U+0020. The comparison-policy version
+and runtime Unicode-data version are bound. This is comparison-only: it does
+not alter proposal or evidence values, strip punctuation, diacritics, subtitle
+or series text, words, or token order. Proposal sets include typed zero-proposal
+results, bind the current inputs and contract versions, resolve identical replay
+without duplication, and are superseded rather than rewritten when inputs
+change. The implementation need not introduce speculative general-purpose slot
+identity or migration machinery beyond this outcome.
+
+| Current/F06/provider condition | Proposal-set result | F10 case |
+| --- | --- | --- |
+| F06 and provider usable titles normalize equally; current title field is present and loaded with an empty value, or the current title is materially different | One `needs_review` proposal whose value is the exact F06 `normalized_value`; F06 `raw_value` remains evidence/provenance | One current undecided case |
+| F06 and provider normalize equally; current title is equivalent | Typed no-op with no proposal | No case |
+| Current title is missing, unloaded, or unavailable | Exact typed current-title no-proposal result | No case |
+| F06 and provider disagree | Typed conflict with no proposal | No case |
+| F06/provider title is empty, unsafe, oversized, redacted, or otherwise unusable; or another required input is missing, failed, unsupported, disabled, no-match, stale, duplicate, or unjoinable | Exact typed unusable-title or other no-proposal result | No case |
+| Identical replay | Same semantic set and, where applicable, case | No duplicate |
+| A bound input changes | New superseding set; prior history remains immutable | Only a qualifying new current set may have a current case |
+
+F09b's disabled state constructs no adapter or client, resolves no provider
+secret, and performs no DNS lookup or egress. When enabled, the adapter owns its
+fixed HTTPS origin, path, method, and read-only query; validates TLS; follows no
+redirects; rejects private or reserved DNS destinations; uses a dedicated
+client; and applies finite request, response, parser, deadline, retry, and
+single-request concurrency bounds. The closed response shape is untrusted.
+Only the minimum allowlisted facts needed for a title lookup leave the
+application. The account-capable token is never logged or shared with the
+target service or a reviewer. Raw requests, responses, headers, tokens, request
+bodies, upstream identifiers, and provider caches are never persisted.
+
+Ordinary CI remains credential-free and fake-based. F09b completion also
+requires one opt-in bounded read-only smoke/contract qualification against the
+fixed real endpoint using a dedicated non-production account and token. It
+retains only a redacted aggregate result.
 
 ### 0.2.0 release exit
 
-- candidate and proposal generation is deterministic, bounded, and
-  provenance-complete;
-- independent evidence-family rules, decisive single-family exceptions,
-  target and work identity, edition-sensitive identity or applicability, no-op
-  omission, field-relevant conflicting-identifier rejection, and provider
-  failure separation pass the synthetic title cohort;
-- directional title cleanup preserves meaningful subtitle and structured
-  series/order information, removes meaningful series/order text only with an
-  independently supported persisted or emitted structured sibling proposal,
-  rejects unsupported noise additions, and resolves deterministic cleanup or
-  degradation through policy rather than AI `manual`;
-- raw identifier provenance, alias and ISBN canonicalization, compatible
-  namespace comparison, non-comparable neutrality, and independently
-  corroborated replacement of a validated current comparable identifier pass
-  the synthetic identifier cohort; malformed or invalid current identifiers
-  remain governed by ordinary applicable field evidence;
-- current metadata remains sourced evidence, and resolving one field leaves
-  every sibling proposal intact;
-- series-label reconciliation is qualified and versioned, preserves raw source
-  lineage and replay or supersession history, and leaves unknown labels
-  unchanged; projected source AI recommendations add no destination evidence,
-  consensus, disposition, decision, or authority;
-- a review case remains authoritative across restart and stale input, resumes
-  only from valid checkpoints, and advances only when independently recomputed
-  coverage matches its selected target scope; blockers identify the required
-  scope, stage, target, and outcome;
-- AI completion is independently audited rather than inferred from process or
-  artifact success, and `manual` remains AI semantics for multiple specifically
-  supported alternatives; it may complete reviewer output but creates neither
-  a human decision nor apply readiness;
-- zero proposals completes proposal selection without reviewer invocation,
-  while every invoked packet has exact per-proposal output coverage;
-- arbitrary, stale, AI-only, or destructive authorization cannot be
-  constructed; and
-- reviewer timeout, malformed output, citation failure, and authentication
-  recovery are typed safe states.
+- F09a demonstrates the complete decision table with the deterministic fake;
+- F09b demonstrates the same provider-neutral contract, disabled behavior,
+  bounded transport, isolated credential handling, and opt-in qualification;
+- F10 persists, restarts, inspects, replays, and supersedes one current
+  case from one current immutable proposal set containing exactly one current
+  `needs_review` title proposal, without creating any other, empty, or duplicate
+  case; and
+- the preview contains no AI, human decision, approval, cover, rich-field,
+  multi-provider-fusion, production-write, or destructive behavior.
+
+F07a #143 (#30, #31, and #188), F07b #228 (#32), and F08 #144 (#33 and
+#34) remain intact as planned 1.0.0 work and are not prerequisites for this
+0.2.0 chain. F11 #147 and #74-#80, the broader #16, #46, #50, and #68-#73
+program, and rich Hardcover work #209 also remain 1.0.0 scope.
 
 ## Release 1.0.0: guarded mutation and product operation
 
@@ -119,6 +142,10 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
+| F07a EPUB opening-matter evidence report | #143 | One safely readable EPUB produces a bounded transient opening-matter claim report with exact provenance or a typed no-applicable/rejected outcome. | #30, #31, #188; #25 and #26 are non-closing inputs | `slice/f07a-epub-opening-evidence` |
+| F07b Durable EPUB evidence round trip | #228 | Completed F07a evidence executes durably for one isolated target and snapshot, survives restart, reuses compatible results, supersedes stale applicability, and remains inspectable without persistence of decoded content. | #32; #25 is a non-closing input | `slice/f07b-durable-epub-evidence` |
+| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
+| F11 AI shadow recommendation | #147 | An isolated reviewer receives a complete bounded vendor-neutral packet carrying the exact normalized current snapshot and explicit field-load state only after required authoritative inputs join successfully, without target-service or provider credentials or vendor payloads, then returns one direct closed-schema `AIDecision` for every proposal; its required `problems` list contains adverse or unresolved problem codes, with `problems: []` for a clean approval. Malformed output, unknown fields, missing required fields, duplicate or partial decisions, trailing content, or semantic repair becomes a typed failure without authorizing apply. A zero-proposal selection terminates without invocation, and optional provider failure remains operational. | #74-#80 | `slice/f11-ai-shadow-review` |
 | F12a Authenticated API foundation | #189 | The supported HTTP service exposes deterministic versioned OpenAPI, minimal anonymous liveness, and one bounded authenticated owner diagnostic; invalid sessions, origins, CSRF, proxy and rate-limit contexts fail closed. | #96, #97 | `slice/f12a-authenticated-api` |
 | F12b Human decision round trip | #148 | An authenticated owner accepts, keeps, or rejects one field, restarts and retrieves the immutable decision/history, then observes a safe stale-version conflict. | #19 | `slice/f12b-human-decision` |
 | F13 Guarded fake-service apply | #149 | A current human-approved field change is planned, backed up, idempotently applied to a fake service through the guarded application/API surfaces, read back, verified, audited, and safely rolled back on injected failure. | #17, #81-#83, #86, #190 | `slice/f13-guarded-fake-apply` |
@@ -155,7 +182,8 @@ embedded-file updates, plugin loading, and the
 backlog work until their prerequisite design and qualification decisions are
 accepted. When scheduled, they receive new functional slice IDs and executable
 outcomes; they are not appended opportunistically to an active branch. The
-reviewer-backend plan does not alter F11, the F01-F17 order, or the 1.0.0 exit.
+reviewer-backend plan does not alter the documented active chain, later 1.0
+slice placement, or the 1.0.0 exit.
 
 ## Planning rules
 

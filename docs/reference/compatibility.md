@@ -47,6 +47,56 @@ remain orthogonal. Unconfigured, unsupported, unavailable, degraded, failed,
 and successful-empty states are not interchangeable and cannot block unrelated
 capable lanes.
 
+## 0.2 title technical-preview contract
+
+The preview binds one current Audiobookshelf title, exactly one current
+successful unambiguous applicable F06 `TITLE` observation whose
+`normalized_value` is non-empty, bounded, and usable rather than an unsafe,
+oversized, or redaction marker, and one provider-neutral title candidate to the
+same target and snapshot. Selector-less F06 titles are valid. Multiple
+applicable titles remain ambiguous; provider agreement or source order never
+selects one.
+
+A conservative deterministic comparison applies, in order, supported-runtime
+NFC normalization, Unicode default case folding, final NFC normalization, then
+trims leading/trailing Unicode whitespace and collapses each internal
+Unicode-whitespace run to U+0020. It binds the comparison-policy version and
+runtime Unicode-data version. Comparison never alters proposal or evidence
+values or removes punctuation, diacritics, subtitle or series text, words, or
+token order. When F06 and provider values compare equally, the exact F06
+`normalized_value` is the proposed value; F06 `raw_value` remains
+evidence/provenance and provider evidence only corroborates.
+
+Each evaluation records an immutable versioned proposal set, including typed
+zero-proposal results. Agreement plus a current title field that is present and
+loaded with an empty value, or a materially different current title, produces
+exactly one `needs_review` proposal. A missing, unloaded, or unavailable current
+title produces a typed current-title no-proposal result; current equivalence a
+typed no-op; disagreement a typed conflict; an empty, unsafe, oversized,
+redacted, or otherwise unusable F06/provider title a typed unusable-title
+result; and another failed, unsupported, disabled, no-match, stale, duplicate,
+or unjoinable input its exact typed no-proposal result. Provider failure never
+erases local evidence or
+becomes negative bibliographic evidence. Identical inputs replay without
+duplication; changed inputs produce a superseding set without rewriting
+history. F10 accepts only one current immutable proposal set containing exactly
+one current `needs_review` title proposal; no other proposal or set creates a
+case.
+
+F09a supplies a deterministic fake candidate through the application-owned
+provider port. F09b implements the same port with disabled-by-default bounded
+Hardcover at fixed HTTPS endpoint `https://api.hardcover.app/v1/graphql` and a
+fixed read-only query. Only bounded canonical title evidence and minimal
+provenance are compatibility data. Raw provider requests, responses, headers,
+tokens, request bodies, upstream identifiers, and caches are not retained
+artifacts.
+
+Ordinary CI is fake-based and credential-free. F09b completion requires one
+opt-in bounded read-only smoke/contract qualification against the fixed
+endpoint using a dedicated non-production account and token, retaining only a
+redacted aggregate result. The preview adds no AI, human decision, cover,
+rich-field, multi-provider, or apply compatibility promise.
+
 ## Audiobookshelf support
 
 Audiobookshelf compatibility is verified with:

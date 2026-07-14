@@ -157,11 +157,74 @@ Separate scenarios cover reviewer failure, provider outage, backup failure,
 stale state, partial apply, verification disagreement, rollback, and circuit
 breaker behavior.
 
-A report-only end-to-end scenario disables every external metadata provider and
-still completes inventory, local evidence extraction, deterministic no-op and
-rejection handling, bounded proposal creation, and human-review projection. A
-paired configured-provider scenario may improve evidence but must preserve the
-same canonical proposal identity rules. Versioned per-field sufficiency
+#### 0.2 title technical-preview cohort
+
+The credential-free F09a cohort binds the current Audiobookshelf title, exactly
+one eligible title from a current successful unambiguous applicable F06 `TITLE`
+observation, and one deterministic fake candidate to the same target and
+snapshot. Its `normalized_value` must be non-empty, bounded, and usable rather
+than an unsafe, oversized, or redaction marker. Selector-less F06 titles are
+valid; document order or provider agreement never chooses among multiple
+applicable observations.
+
+The conservative deterministic comparison applies, in order,
+supported-runtime NFC normalization, Unicode default case folding, final NFC
+normalization, then trims leading/trailing Unicode whitespace and collapses
+each internal Unicode-whitespace run to U+0020. It binds the comparison-policy
+version and runtime Unicode-data version. Comparison never alters proposal or
+evidence values or strips punctuation, diacritics, subtitle or series text,
+words, or token order.
+
+The decision matrix proves:
+
+- normalized usable F06/provider agreement plus a current title field that is
+  present and loaded with an empty value, or a materially different current
+  title, creates exactly one `needs_review` proposal whose value is the exact
+  F06 `normalized_value`; F06 `raw_value` remains evidence/provenance and
+  provider evidence only corroborates;
+- an equivalent current title records a typed no-op and creates no proposal;
+- local/provider disagreement records a typed conflict and creates no proposal;
+- a missing, unloaded, or unavailable current title records its exact typed
+  no-proposal result; an empty, unsafe, oversized, redacted, or otherwise
+  unusable F06/provider title records an exact typed unusable-title no-proposal
+  result; and another failed, unsupported, disabled, no-match, stale,
+  duplicate, or unjoinable input records its own exact typed no-proposal
+  result; and
+- provider failure never erases valid local evidence or becomes negative
+  bibliographic evidence.
+
+Every evaluation creates an immutable versioned proposal set, including
+zero-proposal results. Tests prove identical inputs replay without duplicates,
+changed inputs supersede current applicability without mutating history, and
+F10 creates one current case only from one current immutable proposal set
+containing exactly one current `needs_review` title proposal; no other proposal
+or set creates a case. Restart and inspection retain the case; no-op, conflict,
+failure, or zero-proposal results create no empty case.
+
+F09b runs the same contract through a fake transport in ordinary CI. Tests cover
+disabled composition with no adapter, client, secret resolution, DNS, or
+egress; the fixed HTTPS origin, path, POST method, and read-only query; TLS
+validation; redirect denial; private and reserved DNS rejection; a dedicated
+client; finite request, response, parser, deadline, retry, backoff, and
+single-request concurrency bounds; cancellation; closed-shape parsing; the
+minimum outbound title lookup allowlist and disclosure purposes; and redaction
+of the isolated account-capable token. Only bounded canonical title evidence
+and minimal provenance may persist. Raw requests, responses, headers, tokens,
+request bodies, upstream identifiers, and provider caches must not persist.
+
+F09b completion also requires one opt-in bounded read-only smoke/contract
+qualification against the fixed real endpoint with a dedicated non-production
+account and token. It retains only a redacted aggregate result; ordinary CI and
+fixtures remain credential-free. Negative spies prove the preview invokes no
+AI, human-decision, approval, apply, cover, rich-field, multi-provider-fusion,
+or production-write path.
+
+The broader 1.0 report-only end-to-end scenario disables every external
+metadata provider and still completes inventory, local evidence extraction,
+deterministic no-op and rejection handling, bounded proposal creation, and
+human-review projection. A paired configured-provider scenario may improve
+evidence but must preserve the same canonical proposal identity rules.
+Versioned per-field sufficiency
 fixtures span media type, operation, and change class—including fill-empty,
 replace-populated, no-op, rejection, and edition-sensitive work—and prove
 provider-required cases route to review or explicit unsupported outcomes rather

@@ -232,6 +232,30 @@ Configuration allowlists query capabilities and bounds; it does not contain a
 raw target row or reusable provider request. The application builds each minimal
 bounded `ProviderQuery` from canonical allowlisted facts at execution time.
 
+### Planned F09b Hardcover configuration
+
+F09b adds one schema-declared Hardcover provider entry that is disabled by
+default. It contains only enabled state, a provider-scoped secret reference, and
+supported finite transport bounds. The adapter—not configuration—owns HTTPS
+POST to `https://api.hardcover.app/v1/graphql`, one fixed read-only query, and
+the minimum outbound title lookup allowlist with a disclosure purpose for each
+field. Operators cannot configure an endpoint, query, operation, arbitrary
+header, redirect policy, or response cache.
+
+Disabled composition creates no adapter or client, resolves no secret, and
+performs no DNS lookup or egress. Enabling or changing the entry requires
+restart and re-evaluation but grants no decision or write authority. The
+account-capable token remains isolated from target and reviewer credentials and
+is never logged. Permitted bounds may only tighten the supported request,
+response, parser, deadline, retry, backoff, and single-request concurrency
+profile.
+
+Until that versioned schema extension is delivered, current `config-v1`
+continues to reject detailed Hardcover and provider-secret fields as unknown.
+No hidden environment-variable shortcut is supported. Ordinary CI uses fake
+transport and no live token; the separate opt-in non-production qualification
+supplies its token only through the approved secret mechanism.
+
 Under the planned provider contract, configuration state, declared capability,
 connection availability, execution outcome, candidate count, and evidence
 assessment are orthogonal. An entry may be absent or explicitly disabled

@@ -25,19 +25,46 @@ Exit: a contributor can build, test, and understand the empty product shell.
 
 Exit: restarts and duplicate events cannot lose or duplicate inventory work.
 
-## M2: Evidence and candidates
+## M2: Title-curation technical preview (0.2.0)
 
-- Extract bounded EPUB package, opening-matter, navigation, structural, and
-  audio evidence.
-- Use applicable mined identifiers and edition facts to seed candidates and
-  distinguish work-level from edition-level matches.
-- Normalize provider candidates with provenance.
-- Produce field-level proposals without production writes.
-- Cache provider results and classify systemic provider failures.
-- Qualify generic-title, initial-aware author, contributor-role, correlated-
-  source, and same-title/different-author behavior against synthetic cohorts.
+- Use completed F06 package evidence without reopening it.
+- F09a joins the current Audiobookshelf title, one eligible title from a current
+  successful unambiguous applicable F06 `TITLE` observation, and one
+  deterministic fake candidate through a provider-neutral port.
+- Create one immutable versioned proposal set containing at most one
+  `needs_review` title proposal. The eligible F06 `normalized_value` is
+  non-empty, bounded, and usable rather than an unsafe, oversized, or redaction
+  marker; its exact value becomes the proposal, F06 `raw_value` remains
+  evidence/provenance, and provider evidence only corroborates.
+- Treat a current title field that is present and loaded with an empty value as
+  eligible for fill when F06 and provider corroborate; a materially different
+  current title also remains eligible. Record a missing, unloaded, or
+  unavailable current title, an empty or unusable F06/provider title,
+  current-equivalence, disagreement, and other non-proposal paths as exact typed
+  no-proposal results.
+- F09b substitutes a disabled-by-default bounded Hardcover adapter behind the
+  same port.
+- F10 persists, restarts, inspects, replays, and supersedes one current
+  undecided case only from one current immutable proposal set containing
+  exactly one current `needs_review` title proposal; no other proposal or set
+  creates a case.
+- Keep AI, human decisions, approval, covers, rich fields, multi-provider
+  fusion, and production writes outside the preview.
 
-Exit: candidate generation is repeatable, bounded, and explainable.
+The active sequence is completed F06 #142 plus #221, then F09a #145/#222,
+F09b #204/#223, and F10 #146/#224.
+
+Exit: one deterministic, bounded, explainable title proposal path survives
+restart through one undecided case without gaining decision or write authority.
+
+### Planned 1.0 evidence and review breadth
+
+F07a #143 (#30, #31, and #188), F07b #228 (#32), and F08 #144 (#33 and
+#34) retain their planned scope but are not 0.2 prerequisites. The broader
+candidate and provider program in #16, #46, #50, #68-#73, and #209, and F11
+#147/#74-#80 AI shadow review, likewise remain 1.0 work. They extend the
+provider-neutral seams and immutable history proven by the preview rather than
+being partially implemented inside it.
 
 ## M3: AI review in shadow mode
 

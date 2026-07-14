@@ -169,6 +169,33 @@ Exit criteria:
 - media-health diagnostics remain distinct from metadata evidence and never
   quarantine an otherwise consumable item solely because curation is pending.
 
+### Near-term delivery staging
+
+The initial proof deliberately narrows WP5 to a provider-neutral title path.
+Completed F06 plus planning ticket #221 leads to F09a #145/#222, then F09b
+#204/#223, then F10 #146/#224. F09a combines the current Audiobookshelf title,
+one current successful unambiguous applicable F06 `TITLE` whose
+`normalized_value` is non-empty, bounded, and usable rather than an unsafe,
+oversized, or redaction marker, and one deterministic fake candidate. A current
+title field that is present and loaded with an empty value is eligible for fill
+when F06 and provider corroborate, and a materially different current title
+remains eligible. A missing, unloaded, or unavailable current title, or an empty
+or unusable F06/provider title, produces an exact typed no-proposal result. F09b
+substitutes disabled-by-default bounded Hardcover behind the same
+application-owned port. F10 persists one current undecided case only from one
+current immutable proposal set containing exactly one current `needs_review`
+title proposal; no other proposal or set creates a case.
+
+This staging uses the exact F06 `normalized_value` as the proposal value, keeps
+F06 `raw_value` as evidence/provenance, uses provider evidence only for
+corroboration, records exact typed no-proposal outcomes, and supports replay
+and supersession without introducing AI, human decisions, covers, rich fields,
+multiple providers, or writes. F07a #143, F07b #228, and
+F08 #144 remain intact as planned 1.0 work and do not block the 0.2 preview.
+The broader #16, #46, #50, #68-#73, and #209 program and F11 #147/#74-#80
+also remain 1.0 scope. The WP5 and WP6 contracts below describe that long-term
+architecture; they are not 0.2 exit criteria.
+
 ## WP5: candidate and policy engine
 
 Deliverables:
