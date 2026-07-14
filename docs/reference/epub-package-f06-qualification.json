@@ -1,0 +1,33 @@
+{
+  "constraints": {
+    "container_memory_bytes": 536870912,
+    "container_process_limit": 64,
+    "container_read_only": true,
+    "network": "none",
+    "repository_mount": "read-only",
+    "runtime_user": "65534:65534"
+  },
+  "environment": {
+    "image": "ghcr.io/astral-sh/uv@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca",
+    "implementation": "CPython",
+    "platform": "linux",
+    "python": "3.13.11"
+  },
+  "measured": {
+    "child_cpu_system_seconds": 0.00897,
+    "child_cpu_user_seconds": 0.52326,
+    "child_peak_descriptors": 6,
+    "child_peak_rss_kib": 45576,
+    "elapsed_seconds": 0.688132,
+    "output_bytes": 24925,
+    "parent_descriptor_delta": 0,
+    "peak_process_group_members": 1,
+    "started_children": 1,
+    "surviving_children": 0
+  },
+  "observed_on": "2026-07-14",
+  "outcome": "success",
+  "runner": "scripts/qualify_epub_package.py",
+  "schema": "epub-package-qualification-v1",
+  "source": "repository-authored synthetic EPUB package"
+}

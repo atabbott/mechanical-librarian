@@ -1,0 +1,472 @@
+{
+  "boundary_matrix": {
+    "cases": [
+      "below-default",
+      "exact-default",
+      "above-default",
+      "below-hard-cap",
+      "exact-hard-cap",
+      "above-hard-cap"
+    ],
+    "enforcement_cases": [
+      "usage-below-limit",
+      "usage-exact-limit",
+      "usage-above-limit"
+    ],
+    "constructible_hard_usage": [
+      "archive_entries",
+      "attributes_per_element",
+      "compression_ratio_per_member",
+      "container_xml_bytes",
+      "decoded_xml_text_characters",
+      "expanded_bytes_per_archive",
+      "expanded_bytes_per_member",
+      "guide_references",
+      "metadata_nodes",
+      "opf_package_bytes",
+      "prefix_mappings",
+      "source_archive_bytes",
+      "xml_attributes_per_document",
+      "xml_depth",
+      "xml_nodes_per_document"
+    ],
+    "nonconstructible_hard_usage": {
+      "compressed_bytes_per_member": "an exact-cap member plus mandatory ZIP structure exceeds the equal source-archive hard cap",
+      "manifest_items": "an exact-cap manifest plus mandatory package/rootfile declarations exceeds the immutable public declaration cap",
+      "spine_items": "an exact-cap spine plus mandatory package and manifest declarations exceeds the immutable public declaration cap"
+    },
+    "limits": [
+      "source_archive_bytes",
+      "archive_entries",
+      "compressed_bytes_per_member",
+      "expanded_bytes_per_member",
+      "expanded_bytes_per_archive",
+      "compression_ratio_per_member",
+      "container_xml_bytes",
+      "opf_package_bytes",
+      "xml_nodes_per_document",
+      "xml_attributes_per_document",
+      "attributes_per_element",
+      "xml_depth",
+      "decoded_xml_text_characters",
+      "metadata_nodes",
+      "manifest_items",
+      "spine_items",
+      "guide_references",
+      "prefix_mappings"
+    ]
+  },
+  "cohort": "epub-package-f06-v1",
+  "coverage_matrix": [
+    {
+      "partition": "zip-descriptor-local-header",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_descriptor_signature_ambiguity_and_local_placeholders_are_validated"
+    },
+    {
+      "partition": "zip-preflight-alias-crc-compression",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_raw_zip_preflight_rejects_nul_aliases_crc_and_compression_before_xml"
+    },
+    {
+      "partition": "path-and-zip-encryption",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_hostile_path_reference_matrix_is_typed_and_never_resolved_externally"
+    },
+    {
+      "partition": "xml-entities-xinclude",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_entity_and_xinclude_matrix_is_rejected_without_external_access"
+    },
+    {
+      "partition": "opf-order-refinement-graph",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_package_child_order_and_refinement_targets_are_closed"
+    },
+    {
+      "partition": "encryption-graph",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_required_and_opaque_encryption_are_distinct"
+    },
+    {
+      "partition": "metadata-identifiers-formats-regions",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_identifier_region_format_and_prefix_normalization_are_allowlisted"
+    },
+    {
+      "partition": "metadata-repetition-precedence",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_repeated_calibre_values_preserve_occurrences_and_conflicts"
+    },
+    {
+      "partition": "metadata-standard-refinements-cover",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_standard_metadata_refinement_and_cover_precedence_matrix"
+    },
+    {
+      "partition": "report-declaration-output-bounds",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_per_field_declaration_and_public_report_bounds_are_resource_limits"
+    }
+  ],
+  "fixtures": [
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "epub3",
+      "expected_projection_sha256": "b412b82b2ba2ce5c7719b570cb82394bb55ca406c5c66bfe84e246171dc39a5a",
+      "generation_inputs": {"recipe": "generate_epub3", "seed": "deterministic"},
+      "generator": "generate_epub3",
+      "id": "epub3-deflate",
+      "provenance": "repository-authored synthetic OCF/EPUB 3.3 package declarations",
+      "resource_partition": "ordinary-epub3",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "opf2",
+      "expected_projection_sha256": "7b23d9eea50ba71e2992873979550170d929f0b1512c075542bdd75a1c83296b",
+      "generation_inputs": {"recipe": "generate_opf2", "seed": "deterministic"},
+      "generator": "generate_opf2",
+      "id": "opf2-legacy",
+      "provenance": "repository-authored synthetic OCF/OPF 2.0.1 package declarations",
+      "resource_partition": "ordinary-opf2",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "epub3",
+      "expected_projection_sha256": "8c5a8ac2c512cf45fa9996e5147a8164c04e575d668eb11d8e82d6cace8fb14d",
+      "generation_inputs": {"recipe": "generate_stored", "seed": "deterministic"},
+      "generator": "generate_stored",
+      "id": "epub3-stored",
+      "provenance": "repository-authored synthetic stored ZIP package",
+      "resource_partition": "zip-stored",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "epub3",
+      "expected_projection_sha256": "9f709f95dd5e7576ec92d46ffdc14e48d7b90f88932bea60f9b1b65c97151772",
+      "generation_inputs": {"recipe": "generate_zip64", "seed": "deterministic"},
+      "generator": "generate_zip64",
+      "id": "producer-forced-zip64",
+      "provenance": "repository-authored synthetic bounded ZIP64 local-header form",
+      "resource_partition": "zip64",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "epub3",
+      "expected_projection_sha256": "aa9a50c1011c374d388d6ee05eb2cc15362e10c5a20971b7626fa03a80bb371c",
+      "generation_inputs": {"recipe": "generate_data_descriptors", "seed": "deterministic"},
+      "generator": "generate_data_descriptors",
+      "id": "data-descriptors",
+      "provenance": "repository-authored synthetic ZIP data-descriptor form",
+      "resource_partition": "zip-data-descriptor",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 4,
+      "expected_outcome": "unsupported_multiple_renditions",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "generate_multiple_renditions", "seed": "deterministic"},
+      "generator": "generate_multiple_renditions",
+      "id": "multiple-rootfiles",
+      "provenance": "repository-authored synthetic distinct package declarations",
+      "resource_partition": "rootfile-count",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 4,
+      "expected_outcome": "encrypted",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "generate_required_encryption", "seed": "deterministic"},
+      "generator": "generate_required_encryption",
+      "id": "required-resource-encryption",
+      "provenance": "repository-authored synthetic required-resource encryption declaration",
+      "resource_partition": "encryption-required",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "opaque-encryption",
+      "expected_projection_sha256": "f77a850c5d09a57e0853d0ad050ed08076fdc396e2c9d37284a084b21685e43a",
+      "generation_inputs": {"recipe": "generate_opaque_encryption", "seed": "deterministic"},
+      "generator": "generate_opaque_encryption",
+      "id": "opaque-resource-encryption",
+      "provenance": "repository-authored synthetic non-required-resource encryption declaration",
+      "resource_partition": "encryption-opaque",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 4,
+      "expected_outcome": "encrypted",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "generate_percent_alias_encryption", "seed": "deterministic"},
+      "generator": "generate_percent_alias_encryption",
+      "id": "required-resource-encryption-percent-alias",
+      "provenance": "repository-authored synthetic percent-aliased required-resource encryption declaration",
+      "resource_partition": "encryption-percent-alias",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 5,
+      "expected_outcome": "malformed",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "mutate_foreign_container_namespace", "seed": "deterministic"},
+      "generator": "mutate_foreign_container_namespace",
+      "id": "foreign-container-namespace",
+      "provenance": "deterministic namespace mutation of repository-authored container XML",
+      "resource_partition": "xml-namespace",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 5,
+      "expected_outcome": "malformed",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "mutate_duplicate_global_id", "seed": "deterministic"},
+      "generator": "mutate_duplicate_global_id",
+      "id": "duplicate-global-id",
+      "provenance": "deterministic ID mutation of repository-authored package XML",
+      "resource_partition": "opf-graph-id",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 5,
+      "expected_outcome": "malformed",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "mutate_doctype_entity", "seed": "deterministic"},
+      "generator": "mutate_doctype_entity",
+      "id": "doctype-entity",
+      "provenance": "deterministic entity declaration prepended to repository-authored package XML",
+      "resource_partition": "xml-entity",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 5,
+      "expected_outcome": "malformed",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "mutate_unsafe_zip_flag", "seed": "deterministic"},
+      "generator": "mutate_unsafe_zip_flag",
+      "id": "unsafe-general-purpose-zip-flag",
+      "provenance": "deterministic general-purpose flag mutation of repository-authored ZIP bytes",
+      "resource_partition": "zip-flag",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 5,
+      "expected_outcome": "integrity_failure",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "mutate_required_member_crc", "seed": "deterministic"},
+      "generator": "mutate_required_member_crc",
+      "id": "required-member-crc",
+      "provenance": "deterministic central-directory CRC mutation of repository-authored ZIP bytes",
+      "resource_partition": "zip-crc",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 5,
+      "expected_outcome": "resource_limit",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "limit_per_member_expansion", "seed": "deterministic"},
+      "generator": "limit_per_member_expansion",
+      "id": "per-member-expansion-above",
+      "provenance": "repository-authored package evaluated under a lowered per-member expansion bound",
+      "resource_partition": "expanded-bytes-per-member",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 5,
+      "expected_outcome": "resource_limit",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "limit_aggregate_expansion", "seed": "deterministic"},
+      "generator": "limit_aggregate_expansion",
+      "id": "aggregate-expansion-above",
+      "provenance": "repository-authored package evaluated under a lowered aggregate expansion bound",
+      "resource_partition": "expanded-bytes-per-archive",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 5,
+      "expected_outcome": "resource_limit",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "limit_compression_ratio", "seed": "deterministic"},
+      "generator": "limit_compression_ratio",
+      "id": "compression-ratio-above",
+      "provenance": "repository-authored repeated-byte member evaluated under a lowered ratio bound",
+      "resource_partition": "compression-ratio",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "unsafe",
+      "expected_projection_sha256": "2d50479c8aae4253755824655757563de853f4bf9ac3ec52ec251b4eefcbe245",
+      "generation_inputs": {"recipe": "generate_unsafe_metadata", "seed": "deterministic"},
+      "generator": "generate_unsafe_metadata",
+      "id": "unsafe-metadata-one-way-projection",
+      "provenance": "repository-authored credential-shaped metadata value",
+      "resource_partition": "metadata-privacy",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "metadata-matrix",
+      "expected_projection_sha256": "f7416f8147aff64fa8471b5b0fc652ce768196177a0016730f3668fb86f786e2",
+      "generation_inputs": {"recipe": "generate_metadata_matrix", "seed": "deterministic"},
+      "generator": "generate_metadata_matrix",
+      "id": "standard-refined-metadata-matrix",
+      "provenance": "repository-authored synthetic standard and refined package metadata",
+      "resource_partition": "metadata-standard-matrix",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "identifier-matrix",
+      "expected_projection_sha256": "4cba2dc36490ba77544c221519b46f3476c0d1a4966d49ff5f36b5f4317bb8a1",
+      "generation_inputs": {"recipe": "generate_identifier_matrix", "seed": "deterministic"},
+      "generator": "generate_identifier_matrix",
+      "id": "identifier-applicability-matrix",
+      "provenance": "repository-authored synthetic ISBN UUID DOI ASIN proprietary and invalid identifiers",
+      "resource_partition": "metadata-identifier-matrix",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "calibre-conflict",
+      "expected_projection_sha256": "beab7560f184db0fb657c251fe5327f91534cbea5b0f7e79a771af86c06f1aeb",
+      "generation_inputs": {"recipe": "generate_calibre_conflict", "seed": "deterministic"},
+      "generator": "generate_calibre_conflict",
+      "id": "calibre-repetition-conflict",
+      "provenance": "repository-authored synthetic repeated conflicting Calibre extension pairs",
+      "resource_partition": "metadata-calibre-conflict",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 5,
+      "expected_outcome": "cancellation",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "evidence_process_cancellation", "seed": "deterministic"},
+      "generator": "evidence_process_cancellation",
+      "id": "child-cancellation",
+      "provenance": "repository-authored process protocol scenario linked to integration evidence",
+      "resource_partition": "process-cancellation",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 5,
+      "expected_outcome": "timeout",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "evidence_process_timeout", "seed": "deterministic"},
+      "generator": "evidence_process_timeout",
+      "id": "child-timeout",
+      "provenance": "repository-authored process protocol scenario linked to integration evidence",
+      "resource_partition": "process-timeout",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 70,
+      "expected_outcome": "child_failure",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "evidence_child_crash", "seed": "deterministic"},
+      "generator": "evidence_child_crash",
+      "id": "child-crash",
+      "provenance": "repository-authored nonzero child-exit and recovery scenario linked to integration evidence",
+      "resource_partition": "process-crash",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 70,
+      "expected_outcome": "child_failure",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "evidence_process_group_reap", "seed": "deterministic"},
+      "generator": "evidence_process_group_reap",
+      "id": "process-group-reap",
+      "provenance": "repository-authored process-group termination scenario linked to integration evidence",
+      "resource_partition": "process-group",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 70,
+      "expected_outcome": "child_failure",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "evidence_parent_loss", "seed": "deterministic"},
+      "generator": "evidence_parent_loss",
+      "id": "parent-loss",
+      "provenance": "repository-authored control-pipe parent-loss scenario linked to integration evidence",
+      "resource_partition": "process-parent-loss",
+      "spdx": "AGPL-3.0-or-later"
+    },
+    {
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "empty",
+      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "generation_inputs": {"recipe": "evidence_closed_child_environment", "seed": "deterministic"},
+      "generator": "evidence_closed_child_environment",
+      "id": "closed-child-environment",
+      "provenance": "repository-authored closed-environment scenario linked to integration evidence",
+      "resource_partition": "process-environment",
+      "spdx": "AGPL-3.0-or-later"
+    }
+  ],
+  "generator_module": "tests.unit.test_epub_package_fixture_manifest",
+  "projections": {
+    "empty": {
+      "citation_sections": {},
+      "observation_fields": [],
+      "warnings": []
+    },
+    "epub3": {
+      "citation_sections": {"cover": 1, "manifest": 3, "metadata": 14, "navigation": 1, "package": 2, "spine": 1},
+      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "cover"],
+      "warnings": ["contradictory_series", "identifier_applicability_unknown", "unsupported_vendor_metadata"]
+    },
+    "opf2": {
+      "citation_sections": {"cover": 1, "guide": 1, "manifest": 3, "metadata": 12, "navigation": 1, "package": 2, "spine": 1},
+      "observation_fields": ["package_version", "identifier", "package_identifier", "identifier_scheme", "title", "creator", "sort_key", "creator_role", "language", "publication_date", "date_event", "cover"],
+      "warnings": ["identifier_applicability_unknown"]
+    },
+    "opaque-encryption": {
+      "citation_sections": {"cover": 1, "encryption": 1, "manifest": 3, "metadata": 14, "navigation": 1, "package": 2, "spine": 1},
+      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "cover"],
+      "warnings": ["contradictory_series", "encryption_declarations_present", "identifier_applicability_unknown", "opaque_resource_encrypted", "unsupported_vendor_metadata"]
+    },
+    "unsafe": {
+      "citation_sections": {"cover": 1, "manifest": 3, "metadata": 15, "navigation": 1, "package": 2, "spine": 1},
+      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "cover"],
+      "warnings": ["contradictory_series", "identifier_applicability_unknown", "unsafe_metadata_redacted", "unsupported_vendor_metadata"]
+    },
+    "metadata-matrix": {
+      "citation_sections": {"cover": 1, "manifest": 3, "metadata": 30, "navigation": 1, "package": 2, "spine": 1},
+      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "title", "title", "subtitle", "contributor", "publisher", "subject", "description", "rights", "source", "relation", "type", "region", "contributor_role", "edition", "format", "region", "cover"],
+      "warnings": ["ambiguous_title", "contradictory_series", "identifier_applicability_unknown", "unsupported_vendor_metadata"]
+    },
+    "identifier-matrix": {
+      "citation_sections": {"cover": 1, "manifest": 3, "metadata": 24, "navigation": 1, "package": 2, "spine": 1},
+      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "identifier", "identifier_scheme", "identifier", "identifier_scheme", "identifier", "identifier_scheme", "identifier", "identifier", "identifier_scheme", "cover"],
+      "warnings": ["ambiguous_identifier", "contradictory_series", "identifier_applicability_unknown", "invalid_identifier", "unsupported_vendor_metadata"]
+    },
+    "calibre-conflict": {
+      "citation_sections": {"cover": 1, "manifest": 3, "metadata": 16, "navigation": 1, "package": 2, "spine": 1},
+      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection", "collection_position", "collection_position", "cover"],
+      "warnings": ["contradictory_series", "identifier_applicability_unknown", "unsupported_vendor_metadata"]
+    }
+  },
+  "schema": "synthetic-fixture-manifest-v1"
+}
