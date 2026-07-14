@@ -1,0 +1,1707 @@
+"""Bounded EPUB package metadata extraction.
+
+The adapter deliberately reads only OCF control documents and the single OPF
+package document. Declared content, navigation documents, covers, and linked
+metadata remain opaque declarations.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import posixpath
+import re
+import struct
+import time
+import unicodedata
+import zipfile
+import zlib
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from xml.parsers import expat
+
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_projection_text,
+)
+from mechanical_librarian.domain.identifiers import CompatibilityVersion, ExtractorVersion, SchemaVersion
+from mechanical_librarian.domain.local_evidence import (
+    CitationSection,
+    DeclarationKind,
+    EpubPackageLimits,
+    LocalEvidenceCapability,
+    LocalEvidenceCitation,
+    LocalEvidenceDeclaration,
+    LocalEvidenceField,
+    LocalEvidenceObservation,
+    LocalEvidenceOutcome,
+    LocalEvidenceReport,
+    LocalEvidenceRequest,
+    LocalEvidenceSourceError,
+    LocalEvidenceUsage,
+    LocalEvidenceWarning,
+    MAX_DECLARATIONS,
+    ObservationApplicability,
+    local_resource_identity,
+)
+
+
+_CONTAINER = "META-INF/container.xml"
+_ENCRYPTION = "META-INF/encryption.xml"
+_MIMETYPE = "mimetype"
+_MIMETYPE_VALUE = b"application/epub+zip"
+_CONTAINER_NS = "urn:oasis:names:tc:opendocument:xmlns:container"
+_DC_NS = "http://purl.org/dc/elements/1.1/"
+_OPF_NS = "http://www.idpf.org/2007/opf"
+_ENC_NS = "urn:oasis:names:tc:opendocument:xmlns:container"
+_XMLENC_NS = "http://www.w3.org/2001/04/xmlenc#"
+_XMLDSIG_NS = "http://www.w3.org/2000/09/xmldsig#"
+_XINCLUDE_NS = "http://www.w3.org/2001/XInclude"
+_XML_NS = "http://www.w3.org/XML/1998/namespace"
+_SCHEMA_NS = "http://schema.org/"
+_SCHEMA_HTTPS_NS = "https://schema.org/"
+_DCTERMS_NS = "http://purl.org/dc/terms/"
+_EXTRACTOR_VERSION = ExtractorVersion("epub-package-v1")
+_OBSERVATION_SCHEMA = SchemaVersion("package-observation-v1")
+_ISBN = re.compile(r"^(?:ISBN(?:-1[03])?:?)?\s*([0-9Xx -]{10,20})$")
+_DATE = re.compile(
+    r"^\d{4}(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?)?"
+    r"(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?$"
+)
+_XML_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,255}$")
+_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$")
+_VOCAB_IRI = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:[^\s]{1,1023}$")
+_MEDIA_TYPE = re.compile(r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+$")
+_UUID = re.compile(
+    r"^(?:urn:uuid:)?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
+    r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$"
+)
+_DOI = re.compile(r"^(?:(?:doi:)|(?:https?://doi\.org/))?(10\.\d{4,9}/\S+)$", re.I)
+_ASIN = re.compile(r"^(?:ASIN:)?(B0[A-Z0-9]{8})$", re.I)
+_UNSAFE_MARKER = "unsafe-source-text-sha256:"
+
+
+class _Rejected(Exception):
+    def __init__(self, outcome: LocalEvidenceOutcome) -> None:
+        self.outcome = outcome
+
+
+def _check_request(request: LocalEvidenceRequest) -> None:
+    if request.cancellation.is_cancelled():
+        raise _Rejected(LocalEvidenceOutcome.CANCELLATION)
+    if time.monotonic() >= request.monotonic_deadline:
+        raise _Rejected(LocalEvidenceOutcome.TIMEOUT)
+
+
+@dataclass(frozen=True)
+class _Entry:
+    name: str
+    raw_name: bytes
+    flags: int
+    method: int
+    crc: int
+    compressed_size: int
+    expanded_size: int
+    local_offset: int
+    central_extra_length: int
+    local_extra_length: int
+    data_offset: int
+
+
+@dataclass
+class _Node:
+    name: str
+    attributes: dict[str, str]
+    children: list["_Node"] = field(default_factory=list)
+    text_parts: list[str] = field(default_factory=list)
+    ordinal: int = 0
+
+    @property
+    def text(self) -> str:
+        return "".join(self.text_parts).strip()
+
+
+@dataclass
+class _XmlUsage:
+    nodes: int = 0
+    attributes: int = 0
+    text_characters: int = 0
+    maximum_depth: int = 0
+
+
+class _SourceIO(io.RawIOBase):
+    def __init__(self, request: LocalEvidenceRequest) -> None:
+        self._request = request
+        self._source = request.source
+        self._position = 0
+
+    def readable(self) -> bool:
+        return True
+
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._position
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        _check_request(self._request)
+        position = (
+            offset
+            if whence == io.SEEK_SET
+            else self._position + offset
+            if whence == io.SEEK_CUR
+            else self._source.length + offset
+            if whence == io.SEEK_END
+            else -1
+        )
+        if position < 0 or position > self._source.length:
+            raise OSError("invalid bounded source seek")
+        self._position = position
+        return position
+
+    def read(self, size: int = -1) -> bytes:
+        _check_request(self._request)
+        remaining = self._source.length - self._position
+        amount = remaining if size is None or size < 0 else min(size, remaining)
+        value = self._source.read_at(self._position, amount)
+        _check_request(self._request)
+        self._position += len(value)
+        return value
+
+
+def _read_exact(request: LocalEvidenceRequest, offset: int, size: int) -> bytes:
+    _check_request(request)
+    if size < 0 or offset < 0 or offset + size > request.source.length:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    value = request.source.read_at(offset, size)
+    _check_request(request)
+    if len(value) != size:
+        raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE)
+    return value
+
+
+def _zip64_values(extra: bytes, wanted: tuple[bool, bool, bool]) -> tuple[int | None, ...]:
+    cursor = 0
+    payload = None
+    while cursor + 4 <= len(extra):
+        kind, length = struct.unpack_from("<HH", extra, cursor)
+        cursor += 4
+        if cursor + length > len(extra):
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        if kind == 0x0001:
+            if payload is not None:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            payload = extra[cursor : cursor + length]
+        cursor += length
+    if cursor != len(extra):
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    if not any(wanted):
+        return (None, None, None)
+    if payload is None:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    result: list[int | None] = []
+    position = 0
+    for required in wanted:
+        if not required:
+            result.append(None)
+            continue
+        if position + 8 > len(payload):
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        result.append(struct.unpack_from("<Q", payload, position)[0])
+        position += 8
+    return tuple(result)
+
+
+def _valid_member_name(raw: bytes, flags: int, limits: EpubPackageLimits) -> str:
+    if b"\x00" in raw or len(raw) > limits.MEMBER_NAME_UTF8_BYTES_HARD_CAP:
+        raise _Rejected(
+            LocalEvidenceOutcome.RESOURCE_LIMIT
+            if len(raw) > limits.MEMBER_NAME_UTF8_BYTES_HARD_CAP
+            else LocalEvidenceOutcome.MALFORMED
+        )
+    try:
+        if flags & 0x800:
+            name = raw.decode("utf-8", "strict")
+        else:
+            name = raw.decode("ascii", "strict")
+    except UnicodeDecodeError:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED) from None
+    if unicodedata.normalize("NFC", name) != name:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    parts = name.split("/")
+    if (
+        not name
+        or name.startswith("/")
+        or "\\" in name
+        or any(part in {"", ".", ".."} for part in parts)
+        or any(len(part.encode("utf-8")) > limits.COMPONENT_NAME_UTF8_BYTES_HARD_CAP for part in parts)
+    ):
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    return name
+
+
+def _central_directory(request: LocalEvidenceRequest) -> tuple[_Entry, ...]:
+    limits = request.limits
+    length = request.source.length
+    if length < 22:
+        raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_FORMAT)
+    tail_size = min(length, 65_557)
+    tail_offset = length - tail_size
+    tail = _read_exact(request, tail_offset, tail_size)
+    relative = tail.rfind(b"PK\x05\x06")
+    if relative < 0 or relative + 22 > len(tail):
+        raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_FORMAT)
+    eocd_offset = tail_offset + relative
+    disk, central_disk, disk_entries, entries, central_size, central_offset, comment = struct.unpack_from(
+        "<4H2LH", tail, relative + 4
+    )
+    if eocd_offset + 22 + comment != length or disk or central_disk or disk_entries != entries:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    zip64 = entries == 0xFFFF or central_size == 0xFFFFFFFF or central_offset == 0xFFFFFFFF
+    central_boundary = eocd_offset
+    if zip64:
+        if eocd_offset < 20:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        locator = _read_exact(request, eocd_offset - 20, 20)
+        if locator[:4] != b"PK\x06\x07":
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        locator_disk, zip64_offset, disk_count = struct.unpack_from("<LQL", locator, 4)
+        if locator_disk or disk_count != 1:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        record_header = _read_exact(request, zip64_offset, 12)
+        if record_header[:4] != b"PK\x06\x06":
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        record_size = struct.unpack_from("<Q", record_header, 4)[0]
+        if record_size < 44 or zip64_offset + 12 + record_size != eocd_offset - 20:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        record = _read_exact(request, zip64_offset, 12 + record_size)
+        disk, central_disk = struct.unpack_from("<LL", record, 16)
+        disk_entries, entries, central_size, central_offset = struct.unpack_from("<4Q", record, 24)
+        if disk or central_disk or disk_entries != entries:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        central_boundary = zip64_offset
+    if entries == 0 or entries > limits.archive_entries:
+        raise _Rejected(
+            LocalEvidenceOutcome.RESOURCE_LIMIT if entries > limits.archive_entries else LocalEvidenceOutcome.UNSUPPORTED_FORMAT
+        )
+    if central_offset + central_size != central_boundary:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    result: list[_Entry] = []
+    normalized: set[str] = set()
+    cursor = central_offset
+    intervals: list[tuple[int, int]] = []
+    declared_expanded = 0
+    for _ in range(entries):
+        header = _read_exact(request, cursor, 46)
+        if header[:4] != b"PK\x01\x02":
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        (
+            _made_by,
+            needed,
+            flags,
+            method,
+            _mtime,
+            _mdate,
+            crc,
+            compressed,
+            expanded,
+            name_length,
+            extra_length,
+            comment_length,
+            disk_start,
+            _internal,
+            _external,
+            local_offset,
+        ) = struct.unpack_from("<6H3L5H2L", header, 4)
+        variable = _read_exact(request, cursor + 46, name_length + extra_length + comment_length)
+        raw_name = variable[:name_length]
+        extra = variable[name_length : name_length + extra_length]
+        name = _valid_member_name(raw_name, flags, limits)
+        if flags & 1:
+            raise _Rejected(LocalEvidenceOutcome.ENCRYPTED)
+        if method not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
+            raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_COMPRESSION)
+        allowed_flags = 0x0808 | (0x0006 if method == zipfile.ZIP_DEFLATED else 0)
+        if flags & ~allowed_flags:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        if disk_start != 0:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        central_uses_zip64 = (
+            expanded == 0xFFFFFFFF
+            or compressed == 0xFFFFFFFF
+            or local_offset == 0xFFFFFFFF
+        )
+        zip_expanded, zip_compressed, zip_offset = _zip64_values(
+            extra,
+            (expanded == 0xFFFFFFFF, compressed == 0xFFFFFFFF, local_offset == 0xFFFFFFFF),
+        )
+        expanded = expanded if zip_expanded is None else zip_expanded
+        compressed = compressed if zip_compressed is None else zip_compressed
+        local_offset = local_offset if zip_offset is None else zip_offset
+        minimum_version = (
+            45
+            if central_uses_zip64
+            else 20
+            if method == zipfile.ZIP_DEFLATED or flags & 0x08
+            else 10
+        )
+        if not minimum_version <= needed <= 45:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        if compressed > limits.compressed_bytes_per_member or expanded > limits.expanded_bytes_per_member:
+            raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+        declared_expanded += expanded
+        if declared_expanded > limits.expanded_bytes_per_archive:
+            raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+        if expanded and compressed == 0:
+            raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE)
+        if compressed and expanded > compressed * limits.compression_ratio_per_member:
+            raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+        collision = unicodedata.normalize("NFC", name).casefold()
+        if collision in normalized:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        normalized.add(collision)
+        local = _read_exact(request, local_offset, 30)
+        if local[:4] != b"PK\x03\x04":
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        local_needed, local_flags, local_method = struct.unpack_from("<3H", local, 4)
+        local_crc, local_compressed, local_expanded = struct.unpack_from("<3L", local, 14)
+        local_name_length, local_extra_length = struct.unpack_from("<2H", local, 26)
+        local_variable = _read_exact(
+            request, local_offset + 30, local_name_length + local_extra_length
+        )
+        local_name = local_variable[:local_name_length]
+        local_extra = local_variable[local_name_length:]
+        if (
+            local_name != raw_name
+            or local_flags != flags
+            or local_method != method
+            or local_needed != needed
+        ):
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        if flags & 0x08:
+            if (
+                local_crc not in {0, crc}
+                or local_compressed not in {0, compressed, 0xFFFFFFFF}
+                or local_expanded not in {0, expanded, 0xFFFFFFFF}
+            ):
+                raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE)
+        elif (
+            local_crc != crc
+            or (local_compressed != 0xFFFFFFFF and local_compressed != compressed)
+            or (local_expanded != 0xFFFFFFFF and local_expanded != expanded)
+        ):
+            raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE)
+        local_zip_expanded, local_zip_compressed, _unused = _zip64_values(
+            local_extra,
+            (
+                local_expanded == 0xFFFFFFFF,
+                local_compressed == 0xFFFFFFFF,
+                False,
+            ),
+        )
+        if (
+            (local_zip_expanded is not None and local_zip_expanded != expanded)
+            or (local_zip_compressed is not None and local_zip_compressed != compressed)
+        ):
+            raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE)
+        data_offset = local_offset + 30 + local_name_length + local_extra_length
+        data_end = data_offset + compressed
+        occupied_end = data_end
+        if flags & 0x08:
+            zip64_descriptor = (
+                local_compressed == 0xFFFFFFFF
+                or local_expanded == 0xFFFFFFFF
+                or compressed > 0xFFFFFFFF
+                or expanded > 0xFFFFFFFF
+            )
+            width = 8 if zip64_descriptor else 4
+            prefix = _read_exact(request, data_end, 4)
+            candidates: list[int] = []
+            for has_signature in (False, True):
+                if has_signature and prefix != b"PK\x07\x08":
+                    continue
+                crc_offset = data_end + (4 if has_signature else 0)
+                candidate_end = crc_offset + 4 + width * 2
+                if candidate_end > central_offset:
+                    continue
+                candidate_crc = struct.unpack(
+                    "<L", _read_exact(request, crc_offset, 4)
+                )[0]
+                descriptor_sizes = _read_exact(request, crc_offset + 4, width * 2)
+                candidate_compressed = int.from_bytes(
+                    descriptor_sizes[:width], "little"
+                )
+                candidate_expanded = int.from_bytes(
+                    descriptor_sizes[width:], "little"
+                )
+                if (
+                    candidate_crc == crc
+                    and candidate_compressed == compressed
+                    and candidate_expanded == expanded
+                ):
+                    candidates.append(candidate_end)
+            if len(candidates) != 1:
+                raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE)
+            occupied_end = candidates[0]
+        if occupied_end > central_offset:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        intervals.append((local_offset, occupied_end))
+        result.append(
+            _Entry(
+                name,
+                raw_name,
+                flags,
+                method,
+                crc,
+                compressed,
+                expanded,
+                local_offset,
+                extra_length,
+                local_extra_length,
+                data_offset,
+            )
+        )
+        cursor += 46 + name_length + extra_length + comment_length
+    if cursor != central_offset + central_size:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    for previous, current in zip(sorted(intervals), sorted(intervals)[1:]):
+        if previous[1] > current[0]:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    first = result[0]
+    if first.name != _MIMETYPE:
+        raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_FORMAT)
+    if (
+        first.local_offset != 0
+        or first.method != zipfile.ZIP_STORED
+        or first.flags & 0x08
+        or first.local_extra_length
+        or first.central_extra_length
+    ):
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    if first.expanded_size != len(_MIMETYPE_VALUE):
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    return tuple(result)
+
+
+def _parse_xml(
+    data: bytes,
+    limits: EpubPackageLimits,
+    request: LocalEvidenceRequest,
+) -> tuple[_Node, _XmlUsage]:
+    if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    usage = _XmlUsage()
+    stack: list[_Node] = []
+    root: _Node | None = None
+    try:
+        parser = expat.ParserCreate(namespace_separator="}")
+        if not hasattr(parser, "SetParamEntityParsing") or not parser.SetParamEntityParsing(
+            expat.XML_PARAM_ENTITY_PARSING_NEVER
+        ):
+            raise _Rejected(LocalEvidenceOutcome.UNAVAILABLE_SOURCE)
+    except MemoryError:
+        raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT) from None
+
+    def expanded(name: str) -> str:
+        return "{" + name if "}" in name else name
+
+    def start(name: str, attributes: dict[str, str]) -> None:
+        nonlocal root
+        _check_request(request)
+        usage.nodes += 1
+        usage.attributes += len(attributes)
+        depth = len(stack) + 1
+        usage.maximum_depth = max(usage.maximum_depth, depth)
+        if (
+            usage.nodes > limits.xml_nodes_per_document
+            or usage.attributes > limits.xml_attributes_per_document
+            or len(attributes) > limits.attributes_per_element
+            or depth > limits.xml_depth
+        ):
+            raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+        node = _Node(expanded(name), {expanded(key): value for key, value in attributes.items()}, ordinal=usage.nodes)
+        if node.name.startswith("{" + _XINCLUDE_NS + "}"):
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        if stack:
+            stack[-1].children.append(node)
+        elif root is None:
+            root = node
+        else:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        stack.append(node)
+
+    def end(_name: str) -> None:
+        _check_request(request)
+        if not stack:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        stack.pop()
+
+    def text(value: str) -> None:
+        _check_request(request)
+        if stack and value:
+            usage.text_characters += len(value)
+            if usage.text_characters > limits.decoded_xml_text_characters:
+                raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+            stack[-1].text_parts.append(value)
+
+    def reject(*_arguments: object) -> None:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.CharacterDataHandler = text
+    parser.StartDoctypeDeclHandler = reject
+    parser.EntityDeclHandler = reject
+    parser.UnparsedEntityDeclHandler = reject
+    parser.ExternalEntityRefHandler = lambda *_arguments: 0
+    try:
+        parser.Parse(data, True)
+    except _Rejected:
+        raise
+    except MemoryError:
+        raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT) from None
+    except (expat.ExpatError, UnicodeError, ValueError, RecursionError):
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED) from None
+    if root is None or stack:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    return root, usage
+
+
+def _member_bytes(
+    request: LocalEvidenceRequest,
+    archive: zipfile.ZipFile,
+    entries: dict[str, _Entry],
+    name: str,
+    maximum: int,
+) -> bytes:
+    entry = entries.get(name)
+    if entry is None:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    if entry.expanded_size > maximum:
+        raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+    try:
+        with archive.open(name, "r") as stream:
+            chunks: list[bytes] = []
+            total = 0
+            while True:
+                _check_request(request)
+                chunk = stream.read(min(65_536, maximum + 1 - total))
+                _check_request(request)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+                if total > maximum:
+                    raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+            value = b"".join(chunks)
+    except _Rejected:
+        raise
+    except (zipfile.BadZipFile, RuntimeError, EOFError, OSError, zlib.error):
+        raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE) from None
+    if len(value) != entry.expanded_size:
+        raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE)
+    return value
+
+
+def _children(node: _Node, local: str, namespace: str) -> list[_Node]:
+    expected = f"{{{namespace}}}{local}"
+    return [child for child in node.children if child.name == expected]
+
+
+def _attribute(node: _Node, local: str, namespace: str | None = None) -> str | None:
+    return node.attributes.get(local if namespace is None else f"{{{namespace}}}{local}")
+
+
+def _percent_decode_path(reference: str) -> str:
+    output = bytearray()
+    index = 0
+    while index < len(reference):
+        character = reference[index]
+        if character == "%":
+            if index + 2 >= len(reference):
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            try:
+                value = int(reference[index + 1 : index + 3], 16)
+            except ValueError:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED) from None
+            if value in {0, ord("/"), ord("\\")}:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            output.append(value)
+            index += 3
+            continue
+        output.extend(character.encode("utf-8"))
+        index += 1
+    try:
+        decoded = output.decode("utf-8", "strict")
+    except UnicodeError:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED) from None
+    return unicodedata.normalize("NFC", decoded)
+
+
+def _resolve_member(base: str, reference: str, entries: dict[str, _Entry]) -> str:
+    if not reference or reference.startswith(("/", "\\")) or "\\" in reference or "?" in reference or "#" in reference:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    decoded_reference = _percent_decode_path(reference)
+    joined = posixpath.normpath(posixpath.join(posixpath.dirname(base), decoded_reference))
+    if joined.startswith("../") or joined in {".", ".."}:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    encoded = joined.encode("utf-8")
+    if len(encoded) > EpubPackageLimits.MEMBER_NAME_UTF8_BYTES_HARD_CAP:
+        raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+    if joined not in entries:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    return joined
+
+
+def _declared_resource_identity(
+    base: str, reference: str, entries: dict[str, _Entry]
+) -> tuple[str, str | None]:
+    if reference.startswith(("https://", "http://")):
+        parts = reference.split("/", 3)
+        if (
+            len(reference) > 1_024
+            or len(parts) < 3
+            or not parts[2]
+            or any(ord(character) < 0x20 or character == "\\" for character in reference)
+            or "@" in parts[2]
+        ):
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        return hashlib.sha256(("remote\x00" + reference).encode("utf-8")).hexdigest(), None
+    resolved = _resolve_member(base, reference, entries)
+    return local_resource_identity(resolved), resolved
+
+
+def _normalize_identifier(
+    raw: str,
+) -> tuple[str, ObservationApplicability, str | None, bool]:
+    match = _ISBN.fullmatch(raw)
+    if not match:
+        stripped = raw.strip()
+        uuid = _UUID.fullmatch(stripped)
+        if uuid:
+            return (
+                "urn:uuid:" + uuid.group(1).lower(),
+                ObservationApplicability.EDITION,
+                "UUID",
+                False,
+            )
+        doi = _DOI.fullmatch(stripped)
+        if doi:
+            return doi.group(1), ObservationApplicability.EDITION, "DOI", False
+        asin = _ASIN.fullmatch(stripped)
+        if asin:
+            return asin.group(1).upper(), ObservationApplicability.EDITION, "ASIN", False
+        if stripped.casefold().startswith("urn:"):
+            return stripped, ObservationApplicability.UNKNOWN, "URN", False
+        return stripped, ObservationApplicability.UNKNOWN, None, False
+    compact = re.sub(r"[ -]", "", match.group(1)).upper()
+    if len(compact) == 10:
+        total = sum((10 - index) * (10 if value == "X" else int(value)) for index, value in enumerate(compact))
+        if total % 11 == 0:
+            return compact, ObservationApplicability.UNKNOWN, "ISBN-10", False
+    if len(compact) == 13 and compact.isdigit():
+        total = sum(int(value) * (1 if index % 2 == 0 else 3) for index, value in enumerate(compact[:-1]))
+        if (10 - total % 10) % 10 == int(compact[-1]):
+            return compact, ObservationApplicability.UNKNOWN, "ISBN-13", False
+    return raw.strip(), ObservationApplicability.UNKNOWN, "ISBN", True
+
+
+def _valid_date(value: str) -> bool:
+    if _DATE.fullmatch(value) is None:
+        return False
+    try:
+        if len(value) == 4:
+            return True
+        if len(value) == 7:
+            datetime(int(value[:4]), int(value[5:7]), 1)
+        elif "T" in value:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        else:
+            datetime.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _compatibility(version: str) -> CompatibilityVersion:
+    return CompatibilityVersion("opf-2.0.1" if version == "2.0" else "epub-3.3")
+
+
+def _resolved_property(value: str | None, prefixes: dict[str, str]) -> str | None:
+    if not value:
+        return None
+    if ":" not in value:
+        return value
+    prefix, local = value.split(":", 1)
+    if not local:
+        return None
+    if prefix == "dcterms" and prefixes.get(prefix, _DCTERMS_NS) == _DCTERMS_NS:
+        return "dcterms:" + local
+    if prefix == "schema" and prefixes.get(prefix, _SCHEMA_NS) in {
+        _SCHEMA_NS,
+        _SCHEMA_HTTPS_NS,
+    }:
+        return "schema:" + local
+    return None
+
+
+def _public_text(value: str, maximum: int) -> tuple[str, bool]:
+    try:
+        return validate_projection_text(value, "public EPUB metadata", maximum), False
+    except EvidenceValueError:
+        return _UNSAFE_MARKER + hashlib.sha256(value.encode("utf-8")).hexdigest(), True
+
+
+def _walk(node: _Node) -> list[_Node]:
+    result: list[_Node] = []
+    pending = [node]
+    while pending:
+        current = pending.pop()
+        result.append(current)
+        pending.extend(reversed(current.children))
+    return result
+
+
+def _citation(
+    request: LocalEvidenceRequest,
+    resource: str,
+    section: CitationSection,
+    node: _Node,
+    selector: str | None = None,
+) -> LocalEvidenceCitation:
+    return LocalEvidenceCitation(
+        request.expected_source,
+        local_resource_identity(resource),
+        section,
+        node.name,
+        node.ordinal,
+        selector,
+    )
+
+
+def _observation(
+    request: LocalEvidenceRequest,
+    resource: str,
+    version: str,
+    node: _Node,
+    field_name: LocalEvidenceField,
+    *,
+    normalized: str | None = None,
+    applicability: ObservationApplicability = ObservationApplicability.WORK,
+    display: int | None = None,
+    language: str | None = None,
+    selector: str | None = None,
+    preserve_only: bool = False,
+) -> LocalEvidenceObservation:
+    raw = node.text
+    if len(raw) > request.limits.MAX_RAW_VALUE_CHARACTERS or (normalized is not None and len(normalized) > request.limits.MAX_NORMALIZED_VALUE_CHARACTERS):
+        raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+    safe_raw, raw_redacted = _public_text(raw, request.limits.MAX_RAW_VALUE_CHARACTERS)
+    normalized_value = None if preserve_only else raw.strip() if normalized is None else normalized
+    safe_normalized = None
+    if normalized_value is not None:
+        safe_normalized, normalized_redacted = _public_text(
+            normalized_value,
+            request.limits.MAX_NORMALIZED_VALUE_CHARACTERS,
+        )
+        if raw_redacted or normalized_redacted:
+            safe_normalized = safe_raw
+    return LocalEvidenceObservation(
+        field_name,
+        safe_raw,
+        safe_normalized,
+        applicability,
+        _citation(request, resource, CitationSection.METADATA, node, selector),
+        _OBSERVATION_SCHEMA,
+        _EXTRACTOR_VERSION,
+        _compatibility(version),
+        display,
+        language,
+        local_resource_identity(resource),
+    )
+
+
+_DC_FIELDS = {
+    "title": LocalEvidenceField.TITLE,
+    "creator": LocalEvidenceField.CREATOR,
+    "contributor": LocalEvidenceField.CONTRIBUTOR,
+    "language": LocalEvidenceField.LANGUAGE,
+    "publisher": LocalEvidenceField.PUBLISHER,
+    "date": LocalEvidenceField.PUBLICATION_DATE,
+    "subject": LocalEvidenceField.SUBJECT,
+    "description": LocalEvidenceField.DESCRIPTION,
+    "rights": LocalEvidenceField.RIGHTS,
+    "source": LocalEvidenceField.SOURCE,
+    "relation": LocalEvidenceField.RELATION,
+    "type": LocalEvidenceField.TYPE,
+    "format": LocalEvidenceField.FORMAT,
+    "coverage": LocalEvidenceField.REGION,
+    "identifier": LocalEvidenceField.IDENTIFIER,
+}
+
+
+def _package_report(
+    request: LocalEvidenceRequest,
+    package_name: str,
+    root: _Node,
+    entries: dict[str, _Entry],
+    encryption_names: set[str],
+    encryption_declarations: list[tuple[str, _Node]],
+    encryption_present: bool,
+    usage: LocalEvidenceUsage,
+    rootfile_node: _Node,
+) -> LocalEvidenceReport:
+    if root.name != "{" + _OPF_NS + "}package":
+        raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_FORMAT)
+    version = _attribute(root, "version") or ""
+    if version not in {"2.0", "3.0"}:
+        raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_VERSION)
+    prefix_tokens = (_attribute(root, "prefix") or "").split()
+    if (
+        len(prefix_tokens) % 2
+        or len(prefix_tokens) // 2 > request.limits.prefix_mappings
+        or any(
+            not prefix_tokens[index].endswith(":")
+            or _PREFIX.fullmatch(prefix_tokens[index][:-1]) is None
+            or _VOCAB_IRI.fullmatch(prefix_tokens[index + 1]) is None
+            for index in range(0, len(prefix_tokens), 2)
+        )
+    ):
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    prefixes: dict[str, str] = {}
+    for index in range(0, len(prefix_tokens), 2):
+        name = prefix_tokens[index][:-1]
+        if name in prefixes:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        prefixes[name] = prefix_tokens[index + 1]
+    metadata_groups = _children(root, "metadata", _OPF_NS)
+    manifest_groups = _children(root, "manifest", _OPF_NS)
+    spine_groups = _children(root, "spine", _OPF_NS)
+    if len(metadata_groups) != 1 or len(manifest_groups) != 1 or len(spine_groups) != 1:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    metadata = metadata_groups[0]
+    manifest = manifest_groups[0]
+    spine = spine_groups[0]
+    supported_sequence = [
+        f"{{{_OPF_NS}}}metadata",
+        f"{{{_OPF_NS}}}manifest",
+        f"{{{_OPF_NS}}}spine",
+    ]
+    child_names = [node.name for node in root.children]
+    if child_names[:3] != supported_sequence:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    trailing = child_names[3:]
+    guide_name = f"{{{_OPF_NS}}}guide"
+    if version == "2.0":
+        if trailing not in ([], [guide_name]):
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    else:
+        collection_name = f"{{{_OPF_NS}}}collection"
+        bindings_name = f"{{{_OPF_NS}}}bindings"
+        position = 0
+        if position < len(trailing) and trailing[position] == guide_name:
+            position += 1
+        if position < len(trailing) and trailing[position] == bindings_name:
+            position += 1
+        while position < len(trailing) and trailing[position] == collection_name:
+            position += 1
+        if position != len(trailing):
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    if not manifest.children or not spine.children:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    if len(metadata.children) > request.limits.metadata_nodes:
+        raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+    if len(manifest.children) > request.limits.manifest_items or len(spine.children) > request.limits.spine_items:
+        raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+    observations: list[LocalEvidenceObservation] = []
+    declarations: list[LocalEvidenceDeclaration] = []
+    warnings: list[LocalEvidenceWarning] = []
+    declarations.extend(
+        (
+            LocalEvidenceDeclaration(
+                DeclarationKind.ROOTFILE,
+                rootfile_node.ordinal,
+                _citation(request, _CONTAINER, CitationSection.PACKAGE, rootfile_node),
+                local_resource_identity(package_name),
+                media_type="application/oebps-package+xml",
+            ),
+            LocalEvidenceDeclaration(
+                DeclarationKind.PACKAGE,
+                root.ordinal,
+                _citation(request, package_name, CitationSection.PACKAGE, root),
+                local_resource_identity(package_name),
+                media_type="application/oebps-package+xml",
+            ),
+        )
+    )
+    for encrypted_name, encrypted_node in encryption_declarations:
+        declarations.append(
+            LocalEvidenceDeclaration(
+                DeclarationKind.ENCRYPTION,
+                encrypted_node.ordinal,
+                _citation(
+                    request,
+                    _ENCRYPTION,
+                    CitationSection.ENCRYPTION,
+                    encrypted_node,
+                ),
+                local_resource_identity(encrypted_name),
+            )
+        )
+    identifiers_by_id: dict[str, _Node] = {}
+    id_registry: dict[str, _Node] = {}
+    for node in _walk(root):
+        identifier = _attribute(node, "id")
+        if identifier is None:
+            continue
+        if _XML_ID.fullmatch(identifier) is None or identifier in id_registry:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        id_registry[identifier] = node
+    title_count = 0
+    standard_collection = any(
+        _attribute(node, "property") == "belongs-to-collection" and bool(node.text)
+        for node in metadata.children
+    )
+    standard_position = any(
+        _attribute(node, "property") == "group-position" and bool(node.text)
+        for node in metadata.children
+    )
+    calibre: dict[str, list[tuple[str, _Node]]] = {
+        "calibre:series": [],
+        "calibre:series_index": [],
+    }
+    for node in metadata.children:
+        legacy_name = _attribute(node, "name")
+        if legacy_name in calibre:
+            calibre[legacy_name].append(
+                (_attribute(node, "content") or node.text, node)
+            )
+    refinement_graph: dict[str, str] = {}
+    for node in metadata.children:
+        identifier = _attribute(node, "id")
+        refines = _attribute(node, "refines")
+        if refines:
+            if not refines.startswith("#") or not refines[1:]:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            if refines[1:] not in id_registry:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            if identifier:
+                refinement_graph[identifier] = refines[1:]
+    for start in refinement_graph:
+        visited: set[str] = set()
+        current = start
+        while current in refinement_graph:
+            if current in visited:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            visited.add(current)
+            current = refinement_graph[current]
+    for node in metadata.children:
+        local = node.name.rsplit("}", 1)[-1]
+        identifier = _attribute(node, "id")
+        if node.name.startswith("{" + _DC_NS + "}") and local in _DC_FIELDS:
+            if not node.text:
+                continue
+            target_field = _DC_FIELDS[local]
+            normalized = node.text.strip()
+            applicability = ObservationApplicability.WORK
+            inferred_scheme: str | None = None
+            if local == "identifier":
+                normalized, applicability, inferred_scheme, invalid_identifier = (
+                    _normalize_identifier(node.text)
+                )
+                if identifier:
+                    identifiers_by_id[identifier] = node
+                if invalid_identifier:
+                    warnings.append(
+                        LocalEvidenceWarning(
+                            "invalid_identifier",
+                            _citation(
+                                request,
+                                package_name,
+                                CitationSection.METADATA,
+                                node,
+                            ),
+                        )
+                    )
+            if local == "date":
+                event = _attribute(node, "event", _OPF_NS)
+                target_field = {
+                    "creation": LocalEvidenceField.CREATION_DATE,
+                    "publication": LocalEvidenceField.PUBLICATION_DATE,
+                    "modification": LocalEvidenceField.MODIFICATION_DATE,
+                    "copyright": LocalEvidenceField.COPYRIGHT_DATE,
+                }.get(event or "", LocalEvidenceField.PUBLICATION_DATE)
+                if not _valid_date(normalized):
+                    warnings.append(
+                        LocalEvidenceWarning(
+                            "invalid_date",
+                            _citation(request, package_name, CitationSection.METADATA, node),
+                        )
+                    )
+            if local == "title":
+                title_count += 1
+            observations.append(
+                _observation(
+                    request,
+                    package_name,
+                    version,
+                    node,
+                    target_field,
+                    normalized=normalized,
+                    applicability=applicability,
+                    display=title_count if local == "title" else None,
+                    language=_attribute(node, "lang", _XML_NS),
+                )
+            )
+            if (
+                local == "identifier"
+                and inferred_scheme is not None
+                and _attribute(node, "scheme", _OPF_NS) is None
+            ):
+                observations.append(
+                    _observation(
+                        request,
+                        package_name,
+                        version,
+                        _Node(
+                            node.name,
+                            node.attributes,
+                            text_parts=[inferred_scheme],
+                            ordinal=node.ordinal,
+                        ),
+                        LocalEvidenceField.IDENTIFIER_SCHEME,
+                        applicability=applicability,
+                        selector="inferred-identifier-type",
+                    )
+                )
+            qualifiers = (
+                ("role", _OPF_NS, LocalEvidenceField.CREATOR_ROLE if local == "creator" else LocalEvidenceField.CONTRIBUTOR_ROLE),
+                ("file-as", _OPF_NS, LocalEvidenceField.SORT_KEY),
+                ("scheme", _OPF_NS, LocalEvidenceField.IDENTIFIER_SCHEME),
+                ("event", _OPF_NS, LocalEvidenceField.DATE_EVENT),
+            )
+            for attribute_name, namespace, qualifier_field in qualifiers:
+                qualifier = _attribute(node, attribute_name, namespace)
+                if not qualifier:
+                    continue
+                if attribute_name == "role" and local not in {"creator", "contributor"}:
+                    continue
+                if attribute_name == "file-as" and local not in {"creator", "contributor", "title"}:
+                    continue
+                if attribute_name == "scheme" and local != "identifier":
+                    continue
+                if attribute_name == "event" and local != "date":
+                    continue
+                qualifier_node = _Node(node.name, node.attributes, text_parts=[qualifier], ordinal=node.ordinal)
+                observations.append(
+                    _observation(
+                        request,
+                        package_name,
+                        version,
+                        qualifier_node,
+                        qualifier_field,
+                        applicability=ObservationApplicability.EDITION,
+                        selector=attribute_name,
+                    )
+                )
+        elif node.name == f"{{{_OPF_NS}}}meta":
+            property_name = _attribute(node, "property")
+            resolved_property = _resolved_property(property_name, prefixes)
+            legacy_name = _attribute(node, "name")
+            content = _attribute(node, "content")
+            value = node.text or content or ""
+            if resolved_property == "dcterms:modified" and value:
+                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+                observations.append(_observation(request, package_name, version, synthetic, LocalEvidenceField.MODIFICATION_DATE))
+                if not _valid_date(value):
+                    warnings.append(
+                        LocalEvidenceWarning(
+                            "invalid_date",
+                            _citation(request, package_name, CitationSection.METADATA, node),
+                        )
+                    )
+            elif resolved_property in {"belongs-to-collection", "group-position"} and value:
+                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+                observations.append(
+                    _observation(
+                        request,
+                        package_name,
+                        version,
+                        synthetic,
+                        LocalEvidenceField.COLLECTION if resolved_property == "belongs-to-collection" else LocalEvidenceField.COLLECTION_POSITION,
+                        applicability=ObservationApplicability.EDITION,
+                    )
+                )
+            elif resolved_property in {
+                "title-type",
+                "role",
+                "file-as",
+                "display-seq",
+                "identifier-type",
+            } and value:
+                refines = _attribute(node, "refines") or ""
+                referenced = id_registry.get(refines[1:]) if refines.startswith("#") else None
+                if referenced is None:
+                    raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                allowed_targets = {
+                    "title-type": {f"{{{_DC_NS}}}title"},
+                    "role": {
+                        f"{{{_DC_NS}}}creator",
+                        f"{{{_DC_NS}}}contributor",
+                    },
+                    "file-as": {
+                        f"{{{_DC_NS}}}title",
+                        f"{{{_DC_NS}}}creator",
+                        f"{{{_DC_NS}}}contributor",
+                    },
+                    "display-seq": {f"{{{_DC_NS}}}title"},
+                    "identifier-type": {f"{{{_DC_NS}}}identifier"},
+                }
+                if referenced.name not in allowed_targets[resolved_property]:
+                    raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                if resolved_property == "title-type" and value == "subtitle":
+                    observations.append(
+                        _observation(
+                            request,
+                            package_name,
+                            version,
+                            referenced,
+                            LocalEvidenceField.SUBTITLE,
+                            selector="title-type-subtitle",
+                        )
+                    )
+                elif resolved_property in {"role", "file-as", "identifier-type"}:
+                    synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+                    observations.append(
+                        _observation(
+                            request,
+                            package_name,
+                            version,
+                            synthetic,
+                            (
+                                LocalEvidenceField.CONTRIBUTOR_ROLE
+                                if resolved_property == "role"
+                                and referenced.name == f"{{{_DC_NS}}}contributor"
+                                else LocalEvidenceField.CREATOR_ROLE
+                                if resolved_property == "role"
+                                else LocalEvidenceField.SORT_KEY
+                                if resolved_property == "file-as"
+                                else LocalEvidenceField.IDENTIFIER_SCHEME
+                            ),
+                            applicability=ObservationApplicability.EDITION,
+                            selector=resolved_property,
+                        )
+                    )
+                elif resolved_property == "display-seq":
+                    try:
+                        display_value = int(value)
+                    except ValueError:
+                        raise _Rejected(LocalEvidenceOutcome.MALFORMED) from None
+                    observations.append(
+                        _observation(
+                            request,
+                            package_name,
+                            version,
+                            referenced,
+                            LocalEvidenceField.TITLE,
+                            display=display_value,
+                            selector="display-seq",
+                        )
+                    )
+            elif resolved_property in {
+                "schema:bookEdition",
+                "schema:bookFormat",
+                "schema:contentLocation",
+            } and value:
+                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+                observations.append(
+                    _observation(
+                        request,
+                        package_name,
+                        version,
+                        synthetic,
+                        {
+                            "schema:bookEdition": LocalEvidenceField.EDITION,
+                            "schema:bookFormat": LocalEvidenceField.FORMAT,
+                            "schema:contentLocation": LocalEvidenceField.REGION,
+                        }[resolved_property],
+                        applicability=ObservationApplicability.EDITION,
+                    )
+                )
+            elif property_name or (
+                legacy_name
+                and legacy_name
+                not in {"calibre:series", "calibre:series_index", "cover"}
+            ):
+                warnings.append(LocalEvidenceWarning("unsupported_vendor_metadata", _citation(request, package_name, CitationSection.METADATA, node)))
+    series_values = calibre["calibre:series"]
+    position_values = calibre["calibre:series_index"]
+    for value, node in series_values:
+        if not value.strip():
+            continue
+        synthetic = _Node(
+            node.name, node.attributes, text_parts=[value], ordinal=node.ordinal
+        )
+        observations.append(
+            _observation(
+                request,
+                package_name,
+                version,
+                synthetic,
+                LocalEvidenceField.COLLECTION,
+                applicability=ObservationApplicability.EDITION,
+                selector="calibre-fallback",
+                preserve_only=standard_collection,
+            )
+        )
+    for index, (value, node) in enumerate(position_values):
+        if (
+            not value.strip()
+            or index >= len(series_values)
+            or not series_values[index][0].strip()
+        ):
+            continue
+        synthetic = _Node(
+            node.name, node.attributes, text_parts=[value], ordinal=node.ordinal
+        )
+        observations.append(
+            _observation(
+                request,
+                package_name,
+                version,
+                synthetic,
+                LocalEvidenceField.COLLECTION_POSITION,
+                applicability=ObservationApplicability.EDITION,
+                selector="calibre-fallback",
+                preserve_only=standard_position,
+            )
+        )
+    if (
+        len(series_values) != len(position_values)
+        or any(not value.strip() for value, _node in series_values)
+        or any(not value.strip() for value, _node in position_values)
+    ) and (series_values or position_values):
+        warnings.append(LocalEvidenceWarning("incomplete_calibre_series"))
+    required = {LocalEvidenceField.TITLE, LocalEvidenceField.LANGUAGE, LocalEvidenceField.IDENTIFIER}
+    if not required.issubset({item.field for item in observations}):
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    if version == "3.0" and LocalEvidenceField.MODIFICATION_DATE not in {item.field for item in observations}:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    unique_identifier = _attribute(root, "unique-identifier")
+    if not unique_identifier or unique_identifier not in identifiers_by_id:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    primary = identifiers_by_id[unique_identifier]
+    primary_normalized, primary_applicability, _primary_scheme, _invalid = (
+        _normalize_identifier(primary.text)
+    )
+    observations.append(
+        _observation(
+            request,
+            package_name,
+            version,
+            primary,
+            LocalEvidenceField.PACKAGE_IDENTIFIER,
+            normalized=primary_normalized,
+            applicability=primary_applicability,
+            selector="primary-identifier",
+        )
+    )
+    version_node = _Node(root.name, root.attributes, text_parts=[version], ordinal=root.ordinal)
+    observations.append(_observation(request, package_name, version, version_node, LocalEvidenceField.PACKAGE_VERSION, applicability=ObservationApplicability.FILE))
+    manifest_ids: dict[str, str] = {}
+    manifest_resources: set[str] = set()
+    manifest_fallbacks: dict[str, str] = {}
+    media_overlays: list[str] = []
+    nav_count = 0
+    cover_current: str | None = None
+    for item in manifest.children:
+        if item.name != f"{{{_OPF_NS}}}item":
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        identifier = _attribute(item, "id")
+        href = _attribute(item, "href")
+        media_type = _attribute(item, "media-type")
+        if (
+            not identifier
+            or identifier in manifest_ids
+            or not href
+            or not media_type
+            or _MEDIA_TYPE.fullmatch(media_type) is None
+        ):
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        resource_identity, resolved = _declared_resource_identity(package_name, href, entries)
+        if resource_identity in manifest_resources:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        manifest_resources.add(resource_identity)
+        manifest_ids[identifier] = resource_identity
+        fallback = _attribute(item, "fallback")
+        if fallback:
+            manifest_fallbacks[identifier] = fallback
+        media_overlay = _attribute(item, "media-overlay")
+        if media_overlay:
+            media_overlays.append(media_overlay)
+        properties = tuple(sorted(set((_attribute(item, "properties") or "").split())))
+        if "nav" in properties:
+            nav_count += 1
+        if "cover-image" in properties:
+            if cover_current is not None:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            cover_current = resource_identity
+        declarations.append(
+            LocalEvidenceDeclaration(
+                DeclarationKind.MANIFEST_ITEM,
+                item.ordinal,
+                _citation(request, package_name, CitationSection.MANIFEST, item),
+                resource_identity,
+                identifier,
+                media_type,
+                properties,
+            )
+        )
+        if "nav" in properties:
+            declarations.append(
+                LocalEvidenceDeclaration(
+                    DeclarationKind.NAVIGATION,
+                    item.ordinal,
+                    _citation(request, package_name, CitationSection.NAVIGATION, item),
+                    resource_identity,
+                    identifier,
+                    media_type,
+                    properties,
+                )
+            )
+        if "cover-image" in properties:
+            declarations.append(
+                LocalEvidenceDeclaration(
+                    DeclarationKind.COVER,
+                    item.ordinal,
+                    _citation(request, package_name, CitationSection.COVER, item),
+                    resource_identity,
+                    identifier,
+                    media_type,
+                    properties,
+                )
+            )
+    if any(fallback not in manifest_ids for fallback in manifest_fallbacks.values()):
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    if any(overlay not in manifest_ids for overlay in media_overlays):
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    for start in manifest_fallbacks:
+        visited: set[str] = set()
+        current = start
+        while current in manifest_fallbacks:
+            if current in visited:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            visited.add(current)
+            current = manifest_fallbacks[current]
+    if version == "3.0" and nav_count != 1:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    for itemref in spine.children:
+        if itemref.name != f"{{{_OPF_NS}}}itemref":
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        idref = _attribute(itemref, "idref")
+        if not idref or idref not in manifest_ids:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        declarations.append(
+            LocalEvidenceDeclaration(
+                DeclarationKind.SPINE_ITEM,
+                itemref.ordinal,
+                _citation(request, package_name, CitationSection.SPINE, itemref),
+                manifest_ids[idref],
+                idref,
+            )
+        )
+    toc = _attribute(spine, "toc")
+    if toc:
+        if toc not in manifest_ids:
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        declarations.append(LocalEvidenceDeclaration(DeclarationKind.NCX, spine.ordinal, _citation(request, package_name, CitationSection.NAVIGATION, spine), manifest_ids[toc], toc))
+    guides = _children(root, "guide", _OPF_NS)
+    if len(guides) > 1:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    if guides:
+        if len(guides[0].children) > request.limits.guide_references:
+            raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+        for reference in guides[0].children:
+            if reference.name != f"{{{_OPF_NS}}}reference":
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            href = _attribute(reference, "href")
+            if not href:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            clean_href = href.split("#", 1)[0]
+            resource_identity, _resolved = _declared_resource_identity(package_name, clean_href, entries)
+            reference_type = _attribute(reference, "type")
+            if not reference_type or _XML_ID.fullmatch(reference_type) is None:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            declarations.append(LocalEvidenceDeclaration(DeclarationKind.GUIDE_REFERENCE, reference.ordinal, _citation(request, package_name, CitationSection.GUIDE, reference), resource_identity, reference_type))
+    required_resources = {_MIMETYPE, _CONTAINER, _ENCRYPTION, package_name}
+    if required_resources & encryption_names:
+        raise _Rejected(LocalEvidenceOutcome.ENCRYPTED)
+    if encryption_names:
+        warnings.append(LocalEvidenceWarning("opaque_resource_encrypted"))
+    if encryption_present:
+        warnings.append(LocalEvidenceWarning("encryption_declarations_present"))
+    legacy_cover = None
+    for node in metadata.children:
+        if node.name == f"{{{_OPF_NS}}}meta" and _attribute(node, "name") == "cover":
+            cover_id = _attribute(node, "content")
+            if not cover_id or cover_id not in manifest_ids:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            legacy_cover = manifest_ids[cover_id]
+    selected_cover = cover_current or legacy_cover
+    if selected_cover:
+        cover_node = next(item for item in manifest.children if manifest_ids.get(_attribute(item, "id") or "") == selected_cover)
+        observations.append(_observation(request, package_name, version, _Node(cover_node.name, cover_node.attributes, text_parts=[selected_cover], ordinal=cover_node.ordinal), LocalEvidenceField.COVER, applicability=ObservationApplicability.FILE))
+        if not cover_current:
+            declarations.append(
+                LocalEvidenceDeclaration(
+                    DeclarationKind.COVER,
+                    cover_node.ordinal,
+                    _citation(request, package_name, CitationSection.COVER, cover_node),
+                    selected_cover,
+                    _attribute(cover_node, "id"),
+                    _attribute(cover_node, "media-type"),
+                )
+            )
+    if cover_current and legacy_cover and cover_current != legacy_cover:
+        warnings.append(LocalEvidenceWarning("contradictory_cover_declaration"))
+    values_by_field: dict[LocalEvidenceField, set[str]] = {}
+    for observation in observations:
+        value = observation.normalized_value or observation.raw_value
+        values_by_field.setdefault(observation.field, set()).add(value)
+    for field_name, warning_code in (
+        (LocalEvidenceField.TITLE, "ambiguous_title"),
+        (LocalEvidenceField.CREATOR, "ambiguous_contributor"),
+        (LocalEvidenceField.CONTRIBUTOR, "ambiguous_contributor"),
+        (LocalEvidenceField.IDENTIFIER, "ambiguous_identifier"),
+        (LocalEvidenceField.COLLECTION, "contradictory_series"),
+        (LocalEvidenceField.COLLECTION_POSITION, "contradictory_series"),
+        (LocalEvidenceField.EDITION, "ambiguous_edition"),
+        (LocalEvidenceField.PUBLICATION_DATE, "contradictory_date"),
+        (LocalEvidenceField.MODIFICATION_DATE, "contradictory_date"),
+        (LocalEvidenceField.CREATION_DATE, "contradictory_date"),
+        (LocalEvidenceField.COPYRIGHT_DATE, "contradictory_date"),
+    ):
+        if len(values_by_field.get(field_name, set())) > 1:
+            warnings.append(LocalEvidenceWarning(warning_code))
+    if any(
+        observation.field in {LocalEvidenceField.IDENTIFIER, LocalEvidenceField.PACKAGE_IDENTIFIER}
+        and observation.applicability is ObservationApplicability.UNKNOWN
+        for observation in observations
+    ):
+        warnings.append(LocalEvidenceWarning("identifier_applicability_unknown"))
+    redacted = next(
+        (
+            observation
+            for observation in observations
+            if observation.raw_value.startswith(_UNSAFE_MARKER)
+        ),
+        None,
+    )
+    if redacted is not None:
+        warnings.append(
+            LocalEvidenceWarning("unsafe_metadata_redacted", redacted.citation)
+        )
+    warnings = list({warning.sort_key: warning for warning in warnings}.values())
+    field_counts: dict[LocalEvidenceField, int] = {}
+    for observation in observations:
+        field_counts[observation.field] = field_counts.get(observation.field, 0) + 1
+    if (
+        len(observations) > request.limits.MAX_OBSERVATIONS
+        or len(warnings) > request.limits.MAX_WARNINGS
+        or len(declarations) > MAX_DECLARATIONS
+        or any(
+            count > request.limits.MAX_VALUES_PER_FIELD
+            for count in field_counts.values()
+        )
+    ):
+        raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+    observations.sort(key=lambda value: (value.citation.source_ordinal, value.citation.identity))
+    declarations.sort(key=lambda value: (value.source_ordinal, value.citation.identity))
+    warnings.sort(key=lambda value: value.sort_key)
+    try:
+        return LocalEvidenceReport(
+            LocalEvidenceOutcome.SUCCESS,
+            LocalEvidenceCapability.PACKAGE,
+            request.limits,
+            request.expected_source,
+            tuple(observations),
+            tuple(warnings),
+            tuple(declarations),
+            usage,
+        )
+    except EvidenceValueError as error:
+        if str(error) == "local evidence report exceeds its byte limit":
+            raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT) from None
+        raise
+
+
+def _expat_supported() -> bool:
+    try:
+        return tuple(int(part) for part in expat.EXPAT_VERSION.split("_")[-1].split(".")) >= (2, 7, 2)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+class EpubPackageExtractor:
+    """Extract one bounded OPF package report from an authorized byte source."""
+
+    def extract(self, request: LocalEvidenceRequest) -> LocalEvidenceReport:
+        if type(request) is not LocalEvidenceRequest or request.capability is not LocalEvidenceCapability.PACKAGE:
+            return LocalEvidenceReport(LocalEvidenceOutcome.INTERNAL_FAILURE, LocalEvidenceCapability.PACKAGE, EpubPackageLimits())
+        try:
+            _check_request(request)
+            if datetime.now(timezone.utc) >= request.deadline:
+                raise _Rejected(LocalEvidenceOutcome.TIMEOUT)
+            if not _expat_supported():
+                raise _Rejected(LocalEvidenceOutcome.UNAVAILABLE_SOURCE)
+            entries_tuple = _central_directory(request)
+            entries = {entry.name: entry for entry in entries_tuple}
+            if _CONTAINER not in entries:
+                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            source_io = _SourceIO(request)
+            try:
+                archive = zipfile.ZipFile(source_io, "r", allowZip64=True)
+            except (zipfile.BadZipFile, OSError, ValueError):
+                raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE) from None
+            with archive:
+                mimetype = _member_bytes(request, archive, entries, _MIMETYPE, len(_MIMETYPE_VALUE))
+                if mimetype != _MIMETYPE_VALUE:
+                    raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_FORMAT)
+                container_bytes = _member_bytes(request, archive, entries, _CONTAINER, request.limits.container_xml_bytes)
+                container_root, container_usage = _parse_xml(container_bytes, request.limits, request)
+                if container_root.name != "{" + _CONTAINER_NS + "}container" or _attribute(container_root, "version") != "1.0":
+                    raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                rootfiles_groups = _children(container_root, "rootfiles", _CONTAINER_NS)
+                container_child_names = [node.name for node in container_root.children]
+                allowed_container_sequences = (
+                    [f"{{{_CONTAINER_NS}}}rootfiles"],
+                    [
+                        f"{{{_CONTAINER_NS}}}rootfiles",
+                        f"{{{_CONTAINER_NS}}}links",
+                    ],
+                )
+                if (
+                    len(rootfiles_groups) != 1
+                    or container_child_names not in allowed_container_sequences
+                ):
+                    raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                rootfiles = _children(rootfiles_groups[0], "rootfile", _CONTAINER_NS)
+                if len(rootfiles) != len(rootfiles_groups[0].children):
+                    raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                paths: list[str] = []
+                for rootfile in rootfiles:
+                    full_path = _attribute(rootfile, "full-path")
+                    media_type = _attribute(rootfile, "media-type")
+                    if not full_path or media_type != "application/oebps-package+xml":
+                        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                    paths.append(_resolve_member("", full_path, entries))
+                if not paths:
+                    raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                if len(paths) != len(set(paths)):
+                    raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                if len(paths) > 1:
+                    raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS)
+                package_name = paths[0]
+                encryption_names: set[str] = set()
+                encryption_declarations: list[tuple[str, _Node]] = []
+                encryption_usage = _XmlUsage()
+                if _ENCRYPTION in entries:
+                    encryption_bytes = _member_bytes(request, archive, entries, _ENCRYPTION, request.limits.container_xml_bytes)
+                    encryption_root, encryption_usage = _parse_xml(encryption_bytes, request.limits, request)
+                    if encryption_root.name != f"{{{_ENC_NS}}}encryption":
+                        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                    encrypted_data_name = f"{{{_XMLENC_NS}}}EncryptedData"
+                    encrypted_key_name = f"{{{_XMLENC_NS}}}EncryptedKey"
+                    if any(
+                        node.name not in {encrypted_data_name, encrypted_key_name}
+                        for node in encryption_root.children
+                    ):
+                        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                    encrypted_data_nodes = [
+                        node
+                        for node in encryption_root.children
+                        if node.name == encrypted_data_name
+                    ]
+                    if not encrypted_data_nodes:
+                        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                    for encrypted_data in encrypted_data_nodes:
+                        allowed_encrypted_children = (
+                            f"{{{_XMLENC_NS}}}EncryptionMethod",
+                            f"{{{_XMLDSIG_NS}}}KeyInfo",
+                            f"{{{_XMLENC_NS}}}CipherData",
+                            f"{{{_XMLENC_NS}}}EncryptionProperties",
+                        )
+                        child_names = [node.name for node in encrypted_data.children]
+                        if (
+                            any(name not in allowed_encrypted_children for name in child_names)
+                            or any(child_names.count(name) > 1 for name in allowed_encrypted_children)
+                            or child_names != sorted(
+                                child_names,
+                                key=allowed_encrypted_children.index,
+                            )
+                        ):
+                            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                        cipher_data = _children(
+                            encrypted_data, "CipherData", _XMLENC_NS
+                        )
+                        if len(cipher_data) != 1:
+                            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                        references = _children(
+                            cipher_data[0], "CipherReference", _XMLENC_NS
+                        )
+                        if len(references) != 1 or len(cipher_data[0].children) != 1:
+                            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                        reference = references[0]
+                        if reference.children:
+                            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                        uri = _attribute(reference, "URI")
+                        if not uri:
+                            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                        normalized_uri = _resolve_member("", uri, entries)
+                        encryption_names.add(normalized_uri)
+                        encryption_declarations.append(
+                            (normalized_uri, reference)
+                        )
+                package_bytes = _member_bytes(request, archive, entries, package_name, request.limits.opf_package_bytes)
+                package_root, package_usage = _parse_xml(package_bytes, request.limits, request)
+            usage = LocalEvidenceUsage(
+                archive_entries=len(entries),
+                opened_members=3 + (_ENCRYPTION in entries),
+                compressed_bytes=sum(entry.compressed_size for entry in entries.values()),
+                expanded_bytes=sum(entry.expanded_size for entry in entries.values()),
+                xml_nodes=container_usage.nodes + encryption_usage.nodes + package_usage.nodes,
+                xml_attributes=container_usage.attributes + encryption_usage.attributes + package_usage.attributes,
+                xml_text_characters=container_usage.text_characters + encryption_usage.text_characters + package_usage.text_characters,
+                metadata_nodes=sum(len(node.children) for node in _children(package_root, "metadata", _OPF_NS)),
+                manifest_items=sum(len(node.children) for node in _children(package_root, "manifest", _OPF_NS)),
+                spine_items=sum(len(node.children) for node in _children(package_root, "spine", _OPF_NS)),
+                guide_references=sum(len(node.children) for node in _children(package_root, "guide", _OPF_NS)),
+                prefix_mappings=len((_attribute(package_root, "prefix") or "").split()) // 2,
+            )
+            if usage.expanded_bytes > request.limits.expanded_bytes_per_archive or usage.prefix_mappings > request.limits.prefix_mappings:
+                raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+            return _package_report(
+                request,
+                package_name,
+                package_root,
+                entries,
+                encryption_names,
+                encryption_declarations,
+                _ENCRYPTION in entries,
+                usage,
+                rootfiles[0],
+            )
+        except _Rejected as rejected:
+            return LocalEvidenceReport(rejected.outcome, LocalEvidenceCapability.PACKAGE, request.limits)
+        except LocalEvidenceSourceError:
+            return LocalEvidenceReport(LocalEvidenceOutcome.UNAVAILABLE_SOURCE, LocalEvidenceCapability.PACKAGE, request.limits)
+        except MemoryError:
+            return LocalEvidenceReport(LocalEvidenceOutcome.RESOURCE_LIMIT, LocalEvidenceCapability.PACKAGE, request.limits)
+        except EvidenceValueError:
+            return LocalEvidenceReport(LocalEvidenceOutcome.MALFORMED, LocalEvidenceCapability.PACKAGE, request.limits)
+        except Exception:
+            return LocalEvidenceReport(LocalEvidenceOutcome.INTERNAL_FAILURE, LocalEvidenceCapability.PACKAGE, request.limits)
+
+
+__all__ = ["EpubPackageExtractor"]

@@ -35,6 +35,17 @@ from mechanical_librarian.application.inventory_polling import (
     InventoryPollOutcome,
     InventoryPollResult,
 )
+from mechanical_librarian.application.local_evidence import (
+    EpubPackageReportRunner,
+    internal_failure_report,
+    render_local_evidence_text,
+)
+from mechanical_librarian.domain.local_evidence import (
+    EpubPackageLimits,
+    LocalEvidenceCapability,
+    LocalEvidenceOutcome,
+    LocalEvidenceReport,
+)
 
 
 StateCheckRunner = Callable[[Path], StateCheckResult]
@@ -69,6 +80,61 @@ _CONNECTION_FAILURE = (
 )
 _ABS_INVENTORY_FAILURE = "Audiobookshelf inventory failed safely.\n"
 _ABS_POLL_FAILURE = "Audiobookshelf poll failed safely.\n"
+_EPUB_PACKAGE_EXIT = {
+    LocalEvidenceOutcome.INVALID_INVOCATION: 2,
+    LocalEvidenceOutcome.SUCCESS: 0,
+    LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE: 0,
+    LocalEvidenceOutcome.INVALID_CONFIGURATION: 3,
+    LocalEvidenceOutcome.INVALID_REFERENCE: 3,
+    LocalEvidenceOutcome.UNAVAILABLE_SOURCE: 3,
+    LocalEvidenceOutcome.UNSUPPORTED_FORMAT: 4,
+    LocalEvidenceOutcome.UNSUPPORTED_VERSION: 4,
+    LocalEvidenceOutcome.UNSUPPORTED_COMPRESSION: 4,
+    LocalEvidenceOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS: 4,
+    LocalEvidenceOutcome.ENCRYPTED: 4,
+    LocalEvidenceOutcome.MALFORMED: 5,
+    LocalEvidenceOutcome.INTEGRITY_FAILURE: 5,
+    LocalEvidenceOutcome.RESOURCE_LIMIT: 5,
+    LocalEvidenceOutcome.TIMEOUT: 5,
+    LocalEvidenceOutcome.CANCELLATION: 5,
+    LocalEvidenceOutcome.UNSTABLE_SOURCE: 5,
+    LocalEvidenceOutcome.CHILD_FAILURE: 70,
+    LocalEvidenceOutcome.INTERNAL_FAILURE: 70,
+}
+
+
+class _EpubArgumentError(ValueError):
+    pass
+
+
+class _EpubArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise _EpubArgumentError(message)
+
+
+def _epub_parser() -> argparse.ArgumentParser:
+    parser = _EpubArgumentParser(prog="mechanical-librarian epub-package-report")
+    parser.add_argument("--config", required=True, metavar="PATH", type=Path)
+    parser.add_argument("--mount", required=True, metavar="NAME", type=_bounded_identifier)
+    parser.add_argument("--file", required=True, metavar="RELATIVE")
+    parser.add_argument("--format", choices=("json", "text"), default="json")
+    return parser
+
+
+def _write_epub_report(
+    report: LocalEvidenceReport,
+    output_format: str,
+    output: TextIO,
+    errors: TextIO,
+) -> int:
+    exit_status = _EPUB_PACKAGE_EXIT[report.outcome]
+    destination = output if exit_status == 0 else errors
+    destination.write(
+        report.to_json() + "\n"
+        if output_format == "json"
+        else render_local_evidence_text(report)
+    )
+    return exit_status
 
 
 def _database_path(value: str) -> Path:
@@ -161,6 +227,18 @@ def _parser() -> argparse.ArgumentParser:
     poll_inspect.add_argument(
         "--poll-id", required=True, metavar="ID", type=_bounded_identifier
     )
+    epub_package = commands.add_parser(
+        "epub-package-report",
+        help="emit one bounded cited EPUB package-evidence report",
+    )
+    epub_package.add_argument("--config", required=True, metavar="PATH", type=Path)
+    epub_package.add_argument(
+        "--mount", required=True, metavar="NAME", type=_bounded_identifier
+    )
+    epub_package.add_argument("--file", required=True, metavar="RELATIVE")
+    epub_package.add_argument(
+        "--format", choices=("json", "text"), default="json"
+    )
     return parser
 
 
@@ -175,6 +253,7 @@ def main(
     inventory_inspection_runner: AudiobookshelfInventoryRunner | None = None,
     audiobookshelf_poll_runner: AudiobookshelfPollRunner | None = None,
     inventory_poll_inspection_runner: InventoryPollInspectionRunner | None = None,
+    epub_package_report_runner: EpubPackageReportRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -182,6 +261,55 @@ def main(
 
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
+    raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    if raw_arguments[:1] == ["epub-package-report"]:
+        requested_format = (
+            "text"
+            if any(
+                raw_arguments[index : index + 2] == ["--format", "text"]
+                for index in range(len(raw_arguments) - 1)
+            )
+            else "json"
+        )
+        try:
+            epub_arguments = _epub_parser().parse_args(raw_arguments[1:])
+        except _EpubArgumentError:
+            return _write_epub_report(
+                LocalEvidenceReport(
+                    LocalEvidenceOutcome.INVALID_INVOCATION,
+                    LocalEvidenceCapability.PACKAGE,
+                    EpubPackageLimits(),
+                ),
+                requested_format,
+                output,
+                errors,
+            )
+        try:
+            report = (
+                internal_failure_report()
+                if epub_package_report_runner is None
+                else epub_package_report_runner(
+                    epub_arguments.config,
+                    epub_arguments.mount,
+                    epub_arguments.file,
+                )
+            )
+        except KeyboardInterrupt:
+            report = LocalEvidenceReport(
+                LocalEvidenceOutcome.CANCELLATION,
+                LocalEvidenceCapability.PACKAGE,
+                EpubPackageLimits(),
+            )
+        except Exception:
+            report = internal_failure_report()
+        if type(report) is not LocalEvidenceReport:
+            report = internal_failure_report()
+        return _write_epub_report(
+            report,
+            epub_arguments.format,
+            output,
+            errors,
+        )
     arguments = _parser().parse_args(argv)
     if arguments.command in {"audiobookshelf-poll", "inventory-poll-inspect"}:
         runner = (
@@ -431,5 +559,6 @@ __all__ = [
     "StateCheckRunner",
     "SyntheticInventoryRunner",
     "AudiobookshelfInventoryRunner",
+    "EpubPackageReportRunner",
     "main",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import hashlib
+import os
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +30,9 @@ from mechanical_librarian.adapters.library_services.audiobookshelf import (
 )
 from mechanical_librarian.adapters.library_services.audiobookshelf_inventory import (
     AudiobookshelfInventoryReader,
+)
+from mechanical_librarian.adapters.evidence_extractors.process import (
+    run_epub_package_child,
 )
 from mechanical_librarian.application.connection_probe import (
     ConnectionProbeOutcome,
@@ -78,7 +82,19 @@ from mechanical_librarian.application.synthetic_inventory import (
     SyntheticInventoryOutcome,
     SyntheticInventoryResult,
 )
-from mechanical_librarian.domain.identifiers import AdapterId, LibraryId, canonical_json
+from mechanical_librarian.domain.identifiers import (
+    AdapterId,
+    Fingerprint,
+    LibraryId,
+    SchemaVersion,
+    canonical_json,
+)
+from mechanical_librarian.domain.local_evidence import (
+    EpubPackageLimits,
+    LocalEvidenceCapability,
+    LocalEvidenceOutcome,
+    LocalEvidenceReport,
+)
 from mechanical_librarian.domain.inventory import (
     AdapterCapabilities,
     LibraryConnection,
@@ -89,6 +105,13 @@ from mechanical_librarian.domain.inventory_polling import PollPolicy, PollReques
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.observability.inventory_polling import (
     LoggingInventoryPollTelemetry,
+)
+from mechanical_librarian.infrastructure.local_media import (
+    LocalMediaError,
+    descriptor_identity,
+    open_local_media,
+    sha256_descriptor,
+    validate_relative_reference,
 )
 from mechanical_librarian.infrastructure.security.target_secrets import (
     PrivateFileTargetCredentials,
@@ -800,6 +823,94 @@ def _inventory_inspection_outcome(state: ScanState) -> InventoryOutcome:
     }[state]
 
 
+def _local_evidence_failure(
+    outcome: LocalEvidenceOutcome,
+    limits: EpubPackageLimits | None = None,
+) -> LocalEvidenceReport:
+    return LocalEvidenceReport(
+        outcome,
+        LocalEvidenceCapability.PACKAGE,
+        EpubPackageLimits() if limits is None else limits,
+    )
+
+
+def _run_epub_package_report(
+    configuration_path: Path, mount_name: str, relative_reference: str
+) -> LocalEvidenceReport:
+    """Validate one logical reference and extract it through a transient child."""
+
+    try:
+        configuration = load_configuration_file(configuration_path)
+    except ConfigurationError:
+        return _local_evidence_failure(LocalEvidenceOutcome.INVALID_CONFIGURATION)
+    limits = configuration.evidence.epub_package
+    if "epub" not in configuration.evidence.enabled_formats:
+        return _local_evidence_failure(LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE, limits)
+    try:
+        validate_relative_reference(relative_reference)
+    except LocalMediaError:
+        return _local_evidence_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
+    mounts = tuple(mount for mount in configuration.media_mounts if mount.name == mount_name)
+    if len(mounts) != 1 or not mounts[0].read_only:
+        return _local_evidence_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
+    opened = None
+    replacement = None
+    baseline_established = False
+    try:
+        opened = open_local_media(mounts[0].container_path, relative_reference)
+        if opened.length > limits.source_archive_bytes:
+            return _local_evidence_failure(LocalEvidenceOutcome.RESOURCE_LIMIT, limits)
+        before_identity = opened.identity
+        before_digest = sha256_descriptor(
+            opened.descriptor, opened.length, maximum=limits.source_archive_bytes
+        )
+        baseline_established = True
+        expected = Fingerprint("sha256", SchemaVersion("source-v1"), before_digest)
+        logical_identity = hashlib.sha256(
+            f"{mount_name}\x00{relative_reference}".encode("utf-8")
+        ).hexdigest()
+        report = run_epub_package_child(
+            opened.descriptor,
+            expected,
+            limits,
+            logical_identity=logical_identity,
+        )
+        after_digest = sha256_descriptor(
+            opened.descriptor, opened.length, maximum=limits.source_archive_bytes
+        )
+        after_identity = descriptor_identity(opened.descriptor)
+        replacement = open_local_media(mounts[0].container_path, relative_reference)
+        replacement_digest = sha256_descriptor(
+            replacement.descriptor,
+            replacement.length,
+            maximum=limits.source_archive_bytes,
+        )
+        if (
+            before_identity != after_identity
+            or replacement.identity != before_identity
+            or before_digest != after_digest
+            or replacement_digest != before_digest
+        ):
+            return _local_evidence_failure(LocalEvidenceOutcome.UNSTABLE_SOURCE, limits)
+        return report
+    except LocalMediaError:
+        return _local_evidence_failure(
+            LocalEvidenceOutcome.UNSTABLE_SOURCE
+            if baseline_established
+            else LocalEvidenceOutcome.UNAVAILABLE_SOURCE,
+            limits,
+        )
+    except Exception:
+        return _local_evidence_failure(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
+    finally:
+        for value in (opened, replacement):
+            if value is not None:
+                try:
+                    os.close(value.descriptor)
+                except OSError:
+                    pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Assemble the current process and delegate to its CLI interface."""
 
@@ -813,6 +924,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         inventory_inspection_runner=_inspect_audiobookshelf_inventory,
         audiobookshelf_poll_runner=_run_audiobookshelf_poll,
         inventory_poll_inspection_runner=_inspect_audiobookshelf_poll,
+        epub_package_report_runner=_run_epub_package_report,
     )
 
 
