@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
+import unicodedata
 
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
@@ -130,6 +131,16 @@ _STATE_COMPOUNDS = frozenset(
 )
 _STATE_COMPOUND_PARTS = tuple(tuple(item.split()) for item in _STATE_COMPOUNDS)
 _STATE_COMPACT = frozenset(item.replace(" ", "") for item in _STATE_COMPOUNDS)
+_STRUCTURED_STATE_MARKERS = tuple(
+    sorted(
+        {
+            *_STATE_COMPOUND_PARTS,
+            *((item,) for item in _STATE_NOUNS),
+            *((item,) for item in _STATE_COMPACT),
+        },
+        key=lambda item: (-len(item), item),
+    )
+)
 _STRUCTURED_LABEL = re.compile(r"^[a-z0-9%._:/-]+$", re.IGNORECASE)
 _STRUCTURED_DELIMITER = re.compile(
     r"[._:/-]|%(?:0[9a-d]|20|2d|2e|3a|5f|2f)", re.IGNORECASE
@@ -290,16 +301,121 @@ def _structured_state_parts(value: str) -> tuple[str, ...]:
     return tuple(_normalized_state_label(value).split())
 
 
-def _has_embedded_state_marker(value: str) -> bool:
-    parts = _structured_state_parts(value)
-    if not parts:
-        return False
-    if any(part in _STATE_NOUNS or part in _STATE_COMPACT for part in parts):
+def _is_ascii_alphanumeric(value: str) -> bool:
+    return value.isascii() and value.isalnum()
+
+
+def _is_morphological_continuation(value: str, index: int) -> bool:
+    if value[index].isalnum():
         return True
-    return any(
-        parts[index : index + len(marker)] == marker
-        for marker in _STATE_COMPOUND_PARTS
-        for index in range(len(parts) - len(marker) + 1)
+    if not unicodedata.category(value[index]).startswith("M"):
+        return False
+    while index >= 0 and unicodedata.category(value[index]).startswith("M"):
+        index -= 1
+    return index >= 0 and value[index].isalnum()
+
+
+def _structured_delimiter_width(value: str, index: int) -> int:
+    match = _STRUCTURED_DELIMITER.match(value, index)
+    return len(match.group()) if match is not None else 0
+
+
+def _structured_token_runs(value: str) -> Iterator[tuple[tuple[str, ...], bool, bool]]:
+    index = 0
+    while index < len(value):
+        if not _is_ascii_alphanumeric(value[index]) and not _structured_delimiter_width(
+            value, index
+        ):
+            index += 1
+            continue
+
+        start = index
+        starts_with_delimiter = bool(_structured_delimiter_width(value, index))
+        has_alphanumeric = False
+        has_delimiter = False
+        ends_with_delimiter = False
+        while index < len(value):
+            if _is_ascii_alphanumeric(value[index]):
+                has_alphanumeric = True
+                ends_with_delimiter = False
+                index += 1
+                continue
+            width = _structured_delimiter_width(value, index)
+            if not width:
+                break
+            has_delimiter = True
+            ends_with_delimiter = True
+            index += width
+
+        if not has_alphanumeric or not has_delimiter:
+            continue
+        parts = _structured_state_parts(value[start:index])
+        if not parts:
+            continue
+        left_continues = (
+            not starts_with_delimiter
+            and start > 0
+            and _is_morphological_continuation(value, start - 1)
+        )
+        right_continues = (
+            not ends_with_delimiter
+            and index < len(value)
+            and _is_morphological_continuation(value, index)
+        )
+        yield parts, left_continues, right_continues
+
+
+def _compact_token_runs(value: str) -> Iterator[str]:
+    index = 0
+    while index < len(value):
+        if not _is_ascii_alphanumeric(value[index]):
+            index += 1
+            continue
+        start = index
+        while index < len(value) and _is_ascii_alphanumeric(value[index]):
+            index += 1
+        if start and _is_morphological_continuation(value, start - 1):
+            continue
+        if index < len(value) and _is_morphological_continuation(value, index):
+            continue
+        yield value[start:index]
+
+
+def _has_structured_state_marker(value: str) -> bool:
+    for parts, left_continues, right_continues in _structured_token_runs(value):
+        blocked_spans: list[tuple[int, int, bool, bool]] = []
+        for marker in _STRUCTURED_STATE_MARKERS:
+            for start in range(len(parts) - len(marker) + 1):
+                end = start + len(marker)
+                if parts[start:end] != marker:
+                    continue
+                if any(
+                    blocked_start <= start
+                    and end <= blocked_end
+                    and (
+                        (blocked_left and start == blocked_start)
+                        or (blocked_right and end == blocked_end)
+                    )
+                    for blocked_start, blocked_end, blocked_left, blocked_right in blocked_spans
+                ):
+                    continue
+                blocked_left = start == 0 and left_continues
+                blocked_right = end == len(parts) and right_continues
+                if blocked_left or blocked_right:
+                    blocked_spans.append((start, end, blocked_left, blocked_right))
+                    continue
+                return True
+    return False
+
+
+def _has_embedded_state_marker(value: str) -> bool:
+    # Scan only internally structured tokens. This catches a finite marker
+    # embedded in prose or punctuation without turning ordinary prose nouns
+    # into state markers. Compact compounds are similarly bounded as complete
+    # alphanumeric tokens so morphological near misses remain benign.
+    normalized = unicodedata.normalize("NFC", value)
+    return _has_structured_state_marker(normalized) or any(
+        candidate.casefold() in _STATE_COMPACT for candidate in _compact_token_runs(normalized)
     )
 
 

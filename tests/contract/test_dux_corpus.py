@@ -386,6 +386,58 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             "prefix_savedbrowserstates_suffix",
             "prefix_browser_states_suffix",
             "prefix_reports_suffix",
+            "prefix__reports__suffix",
+            "contains `saved_browser_states`, marker",
+            "contains (prefix_reports_suffix) marker",
+            'contains "browser-state" marker',
+            "contains 'saved%5Fbrowser%5Fstates' marker",
+            "contains BROWSERSTATE marker",
+            "contains savedbrowserstates marker",
+            "contains productionstates marker",
+            "contains supportbundles marker",
+            "contains α_savedbrowserstates_β marker",
+            "contains α_saved_browser_states_ś marker",
+            "contains α_saved_browser_states_s\u0301 marker",
+            "contains α_reports_ś marker",
+            "contains α_reports_s\u0301 marker",
+            "contains α%5Fsaved_browser_states%5Fś marker",
+            "contains α%5Fsaved_browser_states%5Fs\u0301 marker",
+            "contains ↚savedbrowserstates marker",
+            "contains ←\u0338savedbrowserstates marker",
+            "contains ∄saved_browser_states marker",
+            "contains ∃\u0338saved_browser_states marker",
+            "contains !ाsavedbrowserstates marker",
+            "contains !\u20ddsaved_browser_states marker",
+            "contains αsaved_browser_state marker",
+            "contains αsaved_browser_states marker",
+            "contains αsaved-browser-state-s\u0301 marker",
+            "contains αsaved%5Fbrowser%5Fstates%5Fs\u0301 marker",
+        )
+        edge_delimited = tuple(
+            (
+                f"contains {delimiter}reports{delimiter} marker",
+                "DUX022_PROHIBITED_PATH"
+                if delimiter == "/"
+                else "DUX025_PRODUCTION_STATE",
+            )
+            for delimiter in (
+                "_",
+                "-",
+                ".",
+                "/",
+                ":",
+                "%09",
+                "%0A",
+                "%0B",
+                "%0C",
+                "%0D",
+                "%20",
+                "%2D",
+                "%2E",
+                "%3A",
+                "%5F",
+                "%2F",
+            )
         )
         legacy_overlaps = (
             ("/home/generated/reports", "DUX022_PROHIBITED_PATH"),
@@ -410,6 +462,35 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             ("custom:browser_states", "DUX023_DOMAIN_OR_URL"),
             ("prefix.savedbrowserstates.suffix", "DUX023_DOMAIN_OR_URL"),
         )
+        embedded_specific_overlaps = (
+            ("See /home/generated/prefix_browser_states_suffix now", "DUX022_PROHIBITED_PATH"),
+            ("access_token and prefix_reports_suffix", "DUX021_SECRET_SHAPE"),
+            ("Copyright prefix_databases_suffix", "DUX028_COPYRIGHT"),
+            ("See reports.example.invalid and prefix_browser_states_suffix", "DUX023_DOMAIN_OR_URL"),
+            ("Address 192.0.2.44 and prefix_runtimes_suffix", "DUX024_NETWORK_ADDRESS"),
+            (
+                "ID 123e4567-e89b-42d3-a456-426614174000 and prefix_reports_suffix",
+                "DUX026_PRODUCTION_ID",
+            ),
+            ("prototype prefix_browser_states_suffix", "DUX027_SOURCE_LITERAL"),
+            ("custom:prefix_browser_states_suffix", "DUX023_DOMAIN_OR_URL"),
+            ("See /home/generated/%5Freports%5F now", "DUX022_PROHIBITED_PATH"),
+            ("access_token and %5Freports%5F", "DUX021_SECRET_SHAPE"),
+        )
+        unicode_morphological_near_misses = (
+            "contains ésavedbrowserstates marker",
+            "contains e\u0301savedbrowserstates marker",
+            "contains savedbrowserstateś marker",
+            "contains savedbrowserstates\u0301 marker",
+            "contains ésupport_bundles marker",
+            "contains e\u0301support_bundles marker",
+            "contains saved_browser_stateś marker",
+            "contains saved_browser_states\u0301 marker",
+            "contains काsavedbrowserstates marker",
+            "contains savedbrowserstatesा marker",
+            "contains A\u20ddsupport_bundles marker",
+            "contains saved_browser_states\u20dd marker",
+        )
         benign = (
             "databases remain synthetic prose",
             "reports remain synthetic prose",
@@ -423,6 +504,23 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             "support bundles remain synthetic prose",
             "supportive bundles remain synthetic",
             "databaseish label remains synthetic",
+            "contains reports marker",
+            "contains databases marker",
+            "contains saved browser states marker",
+            "contains support bundles marker",
+            "contains supportive_bundles marker",
+            "contains browser_stateful marker",
+            "contains databaseish_label marker",
+            "contains αsavedbrowserstatesβ marker",
+            "contains αsavedbrowserstates marker",
+            "contains savedbrowserstatesß marker",
+            "contains １savedbrowserstates２ marker",
+            "contains αsaved_browser_statesβ marker",
+            "contains saved_browser_statesß marker",
+            "contains xsavedbrowserstatesy marker",
+            "contains xsavedbrowserstates marker",
+            "contains savedbrowserstatesy marker",
+            *unicode_morphological_near_misses,
         )
         benign_keys = (
             "database migration remains synthetic",
@@ -430,15 +528,36 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             "runtime neutrality remains synthetic",
             "saved browser state remains synthetic prose",
             "support bundle remains synthetic prose",
+            "contains reports marker",
+            "contains databases marker",
+            "contains saved browser states marker",
+            "contains support bundles marker",
+            "contains supportive_bundles marker",
+            "contains browser_stateful marker",
+            "contains databaseish_label marker",
+            "contains αsavedbrowserstatesβ marker",
+            "contains αsavedbrowserstates marker",
+            "contains savedbrowserstatesß marker",
+            "contains １savedbrowserstates２ marker",
+            "contains αsaved_browser_statesβ marker",
+            "contains saved_browser_statesß marker",
+            "contains xsavedbrowserstatesy marker",
+            "contains xsavedbrowserstates marker",
+            "contains savedbrowserstatesy marker",
+            *unicode_morphological_near_misses,
         )
         cases = (
             *(("value", marker, "DUX025_PRODUCTION_STATE") for marker in rejected),
             *(("nested-key", marker, "DUX025_PRODUCTION_STATE") for marker in rejected),
             *(("value", marker, "DUX025_PRODUCTION_STATE") for marker in embedded),
             *(("nested-key", marker, "DUX025_PRODUCTION_STATE") for marker in embedded),
+            *(("value", marker, rule) for marker, rule in edge_delimited),
+            *(("nested-key", marker, rule) for marker, rule in edge_delimited),
             *(("value", marker, rule) for marker, rule in legacy_overlaps),
             *(("value", marker, rule) for marker, rule in specific_overlaps),
             *(("nested-key", marker, rule) for marker, rule in specific_overlaps),
+            *(("value", marker, rule) for marker, rule in embedded_specific_overlaps),
+            *(("nested-key", marker, rule) for marker, rule in embedded_specific_overlaps),
             *(("safe-value", marker, None) for marker in benign),
             *(("benign-nested-key", marker, "DUX016_CONTRACT") for marker in benign_keys),
         )
@@ -465,6 +584,39 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                     load_registry(root)
                 self.assertEqual(raised.exception.rule, expected_rule)
                 self.assertNotIn(sentinel, str(raised.exception))
+
+    def test_recursive_audit_finds_structured_state_tokens_at_recursive_depths(self) -> None:
+        for sentinel in (
+            "contains (`prefix_saved_browser_states_suffix`), marker",
+            "contains `%5Freports%5F`, marker",
+        ):
+            mutations = (
+                ("root-value", lambda item: item.__setitem__("dux_behavior", sentinel)),
+                (
+                    "list-value",
+                    lambda item: item["contract"]["input"]["candidate_values"].append(sentinel),
+                ),
+                (
+                    "deep-mapping-list-value",
+                    lambda item: item["contract"]["input"].__setitem__(
+                        "synthetic_container", [{"synthetic_child": [sentinel]}]
+                    ),
+                ),
+                (
+                    "deep-nested-key",
+                    lambda item: item["contract"]["input"].__setitem__(
+                        "synthetic_container",
+                        [{"synthetic_child": {sentinel: "synthetic-value"}}],
+                    ),
+                ),
+            )
+            for location, mutate in mutations:
+                with self.subTest(location=location, sentinel=sentinel), _corpus_copy() as root:
+                    _rewrite(root, "dux-synthetic-01.json", mutate)
+                    with self.assertRaises(CorpusValidationError) as raised:
+                        load_registry(root)
+                    self.assertEqual(raised.exception.rule, "DUX025_PRODUCTION_STATE")
+                    self.assertNotIn(sentinel, str(raised.exception))
 
     def test_recursive_audit_rejects_browser_storage_label_matrix(self) -> None:
         delimiters = ("", ".", "_", "-", " ", ":", "/", "%2E")
