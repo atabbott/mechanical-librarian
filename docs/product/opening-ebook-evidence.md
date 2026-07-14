@@ -46,6 +46,12 @@ the [EPUB Structural Semantics Vocabulary](https://www.w3.org/TR/epub-ssv-11/).
 Supported EPUB versions and tolerated legacy behavior belong in the published
 compatibility matrix and contract fixtures.
 
+Standards define interpretation and precedence, not a reason to discard a
+safely readable book. A malformed optional declaration is warned and omitted,
+and selection continues through lower-precedence semantic sources or the spine
+fallback. Recovery never invents a higher-precedence fact or silently resolves
+an ambiguity.
+
 Vendor extensions are observations with explicit source identity. They cannot
 silently override standard metadata, but may supply useful candidates when
 their meaning is documented and tested.
@@ -123,6 +129,11 @@ qualifying opening documents and enforce a separately configured hard document
 and decoded-text limit. Exact defaults are finalized through synthetic and
 representative fixture benchmarks.
 
+Malformed or unusable navigation, landmark, guide, and optional manifest
+relationships do not prevent fallback over otherwise safe eligible spine
+resources. Invalid or ambiguous identifiers are excluded from semantic
+lookups, and equal-precedence conflicts remain unresolved and visible.
+
 Skip or separately classify:
 
 - cover-only image resources;
@@ -149,7 +160,8 @@ Each observation records:
 - resource-relative element path and bounded text offsets;
 - exact supporting text or raw metadata value;
 - normalized field, value, type, and contributor role;
-- extractor, normalization, schema, and vocabulary versions;
+- extractor, normalization, schema, vocabulary, parser, recovery-mode,
+  text-projection, and selection-contract versions;
 - language and encoding facts;
 - same-file lineage or correlation identity; and
 - ambiguity, malformed-input, edition-applicability, and contradiction
@@ -158,6 +170,16 @@ Each observation records:
 The extractor preserves raw values before normalization. It does not rewrite
 the EPUB, repair package metadata, fetch remote resources, execute scripts,
 apply stylesheets, or infer hidden browser layout.
+
+Real EPUBs frequently contain XHTML that is readable but not well-formed XML.
+The implementation may use a maintained EPUB, XML, XHTML, or HTML parsing
+library and bounded deterministic recovery when that improves compatibility.
+Recovery is an in-memory interpretation only: it does not alter the source,
+grant rendering or network authority, or make a repaired tree byte-exact
+evidence. A citation from recovered content therefore retains the original
+resource digest, identifies the parser and recovery mode, and uses offsets and
+element identity from a versioned deterministic text projection. Exact claims
+remain reproducible under the same projection contract.
 
 ## Identifier and edition rules
 
@@ -214,6 +236,8 @@ The extractor must:
   nesting, XML nodes, attributes, text, and execution time;
 - disable external entities, DTD retrieval, network access, script execution,
   and remote resource loading;
+- permit only bounded, deterministic parser recovery that cannot resolve
+  external resources, execute active content, or escape the selected member;
 - parse only allowlisted local package and content resource types;
 - avoid materializing the complete archive when streaming or bounded reads are
   sufficient;
@@ -280,6 +304,21 @@ Fixtures are generated or licence-safe and contain no real library facts.
 
 ### Shadow qualification
 
+Run the exact installed artifacts outside the repository against an explicitly
+selected private real-world corpus. The corpus, its inventory, raw reports,
+filenames, paths, content, metadata, excerpts, citations, and per-book outcomes
+remain unpublished and must never enter the repository, CI, issues, pull
+requests, or ordinary logs. Publish only aggregate counts and structural
+outcome categories. Any reusable failure family becomes a minimized,
+independently authored synthetic regression fixture.
+
+F07a qualifies every F06-safely-readable book as a bounded extraction success,
+a legitimate no-applicable-evidence outcome, or a typed resource/input
+rejection; it does not require every book to contain opening-matter claims.
+F07b uses disposable application state outside the repository to prove
+aggregate execution, restart reuse, controlled invalidation, and failure
+isolation, then removes content-bearing state and raw reports.
+
 Measure:
 
 - extraction coverage by field and semantic source;
@@ -289,6 +328,8 @@ Measure:
 - candidate retrieval improvement;
 - false replacement, human correction, and unresolved rates;
 - parser failures and bounded-resource enforcement;
+- strict versus recovered parsing and recovery-warning rates;
+- safely readable, no-applicable-evidence, and typed-rejection rates;
 - runtime, memory, temporary storage, and artifact retention; and
 - behavior across supported EPUB versions and producer toolchains.
 
@@ -314,8 +355,10 @@ parser, security, and compatibility qualification.
 
 ## Decisions required before implementation
 
-- Select the archive, XML, and XHTML parser dependencies and record their
-  licences and security posture.
+- Select maintained archive, EPUB, XML, XHTML, or HTML parser dependencies by
+  demonstrated behavior rather than standard-library preference, and record
+  their licences, maintenance posture, resource authority, and security
+  controls.
 - Finalize soft and hard document, byte, text, node, nesting, and time limits.
 - Define the stable resource and text-span provenance scheme.
 - Define supported EPUB 2, EPUB 3, legacy guide, navigation, and vendor metadata
