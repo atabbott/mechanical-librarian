@@ -24,6 +24,7 @@ C = ChangeImpact.CANDIDATE_REEVALUATION_REQUIRED
 V = ChangeImpact.REVIEW_REEVALUATION_REQUIRED
 N = ChangeImpact.NOTIFICATION_RECONFIGURATION_REQUIRED
 B = ChangeImpact.BACKUP_READINESS_REVALIDATION_REQUIRED
+RX = ChangeImpact.REEXTRACT_EVIDENCE
 LIBRARY_ID = "01234567-89ab-4def-8123-456789abcdef"
 SECOND_LIBRARY_ID = "11234567-89ab-4def-8123-456789abcdef"
 REPLACEMENT_LIBRARY_ID = "21234567-89ab-4def-8123-456789abcdef"
@@ -200,7 +201,7 @@ class ConfigurationTests(unittest.TestCase):
 
         limit_cases = (
             ("parser_concurrency", 2, (R,)),
-            ("parser_timeout_seconds", 120, (R, E)),
+            ("parser_timeout_seconds", 120, (R, RX, E)),
             ("temporary_bytes", 2_147_483_648, (R, E)),
         )
         for key, value, impacts in limit_cases:
@@ -214,7 +215,7 @@ class ConfigurationTests(unittest.TestCase):
 
         evidence_cases = (
             ("enabled_formats", ["epub"], (R, X, E, C, V)),
-            ("maximum_document_bytes", 2_097_152, (R, E)),
+            ("maximum_document_bytes", 2_097_152, (R, RX, E)),
             ("maximum_text_characters", 2_048, (R, E)),
         )
         for key, value, impacts in evidence_cases:
@@ -240,6 +241,46 @@ class ConfigurationTests(unittest.TestCase):
                     (ConfigurationChange(f"retention.{key}", (R,)),),
                 )
 
+    def test_epub_package_limits_are_versioned_lowerable_and_require_reextraction(
+        self,
+    ) -> None:
+        configured = self.proposed()
+        configured["evidence"] = {
+            "epub_package": {
+                "profile": "epub-package-limits-v1",
+                "archive_entries": 1_024,
+                "xml_depth": 32,
+            }
+        }
+        limits = load_configuration(configured).evidence.epub_package
+        self.assertEqual(limits.profile, "epub-package-limits-v1")
+        self.assertEqual(limits.archive_entries, 1_024)
+        self.assertEqual(limits.xml_depth, 32)
+        self.assertEqual(limits.opf_package_bytes, 4_194_304)
+        self.assertEqual(
+            tuple(change.path for change in plan_import(self.source, configured).changes),
+            (
+                "evidence.epub_package.archive_entries",
+                "evidence.epub_package.xml_depth",
+            ),
+        )
+        self.assertEqual(plan_import(self.source, configured).impacts, (R, RX))
+        self.assertTrue(plan_import(self.source, configured).reextract_evidence)
+
+        for value in (0, 8_193):
+            with self.subTest(archive_entries=value):
+                invalid = self.proposed()
+                invalid["evidence"] = {"epub_package": {"archive_entries": value}}
+                with self.assertRaises(ConfigurationError):
+                    load_configuration(invalid)
+
+        invalid_profile = self.proposed()
+        invalid_profile["evidence"] = {
+            "epub_package": {"profile": "epub-package-limits-v2"}
+        }
+        with self.assertRaises(ConfigurationError):
+            load_configuration(invalid_profile)
+
     def test_multiple_changes_have_fixed_path_and_impact_order(self) -> None:
         proposed = self.proposed()
         proposed["connections"][0]["endpoint"] = "https://replacement.example"
@@ -254,7 +295,7 @@ class ConfigurationTests(unittest.TestCase):
                 "notifications",
             ),
         )
-        self.assertEqual(plan.impacts, (R, I, X, E, C, V, N))
+        self.assertEqual(plan.impacts, (R, I, X, RX, E, C, V, N))
         self.assertEqual(plan.changed_sections, ("connections", "limits", "notifications"))
 
     def test_set_like_connection_values_are_canonical_noops(self) -> None:

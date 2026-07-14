@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import mechanical_librarian.bootstrap as bootstrap
+import mechanical_librarian.bootstrap.composition as bootstrap
 from mechanical_librarian.application.connection_probe import (
     ConnectionProbeOutcome,
     ConnectionProbeResult,
@@ -525,9 +525,9 @@ class BootstrapTests(unittest.TestCase):
             )
         return exit_code, output.getvalue(), errors.getvalue()
 
-    @patch("mechanical_librarian.bootstrap.preflight")
-    @patch("mechanical_librarian.bootstrap.path_entry_exists", return_value=True)
-    @patch("mechanical_librarian.bootstrap.connect_existing")
+    @patch("mechanical_librarian.bootstrap.composition.preflight")
+    @patch("mechanical_librarian.bootstrap.composition.path_entry_exists", return_value=True)
+    @patch("mechanical_librarian.bootstrap.composition.connect_existing")
     def test_connection_failure_maps_to_fixed_path_free_result(
         self, mocked_connect: Mock, _mocked_exists: Mock, _mocked_preflight: Mock
     ) -> None:
@@ -540,10 +540,10 @@ class BootstrapTests(unittest.TestCase):
             (1, "", "State check failed: state could not be verified.\n"),
         )
 
-    @patch("mechanical_librarian.bootstrap.migrate")
-    @patch("mechanical_librarian.bootstrap.preflight")
-    @patch("mechanical_librarian.bootstrap.path_entry_exists", return_value=True)
-    @patch("mechanical_librarian.bootstrap.connect_existing")
+    @patch("mechanical_librarian.bootstrap.composition.migrate")
+    @patch("mechanical_librarian.bootstrap.composition.preflight")
+    @patch("mechanical_librarian.bootstrap.composition.path_entry_exists", return_value=True)
+    @patch("mechanical_librarian.bootstrap.composition.connect_existing")
     def test_schema_failure_closes_connection_in_finally(
         self,
         mocked_connect: Mock,
@@ -558,10 +558,10 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(self.run_check()[0], 1)
         connection.close.assert_called_once_with()
 
-    @patch("mechanical_librarian.bootstrap.migrate", return_value=1)
-    @patch("mechanical_librarian.bootstrap.preflight")
-    @patch("mechanical_librarian.bootstrap.path_entry_exists", return_value=True)
-    @patch("mechanical_librarian.bootstrap.connect_existing")
+    @patch("mechanical_librarian.bootstrap.composition.migrate", return_value=1)
+    @patch("mechanical_librarian.bootstrap.composition.preflight")
+    @patch("mechanical_librarian.bootstrap.composition.path_entry_exists", return_value=True)
+    @patch("mechanical_librarian.bootstrap.composition.connect_existing")
     def test_locked_append_is_typed_unavailable_and_connection_is_closed(
         self,
         mocked_connect: Mock,

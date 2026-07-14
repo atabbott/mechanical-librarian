@@ -14,6 +14,7 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
 )
 from mechanical_librarian.domain.inventory import SecretReference, ServiceEndpoint
+from mechanical_librarian.domain.local_evidence import EpubPackageLimits
 
 
 class ConfigurationError(ValueError):
@@ -26,6 +27,7 @@ class ChangeImpact(StrEnum):
     RESTART_REQUIRED = "restart_required"
     INVENTORY_RECONCILIATION_REQUIRED = "inventory_reconciliation_required"
     EVIDENCE_INVALIDATION_REQUIRED = "evidence_invalidation_required"
+    REEXTRACT_EVIDENCE = "reextract_evidence"
     EVIDENCE_REEVALUATION_REQUIRED = "evidence_reevaluation_required"
     CANDIDATE_REEVALUATION_REQUIRED = "candidate_reevaluation_required"
     REVIEW_REEVALUATION_REQUIRED = "review_reevaluation_required"
@@ -67,7 +69,12 @@ class ConfigurationImportPlan:
 
     @property
     def reextract_evidence(self) -> bool:
-        return ChangeImpact.EVIDENCE_INVALIDATION_REQUIRED in self.impacts
+        return bool(
+            {
+                ChangeImpact.EVIDENCE_INVALIDATION_REQUIRED,
+                ChangeImpact.REEXTRACT_EVIDENCE,
+            }.intersection(self.impacts)
+        )
 
     @property
     def requires_inventory_reconciliation(self) -> bool:
@@ -207,6 +214,7 @@ class EvidenceConfiguration:
     enabled_formats: tuple[str, ...] = ("epub", "m4b", "mp3")
     maximum_document_bytes: int = 67_108_864
     maximum_text_characters: int = 262_144
+    epub_package: EpubPackageLimits = field(default_factory=EpubPackageLimits)
 
     def __post_init__(self) -> None:
         if (
@@ -233,6 +241,8 @@ class EvidenceConfiguration:
             or not 1_024 <= self.maximum_text_characters <= 4_194_304
         ):
             raise ConfigurationError("evidence text limit is outside safe bounds")
+        if type(self.epub_package) is not EpubPackageLimits:
+            raise ConfigurationError("EPUB package limits are malformed")
 
 
 @dataclass(frozen=True)
@@ -425,6 +435,7 @@ class ApplicationConfiguration:
                 "enabled_formats": list(self.evidence.enabled_formats),
                 "maximum_document_bytes": self.evidence.maximum_document_bytes,
                 "maximum_text_characters": self.evidence.maximum_text_characters,
+                "epub_package": self.evidence.epub_package.to_data(),
             },
             "providers": list(self.providers),
             "reviewers": list(self.reviewers),
@@ -494,8 +505,14 @@ _INVENTORY_FIELDS = frozenset(
 )
 _POLICY_FIELDS = frozenset({"policy_version"})
 _EVIDENCE_FIELDS = frozenset(
-    {"enabled_formats", "maximum_document_bytes", "maximum_text_characters"}
+    {
+        "enabled_formats",
+        "maximum_document_bytes",
+        "maximum_text_characters",
+        "epub_package",
+    }
 )
+_EPUB_PACKAGE_FIELDS = frozenset({"profile", *EpubPackageLimits.HARD_CAPS})
 _RETENTION_FIELDS = frozenset(
     {"evidence_days", "job_log_days", "maximum_artifact_bytes"}
 )
@@ -539,6 +556,17 @@ def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration
         inventory = InventoryConfiguration(**inventory_source)
         evidence_source = source.get("evidence", {})
         _only(evidence_source, _EVIDENCE_FIELDS, "evidence")
+        epub_package_source = evidence_source.get("epub_package", {})
+        _only(epub_package_source, _EPUB_PACKAGE_FIELDS, "EPUB package limits")
+        profile = epub_package_source.get("profile", "epub-package-limits-v1")
+        if profile != "epub-package-limits-v1":
+            raise ConfigurationError("EPUB package limit profile is unsupported")
+        epub_package = EpubPackageLimits(
+            **{
+                name: epub_package_source.get(name, getattr(EpubPackageLimits(), name))
+                for name in EpubPackageLimits.HARD_CAPS
+            }
+        )
         evidence = EvidenceConfiguration(
             enabled_formats=_set_text_tuple(
                 evidence_source.get("enabled_formats", ("epub", "m4b", "mp3")),
@@ -551,6 +579,7 @@ def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration
             maximum_text_characters=evidence_source.get(
                 "maximum_text_characters", 262_144
             ),
+            epub_package=epub_package,
         )
         policy_source = source.get("policy", {})
         _only(policy_source, _POLICY_FIELDS, "policy")
@@ -598,6 +627,7 @@ def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration
 _R = ChangeImpact.RESTART_REQUIRED
 _I = ChangeImpact.INVENTORY_RECONCILIATION_REQUIRED
 _X = ChangeImpact.EVIDENCE_INVALIDATION_REQUIRED
+_RX = ChangeImpact.REEXTRACT_EVIDENCE
 _E = ChangeImpact.EVIDENCE_REEVALUATION_REQUIRED
 _C = ChangeImpact.CANDIDATE_REEVALUATION_REQUIRED
 _V = ChangeImpact.REVIEW_REEVALUATION_REQUIRED
@@ -688,7 +718,7 @@ _IMPACT_MATRIX: tuple[
     (
         "limits.parser_timeout_seconds",
         _limit_projection("parser_timeout_seconds"),
-        (_R, _E),
+        (_R, _RX, _E),
     ),
     ("limits.temporary_bytes", _limit_projection("temporary_bytes"), (_R, _E)),
     ("inventory.page_size", _inventory_projection("page_size"), (_R, _I)),
@@ -745,12 +775,22 @@ _IMPACT_MATRIX: tuple[
     (
         "evidence.maximum_document_bytes",
         _evidence_projection("maximum_document_bytes"),
-        (_R, _E),
+        (_R, _RX, _E),
     ),
     (
         "evidence.maximum_text_characters",
         _evidence_projection("maximum_text_characters"),
         (_R, _E),
+    ),
+    *(
+        (
+            f"evidence.epub_package.{name}",
+            lambda configuration, attribute=name: getattr(
+                configuration.evidence.epub_package, attribute
+            ),
+            (_R, _RX),
+        )
+        for name in EpubPackageLimits.HARD_CAPS
     ),
     ("providers", _projection("providers"), (_R, _C, _V)),
     ("reviewers", _projection("reviewers"), (_R, _V)),

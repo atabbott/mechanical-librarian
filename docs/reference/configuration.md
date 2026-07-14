@@ -54,7 +54,7 @@ hidden fields or environment behavior.
 | Library connections | `id`, `adapter`, `endpoint`, `secret_reference`, `enabled_libraries`, `capability_overrides` |
 | Media mounts | `name`, `library_type`, `container_path`, `service_path`, `read_only` |
 | Inventory traversal and polling | `page_size`, `max_pages`, `max_items`, `max_response_bytes`, `timeout_seconds`, `stability_delay_seconds`, `poll_generation`, `max_attempts`, `max_elapsed_seconds`, `initial_backoff_seconds`, `max_backoff_seconds`, `connect_timeout_seconds`, `read_timeout_seconds`, `max_in_flight_requests` |
-| Evidence extraction | `enabled_formats`, `maximum_document_bytes`, `maximum_text_characters`; shared parser limits remain under `limits` |
+| Evidence extraction | `enabled_formats`, `maximum_document_bytes`, `maximum_text_characters`, and the versioned `epub_package` resource profile; shared parser limits remain under `limits` |
 | Providers | ordered, unique provider identifiers; an empty list disables providers |
 | Reviewers | ordered, unique reviewer identifiers; an empty list disables reviewers |
 | Policy | `policy_version` |
@@ -83,10 +83,13 @@ re-evaluation, notification reconfiguration, and backup-readiness revalidation.
 | `connections.capability_overrides` | restart, inventory reconciliation, evidence, candidate, and review re-evaluation |
 | `media_mounts.name`, `.library_type`, `.container_path`, or `.service_path` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
 | `limits.parser_concurrency` | restart |
-| `limits.parser_timeout_seconds` or `.temporary_bytes` | restart and evidence re-evaluation |
+| `limits.parser_timeout_seconds` | restart, EPUB package evidence re-extraction, and evidence re-evaluation |
+| `limits.temporary_bytes` | restart and evidence re-evaluation |
 | Any `inventory` field | restart and inventory reconciliation |
 | `evidence.enabled_formats` | restart, evidence invalidation and re-evaluation, candidate and review re-evaluation |
-| `evidence.maximum_document_bytes` or `.maximum_text_characters` | restart and evidence re-evaluation |
+| `evidence.maximum_document_bytes` | restart, EPUB package evidence re-extraction, and evidence re-evaluation |
+| `evidence.maximum_text_characters` | restart and evidence re-evaluation |
+| Any `evidence.epub_package` numeric field | restart and EPUB package evidence re-extraction |
 | `providers` | restart, candidate and review re-evaluation |
 | `reviewers` | restart and review re-evaluation |
 | `policy.policy_version` | restart and review re-evaluation |
@@ -177,6 +180,41 @@ schemas.
 Current defaults enable `epub`, `m4b`, and `mp3`, bound one document to
 67,108,864 bytes, and bound retained text processing to 262,144 characters.
 The closed current format vocabulary is `epub`, `m4b`, and `mp3`.
+
+`evidence.epub_package` is the closed `epub-package-limits-v1` profile. Its
+numeric values are strict integers and may be lowered for an installation, or
+raised only as far as the immutable implementation caps shown below. Zero,
+negative, coerced, unknown, and over-cap values fail configuration validation.
+Changing any value requires restart and produces the explicit
+`reextract_evidence` impact; an older extraction is not silently treated as
+having run under the new profile.
+
+| Field | Default | Immutable hard cap |
+| --- | ---: | ---: |
+| `source_archive_bytes` | 268,435,456 | 536,870,912 |
+| `archive_entries` | 2,048 | 8,192 |
+| `compressed_bytes_per_member` | 268,435,456 | 536,870,912 |
+| `expanded_bytes_per_member` | 268,435,456 | 536,870,912 |
+| `expanded_bytes_per_archive` | 1,073,741,824 | 2,147,483,648 |
+| `compression_ratio_per_member` | 200 | 1,000 |
+| `container_xml_bytes` | 65,536 | 1,048,576 |
+| `opf_package_bytes` | 4,194,304 | 16,777,216 |
+| `xml_nodes_per_document` | 50,000 | 200,000 |
+| `xml_attributes_per_document` | 100,000 | 400,000 |
+| `attributes_per_element` | 64 | 256 |
+| `xml_depth` | 64 | 128 |
+| `decoded_xml_text_characters` | 262,144 | 4,194,304 |
+| `metadata_nodes` | 512 | 2,048 |
+| `manifest_items` | 4,096 | 8,192 |
+| `spine_items` | 4,096 | 8,192 |
+| `guide_references` | 256 | 512 |
+| `prefix_mappings` | 64 | 256 |
+
+The profile additionally fixes a 1,024-byte UTF-8 whole-member-name cap, a
+255-byte UTF-8 component-name cap, archive nesting depth one, 256 total
+observations, 32 values per controlled field, 32 warnings, 16,384 Unicode scalar
+values per raw or normalized observation, and 524,288 UTF-8 bytes
+per public report. These constants are not configurable.
 
 ### Providers
 

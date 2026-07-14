@@ -103,6 +103,145 @@
       "title": "ConnectionInput",
       "type": "object"
     },
+    "EpubPackageInput": {
+      "additionalProperties": false,
+      "properties": {
+        "archive_entries": {
+          "default": 2048,
+          "maximum": 8192,
+          "minimum": 1,
+          "title": "Archive Entries",
+          "type": "integer"
+        },
+        "attributes_per_element": {
+          "default": 64,
+          "maximum": 256,
+          "minimum": 1,
+          "title": "Attributes Per Element",
+          "type": "integer"
+        },
+        "compressed_bytes_per_member": {
+          "default": 268435456,
+          "maximum": 536870912,
+          "minimum": 1,
+          "title": "Compressed Bytes Per Member",
+          "type": "integer"
+        },
+        "compression_ratio_per_member": {
+          "default": 200,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Compression Ratio Per Member",
+          "type": "integer"
+        },
+        "container_xml_bytes": {
+          "default": 65536,
+          "maximum": 1048576,
+          "minimum": 1,
+          "title": "Container Xml Bytes",
+          "type": "integer"
+        },
+        "decoded_xml_text_characters": {
+          "default": 262144,
+          "maximum": 4194304,
+          "minimum": 1,
+          "title": "Decoded Xml Text Characters",
+          "type": "integer"
+        },
+        "expanded_bytes_per_archive": {
+          "default": 1073741824,
+          "maximum": 2147483648,
+          "minimum": 1,
+          "title": "Expanded Bytes Per Archive",
+          "type": "integer"
+        },
+        "expanded_bytes_per_member": {
+          "default": 268435456,
+          "maximum": 536870912,
+          "minimum": 1,
+          "title": "Expanded Bytes Per Member",
+          "type": "integer"
+        },
+        "guide_references": {
+          "default": 256,
+          "maximum": 512,
+          "minimum": 1,
+          "title": "Guide References",
+          "type": "integer"
+        },
+        "manifest_items": {
+          "default": 4096,
+          "maximum": 8192,
+          "minimum": 1,
+          "title": "Manifest Items",
+          "type": "integer"
+        },
+        "metadata_nodes": {
+          "default": 512,
+          "maximum": 2048,
+          "minimum": 1,
+          "title": "Metadata Nodes",
+          "type": "integer"
+        },
+        "opf_package_bytes": {
+          "default": 4194304,
+          "maximum": 16777216,
+          "minimum": 1,
+          "title": "Opf Package Bytes",
+          "type": "integer"
+        },
+        "prefix_mappings": {
+          "default": 64,
+          "maximum": 256,
+          "minimum": 1,
+          "title": "Prefix Mappings",
+          "type": "integer"
+        },
+        "profile": {
+          "const": "epub-package-limits-v1",
+          "default": "epub-package-limits-v1",
+          "title": "Profile",
+          "type": "string"
+        },
+        "source_archive_bytes": {
+          "default": 268435456,
+          "maximum": 536870912,
+          "minimum": 1,
+          "title": "Source Archive Bytes",
+          "type": "integer"
+        },
+        "spine_items": {
+          "default": 4096,
+          "maximum": 8192,
+          "minimum": 1,
+          "title": "Spine Items",
+          "type": "integer"
+        },
+        "xml_attributes_per_document": {
+          "default": 100000,
+          "maximum": 400000,
+          "minimum": 1,
+          "title": "Xml Attributes Per Document",
+          "type": "integer"
+        },
+        "xml_depth": {
+          "default": 64,
+          "maximum": 128,
+          "minimum": 1,
+          "title": "Xml Depth",
+          "type": "integer"
+        },
+        "xml_nodes_per_document": {
+          "default": 50000,
+          "maximum": 200000,
+          "minimum": 1,
+          "title": "Xml Nodes Per Document",
+          "type": "integer"
+        }
+      },
+      "title": "EpubPackageInput",
+      "type": "object"
+    },
     "EvidenceInput": {
       "additionalProperties": false,
       "properties": {
@@ -125,6 +264,30 @@
           "title": "Enabled Formats",
           "type": "array",
           "uniqueItems": true
+        },
+        "epub_package": {
+          "$ref": "#/$defs/EpubPackageInput",
+          "default": {
+            "archive_entries": 2048,
+            "attributes_per_element": 64,
+            "compressed_bytes_per_member": 268435456,
+            "compression_ratio_per_member": 200,
+            "container_xml_bytes": 65536,
+            "decoded_xml_text_characters": 262144,
+            "expanded_bytes_per_archive": 1073741824,
+            "expanded_bytes_per_member": 268435456,
+            "guide_references": 256,
+            "manifest_items": 4096,
+            "metadata_nodes": 512,
+            "opf_package_bytes": 4194304,
+            "prefix_mappings": 64,
+            "profile": "epub-package-limits-v1",
+            "source_archive_bytes": 268435456,
+            "spine_items": 4096,
+            "xml_attributes_per_document": 100000,
+            "xml_depth": 64,
+            "xml_nodes_per_document": 50000
+          }
         },
         "maximum_document_bytes": {
           "default": 67108864,
@@ -399,6 +562,27 @@
           "m4b",
           "mp3"
         ],
+        "epub_package": {
+          "archive_entries": 2048,
+          "attributes_per_element": 64,
+          "compressed_bytes_per_member": 268435456,
+          "compression_ratio_per_member": 200,
+          "container_xml_bytes": 65536,
+          "decoded_xml_text_characters": 262144,
+          "expanded_bytes_per_archive": 1073741824,
+          "expanded_bytes_per_member": 268435456,
+          "guide_references": 256,
+          "manifest_items": 4096,
+          "metadata_nodes": 512,
+          "opf_package_bytes": 4194304,
+          "prefix_mappings": 64,
+          "profile": "epub-package-limits-v1",
+          "source_archive_bytes": 268435456,
+          "spine_items": 4096,
+          "xml_attributes_per_document": 100000,
+          "xml_depth": 64,
+          "xml_nodes_per_document": 50000
+        },
         "maximum_document_bytes": 67108864,
         "maximum_text_characters": 262144
       }

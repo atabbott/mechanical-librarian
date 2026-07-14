@@ -175,6 +175,67 @@ def _concrete_adapter_imports() -> list[str]:
 
 
 class ImportBoundaryTests(unittest.TestCase):
+    def test_local_evidence_contracts_import_no_parser_or_io_implementation(self) -> None:
+        contract_paths = (
+            PACKAGE_ROOT / "domain" / "local_evidence.py",
+            PACKAGE_ROOT / "application" / "local_evidence.py",
+            PACKAGE_ROOT / "application" / "ports.py",
+        )
+        forbidden = {
+            "zipfile",
+            "xml",
+            "sqlite3",
+            "httpx",
+            "urllib",
+            "requests",
+            "socket",
+            "subprocess",
+        }
+        violations = []
+        for path in contract_paths:
+            for imported in _imports(path):
+                if imported.split(".", 1)[0] in forbidden:
+                    violations.append(f"{path.name} imports {imported}")
+        self.assertEqual(violations, [])
+
+    def test_epub_package_adapter_has_no_extraction_network_database_or_temp_api(self) -> None:
+        path = PACKAGE_ROOT / "adapters" / "evidence_extractors" / "epub_package.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        forbidden_imports = {
+            "httpx",
+            "os",
+            "pathlib",
+            "requests",
+            "shutil",
+            "socket",
+            "sqlite3",
+            "subprocess",
+            "tempfile",
+            "urllib",
+        }
+        imports = {
+            value.split(".", 1)[0]
+            for value in _imports(path)
+        }
+        extraction_calls = {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"extract", "extractall"}
+        }
+        zip_path_references = {
+            node.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "zipfile"
+            and node.attr == "Path"
+        }
+        self.assertEqual(imports.intersection(forbidden_imports), set())
+        self.assertEqual(extraction_calls, set())
+        self.assertEqual(zip_path_references, set())
+
     def test_production_source_obeys_dependency_direction(self) -> None:
         violations: list[str] = []
         for path in sorted(PACKAGE_ROOT.rglob("*.py")):
