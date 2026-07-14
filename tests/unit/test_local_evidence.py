@@ -20,10 +20,12 @@ from mechanical_librarian.domain.identifiers import (
 from mechanical_librarian.domain.inventory import FileReference
 from mechanical_librarian.domain.local_evidence import (
     CitationSection,
+    DeclarationKind,
     EpubPackageLimits,
     LocalEvidenceCancellation,
     LocalEvidenceCapability,
     LocalEvidenceCitation,
+    LocalEvidenceDeclaration,
     LocalEvidenceField,
     LocalEvidenceObservation,
     LocalEvidenceOutcome,
@@ -34,6 +36,7 @@ from mechanical_librarian.domain.local_evidence import (
     ObservationApplicability,
     local_resource_identity,
 )
+from mechanical_librarian.application.local_evidence import render_local_evidence_text
 
 
 def fingerprint(value: str = "a") -> Fingerprint:
@@ -73,6 +76,84 @@ def observation(
 
 
 class LocalEvidenceTests(unittest.TestCase):
+    def test_declaration_projection_rejects_credentials_in_every_public_string(self) -> None:
+        values = (
+            {"identifier": "ghp_1234567890abcdef"},
+            {"media_type": "application/ghp_1234567890abcdef"},
+            {"properties": ("ghp_1234567890abcdef",)},
+        )
+        for values_by_field in values:
+            with self.subTest(values_by_field=values_by_field):
+                with self.assertRaises(EvidenceValueError):
+                    LocalEvidenceDeclaration(
+                        DeclarationKind.MANIFEST_ITEM,
+                        1,
+                        citation(1),
+                        "d" * 64,
+                        **values_by_field,
+                    )
+
+        safe = LocalEvidenceDeclaration(
+            DeclarationKind.MANIFEST_ITEM,
+            1,
+            citation(1),
+            "d" * 64,
+            "safe-id",
+            "application/xhtml+xml",
+            ("nav",),
+        )
+        report = LocalEvidenceReport(
+            LocalEvidenceOutcome.SUCCESS,
+            LocalEvidenceCapability.PACKAGE,
+            EpubPackageLimits(),
+            fingerprint(),
+            declarations=(safe,),
+        )
+        hostile = report.to_json().replace("safe-id", "ghp_1234567890abcdef")
+        with self.assertRaises(EvidenceValueError):
+            LocalEvidenceReport.from_json(hostile)
+
+    def test_text_rendering_contains_every_canonical_report_component(self) -> None:
+        declaration = LocalEvidenceDeclaration(
+            DeclarationKind.MANIFEST_ITEM,
+            2,
+            citation(2),
+            "d" * 64,
+            "safe-id",
+            "application/xhtml+xml",
+            ("nav",),
+        )
+        report = LocalEvidenceReport(
+            LocalEvidenceOutcome.SUCCESS,
+            LocalEvidenceCapability.PACKAGE,
+            EpubPackageLimits(),
+            fingerprint(),
+            (observation(LocalEvidenceField.TITLE, 1, "Title"),),
+            (LocalEvidenceWarning("ambiguous_title", citation(1)),),
+            (declaration,),
+        )
+
+        rendered = render_local_evidence_text(report)
+
+        for key, value in report.to_data().items():
+            if type(value) is list and value:
+                for index, item in enumerate(value):
+                    expected = f"{key}[{index}]=" + json.dumps(
+                        item,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                    self.assertIn(expected + "\n", rendered)
+            else:
+                expected = f"{key}=" + json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                self.assertIn(expected + "\n", rendered)
+
     def test_repeated_observations_round_trip_without_collapsing_source_order(self) -> None:
         report = LocalEvidenceReport(
             outcome=LocalEvidenceOutcome.SUCCESS,

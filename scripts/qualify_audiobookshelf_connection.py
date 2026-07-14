@@ -180,7 +180,7 @@ def main() -> int:
                 ),
                 encoding="utf-8",
             )
-            from mechanical_librarian.bootstrap import _run_connection_probe
+            from mechanical_librarian.bootstrap.composition import _run_connection_probe
 
             diagnostic = _run_connection_probe(configuration)
             if not diagnostic.succeeded:

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import threading
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
-import mechanical_librarian.bootstrap._epub_child as child
+import mechanical_librarian.bootstrap.epub_child as child
 from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     EpubPackageExtractor,
 )
@@ -18,6 +23,48 @@ from mechanical_librarian.domain.local_evidence import (
 
 
 class EpubChildCompositionTests(unittest.TestCase):
+    def test_entrypoint_import_does_not_load_network_database_or_secret_implementations(
+        self,
+    ) -> None:
+        source = Path(__file__).parents[2] / "src"
+        program = """
+import json
+import sys
+import mechanical_librarian.bootstrap.epub_child
+forbidden = (
+    "httpx",
+    "pydantic",
+    "sqlite3",
+    "mechanical_librarian.adapters.library_services",
+    "mechanical_librarian.adapters.persistence",
+    "mechanical_librarian.infrastructure.security.target_secrets",
+)
+print(json.dumps(sorted(name for name in sys.modules if name.startswith(forbidden))))
+"""
+        completed = subprocess.run(
+            [sys.executable, "-B", "-c", program],
+            cwd="/",
+            env={"PYTHONPATH": str(source), "PYTHONDONTWRITEBYTECODE": "1"},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=10,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode())
+        self.assertEqual(json.loads(completed.stdout), [])
+
+    def test_linux_guard_rejects_a_child_already_reparented_before_installation(
+        self,
+    ) -> None:
+        with (
+            patch.object(child.sys, "platform", "linux"),
+            patch.object(child.os, "getppid", return_value=1),
+            patch.object(child.os, "_exit", side_effect=SystemExit(70)) as exit_process,
+        ):
+            with self.assertRaises(SystemExit):
+                child._install_parent_guard(10, threading.Event(), 999)
+        exit_process.assert_called_once_with(70)
+
     def test_production_child_routes_the_logical_request_through_the_application_service(
         self,
     ) -> None:
@@ -32,6 +79,7 @@ class EpubChildCompositionTests(unittest.TestCase):
             expected,
         )
         context = {
+            "child_seconds": 4.5,
             "expected_source": {
                 "algorithm": "sha256",
                 "digest": digest,
@@ -51,10 +99,10 @@ class EpubChildCompositionTests(unittest.TestCase):
             patch.object(child.os, "close"),
             patch.object(child, "extract_local_evidence", return_value=report) as extract,
         ):
-            exit_code = child.main(["10", "11"])
+            exit_code = child.main(["10", "11", "123"])
 
         self.assertEqual(exit_code, 0)
-        install_parent_guard.assert_called_once()
+        install_parent_guard.assert_called_once_with(11, ANY, 123)
         apply_limits.assert_called_once_with()
         write_report.assert_called_once_with(report)
         extractor, request = extract.call_args.args

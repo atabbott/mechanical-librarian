@@ -157,8 +157,8 @@ class CliTests(unittest.TestCase):
             stderr=errors,
         )
         self.assertEqual(exit_code, 0)
-        self.assertIn("outcome=no_applicable_evidence\n", output.getvalue())
-        self.assertIn("limit_profile=epub-package-limits-v1\n", output.getvalue())
+        self.assertIn('outcome="no_applicable_evidence"\n', output.getvalue())
+        self.assertIn('"profile":"epub-package-limits-v1"', output.getvalue())
         self.assertEqual(errors.getvalue(), "")
 
         def hostile(*_args: object) -> LocalEvidenceReport:
@@ -185,6 +185,26 @@ class CliTests(unittest.TestCase):
         self.assertEqual(output.getvalue(), "")
         self.assertIn('"outcome":"internal_failure"', errors.getvalue())
         self.assertNotIn("sentinel", errors.getvalue())
+
+        for format_arguments in (
+            ["--format=text"],
+            ["--format", "json", "--format=text"],
+        ):
+            with self.subTest(format_arguments=format_arguments):
+                output = io.StringIO()
+                errors = io.StringIO()
+                exit_code = main(
+                    ["epub-package-report", *format_arguments],
+                    state_check_runner=lambda _path: StateCheckResult(
+                        StateCheckOutcome.READY
+                    ),
+                    epub_package_report_runner=Mock(),
+                    stdout=output,
+                    stderr=errors,
+                )
+                self.assertEqual(exit_code, 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn('outcome="invalid_invocation"', errors.getvalue())
 
     def test_poll_inspection_needs_no_config_or_target_access(self) -> None:
         result = InventoryPollResult(

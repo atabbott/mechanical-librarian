@@ -47,7 +47,10 @@ MAX_NORMALIZED_VALUE_CHARACTERS = 16_384
 MAX_PUBLIC_REPORT_BYTES = 524_288
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
-_LANGUAGE = re.compile(r"^[A-Za-z0-9]{1,8}(?:-[A-Za-z0-9]{1,8}){0,7}$")
+_LANGUAGE = re.compile(
+    r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,7}|"
+    r"[xX](?:-[A-Za-z0-9]{1,8}){1,7})$"
+)
 _XML_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$")
 
 
@@ -458,12 +461,19 @@ class LocalEvidenceDeclaration:
             _digest(self.resource_identity, "declaration resource identity")
         if self.identifier is not None:
             validate_text(self.identifier, "declaration identifier", 256)
+            validate_projection_text(
+                self.identifier, "public declaration identifier", 256
+            )
         if self.media_type is not None:
             validate_text(self.media_type, "declaration media type", 128)
+            validate_projection_text(
+                self.media_type, "public declaration media type", 128
+            )
         if type(self.properties) is not tuple or len(self.properties) > 64:
             raise EvidenceValueError("declaration properties are malformed")
         for value in self.properties:
             validate_code(value, "declaration property")
+            validate_projection_text(value, "public declaration property", 64)
         if len(set(self.properties)) != len(self.properties) or self.properties != tuple(
             sorted(self.properties)
         ):

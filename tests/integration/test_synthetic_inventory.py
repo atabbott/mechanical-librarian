@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import mechanical_librarian.bootstrap as bootstrap
+import mechanical_librarian.bootstrap.composition as bootstrap
 from mechanical_librarian.adapters.library_services.synthetic import (
     SyntheticLibraryReader,
 )
@@ -284,9 +284,9 @@ class ComposedSyntheticInventoryTests(unittest.TestCase):
             ):
                 self.assertNotIn(forbidden, vars(bootstrap))
 
-    @patch("mechanical_librarian.bootstrap.SQLiteInventoryRepository")
-    @patch("mechanical_librarian.bootstrap.SyntheticLibraryReader")
-    @patch("mechanical_librarian.bootstrap.preflight")
+    @patch("mechanical_librarian.bootstrap.composition.SQLiteInventoryRepository")
+    @patch("mechanical_librarian.bootstrap.composition.SyntheticLibraryReader")
+    @patch("mechanical_librarian.bootstrap.composition.preflight")
     def test_invalid_or_write_capable_configuration_fails_before_any_construction(
         self, mocked_preflight: Mock, mocked_reader: Mock, mocked_repository: Mock
     ) -> None:

@@ -25,6 +25,8 @@ _STDOUT_LIMIT = 1_048_576
 _STDERR_LIMIT = 65_536
 _CONTEXT_LIMIT = 65_536
 _WALL_SECONDS = 60.0
+_CHILD_MAX_SECONDS = 55.0
+_CHILD_MARGIN_SECONDS = 0.25
 _TERMINATION_GRACE_SECONDS = 2.0
 
 
@@ -93,6 +95,15 @@ def _minimal_environment() -> dict[str, str]:
     }
 
 
+def _bounded_timing(wall_seconds: float) -> tuple[float, float]:
+    effective_wall_seconds = min(float(wall_seconds), _WALL_SECONDS)
+    child_seconds = min(
+        _CHILD_MAX_SECONDS,
+        max(0.001, effective_wall_seconds - _CHILD_MARGIN_SECONDS),
+    )
+    return effective_wall_seconds, child_seconds
+
+
 def run_epub_package_child(
     descriptor: int,
     expected_source: Fingerprint,
@@ -106,8 +117,10 @@ def run_epub_package_child(
 
     if type(wall_seconds) not in {int, float} or isinstance(wall_seconds, bool) or wall_seconds <= 0:
         return _failure(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
+    effective_wall_seconds, child_seconds = _bounded_timing(float(wall_seconds))
     context = json.dumps(
         {
+            "child_seconds": child_seconds,
             "expected_source": {
                 "algorithm": expected_source.algorithm,
                 "digest": expected_source.digest,
@@ -131,9 +144,10 @@ def run_epub_package_child(
                 "-I",
                 "-B",
                 "-m",
-                "mechanical_librarian.bootstrap._epub_child",
+                "mechanical_librarian.bootstrap.epub_child",
                 str(descriptor),
                 str(control_read),
+                str(os.getpid()),
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -156,7 +170,7 @@ def run_epub_package_child(
         stderr_buffer = bytearray()
         selector.register(process.stdout, selectors.EVENT_READ, (stdout_buffer, _STDOUT_LIMIT))
         selector.register(process.stderr, selectors.EVENT_READ, (stderr_buffer, _STDERR_LIMIT))
-        deadline = time.monotonic() + wall_seconds
+        deadline = time.monotonic() + effective_wall_seconds
         overflow = False
         while selector.get_map() or process.poll() is None:
             if cancelled():

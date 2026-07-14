@@ -99,6 +99,18 @@
       "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_standard_metadata_refinement_and_cover_precedence_matrix"
     },
     {
+      "partition": "metadata-title-and-datatypes",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_title_type_and_optional_metadata_datatypes_are_local_refinements"
+    },
+    {
+      "partition": "manifest-semantic-privacy",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_manifest_semantics_require_safe_local_compatible_resources"
+    },
+    {
+      "partition": "identifier-isbn-validation",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_isbn_families_validate_lexical_position_prefix_checksum_and_urn"
+    },
+    {
       "partition": "report-declaration-output-bounds",
       "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_per_field_declaration_and_public_report_bounds_are_resource_limits"
     }
@@ -108,7 +120,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "epub3",
-      "expected_projection_sha256": "b412b82b2ba2ce5c7719b570cb82394bb55ca406c5c66bfe84e246171dc39a5a",
+      "expected_projection_sha256": "b48a26ee1ac5646e6d0e5ff691823604af3639df9c525f3a99e198997a3261e0",
       "generation_inputs": {"recipe": "generate_epub3", "seed": "deterministic"},
       "generator": "generate_epub3",
       "id": "epub3-deflate",
@@ -120,7 +132,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "opf2",
-      "expected_projection_sha256": "7b23d9eea50ba71e2992873979550170d929f0b1512c075542bdd75a1c83296b",
+      "expected_projection_sha256": "b9583d17ba127d8e8fe7999b3639eb060d900b3a54b33109225f2fdc3cb6b89a",
       "generation_inputs": {"recipe": "generate_opf2", "seed": "deterministic"},
       "generator": "generate_opf2",
       "id": "opf2-legacy",
@@ -132,7 +144,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "epub3",
-      "expected_projection_sha256": "8c5a8ac2c512cf45fa9996e5147a8164c04e575d668eb11d8e82d6cace8fb14d",
+      "expected_projection_sha256": "831916006ee9cabc786946cac5ba353c174baec396324b1fda0d9335017a5c20",
       "generation_inputs": {"recipe": "generate_stored", "seed": "deterministic"},
       "generator": "generate_stored",
       "id": "epub3-stored",
@@ -144,7 +156,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "epub3",
-      "expected_projection_sha256": "9f709f95dd5e7576ec92d46ffdc14e48d7b90f88932bea60f9b1b65c97151772",
+      "expected_projection_sha256": "7f32b9c94f6f28ac49819cb3cf19e70718123a473681d7274fd0e419e303e7c5",
       "generation_inputs": {"recipe": "generate_zip64", "seed": "deterministic"},
       "generator": "generate_zip64",
       "id": "producer-forced-zip64",
@@ -156,7 +168,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "epub3",
-      "expected_projection_sha256": "aa9a50c1011c374d388d6ee05eb2cc15362e10c5a20971b7626fa03a80bb371c",
+      "expected_projection_sha256": "c57eef94489528384f9b962e3097a05904b0ba45d7e804d13a187dfa8a9ba501",
       "generation_inputs": {"recipe": "generate_data_descriptors", "seed": "deterministic"},
       "generator": "generate_data_descriptors",
       "id": "data-descriptors",
@@ -192,7 +204,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "opaque-encryption",
-      "expected_projection_sha256": "f77a850c5d09a57e0853d0ad050ed08076fdc396e2c9d37284a084b21685e43a",
+      "expected_projection_sha256": "4597d47ffb4ebc702053a88bb0c321b74e493c1059edc270cccbf4223045bf0c",
       "generation_inputs": {"recipe": "generate_opaque_encryption", "seed": "deterministic"},
       "generator": "generate_opaque_encryption",
       "id": "opaque-resource-encryption",
@@ -228,7 +240,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "epub3-ambiguous-id",
-      "expected_projection_sha256": "b0f8b8630c9a838ac5e43b8c8f334b08bae73edea6afb9883dcc41a9ccbf8822",
+      "expected_projection_sha256": "d48bda85a0acbece62d5c0b34e8ca8127c595d63f4a3dfe4d7d9d0ff77cf9732",
       "generation_inputs": {"recipe": "mutate_duplicate_global_id", "seed": "deterministic"},
       "generator": "mutate_duplicate_global_id",
       "id": "duplicate-global-id",
@@ -312,7 +324,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "unsafe",
-      "expected_projection_sha256": "2d50479c8aae4253755824655757563de853f4bf9ac3ec52ec251b4eefcbe245",
+      "expected_projection_sha256": "7c3695d45397eef4c2926bf12080e46f7e6cbd34589786727ab8767295bcb02e",
       "generation_inputs": {"recipe": "generate_unsafe_metadata", "seed": "deterministic"},
       "generator": "generate_unsafe_metadata",
       "id": "unsafe-metadata-one-way-projection",
@@ -324,7 +336,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "metadata-matrix",
-      "expected_projection_sha256": "f7416f8147aff64fa8471b5b0fc652ce768196177a0016730f3668fb86f786e2",
+      "expected_projection_sha256": "8274de8740d995013b472ebbc8b8f3a16bcd381342287201100e64d31de6f56a",
       "generation_inputs": {"recipe": "generate_metadata_matrix", "seed": "deterministic"},
       "generator": "generate_metadata_matrix",
       "id": "standard-refined-metadata-matrix",
@@ -336,7 +348,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "identifier-matrix",
-      "expected_projection_sha256": "4cba2dc36490ba77544c221519b46f3476c0d1a4966d49ff5f36b5f4317bb8a1",
+      "expected_projection_sha256": "f4f8466b55d672c9aa2a68db070ce86f151fc41f88a09438704fac1e04da69c3",
       "generation_inputs": {"recipe": "generate_identifier_matrix", "seed": "deterministic"},
       "generator": "generate_identifier_matrix",
       "id": "identifier-applicability-matrix",
@@ -348,7 +360,7 @@
       "expected_exit": 0,
       "expected_outcome": "success",
       "expected_projection": "calibre-conflict",
-      "expected_projection_sha256": "beab7560f184db0fb657c251fe5327f91534cbea5b0f7e79a771af86c06f1aeb",
+      "expected_projection_sha256": "ccb786ddd5a7923e80f9589d39d39047c5c136b2513243113476f12d450e8d7d",
       "generation_inputs": {"recipe": "generate_calibre_conflict", "seed": "deterministic"},
       "generator": "generate_calibre_conflict",
       "id": "calibre-repetition-conflict",
@@ -462,13 +474,13 @@
       "warnings": ["contradictory_series", "identifier_applicability_unknown", "unsafe_metadata_redacted", "unsupported_vendor_metadata"]
     },
     "metadata-matrix": {
-      "citation_sections": {"cover": 1, "manifest": 3, "metadata": 30, "navigation": 1, "package": 2, "spine": 1},
-      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "title", "title", "subtitle", "contributor", "publisher", "subject", "description", "rights", "source", "relation", "type", "region", "contributor_role", "edition", "format", "region", "cover"],
-      "warnings": ["ambiguous_title", "contradictory_series", "identifier_applicability_unknown", "unsupported_vendor_metadata"]
+      "citation_sections": {"cover": 1, "manifest": 3, "metadata": 28, "navigation": 1, "package": 2, "spine": 1},
+      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "subtitle", "contributor", "publisher", "subject", "description", "rights", "source", "relation", "type", "region", "contributor_role", "edition", "format", "region", "cover"],
+      "warnings": ["contradictory_series", "identifier_applicability_unknown", "unsupported_vendor_metadata"]
     },
     "identifier-matrix": {
-      "citation_sections": {"cover": 1, "manifest": 3, "metadata": 24, "navigation": 1, "package": 2, "spine": 1},
-      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "identifier", "identifier_scheme", "identifier", "identifier_scheme", "identifier", "identifier_scheme", "identifier", "identifier", "identifier_scheme", "cover"],
+      "citation_sections": {"cover": 1, "manifest": 3, "metadata": 23, "navigation": 1, "package": 2, "spine": 1},
+      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "identifier", "identifier_scheme", "identifier", "identifier_scheme", "identifier", "identifier_scheme", "identifier", "identifier", "cover"],
       "warnings": ["ambiguous_identifier", "contradictory_series", "identifier_applicability_unknown", "invalid_identifier", "unsupported_vendor_metadata"]
     },
     "calibre-conflict": {

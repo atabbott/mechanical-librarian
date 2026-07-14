@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-import mechanical_librarian.bootstrap as bootstrap
+import mechanical_librarian.bootstrap.composition as bootstrap
 import mechanical_librarian.infrastructure.security.target_secrets as target_secrets
 
 

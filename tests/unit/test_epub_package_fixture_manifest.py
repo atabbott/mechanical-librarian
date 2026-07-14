@@ -1131,8 +1131,11 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
             {
                 "encryption-graph",
                 "metadata-identifiers-formats-regions",
+                "identifier-isbn-validation",
+                "manifest-semantic-privacy",
                 "metadata-repetition-precedence",
                 "metadata-standard-refinements-cover",
+                "metadata-title-and-datatypes",
                 "opf-order-refinement-graph",
                 "path-and-zip-encryption",
                 "report-declaration-output-bounds",

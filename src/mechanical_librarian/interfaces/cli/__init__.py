@@ -263,14 +263,19 @@ def main(
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
     if raw_arguments[:1] == ["epub-package-report"]:
-        requested_format = (
-            "text"
-            if any(
-                raw_arguments[index : index + 2] == ["--format", "text"]
-                for index in range(len(raw_arguments) - 1)
-            )
-            else "json"
-        )
+        requested_format = "json"
+        index = 1
+        while index < len(raw_arguments):
+            argument = raw_arguments[index]
+            candidate: str | None = None
+            if argument.startswith("--format="):
+                candidate = argument.partition("=")[2]
+            elif argument == "--format" and index + 1 < len(raw_arguments):
+                index += 1
+                candidate = raw_arguments[index]
+            if candidate in {"json", "text"}:
+                requested_format = candidate
+            index += 1
         try:
             epub_arguments = _epub_parser().parse_args(raw_arguments[1:])
         except _EpubArgumentError:

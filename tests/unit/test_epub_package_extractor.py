@@ -414,6 +414,183 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     )
                 )
 
+        fragment_only = EPUB2_PACKAGE.replace(
+            b'href="chapter.xhtml#start"', b'href="#start"'
+        )
+        fragment_report = EpubPackageExtractor().extract(
+            request(epub_bytes(version=2, package=fragment_only))
+        )
+        self.assertEqual(fragment_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn(
+            "invalid_guide_reference",
+            {item.code for item in fragment_report.warnings},
+        )
+
+    def test_manifest_semantics_require_safe_local_compatible_resources(self) -> None:
+        hostile_values = (
+            EPUB3_PACKAGE.replace(b'id="nav"', b'id="ghp_1234567890abcdef"'),
+            EPUB3_PACKAGE.replace(
+                b'media-type="application/xhtml+xml" properties="nav"',
+                b'media-type="application/ghp_1234567890abcdef" properties="nav"',
+                1,
+            ),
+            EPUB3_PACKAGE.replace(
+                b'properties="nav"',
+                b'properties="nav ghp_1234567890abcdef"',
+            ),
+        )
+        for package in hostile_values:
+            with self.subTest(package=hashlib.sha256(package).hexdigest()):
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(
+                    "unsafe_manifest_item", {item.code for item in report.warnings}
+                )
+                self.assertNotIn("ghp_1234567890abcdef", report.to_json())
+
+        oversized_media = EPUB3_PACKAGE.replace(
+            b"application/xhtml+xml",
+            b"application/" + b"a" * 125,
+            1,
+        )
+        oversized_report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=oversized_media))
+        )
+        self.assertEqual(oversized_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn(
+            "invalid_manifest_item", {item.code for item in oversized_report.warnings}
+        )
+        excessive_properties = EPUB3_PACKAGE.replace(
+            b'properties="nav"',
+            ('properties="' + " ".join(f"p{index}" for index in range(65)) + '"').encode(),
+        )
+        excessive_report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=excessive_properties))
+        )
+        self.assertEqual(excessive_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn(
+            "invalid_manifest_item", {item.code for item in excessive_report.warnings}
+        )
+
+        missing_cover = EPUB3_PACKAGE.replace(
+            b'href="cover.jpg"', b'href="missing.jpg"'
+        )
+        wrong_cover = EPUB3_PACKAGE.replace(
+            b'media-type="image/jpeg" properties="cover-image"',
+            b'media-type="application/xhtml+xml" properties="cover-image"',
+        )
+        wrong_navigation = EPUB3_PACKAGE.replace(
+            b'media-type="application/xhtml+xml" properties="nav"',
+            b'media-type="image/jpeg" properties="nav"',
+            1,
+        )
+        for package, warning, forbidden_kind, forbidden_field in (
+            (
+                missing_cover,
+                "missing_manifest_resource",
+                DeclarationKind.COVER,
+                LocalEvidenceField.COVER,
+            ),
+            (
+                wrong_cover,
+                "invalid_cover_declaration",
+                DeclarationKind.COVER,
+                LocalEvidenceField.COVER,
+            ),
+            (
+                wrong_navigation,
+                "invalid_navigation_declaration",
+                DeclarationKind.NAVIGATION,
+                LocalEvidenceField.NAVIGATION,
+            ),
+        ):
+            with self.subTest(warning=warning):
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(warning, {item.code for item in report.warnings})
+                self.assertNotIn(forbidden_kind, {item.kind for item in report.declarations})
+                self.assertNotIn(forbidden_field, {item.field for item in report.observations})
+
+    def test_isbn_families_validate_lexical_position_prefix_checksum_and_urn(self) -> None:
+        cases = (
+            (b"0-306-40615-2", "0306406152", "ISBN-10", True),
+            (b"0-8044-2957-X", "080442957X", "ISBN-10", True),
+            (b"9780306406157", "9780306406157", "ISBN-13", True),
+            (b"9791090636071", "9791090636071", "ISBN-13", True),
+            (b"urn:isbn:9780306406157", "9780306406157", "ISBN-13", True),
+            (b"X000000018", "X000000018", None, False),
+            (b"1234567890128", "1234567890128", None, False),
+            (b"urn:isbn:9780306406158", "urn:isbn:9780306406158", None, False),
+            (b"urn:isbn:not-an-isbn", "urn:isbn:not-an-isbn", None, False),
+            (b"ISBN:not-an-isbn", "ISBN:not-an-isbn", None, False),
+            (b"ISBN-10:9780306406157", "ISBN-10:9780306406157", None, False),
+        )
+        original = b"9780306406157"
+        for raw, normalized, scheme, valid in cases:
+            with self.subTest(raw=raw):
+                package = EPUB3_PACKAGE.replace(original, raw, 1)
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                identifier = next(
+                    item
+                    for item in report.observations
+                    if item.field is LocalEvidenceField.IDENTIFIER
+                )
+                self.assertEqual(identifier.normalized_value, normalized)
+                self.assertIs(
+                    identifier.applicability,
+                    (
+                        ObservationApplicability.UNKNOWN
+                        if valid
+                        else ObservationApplicability.INAPPLICABLE
+                    ),
+                )
+                inferred = {
+                    item.normalized_value
+                    for item in report.observations
+                    if item.field is LocalEvidenceField.IDENTIFIER_SCHEME
+                    and item.citation.selector == "inferred-identifier-type"
+                }
+                self.assertEqual(inferred, set() if scheme is None else {scheme})
+                self.assertEqual(
+                    "invalid_identifier" in {item.code for item in report.warnings},
+                    not valid,
+                )
+
+        invalid_declared = EPUB2_PACKAGE.replace(
+            b">0-306-40615-2</dc:identifier>",
+            b">not-an-isbn</dc:identifier>",
+        )
+        declared_report = EpubPackageExtractor().extract(
+            request(epub_bytes(version=2, package=invalid_declared))
+        )
+        declared_identifier = next(
+            item
+            for item in declared_report.observations
+            if item.field is LocalEvidenceField.IDENTIFIER
+        )
+        self.assertEqual(declared_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIs(
+            declared_identifier.applicability,
+            ObservationApplicability.INAPPLICABLE,
+        )
+        self.assertIn(
+            "invalid_identifier", {item.code for item in declared_report.warnings}
+        )
+        self.assertNotIn(
+            "ISBN",
+            {
+                item.normalized_value
+                for item in declared_report.observations
+                if item.field is LocalEvidenceField.IDENTIFIER_SCHEME
+            },
+        )
+
     def test_repeated_legacy_cover_declarations_preserve_agreement_and_conflict(self) -> None:
         cover_meta = b'<meta name="cover" content="cover"/>'
         agreeing_package = EPUB2_PACKAGE.replace(
@@ -434,6 +611,12 @@ class EpubPackageExtractorTests(unittest.TestCase):
             ),
             1,
         )
+        agreeing_cover = next(
+            item
+            for item in agreeing.declarations
+            if item.kind is DeclarationKind.COVER
+        )
+        self.assertTrue(agreeing_cover.citation.expanded_name.endswith("}meta"))
 
         conflicting_package = EPUB2_PACKAGE.replace(
             cover_meta,
@@ -942,6 +1125,22 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 LocalEvidenceField.TYPE,
             }.issubset(fields)
         )
+        subtitle = [
+            item
+            for item in report.observations
+            if item.raw_value == "Synthetic Subtitle"
+        ]
+        self.assertEqual(len(subtitle), 1)
+        self.assertIs(subtitle[0].field, LocalEvidenceField.SUBTITLE)
+        self.assertEqual(subtitle[0].declared_display_sequence, 2)
+        self.assertIn("title-type-subtitle@", subtitle[0].citation.selector or "")
+        self.assertIn("display-seq@", subtitle[0].citation.selector or "")
+        base_title = next(
+            item
+            for item in report.observations
+            if item.raw_value == "A Synthetic Book"
+        )
+        self.assertIsNone(base_title.declared_display_sequence)
         self.assertNotIn("contradictory_cover_declaration", {item.code for item in report.warnings})
         self.assertTrue(
             all(
@@ -991,13 +1190,157 @@ class EpubPackageExtractorTests(unittest.TestCase):
             )
         )
 
-    def test_invalid_language_is_malformed_not_a_resource_failure(self) -> None:
-        package = EPUB3_PACKAGE.replace(
-            b'<dc:title id="title">',
-            b'<dc:title id="title" xml:lang="not a language!">',
-        )
+    def test_title_type_and_optional_metadata_datatypes_are_local_refinements(self) -> None:
+        titles = b'''
+    <dc:title id="main-title">Main</dc:title>
+    <dc:title id="subtitle-title">Subtitle</dc:title>
+    <dc:title id="short-title">Short</dc:title>
+    <dc:title id="collection-title">Collection</dc:title>
+    <dc:title id="edition-title">Edition</dc:title>
+    <dc:title id="expanded-title">Expanded</dc:title>
+    <meta refines="#main-title" property="title-type">main</meta>
+    <meta refines="#subtitle-title" property="title-type">subtitle</meta>
+    <meta refines="#short-title" property="title-type">short</meta>
+    <meta refines="#collection-title" property="title-type">collection</meta>
+    <meta refines="#edition-title" property="title-type">edition</meta>
+    <meta refines="#expanded-title" property="title-type">expanded</meta>
+    <meta refines="#main-title" property="display-seq">1000000</meta>'''
+        package = EPUB3_PACKAGE.replace(b"</metadata>", titles + b"</metadata>")
         report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.MALFORMED)
+        by_value = {
+            item.raw_value: item
+            for item in report.observations
+            if item.raw_value
+            in {"Main", "Subtitle", "Short", "Collection", "Edition", "Expanded"}
+        }
+        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(len(by_value), 6)
+        self.assertIs(by_value["Main"].field, LocalEvidenceField.TITLE)
+        self.assertIs(by_value["Subtitle"].field, LocalEvidenceField.SUBTITLE)
+        self.assertIs(by_value["Short"].field, LocalEvidenceField.TITLE)
+        self.assertIs(by_value["Collection"].field, LocalEvidenceField.COLLECTION)
+        self.assertIs(by_value["Edition"].field, LocalEvidenceField.EDITION)
+        self.assertIs(by_value["Expanded"].field, LocalEvidenceField.TITLE)
+        self.assertEqual(by_value["Main"].declared_display_sequence, 1_000_000)
+
+        invalid_values = (
+            (
+                b'<meta property="dcterms:modified">2026-01-13T00:00:00Z</meta>',
+                b'<meta property="dcterms:modified">2026-01-13</meta>',
+                LocalEvidenceField.MODIFICATION_DATE,
+                "invalid_date",
+                "2026-01-13",
+                True,
+            ),
+            (
+                b'<meta property="group-position">2</meta>',
+                b'<meta property="group-position">0</meta>',
+                LocalEvidenceField.COLLECTION_POSITION,
+                "invalid_metadata_refinement",
+                "0",
+                False,
+            ),
+            (
+                b'<dc:language>en-GB</dc:language>',
+                b'<dc:language>not a language!</dc:language>',
+                LocalEvidenceField.LANGUAGE,
+                "invalid_language",
+                "not a language!",
+                True,
+            ),
+            (
+                b'<dc:language>en-GB</dc:language>',
+                b'<dc:language>123</dc:language>',
+                LocalEvidenceField.LANGUAGE,
+                "invalid_language",
+                "123",
+                True,
+            ),
+            (
+                b'<meta property="group-position">2</meta>',
+                '<meta property="group-position">٢</meta>'.encode(),
+                LocalEvidenceField.COLLECTION_POSITION,
+                "invalid_metadata_refinement",
+                "٢",
+                False,
+            ),
+        )
+        for original, replacement, field, warning, invalid_raw, retained in invalid_values:
+            with self.subTest(warning=warning):
+                invalid_package = EPUB3_PACKAGE.replace(original, replacement)
+                invalid = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=invalid_package))
+                )
+                self.assertEqual(invalid.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(warning, {item.code for item in invalid.warnings})
+                values = [
+                    item
+                    for item in invalid.observations
+                    if item.field is field and item.raw_value == invalid_raw
+                ]
+                self.assertEqual(bool(values), retained)
+                if retained:
+                    self.assertTrue(
+                        all(
+                        item.applicability is ObservationApplicability.INAPPLICABLE
+                        and item.normalized_value is None
+                        for item in values
+                        )
+                    )
+
+        for display_value, expected in (
+            ("0", 0),
+            ("1", 1),
+            ("1000000", 1_000_000),
+            ("1000001", None),
+            ("4294967295", None),
+        ):
+            with self.subTest(display_value=display_value):
+                refinement = (
+                    f'<meta refines="#title" property="display-seq">'
+                    f"{display_value}</meta>"
+                ).encode()
+                display_package = EPUB3_PACKAGE.replace(
+                    b"</metadata>", refinement + b"</metadata>"
+                )
+                display_report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=display_package))
+                )
+                title = next(
+                    item
+                    for item in display_report.observations
+                    if item.raw_value == "A Synthetic Book"
+                )
+                self.assertEqual(display_report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(title.declared_display_sequence, expected)
+                self.assertEqual(
+                    "invalid_metadata_refinement"
+                    in {item.code for item in display_report.warnings},
+                    expected is None,
+                )
+
+    def test_invalid_language_warns_and_omits_only_the_optional_qualifier(self) -> None:
+        for invalid_language in ("not a language!", "1"):
+            with self.subTest(invalid_language=invalid_language):
+                package = EPUB3_PACKAGE.replace(
+                    b'<dc:title id="title">',
+                    (
+                        f'<dc:title id="title" xml:lang="{invalid_language}">'
+                    ).encode(),
+                )
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(
+                    "invalid_language", {item.code for item in report.warnings}
+                )
+                title = next(
+                    item
+                    for item in report.observations
+                    if item.field is LocalEvidenceField.TITLE
+                )
+                self.assertIsNone(title.language)
 
     def test_multiple_renditions_entities_and_cancellation_are_typed(self) -> None:
         multiple = EpubPackageExtractor().extract(request(epub_bytes(container=CONTAINER_MULTIPLE)))

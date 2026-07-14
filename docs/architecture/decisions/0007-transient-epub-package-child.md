@@ -35,9 +35,11 @@ a typed report.
 3. Each request starts one child without a shell. The child inherits only the
    read-only source descriptor and a parent-liveness control descriptor. A
    bounded canonical
-   JSON context supplies the expected fingerprint and the closed
-   `epub-package-limits-v1` profile. It contains no path, endpoint, credential,
-   database handle, client, or mutation capability.
+   JSON context supplies the expected fingerprint, a parent-derived child
+   deadline, and the closed `epub-package-limits-v1` profile. The module runs
+   below an inert package initializer, so network, database, persistence and
+   secret implementations are not imported into the child. The context contains
+   no path, endpoint, credential, database handle, client, or mutation capability.
 4. The child receives a minimal secret-free environment, uses no temporary
    files, and emits exactly one canonical `local-evidence-report-v1` JSON object
    followed by one newline. Stderr is empty on a valid protocol exchange.
@@ -47,10 +49,11 @@ a typed report.
    nonzero-exit output is `child_failure`.
 6. The child enforces zero core dumps, 64 open descriptors, 30 seconds CPU and,
    on Linux production, 256 MiB address space plus `RLIMIT_NPROC=1`. Linux
-   installs `PR_SET_PDEATHSIG` before applying the process cap and then closes
-   the control descriptor; Darwin uses the parent-pipe watcher. The parent
-   enforces a 60-second
-   wall deadline. Timeout or cancellation terminates the process group, waits
+   verifies the parent PID passed at spawn, installs `PR_SET_PDEATHSIG`, verifies
+   the same PID again, and only then closes the control descriptor and applies
+   the process cap; Darwin uses the parent-pipe watcher. The parent enforces the
+   configured parser deadline up to an immutable 60-second wall cap, and the
+   child deadline is always shorter. Timeout or cancellation terminates the process group, waits
    up to two seconds, kills if necessary, and reaps it. Parent-pipe EOF causes
    immediate child exit.
 7. Darwin framework Python reserves an address space larger than 256 MiB before

@@ -14,8 +14,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-import mechanical_librarian.bootstrap as bootstrap
+import mechanical_librarian.bootstrap.composition as bootstrap
 from mechanical_librarian.adapters.evidence_extractors.process import (
+    _bounded_timing,
     _minimal_environment,
     _stop,
     run_epub_package_child,
@@ -69,13 +70,22 @@ def configuration(mount: Path) -> dict[str, object]:
 
 
 class EpubPackageProcessTests(unittest.TestCase):
+    def test_child_deadline_is_derived_below_the_bounded_parent_wall(self) -> None:
+        for configured, expected_wall in ((1.0, 1.0), (60.0, 60.0), (120.0, 60.0)):
+            with self.subTest(configured=configured):
+                wall, child = _bounded_timing(configured)
+                self.assertEqual(wall, expected_wall)
+                self.assertGreater(child, 0)
+                self.assertLess(child, wall)
+                self.assertLessEqual(child, 55.0)
+
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux production limit cohort")
     def test_linux_child_limits_are_exact_and_block_an_additional_process(self) -> None:
         program = '''
 import resource
 import subprocess
 import sys
-from mechanical_librarian.bootstrap._epub_child import _apply_limits
+from mechanical_librarian.bootstrap.epub_child import _apply_limits
 _apply_limits()
 expected = {
     resource.RLIMIT_AS: 256 * 1024 * 1024,
@@ -359,6 +369,52 @@ finally:
             self.assertNotIn(str(root), combined)
             self.assertNotIn("book.epub", combined)
             self.assertNotIn("docker-secret", combined)
+
+    def test_composition_uses_the_narrowest_document_and_parser_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mount = root / "media"
+            mount.mkdir()
+            (mount / "book.epub").write_bytes(epub_bytes())
+            data = configuration(mount)
+            data["limits"] = {
+                "parser_concurrency": 1,
+                "parser_timeout_seconds": 7,
+            }
+            data["evidence"] = {
+                "maximum_document_bytes": 1_048_576,
+                "epub_package": {"source_archive_bytes": 2_097_152},
+            }
+            config = root / "configuration.json"
+            config.write_text(json.dumps(data), encoding="utf-8")
+            captured: dict[str, object] = {}
+
+            def capture(
+                _descriptor: int,
+                expected: Fingerprint,
+                limits: EpubPackageLimits,
+                **keywords: object,
+            ) -> LocalEvidenceReport:
+                captured["limits"] = limits
+                captured.update(keywords)
+                return LocalEvidenceReport(
+                    LocalEvidenceOutcome.SUCCESS,
+                    LocalEvidenceCapability.PACKAGE,
+                    limits,
+                    expected,
+                )
+
+            with patch.object(bootstrap, "run_epub_package_child", side_effect=capture):
+                report = bootstrap._run_epub_package_report(
+                    config, "books", "book.epub"
+                )
+
+            self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+            effective_limits = captured["limits"]
+            self.assertIsInstance(effective_limits, EpubPackageLimits)
+            assert isinstance(effective_limits, EpubPackageLimits)
+            self.assertEqual(effective_limits.source_archive_bytes, 1_048_576)
+            self.assertEqual(captured["wall_seconds"], 7)
 
     def test_supported_cli_returns_exact_hostile_package_outcomes_and_streams(self) -> None:
         malformed_package = EPUB3_PACKAGE.replace(

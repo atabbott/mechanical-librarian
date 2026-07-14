@@ -79,7 +79,7 @@ def _read_context() -> dict[str, object]:
         raise ValueError("invalid child context")
     return _closed_object(
         json.loads(value),
-        {"expected_source", "limits", "logical_identity"},
+        {"child_seconds", "expected_source", "limits", "logical_identity"},
     )
 
 
@@ -107,15 +107,18 @@ def _parent_watch(descriptor: int, done: threading.Event) -> None:
         os._exit(70)
 
 
-def _install_parent_guard(descriptor: int, done: threading.Event) -> None:
+def _install_parent_guard(
+    descriptor: int, done: threading.Event, expected_parent: int
+) -> None:
     if sys.platform.startswith("linux"):
         import ctypes
 
-        parent = os.getppid()
+        if os.getppid() != expected_parent:
+            os._exit(70)
         library = ctypes.CDLL(None, use_errno=True)
         if library.prctl(1, signal.SIGKILL, 0, 0, 0) != 0:
             raise OSError(ctypes.get_errno(), "could not install parent-death signal")
-        if os.getppid() != parent:
+        if os.getppid() != expected_parent:
             os._exit(70)
         os.close(descriptor)
         return
@@ -134,22 +137,27 @@ def _write_report(report: LocalEvidenceReport) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
-    if len(arguments) != 2:
+    if len(arguments) != 3:
         return 70
     source_descriptor = int(arguments[0])
     control_descriptor = int(arguments[1])
+    expected_parent = int(arguments[2])
     done = threading.Event()
     limits = EpubPackageLimits()
     sys.dont_write_bytecode = True
     try:
-        _install_parent_guard(control_descriptor, done)
+        _install_parent_guard(control_descriptor, done, expected_parent)
         _apply_limits()
         signal.signal(signal.SIGXCPU, lambda *_arguments: os._exit(71))
         context = _read_context()
         limits = _limits(context["limits"])
         expected = _fingerprint(context["expected_source"])
+        child_seconds = context["child_seconds"]
         logical_identity = context["logical_identity"]
         if (
+            type(child_seconds) is not float
+            or not 0 < child_seconds <= 55.0
+            or
             type(logical_identity) is not str
             or len(logical_identity) != 64
             or any(character not in "0123456789abcdef" for character in logical_identity)
@@ -163,8 +171,8 @@ def main(argv: list[str] | None = None) -> int:
             expected,
             LocalEvidenceCapability.PACKAGE,
             limits,
-            datetime.now(timezone.utc) + timedelta(seconds=55),
-            time.monotonic() + 55.0,
+            datetime.now(timezone.utc) + timedelta(seconds=child_seconds),
+            time.monotonic() + child_seconds,
             LocalEvidenceCancellation("epub-child", lambda: False),
         )
         report = extract_local_evidence(EpubPackageExtractor(), request)

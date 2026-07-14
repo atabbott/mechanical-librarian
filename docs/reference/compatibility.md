@@ -215,16 +215,20 @@ with the exact media type after BOM/whitespace normalization may be compressed
 or appear out of order and emits `noncanonical_mimetype`. The compression method
 still controls decoding; partial or adjacent flag patterns, encryption, patched
 data, strong encryption, unknown flags, unsafe names and header disagreement
-remain rejected. EPUB 3 `display-seq` refinements on properties with their own
-precedence are accepted but do not override document order.
+remain rejected. EPUB 3 `title-type` values and `display-seq` values through the
+public-domain cap of 1,000,000 refine one originating title observation without
+inventing document order or duplicating the title. Invalid optional datatypes
+remain cited but inapplicable, or are omitted when no safe bounded fact remains.
 
 Every DOCTYPE and general, parameter, unparsed, or external entity declaration
 or reference is intentionally unsupported and maps to `malformed`. OPF 2
 multi-file/entity package forms are likewise outside the supported subset.
 F06 preserves bounded trustworthy manifest, spine, guide, NCX, navigation,
 cover, and encryption declarations but does not dereference or parse their
-content. Missing or ambiguous optional graph declarations are warned rather
-than failing unrelated metadata evidence. EPUB 2 deprecated `tours` structure
+content. Semantic navigation, cover, spine and NCX evidence requires a present
+local resource and a compatible media type where the format defines one.
+Missing, incompatible or ambiguous optional graph declarations are warned and
+omitted rather than failing unrelated metadata evidence. EPUB 2 deprecated `tours` structure
 is inspected without exposing its titles or dereferencing its sites and emits
 `deprecated_tours`; invalid or EPUB 3 tour structure is ignored with an
 additional warning. EPUB 3 container `links`,
@@ -238,12 +242,12 @@ evidence; canonical reports contain deterministic logical counters only.
 The closed generated manifest executes the ordinary archive, package,
 encryption, malformed-input, resource and unsafe-metadata partitions and runs
 each process-only partition through its named integration test. The complete
-593-test repository suite is tested on macOS arm64 with CPython 3.13.14 (Expat 2.8.1,
+602-test repository suite is tested on macOS arm64 with CPython 3.13.14 (Expat 2.8.1,
 zlib 1.2.12) and CPython 3.14.6 (Expat 2.7.4, zlib 1.2.12); macOS remains a
 development target for F06 because framework Python cannot install the Linux
 address-space cap.
 
-The 119-test F06 parser/process cohort is separately tested as UID/GID
+The 125-test F06 parser/process cohort is separately tested as UID/GID
 65534:65534 on Linux arm64 with CPython 3.13.11, Expat 2.7.3 and zlib 1.2.13 in
 `ghcr.io/astral-sh/uv@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca`.
 That qualification disables networking, mounts both repository and installed

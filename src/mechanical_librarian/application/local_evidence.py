@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
@@ -50,38 +51,32 @@ def render_local_evidence_text(report: LocalEvidenceReport) -> str:
 
     if type(report) is not LocalEvidenceReport:
         raise ValueError("local evidence text rendering requires a typed report")
-    fingerprint = (
-        "none"
-        if report.source_fingerprint is None
-        else f"{report.source_fingerprint.schema.value}:{report.source_fingerprint.digest}"
-    )
-    lines = [
-        f"schema={report.schema_version.value}",
-        f"outcome={report.outcome.value}",
-        f"capability={report.capability.value}",
-        f"limit_profile={report.limits.profile}",
-        f"source_fingerprint={fingerprint}",
-        "artifact=none" if report.artifact is None else f"artifact={report.artifact.kind}:{report.artifact.identity}",
-        f"observations={len(report.observations)} declarations={len(report.declarations)} warnings={len(report.warnings)}",
-    ]
-    for observation in report.normalized_observations:
-        normalized = observation.normalized_value or "none"
+    lines: list[str] = []
+    for key, value in report.to_data().items():
+        if type(value) is list:
+            if not value:
+                lines.append(f"{key}=[]")
+                continue
+            for index, item in enumerate(value):
+                lines.append(
+                    f"{key}[{index}]="
+                    + json.dumps(
+                        item,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                )
+            continue
         lines.append(
-            "observation="
-            f"{observation.field.value} applicability={observation.applicability.value} "
-            f"ordinal={observation.citation.source_ordinal} normalized={normalized}"
+            f"{key}="
+            + json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
         )
-    for declaration in report.declarations:
-        lines.append(
-            f"declaration={declaration.kind.value} ordinal={declaration.source_ordinal}"
-        )
-    for warning in report.warnings:
-        ordinal = "none" if warning.citation is None else str(warning.citation.source_ordinal)
-        lines.append(f"warning={warning.code} ordinal={ordinal}")
-    lines.append(
-        "usage="
-        + ",".join(f"{key}:{value}" for key, value in report.usage.to_data().items())
-    )
     return "\n".join(lines) + "\n"
 
 

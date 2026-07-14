@@ -19,11 +19,13 @@ versioning after the first public release.
   exact child resource/process gates. Read-only compatibility includes opaque
   ZIP directory entries, a warned exact producer-residue ZIP flag pattern,
   bounded noncanonical `mimetype` packaging, compatible package-version
-  families, and non-overriding EPUB 3 display-sequence refinements. Optional
+  families, and bounded EPUB 3 title-type/display-sequence refinements. Optional
   broken package declarations and deprecated tours are warned and omitted
-  without exposing or dereferencing content. Defaults accept 256 MiB archives,
-  and ordinary metadata values up to 16,384 characters are preserved within
-  the unchanged 512 KiB public-report cap.
+  without exposing or dereferencing content. The effective document ceiling is
+  the narrower of the shared 64 MiB default and the EPUB profile's 256 MiB
+  default, while ordinary metadata values up to 16,384 characters are preserved
+  within the unchanged 512 KiB public-report cap. JSON and line-oriented text
+  expose the same complete privacy-safe cited projection.
 
 - Added durable duplicate-safe Audiobookshelf polling with persisted cumulative
   budgets, bounded retry/backoff, governing-state suppression, monotonic lease

@@ -139,10 +139,13 @@ F06 EPUB package extraction applies those controls through one transient child.
 The parent performs a component-by-component no-follow walk within one
 configured read-only mount, hashes the complete descriptor before and after
 the child, and repeats the walk after extraction. The child inherits only that
-descriptor and a parent-liveness control descriptor; its context contains fixed
-limits and an opaque fingerprint, not a host path or product handle. On Linux
-the child installs `PR_SET_PDEATHSIG`, closes the control descriptor, and then
-lowers `RLIMIT_NPROC` to one; Darwin retains the control-pipe watcher. Raw ZIP
+descriptor and a parent-liveness control descriptor; its context contains the
+effective narrowest limits, a derived deadline and an opaque fingerprint, not a
+host path or product handle. The child entry point sits below an inert package
+initializer and therefore does not import product network, database, persistence
+or secret implementations. On Linux the child verifies its spawn-time parent
+PID before and after installing `PR_SET_PDEATHSIG`, then closes the control
+descriptor and lowers `RLIMIT_NPROC` to one; Darwin retains the control-pipe watcher. Raw ZIP
 preflight rejects
 NUL names, Unicode/case aliases, traversal, split archives, local/central
 conflicts, unsupported compression/encryption, overlaps, declaration overruns,

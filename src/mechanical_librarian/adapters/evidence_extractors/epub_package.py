@@ -22,6 +22,7 @@ from xml.parsers import expat
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
+    validate_code,
     validate_projection_text,
 )
 from mechanical_librarian.domain.identifiers import CompatibilityVersion, ExtractorVersion, SchemaVersion
@@ -63,10 +64,18 @@ _SCHEMA_HTTPS_NS = "https://schema.org/"
 _DCTERMS_NS = "http://purl.org/dc/terms/"
 _EXTRACTOR_VERSION = ExtractorVersion("epub-package-v1")
 _OBSERVATION_SCHEMA = SchemaVersion("package-observation-v1")
-_ISBN = re.compile(r"^(?:ISBN(?:-1[03])?:?)?\s*([0-9Xx -]{10,20})$")
+_ISBN = re.compile(r"^(?:(ISBN(?:-1[03])?):?)?\s*([0-9Xx -]{10,20})$", re.I)
 _DATE = re.compile(
     r"^\d{4}(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?)?"
     r"(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?$"
+)
+_MODIFIED_DATE = re.compile(
+    r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
+    r"T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?Z$"
+)
+_LANGUAGE = re.compile(
+    r"^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8}){0,7}|"
+    r"[xX](?:-[A-Za-z0-9]{1,8}){1,7})$"
 )
 _XML_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,255}$")
 _PREFIX = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$")
@@ -695,10 +704,25 @@ def _declared_resource_identity(
 
 def _normalize_identifier(
     raw: str,
+    declared_scheme: str | None = None,
 ) -> tuple[str, ObservationApplicability, str | None, bool]:
-    match = _ISBN.fullmatch(raw)
+    stripped = raw.strip()
+    urn_isbn = stripped.casefold().startswith("urn:isbn:")
+    candidate = stripped[9:] if urn_isbn else raw
+    declared_isbn = (
+        declared_scheme.upper()
+        if declared_scheme is not None
+        and declared_scheme.upper() in {"ISBN", "ISBN-10", "ISBN-13"}
+        else None
+    )
+    match = _ISBN.fullmatch(candidate)
     if not match:
-        stripped = raw.strip()
+        if (
+            urn_isbn
+            or stripped.casefold().startswith("isbn")
+            or declared_isbn is not None
+        ):
+            return stripped, ObservationApplicability.UNKNOWN, "ISBN", True
         uuid = _UUID.fullmatch(stripped)
         if uuid:
             return (
@@ -716,12 +740,25 @@ def _normalize_identifier(
         if stripped.casefold().startswith("urn:"):
             return stripped, ObservationApplicability.UNKNOWN, "URN", False
         return stripped, ObservationApplicability.UNKNOWN, None, False
-    compact = re.sub(r"[ -]", "", match.group(1)).upper()
-    if len(compact) == 10:
+    labelled_scheme = None if match.group(1) is None else match.group(1).upper()
+    required_scheme = (
+        labelled_scheme
+        if labelled_scheme in {"ISBN-10", "ISBN-13"}
+        else declared_isbn
+    )
+    compact = re.sub(r"[ -]", "", match.group(2)).upper()
+    if required_scheme != "ISBN-13" and len(compact) == 10 and compact[:9].isdigit() and (
+        compact[-1].isdigit() or compact[-1] == "X"
+    ):
         total = sum((10 - index) * (10 if value == "X" else int(value)) for index, value in enumerate(compact))
         if total % 11 == 0:
             return compact, ObservationApplicability.UNKNOWN, "ISBN-10", False
-    if len(compact) == 13 and compact.isdigit():
+    if (
+        required_scheme != "ISBN-10"
+        and len(compact) == 13
+        and compact.isdigit()
+        and compact.startswith(("978", "979"))
+    ):
         total = sum(int(value) * (1 if index % 2 == 0 else 3) for index, value in enumerate(compact[:-1]))
         if (10 - total % 10) % 10 == int(compact[-1]):
             return compact, ObservationApplicability.UNKNOWN, "ISBN-13", False
@@ -743,6 +780,18 @@ def _valid_date(value: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _valid_modified_date(value: str) -> bool:
+    return _MODIFIED_DATE.fullmatch(value) is not None and _valid_date(value)
+
+
+def _valid_language(value: str) -> bool:
+    return _LANGUAGE.fullmatch(value) is not None
+
+
+def _valid_group_position(value: str) -> bool:
+    return re.fullmatch(r"[0-9]+", value) is not None and int(value) >= 1
 
 
 def _compatibility(version: str) -> CompatibilityVersion:
@@ -1039,13 +1088,13 @@ def _package_report(
             warnings.append(LocalEvidenceWarning("ambiguous_package_id"))
             continue
         id_registry[identifier] = node
-    title_count = 0
     standard_collection = any(
         _attribute(node, "property") == "belongs-to-collection" and bool(node.text)
         for node in metadata.children
     )
     standard_position = any(
-        _attribute(node, "property") == "group-position" and bool(node.text)
+        _attribute(node, "property") == "group-position"
+        and _valid_group_position(node.text)
         for node in metadata.children
     )
     calibre: dict[str, list[tuple[str, _Node]]] = {
@@ -1080,6 +1129,54 @@ def _package_report(
                 break
             visited.add(current)
             current = refinement_graph[current]
+    title_types: dict[str, tuple[str, _Node]] = {}
+    title_sequences: dict[str, tuple[int, _Node]] = {}
+    duplicate_title_refinements: set[tuple[str, str]] = set()
+    for node in metadata.children:
+        if node.name != f"{{{_OPF_NS}}}meta":
+            continue
+        resolved_property = _resolved_property(_attribute(node, "property"), prefixes)
+        if resolved_property not in {"title-type", "display-seq"}:
+            continue
+        refines = _attribute(node, "refines") or ""
+        referenced = id_registry.get(refines[1:]) if refines.startswith("#") else None
+        if referenced is None:
+            warnings.append(LocalEvidenceWarning("unresolved_metadata_refinement"))
+            continue
+        if referenced.name != f"{{{_DC_NS}}}title":
+            warnings.append(LocalEvidenceWarning("inapplicable_metadata_refinement"))
+            continue
+        value = node.text or _attribute(node, "content") or ""
+        key = refines[1:]
+        family_key = (key, resolved_property)
+        target = title_types if resolved_property == "title-type" else title_sequences
+        if family_key in duplicate_title_refinements or key in target:
+            target.pop(key, None)
+            duplicate_title_refinements.add(family_key)
+            warnings.append(LocalEvidenceWarning("ambiguous_metadata_refinement"))
+            continue
+        if resolved_property == "title-type":
+            if value not in {
+                "main",
+                "subtitle",
+                "short",
+                "collection",
+                "edition",
+                "expanded",
+            }:
+                warnings.append(LocalEvidenceWarning("unsupported_vendor_metadata"))
+                continue
+            title_types[key] = (value, node)
+            continue
+        try:
+            display_value = int(value)
+        except ValueError:
+            warnings.append(LocalEvidenceWarning("invalid_metadata_refinement"))
+            continue
+        if not 0 <= display_value <= 1_000_000:
+            warnings.append(LocalEvidenceWarning("invalid_metadata_refinement"))
+            continue
+        title_sequences[key] = (display_value, node)
     for node in metadata.children:
         local = node.name.rsplit("}", 1)[-1]
         identifier = _attribute(node, "id")
@@ -1089,14 +1186,20 @@ def _package_report(
             target_field = _DC_FIELDS[local]
             normalized = node.text.strip()
             applicability = ObservationApplicability.WORK
+            preserve_only = False
+            display: int | None = None
+            selector: str | None = None
             inferred_scheme: str | None = None
             if local == "identifier":
+                declared_identifier_scheme = _attribute(node, "scheme", _OPF_NS)
                 normalized, applicability, inferred_scheme, invalid_identifier = (
-                    _normalize_identifier(node.text)
+                    _normalize_identifier(node.text, declared_identifier_scheme)
                 )
                 if identifier and id_registry.get(identifier) is node:
                     identifiers_by_id[identifier] = node
                 if invalid_identifier:
+                    applicability = ObservationApplicability.INAPPLICABLE
+                    inferred_scheme = None
                     warnings.append(
                         LocalEvidenceWarning(
                             "invalid_identifier",
@@ -1123,8 +1226,45 @@ def _package_report(
                             _citation(request, package_name, CitationSection.METADATA, node),
                         )
                     )
+                    applicability = ObservationApplicability.INAPPLICABLE
+                    preserve_only = True
+            if local == "language" and not _valid_language(normalized):
+                warnings.append(
+                    LocalEvidenceWarning(
+                        "invalid_language",
+                        _citation(request, package_name, CitationSection.METADATA, node),
+                    )
+                )
+                applicability = ObservationApplicability.INAPPLICABLE
+                preserve_only = True
             if local == "title":
-                title_count += 1
+                title_type = title_types.get(identifier or "")
+                title_sequence = title_sequences.get(identifier or "")
+                if title_type is not None:
+                    target_field = {
+                        "subtitle": LocalEvidenceField.SUBTITLE,
+                        "collection": LocalEvidenceField.COLLECTION,
+                        "edition": LocalEvidenceField.EDITION,
+                    }.get(title_type[0], LocalEvidenceField.TITLE)
+                if title_sequence is not None:
+                    display = title_sequence[0]
+                selector_parts = []
+                if title_type is not None:
+                    selector_parts.append(
+                        f"title-type-{title_type[0]}@{title_type[1].ordinal}"
+                    )
+                if title_sequence is not None:
+                    selector_parts.append(f"display-seq@{title_sequence[1].ordinal}")
+                selector = ";".join(selector_parts) or None
+            language = _attribute(node, "lang", _XML_NS)
+            if language is not None and not _valid_language(language):
+                warnings.append(
+                    LocalEvidenceWarning(
+                        "invalid_language",
+                        _citation(request, package_name, CitationSection.METADATA, node),
+                    )
+                )
+                language = None
             observations.append(
                 _observation(
                     request,
@@ -1134,8 +1274,10 @@ def _package_report(
                     target_field,
                     normalized=normalized,
                     applicability=applicability,
-                    display=title_count if local == "title" else None,
-                    language=_attribute(node, "lang", _XML_NS),
+                    display=display,
+                    language=language,
+                    selector=selector,
+                    preserve_only=preserve_only,
                 )
             )
             if (
@@ -1175,6 +1317,8 @@ def _package_report(
                     continue
                 if attribute_name == "scheme" and local != "identifier":
                     continue
+                if attribute_name == "scheme" and invalid_identifier:
+                    continue
                 if attribute_name == "event" and local != "date":
                     continue
                 qualifier_node = _Node(node.name, node.attributes, text_parts=[qualifier], ordinal=node.ordinal)
@@ -1197,8 +1341,23 @@ def _package_report(
             value = node.text or content or ""
             if resolved_property == "dcterms:modified" and value:
                 synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
-                observations.append(_observation(request, package_name, version, synthetic, LocalEvidenceField.MODIFICATION_DATE))
-                if not _valid_date(value):
+                valid_modified = _valid_modified_date(value)
+                observations.append(
+                    _observation(
+                        request,
+                        package_name,
+                        version,
+                        synthetic,
+                        LocalEvidenceField.MODIFICATION_DATE,
+                        applicability=(
+                            ObservationApplicability.WORK
+                            if valid_modified
+                            else ObservationApplicability.INAPPLICABLE
+                        ),
+                        preserve_only=not valid_modified,
+                    )
+                )
+                if not valid_modified:
                     warnings.append(
                         LocalEvidenceWarning(
                             "invalid_date",
@@ -1206,6 +1365,9 @@ def _package_report(
                         )
                     )
             elif resolved_property in {"belongs-to-collection", "group-position"} and value:
+                if resolved_property == "group-position" and not _valid_group_position(value):
+                    warnings.append(LocalEvidenceWarning("invalid_metadata_refinement"))
+                    continue
                 synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
                 observations.append(
                     _observation(
@@ -1217,11 +1379,11 @@ def _package_report(
                         applicability=ObservationApplicability.EDITION,
                     )
                 )
+            elif resolved_property in {"title-type", "display-seq"}:
+                continue
             elif resolved_property in {
-                "title-type",
                 "role",
                 "file-as",
-                "display-seq",
                 "identifier-type",
             } and value:
                 refines = _attribute(node, "refines") or ""
@@ -1230,7 +1392,6 @@ def _package_report(
                     warnings.append(LocalEvidenceWarning("unresolved_metadata_refinement"))
                     continue
                 allowed_targets = {
-                    "title-type": {f"{{{_DC_NS}}}title"},
                     "role": {
                         f"{{{_DC_NS}}}creator",
                         f"{{{_DC_NS}}}contributor",
@@ -1240,73 +1401,32 @@ def _package_report(
                         f"{{{_DC_NS}}}creator",
                         f"{{{_DC_NS}}}contributor",
                     },
-                    "display-seq": {f"{{{_DC_NS}}}title"},
                     "identifier-type": {f"{{{_DC_NS}}}identifier"},
                 }
-                if (
-                    resolved_property != "display-seq"
-                    and referenced.name not in allowed_targets[resolved_property]
-                ):
+                if referenced.name not in allowed_targets[resolved_property]:
                     warnings.append(LocalEvidenceWarning("inapplicable_metadata_refinement"))
                     continue
-                if resolved_property == "title-type" and value == "subtitle":
-                    observations.append(
-                        _observation(
-                            request,
-                            package_name,
-                            version,
-                            referenced,
-                            LocalEvidenceField.SUBTITLE,
-                            selector="title-type-subtitle",
-                        )
+                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+                observations.append(
+                    _observation(
+                        request,
+                        package_name,
+                        version,
+                        synthetic,
+                        (
+                            LocalEvidenceField.CONTRIBUTOR_ROLE
+                            if resolved_property == "role"
+                            and referenced.name == f"{{{_DC_NS}}}contributor"
+                            else LocalEvidenceField.CREATOR_ROLE
+                            if resolved_property == "role"
+                            else LocalEvidenceField.SORT_KEY
+                            if resolved_property == "file-as"
+                            else LocalEvidenceField.IDENTIFIER_SCHEME
+                        ),
+                        applicability=ObservationApplicability.EDITION,
+                        selector=resolved_property,
                     )
-                elif resolved_property in {"role", "file-as", "identifier-type"}:
-                    synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
-                    observations.append(
-                        _observation(
-                            request,
-                            package_name,
-                            version,
-                            synthetic,
-                            (
-                                LocalEvidenceField.CONTRIBUTOR_ROLE
-                                if resolved_property == "role"
-                                and referenced.name == f"{{{_DC_NS}}}contributor"
-                                else LocalEvidenceField.CREATOR_ROLE
-                                if resolved_property == "role"
-                                else LocalEvidenceField.SORT_KEY
-                                if resolved_property == "file-as"
-                                else LocalEvidenceField.IDENTIFIER_SCHEME
-                            ),
-                            applicability=ObservationApplicability.EDITION,
-                            selector=resolved_property,
-                        )
-                    )
-                elif resolved_property == "display-seq":
-                    try:
-                        display_value = int(value)
-                    except ValueError:
-                        warnings.append(LocalEvidenceWarning("invalid_metadata_refinement"))
-                        continue
-                    if not 0 <= display_value <= 4_294_967_295:
-                        warnings.append(LocalEvidenceWarning("invalid_metadata_refinement"))
-                        continue
-                    if referenced.name == f"{{{_DC_NS}}}title":
-                        observations.append(
-                            _observation(
-                                request,
-                                package_name,
-                                version,
-                                referenced,
-                                LocalEvidenceField.TITLE,
-                                display=display_value,
-                                selector="display-seq",
-                            )
-                        )
-                    else:
-                        warnings.append(
-                            LocalEvidenceWarning("inapplicable_metadata_refinement")
-                        )
+                )
             elif resolved_property in {
                 "schema:bookEdition",
                 "schema:bookFormat",
@@ -1382,9 +1502,14 @@ def _package_report(
     ) and (series_values or position_values):
         warnings.append(LocalEvidenceWarning("incomplete_calibre_series"))
     required = {LocalEvidenceField.TITLE, LocalEvidenceField.LANGUAGE, LocalEvidenceField.IDENTIFIER}
-    if not required.issubset({item.field for item in observations}):
+    applicable_fields = {
+        item.field
+        for item in observations
+        if item.applicability is not ObservationApplicability.INAPPLICABLE
+    }
+    if not required.issubset(applicable_fields):
         warnings.append(LocalEvidenceWarning("incomplete_required_metadata"))
-    if version == "3.0" and LocalEvidenceField.MODIFICATION_DATE not in {item.field for item in observations}:
+    if version == "3.0" and LocalEvidenceField.MODIFICATION_DATE not in applicable_fields:
         warnings.append(LocalEvidenceWarning("missing_modification_date"))
     unique_identifier = _attribute(root, "unique-identifier")
     primary = identifiers_by_id.get(unique_identifier or "")
@@ -1394,9 +1519,14 @@ def _package_report(
     elif primary is None:
         warnings.append(LocalEvidenceWarning("missing_package_identifier"))
     if primary is not None:
-        primary_normalized, primary_applicability, _primary_scheme, _invalid = (
-            _normalize_identifier(primary.text)
+        primary_normalized, primary_applicability, _primary_scheme, primary_invalid = (
+            _normalize_identifier(
+                primary.text,
+                _attribute(primary, "scheme", _OPF_NS),
+            )
         )
+        if primary_invalid:
+            primary_applicability = ObservationApplicability.INAPPLICABLE
         observations.append(
             _observation(
                 request,
@@ -1413,6 +1543,8 @@ def _package_report(
     observations.append(_observation(request, package_name, version, version_node, LocalEvidenceField.PACKAGE_VERSION, applicability=ObservationApplicability.FILE))
     manifest_ids: dict[str, str] = {}
     manifest_nodes: dict[str, _Node] = {}
+    manifest_media_types: dict[str, str] = {}
+    local_manifest_ids: set[str] = set()
     manifest_resources: set[str] = set()
     manifest_fallbacks: dict[str, str] = {}
     media_overlays: list[str] = []
@@ -1433,6 +1565,30 @@ def _package_report(
         ):
             warnings.append(LocalEvidenceWarning("invalid_manifest_item"))
             continue
+        properties = tuple(sorted(set((_attribute(item, "properties") or "").split())))
+        if (
+            len(properties) > 64
+            or len(media_type) > 128
+            or any(len(value) > 64 for value in properties)
+        ):
+            warnings.append(LocalEvidenceWarning("invalid_manifest_item"))
+            continue
+        try:
+            validate_projection_text(identifier, "public manifest identifier", 256)
+            validate_projection_text(media_type, "public manifest media type", 128)
+            for property_value in properties:
+                validate_code(property_value, "manifest property")
+                validate_projection_text(
+                    property_value, "public manifest property", 64
+                )
+        except EvidenceValueError:
+            warnings.append(
+                LocalEvidenceWarning(
+                    "unsafe_manifest_item",
+                    _citation(request, package_name, CitationSection.MANIFEST, item),
+                )
+            )
+            continue
         resource_identity, resolved = _declared_resource_identity(package_name, href, entries)
         if resolved is not None and resolved not in entries:
             warnings.append(
@@ -1441,21 +1597,39 @@ def _package_report(
                     _citation(request, package_name, CitationSection.MANIFEST, item),
                 )
             )
+            continue
         if resource_identity in manifest_resources:
             warnings.append(LocalEvidenceWarning("duplicate_manifest_resource"))
         manifest_resources.add(resource_identity)
         manifest_ids[identifier] = resource_identity
         manifest_nodes[identifier] = item
+        manifest_media_types[identifier] = media_type
+        if resolved is not None:
+            local_manifest_ids.add(identifier)
         fallback = _attribute(item, "fallback")
         if fallback:
             manifest_fallbacks[identifier] = fallback
         media_overlay = _attribute(item, "media-overlay")
         if media_overlay:
             media_overlays.append(media_overlay)
-        properties = tuple(sorted(set((_attribute(item, "properties") or "").split())))
-        if "nav" in properties:
+        valid_navigation = (
+            "nav" in properties
+            and identifier in local_manifest_ids
+            and media_type == "application/xhtml+xml"
+        )
+        valid_cover = (
+            "cover-image" in properties
+            and identifier in local_manifest_ids
+            and media_type
+            in {"image/gif", "image/jpeg", "image/png", "image/svg+xml"}
+        )
+        if "nav" in properties and not valid_navigation:
+            warnings.append(LocalEvidenceWarning("invalid_navigation_declaration"))
+        if "cover-image" in properties and not valid_cover:
+            warnings.append(LocalEvidenceWarning("invalid_cover_declaration"))
+        if valid_navigation:
             nav_count += 1
-        if "cover-image" in properties:
+        if valid_cover:
             cover_current_ids.append(identifier)
         declarations.append(
             LocalEvidenceDeclaration(
@@ -1468,7 +1642,7 @@ def _package_report(
                 properties,
             )
         )
-        if "nav" in properties:
+        if valid_navigation:
             declarations.append(
                 LocalEvidenceDeclaration(
                     DeclarationKind.NAVIGATION,
@@ -1480,7 +1654,7 @@ def _package_report(
                     properties,
                 )
             )
-        if "cover-image" in properties:
+        if valid_cover:
             declarations.append(
                 LocalEvidenceDeclaration(
                     DeclarationKind.COVER,
@@ -1511,6 +1685,12 @@ def _package_report(
         }
     if any(overlay not in manifest_ids for overlay in media_overlays):
         warnings.append(LocalEvidenceWarning("invalid_media_overlay"))
+    if any(
+        overlay not in local_manifest_ids
+        or manifest_media_types.get(overlay) != "application/smil+xml"
+        for overlay in media_overlays
+    ):
+        warnings.append(LocalEvidenceWarning("invalid_media_overlay"))
     for start in manifest_fallbacks:
         visited: set[str] = set()
         current = start
@@ -1527,7 +1707,7 @@ def _package_report(
             warnings.append(LocalEvidenceWarning("invalid_spine_item"))
             continue
         idref = _attribute(itemref, "idref")
-        if not idref or idref not in manifest_ids:
+        if not idref or idref not in local_manifest_ids:
             warnings.append(LocalEvidenceWarning("invalid_spine_item"))
             continue
         declarations.append(
@@ -1541,7 +1721,10 @@ def _package_report(
         )
     toc = _attribute(spine, "toc")
     if toc:
-        if toc not in manifest_ids:
+        if (
+            toc not in local_manifest_ids
+            or manifest_media_types.get(toc) != "application/x-dtbncx+xml"
+        ):
             warnings.append(LocalEvidenceWarning("invalid_ncx_declaration"))
         else:
             declarations.append(LocalEvidenceDeclaration(DeclarationKind.NCX, spine.ordinal, _citation(request, package_name, CitationSection.NAVIGATION, spine), manifest_ids[toc], toc))
@@ -1562,9 +1745,13 @@ def _package_report(
                     and not site.children
                 )
                 if href:
+                    clean_href = href.split("#", 1)[0]
+                    if not clean_href:
+                        valid_tours = False
+                        continue
                     resource_identity, resolved = _declared_resource_identity(
                         package_name,
-                        href.split("#", 1)[0],
+                        clean_href,
                         entries,
                     )
                     valid_tours = valid_tours and (
@@ -1575,8 +1762,8 @@ def _package_report(
             warnings.append(LocalEvidenceWarning("invalid_deprecated_tours"))
     guides = _children(root, "guide", _OPF_NS)
     if len(guides) > 1:
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
-    if guides:
+        warnings.append(LocalEvidenceWarning("invalid_guide_reference"))
+    if len(guides) == 1:
         if len(guides[0].children) > request.limits.guide_references:
             raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
         for reference in guides[0].children:
@@ -1588,6 +1775,9 @@ def _package_report(
                 warnings.append(LocalEvidenceWarning("invalid_guide_reference"))
                 continue
             clean_href = href.split("#", 1)[0]
+            if not clean_href:
+                warnings.append(LocalEvidenceWarning("invalid_guide_reference"))
+                continue
             resource_identity, resolved = _declared_resource_identity(
                 package_name, clean_href, entries
             )
@@ -1599,6 +1789,13 @@ def _package_report(
             ):
                 warnings.append(LocalEvidenceWarning("invalid_guide_reference"))
                 continue
+            try:
+                validate_projection_text(
+                    reference_type, "public guide reference type", 256
+                )
+            except EvidenceValueError:
+                warnings.append(LocalEvidenceWarning("invalid_guide_reference"))
+                continue
             declarations.append(LocalEvidenceDeclaration(DeclarationKind.GUIDE_REFERENCE, reference.ordinal, _citation(request, package_name, CitationSection.GUIDE, reference), resource_identity, reference_type))
     required_resources = {_MIMETYPE, _CONTAINER, _ENCRYPTION, package_name}
     if required_resources & encryption_names:
@@ -1607,14 +1804,20 @@ def _package_report(
         warnings.append(LocalEvidenceWarning("opaque_resource_encrypted"))
     if encryption_present:
         warnings.append(LocalEvidenceWarning("encryption_declarations_present"))
-    legacy_cover_ids: list[str] = []
+    legacy_covers: list[tuple[str, _Node]] = []
     for node in metadata.children:
         if node.name == f"{{{_OPF_NS}}}meta" and _attribute(node, "name") == "cover":
             cover_id = _attribute(node, "content")
-            if not cover_id or cover_id not in manifest_ids:
+            if (
+                not cover_id
+                or cover_id not in local_manifest_ids
+                or manifest_media_types.get(cover_id)
+                not in {"image/gif", "image/jpeg", "image/png", "image/svg+xml"}
+            ):
                 warnings.append(LocalEvidenceWarning("invalid_cover_declaration"))
                 continue
-            legacy_cover_ids.append(cover_id)
+            legacy_covers.append((cover_id, node))
+    legacy_cover_ids = [identifier for identifier, _node in legacy_covers]
     legacy_cover_resources = {
         manifest_ids[identifier] for identifier in legacy_cover_ids
     }
@@ -1622,6 +1825,10 @@ def _package_report(
         legacy_cover_ids[0]
         if legacy_cover_ids and len(legacy_cover_resources) == 1
         else None
+    )
+    legacy_cover_node = next(
+        (node for identifier, node in legacy_covers if identifier == legacy_cover_id),
+        None,
     )
     if len(legacy_cover_resources) > 1:
         warnings.append(LocalEvidenceWarning("contradictory_cover_declaration"))
@@ -1632,7 +1839,12 @@ def _package_report(
         manifest_ids[selected_cover_id] if selected_cover_id is not None else None
     )
     if selected_cover:
-        cover_node = manifest_nodes[selected_cover_id]
+        cover_node = (
+            manifest_nodes[selected_cover_id]
+            if cover_current_ids
+            else legacy_cover_node
+        )
+        assert cover_node is not None
         observations.append(_observation(request, package_name, version, _Node(cover_node.name, cover_node.attributes, text_parts=[selected_cover], ordinal=cover_node.ordinal), LocalEvidenceField.COVER, applicability=ObservationApplicability.FILE))
         if not cover_current_ids:
             declarations.append(
@@ -1641,8 +1853,8 @@ def _package_report(
                     cover_node.ordinal,
                     _citation(request, package_name, CitationSection.COVER, cover_node),
                     selected_cover,
-                    _attribute(cover_node, "id"),
-                    _attribute(cover_node, "media-type"),
+                    selected_cover_id,
+                    manifest_media_types[selected_cover_id],
                 )
             )
     if (
@@ -1656,6 +1868,8 @@ def _package_report(
         warnings.append(LocalEvidenceWarning("contradictory_cover_declaration"))
     values_by_field: dict[LocalEvidenceField, set[str]] = {}
     for observation in observations:
+        if observation.applicability is ObservationApplicability.INAPPLICABLE:
+            continue
         value = observation.normalized_value or observation.raw_value
         values_by_field.setdefault(observation.field, set()).add(value)
     for field_name, warning_code in (
