@@ -17,6 +17,14 @@ divide it into unreviewable horizontal-layer PRs.
 The authoritative branch, issue, and review mechanics are defined in
 [functional slice delivery](../development/slice-delivery.md).
 
+The currently numbered delivery milestones are internal pre-release checkpoints,
+not automatic release-publication commitments. Their exit criteria remain
+authoritative, but completing a checkpoint does not itself create a tag, GitHub
+Release, supported version, or published release artifact. The checkpoint and
+version for the first published release remain undecided and require a separate
+maintainer selection plus all applicable release gates and release-publication
+gates.
+
 ## Focused work outside the slice sequence
 
 Fixes, audit corrections, security work, documentation, tooling,
@@ -36,7 +44,7 @@ Current focused work includes:
 - lifecycle and authorization correction #128 before F10; and
 - frontend architecture decision #192 before F16a.
 
-## Release 0.1.0: trustworthy report-only product spine
+## Delivery checkpoint 0.1.0: trustworthy report-only product spine
 
 Production metadata and cover writes remain disabled throughout these slices.
 
@@ -50,7 +58,7 @@ Production metadata and cover writes remain disabled throughout these slices.
 | F05b Audiobookshelf reconciliation | #215 | Persisted polling triggers duplicate-safe reconciliation with bounded retry/backoff, restart recovery, and explicit compatibility-drift states; Socket.IO notifications remain excluded. | #66, #67 | `slice/f05b-audiobookshelf-reconciliation` |
 | F06 EPUB package evidence report | #142 | Ordinary, noncanonical, and partially defective EPUBs are parsed within hostile-input bounds through the supported CLI; every trustworthy package-metadata fact is cited and bounded, optional defects warn and are omitted without silent resolution, and an external private-corpus shadow qualification records aggregate compatibility without retaining copyrighted content or private reports. | #26-#29; #13 and #21 are non-closing inputs | `slice/f06-epub-package-evidence` |
 
-### 0.1.0 release exit
+### 0.1.0 checkpoint exit
 
 - the focused foundation and trusted-change-loop prerequisites pass from a
   clean checkout;
@@ -60,9 +68,14 @@ Production metadata and cover writes remain disabled throughout these slices.
   unsupported capability behavior are bounded and visible; and
 - no development or CI path points at a contributor's production library.
 
-## Release 0.2.0: title-curation technical preview
+Once the F01-F06 functional slices are complete, dependency-ready 0.2.0 work may
+proceed without waiting for a `0.1.0` tag, GitHub Release, or published release
+artifact. That progression does not declare the wider 0.1.0 checkpoint exit
+complete; every exit criterion above remains authoritative.
 
-This release proves one deliberately narrow, report-only path from local and
+## Delivery checkpoint 0.2.0: title-curation technical preview
+
+This checkpoint proves one deliberately narrow, report-only path from local and
 provider title evidence to one persistent undecided review case. It grants no
 human or AI decision, approval, production write, or destructive authority.
 
@@ -118,7 +131,7 @@ requires one opt-in bounded read-only smoke/contract qualification against the
 fixed real endpoint using a dedicated non-production account and token. It
 retains only a redacted aggregate result.
 
-### 0.2.0 release exit
+### 0.2.0 checkpoint exit
 
 - F09a demonstrates the complete decision table with the deterministic fake;
 - F09b demonstrates the same provider-neutral contract, disabled behavior,
@@ -135,7 +148,7 @@ F07a #143 (#30, #31, and #188), F07b #228 (#32), and F08 #144 (#33 and
 0.2.0 chain. F11 #147 and #74-#80, the broader #16, #46, #50, and #68-#73
 program, and rich Hardcover work #209 also remain 1.0.0 scope.
 
-## Release 1.0.0: guarded mutation and product operation
+## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit
 canary slice. Destructive operations remain outside ordinary review and apply.
@@ -156,7 +169,7 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 | F16b Browser summaries, bulk, and qualification | #195 | The browser presents server-authoritative summaries/history, commits one exact-version bulk decision, reverses one unapplied decision, and qualifies every applicable category across the supported browser matrix. | #20, #101-#103, #193, #194 | `slice/f16b-review-bulk-qualification` |
 | F17 Continuous-operation qualification | #153 | The same canonical target/evidence/candidate scenario passes Audiobookshelf and CWA-shaped target fakes, each with provider-disabled and configured-provider variants, without schema changes; provider-disabled runs construct no provider adapter/client, resolve no provider secret, and make no provider network call, while the CWA-shaped fake traps database, UI, maintenance-container, media-write, unsupported-API, and production-mutation fallbacks. Events, reconciliation, review, guarded apply, circuit breakers, immutable workflow upgrades, dependency fan-out and fan-in, duplicate-safe resume, cancellation, worker and scheduler death, candidate-lane reuse and retry, physical JSONL framing, report-only authority isolation, browser-category coverage, advisory progress, restart, upgrade, backup, restore, release provenance, and support diagnostics pass the release cohort. | #94, #95 and a slice-specific release cohort | `slice/f17-release-qualification` |
 
-### 1.0.0 release exit
+### 1.0.0 checkpoint exit
 
 - every write is current, authorized, backed up, idempotent, verified, audited,
   and recoverable;
@@ -174,11 +187,16 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 - release, upgrade, restore, isolation, and end-to-end qualification evidence is
   complete.
 
+Satisfying this checkpoint exit does not itself publish a release. Its release
+cohort, provenance, upgrade, restore, isolation, and end-to-end qualification
+requirements remain mandatory checkpoint evidence regardless of whether or
+when a maintainer separately selects a checkpoint for release publication.
+
 ## Deferred slice series
 
 Opening-audio transcription (#24 and #104-#110), additional adapters,
 embedded-file updates, plugin loading, and the
-[post-1.0 reviewer backends](future-reviewer-backends.md) remain unassigned
+[reviewer backends after the 1.0 checkpoint](future-reviewer-backends.md) remain unassigned
 backlog work until their prerequisite design and qualification decisions are
 accepted. When scheduled, they receive new functional slice IDs and executable
 outcomes; they are not appended opportunistically to an active branch. The

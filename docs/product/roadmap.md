@@ -3,6 +3,18 @@
 Milestones are outcome-based. Dates should not be promised until the preceding
 milestone has met its exit criteria.
 
+During pre-release development, the numbered delivery groupings are internal
+checkpoints rather than release-publication commitments. The roadmap milestones
+and numbered checkpoints retain all of their exit criteria whether or not a
+release is published. Completing one does not create a tag, GitHub Release,
+supported version, or published release artifact. The first release publication
+requires a separate maintainer decision selecting a checkpoint with genuinely
+usable functionality that provides value to the owner or another user, followed
+by every applicable release gate and release-publication gate. This roadmap
+selects neither that checkpoint nor its version. After the first published
+release, maintainers may explicitly designate later milestones as release
+trains; release publication does not make that automatic.
+
 ## M0: Foundation
 
 - Enforce the recorded `AGPL-3.0-or-later` licence and notice policy.

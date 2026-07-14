@@ -1,21 +1,21 @@
-# Post-1.0 Reviewer Backends
+# Reviewer Backends After the 1.0 Checkpoint
 
 ## Purpose and status
 
 This document defines deferred work for additional AI reviewer backends after
-the first stable release. It is planning authority for the outcomes and safety
+the 1.0 checkpoint. It is planning authority for the outcomes and safety
 boundaries below, not a statement of current behavior or permission to begin
 implementation.
 
-The initial release plan remains unchanged:
+The initial checkpoint plan remains unchanged:
 
 - Codex CLI is the first reviewer backend;
 - F11 delivers isolated AI shadow recommendations;
 - the F01-F17 sequence and the 1.0.0 exit criteria remain authoritative; and
 - the normal deployment remains one Mechanical Librarian container.
 
-After 1.0.0, two optional reviewer capabilities may be scheduled as separate
-functional slices:
+After the 1.0.0 checkpoint is complete, two optional reviewer capabilities may
+be scheduled as separate functional slices:
 
 1. a hosted OpenRouter reviewer using an owner-controlled account and exact
    qualified free or paid model configuration; and
@@ -90,7 +90,7 @@ delivery dependency between the slices.
 **Title:** Deliver a qualified OpenRouter reviewer with owner-controlled
 credentials
 
-**Classification:** Post-1.0 functional slice; Feature; High risk
+**Classification:** After-1.0-checkpoint functional slice; Feature; High risk
 
 **Exact constituent-ticket list:**
 
@@ -267,7 +267,7 @@ local-model support.
 
 The slice tracker closes with the constituent feature ticket only when every
 criterion above and that ticket's complete criteria pass. It closes no F-series
-tracker and changes no 1.0.0 release criterion.
+tracker and changes no 1.0.0 checkpoint criterion.
 
 ## Constituent ticket A1
 
@@ -324,7 +324,7 @@ only in the tracker pull request.
 **Title:** Deliver a reviewer backed by an externally operated compatible model
 server
 
-**Classification:** Post-1.0 functional slice; Feature; High risk
+**Classification:** After-1.0-checkpoint functional slice; Feature; High risk
 
 **Exact constituent-ticket list:**
 
@@ -485,7 +485,7 @@ and OpenRouter support.
 
 The slice tracker closes with the constituent feature ticket only when every
 criterion above and that ticket's complete criteria pass. It closes no F-series
-tracker and changes no 1.0.0 release criterion.
+tracker and changes no 1.0.0 checkpoint criterion.
 
 ## Constituent ticket B1
 
@@ -532,7 +532,8 @@ only in the tracker pull request.
 
 ## Planning disposition
 
-The planning document is approved deferred post-1.0 scope. The two
+The planning document is approved scope deferred until after the 1.0
+checkpoint. The two
 implementation trackers remain unassigned backlog work and cannot become
 `Ready` until their named decisions are resolved, current external-service
 behavior is reverified, exact closure lists and slice IDs are approved, and
