@@ -1741,19 +1741,30 @@ def _package_report(
             current = fallback
         return False
 
+    accepted_spine_ids: set[str] = set()
     for itemref in spine.children:
         if itemref.name != f"{{{_OPF_NS}}}itemref":
             warnings.append(LocalEvidenceWarning("invalid_spine_item"))
+            continue
+        citation = _citation(
+            request, package_name, CitationSection.SPINE, itemref
+        )
+        if itemref.children or itemref.text:
+            warnings.append(LocalEvidenceWarning("invalid_spine_item", citation))
             continue
         idref = _attribute(itemref, "idref")
         if not idref or not has_compatible_spine_target(idref):
             warnings.append(LocalEvidenceWarning("invalid_spine_item"))
             continue
+        if idref in accepted_spine_ids:
+            warnings.append(LocalEvidenceWarning("invalid_spine_item", citation))
+            continue
+        accepted_spine_ids.add(idref)
         declarations.append(
             LocalEvidenceDeclaration(
                 DeclarationKind.SPINE_ITEM,
                 itemref.ordinal,
-                _citation(request, package_name, CitationSection.SPINE, itemref),
+                citation,
                 manifest_ids[idref],
                 idref,
             )
