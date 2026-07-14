@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 import re
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
+import unicodedata
 
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
@@ -101,9 +102,48 @@ _SECRET = re.compile(
     r"^\s*(?:authorizations|bearers|cookies|credentials|headers|keys|passwords|secrets|token)\s*$)",
     re.IGNORECASE,
 )
-_STATE = re.compile(
+_LEGACY_STATE = re.compile(
     r"\b(?:database|report|runtime|production|saved browser state|support bundle)\b",
     re.IGNORECASE,
+)
+_STATE_NOUNS = frozenset(
+    {
+        "database",
+        "databases",
+        "production",
+        "report",
+        "reports",
+        "runtime",
+        "runtimes",
+    }
+)
+_STATE_COMPOUNDS = frozenset(
+    {
+        "browser state",
+        "browser states",
+        "production state",
+        "production states",
+        "saved browser state",
+        "saved browser states",
+        "support bundle",
+        "support bundles",
+    }
+)
+_STATE_COMPOUND_PARTS = tuple(tuple(item.split()) for item in _STATE_COMPOUNDS)
+_STATE_COMPACT = frozenset(item.replace(" ", "") for item in _STATE_COMPOUNDS)
+_STRUCTURED_STATE_MARKERS = tuple(
+    sorted(
+        {
+            *_STATE_COMPOUND_PARTS,
+            *((item,) for item in _STATE_NOUNS),
+            *((item,) for item in _STATE_COMPACT),
+        },
+        key=lambda item: (-len(item), item),
+    )
+)
+_STRUCTURED_LABEL = re.compile(r"^[a-z0-9%._:/-]+$", re.IGNORECASE)
+_STRUCTURED_DELIMITER = re.compile(
+    r"[._:/-]|%(?:0[9a-d]|20|2d|2e|3a|5f|2f)", re.IGNORECASE
 )
 _PRODUCTION_ID = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b|"
@@ -242,6 +282,147 @@ def _normalized_labels(value: str) -> str:
     return re.sub(r"[_.\-\s:/]+", " ", decoded_delimiters)
 
 
+def _normalized_state_label(value: str) -> str:
+    return " ".join(_normalized_labels(value).casefold().split())
+
+
+def _is_exact_state_marker(value: str) -> bool:
+    normalized = _normalized_state_label(value)
+    return (
+        normalized in _STATE_NOUNS
+        or normalized in _STATE_COMPOUNDS
+        or normalized.replace(" ", "") in _STATE_COMPACT
+    )
+
+
+def _structured_state_parts(value: str) -> tuple[str, ...]:
+    if not _STRUCTURED_LABEL.fullmatch(value) or not _STRUCTURED_DELIMITER.search(value):
+        return ()
+    return tuple(_normalized_state_label(value).split())
+
+
+def _is_ascii_alphanumeric(value: str) -> bool:
+    return value.isascii() and value.isalnum()
+
+
+def _is_morphological_continuation(value: str, index: int) -> bool:
+    if value[index].isalnum():
+        return True
+    if not unicodedata.category(value[index]).startswith("M"):
+        return False
+    while index >= 0 and unicodedata.category(value[index]).startswith("M"):
+        index -= 1
+    return index >= 0 and value[index].isalnum()
+
+
+def _structured_delimiter_width(value: str, index: int) -> int:
+    match = _STRUCTURED_DELIMITER.match(value, index)
+    return len(match.group()) if match is not None else 0
+
+
+def _structured_token_runs(value: str) -> Iterator[tuple[tuple[str, ...], bool, bool]]:
+    index = 0
+    while index < len(value):
+        if not _is_ascii_alphanumeric(value[index]) and not _structured_delimiter_width(
+            value, index
+        ):
+            index += 1
+            continue
+
+        start = index
+        starts_with_delimiter = bool(_structured_delimiter_width(value, index))
+        has_alphanumeric = False
+        has_delimiter = False
+        ends_with_delimiter = False
+        while index < len(value):
+            if _is_ascii_alphanumeric(value[index]):
+                has_alphanumeric = True
+                ends_with_delimiter = False
+                index += 1
+                continue
+            width = _structured_delimiter_width(value, index)
+            if not width:
+                break
+            has_delimiter = True
+            ends_with_delimiter = True
+            index += width
+
+        if not has_alphanumeric or not has_delimiter:
+            continue
+        parts = _structured_state_parts(value[start:index])
+        if not parts:
+            continue
+        left_continues = (
+            not starts_with_delimiter
+            and start > 0
+            and _is_morphological_continuation(value, start - 1)
+        )
+        right_continues = (
+            not ends_with_delimiter
+            and index < len(value)
+            and _is_morphological_continuation(value, index)
+        )
+        yield parts, left_continues, right_continues
+
+
+def _compact_token_runs(value: str) -> Iterator[str]:
+    index = 0
+    while index < len(value):
+        if not _is_ascii_alphanumeric(value[index]):
+            index += 1
+            continue
+        start = index
+        while index < len(value) and _is_ascii_alphanumeric(value[index]):
+            index += 1
+        if start and _is_morphological_continuation(value, start - 1):
+            continue
+        if index < len(value) and _is_morphological_continuation(value, index):
+            continue
+        yield value[start:index]
+
+
+def _has_structured_state_marker(value: str) -> bool:
+    for parts, left_continues, right_continues in _structured_token_runs(value):
+        blocked_spans: list[tuple[int, int, bool, bool]] = []
+        for marker in _STRUCTURED_STATE_MARKERS:
+            for start in range(len(parts) - len(marker) + 1):
+                end = start + len(marker)
+                if parts[start:end] != marker:
+                    continue
+                if any(
+                    blocked_start <= start
+                    and end <= blocked_end
+                    and (
+                        (blocked_left and start == blocked_start)
+                        or (blocked_right and end == blocked_end)
+                    )
+                    for blocked_start, blocked_end, blocked_left, blocked_right in blocked_spans
+                ):
+                    continue
+                blocked_left = start == 0 and left_continues
+                blocked_right = end == len(parts) and right_continues
+                if blocked_left or blocked_right:
+                    blocked_spans.append((start, end, blocked_left, blocked_right))
+                    continue
+                return True
+    return False
+
+
+def _has_embedded_state_marker(value: str) -> bool:
+    # Scan only internally structured tokens. This catches a finite marker
+    # embedded in prose or punctuation without turning ordinary prose nouns
+    # into state markers. Compact compounds are similarly bounded as complete
+    # alphanumeric tokens so morphological near misses remain benign.
+    normalized = unicodedata.normalize("NFC", value)
+    return _has_structured_state_marker(normalized) or any(
+        candidate.casefold() in _STATE_COMPACT for candidate in _compact_token_runs(normalized)
+    )
+
+
+def _is_legacy_state_marker(value: str) -> bool:
+    return _LEGACY_STATE.search(_normalized_labels(value)) is not None
+
+
 def _audit(value: Any, *, scenario: str, ordinal: int, path: tuple[str, ...] = ()) -> None:
     if type(value) is dict:
         for key, child in value.items():
@@ -252,6 +433,22 @@ def _audit(value: Any, *, scenario: str, ordinal: int, path: tuple[str, ...] = (
                 _fail("DUX021_SECRET_SHAPE", scenario=scenario, ordinal=ordinal)
             if _PROTOTYPE.search(normalized_key):
                 _fail("DUX027_SOURCE_LITERAL", scenario=scenario, ordinal=ordinal)
+            if _is_exact_state_marker(key):
+                _fail("DUX025_PRODUCTION_STATE", scenario=scenario, ordinal=ordinal)
+            if _has_embedded_state_marker(key):
+                state_overlap_checks = (
+                    ("DUX022_PROHIBITED_PATH", _PATH, key),
+                    ("DUX028_COPYRIGHT", _COPYRIGHT, normalized_key),
+                    ("DUX023_DOMAIN_OR_URL", _URL_EMAIL_DOMAIN, key),
+                    ("DUX024_NETWORK_ADDRESS", _IP, key),
+                    ("DUX026_PRODUCTION_ID", _PRODUCTION_ID, key),
+                )
+                for rule, pattern, selected in state_overlap_checks:
+                    if pattern.search(selected):
+                        _fail(rule, scenario=scenario, ordinal=ordinal)
+                if _GENERIC_URI_SCHEME.search(key):
+                    _fail("DUX023_DOMAIN_OR_URL", scenario=scenario, ordinal=ordinal)
+                _fail("DUX025_PRODUCTION_STATE", scenario=scenario, ordinal=ordinal)
             _audit(child, scenario=scenario, ordinal=ordinal, path=(*path, key))
         return
     if type(value) is list:
@@ -269,22 +466,31 @@ def _audit(value: Any, *, scenario: str, ordinal: int, path: tuple[str, ...] = (
     if SOURCE_COMMIT in value or SOURCE_TAG in value:
         _fail("DUX027_SOURCE_LITERAL", scenario=scenario, ordinal=ordinal)
     normalized = _normalized_labels(value)
-    checks = (
+    checks_before_state = (
         ("DUX022_PROHIBITED_PATH", _PATH),
         ("DUX021_SECRET_SHAPE", _SECRET, normalized),
-        ("DUX025_PRODUCTION_STATE", _STATE, normalized),
+    )
+    for item in checks_before_state:
+        rule, pattern, *selected = item
+        if pattern.search(selected[0] if selected else value):
+            _fail(rule, scenario=scenario, ordinal=ordinal)
+    if _is_legacy_state_marker(value) or _is_exact_state_marker(value):
+        _fail("DUX025_PRODUCTION_STATE", scenario=scenario, ordinal=ordinal)
+    checks_after_state = (
         ("DUX028_COPYRIGHT", _COPYRIGHT, normalized),
         ("DUX023_DOMAIN_OR_URL", _URL_EMAIL_DOMAIN),
         ("DUX024_NETWORK_ADDRESS", _IP),
         ("DUX026_PRODUCTION_ID", _PRODUCTION_ID),
         ("DUX027_SOURCE_LITERAL", _PROTOTYPE, normalized),
     )
-    for item in checks:
+    for item in checks_after_state:
         rule, pattern, *selected = item
         if pattern.search(selected[0] if selected else value):
             _fail(rule, scenario=scenario, ordinal=ordinal)
     if _GENERIC_URI_SCHEME.search(value):
         _fail("DUX023_DOMAIN_OR_URL", scenario=scenario, ordinal=ordinal)
+    if _has_embedded_state_marker(value):
+        _fail("DUX025_PRODUCTION_STATE", scenario=scenario, ordinal=ordinal)
 
 
 def _freeze(value: Any) -> Any:
