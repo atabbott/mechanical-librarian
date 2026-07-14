@@ -49,8 +49,9 @@ explainable, and durable through one undecided review case.
 The remaining evidence-and-candidate goals retain their long-term scope but are
 not 0.2 exit criteria:
 
-- integrate and use the already delivered F07 opening-matter and navigation
-  evidence and F08 structural and audio evidence in candidate policy;
+- after their deferred 0.1 execution, integrate and use the planned F07a/F07b
+  opening-matter and navigation evidence and F08 structural and audio evidence
+  in candidate policy;
 - use applicable mined identifiers and edition facts to seed candidates and
   distinguish work-level from edition-level matches;
 - normalize broader provider candidates with provenance;

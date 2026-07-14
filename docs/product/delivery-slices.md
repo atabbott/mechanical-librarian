@@ -75,8 +75,9 @@ write or review-decision authority.
 | F10 Persistent title review case | #146 | Only the current proposal set containing exactly one current `needs_review` title proposal becomes one durable review case. Persistence, restart, idempotent replay, immutable history, and stale-input supersession are demonstrable; zero-proposal sets create no empty case, and no human or AI decision or write authority is introduced. | #224 | `slice/f10-title-review-case` |
 
 The explicit entry chain is `#221 + completed F06 #142 -> F09a -> F09b -> F10`.
-F07 and F08 remain part of the 0.1 plan, but neither is an entry dependency for
-this narrow title path and this sequencing does not replan them.
+F07a, F07b, and F08 remain planned under their existing 0.1 trackers, but their
+execution is deferred. After this planning change, F09a is the next selected
+functional slice.
 
 For 0.2, `title-normalization-v1` creates a comparison key using the Unicode
 16.0.0 definition of NFC and a frozen, byte-exact Unicode 16.0.0 data bundle:
