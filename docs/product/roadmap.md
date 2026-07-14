@@ -60,8 +60,10 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
   `agree-empty` case. Omitting its optional secret-file reference performs no
   secret access, DNS, or egress; it changes no `config-v1` field and cannot
   reinterpret F09a's `synthetic_preview` history as live or
-  production-applicable evidence. Fake transport is the required qualification;
-  real-endpoint smoke is optional until a live compatibility claim is made.
+  production-applicable evidence. A sanitized live-shape fake qualifies normal
+  automation, and the exact installed artifact must also parse one bounded live
+  response. F09f retains production configuration, provider-work persistence,
+  freshness/reuse, restart, and live-target responsibilities.
 - F10 persists, restarts, inspects, replays, and supersedes one current
   visibly synthetic undecided case only from one current immutable proposal set containing
   exactly one current `needs_review` title proposal; no other proposal or set

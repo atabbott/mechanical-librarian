@@ -23,6 +23,9 @@ TITLE_COMPARISON_VERSION = "unicode-title-comparison-v1"
 TITLE_PROPOSAL_POLICY_VERSION = "synthetic-title-policy-v1"
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_HARDCOVER_PROVIDER_VERSIONS = frozenset(
+    {"hardcover-title-poc-v1", "hardcover-title-poc-v2"}
+)
 
 
 class TitleProposalValueError(ValueError):
@@ -311,7 +314,10 @@ def _proposal_identity_manifest(manifest: Mapping[str, object]) -> object:
     """Preserve F09a IDs while removing the F09b provider as an ID dimension."""
 
     provider = manifest.get("provider")
-    if not isinstance(provider, Mapping) or provider.get("version") != "hardcover-title-poc-v1":
+    if (
+        not isinstance(provider, Mapping)
+        or provider.get("version") not in _HARDCOVER_PROVIDER_VERSIONS
+    ):
         return _deep_thaw(manifest)
     f06 = manifest.get("f06")
     if not isinstance(f06, Mapping):
@@ -359,7 +365,10 @@ def _validate_proposal_projection(
     proposals: tuple[SyntheticTitleProposal, ...],
 ) -> None:
     provider = manifest.get("provider")
-    if isinstance(provider, Mapping) and provider.get("version") == "hardcover-title-poc-v1":
+    if (
+        isinstance(provider, Mapping)
+        and provider.get("version") in _HARDCOVER_PROVIDER_VERSIONS
+    ):
         _validate_hardcover_projection(manifest, result)
     if result is not TitleProposalResult.NEEDS_REVIEW:
         if proposals:
@@ -536,7 +545,7 @@ def _validate_manifest(value: Mapping[str, object]) -> None:
             "candidate", "disabled", "failed", "empty", "no_match", "not_invoked"
         }:
             raise TitleProposalValueError("proposal-set provider outcome is invalid")
-    elif provider_version == "hardcover-title-poc-v1":
+    elif provider_version in _HARDCOVER_PROVIDER_VERSIONS:
         if (
             set(provider) != {"candidate", "failure_kind", "outcome", "version"}
             or provider["outcome"] not in {
@@ -575,7 +584,7 @@ def _validate_manifest(value: Mapping[str, object]) -> None:
         if type(candidate_values) is not tuple or len(candidate_values) != 1:
             raise TitleProposalValueError("proposal-set provider title is invalid")
         _title(candidate_values[0], "provider title")
-        if provider_version == "hardcover-title-poc-v1" and (
+        if provider_version in _HARDCOVER_PROVIDER_VERSIONS and (
             candidate["source_id"] != "hardcover-title-poc"
             or type(candidate["correlation_id"]) is not str
             or re.fullmatch(
@@ -585,7 +594,7 @@ def _validate_manifest(value: Mapping[str, object]) -> None:
             raise TitleProposalValueError("Hardcover provider provenance is invalid")
     if (provider["outcome"] == "candidate") != (candidate is not None):
         raise TitleProposalValueError("proposal-set provider candidate disagrees with outcome")
-    if provider_version == "hardcover-title-poc-v1":
+    if provider_version in _HARDCOVER_PROVIDER_VERSIONS:
         observation = _canonical_json(provider).encode("utf-8")
         expected_lineage = f"hardcover-poc-{hashlib.sha256(observation).hexdigest()[:48]}"
         if value["lineage"] != expected_lineage:

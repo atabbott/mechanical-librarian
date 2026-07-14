@@ -54,10 +54,12 @@ class _HardcoverAuthorizationAuth(httpx.Auth):
             and request.url.scheme == "https"
             and request.url.port in {None, 443}
             and request.url.path == "/v1/graphql"
+            and not request.url.query
+            and not request.url.fragment
             and request.headers.get("host") == "api.hardcover.app"
             and request.extensions.get("sni_hostname") == "api.hardcover.app"
         ):
-            request.headers["authorization"] = self._token
+            request.headers["authorization"] = f"Bearer {self._token}"
         yield request
 
 

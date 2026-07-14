@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -10,11 +12,20 @@ from unittest.mock import patch
 
 import httpx
 
+from mechanical_librarian.adapters.persistence.title_proposals import (
+    SQLiteTitleProposalRepository,
+)
 from mechanical_librarian.bootstrap.composition import (
     _run_hardcover_title_proposal_report,
     _run_synthetic_title_proposal_report,
 )
+from mechanical_librarian.domain.title_proposals import (
+    TitleProposalResult,
+    proposal_set_from_manifest,
+)
+from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate
 from mechanical_librarian.interfaces.cli import main as cli_main
+from tests.support.hardcover_fixtures import hardcover_live_search_payload
 
 
 PUBLIC_IP = "93.184.216.34"
@@ -27,18 +38,15 @@ class _Peer:
 
 
 def _payload(results: list[object]) -> dict[str, object]:
-    return {
-        "data": {
-            "search": {
-                "error": None,
-                "page": 1,
-                "per_page": 1,
-                "query": TITLE,
-                "query_type": "Book",
-                "results": results,
-            }
-        }
-    }
+    result_title = None if not results else results[0]["title"]  # type: ignore[index]
+    payload = hardcover_live_search_payload(TITLE, result_title)
+    if len(results) > 1:
+        hits = payload["data"]["search"]["results"]["hits"]  # type: ignore[index]
+        for result in results[1:]:
+            extra = hardcover_live_search_payload(TITLE, result["title"])  # type: ignore[index]
+            hits.extend(extra["data"]["search"]["results"]["hits"])  # type: ignore[index,union-attr]
+        payload["data"]["search"]["results"]["found"] = len(hits)  # type: ignore[index,arg-type]
+    return payload
 
 
 def _transport(payload: object | None = None, *, status: int = 200, calls=None):
@@ -58,7 +66,7 @@ def _transport(payload: object | None = None, *, status: int = 200, calls=None):
 
 def _secret(root: Path, value: str = "provider-token-sentinel") -> Path:
     secret = root / "provider-token"
-    secret.write_text(value + "\n", encoding="utf-8")
+    secret.write_text(value, encoding="utf-8")
     secret.chmod(0o600)
     return secret
 
@@ -81,6 +89,10 @@ class HardcoverTitleProposalIntegrationTests(unittest.TestCase):
             self.assertEqual(report.proposal_set.result.value, "provider_disabled")
             self.assertEqual(report.proposal_set.proposals, ())
             self.assertTrue(report.proposal_set.lineage.startswith("hardcover-poc-"))
+            self.assertEqual(
+                report.proposal_set.to_data()["manifest"]["provider"]["version"],
+                "hardcover-title-poc-v2",
+            )
             self.assertFalse(report.proposal_set.production_applicable)
 
     def test_supported_fake_candidate_uses_real_command_composition_and_persists_minimally(self) -> None:
@@ -105,12 +117,18 @@ class HardcoverTitleProposalIntegrationTests(unittest.TestCase):
                 synthetic.proposal_set.proposals[0].id,
             )
             self.assertEqual(len(calls), 1)
-            self.assertEqual(calls[0].headers["authorization"], "provider-token-sentinel")
+            self.assertEqual(
+                calls[0].headers["authorization"],
+                "Bearer provider-token-sentinel",
+            )
             persisted = database.read_bytes()
             for private in (
                 b"provider-token-sentinel",
+                b"Bearer provider-token-sentinel",
                 str(secret).encode("utf-8"),
                 b"query HardcoverTitlePoc",
+                b"synthetic-live-book-id",
+                b"Synthetic Author",
             ):
                 self.assertNotIn(private, persisted)
 
@@ -187,6 +205,52 @@ class HardcoverTitleProposalIntegrationTests(unittest.TestCase):
                         "SELECT COUNT(*) FROM synthetic_title_proposal_sets"
                     ).fetchone(),
                     (6,),
+                )
+            finally:
+                connection.close()
+
+    def test_v1_no_candidate_history_hydrates_without_replaying_as_v2(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed = _run_hardcover_title_proposal_report(root / "seed.sqlite", None)
+            legacy_manifest = copy.deepcopy(seed.proposal_set.to_data()["manifest"])
+            provider = legacy_manifest["provider"]
+            provider["version"] = "hardcover-title-poc-v1"
+            digest = hashlib.sha256(
+                json.dumps(
+                    provider,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            legacy_manifest["lineage"] = f"hardcover-poc-{digest[:48]}"
+            legacy = proposal_set_from_manifest(
+                manifest=legacy_manifest,
+                result=TitleProposalResult.PROVIDER_DISABLED,
+            )
+
+            database = root / "state.sqlite"
+            connection = connect(database)
+            try:
+                migrate(connection)
+                repository = SQLiteTitleProposalRepository(connection)
+                self.assertFalse(repository.store(legacy).replayed)
+                self.assertEqual(repository.current(legacy.lineage), legacy)
+            finally:
+                connection.close()
+
+            current = _run_hardcover_title_proposal_report(database, None)
+            self.assertFalse(current.persistence.replayed)
+            self.assertNotEqual(current.proposal_set.lineage, legacy.lineage)
+            self.assertNotEqual(current.proposal_set.set_id, legacy.set_id)
+            connection = sqlite3.connect(database)
+            try:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM synthetic_title_proposal_sets"
+                    ).fetchone(),
+                    (2,),
                 )
             finally:
                 connection.close()

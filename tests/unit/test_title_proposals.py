@@ -75,13 +75,15 @@ def manifest() -> dict[str, object]:
     }
 
 
-def hardcover_manifest() -> dict[str, object]:
+def hardcover_manifest(
+    version: str = "hardcover-title-poc-v1",
+) -> dict[str, object]:
     value = manifest()
     provider = {
         "candidate": None,
         "failure_kind": None,
         "outcome": "disabled",
-        "version": "hardcover-title-poc-v1",
+        "version": version,
     }
     digest = hashlib.sha256(
         json.dumps(provider, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -111,6 +113,25 @@ class TitleProposalDomainTests(unittest.TestCase):
                     TitleProposalSet.from_json(
                         json.dumps(data, separators=(",", ":"), sort_keys=True)
                     )
+
+    def test_hardcover_v1_history_hydrates_but_v2_no_candidate_identity_is_distinct(
+        self,
+    ) -> None:
+        legacy = proposal_set_from_manifest(
+            manifest=hardcover_manifest("hardcover-title-poc-v1"),
+            result=TitleProposalResult.PROVIDER_DISABLED,
+        )
+        current = proposal_set_from_manifest(
+            manifest=hardcover_manifest("hardcover-title-poc-v2"),
+            result=TitleProposalResult.PROVIDER_DISABLED,
+        )
+
+        self.assertEqual(TitleProposalSet.from_json(legacy.to_json()), legacy)
+        self.assertEqual(TitleProposalSet.from_json(current.to_json()), current)
+        self.assertNotEqual(legacy.lineage, current.lineage)
+        self.assertNotEqual(legacy.identity_digest, current.identity_digest)
+        self.assertNotEqual(legacy.set_id, current.set_id)
+        self.assertNotEqual(legacy.to_json(), current.to_json())
 
     def test_unicode_comparison_is_nfc_casefold_nfc_and_unicode_space_collapsed(self) -> None:
         equivalent = (

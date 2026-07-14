@@ -188,8 +188,10 @@ adds `hardcover-title-proposal-report` for only the fixed generated
 secret-file reference performs no secret access, DNS, or egress and records
 `provider_disabled`; provider and credential failures retain local evidence as
 `provider_failed`. It changes no `config-v1` field. Required qualification uses
-a fake through the same adapter seam; real-endpoint smoke is optional until a
-live compatibility claim is made. F10 persists one current undecided case only from one
+a sanitized live-shape fake through the same adapter seam and the exact
+installed artifact against the bounded real endpoint. Production provider
+configuration, durable work, freshness/reuse, restart, and live-target binding
+remain F09f scope. F10 persists one current undecided case only from one
 current immutable proposal set containing exactly one current `needs_review`
 title proposal; no other proposal or set creates a case.
 

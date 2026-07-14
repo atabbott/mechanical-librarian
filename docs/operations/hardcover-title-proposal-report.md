@@ -1,10 +1,10 @@
 # Hardcover title proposal report
 
-`hardcover-title-proposal-report` is the narrow F09b proof-of-concept command.
-It preserves the F09a synthetic preview and substitutes a bounded Hardcover
-lookup for the deterministic provider fake in one generated `agree-empty`
-case. It accepts no title, scenario, configuration, endpoint, query, or
-transport-mode input.
+`hardcover-title-proposal-report` is the narrow, live-compatible F09b proof-of-
+concept command. It preserves the F09a synthetic preview and substitutes a
+bounded Hardcover lookup for the deterministic provider fake in one generated
+`agree-empty` case. It accepts no title, scenario, configuration, endpoint,
+query, or transport-mode input.
 
 ## Run the preview
 
@@ -31,9 +31,11 @@ mechanical-librarian hardcover-title-proposal-report \
 
 `--format` may be `json` (the default) or `text`; both expose the same bounded,
 secret-free projection. A secret file must be an absolute, owner-only regular
-file, not a symlink, contain 1 through 2,048 bytes, and decode to a printable
-non-whitespace ASCII token. A Docker secret is usable only when its mount meets
-those rules. The path and token never appear in output or durable state.
+file, not a symlink, contain 1 through 2,048 bytes, and contain only the raw
+printable non-whitespace ASCII token. Do not include `Bearer`; the Hardcover-
+specific adapter constructs that scheme for the fixed request. A Docker secret
+is usable only when its mount meets those rules. The path and token never
+appear in output or durable state.
 
 ## Outcomes and exits
 
@@ -69,8 +71,16 @@ provider framework, or write authority.
 
 ## Compatibility status
 
-Ordinary qualification uses a credential-free fake transport through the same
-command and adapter seam. A bounded real-endpoint smoke test is optional for
-this proof of concept. It must pass with a dedicated non-production account
-before a later release claims live Hardcover compatibility. See the
-[frozen F09b contract](../reference/hardcover-f09b-contract.md).
+Ordinary automated qualification uses a credential-free, structurally faithful
+fake through the same command and adapter seam. F09b completion also requires
+the exact installed wheel and console command to pass one bounded read-only run
+against the fixed endpoint with a dedicated non-production account, fixed
+generated title, and disposable database. A valid parsed differing title
+produces `local_provider_conflict`; a count-consistent empty result produces
+`provider_empty`. A parser or compatibility failure does not qualify. Retain
+only the redacted aggregate result and no disposable state or provider traffic.
+See the [frozen F09b contract](../reference/hardcover-f09b-contract.md).
+
+This qualification does not add provider configuration, durable provider work,
+freshness or reuse, retry/restart behavior, live-target binding, or production
+applicability. Those production responsibilities remain F09f scope.

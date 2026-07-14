@@ -178,9 +178,12 @@ no review or apply adapter. Connecting a configured media item and current live
 snapshot to F06 is a later application use case, not an implicit adapter hidden
 inside F09a.
 
-F09b ordinary qualification uses a credential-free fake through the same
-adapter seam. A real-endpoint smoke test is optional and is required only before
-any later live Hardcover compatibility claim.
+F09b ordinary automation uses a credential-free structural fake through the
+same adapter seam. Completion also requires the exact installed artifact to
+parse one bounded real-endpoint result without a parser or compatibility
+failure, retaining only redacted aggregate evidence. Production provider
+configuration, persisted work, freshness/reuse, restart behavior, and live-
+target binding remain F09f scope.
 
 ### Apply
 

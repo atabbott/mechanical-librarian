@@ -243,10 +243,11 @@ or egress. There is no hidden environment-variable, encrypted-store, provider
 registry, or generic egress configuration. Current `config-v1` continues to
 reject detailed Hardcover and provider-secret fields as unknown.
 
-The full command and transport contract is
-[documented separately](hardcover-f09b-contract.md). A future supported provider
-integration must define its own versioned structured configuration rather than
-turning this proof-of-concept CLI into an implicit schema extension.
+The live-compatible command and transport/parser contract is
+[documented separately](hardcover-f09b-contract.md). F09f's future production
+provider must define its own versioned structured configuration, persisted
+work, freshness/reuse, and restart behavior rather than turning this proof-of-
+concept CLI into an implicit schema extension.
 
 ### AI reviewers
 

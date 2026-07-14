@@ -6,11 +6,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import httpx
+
 from mechanical_librarian.domain.inventory import SecretReference
 from mechanical_librarian.domain.security import SecretHandle, SecretScope
 from mechanical_librarian.infrastructure.security.provider_secrets import (
     PrivateFileProviderCredentials,
     ProviderSecretUnavailable,
+    _HardcoverAuthorizationAuth,
 )
 
 
@@ -81,6 +84,55 @@ class ProviderSecretTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ProviderSecretUnavailable):
                         PrivateFileProviderCredentials().hardcover_client(handle)
+
+    def test_hardcover_auth_builds_one_bearer_header_only_for_the_fixed_request(
+        self,
+    ) -> None:
+        auth = _HardcoverAuthorizationAuth("raw-provider-token")
+
+        def authorize(
+            *,
+            method: str = "POST",
+            url: str = "https://93.184.216.34/v1/graphql",
+            host: str = "api.hardcover.app",
+            sni: str = "api.hardcover.app",
+        ) -> httpx.Request:
+            request = httpx.Request(
+                method,
+                url,
+                headers={"host": host},
+                extensions={"sni_hostname": sni},
+            )
+            return next(auth.auth_flow(request))
+
+        self.assertEqual(
+            authorize().headers["authorization"], "Bearer raw-provider-token"
+        )
+        near_misses = (
+            {"method": "GET"},
+            {"url": "http://93.184.216.34/v1/graphql"},
+            {"url": "https://93.184.216.34:444/v1/graphql"},
+            {"url": "https://93.184.216.34/v1/other"},
+            {"url": "https://93.184.216.34/v1/graphql?operation=other"},
+            {"url": "https://93.184.216.34/v1/graphql#fragment"},
+            {"host": "example.invalid"},
+            {"sni": "example.invalid"},
+        )
+        for values in near_misses:
+            with self.subTest(values=values):
+                self.assertNotIn("authorization", authorize(**values).headers)
+
+    def test_prefixed_token_is_rejected_by_the_unchanged_shared_reader(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "token"
+            secret.write_text("Bearer raw-provider-token", encoding="utf-8")
+            secret.chmod(0o600)
+            with self.assertRaises(ProviderSecretUnavailable):
+                PrivateFileProviderCredentials().hardcover_client(
+                    SecretHandle(
+                        SecretReference(str(secret)), SecretScope.METADATA_PROVIDER
+                    )
+                )
 
 
 if __name__ == "__main__":

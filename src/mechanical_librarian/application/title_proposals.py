@@ -55,7 +55,7 @@ FIXTURE_VERSION = "synthetic-title-scenarios-v1"
 PROVIDER_SCHEMA = SchemaVersion("synthetic-title-query-v1")
 SYNTHETIC_LINEAGE = "synthetic-title-preview"
 HARDCOVER_POC_LINEAGE = "hardcover-poc"
-HARDCOVER_POC_PROVIDER_VERSION = "hardcover-title-poc-v1"
+HARDCOVER_POC_PROVIDER_VERSION = "hardcover-title-poc-v2"
 
 
 class ProviderPreviewProfile(StrEnum):

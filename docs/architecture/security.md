@@ -93,6 +93,11 @@ certificate verification, then rejects a peer-address mismatch. It trusts no
 environment proxy, sends no cookies, requests no compression, and has the exact
 finite bounds in the [F09b contract](../reference/hardcover-f09b-contract.md):
 one attempt, no retry or backoff, five seconds total, and concurrency one.
+The owner-only secret file contains only the bounded raw token. The provider-
+specific authentication adapter constructs `Bearer <raw-token>` only after the
+method, HTTPS port, path, empty query and fragment, host header, and TLS SNI
+match the fixed request; the shared secret reader and destination checks are
+not relaxed.
 
 The application sends only an allowlisted minimum title lookup projection, with
 a documented disclosure purpose for each field. It never sends target-service
@@ -101,13 +106,21 @@ capability. The account-capable provider token is isolated from target and
 reviewer credentials and is redacted from logs, diagnostics, exceptions, and
 test output.
 
-Provider responses are untrusted and must match a closed bounded shape. Only a
-bounded canonical title value and the minimum provenance needed to explain its
-source may be retained. Raw requests, responses, headers, tokens, request
-bodies, upstream identifiers, and caches are never persisted. Provider failure
-or disagreement cannot erase valid F06 evidence, become negative
+Provider responses are untrusted and must match the closed versioned live
+Typesense wrapper, hit, document, highlight, count, echo, and rich-field shape.
+Every field is validated within byte, depth, node, object, list, string, numeric,
+and result bounds; only a bounded canonical title value and the minimum
+provenance needed to explain its source may be retained. Validated rich fields
+and upstream IDs are discarded. Raw requests, responses, headers, tokens,
+request bodies, upstream identifiers, and caches are never persisted. Provider
+failure or disagreement cannot erase valid F06 evidence, become negative
 bibliographic evidence, or grant proposal, decision, review, or write
 authority.
+
+The live-compatible provider contract is persisted as
+`hardcover-title-poc-v2` for every provider outcome. Version 1 observations
+remain readable, while their version-bearing lineage cannot be replayed as a
+version 2 observation; no persisted schema migration is required.
 
 `synthetic_preview` is a closed identity-bearing execution mode, not an
 operator flag. Persisted proposal sets and their current pointers remain in
@@ -141,11 +154,14 @@ duplicate, or unjoinable input creates its exact typed no-proposal result.
 Identical replay does not duplicate state, while changed inputs supersede
 current applicability without rewriting history.
 
-Ordinary CI and automated tests use a fake through the same adapter seam and no
-provider credential. A real-endpoint smoke test with a dedicated non-production
-account is optional for F09b and required before any later supported-live-
-compatibility claim; only a redacted aggregate result may be retained. Nothing
-in the preview invokes AI, records a human decision, handles covers or rich
+Ordinary CI and automated tests use an irreversibly synthetic structural fake
+through the same adapter seam and no provider credential. F09b also requires
+the exact installed artifact to parse one bounded real-endpoint result with a
+dedicated non-production account and disposable state; only a redacted
+aggregate result may be retained. This proves no production configuration,
+provider-work persistence, freshness/reuse, restart, or live-target behavior;
+those responsibilities remain F09f scope. Nothing in the preview invokes AI,
+records a human decision, handles covers or rich
 fields, fuses multiple providers, or authorizes a production write.
 
 ## Primary threats and mitigations

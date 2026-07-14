@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import math
 import subprocess
 import sys
 import time
@@ -48,12 +49,111 @@ HARDCOVER_QUERY = """query HardcoverTitlePoc($title: String!) {
     results
   }
 }"""
-CONTRACT_VERSION = "hardcover-f09b-contract-v1"
+CONTRACT_VERSION = "hardcover-f09b-contract-v2"
 MAX_REQUEST_BYTES = 8_192
 MAX_RESPONSE_BYTES = 65_536
 MAX_TITLE_LENGTH = 512
-MAX_JSON_DEPTH = 8
-MAX_JSON_NODES = 64
+MAX_JSON_DEPTH = 16
+MAX_JSON_NODES = 128
+MAX_OBJECT_KEYS = 64
+MAX_LIST_ITEMS = 16
+MAX_STRING_LENGTH = 512
+MAX_INTEGER = 2_147_483_647
+MAX_TEXT_MATCH_INTEGER = 9_223_372_036_854_775_807
+MIN_RATING = 0.0
+MAX_RATING = 5.0
+
+_RESULT_KEYS = {
+    "facet_counts",
+    "found",
+    "hits",
+    "out_of",
+    "page",
+    "request_params",
+    "search_cutoff",
+    "search_time_ms",
+}
+_REQUEST_PARAM_KEYS = {"collection_name", "first_q", "per_page", "q"}
+_HIT_KEYS = {"document", "highlight", "highlights", "text_match", "text_match_info"}
+_DOCUMENT_KEYS = {
+    "activities_count",
+    "alternative_titles",
+    "author_names",
+    "book_category_id",
+    "compilation",
+    "content_warnings",
+    "contribution_types",
+    "contributions",
+    "cover_color",
+    "description",
+    "featured_series",
+    "genres",
+    "has_audiobook",
+    "has_ebook",
+    "id",
+    "image",
+    "isbns",
+    "lists_count",
+    "moods",
+    "pages",
+    "prompts_count",
+    "rating",
+    "ratings_count",
+    "release_date",
+    "release_year",
+    "reviews_count",
+    "series_ids",
+    "series_names",
+    "slug",
+    "subtitle",
+    "tags",
+    "title",
+    "users_count",
+    "users_read_count",
+}
+_DOCUMENT_INTEGER_KEYS = {
+    "activities_count",
+    "book_category_id",
+    "lists_count",
+    "pages",
+    "prompts_count",
+    "ratings_count",
+    "release_year",
+    "reviews_count",
+    "users_count",
+    "users_read_count",
+}
+_DOCUMENT_BOOLEAN_KEYS = {"compilation", "has_audiobook", "has_ebook"}
+_DOCUMENT_STRING_KEYS = {
+    "cover_color",
+    "description",
+    "id",
+    "release_date",
+    "slug",
+    "subtitle",
+}
+_DOCUMENT_STRING_LIST_KEYS = {
+    "alternative_titles",
+    "author_names",
+    "content_warnings",
+    "contribution_types",
+    "genres",
+    "isbns",
+    "moods",
+    "series_ids",
+    "series_names",
+    "tags",
+}
+_IMAGE_KEYS = {"color", "color_name", "height", "id", "url", "width"}
+_TEXT_MATCH_INFO_KEYS = {
+    "best_field_score",
+    "best_field_weight",
+    "fields_matched",
+    "num_tokens_dropped",
+    "score",
+    "tokens_matched",
+    "typo_prefix_score",
+}
 
 AddressResolver = Callable[[str, int, "_OperationBudget"], tuple[str, ...]]
 _ResultT = TypeVar("_ResultT")
@@ -474,7 +574,7 @@ async def _bounded_response_bytes(
     if length_header is not None:
         try:
             declared_length = int(length_header)
-            if declared_length < 0 or declared_length > MAX_RESPONSE_BYTES:
+            if not _response_size_allowed(declared_length):
                 return None
         except ValueError:
             raise ValueError("invalid content length") from None
@@ -484,7 +584,7 @@ async def _bounded_response_bytes(
         if failure is not None:
             return failure
         payload.extend(chunk)
-        if len(payload) > MAX_RESPONSE_BYTES:
+        if not _response_size_allowed(len(payload)):
             return None
         failure = budget.failure()
         if failure is not None:
@@ -513,8 +613,7 @@ def _parse_response(
             object_pairs_hook=_unique_object,
             parse_constant=_reject_json_constant,
         )
-        nodes, depth = _json_shape(value)
-        if nodes > MAX_JSON_NODES or depth > MAX_JSON_DEPTH:
+        if not _json_within_bounds(value):
             raise ValueError
     except (UnicodeError, ValueError, TypeError, RecursionError, json.JSONDecodeError):
         return _failure(FailureKind.INVALID_RESPONSE, "Hardcover response invalid")
@@ -542,25 +641,14 @@ def _parse_response(
         or search["per_page"] != 1
         or search["query"] != requested_title
         or search["query_type"] != "Book"
-        or type(search["results"]) is not list
-        or len(search["results"]) > 1
     ):
         return _failure(FailureKind.INCOMPATIBLE, "Hardcover response incompatible")
-    if not search["results"]:
+    parsed_title = _parse_search_results(search["results"], requested_title)
+    if isinstance(parsed_title, PortFailure):
+        return parsed_title
+    if parsed_title is None:
         return ()
-    item = search["results"][0]
-    if type(item) is not dict or set(item) != {"title"}:
-        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover title result invalid")
-    title = item["title"]
-    if (
-        type(title) is not str
-        or not title
-        or title.strip() != title
-        or len(title) > MAX_TITLE_LENGTH
-        or "\x00" in title
-        or any(ord(character) < 32 for character in title)
-    ):
-        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover title result invalid")
+    title = parsed_title
     try:
         title.encode("utf-8")
         validate_projection_text(title, "Hardcover title", MAX_TITLE_LENGTH)
@@ -583,6 +671,199 @@ def _parse_response(
     return (candidate,)
 
 
+def _parse_search_results(value: object, requested_title: str) -> str | None | PortFailure:
+    if type(value) is not dict or set(value) != _RESULT_KEYS:
+        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover search result invalid")
+    if (
+        type(value["facet_counts"]) is not list
+        or value["facet_counts"]
+        or not _non_negative_int(value["found"])
+        or not _non_negative_int(value["out_of"])
+        or type(value["page"]) is not int
+        or value["page"] != 1
+        or type(value["search_cutoff"]) is not bool
+        or not _non_negative_int(value["search_time_ms"])
+        or type(value["hits"]) is not list
+        or len(value["hits"]) > 1
+        or value["found"] > value["out_of"]
+        or bool(value["hits"]) != (value["found"] > 0)
+    ):
+        return _failure(FailureKind.INCOMPATIBLE, "Hardcover search result incompatible")
+    request_params = value["request_params"]
+    if (
+        type(request_params) is not dict
+        or set(request_params) != _REQUEST_PARAM_KEYS
+        or not _bounded_string(request_params["collection_name"], require_value=True)
+        or type(request_params["first_q"]) is not str
+        or request_params["first_q"] != requested_title
+        or type(request_params["q"]) is not str
+        or request_params["q"] != requested_title
+        or type(request_params["per_page"]) is not int
+        or request_params["per_page"] != 1
+    ):
+        return _failure(FailureKind.INCOMPATIBLE, "Hardcover search echo incompatible")
+    if not value["hits"]:
+        return None
+    return _parse_hit(value["hits"][0])
+
+
+def _parse_hit(value: object) -> str | PortFailure:
+    if type(value) is not dict or set(value) != _HIT_KEYS:
+        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover search hit invalid")
+    document = value["document"]
+    if type(document) is not dict or set(document) != _DOCUMENT_KEYS:
+        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover document invalid")
+    if any(not _non_negative_int(document[key]) for key in _DOCUMENT_INTEGER_KEYS):
+        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover document invalid")
+    if any(type(document[key]) is not bool for key in _DOCUMENT_BOOLEAN_KEYS):
+        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover document invalid")
+    if any(not _bounded_string(document[key]) for key in _DOCUMENT_STRING_KEYS):
+        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover document invalid")
+    if any(not _string_list(document[key]) for key in _DOCUMENT_STRING_LIST_KEYS):
+        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover document invalid")
+    if (
+        type(document["featured_series"]) is not dict
+        or document["featured_series"]
+        or not _contributions(document["contributions"])
+        or not _image(document["image"])
+        or type(document["rating"]) is not float
+        or not math.isfinite(document["rating"])
+        or not MIN_RATING <= document["rating"] <= MAX_RATING
+        or not _non_negative_text_match_int(value["text_match"])
+        or not _highlight(value["highlight"])
+        or not _highlights(value["highlights"])
+        or not _text_match_info(value["text_match_info"])
+    ):
+        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover search hit invalid")
+    title = document["title"]
+    if not _bounded_string(title, require_value=True, require_trimmed=True):
+        return _failure(FailureKind.INVALID_RESPONSE, "Hardcover title result invalid")
+    return title
+
+
+def _contributions(value: object) -> bool:
+    if type(value) is not list:
+        return False
+    for item in value:
+        if type(item) is not dict or set(item) not in (
+            {"author"},
+            {"author", "contribution"},
+        ):
+            return False
+        if "contribution" in item and not _bounded_string(item["contribution"]):
+            return False
+        author = item["author"]
+        if type(author) is not dict or set(author) != {"id", "image", "name", "slug"}:
+            return False
+        if (
+            not _non_negative_int(author["id"])
+            or type(author["image"]) is not dict
+            or author["image"]
+            or not _bounded_string(author["name"], require_value=True)
+            or not _bounded_string(author["slug"], require_value=True)
+        ):
+            return False
+    return True
+
+
+def _image(value: object) -> bool:
+    return (
+        type(value) is dict
+        and set(value) == _IMAGE_KEYS
+        and all(_bounded_string(value[key]) for key in ("color", "color_name", "url"))
+        and all(_non_negative_int(value[key]) for key in ("height", "id", "width"))
+    )
+
+
+def _highlight(value: object) -> bool:
+    if type(value) is not dict or set(value) != {"title"}:
+        return False
+    title = value["title"]
+    return (
+        type(title) is dict
+        and set(title) == {"matched_tokens", "snippet"}
+        and _string_list(title["matched_tokens"])
+        and _bounded_string(title["snippet"])
+    )
+
+
+def _highlights(value: object) -> bool:
+    if type(value) is not list or len(value) != 1:
+        return False
+    item = value[0]
+    return (
+        type(item) is dict
+        and set(item) == {"field", "matched_tokens", "snippet"}
+        and _bounded_string(item["field"], require_value=True)
+        and _string_list(item["matched_tokens"])
+        and _bounded_string(item["snippet"])
+    )
+
+
+def _text_match_info(value: object) -> bool:
+    if type(value) is not dict or set(value) != _TEXT_MATCH_INFO_KEYS:
+        return False
+    return (
+        _bounded_string(value["best_field_score"], require_value=True)
+        and _bounded_string(value["score"], require_value=True)
+        and all(
+            _non_negative_int(value[key])
+            for key in (
+                "best_field_weight",
+                "fields_matched",
+                "num_tokens_dropped",
+                "tokens_matched",
+                "typo_prefix_score",
+            )
+        )
+    )
+
+
+def _string_list(value: object) -> bool:
+    return type(value) is list and all(_bounded_string(item) for item in value)
+
+
+def _non_negative_int(value: object) -> bool:
+    return type(value) is int and 0 <= value <= MAX_INTEGER
+
+
+def _non_negative_text_match_int(value: object) -> bool:
+    return type(value) is int and 0 <= value <= MAX_TEXT_MATCH_INTEGER
+
+
+def _response_size_allowed(size: object) -> bool:
+    return type(size) is int and 0 <= size <= MAX_RESPONSE_BYTES
+
+
+def _json_within_bounds(value: object) -> bool:
+    nodes, depth, object_keys, list_items, string_length = _json_shape(value)
+    return (
+        nodes <= MAX_JSON_NODES
+        and depth <= MAX_JSON_DEPTH
+        and object_keys <= MAX_OBJECT_KEYS
+        and list_items <= MAX_LIST_ITEMS
+        and string_length <= MAX_STRING_LENGTH
+    )
+
+
+def _bounded_string(
+    value: object, *, require_value: bool = False, require_trimmed: bool = False
+) -> bool:
+    if type(value) is not str or len(value) > MAX_STRING_LENGTH:
+        return False
+    if require_value and not value:
+        return False
+    if require_trimmed and value.strip() != value:
+        return False
+    if "\x00" in value or any(ord(character) < 32 for character in value):
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeError:
+        return False
+    return True
+
+
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     value: dict[str, object] = {}
     for key, item in pairs:
@@ -596,24 +877,48 @@ def _reject_json_constant(_value: str) -> object:
     raise ValueError("non-finite JSON value")
 
 
-def _json_shape(value: object, depth: int = 1) -> tuple[int, int]:
+def _json_shape(value: object, depth: int = 1) -> tuple[int, int, int, int, int]:
     if isinstance(value, Mapping):
         nodes = 1
         maximum = depth
+        object_keys = len(value)
+        list_items = 0
+        string_length = 0
         for item in value.values():
-            child_nodes, child_depth = _json_shape(item, depth + 1)
+            (
+                child_nodes,
+                child_depth,
+                child_object_keys,
+                child_list_items,
+                child_string_length,
+            ) = _json_shape(item, depth + 1)
             nodes += child_nodes
             maximum = max(maximum, child_depth)
-        return nodes, maximum
+            object_keys = max(object_keys, child_object_keys)
+            list_items = max(list_items, child_list_items)
+            string_length = max(string_length, child_string_length)
+        return nodes, maximum, object_keys, list_items, string_length
     if type(value) is list:
         nodes = 1
         maximum = depth
+        object_keys = 0
+        list_items = len(value)
+        string_length = 0
         for item in value:
-            child_nodes, child_depth = _json_shape(item, depth + 1)
+            (
+                child_nodes,
+                child_depth,
+                child_object_keys,
+                child_list_items,
+                child_string_length,
+            ) = _json_shape(item, depth + 1)
             nodes += child_nodes
             maximum = max(maximum, child_depth)
-        return nodes, maximum
-    return 1, depth
+            object_keys = max(object_keys, child_object_keys)
+            list_items = max(list_items, child_list_items)
+            string_length = max(string_length, child_string_length)
+        return nodes, maximum, object_keys, list_items, string_length
+    return 1, depth, 0, 0, len(value) if type(value) is str else 0
 
 
 def _failure(kind: FailureKind, summary: str) -> PortFailure:

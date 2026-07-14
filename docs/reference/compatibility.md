@@ -95,14 +95,16 @@ endpoint and read-only query. Only bounded canonical title evidence and minimal
 provenance are compatibility data. Raw provider traffic, credentials, secret
 paths, upstream identifiers, and caches are not retained artifacts.
 
-Ordinary CI is fake-based and credential-free. That qualification demonstrates
-the PoC command and adapter seam, not supported live Hardcover compatibility.
-An opt-in bounded read-only real-endpoint smoke test with a dedicated
-non-production account is optional for F09b and required before any later live
-compatibility claim. The frozen upstream and parser contract is
-[F09b Hardcover proof-of-concept contract](hardcover-f09b-contract.md). The
-preview adds no AI, human decision, cover, rich-field, multi-provider, or apply
-compatibility promise.
+Ordinary CI is fake-based and credential-free against the sanitized live key,
+type, count, and resource shape. F09b completion additionally requires the
+exact installed artifact to pass a bounded read-only run against the fixed
+endpoint with a dedicated non-production account and disposable state. Only a
+redacted aggregate result is retained. This proves the narrow F09b request,
+authentication, parser, and canonical title seam described by the
+[F09b Hardcover proof-of-concept contract](hardcover-f09b-contract.md). It does
+not provide F09f's configured production operation, durable provider work,
+freshness/reuse, retry/restart, or live-target binding, and adds no AI, human
+decision, cover, rich-field, multi-provider, or apply compatibility promise.
 
 ## Audiobookshelf support
 
