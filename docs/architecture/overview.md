@@ -149,11 +149,11 @@ bibliographic truth. Providerless report-only operation remains a planned valid
 flow: inventory, local evidence, deterministic no-op and rejection handling,
 bounded proposals, and human review do not require a catalogue provider.
 
-The narrower 0.2 title preview uses the same application-owned seams but
-requires three current, joinable inputs: the current Audiobookshelf title,
-exactly one eligible F06 `TITLE` whose `normalized_value` is non-empty, bounded,
-and usable rather than an unsafe, oversized, or redaction marker, and one
-candidate from a provider-neutral port. F09a supplies a deterministic fake;
+The narrower 0.2 title preview uses the same application-owned seams but F09a
+constructs all three inputs inside a closed synthetic harness: an in-memory
+Audiobookshelf-shaped title snapshot, exactly one eligible `TITLE` from the real
+F06 child reading an application-generated EPUB, and one candidate from a
+provider-neutral port. F09a supplies a deterministic fake;
 F09b later substitutes disabled-by-default bounded Hardcover. Agreement creates
 at most one `needs_review` proposal whose value is the exact F06
 `normalized_value`; F06 `raw_value` remains evidence/provenance and provider
@@ -168,6 +168,13 @@ immutable proposal set containing exactly one current `needs_review` title
 proposal as one undecided case; no other proposal or set creates a case. AI,
 human decisions, covers, rich fields, multi-provider fusion, and writes remain
 outside the preview.
+
+The harness persists only identity-bound `synthetic_preview` sets with derived
+false production applicability and a separate synthetic current pointer. It
+never adds rows to inventory history or current inventory pointers, and it has
+no review or apply adapter. Connecting a configured media item and current live
+snapshot to F06 is a later application use case, not an implicit adapter hidden
+inside F09a.
 
 ### Apply
 

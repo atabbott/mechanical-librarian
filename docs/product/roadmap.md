@@ -40,9 +40,11 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
 ## M2: Title-curation technical preview (0.2.0)
 
 - Use completed F06 package evidence without reopening it.
-- F09a joins the current Audiobookshelf title, one eligible title from a current
-  successful unambiguous applicable F06 `TITLE` observation, and one
-  deterministic fake candidate through a provider-neutral port.
+- F09a proves that join only inside a closed synthetic harness: it generates a
+  licence-safe EPUB, runs the real F06 child, creates an in-memory
+  Audiobookshelf-shaped snapshot, and invokes one deterministic fake through a
+  provider-neutral port. It accepts no live target, media, title, or provider
+  input.
 - Create one immutable versioned proposal set containing at most one
   `needs_review` title proposal. The eligible F06 `normalized_value` is
   non-empty, bounded, and usable rather than an unsafe, oversized, or redaction
@@ -55,9 +57,10 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
   current-equivalence, disagreement, and other non-proposal paths as exact typed
   no-proposal results.
 - F09b substitutes a disabled-by-default bounded Hardcover adapter behind the
-  same port.
+  same port, but cannot reinterpret F09a's `synthetic_preview` history as live
+  or production-applicable evidence.
 - F10 persists, restarts, inspects, replays, and supersedes one current
-  undecided case only from one current immutable proposal set containing
+  visibly synthetic undecided case only from one current immutable proposal set containing
   exactly one current `needs_review` title proposal; no other proposal or set
   creates a case.
 - Keep AI, human decisions, approval, covers, rich fields, multi-provider
@@ -65,6 +68,11 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
 
 The active sequence is completed F06 #142 plus #221, then F09a #145/#222,
 F09b #204/#223, and F10 #146/#224.
+
+Binding a production F06 report to a current Audiobookshelf snapshot, resolving
+configured media, and defining live freshness/recovery semantics are deferred.
+They require an explicit later slice; they are not hidden acceptance criteria
+for this proof of concept.
 
 Exit: one deterministic, bounded, explainable title proposal path survives
 restart through one undecided case without gaining decision or write authority.
