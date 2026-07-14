@@ -173,8 +173,10 @@ Exit criteria:
 
 The initial proof deliberately narrows WP5 to a provider-neutral title path.
 Completed F06 plus planning ticket #221 leads to F09a #145/#222, then F09b
-#204/#223, then F10 #146/#224. F09a combines the current Audiobookshelf title,
-one current successful unambiguous applicable F06 `TITLE` whose
+#204/#223, then F10 #146/#224. F09a combines a closed in-memory
+Audiobookshelf-shaped synthetic snapshot, one current successful unambiguous
+applicable `TITLE` produced by the real F06 child from an application-generated
+EPUB, and a deterministic fake provider candidate. The F06 title's
 `normalized_value` is non-empty, bounded, and usable rather than an unsafe,
 oversized, or redaction marker, and one deterministic fake candidate. A current
 title field that is present and loaded with an empty value is eligible for fill
@@ -195,6 +197,15 @@ F08 #144 remain intact as planned 1.0 work and do not block the 0.2 preview.
 The broader #16, #46, #50, #68-#73, and #209 program and F11 #147/#74-#80
 also remain 1.0 scope. The WP5 and WP6 contracts below describe that long-term
 architecture; they are not 0.2 exit criteria.
+
+Every F09a set carries the closed `synthetic_preview` mode in its identity and
+derives `production_applicable=false`; it cannot enter production review or
+apply authority. The command accepts no configuration, live IDs, operator
+titles, media references, provider payloads, endpoints, or credentials. A live
+F06-to-current-Audiobookshelf binding, configured-media resolution, and their
+freshness and recovery semantics are deliberately deferred to explicit future
+work. F09b and F10 may continue the preview only without erasing that synthetic
+lineage or granting it production applicability.
 
 ## WP5: candidate and policy engine
 

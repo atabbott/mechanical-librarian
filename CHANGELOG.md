@@ -7,6 +7,17 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added `synthetic-title-proposal-report`, a credential-free F09a technical
+  preview that runs a closed scenario through a licence-safe generated EPUB,
+  the real descriptor-bound F06 child, an in-memory Audiobookshelf-shaped
+  snapshot, and a deterministic fake behind the provider-neutral metadata
+  port. Every valid scenario atomically persists one immutable schema-6
+  `synthetic_preview` proposal set, including exact typed zero-proposal results,
+  with duplicate-safe restart replay and same-lineage supersession. Production
+  applicability is structurally false; the command has no live target/media,
+  configuration, network, credential, AI, review, approval, apply, or write
+  surface. The live F06/current-snapshot binding remains explicitly deferred.
+
 - Added `epub-package-report`: a deterministic cited EPUB 2/3 package-evidence
   report with bounded ZIP64/Deflate and Expat processing, no-follow read-only
   source access, a transient descriptor-bound child, source-stability checks,

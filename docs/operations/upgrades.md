@@ -91,6 +91,20 @@ v2 tables or edit `schema_migrations`. After upgrade or restore, run
 `state-check`, a v1 synthetic inventory readback, and `inventory-inspect` before
 resuming normal operation.
 
+The F09a proposal-preview migration is additive and forward-only from genuine
+schema 5. Migration 6 adds immutable `synthetic_preview` title-proposal history,
+a separate synthetic current pointer, append-only history triggers, and a
+lineage/revision index. It does not transform or update inventory, poll, job,
+workflow, or audit rows. Migration and publication are independently atomic;
+failure at history insertion, pointer advancement, or readback leaves no
+partial proposal set. A clean retry applies migration 6 once and identical
+scenario replay reuses history. Downgrade requires stopping the service and
+restoring a verified pre-F09a schema-5 state copy; an older binary must not open
+schema-6 state, and operators must not delete preview tables or edit
+`schema_migrations`. After upgrade or restore, run `state-check` and one
+[`synthetic-title-proposal-report`](synthetic-title-proposal-report.md) scenario
+against non-production state before resuming normal operation.
+
 ## Verification
 
 After upgrade:

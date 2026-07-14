@@ -69,7 +69,12 @@ provider secret, and permits no provider egress.
 ### 0.2 title technical-preview boundary
 
 The 0.2 path remains report-only. F09a supplies a deterministic fake candidate
-through an application-owned provider-neutral port. F09b implements the same
+through an application-owned provider-neutral port and obtains its other inputs
+only from a licence-safe generated EPUB passed by descriptor to the real F06
+child and an in-memory Audiobookshelf-shaped synthetic snapshot. Its CLI parser
+accepts only a database path, a closed scenario, and an output format before
+state is opened. It accepts no configuration, target/media identifiers, title
+values, paths, provider payloads, endpoints, or credentials. F09b implements the same
 port with a disabled-by-default Hardcover adapter. Disabled composition creates
 no adapter or network client, resolves no provider secret, performs no DNS
 lookup, and permits no provider egress.
@@ -96,6 +101,17 @@ bodies, upstream identifiers, and caches are never persisted. Provider failure
 or disagreement cannot erase valid F06 evidence, become negative
 bibliographic evidence, or grant proposal, decision, review, or write
 authority.
+
+`synthetic_preview` is a closed identity-bearing execution mode, not an
+operator flag. Persisted proposal sets and their current pointers remain in
+dedicated synthetic tables; production applicability is always derived false
+and has no independently writable column. Unknown modes, altered canonical
+sets, dangling pointers, non-exact predecessors, cross-lineage supersession,
+and changed identity headers fail closed without repair. Generated EPUB bytes,
+paths, and descriptors are never persisted, and temporary files plus child
+process pipes are released on every success, failure, cancellation, and
+exception path. The live F06/current-snapshot join and configured-media
+resolution remain deferred and cannot be inferred from this preview.
 
 The current target snapshot, current title, successful F06 report, provider
 outcome, comparison policy, and proposal set are bound explicitly. An eligible

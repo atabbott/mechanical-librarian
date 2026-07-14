@@ -68,9 +68,9 @@ human or AI decision, approval, production write, or destructive authority.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
-| F09a Provider-neutral title proposal | #145 | The current Audiobookshelf title, exactly one eligible title from a current successful unambiguous applicable F06 `TITLE` observation, and one deterministic fake candidate supplied through an application-owned provider-neutral port produce one immutable versioned title proposal set containing at most one `needs_review` proposal. The F06 `normalized_value` must be non-empty, bounded, and usable rather than an unsafe, oversized, or redaction marker; selector-less titles remain valid. Agreement creates a proposal only when the current title field is present and loaded with an empty value or the current title is materially different. Its value is the exact F06 `normalized_value`; F06 `raw_value` remains evidence/provenance and provider evidence only corroborates. A missing, unloaded, or unavailable current title, current equivalence, disagreement, an empty or unusable F06/provider title, or another failed, unsupported, disabled, no-match, stale, duplicate, or unjoinable input produces an exact typed no-proposal result. | #222 | `slice/f09a-title-proposal` |
+| F09a Provider-neutral title proposal | #145 | `synthetic-title-proposal-report` runs one of a closed set of generated, licence-safe scenarios through the real F06 EPUB child, an in-memory Audiobookshelf-shaped synthetic snapshot, and a deterministic fake behind the provider-neutral port. It persists one immutable `synthetic_preview` proposal set for every valid scenario, including typed zero-proposal results, and demonstrates replay plus same-lineage supersession. The mode is identity-bearing and structurally derives `production_applicable=false`; no live target, configured media, credential, network, review, approval, apply, or write surface is accepted or constructed. | #222 | `slice/f09a-title-proposal` |
 | F09b Bounded Hardcover title evidence | #204 | A disabled-by-default bounded Hardcover adapter replaces the fake behind the same provider-neutral port. It uses one fixed read-only query at one fixed HTTPS endpoint through a dedicated bounded client, keeps its account-capable token isolated and redacted, and retains only bounded canonical title evidence plus minimal provenance. It never caches raw provider traffic or turns provider failure or disagreement into negative local evidence. | #223 | `slice/f09b-hardcover-title` |
-| F10 Persistent title review case | #146 | One current immutable proposal set containing exactly one current `needs_review` title proposal becomes one durable undecided review case; no other proposal or set creates a case. Persistence, restart, identical replay, inspection, immutable history, and changed-input supersession are demonstrable; zero-proposal results create no empty case. | #224 | `slice/f10-title-review-case` |
+| F10 Persistent title review case | #146 | One current immutable proposal set containing exactly one current `needs_review` title proposal may become one durable undecided review case only while retaining the visibly synthetic, apply-ineligible preview lineage. No other proposal or set creates a case. Persistence, restart, identical replay, inspection, immutable history, and changed-input supersession are demonstrable; zero-proposal results create no empty case. | #224 | `slice/f10-title-review-case` |
 
 The only active delivery chain is:
 
@@ -91,6 +91,18 @@ results, bind the current inputs and contract versions, resolve identical replay
 without duplication, and are superseded rather than rewritten when inputs
 change. The implementation need not introduce speculative general-purpose slot
 identity or migration machinery beyond this outcome.
+
+F09a is intentionally a technical-preview harness, not a live inventory join.
+Its command accepts only a durable database path, one closed scenario name, and
+`json` or `text` output. The scenario manifest binds generator, snapshot, file,
+F06, fake-provider, Unicode comparison, policy, fixture, proposal, lineage, and
+mode versions. It does not accept configuration, live identifiers, titles,
+paths, media, provider payloads, endpoints, or credentials. Connecting a real
+F06 report to a current Audiobookshelf snapshot is deferred until a later slice
+defines the live join, freshness, file-identity, and recovery contract. F09b or
+F10 may consume F09a state only by preserving the same `synthetic_preview`
+identity and false production applicability; neither may reinterpret it as
+production evidence.
 
 | Current/F06/provider condition | Proposal-set result | F10 case |
 | --- | --- | --- |

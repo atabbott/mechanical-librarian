@@ -49,8 +49,9 @@ capable lanes.
 
 ## 0.2 title technical-preview contract
 
-The preview binds one current Audiobookshelf title, exactly one current
-successful unambiguous applicable F06 `TITLE` observation whose
+F09a binds one in-memory Audiobookshelf-shaped synthetic title snapshot,
+exactly one current successful unambiguous applicable F06 `TITLE` observation
+from the real child reading a generated EPUB whose
 `normalized_value` is non-empty, bounded, and usable rather than an unsafe,
 oversized, or redaction marker, and one provider-neutral title candidate to the
 same target and snapshot. Selector-less F06 titles are valid. Multiple
@@ -79,12 +80,15 @@ or unjoinable input its exact typed no-proposal result. Provider failure never
 erases local evidence or
 becomes negative bibliographic evidence. Identical inputs replay without
 duplication; changed inputs produce a superseding set without rewriting
-history. F10 accepts only one current immutable proposal set containing exactly
+history. F10 accepts only one current immutable synthetic-preview proposal set containing exactly
 one current `needs_review` title proposal; no other proposal or set creates a
 case.
 
 F09a supplies a deterministic fake candidate through the application-owned
-provider port. F09b implements the same port with disabled-by-default bounded
+provider port. The closed `synthetic_preview` mode and derived false production
+applicability are part of compatibility identity. No live snapshot/media join,
+configuration, production review, or apply compatibility is claimed; that
+binding is deferred. F09b implements the same port with disabled-by-default bounded
 Hardcover at fixed HTTPS endpoint `https://api.hardcover.app/v1/graphql` and a
 fixed read-only query. Only bounded canonical title evidence and minimal
 provenance are compatibility data. Raw provider requests, responses, headers,

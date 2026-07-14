@@ -18,6 +18,36 @@ CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
+    def test_f09a_migration_is_additive_from_genuine_version_five_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            with patch.object(sqlite, "MIGRATIONS", MIGRATIONS[:5]):
+                self.assertEqual(migrate(connection), 5)
+            connection.execute(
+                "INSERT INTO instance_metadata(key, value) VALUES ('f09a-sentinel', 'preserved')"
+            )
+
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT value FROM instance_metadata WHERE key = 'f09a-sentinel'"
+                ).fetchone(),
+                ("preserved",),
+            )
+            objects = {
+                (kind, name)
+                for kind, name in connection.execute(
+                    "SELECT type, name FROM sqlite_master WHERE name LIKE '%synthetic_title_proposal%'"
+                )
+            }
+            self.assertIn(("table", "synthetic_title_proposal_sets"), objects)
+            self.assertIn(("table", "current_synthetic_title_proposals"), objects)
+            self.assertIn(("trigger", "synthetic_title_proposal_sets_no_update"), objects)
+            self.assertIn(("trigger", "synthetic_title_proposal_sets_no_delete"), objects)
+            self.assertIn(("trigger", "current_synthetic_title_proposals_no_delete"), objects)
+
     def test_integrity_verification_requires_one_exact_ok_row(self) -> None:
         connection = Mock()
         connection.execute.return_value.fetchall.return_value = [("ok",), ("extra",)]
