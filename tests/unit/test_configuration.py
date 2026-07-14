@@ -201,7 +201,7 @@ class ConfigurationTests(unittest.TestCase):
 
         limit_cases = (
             ("parser_concurrency", 2, (R,)),
-            ("parser_timeout_seconds", 120, (R, E)),
+            ("parser_timeout_seconds", 120, (R, RX, E)),
             ("temporary_bytes", 2_147_483_648, (R, E)),
         )
         for key, value, impacts in limit_cases:
@@ -215,7 +215,7 @@ class ConfigurationTests(unittest.TestCase):
 
         evidence_cases = (
             ("enabled_formats", ["epub"], (R, X, E, C, V)),
-            ("maximum_document_bytes", 2_097_152, (R, E)),
+            ("maximum_document_bytes", 2_097_152, (R, RX, E)),
             ("maximum_text_characters", 2_048, (R, E)),
         )
         for key, value, impacts in evidence_cases:
@@ -295,7 +295,7 @@ class ConfigurationTests(unittest.TestCase):
                 "notifications",
             ),
         )
-        self.assertEqual(plan.impacts, (R, I, X, E, C, V, N))
+        self.assertEqual(plan.impacts, (R, I, X, RX, E, C, V, N))
         self.assertEqual(plan.changed_sections, ("connections", "limits", "notifications"))
 
     def test_set_like_connection_values_are_canonical_noops(self) -> None:

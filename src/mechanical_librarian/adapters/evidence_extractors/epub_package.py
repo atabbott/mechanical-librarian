@@ -89,11 +89,21 @@ _DOI = re.compile(r"^(?:(?:doi:)|(?:https?://doi\.org/))?(10\.\d{4,9}/\S+)$", re
 _ASIN = re.compile(r"^(?:ASIN:)?(B0[A-Z0-9]{8})$", re.I)
 _UNSAFE_MARKER = "unsafe-source-text-sha256:"
 _OVERSIZED_MARKER = "oversized-source-text-sha256:"
+_EPUB2_SPINE_MEDIA_TYPES = {
+    "application/xhtml+xml",
+    "application/x-dtbook+xml",
+    "text/x-oeb1-document",
+}
+_EPUB3_SPINE_MEDIA_TYPES = {"application/xhtml+xml", "image/svg+xml"}
 
 
 class _Rejected(Exception):
     def __init__(self, outcome: LocalEvidenceOutcome) -> None:
         self.outcome = outcome
+
+
+class _InvalidReferenceSyntax(Exception):
+    """An optional package reference is syntactically invalid and can be omitted."""
 
 
 def _check_request(request: LocalEvidenceRequest) -> None:
@@ -635,11 +645,11 @@ def _percent_decode_path(reference: str) -> str:
         character = reference[index]
         if character == "%":
             if index + 2 >= len(reference):
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                raise _InvalidReferenceSyntax
             try:
                 value = int(reference[index + 1 : index + 3], 16)
             except ValueError:
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED) from None
+                raise _InvalidReferenceSyntax from None
             if value in {0, ord("/"), ord("\\")}:
                 raise _Rejected(LocalEvidenceOutcome.MALFORMED)
             output.append(value)
@@ -650,24 +660,23 @@ def _percent_decode_path(reference: str) -> str:
     try:
         decoded = output.decode("utf-8", "strict")
     except UnicodeError:
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED) from None
+        raise _InvalidReferenceSyntax from None
     return unicodedata.normalize("NFC", decoded)
 
 
 def _normalize_member_reference(base: str, reference: str) -> str:
     first_segment = reference.split("/", 1)[0]
-    if (
-        not reference
-        or reference.startswith(("/", "\\"))
-        or "\\" in reference
-        or "?" in reference
-        or "#" in reference
-        or ":" in first_segment
-    ):
+    if not reference or "?" in reference or "#" in reference:
+        raise _InvalidReferenceSyntax
+    if reference.startswith(("/", "\\")) or "\\" in reference:
         raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+    if ":" in first_segment:
+        if first_segment.casefold().startswith("file:"):
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        raise _InvalidReferenceSyntax
     decoded_reference = _percent_decode_path(reference)
     if decoded_reference.endswith("/"):
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        raise _InvalidReferenceSyntax
     joined = posixpath.normpath(posixpath.join(posixpath.dirname(base), decoded_reference))
     if joined.startswith("../") or joined in {".", ".."}:
         raise _Rejected(LocalEvidenceOutcome.MALFORMED)
@@ -678,7 +687,10 @@ def _normalize_member_reference(base: str, reference: str) -> str:
 
 
 def _resolve_member(base: str, reference: str, entries: dict[str, _Entry]) -> str:
-    joined = _normalize_member_reference(base, reference)
+    try:
+        joined = _normalize_member_reference(base, reference)
+    except _InvalidReferenceSyntax:
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED) from None
     if joined not in entries:
         raise _Rejected(LocalEvidenceOutcome.MALFORMED)
     return joined
@@ -689,13 +701,14 @@ def _declared_resource_identity(
 ) -> tuple[str, str | None]:
     if reference.startswith(("https://", "http://")):
         parts = reference.split("/", 3)
-        if (
-            len(reference) > 1_024
-            or len(parts) < 3
-            or not parts[2]
-            or any(ord(character) < 0x20 or character == "\\" for character in reference)
-            or "@" in parts[2]
-        ):
+        if len(reference) > 1_024:
+            raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+        if len(parts) < 3 or not parts[2]:
+            raise _InvalidReferenceSyntax
+        if any(
+            ord(character) < 0x20 or character == "\\"
+            for character in reference
+        ) or "@" in parts[2]:
             raise _Rejected(LocalEvidenceOutcome.MALFORMED)
         return hashlib.sha256(("remote\x00" + reference).encode("utf-8")).hexdigest(), None
     resolved = _normalize_member_reference(base, reference)
@@ -1589,7 +1602,13 @@ def _package_report(
                 )
             )
             continue
-        resource_identity, resolved = _declared_resource_identity(package_name, href, entries)
+        try:
+            resource_identity, resolved = _declared_resource_identity(
+                package_name, href, entries
+            )
+        except _InvalidReferenceSyntax:
+            warnings.append(LocalEvidenceWarning("invalid_manifest_item"))
+            continue
         if resolved is not None and resolved not in entries:
             warnings.append(
                 LocalEvidenceWarning(
@@ -1702,12 +1721,32 @@ def _package_report(
             current = manifest_fallbacks[current]
     if version == "3.0" and nav_count != 1:
         warnings.append(LocalEvidenceWarning("invalid_navigation_declaration"))
+
+    spine_media_types = (
+        _EPUB3_SPINE_MEDIA_TYPES if version == "3.0" else _EPUB2_SPINE_MEDIA_TYPES
+    )
+
+    def has_compatible_spine_target(identifier: str) -> bool:
+        visited: set[str] = set()
+        current = identifier
+        while current not in visited:
+            visited.add(current)
+            if current not in local_manifest_ids:
+                return False
+            if manifest_media_types.get(current) in spine_media_types:
+                return True
+            fallback = manifest_fallbacks.get(current)
+            if fallback is None:
+                return False
+            current = fallback
+        return False
+
     for itemref in spine.children:
         if itemref.name != f"{{{_OPF_NS}}}itemref":
             warnings.append(LocalEvidenceWarning("invalid_spine_item"))
             continue
         idref = _attribute(itemref, "idref")
-        if not idref or idref not in local_manifest_ids:
+        if not idref or not has_compatible_spine_target(idref):
             warnings.append(LocalEvidenceWarning("invalid_spine_item"))
             continue
         declarations.append(
@@ -1749,11 +1788,15 @@ def _package_report(
                     if not clean_href:
                         valid_tours = False
                         continue
-                    resource_identity, resolved = _declared_resource_identity(
-                        package_name,
-                        clean_href,
-                        entries,
-                    )
+                    try:
+                        resource_identity, resolved = _declared_resource_identity(
+                            package_name,
+                            clean_href,
+                            entries,
+                        )
+                    except _InvalidReferenceSyntax:
+                        valid_tours = False
+                        continue
                     valid_tours = valid_tours and (
                         (resolved is None or resolved in entries)
                         and resource_identity in manifest_resources
@@ -1778,9 +1821,13 @@ def _package_report(
             if not clean_href:
                 warnings.append(LocalEvidenceWarning("invalid_guide_reference"))
                 continue
-            resource_identity, resolved = _declared_resource_identity(
-                package_name, clean_href, entries
-            )
+            try:
+                resource_identity, resolved = _declared_resource_identity(
+                    package_name, clean_href, entries
+                )
+            except _InvalidReferenceSyntax:
+                warnings.append(LocalEvidenceWarning("invalid_guide_reference"))
+                continue
             reference_type = _attribute(reference, "type")
             if (
                 not reference_type
@@ -2101,6 +2148,8 @@ class EpubPackageExtractor:
                         encryption_declarations.append(
                             (normalized_uri, reference)
                         )
+                if package_name in encryption_names:
+                    raise _Rejected(LocalEvidenceOutcome.ENCRYPTED)
                 package_bytes = _member_bytes(request, archive, entries, package_name, request.limits.opf_package_bytes)
                 package_root, package_usage = _parse_xml(package_bytes, request.limits, request)
             usage = LocalEvidenceUsage(

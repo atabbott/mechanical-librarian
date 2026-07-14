@@ -83,10 +83,12 @@ re-evaluation, notification reconfiguration, and backup-readiness revalidation.
 | `connections.capability_overrides` | restart, inventory reconciliation, evidence, candidate, and review re-evaluation |
 | `media_mounts.name`, `.library_type`, `.container_path`, or `.service_path` | restart, inventory reconciliation, evidence invalidation, candidate and review re-evaluation |
 | `limits.parser_concurrency` | restart |
-| `limits.parser_timeout_seconds` or `.temporary_bytes` | restart and evidence re-evaluation |
+| `limits.parser_timeout_seconds` | restart, EPUB package evidence re-extraction, and evidence re-evaluation |
+| `limits.temporary_bytes` | restart and evidence re-evaluation |
 | Any `inventory` field | restart and inventory reconciliation |
 | `evidence.enabled_formats` | restart, evidence invalidation and re-evaluation, candidate and review re-evaluation |
-| `evidence.maximum_document_bytes` or `.maximum_text_characters` | restart and evidence re-evaluation |
+| `evidence.maximum_document_bytes` | restart, EPUB package evidence re-extraction, and evidence re-evaluation |
+| `evidence.maximum_text_characters` | restart and evidence re-evaluation |
 | Any `evidence.epub_package` numeric field | restart and EPUB package evidence re-extraction |
 | `providers` | restart, candidate and review re-evaluation |
 | `reviewers` | restart and review re-evaluation |

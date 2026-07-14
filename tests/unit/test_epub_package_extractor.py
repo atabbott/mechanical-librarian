@@ -426,6 +426,101 @@ class EpubPackageExtractorTests(unittest.TestCase):
             {item.code for item in fragment_report.warnings},
         )
 
+    def test_invalid_optional_resource_syntax_is_warned_and_omitted(self) -> None:
+        for href in (b"a:b", b"chapter.xhtml?edition=1", b"chapter%ZZ.xhtml"):
+            with self.subTest(kind="manifest", href=href):
+                package = EPUB3_PACKAGE.replace(
+                    b'href="chapter.xhtml"', b'href="' + href + b'"', 1
+                )
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertTrue(
+                    {"invalid_manifest_item", "invalid_spine_item"}
+                    <= {item.code for item in report.warnings}
+                )
+
+            with self.subTest(kind="guide", href=href):
+                package = EPUB2_PACKAGE.replace(
+                    b'href="chapter.xhtml#start"', b'href="' + href + b'"', 1
+                )
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(version=2, package=package))
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(
+                    "invalid_guide_reference",
+                    {item.code for item in report.warnings},
+                )
+
+        tours = b'''<tours>
+    <tour title="Synthetic route">
+      <site title="Synthetic stop" href="a:b"/>
+    </tour>
+  </tours>
+  '''
+        toured = EPUB2_PACKAGE.replace(b"  <guide>", b"  " + tours + b"<guide>")
+        report = EpubPackageExtractor().extract(
+            request(epub_bytes(version=2, package=toured))
+        )
+        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn(
+            "invalid_deprecated_tours", {item.code for item in report.warnings}
+        )
+
+    def test_spine_requires_compatible_content_or_local_fallback(self) -> None:
+        incompatible_packages = (
+            EPUB3_PACKAGE.replace(
+                b'<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>',
+                b'<item id="chapter" href="chapter.xhtml" media-type="image/jpeg"/>',
+            ),
+            EPUB2_PACKAGE.replace(b'idref="chapter"', b'idref="ncx"'),
+        )
+        for package in incompatible_packages:
+            with self.subTest(package=hashlib.sha256(package).hexdigest()):
+                report = EpubPackageExtractor().extract(
+                    request(
+                        epub_bytes(
+                            version=2 if b'idref="ncx"' in package else 3,
+                            package=package,
+                        )
+                    )
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(
+                    "invalid_spine_item", {item.code for item in report.warnings}
+                )
+                self.assertFalse(
+                    any(
+                        item.kind is DeclarationKind.SPINE_ITEM
+                        for item in report.declarations
+                    )
+                )
+
+        fallback_package = EPUB3_PACKAGE.replace(
+            b'<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>',
+            b'<item id="chapter" href="chapter.xhtml" media-type="application/pdf" fallback="chapter-fallback"/>'
+            b'<item id="chapter-fallback" href="fallback.xhtml" media-type="application/xhtml+xml"/>',
+        )
+        fallback_report = EpubPackageExtractor().extract(
+            request(
+                epub_bytes(
+                    package=fallback_package,
+                    extra_entries=(
+                        ("EPUB/fallback.xhtml", b"opaque", zipfile.ZIP_STORED),
+                    ),
+                )
+            )
+        )
+        self.assertEqual(fallback_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        spine = next(
+            item
+            for item in fallback_report.declarations
+            if item.kind is DeclarationKind.SPINE_ITEM
+        )
+        self.assertEqual(spine.identifier, "chapter")
+
     def test_manifest_semantics_require_safe_local_compatible_resources(self) -> None:
         hostile_values = (
             EPUB3_PACKAGE.replace(b'id="nav"', b'id="ghp_1234567890abcdef"'),
@@ -1394,6 +1489,12 @@ class EpubPackageExtractorTests(unittest.TestCase):
             1,
         )
         self.assertEqual(required_report.outcome, LocalEvidenceOutcome.ENCRYPTED)
+        self.assertEqual(
+            EpubPackageExtractor().extract(
+                request(epub_bytes(package=b"not XML", encryption=required))
+            ).outcome,
+            LocalEvidenceOutcome.ENCRYPTED,
+        )
 
         encrypted_key = b'''<EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData><CipherValue>repository-authored-synthetic-key</CipherValue></CipherData></EncryptedKey>'''
         opaque_with_key = opaque.replace(b"<EncryptedData", encrypted_key + b"<EncryptedData")

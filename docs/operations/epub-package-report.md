@@ -132,8 +132,8 @@ The committed Linux result is
 It was measured as UID/GID `65534:65534` in the digest-pinned CPython 3.13 image
 already listed in the compatibility policy, with networking disabled, a
 read-only container root and repository mount, 512 MiB container memory and a
-64-process container ceiling. The run observed 26,452 KiB child peak RSS,
-0.190492 seconds combined child CPU, 0.309761 seconds elapsed, six child file
+64-process container ceiling. The run observed 26,712 KiB child peak RSS,
+0.20201 seconds combined child CPU, 0.32338 seconds elapsed, five child file
 descriptors, one process-group member, 24,935 output bytes, zero parent
 descriptor delta and zero surviving children. The artifact is schema-checked
 and its measurements are asserted against the child gates by the cohort tests.

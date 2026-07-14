@@ -14,11 +14,11 @@
     "python": "3.13.11"
   },
   "measured": {
-    "child_cpu_system_seconds": 0.000997,
-    "child_cpu_user_seconds": 0.189495,
-    "child_peak_descriptors": 6,
-    "child_peak_rss_kib": 26452,
-    "elapsed_seconds": 0.309761,
+    "child_cpu_system_seconds": 0.003,
+    "child_cpu_user_seconds": 0.19901,
+    "child_peak_descriptors": 5,
+    "child_peak_rss_kib": 26712,
+    "elapsed_seconds": 0.32338,
     "output_bytes": 24935,
     "parent_descriptor_delta": 0,
     "peak_process_group_members": 1,

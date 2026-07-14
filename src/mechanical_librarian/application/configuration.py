@@ -718,7 +718,7 @@ _IMPACT_MATRIX: tuple[
     (
         "limits.parser_timeout_seconds",
         _limit_projection("parser_timeout_seconds"),
-        (_R, _E),
+        (_R, _RX, _E),
     ),
     ("limits.temporary_bytes", _limit_projection("temporary_bytes"), (_R, _E)),
     ("inventory.page_size", _inventory_projection("page_size"), (_R, _I)),
@@ -775,7 +775,7 @@ _IMPACT_MATRIX: tuple[
     (
         "evidence.maximum_document_bytes",
         _evidence_projection("maximum_document_bytes"),
-        (_R, _E),
+        (_R, _RX, _E),
     ),
     (
         "evidence.maximum_text_characters",
