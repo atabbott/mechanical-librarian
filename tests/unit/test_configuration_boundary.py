@@ -92,6 +92,23 @@ class ConfigurationBoundaryTests(unittest.TestCase):
             definitions["ConnectionInput"]["properties"]["adapter"]["pattern"],
             "^[a-z][a-z0-9_-]{0,63}$",
         )
+        epub = definitions["EpubPackageInput"]["properties"]
+        self.assertEqual(
+            epub["profile"]["const"], "epub-package-limits-v1"
+        )
+        self.assertEqual(
+            epub["source_archive_bytes"],
+            {
+                "default": 67_108_864,
+                "maximum": 536_870_912,
+                "minimum": 1,
+                "title": "Source Archive Bytes",
+                "type": "integer",
+            },
+        )
+        self.assertEqual(epub["xml_depth"]["default"], 64)
+        self.assertEqual(epub["xml_depth"]["maximum"], 128)
+        self.assertEqual(len(epub), 19)
 
     def test_checked_in_synthetic_file_maps_to_immutable_secret_free_values(
         self,

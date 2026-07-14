@@ -64,6 +64,10 @@ from mechanical_librarian.domain.inventory import (
     MetadataField,
     SecretReference,
 )
+from mechanical_librarian.domain.local_evidence import (
+    LocalEvidenceReport,
+    LocalEvidenceRequest,
+)
 from mechanical_librarian.domain.security import SecretHandle, SecretScope
 
 
@@ -812,6 +816,16 @@ class EvidenceExtractor(Protocol):
     def extract(self, request: ExtractorRequest) -> PortResult[EvidenceRecord]: ...
 
 
+class LocalEvidenceExtractor(Protocol):
+    """Bounded read-only local-media evidence port.
+
+    Implementations receive no persistence, network, credential, reviewer or
+    write method through this contract.
+    """
+
+    def extract(self, request: LocalEvidenceRequest) -> LocalEvidenceReport: ...
+
+
 class ProviderFactCode(StrEnum):
     TITLE = "title"
     AUTHOR = "author"
@@ -1190,7 +1204,7 @@ __all__ = [
     "BackupReadinessReport", "BackupReadinessRequest", "BackupState", "CancellationId",
     "CancellationProbe", "Capability", "CapabilitySet", "Clock", "CompatibilityReport",
     "CompatibilityStatus", "CoverCandidate", "CoverMutation", "CoverProvider", "CurrentFieldState", "CurrentFieldStateKind", "Deadline", "EvidenceExtractor",
-    "ExpectedState", "ExtractorRequest", "FailureKind", "HealthReport", "HealthStatus",
+    "ExpectedState", "ExtractorRequest", "FailureKind", "HealthReport", "HealthStatus", "LocalEvidenceExtractor",
     "IdentifierGenerator", "JobHeartbeatRepository", "LibraryListRequest", "LibraryReadRequest",
     "LibraryConnectionDiagnostics", "LibraryConnectionDiagnosticsRequest", "LibraryConnectionFacts", "LibraryReader", "LibraryService", "MetadataCandidate", "MetadataMutation", "MetadataProvider", "Notification",
     "Notifier", "OperationContext", "OperationUsage", "Page", "PageRequest", "PortFailure", "PortResult",

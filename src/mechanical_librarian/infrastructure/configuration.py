@@ -186,6 +186,40 @@ class InventoryInput(BaseModel):
         return self
 
 
+class EpubPackageInput(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    profile: Literal["epub-package-limits-v1"] = "epub-package-limits-v1"
+    source_archive_bytes: Annotated[StrictInt, Field(ge=1, le=536_870_912)] = 67_108_864
+    archive_entries: Annotated[StrictInt, Field(ge=1, le=8_192)] = 2_048
+    compressed_bytes_per_member: Annotated[
+        StrictInt, Field(ge=1, le=536_870_912)
+    ] = 67_108_864
+    expanded_bytes_per_member: Annotated[
+        StrictInt, Field(ge=1, le=536_870_912)
+    ] = 67_108_864
+    expanded_bytes_per_archive: Annotated[
+        StrictInt, Field(ge=1, le=2_147_483_648)
+    ] = 536_870_912
+    compression_ratio_per_member: Annotated[StrictInt, Field(ge=1, le=1_000)] = 200
+    container_xml_bytes: Annotated[StrictInt, Field(ge=1, le=1_048_576)] = 65_536
+    opf_package_bytes: Annotated[StrictInt, Field(ge=1, le=16_777_216)] = 4_194_304
+    xml_nodes_per_document: Annotated[StrictInt, Field(ge=1, le=200_000)] = 50_000
+    xml_attributes_per_document: Annotated[
+        StrictInt, Field(ge=1, le=400_000)
+    ] = 100_000
+    attributes_per_element: Annotated[StrictInt, Field(ge=1, le=256)] = 64
+    xml_depth: Annotated[StrictInt, Field(ge=1, le=128)] = 64
+    decoded_xml_text_characters: Annotated[
+        StrictInt, Field(ge=1, le=4_194_304)
+    ] = 262_144
+    metadata_nodes: Annotated[StrictInt, Field(ge=1, le=2_048)] = 512
+    manifest_items: Annotated[StrictInt, Field(ge=1, le=8_192)] = 4_096
+    spine_items: Annotated[StrictInt, Field(ge=1, le=8_192)] = 4_096
+    guide_references: Annotated[StrictInt, Field(ge=1, le=512)] = 128
+    prefix_mappings: Annotated[StrictInt, Field(ge=1, le=256)] = 64
+
+
 class EvidenceInput(BaseModel):
     model_config = _MODEL_CONFIG
 
@@ -199,6 +233,7 @@ class EvidenceInput(BaseModel):
     maximum_text_characters: Annotated[StrictInt, Field(ge=1_024, le=4_194_304)] = (
         262_144
     )
+    epub_package: EpubPackageInput = EpubPackageInput()
 
 
 class PolicyInput(BaseModel):
