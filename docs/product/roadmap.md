@@ -56,9 +56,12 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
   unavailable current title, an empty or unusable F06/provider title,
   current-equivalence, disagreement, and other non-proposal paths as exact typed
   no-proposal results.
-- F09b substitutes a disabled-by-default bounded Hardcover adapter behind the
-  same port, but cannot reinterpret F09a's `synthetic_preview` history as live
-  or production-applicable evidence.
+- F09b adds `hardcover-title-proposal-report` for one fixed generated
+  `agree-empty` case. Omitting its optional secret-file reference performs no
+  secret access, DNS, or egress; it changes no `config-v1` field and cannot
+  reinterpret F09a's `synthetic_preview` history as live or
+  production-applicable evidence. Fake transport is the required qualification;
+  real-endpoint smoke is optional until a live compatibility claim is made.
 - F10 persists, restarts, inspects, replays, and supersedes one current
   visibly synthetic undecided case only from one current immutable proposal set containing
   exactly one current `needs_review` title proposal; no other proposal or set

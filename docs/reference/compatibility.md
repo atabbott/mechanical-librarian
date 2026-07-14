@@ -88,18 +88,21 @@ F09a supplies a deterministic fake candidate through the application-owned
 provider port. The closed `synthetic_preview` mode and derived false production
 applicability are part of compatibility identity. No live snapshot/media join,
 configuration, production review, or apply compatibility is claimed; that
-binding is deferred. F09b implements the same port with disabled-by-default bounded
-Hardcover at fixed HTTPS endpoint `https://api.hardcover.app/v1/graphql` and a
-fixed read-only query. Only bounded canonical title evidence and minimal
-provenance are compatibility data. Raw provider requests, responses, headers,
-tokens, request bodies, upstream identifiers, and caches are not retained
-artifacts.
+binding is deferred. F09b implements the same port for one generated
+`agree-empty` case through `hardcover-title-proposal-report`. It is disabled by
+omitting `--secret-reference`, adds no `config-v1` field, and fixes the HTTPS
+endpoint and read-only query. Only bounded canonical title evidence and minimal
+provenance are compatibility data. Raw provider traffic, credentials, secret
+paths, upstream identifiers, and caches are not retained artifacts.
 
-Ordinary CI is fake-based and credential-free. F09b completion requires one
-opt-in bounded read-only smoke/contract qualification against the fixed
-endpoint using a dedicated non-production account and token, retaining only a
-redacted aggregate result. The preview adds no AI, human decision, cover,
-rich-field, multi-provider, or apply compatibility promise.
+Ordinary CI is fake-based and credential-free. That qualification demonstrates
+the PoC command and adapter seam, not supported live Hardcover compatibility.
+An opt-in bounded read-only real-endpoint smoke test with a dedicated
+non-production account is optional for F09b and required before any later live
+compatibility claim. The frozen upstream and parser contract is
+[F09b Hardcover proof-of-concept contract](hardcover-f09b-contract.md). The
+preview adds no AI, human decision, cover, rich-field, multi-provider, or apply
+compatibility promise.
 
 ## Audiobookshelf support
 

@@ -183,8 +183,13 @@ title field that is present and loaded with an empty value is eligible for fill
 when F06 and provider corroborate, and a materially different current title
 remains eligible. A missing, unloaded, or unavailable current title, or an empty
 or unusable F06/provider title, produces an exact typed no-proposal result. F09b
-substitutes disabled-by-default bounded Hardcover behind the same
-application-owned port. F10 persists one current undecided case only from one
+adds `hardcover-title-proposal-report` for only the fixed generated
+`agree-empty` case behind the same application-owned port. Omitting its optional
+secret-file reference performs no secret access, DNS, or egress and records
+`provider_disabled`; provider and credential failures retain local evidence as
+`provider_failed`. It changes no `config-v1` field. Required qualification uses
+a fake through the same adapter seam; real-endpoint smoke is optional until a
+live compatibility claim is made. F10 persists one current undecided case only from one
 current immutable proposal set containing exactly one current `needs_review`
 title proposal; no other proposal or set creates a case.
 

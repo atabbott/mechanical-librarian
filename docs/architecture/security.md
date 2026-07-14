@@ -74,18 +74,25 @@ only from a licence-safe generated EPUB passed by descriptor to the real F06
 child and an in-memory Audiobookshelf-shaped synthetic snapshot. Its CLI parser
 accepts only a database path, a closed scenario, and an output format before
 state is opened. It accepts no configuration, target/media identifiers, title
-values, paths, provider payloads, endpoints, or credentials. F09b implements the same
-port with a disabled-by-default Hardcover adapter. Disabled composition creates
-no adapter or network client, resolves no provider secret, performs no DNS
-lookup, and permits no provider egress.
+values, paths, provider payloads, endpoints, or credentials. F09b preserves that
+mode and adds `hardcover-title-proposal-report` for only the generated
+`agree-empty` case. Omitting its optional secret-file reference creates no
+adapter or network client, resolves no secret, performs no DNS lookup, and
+permits no provider egress. It adds no `config-v1` field. A malformed reference
+fails before state access. A valid reference whose file is missing, insecure,
+unreadable, or invalid makes no request and records `provider_failed` while
+preserving local F06 evidence.
 
 The enabled adapter owns one fixed read-only GraphQL query sent only by HTTPS
 POST to `https://api.hardcover.app/v1/graphql`. The origin, path, method, and
 query are not operator-controlled. TLS validation is mandatory, redirects are
-not followed, and loopback, link-local, private, multicast, and reserved DNS
-destinations are rejected. A dedicated client has finite request, response,
-parser, deadline, retry, backoff, and one-request concurrency bounds.
-Cancellation stops further attempts.
+not followed, and loopback, link-local, private, multicast, reserved,
+unspecified, or unexpected destinations are rejected. The client connects to
+the validated IP while retaining the Hardcover hostname for TLS SNI and
+certificate verification, then rejects a peer-address mismatch. It trusts no
+environment proxy, sends no cookies, requests no compression, and has the exact
+finite bounds in the [F09b contract](../reference/hardcover-f09b-contract.md):
+one attempt, no retry or backoff, five seconds total, and concurrency one.
 
 The application sends only an allowlisted minimum title lookup projection, with
 a documented disclosure purpose for each field. It never sends target-service
@@ -134,12 +141,12 @@ duplicate, or unjoinable input creates its exact typed no-proposal result.
 Identical replay does not duplicate state, while changed inputs supersede
 current applicability without rewriting history.
 
-Ordinary CI and automated tests use fakes and no provider credential. F09b
-completion additionally requires one opt-in bounded read-only smoke/contract
-qualification against the fixed endpoint using a dedicated non-production
-account and token; only a redacted aggregate result is retained. Nothing in the
-preview invokes AI, records a human decision, handles covers or rich fields,
-fuses multiple providers, or authorizes a production write.
+Ordinary CI and automated tests use a fake through the same adapter seam and no
+provider credential. A real-endpoint smoke test with a dedicated non-production
+account is optional for F09b and required before any later supported-live-
+compatibility claim; only a redacted aggregate result may be retained. Nothing
+in the preview invokes AI, records a human decision, handles covers or rich
+fields, fuses multiple providers, or authorizes a production write.
 
 ## Primary threats and mitigations
 

@@ -232,38 +232,21 @@ Configuration allowlists query capabilities and bounds; it does not contain a
 raw target row or reusable provider request. The application builds each minimal
 bounded `ProviderQuery` from canonical allowlisted facts at execution time.
 
-### Planned F09b Hardcover configuration
+### F09b proof-of-concept boundary
 
-F09b adds one schema-declared Hardcover provider entry that is disabled by
-default. It contains only enabled state, a provider-scoped secret reference, and
-supported finite transport bounds. The adapter—not configuration—owns HTTPS
-POST to `https://api.hardcover.app/v1/graphql`, one fixed read-only query, and
-the minimum outbound title lookup allowlist with a disclosure purpose for each
-field. Operators cannot configure an endpoint, query, operation, arbitrary
-header, redirect policy, or response cache.
+F09b does not extend `config-v1`. Its separate
+`hardcover-title-proposal-report` command accepts only a database path, optional
+absolute secret-file reference, and output format. The fixed endpoint, query,
+operation, headers, transport bounds, and generated title are not configurable.
+Omitting the reference records `provider_disabled` without secret access, DNS,
+or egress. There is no hidden environment-variable, encrypted-store, provider
+registry, or generic egress configuration. Current `config-v1` continues to
+reject detailed Hardcover and provider-secret fields as unknown.
 
-Disabled composition creates no adapter or client, resolves no secret, and
-performs no DNS lookup or egress. Enabling or changing the entry requires
-restart and re-evaluation but grants no decision or write authority. The
-account-capable token remains isolated from target and reviewer credentials and
-is never logged. Permitted bounds may only tighten the supported request,
-response, parser, deadline, retry, backoff, and single-request concurrency
-profile.
-
-Until that versioned schema extension is delivered, current `config-v1`
-continues to reject detailed Hardcover and provider-secret fields as unknown.
-No hidden environment-variable shortcut is supported. Ordinary CI uses fake
-transport and no live token; the separate opt-in non-production qualification
-supplies its token only through the approved secret mechanism.
-
-Under the planned provider contract, configuration state, declared capability,
-connection availability, execution outcome, candidate count, and evidence
-assessment are orthogonal. An entry may be absent or explicitly disabled
-without creating a failed job; unsupported, unavailable, degraded, failed, and
-successful-empty are distinct typed scoped states. A provider-disabled
-configuration is valid for report-only inventory, local evidence, deterministic
-policy, bounded proposals, and human review, subject to the active sufficiency
-matrix keyed by field, media type, operation, and change class.
+The full command and transport contract is
+[documented separately](hardcover-f09b-contract.md). A future supported provider
+integration must define its own versioned structured configuration rather than
+turning this proof-of-concept CLI into an implicit schema extension.
 
 ### AI reviewers
 
