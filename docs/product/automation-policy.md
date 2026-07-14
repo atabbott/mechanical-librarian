@@ -175,9 +175,12 @@ the current assessments. It neither unions all historical adverse facts nor
 allows a strongest-row winner to erase a genuine conflict.
 
 Candidates retain generic source-adapter or provider provenance and correlation,
-but provider name is not semantic proposal identity. For the same canonical
-target, snapshot, field, normalized value, proposal schema, and policy, equal
-values collapse while retaining all distinct evidence lineage.
+but provider name is not part of provider-neutral comparison grouping. For the
+same canonical target, snapshot, field, normalized comparison value, proposal
+schema, and policy, equal values group while retaining all distinct evidence
+lineage. Immutable proposal and proposal-set versions additionally bind the
+exact retained proposed value and immutable supporting-evidence identities, so
+exact-value drift supersedes rather than replaying an earlier version.
 
 ### Identifier arbitration
 

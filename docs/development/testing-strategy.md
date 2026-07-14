@@ -162,19 +162,25 @@ breaker behavior.
 The 0.2 cohort stops at one persistent, undecided title review case and runs
 without production credentials or writes. F09a uses a deterministic fake
 provider. F09b runs the bounded Hardcover adapter against a fake transport; CI
-never uses a live provider token. Both variants exercise the same immutable,
+never uses a live provider token. That revision remains `experimental` while
+qualification is fake-transport-only. Both variants exercise the same immutable,
 versioned, provider-neutral candidate and proposal-set contracts. Each evaluated
 input combination persists one proposal-set version bound to the exact target,
-snapshot, F06 evidence, provider candidate, normalization, and policy versions,
+snapshot, exact retained F06 package-title value and immutable F06 evidence
+identity, provider candidate, normalization, and policy versions,
 including typed zero-proposal outcomes.
 
-The `title-normalization-v1` cohort uses frozen Unicode 16.0.0 tables. It proves
-the exact sequence: NFC under Unicode 16.0.0; map each maximal run of code
+The `title-normalization-v1` cohort uses the Unicode 16.0.0 definition of NFC
+and frozen, byte-exact copies of `UnicodeData.txt`,
+`DerivedNormalizationProps.txt`, `CompositionExclusions.txt`, `PropList.txt`,
+and `CaseFolding.txt`, with a recorded SHA-256 digest for each file. It runs the
+full Unicode 16.0.0 `NormalizationTest.txt` conformance data and proves the
+exact sequence: NFC under Unicode 16.0.0; map each maximal run of code
 points with `White_Space=Yes` in Unicode 16.0.0 `PropList.txt` to U+0020 and
 remove leading/trailing U+0020; apply Unicode 16.0.0 Default Case Folding status
 C/F mappings from `CaseFolding.txt`; apply NFC under Unicode 16.0.0 again; and
 compare resulting keys byte-for-byte. Golden fixtures prove implementations use
-the frozen tables rather than host-runtime Unicode data.
+the complete frozen baseline rather than host-runtime Unicode data.
 
 The cohort also proves punctuation, diacritics, subtitle separators and content,
 series/order text, words, and token order are neither stripped nor replaced.
@@ -199,6 +205,12 @@ replay resolves to the same semantic proposal-set identity and, where
 applicable, the same case identity without a duplicate. Changed or stale input
 supersedes current applicability while preserving every prior set, proposal,
 case, and typed outcome.
+
+The identity cohort includes exact-value drift that normalization deliberately
+hides: replacing retained F06 title `DUNE` with `Dune` keeps the same comparison
+key but creates a new immutable proposal-set version bound to the new exact F06
+value and evidence identity. It supersedes current applicability; it is not an
+idempotent replay of the prior proposal.
 
 F10 tests prove that only a current set containing exactly one current
 `needs_review` proposal creates one case, and that persistence, restart,
@@ -225,8 +237,20 @@ undeclared field. Fake-transport qualification covers:
   and no-match outcomes; and
 - token and authorization-header redaction plus evidence-retention tests proving
   that only bounded canonical candidate/evidence and opaque provenance are
-  inspectable, exportable, and deletable by the owner, while raw requests,
-  responses, headers, and upstream identifiers are never cached or persisted.
+  inspectable and exportable by the owner; expiry under
+  `retention.evidence_days` and owner deletion purge private retained values;
+  any referential-history tombstone is minimal and non-private; and raw
+  requests, responses, headers, and upstream identifiers are never cached or
+  persisted.
+
+Ordinary CI and the technical-preview release remain token-free. Before the
+Hardcover API revision can move from `experimental` to `tested` or `supported`,
+an opt-in release job must use a dedicated synthetic Hardcover account and
+short-lived account token to run the exact fixed read-only query against the
+frozen schema and authentication contract. The job retains only the redacted,
+aggregate qualification result; the token and provider payload never become
+fixtures or artifacts. Absence of this live credential does not block the
+experimental technical preview.
 
 The broader 1.0 report-only cohort disables every external metadata provider
 and still completes inventory, local evidence extraction, deterministic no-op
@@ -303,7 +327,8 @@ Fixture families include:
   sensitive cases;
 - equal normalized candidates from different source adapters/providers proving
   generic provenance and correlation survive while provider name does not alter
-  semantic proposal identity for the same target, snapshot, field, and value;
+  provider-neutral comparison grouping for the same target, snapshot, field,
+  and value;
 - repeated and projected records from one evidence family that must not count
   as independent agreement;
 - identity-backed title cleanup with supported target and work identity, plus

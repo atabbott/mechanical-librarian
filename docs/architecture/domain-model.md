@@ -169,11 +169,14 @@ One proposed value for one field on one item snapshot. It references supporting
 and contradicting evidence and declares whether it fills an empty field,
 replaces a populated field, or represents no change.
 
-Semantic proposal identity is the canonical target, snapshot, field, normalized
-value, proposal schema, and applicable policy identity. The provider or source
-adapter name is provenance, not an identity component: equivalent values for
-the same target/snapshot/field collapse without losing their distinct evidence,
-lineage, or correlation records.
+Provider-neutral comparison grouping uses the canonical target, snapshot,
+field, normalized comparison value, proposal schema, and applicable policy
+identity. The provider or source-adapter name is provenance, not a grouping
+component: equivalent values collapse without losing their distinct evidence,
+lineage, or correlation records. An immutable proposal version additionally
+binds its exact retained proposed value and immutable supporting-evidence
+identities. A changed exact retained value therefore supersedes the prior
+proposal even when both values share a comparison key.
 
 ### ReviewCase
 

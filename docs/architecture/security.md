@@ -97,8 +97,13 @@ authorization headers.
 Provider responses remain untrusted. The adapter validates a closed response
 shape and retains only a bounded canonical title candidate with opaque
 provider provenance. That canonical candidate/evidence and provenance are
-classified as retained evidence and follow the documented evidence-retention,
-owner inspection, export, and deletion behavior. Raw responses, upstream
+classified as retained evidence. Before F09b can be marked Ready, #223 must
+define their exact lifecycle: bind expiry to `retention.evidence_days`; provide
+owner inspection and export; purge private retained values and provenance on
+owner deletion or expiry; and preserve only a minimal non-private tombstone or
+referential-history record needed to explain immutable proposal history. Until
+that contract and its tests exist, the project makes no claim that these
+behaviors are supported. Raw responses, upstream
 provider identifiers, headers, and request bodies are neither persisted nor
 cached. Disabled configuration constructs no provider adapter or client,
 resolves no provider secret, performs no DNS lookup, and permits no egress.
@@ -107,12 +112,13 @@ The current target snapshot, F06 result, provider result, normalization policy,
 candidate, and proposal set are joined by explicit versions and scope. Each
 evaluated combination has one immutable versioned set, including typed
 zero-proposal outcomes. `title-normalization-v1` derives only the conservative
-comparison key documented in the compatibility contract using frozen Unicode
-16.0.0 `PropList.txt` and `CaseFolding.txt` tables rather than host-runtime
-Unicode data. Provider data only corroborates; the retained proposal value is
-always the bounded original F06 package title, never the provider spelling or
-comparison key. Missing, failed, unsupported, stale, duplicate, or unjoinable
-input cannot create a proposal; local/provider disagreement creates a typed
+comparison key documented in the compatibility contract using the complete
+frozen Unicode 16.0.0 normalization, whitespace, and case-folding baseline
+rather than host-runtime Unicode data. Provider data only corroborates; the
+retained proposal value is always the bounded original F06 package title, never
+the provider spelling or comparison key. Missing, failed, unsupported, stale,
+duplicate, or unjoinable input cannot create a proposal; local/provider
+disagreement creates a typed
 conflict set. Identical replay resolves to the same
 semantic set and case identity without duplication. Current-state drift
 supersedes applicability of the set and any derived case while preserving

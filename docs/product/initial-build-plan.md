@@ -56,7 +56,8 @@ Exit criteria:
 - the domain layer imports no framework, database, network, or vendor modules;
 - no canonical domain or application schema exposes Audiobookshelf, CWA, or
   provider payload semantics; generic opaque source provenance and correlation
-  remain allowed without becoming semantic proposal identity;
+  remain allowed without becoming provider-neutral comparison-grouping
+  components;
 - sibling groups cannot propagate decisions or apply state;
 - invalid transitions cannot be constructed through public interfaces; and
 - configuration errors fail before any job or network mutation starts.
@@ -206,8 +207,10 @@ Deliverables:
   fact; recompute one deterministic aggregate disposition without unioning
   stale risks or allowing a strongest-source winner to erase conflict;
 - keep generic source adapter/provider provenance and correlation on candidates,
-  while defining semantic proposal identity from canonical target, snapshot,
-  field, normalized value, schema, and policy rather than provider name;
+  while defining provider-neutral comparison grouping from canonical target,
+  snapshot, field, normalized value, schema, and policy rather than provider
+  name; immutable proposal versions additionally bind exact retained values and
+  supporting-evidence identities;
 - persist a versioned, capability-derived candidate-lane manifest that records
   applicability for every derived lane and a typed execution outcome for each
   applicable lane; only successfully completed applicable lanes record a

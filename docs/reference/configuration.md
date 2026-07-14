@@ -205,6 +205,12 @@ disabling, changing the secret reference, or changing a permitted bound
 requires restart and candidate and review re-evaluation; it never grants write
 authority. F09b exposes no raw response-cache setting.
 
+While qualification uses only the fake transport, the configured Hardcover API
+revision is `experimental`. Moving it to `tested` or `supported` requires the
+separate opt-in synthetic-account release qualification defined by the testing
+and compatibility contracts; ordinary CI and the experimental preview require
+no live token.
+
 The supported F09b contract must freeze the exact outbound field allowlist and
 per-field disclosure purpose before F09b can be marked Ready or implementation
 begins. That allowlist is adapter policy, not operator configuration, and is not

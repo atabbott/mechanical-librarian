@@ -59,15 +59,22 @@ zero-proposal outcome. A stale, mismatched, missing, failed, unsupported,
 duplicated, or otherwise unjoinable input cannot be interpreted as a current
 proposal.
 
-`title-normalization-v1` derives only a comparison key from frozen Unicode
-16.0.0 data. It first applies NFC under Unicode 16.0.0, maps each maximal run of
+`title-normalization-v1` derives only a comparison key from the Unicode 16.0.0
+definition of NFC and frozen, byte-exact Unicode 16.0.0
+`UnicodeData.txt`, `DerivedNormalizationProps.txt`,
+`CompositionExclusions.txt`, `PropList.txt`, and `CaseFolding.txt` files. The
+baseline records each file's SHA-256 digest and is verified against the full
+Unicode 16.0.0 `NormalizationTest.txt` conformance data. Files come only from
+the versioned `https://www.unicode.org/Public/16.0.0/ucd/` source and NFC follows
+the UAX #15 definition incorporated by Unicode 16.0.0. It first applies NFC
+under Unicode 16.0.0, maps each maximal run of
 code points whose Unicode 16.0.0 `PropList.txt` property is
 `White_Space=Yes` to U+0020, removes leading and trailing U+0020, applies the
 Unicode 16.0.0 Default Case Folding mappings with status C or F from
 `CaseFolding.txt`, and applies NFC under Unicode 16.0.0 again. Resulting keys
-are compared byte-for-byte. Implementations must use these frozen tables rather
-than host-runtime Unicode data; changing a table requires a new normalization
-version.
+are compared byte-for-byte. Implementations must use this complete frozen
+baseline rather than host-runtime Unicode data; changing a source file or
+algorithm requires a new normalization version.
 
 Normalization does not strip or replace punctuation, diacritics, subtitle
 separators or content, series/order text, or words, and it does not reorder
@@ -77,11 +84,12 @@ original F06 package title, never the provider spelling or comparison key.
 
 F09a supplies a deterministic fake provider candidate. F09b substitutes a
 bounded Hardcover adapter behind the same application-owned provider port.
-Provider name is provenance, not part of the semantic identity of a canonical
-title candidate, proposal, or proposal set: the same target, snapshot, field,
-comparison key, and contract versions produce the same identity regardless of
-those two sources. The proposal-set version binds the exact target, snapshot,
-F06 evidence, provider candidate, normalization, and policy versions. Source
+Provider name is provenance, not part of provider-neutral comparison grouping:
+the same target, snapshot, field, comparison key, and contract versions group
+regardless of those two sources. Immutable proposal and proposal-set versions
+additionally bind the exact retained F06 package-title value and immutable F06
+evidence identity. The proposal-set version also binds the exact target,
+snapshot, provider candidate, normalization, and policy versions. Source
 observations and assessments remain distinct so agreement, contradiction, and
 supersession can be explained without overwriting history.
 
@@ -97,9 +105,16 @@ requests are not compatibility artifacts and are not cached or persisted. The
 0.2 schema has no cover, rich-field, cross-target, multi-provider-fusion,
 reviewer, decision, or apply-plan semantics.
 
+The F09b Hardcover API revision is `experimental` while only the fake transport
+has been qualified. It may be called `tested` or `supported` only after an
+opt-in release qualification runs the exact fixed read-only query and frozen
+authentication/schema contract with a dedicated synthetic Hardcover account
+and token. Ordinary CI stays token-free, and lack of a live token does not block
+the experimental technical preview.
+
 Future providers and fields extend the contracts additively through declared
 schema and policy versions. They must not reinterpret existing title identity,
-change preserved set, proposal, or case history, or silently make an old
+change preserved set, proposal-version, or case history, or silently make an old
 zero-proposal outcome current. The broader providerless-proposal, candidate-lane, reviewer,
 CWA-shaped target, cover, and rich-field cohorts remain 1.0 qualification, not
 0.2 release criteria.

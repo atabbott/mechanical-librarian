@@ -71,21 +71,26 @@ write or review-decision authority.
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
 | F09a Provider-neutral title proposal | #145 | Canonical current Audiobookshelf title, a successful current F06 package-title result, and one fake provider title candidate produce one immutable, versioned proposal set containing at most one provider-neutral title proposal. Every typed zero-proposal outcome is also a proposal set. Conservative normalization requires local/provider agreement: an empty or materially different current title produces `needs_review`; a current-equivalent title produces no proposal; disagreement produces a typed conflict and no proposal; and missing, failed, unsupported, stale, duplicate, or unjoinable evidence produces a typed zero-proposal set without hiding unrelated inventory or local evidence. | #222 | `slice/f09a-title-proposal` |
-| F09b Bounded Hardcover title evidence | #204 | A disabled-by-default Hardcover adapter replaces the F09a fake behind the existing provider port. It submits one fixed read-only POST query to `https://api.hardcover.app/v1/graphql` through a dedicated bounded client, preserves the same provider-neutral title identity, and retains only a bounded canonical title candidate and opaque provenance. Provider disablement or failure creates a typed zero-proposal set while local evidence remains visible. | #223 | `slice/f09b-hardcover-title` |
+| F09b Bounded Hardcover title evidence | #204 | A disabled-by-default Hardcover adapter replaces the F09a fake behind the existing provider port. It submits one fixed read-only POST query to `https://api.hardcover.app/v1/graphql` through a dedicated bounded client, preserves the same provider-neutral comparison grouping, and retains only a bounded canonical title candidate and opaque provenance. Provider disablement or failure creates a typed zero-proposal set while local evidence remains visible. The API revision remains `experimental` while qualification is fake-transport-only. | #223 | `slice/f09b-hardcover-title` |
 | F10 Persistent title review case | #146 | Only the current proposal set containing exactly one current `needs_review` title proposal becomes one durable review case. Persistence, restart, idempotent replay, immutable history, and stale-input supersession are demonstrable; zero-proposal sets create no empty case, and no human or AI decision or write authority is introduced. | #224 | `slice/f10-title-review-case` |
 
 The explicit entry chain is `#221 + completed F06 #142 -> F09a -> F09b -> F10`.
 F07 and F08 remain part of the 0.1 plan, but neither is an entry dependency for
 this narrow title path and this sequencing does not replan them.
 
-For 0.2, `title-normalization-v1` creates a comparison key using only frozen
-Unicode 16.0.0 data. It first applies NFC under Unicode 16.0.0, maps each maximal
+For 0.2, `title-normalization-v1` creates a comparison key using the Unicode
+16.0.0 definition of NFC and a frozen, byte-exact Unicode 16.0.0 data bundle:
+`UnicodeData.txt`, `DerivedNormalizationProps.txt`,
+`CompositionExclusions.txt`, `PropList.txt`, and `CaseFolding.txt`. The bundle
+records a SHA-256 digest for each source file and is verified against the full
+Unicode 16.0.0 `NormalizationTest.txt` conformance data. It first applies NFC
+under Unicode 16.0.0, maps each maximal
 run of code points whose Unicode 16.0.0 `PropList.txt` property is
 `White_Space=Yes` to U+0020, removes leading and trailing U+0020, applies the
 Unicode 16.0.0 Default Case Folding mappings with status C or F from
 `CaseFolding.txt`, and applies NFC under Unicode 16.0.0 again. Resulting keys
-are compared byte-for-byte. Implementations use these frozen tables rather than
-host-runtime Unicode data.
+are compared byte-for-byte. Implementations use this complete frozen baseline
+rather than host-runtime Unicode data.
 
 The normalization does not strip or replace punctuation, diacritics, subtitle
 separators or content, series/order text, or words, and it does not reorder
@@ -95,7 +100,8 @@ proposal always retains the bounded original F06 package title, never the
 provider spelling or comparison key.
 
 Each evaluated input combination has one immutable proposal-set version bound
-to the exact target, snapshot, F06 evidence, provider candidate,
+to the exact target, snapshot, retained F06 package-title value and immutable
+F06 evidence identity, provider candidate,
 `title-normalization-v1`, and policy versions, including typed zero-proposal
 outcomes. An idempotent replay resolves to the same semantic proposal-set
 identity. A changed or stale input creates a superseding applicability result
@@ -118,7 +124,9 @@ without mutating prior set or case history.
   one provider title are version-bound to the same target and snapshot;
 - F09a proves the title decision matrix with a deterministic fake provider, and
   F09b proves the same provider-neutral contract with a fake transport for the
-  bounded Hardcover adapter and no live token;
+  bounded Hardcover adapter and no live token; that Hardcover API revision is
+  published as `experimental`, not `tested` or `supported`, until a separate
+  opt-in release qualification succeeds against a dedicated synthetic account;
 - `title-normalization-v1` and the decision table produce one immutable,
   version-bound proposal set containing at most one `needs_review` title
   proposal; current equivalence, disagreement, missing or failed input,
