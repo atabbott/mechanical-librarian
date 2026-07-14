@@ -40,3 +40,26 @@ bound, and streams into a hard response cap. Composition supplies only a
 target-service scoped credential-bearing client. HTTPX receives no persistence,
 media, provider, reviewer, or mutation authority. These licences are compatible
 with AGPL-3.0-or-later distribution; MPL-2.0 applies at file level to Certifi.
+
+F06 adds no direct or transitive runtime dependency and changes no lockfile. It
+targets the CPython 3.13/3.14 standard-library boundary, with these
+incorporated or system components recorded for dependency inventory, notices,
+and the release SBOM:
+
+| Component | Supported boundary | SPDX licence | Product authority |
+| --- | --- | --- | --- |
+| CPython | 3.13.14 and 3.14.6 macOS development; 3.13.11 Linux F06 cohort | Python-2.0 | standard runtime and bounded local parsing/process facilities |
+| Expat through `xml.parsers.expat` | `pyexpat.EXPAT_VERSION >= 2.7.2` before input is opened | MIT | event-driven XML tokenization only |
+| zlib through `zipfile` | incorporated/system version shipped with the targeted CPython runtime | Zlib | stored/Deflate stream decode only |
+
+The adapter boundary is the replacement seam if a targeted CPython patch
+release no longer satisfies the frozen contract. The standard-library choice
+does not grant network, credential, database, reviewer, persistence, media
+write, shell, or product-file authority, and it is not described as a kernel
+sandbox. Full-suite development qualification covers CPython 3.13.14 with
+Expat 2.8.1 and CPython 3.14.6 with Expat 2.7.4 on macOS; both use zlib 1.2.12.
+The isolated Linux F06 cohort covers CPython 3.13.11, Expat 2.7.3 and zlib
+1.2.13 with a read-only root/environment, disabled networking, and exact proof
+of the 256 MiB `RLIMIT_AS`, one-process `RLIMIT_NPROC`, CPU, descriptor and core
+gates. Future published combinations require their own exact patch and
+container evidence.

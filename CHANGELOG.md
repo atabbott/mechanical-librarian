@@ -7,6 +7,17 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added `epub-package-report`: a deterministic cited EPUB 2/3 package-evidence
+  report with bounded ZIP64/Deflate and Expat processing, no-follow read-only
+  source access, a transient descriptor-bound child, source-stability checks,
+  exact typed exits, configurable immutable resource caps, and no persistence,
+  content-resource dereference, temporary extraction, network, or write path.
+  Unsafe metadata is projected one-way to a digest placeholder and cited
+  warning. The complete suite is qualified on CPython 3.13.14 and 3.14.6 for
+  macOS development, and the F06 parser/process cohort is qualified on
+  non-root Linux CPython 3.13.11 with a read-only filesystem, no network, and
+  exact child resource/process gates.
+
 - Added durable duplicate-safe Audiobookshelf polling with persisted cumulative
   budgets, bounded retry/backoff, governing-state suppression, monotonic lease
   fencing, credential-free poll inspection, and cohort-atomic removal

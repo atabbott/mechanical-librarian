@@ -55,6 +55,7 @@ release standards as code.
 - [Synthetic inventory round trip](operations/synthetic-inventory.md)
 - [Audiobookshelf inventory](operations/audiobookshelf-inventory.md)
 - [Audiobookshelf connection check](operations/audiobookshelf-connection.md)
+- [EPUB package evidence report](operations/epub-package-report.md)
 - [Deployment model](operations/deployment.md)
 - [Backups and recovery](operations/backups-and-recovery.md)
 - [Observability and supportability](operations/observability.md)

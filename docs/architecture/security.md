@@ -135,6 +135,34 @@ Mitigations:
   and recovery path.
 - Keep parser dependencies updated and covered by malformed-input tests.
 
+F06 EPUB package extraction applies those controls through one transient child.
+The parent performs a component-by-component no-follow walk within one
+configured read-only mount, hashes the complete descriptor before and after
+the child, and repeats the walk after extraction. The child inherits only that
+descriptor and a parent-liveness control descriptor; its context contains fixed
+limits and an opaque fingerprint, not a host path or product handle. On Linux
+the child installs `PR_SET_PDEATHSIG`, closes the control descriptor, and then
+lowers `RLIMIT_NPROC` to one; Darwin retains the control-pipe watcher. Raw ZIP
+preflight rejects
+NUL names, Unicode/case aliases, traversal, split archives, local/central
+conflicts, unsupported compression/encryption, overlaps, declaration overruns,
+and unsafe expansion before XML interpretation. Required members are streamed
+with CRC checks and never extracted to disk.
+
+Fresh Expat parsers reject DOCTYPE/entity declarations, external resolution,
+and XInclude while enforcing XML and package-graph counters. Opaque navigation,
+content, cover, and linked-resource declarations are never dereferenced. The
+parent concurrently caps child stdout/stderr, validates one canonical closed
+report, and terminates/reaps on cancellation, deadline, overflow, crash, or
+parent loss. These composition controls deny delegated application authority;
+they are not described as a kernel syscall sandbox. Linux production also
+enforces the fixed 256 MiB child address-space limit. Darwin framework Python
+cannot lower its address-space limit beneath its preloaded reservation, so
+macOS qualification is development-only for this command until an enforceable
+memory boundary is available. The Linux F06 cohort is qualified non-root with
+networking disabled and the container root, repository, and installed Python
+environment read-only.
+
 ### Stale or conflicting writes
 
 Risk: a user, scan, import, or another curator job changes an item after review.

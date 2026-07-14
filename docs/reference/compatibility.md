@@ -182,6 +182,60 @@ limits, and qualified producer-tool variants. Unknown or malformed files remain
 visible as unsupported evidence sources; they must not block the rest of a
 library scan.
 
+### Frozen EPUB package baseline for F06
+
+F06 targets these authoritative revisions; the links and hashes freeze the
+contract independently of platform qualification:
+
+- [Open Container Format (OCF) 2.0.1](https://idpf.org/doc_library/epub/OCF_2.0.1_draft.doc), document version 1.0.1, Recommended
+  Specification dated 2010-09-04. The frozen official Word source
+  has SHA-256
+  `aa64a61ca430257f1aa22fe555bb1281053a9cf3741b2d645c27d77a8a0d09d9`.
+- [Open Packaging Format (OPF) 2.0.1](https://idpf.org/epub/20/spec/OPF_2.0.1_draft.htm), Recommended Specification dated
+  2010-09-04, limited to package documents declaring `version="2.0"`.
+- [EPUB 3.3](https://www.w3.org/TR/2026/REC-epub-33-20260113/), W3C Recommendation dated 2026-01-13, limited to package documents
+  declaring `version="3.0"`.
+
+The package subset supports bounded ZIP64 plus stored and Deflate members. A
+component name over 255 UTF-8 bytes is `malformed`; a complete member name over
+1,024 UTF-8 bytes is `resource_limit`. Identical repeated rootfile declarations
+are malformed rather than filtered. Multiple distinct canonical rootfiles are
+`unsupported_multiple_renditions`. Package graph defects are malformed. CRC is
+checked for each required member that is opened; F06 makes no integrity claim
+for opaque, unopened content members.
+
+Every DOCTYPE and general, parameter, unparsed, or external entity declaration
+or reference is intentionally unsupported and maps to `malformed`. OPF 2
+multi-file/entity package forms are likewise outside the supported subset.
+F06 preserves bounded manifest, spine, guide, NCX, navigation, cover, and
+encryption declarations but does not dereference or parse their content. EPUB
+3 container `links`, package `collection` elements, deprecated `bindings`, and
+XML Encryption `EncryptedKey` elements are accepted as bounded opaque package
+structure; encrypted resource classification still requires a complete local
+`EncryptedData`/`CipherReference` declaration. Runtime memory, CPU, descriptor
+and elapsed-time peaks remain qualification
+evidence; canonical reports contain deterministic logical counters only.
+
+The closed generated manifest executes the ordinary archive, package,
+encryption, malformed-input, resource and unsafe-metadata partitions and runs
+each process-only partition through its named integration test. The complete
+584-test repository suite is tested on macOS arm64 with CPython 3.13.14 (Expat 2.8.1,
+zlib 1.2.12) and CPython 3.14.6 (Expat 2.7.4, zlib 1.2.12); macOS remains a
+development target for F06 because framework Python cannot install the Linux
+address-space cap.
+
+The 110-test F06 parser/process cohort is separately tested as UID/GID
+65534:65534 on Linux arm64 with CPython 3.13.11, Expat 2.7.3 and zlib 1.2.13 in
+`ghcr.io/astral-sh/uv@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca`.
+That qualification disables networking, mounts both repository and installed
+environment read-only, uses a read-only container root, and proves the fixed
+256 MiB `RLIMIT_AS`, one-process `RLIMIT_NPROC`, 30-second CPU, 64-descriptor
+and zero-core gates. It also proves that an additional process is denied,
+parent loss terminates the child, and the ordinary sibling remains usable after
+cancellation or timeout. This records F06 evidence for that exact combination;
+it does not publish whole-product Linux support or widen the frozen format
+subset.
+
 ## Public API compatibility
 
 Before a stable release, public endpoints and schemas may change, but every change must update the OpenAPI description and changelog.
