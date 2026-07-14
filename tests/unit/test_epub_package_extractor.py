@@ -22,6 +22,7 @@ from mechanical_librarian.domain.identifiers import (
 )
 from mechanical_librarian.domain.inventory import FileReference
 from mechanical_librarian.domain.local_evidence import (
+    CitationSection,
     DeclarationKind,
     EpubPackageLimits,
     LocalEvidenceCancellation,
@@ -520,6 +521,166 @@ class EpubPackageExtractorTests(unittest.TestCase):
             if item.kind is DeclarationKind.SPINE_ITEM
         )
         self.assertEqual(spine.identifier, "chapter")
+
+    def test_repeated_spine_itemrefs_are_cited_warned_and_omitted(self) -> None:
+        expected_ordinals = {2: (15, 16, 17), 3: (19, 20, 21)}
+        for version, base_package in (
+            (2, EPUB2_PACKAGE),
+            (3, EPUB3_PACKAGE),
+        ):
+            with self.subTest(version=version):
+                package = base_package.replace(
+                    b"</manifest>",
+                    b'<item id="second" href="second.xhtml" '
+                    b'media-type="application/xhtml+xml"/></manifest>',
+                ).replace(
+                    b'<itemref idref="chapter"/>',
+                    b'<itemref idref="chapter"/>'
+                    b'<itemref idref="chapter"/>'
+                    b'<itemref idref="second"/>',
+                )
+                value = epub_bytes(
+                    version=version,
+                    package=package,
+                    extra_entries=(
+                        (
+                            "EPUB/second.xhtml",
+                            b"PRIVATE-SPINE-CONTENT",
+                            zipfile.ZIP_STORED,
+                        ),
+                    ),
+                )
+                first = EpubPackageExtractor().extract(request(value))
+                second = EpubPackageExtractor().extract(request(value))
+                spine_items = [
+                    item
+                    for item in first.declarations
+                    if item.kind is DeclarationKind.SPINE_ITEM
+                ]
+                duplicate_warnings = [
+                    item
+                    for item in first.warnings
+                    if item.code == "invalid_spine_item"
+                ]
+                first_ordinal, duplicate_ordinal, second_ordinal = (
+                    expected_ordinals[version]
+                )
+
+                self.assertEqual(first.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(first.to_json(), second.to_json())
+                self.assertEqual(
+                    [item.identifier for item in spine_items],
+                    ["chapter", "second"],
+                )
+                self.assertEqual(
+                    [item.source_ordinal for item in spine_items],
+                    [first_ordinal, second_ordinal],
+                )
+                self.assertEqual(
+                    [item.citation.source_ordinal for item in spine_items],
+                    [first_ordinal, second_ordinal],
+                )
+                self.assertEqual(len(duplicate_warnings), 1)
+                self.assertIsNotNone(duplicate_warnings[0].citation)
+                self.assertEqual(
+                    duplicate_warnings[0].citation.source_ordinal,
+                    duplicate_ordinal,
+                )
+                self.assertEqual(
+                    duplicate_warnings[0].citation.section,
+                    CitationSection.SPINE,
+                )
+                serialized = first.to_json()
+                self.assertNotIn("second.xhtml", serialized)
+                self.assertNotIn("PRIVATE-SPINE-CONTENT", serialized)
+
+    def test_distinct_spine_itemrefs_remain_distinct(self) -> None:
+        for version, base_package in (
+            (2, EPUB2_PACKAGE),
+            (3, EPUB3_PACKAGE),
+        ):
+            with self.subTest(version=version):
+                package = base_package.replace(
+                    b"</manifest>",
+                    b'<item id="second" href="second.xhtml" '
+                    b'media-type="application/xhtml+xml"/></manifest>',
+                ).replace(
+                    b'<itemref idref="chapter"/>',
+                    b'<itemref idref="chapter"/><itemref idref="second"/>',
+                )
+                report = EpubPackageExtractor().extract(
+                    request(
+                        epub_bytes(
+                            version=version,
+                            package=package,
+                            extra_entries=(
+                                (
+                                    "EPUB/second.xhtml",
+                                    b"opaque",
+                                    zipfile.ZIP_STORED,
+                                ),
+                            ),
+                        )
+                    )
+                )
+
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(
+                    [
+                        item.identifier
+                        for item in report.declarations
+                        if item.kind is DeclarationKind.SPINE_ITEM
+                    ],
+                    ["chapter", "second"],
+                )
+                self.assertNotIn(
+                    "invalid_spine_item", {item.code for item in report.warnings}
+                )
+
+    def test_malformed_spine_itemref_does_not_claim_first_valid_occurrence(self) -> None:
+        for version, base_package in (
+            (2, EPUB2_PACKAGE),
+            (3, EPUB3_PACKAGE),
+        ):
+            for malformed_content in (b"unexpected", b"<meta/>"):
+                with self.subTest(version=version, content=malformed_content):
+                    package = base_package.replace(
+                        b'<itemref idref="chapter"/>',
+                        b'<itemref idref="chapter">'
+                        + malformed_content
+                        + b'</itemref><itemref idref="chapter"/>',
+                    )
+                    report = EpubPackageExtractor().extract(
+                        request(epub_bytes(version=version, package=package))
+                    )
+                    spine_items = [
+                        item
+                        for item in report.declarations
+                        if item.kind is DeclarationKind.SPINE_ITEM
+                    ]
+                    invalid_warnings = [
+                        item
+                        for item in report.warnings
+                        if item.code == "invalid_spine_item"
+                    ]
+
+                    self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                    self.assertEqual(len(spine_items), 1)
+                    self.assertEqual(spine_items[0].identifier, "chapter")
+                    self.assertEqual(len(invalid_warnings), 1)
+                    self.assertIsNotNone(invalid_warnings[0].citation)
+                    self.assertEqual(
+                        invalid_warnings[0].citation.section,
+                        CitationSection.SPINE,
+                    )
+                    self.assertLess(
+                        invalid_warnings[0].citation.source_ordinal,
+                        spine_items[0].source_ordinal,
+                    )
+                    self.assertEqual(
+                        spine_items[0].source_ordinal,
+                        spine_items[0].citation.source_ordinal,
+                    )
 
     def test_manifest_semantics_require_safe_local_compatible_resources(self) -> None:
         hostile_values = (
