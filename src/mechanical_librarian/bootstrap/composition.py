@@ -35,6 +35,15 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_inventory imp
 from mechanical_librarian.adapters.evidence_extractors.process import (
     run_epub_package_child,
 )
+from mechanical_librarian.adapters.evidence_extractors.synthetic_epub import (
+    generated_synthetic_epub,
+)
+from mechanical_librarian.adapters.persistence.title_proposals import (
+    SQLiteTitleProposalRepository,
+)
+from mechanical_librarian.adapters.providers.synthetic_title import (
+    SyntheticTitleProvider,
+)
 from mechanical_librarian.application.connection_probe import (
     ConnectionProbeOutcome,
     ConnectionProbeResult,
@@ -82,6 +91,12 @@ from mechanical_librarian.application.synthetic_inventory import (
     InspectSyntheticInventory,
     SyntheticInventoryOutcome,
     SyntheticInventoryResult,
+)
+from mechanical_librarian.application.title_proposals import (
+    ProposeSyntheticTitle,
+    SyntheticScenario,
+    SyntheticTitleProposalReport,
+    scenario_named,
 )
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
@@ -919,6 +934,88 @@ def _run_epub_package_report(
                     pass
 
 
+def _run_synthetic_title_proposal_report(
+    database: Path, scenario_name: str
+) -> SyntheticTitleProposalReport:
+    """Run the closed generated-EPUB preview before opening durable state."""
+
+    scenario = scenario_named(scenario_name)
+    limits = EpubPackageLimits(source_archive_bytes=4 * 1024 * 1024)
+    with generated_synthetic_epub(scenario) as generated:
+        expected = Fingerprint("sha256", SchemaVersion("source-v1"), generated.digest)
+        local_report = run_epub_package_child(
+            generated.descriptor,
+            expected,
+            limits,
+            wall_seconds=30,
+            logical_identity=generated.opaque_identity,
+        )
+        # The child has consumed only the descriptor.  The generated resource is
+        # closed by the context manager before this function returns on any path.
+        epub_digest = generated.digest
+        opaque_identity = generated.opaque_identity
+    if local_report.outcome is not LocalEvidenceOutcome.SUCCESS:
+        raise SchemaError("synthetic title evidence extraction failed")
+    return _persist_synthetic_title_proposal(
+        database, scenario, local_report, epub_digest, opaque_identity
+    )
+
+
+def _persist_synthetic_title_proposal(
+    database: Path,
+    scenario: SyntheticScenario,
+    local_report: LocalEvidenceReport,
+    epub_digest: str,
+    opaque_identity: str,
+) -> SyntheticTitleProposalReport:
+    preflight(database)
+    if path_entry_exists(database):
+        preflight(database)
+        connection = None
+        try:
+            connection = connect_existing(database)
+            migrate(connection)
+            return ProposeSyntheticTitle(
+                SyntheticTitleProvider(scenario),
+                SQLiteTitleProposalRepository(connection),
+            ).run(
+                scenario,
+                local_report,
+                epub_digest=epub_digest,
+                opaque_file_identity=opaque_identity,
+            )
+        finally:
+            if connection is not None:
+                connection.close()
+
+    with staged_state(database) as staged:
+        connection = None
+        try:
+            connection = connect(staged)
+            migrate(connection)
+            report = ProposeSyntheticTitle(
+                SyntheticTitleProvider(scenario),
+                SQLiteTitleProposalRepository(connection),
+            ).run(
+                scenario,
+                local_report,
+                epub_digest=epub_digest,
+                opaque_file_identity=opaque_identity,
+            )
+            finalize_staged_state(connection)
+        finally:
+            if connection is not None:
+                connection.close()
+        published = publish_staged_state(staged, database)
+    if published:
+        return report
+    # A concurrent complete initializer won. Reuse the already-extracted,
+    # deterministic input against that winner without regenerating resources.
+    return _persist_synthetic_title_proposal(
+        database, scenario, local_report, epub_digest, opaque_identity
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Assemble the current process and delegate to its CLI interface."""
 
@@ -933,6 +1030,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         audiobookshelf_poll_runner=_run_audiobookshelf_poll,
         inventory_poll_inspection_runner=_inspect_audiobookshelf_poll,
         epub_package_report_runner=_run_epub_package_report,
+        synthetic_title_proposal_runner=_run_synthetic_title_proposal_report,
     )
 
 

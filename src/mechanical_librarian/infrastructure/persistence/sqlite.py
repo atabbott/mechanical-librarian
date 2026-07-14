@@ -343,6 +343,38 @@ _INVENTORY_SCAN_POLL_CLAIMS_TABLE_SQL = (
     "poll_id TEXT NOT NULL, attempt INTEGER NOT NULL, fence INTEGER NOT NULL CHECK (fence > 0), "
     "FOREIGN KEY (poll_id, attempt, fence) REFERENCES inventory_poll_attempts(poll_id, attempt, fence))"
 )
+_SYNTHETIC_TITLE_PROPOSAL_SETS_TABLE_SQL = (
+    "CREATE TABLE synthetic_title_proposal_sets ("
+    "set_id TEXT PRIMARY KEY CHECK (typeof(set_id) = 'text' AND length(set_id) BETWEEN 1 AND 64 "
+    "AND set_id GLOB '[a-z]*' AND set_id NOT GLOB '*[^a-z0-9_-]*'), "
+    "identity_digest TEXT NOT NULL UNIQUE CHECK (length(identity_digest) = 64 AND identity_digest NOT GLOB '*[^0-9a-f]*'), "
+    "lineage TEXT NOT NULL CHECK (typeof(lineage) = 'text' AND length(lineage) BETWEEN 1 AND 64 "
+    "AND lineage GLOB '[a-z]*' AND lineage NOT GLOB '*[^a-z0-9_-]*'), "
+    "lineage_revision INTEGER NOT NULL CHECK (lineage_revision BETWEEN 1 AND 1000000), "
+    "previous_set_id TEXT REFERENCES synthetic_title_proposal_sets(set_id), "
+    "mode TEXT NOT NULL CHECK (mode = 'synthetic_preview'), "
+    "canonical_set TEXT NOT NULL CHECK (typeof(canonical_set) = 'text' "
+    "AND length(CAST(canonical_set AS BLOB)) BETWEEN 2 AND 131072), "
+    "UNIQUE (lineage, lineage_revision), UNIQUE (lineage, set_id), "
+    "CHECK (previous_set_id IS NULL OR previous_set_id != set_id))"
+)
+_CURRENT_SYNTHETIC_TITLE_PROPOSALS_TABLE_SQL = (
+    "CREATE TABLE current_synthetic_title_proposals ("
+    "lineage TEXT PRIMARY KEY, set_id TEXT NOT NULL UNIQUE, "
+    "FOREIGN KEY (lineage, set_id) REFERENCES synthetic_title_proposal_sets(lineage, set_id))"
+)
+_SYNTHETIC_TITLE_PROPOSALS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER synthetic_title_proposal_sets_no_update BEFORE UPDATE ON synthetic_title_proposal_sets "
+    "BEGIN SELECT RAISE(ABORT, 'synthetic title proposal history is append-only'); END"
+)
+_SYNTHETIC_TITLE_PROPOSALS_NO_DELETE_SQL = (
+    "CREATE TRIGGER synthetic_title_proposal_sets_no_delete BEFORE DELETE ON synthetic_title_proposal_sets "
+    "BEGIN SELECT RAISE(ABORT, 'synthetic title proposal history is append-only'); END"
+)
+_CURRENT_SYNTHETIC_TITLE_PROPOSALS_NO_DELETE_SQL = (
+    "CREATE TRIGGER current_synthetic_title_proposals_no_delete BEFORE DELETE ON current_synthetic_title_proposals "
+    "BEGIN SELECT RAISE(ABORT, 'synthetic title proposal current pointers cannot be deleted'); END"
+)
 MIGRATIONS = (
     Migration(
         1,
@@ -433,6 +465,23 @@ MIGRATIONS = (
                 "inventory_polls",
                 "inventory_poll_attempts",
                 "inventory_scan_poll_claims",
+            }
+        ),
+    ),
+    Migration(
+        6,
+        (
+            _SYNTHETIC_TITLE_PROPOSAL_SETS_TABLE_SQL,
+            _CURRENT_SYNTHETIC_TITLE_PROPOSALS_TABLE_SQL,
+            _SYNTHETIC_TITLE_PROPOSALS_NO_UPDATE_SQL,
+            _SYNTHETIC_TITLE_PROPOSALS_NO_DELETE_SQL,
+            _CURRENT_SYNTHETIC_TITLE_PROPOSALS_NO_DELETE_SQL,
+            "CREATE INDEX synthetic_title_proposal_sets_by_lineage ON synthetic_title_proposal_sets(lineage, lineage_revision, set_id)",
+        ),
+        frozenset(
+            {
+                "synthetic_title_proposal_sets",
+                "current_synthetic_title_proposals",
             }
         ),
     ),

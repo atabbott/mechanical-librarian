@@ -40,6 +40,11 @@ from mechanical_librarian.application.local_evidence import (
     internal_failure_report,
     render_local_evidence_text,
 )
+from mechanical_librarian.application.title_proposals import (
+    SCENARIOS,
+    SyntheticTitleProposalReport,
+    render_title_proposal_text,
+)
 from mechanical_librarian.domain.local_evidence import (
     EpubPackageLimits,
     LocalEvidenceCapability,
@@ -55,6 +60,7 @@ ConnectionProbeRunner = Callable[[Path], ConnectionProbeResult]
 AudiobookshelfInventoryRunner = Callable[[Path, Path], InventoryRunResult]
 AudiobookshelfPollRunner = Callable[[Path, Path, str], InventoryPollResult]
 InventoryPollInspectionRunner = Callable[[Path, str], InventoryPollResult]
+SyntheticTitleProposalRunner = Callable[[Path, str], SyntheticTitleProposalReport]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -80,6 +86,8 @@ _CONNECTION_FAILURE = (
 )
 _ABS_INVENTORY_FAILURE = "Audiobookshelf inventory failed safely.\n"
 _ABS_POLL_FAILURE = "Audiobookshelf poll failed safely.\n"
+_TITLE_PROPOSAL_FAILURE = "Synthetic title preview failed safely.\n"
+_TITLE_PROPOSAL_INVALID = "Synthetic title preview invocation is invalid.\n"
 _EPUB_PACKAGE_EXIT = {
     LocalEvidenceOutcome.INVALID_INVOCATION: 2,
     LocalEvidenceOutcome.SUCCESS: 0,
@@ -112,11 +120,30 @@ class _EpubArgumentParser(argparse.ArgumentParser):
         raise _EpubArgumentError(message)
 
 
+class _TitleArgumentError(ValueError):
+    pass
+
+
+class _TitleArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise _TitleArgumentError(message)
+
+
 def _epub_parser() -> argparse.ArgumentParser:
     parser = _EpubArgumentParser(prog="mechanical-librarian epub-package-report")
     parser.add_argument("--config", required=True, metavar="PATH", type=Path)
     parser.add_argument("--mount", required=True, metavar="NAME", type=_bounded_identifier)
     parser.add_argument("--file", required=True, metavar="RELATIVE")
+    parser.add_argument("--format", choices=("json", "text"), default="json")
+    return parser
+
+
+def _title_proposal_parser() -> argparse.ArgumentParser:
+    parser = _TitleArgumentParser(
+        prog="mechanical-librarian synthetic-title-proposal-report"
+    )
+    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
+    parser.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
     parser.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
@@ -239,6 +266,15 @@ def _parser() -> argparse.ArgumentParser:
     epub_package.add_argument(
         "--format", choices=("json", "text"), default="json"
     )
+    title_proposal = commands.add_parser(
+        "synthetic-title-proposal-report",
+        help="emit one persisted apply-ineligible synthetic title proposal preview",
+    )
+    title_proposal.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
+    title_proposal.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
+    title_proposal.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
 
@@ -254,6 +290,7 @@ def main(
     audiobookshelf_poll_runner: AudiobookshelfPollRunner | None = None,
     inventory_poll_inspection_runner: InventoryPollInspectionRunner | None = None,
     epub_package_report_runner: EpubPackageReportRunner | None = None,
+    synthetic_title_proposal_runner: SyntheticTitleProposalRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -262,6 +299,36 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    if raw_arguments[:1] == ["synthetic-title-proposal-report"]:
+        try:
+            title_arguments = _title_proposal_parser().parse_args(raw_arguments[1:])
+        except _TitleArgumentError:
+            errors.write(_TITLE_PROPOSAL_INVALID)
+            return 2
+        if synthetic_title_proposal_runner is None:
+            errors.write(_TITLE_PROPOSAL_FAILURE)
+            return 1
+        try:
+            report = synthetic_title_proposal_runner(
+                title_arguments.database, title_arguments.scenario
+            )
+        except (KeyboardInterrupt, Exception):
+            errors.write(_TITLE_PROPOSAL_FAILURE)
+            return 1
+        if type(report) is not SyntheticTitleProposalReport:
+            errors.write(_TITLE_PROPOSAL_FAILURE)
+            return 1
+        try:
+            rendered = (
+                report.to_json() + "\n"
+                if title_arguments.format == "json"
+                else render_title_proposal_text(report)
+            )
+        except Exception:
+            errors.write(_TITLE_PROPOSAL_FAILURE)
+            return 1
+        output.write(rendered)
+        return 0
     if raw_arguments[:1] == ["epub-package-report"]:
         requested_format = "json"
         index = 1
@@ -565,5 +632,6 @@ __all__ = [
     "SyntheticInventoryRunner",
     "AudiobookshelfInventoryRunner",
     "EpubPackageReportRunner",
+    "SyntheticTitleProposalRunner",
     "main",
 ]

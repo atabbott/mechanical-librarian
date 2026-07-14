@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import io
+import json
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from contextlib import redirect_stderr
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from mechanical_librarian.application.job_heartbeat import (
     HeartbeatInspection,
@@ -46,6 +48,9 @@ from mechanical_librarian.domain.local_evidence import (
     LocalEvidenceReport,
 )
 from mechanical_librarian.interfaces.cli import main
+from mechanical_librarian.bootstrap.composition import _run_synthetic_title_proposal_report
+from mechanical_librarian.infrastructure.persistence import sqlite as sqlite_foundation
+from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate
 
 
 class CliTests(unittest.TestCase):
@@ -484,6 +489,109 @@ class CliTests(unittest.TestCase):
         runner.assert_not_called()
         self.assertNotIn(":memory:", errors.getvalue())
         self.assertIn("durable filesystem path", errors.getvalue())
+
+    def test_synthetic_title_invalid_invocation_is_fixed_redacted_and_has_no_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "private-sentinel.sqlite"
+            runner = Mock()
+            output = io.StringIO()
+            errors = io.StringIO()
+            exit_code = main(
+                [
+                    "synthetic-title-proposal-report",
+                    "--database", str(database),
+                    "--scenario", "private-invalid-scenario",
+                ],
+                state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+                synthetic_title_proposal_runner=runner,
+                stdout=output,
+                stderr=errors,
+            )
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(output.getvalue(), "")
+            self.assertEqual(errors.getvalue(), "Synthetic title preview invocation is invalid.\n")
+            self.assertFalse(database.exists())
+            runner.assert_not_called()
+
+    def test_synthetic_title_invalid_value_precedes_existing_state_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "schema-five.sqlite"
+            connection = connect(database)
+            try:
+                with patch.object(
+                    sqlite_foundation, "MIGRATIONS", sqlite_foundation.MIGRATIONS[:5]
+                ):
+                    self.assertEqual(migrate(connection), 5)
+            finally:
+                connection.close()
+            runner = Mock()
+            exit_code = main(
+                [
+                    "synthetic-title-proposal-report", "--database", str(database),
+                    "--scenario", "unknown",
+                ],
+                state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+                synthetic_title_proposal_runner=runner,
+                stdout=io.StringIO(),
+                stderr=io.StringIO(),
+            )
+            self.assertEqual(exit_code, 2)
+            runner.assert_not_called()
+            inspected = sqlite_foundation.sqlite3.connect(database)
+            try:
+                self.assertEqual(
+                    inspected.execute("SELECT MAX(version) FROM schema_migrations").fetchone(),
+                    (5,),
+                )
+            finally:
+                inspected.close()
+
+    def test_synthetic_title_json_and_text_use_one_bounded_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.sqlite"
+            report = _run_synthetic_title_proposal_report(source, "agree-empty")
+            for output_format in ("json", "text"):
+                with self.subTest(output_format=output_format):
+                    output = io.StringIO()
+                    errors = io.StringIO()
+                    target = Path(directory) / "unused-private.sqlite"
+                    runner = Mock(return_value=report)
+                    exit_code = main(
+                        [
+                            "synthetic-title-proposal-report", "--database", str(target),
+                            "--scenario", "agree-empty", "--format", output_format,
+                        ],
+                        state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+                        synthetic_title_proposal_runner=runner,
+                        stdout=output,
+                        stderr=errors,
+                    )
+                    self.assertEqual(exit_code, 0)
+                    self.assertEqual(errors.getvalue(), "")
+                    self.assertNotIn(str(target), output.getvalue())
+                    if output_format == "json":
+                        self.assertEqual(json.loads(output.getvalue()), report.to_data())
+                    else:
+                        self.assertIn('authority="synthetic-report-only"\n', output.getvalue())
+
+    def test_synthetic_title_failure_has_exit_one_empty_stdout_and_fixed_stderr(self) -> None:
+        def hostile(_database: Path, _scenario: str):
+            raise RuntimeError("/private/path token=secret")
+        output = io.StringIO()
+        errors = io.StringIO()
+        exit_code = main(
+            [
+                "synthetic-title-proposal-report", "--database", "private.sqlite",
+                "--scenario", "agree-empty",
+            ],
+            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+            synthetic_title_proposal_runner=hostile,
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "Synthetic title preview failed safely.\n")
 
 
 if __name__ == "__main__":
