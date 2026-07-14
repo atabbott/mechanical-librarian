@@ -59,6 +59,16 @@ zero-proposal outcome. A stale, mismatched, missing, failed, unsupported,
 duplicated, or otherwise unjoinable input cannot be interpreted as a current
 proposal.
 
+Every proposal set binds three ordered `proposal-input-slot-v1` identities:
+current title, F06 title, and provider title. A slot is a tagged successful
+value/evidence identity or its exact typed non-success outcome, target/snapshot
+scope, and contract version. The current-title slot preserves `PRESENT`,
+`MISSING`, `NULL`, `EMPTY`, `MALFORMED`, and `UNSUPPORTED`; only `EMPTY` is
+eligible for fill-empty policy, while `PRESENT` is partitioned by equivalent or
+different comparison keys. Provider disabled, unsupported, incompatible,
+failed, successful-empty, and no-match outcomes remain distinct. No zero-result
+slot invents an evidence value, candidate, or shared sentinel identity.
+
 `title-normalization-v1` derives only a comparison key from the Unicode 16.0.0
 definition of NFC and frozen, byte-exact Unicode 16.0.0
 `UnicodeData.txt`, `DerivedNormalizationProps.txt`,
@@ -86,10 +96,10 @@ F09a supplies a deterministic fake provider candidate. F09b substitutes a
 bounded Hardcover adapter behind the same application-owned provider port.
 Provider name is provenance, not part of provider-neutral comparison grouping:
 the same target, snapshot, field, comparison key, and contract versions group
-regardless of those two sources. Immutable proposal and proposal-set versions
-additionally bind the exact retained F06 package-title value and immutable F06
-evidence identity. The proposal-set version also binds the exact target,
-snapshot, provider candidate, normalization, and policy versions. Source
+regardless of those two sources. Immutable proposal versions additionally bind
+the exact retained F06 package-title value and immutable F06 evidence identity.
+The proposal-set version binds the exact target, snapshot, all three tagged
+input-slot identities, normalization, and policy versions. Source
 observations and assessments remain distinct so agreement, contradiction, and
 supersession can be explained without overwriting history.
 

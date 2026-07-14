@@ -178,9 +178,13 @@ Candidates retain generic source-adapter or provider provenance and correlation,
 but provider name is not part of provider-neutral comparison grouping. For the
 same canonical target, snapshot, field, normalized comparison value, proposal
 schema, and policy, equal values group while retaining all distinct evidence
-lineage. Immutable proposal and proposal-set versions additionally bind the
-exact retained proposed value and immutable supporting-evidence identities, so
-exact-value drift supersedes rather than replaying an earlier version.
+lineage. Immutable proposal versions additionally bind the exact retained
+proposed value and immutable supporting-evidence identities. Proposal-set
+versions bind an ordered, tagged identity for every required input slot: a
+successful exact value/evidence identity or its exact typed scoped outcome and
+contract version. Exact-value, evidence, state, or outcome drift therefore
+supersedes rather than replaying an earlier version, and zero-result paths do
+not require invented candidate values.
 
 ### Identifier arbitration
 

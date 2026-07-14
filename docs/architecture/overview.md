@@ -154,8 +154,12 @@ The narrower 0.2 title technical preview deliberately does require
 `title-normalization-v1` agreement between the current successful F06 package
 title and one provider title before its immutable proposal set contains a
 proposal. The current Audiobookshelf title determines whether that agreed value
-is a typed zero-proposal no-op or one `needs_review` proposal. Every evaluated
-combination has a version-bound proposal set. Provider disablement, failure,
+is a typed zero-proposal no-op or one `needs_review` proposal: only canonical
+`EMPTY` permits a fill, `PRESENT` is compared as equivalent or different, and
+`MISSING`, `NULL`, `MALFORMED`, or `UNSUPPORTED` produces its own typed
+zero-proposal outcome. Every evaluated combination has a version-bound proposal
+set whose identity binds successful values or exact typed outcomes for all
+three required input slots. Provider disablement, failure,
 disagreement, duplicate input, or stale or unjoinable evidence produces a typed
 zero-proposal set while unrelated inventory and F06 evidence remain visible.
 Providerless proposal policy, additional fields, covers, multiple providers,

@@ -70,7 +70,7 @@ write or review-decision authority.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
-| F09a Provider-neutral title proposal | #145 | Canonical current Audiobookshelf title, a successful current F06 package-title result, and one fake provider title candidate produce one immutable, versioned proposal set containing at most one provider-neutral title proposal. Every typed zero-proposal outcome is also a proposal set. Conservative normalization requires local/provider agreement: an empty or materially different current title produces `needs_review`; a current-equivalent title produces no proposal; disagreement produces a typed conflict and no proposal; and missing, failed, unsupported, stale, duplicate, or unjoinable evidence produces a typed zero-proposal set without hiding unrelated inventory or local evidence. | #222 | `slice/f09a-title-proposal` |
+| F09a Provider-neutral title proposal | #145 | Canonical current Audiobookshelf title, a successful current F06 package-title result, and one fake provider title candidate produce one immutable, versioned proposal set containing at most one provider-neutral title proposal. Every typed zero-proposal outcome is also a proposal set. Conservative normalization requires local/provider agreement: canonical current-title `EMPTY` produces a fill proposal; `PRESENT` produces a replacement only when materially different and no proposal when equivalent; `MISSING`, `NULL`, `MALFORMED`, and `UNSUPPORTED` remain distinct zero-proposal states. Disagreement and missing, failed, stale, duplicate, or unjoinable evidence also produce typed zero-proposal sets without hiding unrelated inventory or local evidence. | #222 | `slice/f09a-title-proposal` |
 | F09b Bounded Hardcover title evidence | #204 | A disabled-by-default Hardcover adapter replaces the F09a fake behind the existing provider port. It submits one fixed read-only POST query to `https://api.hardcover.app/v1/graphql` through a dedicated bounded client, preserves the same provider-neutral comparison grouping, and retains only a bounded canonical title candidate and opaque provenance. Provider disablement or failure creates a typed zero-proposal set while local evidence remains visible. The API revision remains `experimental` while qualification is fake-transport-only. | #223 | `slice/f09b-hardcover-title` |
 | F10 Persistent title review case | #146 | Only the current proposal set containing exactly one current `needs_review` title proposal becomes one durable review case. Persistence, restart, idempotent replay, immutable history, and stale-input supersession are demonstrable; zero-proposal sets create no empty case, and no human or AI decision or write authority is introduced. | #224 | `slice/f10-title-review-case` |
 
@@ -100,21 +100,25 @@ proposal always retains the bounded original F06 package title, never the
 provider spelling or comparison key.
 
 Each evaluated input combination has one immutable proposal-set version bound
-to the exact target, snapshot, retained F06 package-title value and immutable
-F06 evidence identity, provider candidate,
-`title-normalization-v1`, and policy versions, including typed zero-proposal
-outcomes. An idempotent replay resolves to the same semantic proposal-set
-identity. A changed or stale input creates a superseding applicability result
-without mutating prior set or case history.
+to the exact target, snapshot, `proposal-input-slot-v1` identity for the current
+title, F06 title, and provider title, `title-normalization-v1`, and policy
+versions. Each slot identity is a tagged success value/evidence identity or the
+exact typed missing, null, malformed, unsupported, disabled, failed, empty, or
+no-match outcome with its scope and contract version. Zero-result paths never
+invent a value or provider candidate. An idempotent replay resolves to the same
+semantic proposal-set identity. A changed state, value, evidence identity, or
+stale input creates a superseding applicability result without mutating prior
+set or case history.
 
 | Current/F06/provider condition | Proposal-set result | F10 case | Retained visibility |
 | --- | --- | --- | --- |
-| Current title empty; current F06 and provider keys agree | Exactly one current `needs_review` proposal retaining the bounded original F06 package title | Exactly one current case | Inventory, F06 evidence, bounded provider evidence, proposal set, and case |
-| Current title materially different; current F06 and provider keys agree | Exactly one current `needs_review` proposal retaining the bounded original F06 package title | Exactly one current case | Inventory, F06 evidence, bounded provider evidence, proposal set, and case |
-| Current title equivalent; current F06 and provider keys agree | Typed current-equivalent zero-proposal set | No case | Inventory, F06 evidence, bounded provider evidence, and proposal set |
+| Current title is canonical `EMPTY`; current F06 and provider keys agree | Exactly one current `needs_review` fill-empty proposal retaining the bounded original F06 package title | Exactly one current case | Inventory, F06 evidence, bounded provider evidence, proposal set, and case |
+| Current title is canonical `PRESENT` and materially different; current F06 and provider keys agree | Exactly one current `needs_review` replacement proposal retaining the bounded original F06 package title | Exactly one current case | Inventory, F06 evidence, bounded provider evidence, proposal set, and case |
+| Current title is canonical `PRESENT` and equivalent; current F06 and provider keys agree | Typed current-equivalent zero-proposal set | No case | Inventory, F06 evidence, bounded provider evidence, and proposal set |
+| Current title is canonical `MISSING`, `NULL`, `MALFORMED`, or `UNSUPPORTED` | Distinct typed current-observation zero-proposal set; it is never treated as empty | No case | Inventory with exact current observation state, other bounded evidence, and proposal set |
 | Current F06 and provider keys disagree | Typed conflict zero-proposal set | No case | Inventory, both source observations, conflict, and proposal set |
 | F06 evidence missing, failed, or unsupported | Typed no-proposal set | No case | Inventory, typed F06 outcome, any bounded provider evidence, and proposal set |
-| Provider disabled, failed, empty, or no match | Typed no-proposal set | No case | Inventory, F06 evidence, typed provider outcome, and proposal set |
+| Provider disabled, unsupported, incompatible, failed, empty, or no match | Distinct typed provider zero-proposal set | No case | Inventory, F06 evidence, exact provider outcome, and proposal set |
 | Required input stale, duplicate, or unjoinable | Typed no-proposal set; prior set becomes non-current where applicable | No case | Immutable inputs, typed blocker, prior history, and proposal set |
 | Identical replay of an accepted input combination | Same semantic proposal-set identity; no duplicate set or proposal | No new case; replay returns the same case identity when one exists | Existing immutable set, case, evidence, and replay outcome |
 

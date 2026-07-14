@@ -166,9 +166,11 @@ never uses a live provider token. That revision remains `experimental` while
 qualification is fake-transport-only. Both variants exercise the same immutable,
 versioned, provider-neutral candidate and proposal-set contracts. Each evaluated
 input combination persists one proposal-set version bound to the exact target,
-snapshot, exact retained F06 package-title value and immutable F06 evidence
-identity, provider candidate, normalization, and policy versions,
-including typed zero-proposal outcomes.
+snapshot, three `proposal-input-slot-v1` identities, normalization, and policy
+versions. The current-title, F06-title, and provider-title slots each contain a
+tagged successful value/evidence identity or the exact typed non-success outcome
+with its scope and contract version. This makes typed zero-proposal sets
+constructible without sentinel values or nonexistent provider candidates.
 
 The `title-normalization-v1` cohort uses the Unicode 16.0.0 definition of NFC
 and frozen, byte-exact copies of `UnicodeData.txt`,
@@ -190,15 +192,19 @@ original F06 package title, never the provider spelling or comparison key.
 The decision matrix binds the current Audiobookshelf title, a current successful
 F06 package title, and one provider title to the same target and snapshot:
 
-- equal local and provider comparison keys plus an empty or materially
-  different current key produce a set with exactly one `needs_review` proposal;
-- an equivalent current key produces a typed zero-proposal set;
+- equal local and provider comparison keys plus canonical current state `EMPTY`
+  produce a set with exactly one fill-empty `needs_review` proposal;
+- equal local and provider comparison keys plus canonical current state
+  `PRESENT` produce one replacement proposal when materially different and a
+  typed zero-proposal set when equivalent;
+- canonical current states `MISSING`, `NULL`, `MALFORMED`, and `UNSUPPORTED`
+  each produce their own typed zero-proposal set and never enter the empty row;
 - local/provider key disagreement produces a typed conflict zero-proposal set;
 - missing, failed, unsupported, stale, or unjoinable required evidence produces
   a typed zero-proposal set; and
-- provider disablement, timeout, malformed response, empty result, or no match
-  leaves inventory and F06 evidence visible and creates a typed zero-proposal
-  set.
+- provider disablement, unsupported or incompatible capability, timeout,
+  malformed response, empty result, or no match leaves inventory and F06
+  evidence visible and creates its exact typed zero-proposal set.
 
 Duplicate and unjoinable input tests create no current proposal. Identical
 replay resolves to the same semantic proposal-set identity and, where
@@ -286,14 +292,17 @@ read-only media mounts, and preserves state across upgrade/restart tests.
 
 Fixture families include:
 
-- the exact 0.2 title matrix: current title empty, different, and equivalent;
+- the exact 0.2 title matrix: canonical current title `PRESENT`, `MISSING`,
+  `NULL`, `EMPTY`, `MALFORMED`, and `UNSUPPORTED`, with `PRESENT` partitioned
+  into different and equivalent values and only `EMPTY` eligible to fill;
   agreeing and disagreeing `title-normalization-v1` keys with preservation of
   the bounded original F06 package title; missing, failed,
-  unsupported, stale, and unjoinable F06 input; and provider disabled, timed
-  out, malformed, empty, unmatched, stale, and successful through a fake
-  Hardcover transport;
-- immutable proposal-set fixtures covering typed zero-proposal outcomes,
-  duplicate/unjoinable input, identical replay identity, and changed-input
+  unsupported, stale, and unjoinable F06 input; and provider disabled,
+  unsupported, incompatible, timed out, malformed, empty, unmatched, stale,
+  and successful through a fake Hardcover transport;
+- immutable proposal-set fixtures covering typed zero-proposal outcomes, exact
+  tagged identity for all three required slots, duplicate/unjoinable input,
+  identical replay identity, and state-, value-, evidence-, or outcome-changed
   supersession without history mutation;
 - F10 case creation, restart, idempotent replay, and supersession fixtures that
   retain immutable set, proposal, and case history and reject zero-proposal-set

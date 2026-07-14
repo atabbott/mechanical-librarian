@@ -110,13 +110,20 @@ resolves no provider secret, performs no DNS lookup, and permits no egress.
 
 The current target snapshot, F06 result, provider result, normalization policy,
 candidate, and proposal set are joined by explicit versions and scope. Each
-evaluated combination has one immutable versioned set, including typed
-zero-proposal outcomes. `title-normalization-v1` derives only the conservative
+evaluated combination has one immutable versioned set bound to the ordered
+`proposal-input-slot-v1` identities for current title, F06 title, and provider
+title, including typed zero-proposal outcomes. Each slot carries a successful
+exact value/evidence identity or its exact typed scoped outcome and contract
+version; missing or failed inputs do not manufacture candidate values.
+`title-normalization-v1` derives only the conservative
 comparison key documented in the compatibility contract using the complete
 frozen Unicode 16.0.0 normalization, whitespace, and case-folding baseline
 rather than host-runtime Unicode data. Provider data only corroborates; the
 retained proposal value is always the bounded original F06 package title, never
-the provider spelling or comparison key. Missing, failed, unsupported, stale,
+the provider spelling or comparison key. Only canonical current-title `EMPTY`
+can enter fill-empty policy; `PRESENT` is partitioned into equivalent or
+different values, while `MISSING`, `NULL`, `MALFORMED`, and `UNSUPPORTED`
+remain distinct zero-proposal outcomes. Missing, failed, unsupported, stale,
 duplicate, or unjoinable input cannot create a proposal; local/provider
 disagreement creates a typed
 conflict set. Identical replay resolves to the same

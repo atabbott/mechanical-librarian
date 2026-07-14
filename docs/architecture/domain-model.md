@@ -163,6 +163,32 @@ mode. An unconfigured, unsupported, unavailable, degraded, failed, successful-
 empty, or missing provider state remains scoped and typed. It cannot become
 negative metadata evidence, manufacture consensus, or block unrelated lanes.
 
+### ProposalInputSlotIdentity
+
+Versioned identity for one required proposal input. `proposal-input-slot-v1`
+binds the canonical target, snapshot, field, slot role, and contract version.
+Its tagged payload is either a successful exact value plus immutable evidence
+or candidate identity, or the exact typed observation, capability, execution,
+or candidate-count outcome for that scope. Absence is represented by its
+canonical typed state rather than a synthetic value or shared sentinel.
+
+For the 0.2 title path the ordered roles are current title, F06 title, and
+provider title. The current-title role preserves `PRESENT`, `MISSING`, `NULL`,
+`EMPTY`, `MALFORMED`, and `UNSUPPORTED`; only `EMPTY` permits fill-empty policy.
+The provider role keeps disabled, unsupported, incompatible, failed,
+successful-empty, and no-match outcomes distinct. Changing any tag, exact
+value, evidence identity, scope, or contract version changes the slot identity.
+
+### ProposalSet
+
+Immutable result of evaluating one ordered set of proposal input-slot
+identities under exact normalization and policy versions. It contains at most
+one current title proposal in the 0.2 path and otherwise retains a typed
+zero-proposal outcome. Its semantic identity binds every input slot even when
+one or more slots did not produce a value. Identical replay resolves to the
+same set identity; any state, value, evidence, scope, normalization, or policy
+change creates a superseding set without rewriting history.
+
 ### FieldProposal
 
 One proposed value for one field on one item snapshot. It references supporting
