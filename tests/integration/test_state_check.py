@@ -13,7 +13,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
-from mechanical_librarian.bootstrap import _run_state_check, main
+from mechanical_librarian.bootstrap.composition import _run_state_check, main
 from mechanical_librarian.infrastructure.persistence import sqlite
 from mechanical_librarian.infrastructure.persistence.sqlite import (
     Migration,
@@ -190,7 +190,7 @@ class ComposedStateCheckTests(unittest.TestCase):
             }
 
             with patch(
-                "mechanical_librarian.bootstrap.connect_existing",
+                "mechanical_librarian.bootstrap.composition.connect_existing",
                 side_effect=AssertionError("corrupt source must not be opened"),
             ):
                 self.assertEqual(
@@ -363,7 +363,7 @@ class ComposedStateCheckTests(unittest.TestCase):
                 return real_publish(staged, target)
 
             with patch(
-                "mechanical_librarian.bootstrap.publish_staged_state",
+                "mechanical_librarian.bootstrap.composition.publish_staged_state",
                 side_effect=publish_after_orphan,
             ):
                 self.assertEqual(
@@ -458,7 +458,7 @@ class ComposedStateCheckTests(unittest.TestCase):
                 return real_publish(staged, target)
 
             with patch(
-                "mechanical_librarian.bootstrap.publish_staged_state",
+                "mechanical_librarian.bootstrap.composition.publish_staged_state",
                 side_effect=publish_after_competitor,
             ):
                 self.assertEqual(
@@ -496,7 +496,7 @@ class ComposedStateCheckTests(unittest.TestCase):
 
             with (
                 patch(
-                    "mechanical_librarian.bootstrap.publish_staged_state",
+                    "mechanical_librarian.bootstrap.composition.publish_staged_state",
                     side_effect=synchronized_publish,
                 ),
                 ThreadPoolExecutor(max_workers=2) as executor,

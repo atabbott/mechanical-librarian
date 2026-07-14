@@ -202,6 +202,46 @@ Mitigations:
   and recovery path.
 - Keep parser dependencies updated and covered by malformed-input tests.
 
+F06 EPUB package extraction applies those controls through one transient child.
+The parent performs a component-by-component no-follow walk within one
+configured read-only mount, hashes the complete descriptor before and after
+the child, and repeats the walk after extraction. The child inherits only that
+descriptor and a parent-liveness control descriptor; its context contains the
+effective narrowest limits, a derived deadline and an opaque fingerprint, not a
+host path or product handle. The child entry point sits below an inert package
+initializer and therefore does not import product network, database, persistence
+or secret implementations. On Linux the child verifies its spawn-time parent
+PID before and after installing `PR_SET_PDEATHSIG`, then closes the control
+descriptor and lowers `RLIMIT_NPROC` to one; Darwin retains the control-pipe watcher. Raw ZIP
+preflight rejects
+NUL names, Unicode/case aliases, traversal, split archives, local/central
+conflicts, unsupported compression/encryption, overlaps, declaration overruns,
+and unsafe expansion before XML interpretation. Required members are streamed
+with CRC checks and never extracted to disk.
+
+Compatibility warnings do not bypass those gates. Noncanonical marker order,
+legacy package versions, duplicate or missing optional declarations, invalid
+refinements, and deprecated package elements may be ignored or downgraded to a
+warning only after ZIP/path/XML preflight succeeds. They grant no new codec,
+path, network, entity, encryption, extraction, or write capability. Larger
+archive defaults apply to ranged structural reads and opaque declarations;
+required XML members retain their separate small byte/tree limits, and the
+child address-space and public-report caps are unchanged.
+
+Fresh Expat parsers reject DOCTYPE/entity declarations, external resolution,
+and XInclude while enforcing XML and package-graph counters. Opaque navigation,
+content, cover, and linked-resource declarations are never dereferenced. The
+parent concurrently caps child stdout/stderr, validates one canonical closed
+report, and terminates/reaps on cancellation, deadline, overflow, crash, or
+parent loss. These composition controls deny delegated application authority;
+they are not described as a kernel syscall sandbox. Linux production also
+enforces the fixed 256 MiB child address-space limit. Darwin framework Python
+cannot lower its address-space limit beneath its preloaded reservation, so
+macOS qualification is development-only for this command until an enforceable
+memory boundary is available. The Linux F06 cohort is qualified non-root with
+networking disabled and the container root, repository, and installed Python
+environment read-only.
+
 ### Stale or conflicting writes
 
 Risk: a user, scan, import, or another curator job changes an item after review.
