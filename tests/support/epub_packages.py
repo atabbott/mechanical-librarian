@@ -85,12 +85,19 @@ def epub_bytes(
     encryption: bytes | None = None,
     compression: int = zipfile.ZIP_DEFLATED,
     extra_entries: tuple[tuple[str, bytes, int], ...] = (),
+    mimetype_value: bytes = b"application/epub+zip",
+    mimetype_compression: int = zipfile.ZIP_STORED,
+    mimetype_first: bool = True,
 ) -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", allowZip64=True) as archive:
-        mimetype = zipfile.ZipInfo("mimetype", (2026, 1, 13, 0, 0, 0))
-        mimetype.compress_type = zipfile.ZIP_STORED
-        archive.writestr(mimetype, b"application/epub+zip")
+        def write_mimetype() -> None:
+            mimetype = zipfile.ZipInfo("mimetype", (2026, 1, 13, 0, 0, 0))
+            mimetype.compress_type = mimetype_compression
+            archive.writestr(mimetype, mimetype_value)
+
+        if mimetype_first:
+            write_mimetype()
         archive.writestr(*_entry("META-INF/container.xml", container, compression))
         archive.writestr(*_entry("EPUB/package.opf", package or (EPUB3_PACKAGE if version == 3 else EPUB2_PACKAGE), compression))
         if container is CONTAINER_MULTIPLE:
@@ -103,6 +110,8 @@ def epub_bytes(
         archive.writestr(*_entry("EPUB/cover.jpg", b"TRAP: cover bytes must remain opaque", zipfile.ZIP_STORED))
         for name, data, compression in extra_entries:
             archive.writestr(*_entry(name, data, compression))
+        if not mimetype_first:
+            write_mimetype()
     return output.getvalue()
 
 

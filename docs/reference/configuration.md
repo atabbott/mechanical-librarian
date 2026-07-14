@@ -189,11 +189,11 @@ having run under the new profile.
 
 | Field | Default | Immutable hard cap |
 | --- | ---: | ---: |
-| `source_archive_bytes` | 67,108,864 | 536,870,912 |
+| `source_archive_bytes` | 268,435,456 | 536,870,912 |
 | `archive_entries` | 2,048 | 8,192 |
-| `compressed_bytes_per_member` | 67,108,864 | 536,870,912 |
-| `expanded_bytes_per_member` | 67,108,864 | 536,870,912 |
-| `expanded_bytes_per_archive` | 536,870,912 | 2,147,483,648 |
+| `compressed_bytes_per_member` | 268,435,456 | 536,870,912 |
+| `expanded_bytes_per_member` | 268,435,456 | 536,870,912 |
+| `expanded_bytes_per_archive` | 1,073,741,824 | 2,147,483,648 |
 | `compression_ratio_per_member` | 200 | 1,000 |
 | `container_xml_bytes` | 65,536 | 1,048,576 |
 | `opf_package_bytes` | 4,194,304 | 16,777,216 |
@@ -205,13 +205,13 @@ having run under the new profile.
 | `metadata_nodes` | 512 | 2,048 |
 | `manifest_items` | 4,096 | 8,192 |
 | `spine_items` | 4,096 | 8,192 |
-| `guide_references` | 128 | 512 |
+| `guide_references` | 256 | 512 |
 | `prefix_mappings` | 64 | 256 |
 
 The profile additionally fixes a 1,024-byte UTF-8 whole-member-name cap, a
 255-byte UTF-8 component-name cap, archive nesting depth one, 256 total
-observations, 32 values per controlled field, 32 warnings, 1,024 Unicode scalar
-values per raw observation, 4,096 per normalized value, and 524,288 UTF-8 bytes
+observations, 32 values per controlled field, 32 warnings, 16,384 Unicode scalar
+values per raw or normalized observation, and 524,288 UTF-8 bytes
 per public report. These constants are not configurable.
 
 ### Providers

@@ -188,6 +188,54 @@ class LocalEvidenceTests(unittest.TestCase):
                 "{file:///Users/private/package.opf}title",
                 1,
             )
+        unsafe_namespaces = (
+            "{https://user:synthetic-secret@example.invalid/ns}quiet",
+            "{file:///Users/example/private}quiet",
+            "{urn:synthetic:spoof\u202econtrol}quiet",
+            "{urn:synthetic:ordinary}ghp_1234567890abcdef",
+            "ghp_1234567890abcdef",
+        )
+        for expanded_name in unsafe_namespaces:
+            with self.subTest(expanded_name=expanded_name):
+                with self.assertRaises(EvidenceValueError):
+                    LocalEvidenceCitation(
+                        fingerprint(),
+                        "b" * 64,
+                        CitationSection.METADATA,
+                        expanded_name,
+                        1,
+                    )
+        ordinary_foreign = LocalEvidenceCitation(
+            fingerprint(),
+            "b" * 64,
+            CitationSection.METADATA,
+            "{urn:synthetic:ordinary}quiet",
+            1,
+        )
+        self.assertEqual(
+            ordinary_foreign.expanded_name, "{urn:synthetic:ordinary}quiet"
+        )
+
+        report = LocalEvidenceReport(
+            LocalEvidenceOutcome.SUCCESS,
+            LocalEvidenceCapability.PACKAGE,
+            EpubPackageLimits(),
+            fingerprint(),
+            (observation(LocalEvidenceField.TITLE, 1, "Title"),),
+        )
+        serialized = json.loads(report.to_json())
+        serialized["observations"][0]["citation"]["expanded_name"] = (
+            unsafe_namespaces[0]
+        )
+        with self.assertRaises(EvidenceValueError):
+            LocalEvidenceReport.from_json(
+                json.dumps(
+                    serialized,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
         self.assertEqual(
             local_resource_identity("OPS/package.opf"),
             "4f9acde629bc2391e0d1bc19daef01f7419dc8af6fc5002f6bfb9abc7bdab53e",

@@ -79,6 +79,7 @@ _UUID = re.compile(
 _DOI = re.compile(r"^(?:(?:doi:)|(?:https?://doi\.org/))?(10\.\d{4,9}/\S+)$", re.I)
 _ASIN = re.compile(r"^(?:ASIN:)?(B0[A-Z0-9]{8})$", re.I)
 _UNSAFE_MARKER = "unsafe-source-text-sha256:"
+_OVERSIZED_MARKER = "oversized-source-text-sha256:"
 
 
 class _Rejected(Exception):
@@ -229,7 +230,7 @@ def _valid_member_name(raw: bytes, flags: int, limits: EpubPackageLimits) -> str
         raise _Rejected(LocalEvidenceOutcome.MALFORMED) from None
     if unicodedata.normalize("NFC", name) != name:
         raise _Rejected(LocalEvidenceOutcome.MALFORMED)
-    parts = name.split("/")
+    parts = name[:-1].split("/") if name.endswith("/") else name.split("/")
     if (
         not name
         or name.startswith("/")
@@ -239,6 +240,14 @@ def _valid_member_name(raw: bytes, flags: int, limits: EpubPackageLimits) -> str
     ):
         raise _Rejected(LocalEvidenceOutcome.MALFORMED)
     return name
+
+
+def _canonical_zip_flags(method: int) -> int:
+    return 0x0808 | (0x0006 if method == zipfile.ZIP_DEFLATED else 0)
+
+
+def _uses_noncanonical_zip_flags(flags: int, method: int) -> bool:
+    return bool(flags & ~_canonical_zip_flags(method))
 
 
 def _central_directory(request: LocalEvidenceRequest) -> tuple[_Entry, ...]:
@@ -322,8 +331,14 @@ def _central_directory(request: LocalEvidenceRequest) -> tuple[_Entry, ...]:
             raise _Rejected(LocalEvidenceOutcome.ENCRYPTED)
         if method not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}:
             raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_COMPRESSION)
-        allowed_flags = 0x0808 | (0x0006 if method == zipfile.ZIP_DEFLATED else 0)
-        if flags & ~allowed_flags:
+        # A deployed producer leaves the exact bits 1, 2, and 4 residue set on
+        # both stored and Deflated entries. Accept that complete pattern only;
+        # the selected method remains authoritative and every adjacent unknown
+        # or capability-bearing flag remains rejected.
+        compatibility_flags = (
+            flags & 0x0016 == 0x0016 and flags & ~0x081E == 0
+        )
+        if flags & ~_canonical_zip_flags(method) and not compatibility_flags:
             raise _Rejected(LocalEvidenceOutcome.MALFORMED)
         if disk_start != 0:
             raise _Rejected(LocalEvidenceOutcome.MALFORMED)
@@ -357,7 +372,9 @@ def _central_directory(request: LocalEvidenceRequest) -> tuple[_Entry, ...]:
             raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE)
         if compressed and expanded > compressed * limits.compression_ratio_per_member:
             raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
-        collision = unicodedata.normalize("NFC", name).casefold()
+        if name.endswith("/") and (expanded != 0 or crc != 0):
+            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        collision = unicodedata.normalize("NFC", name.removesuffix("/")).casefold()
         if collision in normalized:
             raise _Rejected(LocalEvidenceOutcome.MALFORMED)
         normalized.add(collision)
@@ -468,19 +485,8 @@ def _central_directory(request: LocalEvidenceRequest) -> tuple[_Entry, ...]:
     for previous, current in zip(sorted(intervals), sorted(intervals)[1:]):
         if previous[1] > current[0]:
             raise _Rejected(LocalEvidenceOutcome.MALFORMED)
-    first = result[0]
-    if first.name != _MIMETYPE:
+    if not any(entry.name == _MIMETYPE for entry in result):
         raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_FORMAT)
-    if (
-        first.local_offset != 0
-        or first.method != zipfile.ZIP_STORED
-        or first.flags & 0x08
-        or first.local_extra_length
-        or first.central_extra_length
-    ):
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
-    if first.expanded_size != len(_MIMETYPE_VALUE):
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
     return tuple(result)
 
 
@@ -639,16 +645,31 @@ def _percent_decode_path(reference: str) -> str:
     return unicodedata.normalize("NFC", decoded)
 
 
-def _resolve_member(base: str, reference: str, entries: dict[str, _Entry]) -> str:
-    if not reference or reference.startswith(("/", "\\")) or "\\" in reference or "?" in reference or "#" in reference:
+def _normalize_member_reference(base: str, reference: str) -> str:
+    first_segment = reference.split("/", 1)[0]
+    if (
+        not reference
+        or reference.startswith(("/", "\\"))
+        or "\\" in reference
+        or "?" in reference
+        or "#" in reference
+        or ":" in first_segment
+    ):
         raise _Rejected(LocalEvidenceOutcome.MALFORMED)
     decoded_reference = _percent_decode_path(reference)
+    if decoded_reference.endswith("/"):
+        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
     joined = posixpath.normpath(posixpath.join(posixpath.dirname(base), decoded_reference))
     if joined.startswith("../") or joined in {".", ".."}:
         raise _Rejected(LocalEvidenceOutcome.MALFORMED)
     encoded = joined.encode("utf-8")
     if len(encoded) > EpubPackageLimits.MEMBER_NAME_UTF8_BYTES_HARD_CAP:
         raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+    return joined
+
+
+def _resolve_member(base: str, reference: str, entries: dict[str, _Entry]) -> str:
+    joined = _normalize_member_reference(base, reference)
     if joined not in entries:
         raise _Rejected(LocalEvidenceOutcome.MALFORMED)
     return joined
@@ -668,7 +689,7 @@ def _declared_resource_identity(
         ):
             raise _Rejected(LocalEvidenceOutcome.MALFORMED)
         return hashlib.sha256(("remote\x00" + reference).encode("utf-8")).hexdigest(), None
-    resolved = _resolve_member(base, reference, entries)
+    resolved = _normalize_member_reference(base, reference)
     return local_resource_identity(resolved), resolved
 
 
@@ -747,6 +768,8 @@ def _resolved_property(value: str | None, prefixes: dict[str, str]) -> str | Non
 
 
 def _public_text(value: str, maximum: int) -> tuple[str, bool]:
+    if len(value) > maximum:
+        return _OVERSIZED_MARKER + hashlib.sha256(value.encode("utf-8")).hexdigest(), True
     try:
         return validate_projection_text(value, "public EPUB metadata", maximum), False
     except EvidenceValueError:
@@ -770,11 +793,34 @@ def _citation(
     node: _Node,
     selector: str | None = None,
 ) -> LocalEvidenceCitation:
+    expanded_name = node.name
+    namespace = ""
+    local_name = expanded_name
+    if expanded_name.startswith("{"):
+        namespace, separator, local_name = expanded_name[1:].partition("}")
+        if not separator:
+            namespace = ""
+    public_name = (
+        (namespace == _DC_NS and local_name in _DC_FIELDS)
+        or (
+            namespace == _OPF_NS
+            and local_name
+            in {"item", "itemref", "meta", "package", "reference", "spine"}
+        )
+        or (namespace == _CONTAINER_NS and local_name == "rootfile")
+        or (namespace == _XMLENC_NS and local_name == "CipherReference")
+    )
+    if not public_name or len(expanded_name) > 512:
+        expanded_name = (
+            "{urn:sha256:"
+            + hashlib.sha256(expanded_name.encode("utf-8")).hexdigest()
+            + "}element"
+        )
     return LocalEvidenceCitation(
         request.expected_source,
         local_resource_identity(resource),
         section,
-        node.name,
+        expanded_name,
         node.ordinal,
         selector,
     )
@@ -795,8 +841,6 @@ def _observation(
     preserve_only: bool = False,
 ) -> LocalEvidenceObservation:
     raw = node.text
-    if len(raw) > request.limits.MAX_RAW_VALUE_CHARACTERS or (normalized is not None and len(normalized) > request.limits.MAX_NORMALIZED_VALUE_CHARACTERS):
-        raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
     safe_raw, raw_redacted = _public_text(raw, request.limits.MAX_RAW_VALUE_CHARACTERS)
     normalized_value = None if preserve_only else raw.strip() if normalized is None else normalized
     safe_normalized = None
@@ -851,11 +895,16 @@ def _package_report(
     encryption_present: bool,
     usage: LocalEvidenceUsage,
     rootfile_node: _Node,
+    noncanonical_mimetype: bool,
 ) -> LocalEvidenceReport:
     if root.name != "{" + _OPF_NS + "}package":
         raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_FORMAT)
-    version = _attribute(root, "version") or ""
-    if version not in {"2.0", "3.0"}:
+    declared_version = _attribute(root, "version") or ""
+    if declared_version == "1.0" or re.fullmatch(r"2(?:\.[0-9]+)+", declared_version):
+        version = "2.0"
+    elif re.fullmatch(r"3(?:\.[0-9]+)+", declared_version):
+        version = "3.0"
+    else:
         raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_VERSION)
     prefix_tokens = (_attribute(root, "prefix") or "").split()
     if (
@@ -894,11 +943,19 @@ def _package_report(
     trailing = child_names[3:]
     guide_name = f"{{{_OPF_NS}}}guide"
     if version == "2.0":
-        if trailing not in ([], [guide_name]):
+        tours_name = f"{{{_OPF_NS}}}tours"
+        if trailing not in (
+            [],
+            [tours_name],
+            [guide_name],
+            [tours_name, guide_name],
+        ):
             raise _Rejected(LocalEvidenceOutcome.MALFORMED)
     else:
         collection_name = f"{{{_OPF_NS}}}collection"
         bindings_name = f"{{{_OPF_NS}}}bindings"
+        tours_name = f"{{{_OPF_NS}}}tours"
+        trailing = [name for name in trailing if name != tours_name]
         position = 0
         if position < len(trailing) and trailing[position] == guide_name:
             position += 1
@@ -917,6 +974,18 @@ def _package_report(
     observations: list[LocalEvidenceObservation] = []
     declarations: list[LocalEvidenceDeclaration] = []
     warnings: list[LocalEvidenceWarning] = []
+    if noncanonical_mimetype:
+        warnings.append(LocalEvidenceWarning("noncanonical_mimetype"))
+    if declared_version != version:
+        warnings.append(LocalEvidenceWarning("noncanonical_package_version"))
+    if any(
+        _uses_noncanonical_zip_flags(entry.flags, entry.method)
+        for entry in entries.values()
+    ):
+        warnings.append(LocalEvidenceWarning("noncanonical_zip_flags"))
+    tours = _children(root, "tours", _OPF_NS)
+    if tours:
+        warnings.append(LocalEvidenceWarning("deprecated_tours"))
     declarations.extend(
         (
             LocalEvidenceDeclaration(
@@ -951,12 +1020,24 @@ def _package_report(
         )
     identifiers_by_id: dict[str, _Node] = {}
     id_registry: dict[str, _Node] = {}
+    ambiguous_ids: set[str] = set()
     for node in _walk(root):
         identifier = _attribute(node, "id")
         if identifier is None:
             continue
-        if _XML_ID.fullmatch(identifier) is None or identifier in id_registry:
-            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        if _XML_ID.fullmatch(identifier) is None:
+            warnings.append(
+                LocalEvidenceWarning(
+                    "invalid_package_id",
+                    _citation(request, package_name, CitationSection.PACKAGE, node),
+                )
+            )
+            continue
+        if identifier in id_registry or identifier in ambiguous_ids:
+            id_registry.pop(identifier, None)
+            ambiguous_ids.add(identifier)
+            warnings.append(LocalEvidenceWarning("ambiguous_package_id"))
+            continue
         id_registry[identifier] = node
     title_count = 0
     standard_collection = any(
@@ -983,9 +1064,11 @@ def _package_report(
         refines = _attribute(node, "refines")
         if refines:
             if not refines.startswith("#") or not refines[1:]:
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                warnings.append(LocalEvidenceWarning("invalid_metadata_refinement"))
+                continue
             if refines[1:] not in id_registry:
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                warnings.append(LocalEvidenceWarning("unresolved_metadata_refinement"))
+                continue
             if identifier:
                 refinement_graph[identifier] = refines[1:]
     for start in refinement_graph:
@@ -993,7 +1076,8 @@ def _package_report(
         current = start
         while current in refinement_graph:
             if current in visited:
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                warnings.append(LocalEvidenceWarning("cyclic_metadata_refinement"))
+                break
             visited.add(current)
             current = refinement_graph[current]
     for node in metadata.children:
@@ -1010,7 +1094,7 @@ def _package_report(
                 normalized, applicability, inferred_scheme, invalid_identifier = (
                     _normalize_identifier(node.text)
                 )
-                if identifier:
+                if identifier and id_registry.get(identifier) is node:
                     identifiers_by_id[identifier] = node
                 if invalid_identifier:
                     warnings.append(
@@ -1143,7 +1227,8 @@ def _package_report(
                 refines = _attribute(node, "refines") or ""
                 referenced = id_registry.get(refines[1:]) if refines.startswith("#") else None
                 if referenced is None:
-                    raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                    warnings.append(LocalEvidenceWarning("unresolved_metadata_refinement"))
+                    continue
                 allowed_targets = {
                     "title-type": {f"{{{_DC_NS}}}title"},
                     "role": {
@@ -1158,8 +1243,12 @@ def _package_report(
                     "display-seq": {f"{{{_DC_NS}}}title"},
                     "identifier-type": {f"{{{_DC_NS}}}identifier"},
                 }
-                if referenced.name not in allowed_targets[resolved_property]:
-                    raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                if (
+                    resolved_property != "display-seq"
+                    and referenced.name not in allowed_targets[resolved_property]
+                ):
+                    warnings.append(LocalEvidenceWarning("inapplicable_metadata_refinement"))
+                    continue
                 if resolved_property == "title-type" and value == "subtitle":
                     observations.append(
                         _observation(
@@ -1197,18 +1286,27 @@ def _package_report(
                     try:
                         display_value = int(value)
                     except ValueError:
-                        raise _Rejected(LocalEvidenceOutcome.MALFORMED) from None
-                    observations.append(
-                        _observation(
-                            request,
-                            package_name,
-                            version,
-                            referenced,
-                            LocalEvidenceField.TITLE,
-                            display=display_value,
-                            selector="display-seq",
+                        warnings.append(LocalEvidenceWarning("invalid_metadata_refinement"))
+                        continue
+                    if not 0 <= display_value <= 4_294_967_295:
+                        warnings.append(LocalEvidenceWarning("invalid_metadata_refinement"))
+                        continue
+                    if referenced.name == f"{{{_DC_NS}}}title":
+                        observations.append(
+                            _observation(
+                                request,
+                                package_name,
+                                version,
+                                referenced,
+                                LocalEvidenceField.TITLE,
+                                display=display_value,
+                                selector="display-seq",
+                            )
                         )
-                    )
+                    else:
+                        warnings.append(
+                            LocalEvidenceWarning("inapplicable_metadata_refinement")
+                        )
             elif resolved_property in {
                 "schema:bookEdition",
                 "schema:bookFormat",
@@ -1285,36 +1383,41 @@ def _package_report(
         warnings.append(LocalEvidenceWarning("incomplete_calibre_series"))
     required = {LocalEvidenceField.TITLE, LocalEvidenceField.LANGUAGE, LocalEvidenceField.IDENTIFIER}
     if not required.issubset({item.field for item in observations}):
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        warnings.append(LocalEvidenceWarning("incomplete_required_metadata"))
     if version == "3.0" and LocalEvidenceField.MODIFICATION_DATE not in {item.field for item in observations}:
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        warnings.append(LocalEvidenceWarning("missing_modification_date"))
     unique_identifier = _attribute(root, "unique-identifier")
-    if not unique_identifier or unique_identifier not in identifiers_by_id:
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
-    primary = identifiers_by_id[unique_identifier]
-    primary_normalized, primary_applicability, _primary_scheme, _invalid = (
-        _normalize_identifier(primary.text)
-    )
-    observations.append(
-        _observation(
-            request,
-            package_name,
-            version,
-            primary,
-            LocalEvidenceField.PACKAGE_IDENTIFIER,
-            normalized=primary_normalized,
-            applicability=primary_applicability,
-            selector="primary-identifier",
+    primary = identifiers_by_id.get(unique_identifier or "")
+    if primary is None and len(identifiers_by_id) == 1:
+        primary = next(iter(identifiers_by_id.values()))
+        warnings.append(LocalEvidenceWarning("inferred_package_identifier"))
+    elif primary is None:
+        warnings.append(LocalEvidenceWarning("missing_package_identifier"))
+    if primary is not None:
+        primary_normalized, primary_applicability, _primary_scheme, _invalid = (
+            _normalize_identifier(primary.text)
         )
-    )
-    version_node = _Node(root.name, root.attributes, text_parts=[version], ordinal=root.ordinal)
+        observations.append(
+            _observation(
+                request,
+                package_name,
+                version,
+                primary,
+                LocalEvidenceField.PACKAGE_IDENTIFIER,
+                normalized=primary_normalized,
+                applicability=primary_applicability,
+                selector="primary-identifier",
+            )
+        )
+    version_node = _Node(root.name, root.attributes, text_parts=[declared_version], ordinal=root.ordinal)
     observations.append(_observation(request, package_name, version, version_node, LocalEvidenceField.PACKAGE_VERSION, applicability=ObservationApplicability.FILE))
     manifest_ids: dict[str, str] = {}
+    manifest_nodes: dict[str, _Node] = {}
     manifest_resources: set[str] = set()
     manifest_fallbacks: dict[str, str] = {}
     media_overlays: list[str] = []
     nav_count = 0
-    cover_current: str | None = None
+    cover_current_ids: list[str] = []
     for item in manifest.children:
         if item.name != f"{{{_OPF_NS}}}item":
             raise _Rejected(LocalEvidenceOutcome.MALFORMED)
@@ -1323,17 +1426,26 @@ def _package_report(
         media_type = _attribute(item, "media-type")
         if (
             not identifier
-            or identifier in manifest_ids
+            or id_registry.get(identifier) is not item
             or not href
             or not media_type
             or _MEDIA_TYPE.fullmatch(media_type) is None
         ):
-            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            warnings.append(LocalEvidenceWarning("invalid_manifest_item"))
+            continue
         resource_identity, resolved = _declared_resource_identity(package_name, href, entries)
+        if resolved is not None and resolved not in entries:
+            warnings.append(
+                LocalEvidenceWarning(
+                    "missing_manifest_resource",
+                    _citation(request, package_name, CitationSection.MANIFEST, item),
+                )
+            )
         if resource_identity in manifest_resources:
-            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            warnings.append(LocalEvidenceWarning("duplicate_manifest_resource"))
         manifest_resources.add(resource_identity)
         manifest_ids[identifier] = resource_identity
+        manifest_nodes[identifier] = item
         fallback = _attribute(item, "fallback")
         if fallback:
             manifest_fallbacks[identifier] = fallback
@@ -1344,9 +1456,7 @@ def _package_report(
         if "nav" in properties:
             nav_count += 1
         if "cover-image" in properties:
-            if cover_current is not None:
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
-            cover_current = resource_identity
+            cover_current_ids.append(identifier)
         declarations.append(
             LocalEvidenceDeclaration(
                 DeclarationKind.MANIFEST_ITEM,
@@ -1382,26 +1492,44 @@ def _package_report(
                     properties,
                 )
             )
+    cover_current_resources = {
+        manifest_ids[identifier] for identifier in cover_current_ids
+    }
+    cover_current_id = (
+        cover_current_ids[0]
+        if cover_current_ids and len(cover_current_resources) == 1
+        else None
+    )
+    if len(cover_current_resources) > 1:
+        warnings.append(LocalEvidenceWarning("contradictory_cover_declaration"))
     if any(fallback not in manifest_ids for fallback in manifest_fallbacks.values()):
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        warnings.append(LocalEvidenceWarning("invalid_manifest_fallback"))
+        manifest_fallbacks = {
+            source: target
+            for source, target in manifest_fallbacks.items()
+            if target in manifest_ids
+        }
     if any(overlay not in manifest_ids for overlay in media_overlays):
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        warnings.append(LocalEvidenceWarning("invalid_media_overlay"))
     for start in manifest_fallbacks:
         visited: set[str] = set()
         current = start
         while current in manifest_fallbacks:
             if current in visited:
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                warnings.append(LocalEvidenceWarning("cyclic_manifest_fallback"))
+                break
             visited.add(current)
             current = manifest_fallbacks[current]
     if version == "3.0" and nav_count != 1:
-        raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+        warnings.append(LocalEvidenceWarning("invalid_navigation_declaration"))
     for itemref in spine.children:
         if itemref.name != f"{{{_OPF_NS}}}itemref":
-            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            warnings.append(LocalEvidenceWarning("invalid_spine_item"))
+            continue
         idref = _attribute(itemref, "idref")
         if not idref or idref not in manifest_ids:
-            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            warnings.append(LocalEvidenceWarning("invalid_spine_item"))
+            continue
         declarations.append(
             LocalEvidenceDeclaration(
                 DeclarationKind.SPINE_ITEM,
@@ -1414,8 +1542,37 @@ def _package_report(
     toc = _attribute(spine, "toc")
     if toc:
         if toc not in manifest_ids:
-            raise _Rejected(LocalEvidenceOutcome.MALFORMED)
-        declarations.append(LocalEvidenceDeclaration(DeclarationKind.NCX, spine.ordinal, _citation(request, package_name, CitationSection.NAVIGATION, spine), manifest_ids[toc], toc))
+            warnings.append(LocalEvidenceWarning("invalid_ncx_declaration"))
+        else:
+            declarations.append(LocalEvidenceDeclaration(DeclarationKind.NCX, spine.ordinal, _citation(request, package_name, CitationSection.NAVIGATION, spine), manifest_ids[toc], toc))
+    if tours:
+        valid_tours = version == "2.0" and len(tours) == 1 and bool(tours[0].children)
+        for tour in tours[0].children if len(tours) == 1 else ():
+            valid_tours = valid_tours and (
+                tour.name == f"{{{_OPF_NS}}}tour"
+                and bool(_attribute(tour, "title"))
+                and bool(tour.children)
+            )
+            for site in tour.children:
+                href = _attribute(site, "href")
+                valid_tours = valid_tours and (
+                    site.name == f"{{{_OPF_NS}}}site"
+                    and bool(_attribute(site, "title"))
+                    and bool(href)
+                    and not site.children
+                )
+                if href:
+                    resource_identity, resolved = _declared_resource_identity(
+                        package_name,
+                        href.split("#", 1)[0],
+                        entries,
+                    )
+                    valid_tours = valid_tours and (
+                        (resolved is None or resolved in entries)
+                        and resource_identity in manifest_resources
+                    )
+        if not valid_tours:
+            warnings.append(LocalEvidenceWarning("invalid_deprecated_tours"))
     guides = _children(root, "guide", _OPF_NS)
     if len(guides) > 1:
         raise _Rejected(LocalEvidenceOutcome.MALFORMED)
@@ -1424,15 +1581,24 @@ def _package_report(
             raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
         for reference in guides[0].children:
             if reference.name != f"{{{_OPF_NS}}}reference":
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+                warnings.append(LocalEvidenceWarning("invalid_guide_reference"))
+                continue
             href = _attribute(reference, "href")
-            if not href:
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            if not href or reference.children or reference.text:
+                warnings.append(LocalEvidenceWarning("invalid_guide_reference"))
+                continue
             clean_href = href.split("#", 1)[0]
-            resource_identity, _resolved = _declared_resource_identity(package_name, clean_href, entries)
+            resource_identity, resolved = _declared_resource_identity(
+                package_name, clean_href, entries
+            )
             reference_type = _attribute(reference, "type")
-            if not reference_type or _XML_ID.fullmatch(reference_type) is None:
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
+            if (
+                not reference_type
+                or _XML_ID.fullmatch(reference_type) is None
+                or (resolved is not None and resolved not in entries)
+            ):
+                warnings.append(LocalEvidenceWarning("invalid_guide_reference"))
+                continue
             declarations.append(LocalEvidenceDeclaration(DeclarationKind.GUIDE_REFERENCE, reference.ordinal, _citation(request, package_name, CitationSection.GUIDE, reference), resource_identity, reference_type))
     required_resources = {_MIMETYPE, _CONTAINER, _ENCRYPTION, package_name}
     if required_resources & encryption_names:
@@ -1441,18 +1607,34 @@ def _package_report(
         warnings.append(LocalEvidenceWarning("opaque_resource_encrypted"))
     if encryption_present:
         warnings.append(LocalEvidenceWarning("encryption_declarations_present"))
-    legacy_cover = None
+    legacy_cover_ids: list[str] = []
     for node in metadata.children:
         if node.name == f"{{{_OPF_NS}}}meta" and _attribute(node, "name") == "cover":
             cover_id = _attribute(node, "content")
             if not cover_id or cover_id not in manifest_ids:
-                raise _Rejected(LocalEvidenceOutcome.MALFORMED)
-            legacy_cover = manifest_ids[cover_id]
-    selected_cover = cover_current or legacy_cover
+                warnings.append(LocalEvidenceWarning("invalid_cover_declaration"))
+                continue
+            legacy_cover_ids.append(cover_id)
+    legacy_cover_resources = {
+        manifest_ids[identifier] for identifier in legacy_cover_ids
+    }
+    legacy_cover_id = (
+        legacy_cover_ids[0]
+        if legacy_cover_ids and len(legacy_cover_resources) == 1
+        else None
+    )
+    if len(legacy_cover_resources) > 1:
+        warnings.append(LocalEvidenceWarning("contradictory_cover_declaration"))
+    selected_cover_id = (
+        cover_current_id if cover_current_ids else legacy_cover_id
+    )
+    selected_cover = (
+        manifest_ids[selected_cover_id] if selected_cover_id is not None else None
+    )
     if selected_cover:
-        cover_node = next(item for item in manifest.children if manifest_ids.get(_attribute(item, "id") or "") == selected_cover)
+        cover_node = manifest_nodes[selected_cover_id]
         observations.append(_observation(request, package_name, version, _Node(cover_node.name, cover_node.attributes, text_parts=[selected_cover], ordinal=cover_node.ordinal), LocalEvidenceField.COVER, applicability=ObservationApplicability.FILE))
-        if not cover_current:
+        if not cover_current_ids:
             declarations.append(
                 LocalEvidenceDeclaration(
                     DeclarationKind.COVER,
@@ -1463,7 +1645,14 @@ def _package_report(
                     _attribute(cover_node, "media-type"),
                 )
             )
-    if cover_current and legacy_cover and cover_current != legacy_cover:
+    if (
+        cover_current_ids
+        and any(
+            current_resource != legacy_resource
+            for current_resource in cover_current_resources
+            for legacy_resource in legacy_cover_resources
+        )
+    ):
         warnings.append(LocalEvidenceWarning("contradictory_cover_declaration"))
     values_by_field: dict[LocalEvidenceField, set[str]] = {}
     for observation in observations:
@@ -1502,7 +1691,30 @@ def _package_report(
         warnings.append(
             LocalEvidenceWarning("unsafe_metadata_redacted", redacted.citation)
         )
+    oversized = next(
+        (
+            observation
+            for observation in observations
+            if observation.raw_value.startswith(_OVERSIZED_MARKER)
+            or (
+                observation.normalized_value is not None
+                and observation.normalized_value.startswith(_OVERSIZED_MARKER)
+            )
+        ),
+        None,
+    )
+    if oversized is not None:
+        warnings.append(
+            LocalEvidenceWarning("oversized_metadata_redacted", oversized.citation)
+        )
     warnings = list({warning.sort_key: warning for warning in warnings}.values())
+    if len(warnings) > request.limits.MAX_WARNINGS:
+        warnings = [
+            LocalEvidenceWarning(code)
+            for code in sorted({warning.code for warning in warnings})
+        ]
+        if len(warnings) < request.limits.MAX_WARNINGS:
+            warnings.append(LocalEvidenceWarning("warning_occurrences_aggregated"))
     field_counts: dict[LocalEvidenceField, int] = {}
     for observation in observations:
         field_counts[observation.field] = field_counts.get(observation.field, 0) + 1
@@ -1557,7 +1769,7 @@ class EpubPackageExtractor:
                 raise _Rejected(LocalEvidenceOutcome.UNAVAILABLE_SOURCE)
             entries_tuple = _central_directory(request)
             entries = {entry.name: entry for entry in entries_tuple}
-            if _CONTAINER not in entries:
+            if _MIMETYPE not in entries or _CONTAINER not in entries:
                 raise _Rejected(LocalEvidenceOutcome.MALFORMED)
             source_io = _SourceIO(request)
             try:
@@ -1565,9 +1777,21 @@ class EpubPackageExtractor:
             except (zipfile.BadZipFile, OSError, ValueError):
                 raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE) from None
             with archive:
-                mimetype = _member_bytes(request, archive, entries, _MIMETYPE, len(_MIMETYPE_VALUE))
+                marker = entries[_MIMETYPE]
+                noncanonical_mimetype = (
+                    entries_tuple[0].name != _MIMETYPE
+                    or marker.local_offset != 0
+                    or marker.method != zipfile.ZIP_STORED
+                    or bool(marker.flags & 0x08)
+                    or bool(marker.local_extra_length)
+                    or bool(marker.central_extra_length)
+                    or marker.expanded_size != len(_MIMETYPE_VALUE)
+                )
+                mimetype = _member_bytes(request, archive, entries, _MIMETYPE, 64)
                 if mimetype != _MIMETYPE_VALUE:
-                    raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_FORMAT)
+                    if mimetype.removeprefix(b"\xef\xbb\xbf").strip() != _MIMETYPE_VALUE:
+                        raise _Rejected(LocalEvidenceOutcome.UNSUPPORTED_FORMAT)
+                    noncanonical_mimetype = True
                 container_bytes = _member_bytes(request, archive, entries, _CONTAINER, request.limits.container_xml_bytes)
                 container_root, container_usage = _parse_xml(container_bytes, request.limits, request)
                 if container_root.name != "{" + _CONTAINER_NS + "}container" or _attribute(container_root, "version") != "1.0":
@@ -1691,6 +1915,7 @@ class EpubPackageExtractor:
                 _ENCRYPTION in entries,
                 usage,
                 rootfiles[0],
+                noncanonical_mimetype,
             )
         except _Rejected as rejected:
             return LocalEvidenceReport(rejected.outcome, LocalEvidenceCapability.PACKAGE, request.limits)

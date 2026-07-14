@@ -16,7 +16,14 @@ versioning after the first public release.
   warning. The complete suite is qualified on CPython 3.13.14 and 3.14.6 for
   macOS development, and the F06 parser/process cohort is qualified on
   non-root Linux CPython 3.13.11 with a read-only filesystem, no network, and
-  exact child resource/process gates.
+  exact child resource/process gates. Read-only compatibility includes opaque
+  ZIP directory entries, a warned exact producer-residue ZIP flag pattern,
+  bounded noncanonical `mimetype` packaging, compatible package-version
+  families, and non-overriding EPUB 3 display-sequence refinements. Optional
+  broken package declarations and deprecated tours are warned and omitted
+  without exposing or dereferencing content. Defaults accept 256 MiB archives,
+  and ordinary metadata values up to 16,384 characters are preserved within
+  the unchanged 512 KiB public-report cap.
 
 - Added durable duplicate-safe Audiobookshelf polling with persisted cumulative
   budgets, bounded retry/backoff, governing-state suppression, monotonic lease

@@ -1137,6 +1137,7 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                 "path-and-zip-encryption",
                 "report-declaration-output-bounds",
                 "xml-entities-xinclude",
+                "zip-directory-and-known-flag-residue",
                 "zip-descriptor-local-header",
                 "zip-preflight-alias-crc-compression",
             },

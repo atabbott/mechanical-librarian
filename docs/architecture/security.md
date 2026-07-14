@@ -149,6 +149,15 @@ conflicts, unsupported compression/encryption, overlaps, declaration overruns,
 and unsafe expansion before XML interpretation. Required members are streamed
 with CRC checks and never extracted to disk.
 
+Compatibility warnings do not bypass those gates. Noncanonical marker order,
+legacy package versions, duplicate or missing optional declarations, invalid
+refinements, and deprecated package elements may be ignored or downgraded to a
+warning only after ZIP/path/XML preflight succeeds. They grant no new codec,
+path, network, entity, encryption, extraction, or write capability. Larger
+archive defaults apply to ranged structural reads and opaque declarations;
+required XML members retain their separate small byte/tree limits, and the
+child address-space and public-report caps are unchanged.
+
 Fresh Expat parsers reject DOCTYPE/entity declarations, external resolution,
 and XInclude while enforcing XML and package-graph counters. Opaque navigation,
 content, cover, and linked-resource declarations are never dereferenced. The

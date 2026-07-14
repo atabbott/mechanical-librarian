@@ -55,7 +55,7 @@ recover the rejected source value.
 ## Supported package subset
 
 The frozen revisions and deliberate omissions are maintained in the
-[compatibility policy](../reference/compatibility.md#frozen-epub-package-baseline-for-f06).
+[compatibility policy](../reference/compatibility.md#epub-package-compatibility-baseline-for-f06).
 F06 reads package declarations only. It does not parse navigation XHTML, NCX
 content, landmarks, opening/body XHTML, cover binaries or linked metadata, and
 does not persist evidence. Those behaviors remain in F07 and later slices.
@@ -132,9 +132,9 @@ The committed Linux result is
 It was measured as UID/GID `65534:65534` in the digest-pinned CPython 3.13 image
 already listed in the compatibility policy, with networking disabled, a
 read-only container root and repository mount, 512 MiB container memory and a
-64-process container ceiling. The run observed 45,576 KiB child peak RSS,
-0.53223 seconds combined child CPU, 0.688132 seconds elapsed, six child file
-descriptors, one process-group member, 24,925 output bytes, zero parent
+64-process container ceiling. The run observed 45,664 KiB child peak RSS,
+0.502084 seconds combined child CPU, 0.651933 seconds elapsed, six child file
+descriptors, one process-group member, 24,929 output bytes, zero parent
 descriptor delta and zero surviving children. The artifact is schema-checked
 and its measurements are asserted against the child gates by the cohort tests.
 

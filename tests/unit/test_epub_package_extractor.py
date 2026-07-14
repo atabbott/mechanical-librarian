@@ -35,6 +35,7 @@ from mechanical_librarian.domain.local_evidence import (
 from tests.support.epub_packages import (
     CONTAINER_MULTIPLE,
     CONTAINER_ONE,
+    EPUB2_PACKAGE,
     EPUB3_PACKAGE,
     epub_data_descriptor_bytes,
     epub_bytes,
@@ -208,6 +209,38 @@ class EpubPackageExtractorTests(unittest.TestCase):
         self.assertEqual(primary.normalized_value, "0306406152")
         self.assertIs(primary.applicability, ObservationApplicability.UNKNOWN)
 
+        tours = b'''<tours>
+    <tour title="Synthetic route">
+      <site title="Synthetic stop" href="chapter.xhtml#start"/>
+    </tour>
+  </tours>
+  '''
+        toured_package = EPUB2_PACKAGE.replace(b"  <guide>", b"  " + tours + b"<guide>")
+        toured = EpubPackageExtractor().extract(
+            request(epub_bytes(package=toured_package))
+        )
+        self.assertEqual(toured.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn("deprecated_tours", {item.code for item in toured.warnings})
+        self.assertNotIn("Synthetic route", toured.to_json())
+        self.assertNotIn("Synthetic stop", toured.to_json())
+
+        invalid_tours = (
+            EPUB2_PACKAGE.replace(b"  <guide>", b"  <tours/>\n  <guide>"),
+            toured_package.replace(b'href="chapter.xhtml#start"', b'href="missing.xhtml"', 1),
+            toured_package.replace(b'title="Synthetic stop" ', b""),
+            EPUB3_PACKAGE.replace(b"</package>", tours + b"</package>"),
+        )
+        for package in invalid_tours:
+            with self.subTest(invalid_tours=hashlib.sha256(package).hexdigest()):
+                invalid_tour_report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                self.assertEqual(invalid_tour_report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(
+                    "invalid_deprecated_tours",
+                    {item.code for item in invalid_tour_report.warnings},
+                )
+
     def test_remote_manifest_resource_is_hashed_and_never_fetched_or_disclosed(self) -> None:
         package = EPUB3_PACKAGE.replace(
             b"</manifest>",
@@ -255,8 +288,206 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 LocalEvidenceOutcome.MALFORMED,
                 LocalEvidenceOutcome.MALFORMED,
                 LocalEvidenceOutcome.SUCCESS,
-                LocalEvidenceOutcome.MALFORMED,
+                LocalEvidenceOutcome.SUCCESS,
             ),
+        )
+        duplicate_report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=duplicate_id))
+        )
+        self.assertIn(
+            "ambiguous_package_id",
+            {item.code for item in duplicate_report.warnings},
+        )
+
+    def test_invalid_and_ambiguous_ids_are_omitted_from_semantic_lookups(self) -> None:
+        duplicate_primary = EPUB3_PACKAGE.replace(
+            b'<dc:identifier id="pub-id">9780306406157</dc:identifier>',
+            b'<dc:identifier id="pub-id">9780306406157</dc:identifier>'
+            b'<dc:identifier id="pub-id">9781861972712</dc:identifier>',
+        )
+        duplicate_primary_report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=duplicate_primary))
+        )
+        self.assertEqual(
+            duplicate_primary_report.outcome, LocalEvidenceOutcome.SUCCESS
+        )
+        self.assertIn(
+            "ambiguous_package_id",
+            {item.code for item in duplicate_primary_report.warnings},
+        )
+        self.assertNotIn(
+            LocalEvidenceField.PACKAGE_IDENTIFIER,
+            {item.field for item in duplicate_primary_report.observations},
+        )
+
+        invalid_primary = EPUB3_PACKAGE.replace(b'id="pub-id"', b'id="bad id"', 1)
+        invalid_primary_report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=invalid_primary))
+        )
+        self.assertIn(
+            "invalid_package_id",
+            {item.code for item in invalid_primary_report.warnings},
+        )
+        self.assertNotIn(
+            LocalEvidenceField.PACKAGE_IDENTIFIER,
+            {item.field for item in invalid_primary_report.observations},
+        )
+
+        duplicate_manifest_id = EPUB3_PACKAGE.replace(
+            b'<item id="nav"', b'<item id="chapter"', 1
+        )
+        duplicate_manifest_report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=duplicate_manifest_id))
+        )
+        self.assertEqual(
+            duplicate_manifest_report.outcome, LocalEvidenceOutcome.SUCCESS
+        )
+        self.assertFalse(
+            any(
+                item.identifier == "chapter"
+                for item in duplicate_manifest_report.declarations
+            )
+        )
+        self.assertTrue(
+            {"ambiguous_package_id", "invalid_manifest_item", "invalid_spine_item"}
+            <= {item.code for item in duplicate_manifest_report.warnings}
+        )
+
+    def test_duplicate_cover_resource_keeps_cover_item_provenance(self) -> None:
+        package = EPUB3_PACKAGE.replace(
+            b'href="cover.jpg"', b'href="chapter.xhtml"'
+        )
+        report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
+        cover_observation = next(
+            item
+            for item in report.observations
+            if item.field is LocalEvidenceField.COVER
+        )
+        cover_declaration = next(
+            item
+            for item in report.declarations
+            if item.kind is DeclarationKind.COVER
+        )
+        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn(
+            "duplicate_manifest_resource", {item.code for item in report.warnings}
+        )
+        self.assertEqual(
+            cover_observation.citation.source_ordinal,
+            cover_declaration.citation.source_ordinal,
+        )
+
+    def test_missing_guide_target_is_warned_and_omitted(self) -> None:
+        reference = (
+            b'<reference type="text" title="Start" '
+            b'href="chapter.xhtml#start"/>'
+        )
+        invalid_references = (
+            reference.replace(
+                b'href="chapter.xhtml#start"', b'href="missing.xhtml#start"'
+            ),
+            b'<reference type="text" title="Start"/>',
+            b'<landmark type="text" title="Start" href="chapter.xhtml#start"/>',
+            b'<reference type="text" title="Start" href="chapter.xhtml#start">'
+            b"<landmark/>"
+            b"</reference>",
+            b'<reference type="text" title="Start" '
+            b'href="chapter.xhtml#start">unexpected</reference>',
+        )
+        for invalid_reference in invalid_references:
+            with self.subTest(
+                invalid_reference=hashlib.sha256(invalid_reference).hexdigest()
+            ):
+                package = EPUB2_PACKAGE.replace(reference, invalid_reference)
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(version=2, package=package))
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(
+                    "invalid_guide_reference",
+                    {item.code for item in report.warnings},
+                )
+                self.assertFalse(
+                    any(
+                        item.kind is DeclarationKind.GUIDE_REFERENCE
+                        for item in report.declarations
+                    )
+                )
+
+    def test_repeated_legacy_cover_declarations_preserve_agreement_and_conflict(self) -> None:
+        cover_meta = b'<meta name="cover" content="cover"/>'
+        agreeing_package = EPUB2_PACKAGE.replace(
+            cover_meta, cover_meta + cover_meta
+        )
+        agreeing = EpubPackageExtractor().extract(
+            request(epub_bytes(version=2, package=agreeing_package))
+        )
+        self.assertEqual(agreeing.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertNotIn(
+            "contradictory_cover_declaration",
+            {item.code for item in agreeing.warnings},
+        )
+        self.assertEqual(
+            sum(
+                item.field is LocalEvidenceField.COVER
+                for item in agreeing.observations
+            ),
+            1,
+        )
+
+        conflicting_package = EPUB2_PACKAGE.replace(
+            cover_meta,
+            cover_meta + b'<meta name="cover" content="cover2"/>',
+        ).replace(
+            b"</manifest>",
+            b'<item id="cover2" href="cover2.jpg" media-type="image/jpeg"/>'
+            b"</manifest>",
+        )
+        conflicting = EpubPackageExtractor().extract(
+            request(
+                epub_bytes(
+                    version=2,
+                    package=conflicting_package,
+                    extra_entries=(
+                        ("EPUB/cover2.jpg", b"opaque", zipfile.ZIP_STORED),
+                    ),
+                )
+            )
+        )
+        self.assertEqual(conflicting.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn(
+            "contradictory_cover_declaration",
+            {item.code for item in conflicting.warnings},
+        )
+        self.assertNotIn(
+            LocalEvidenceField.COVER,
+            {item.field for item in conflicting.observations},
+        )
+
+        current_conflict_package = EPUB3_PACKAGE.replace(
+            b"</manifest>",
+            b'<item id="cover2" href="cover2.jpg" media-type="image/jpeg" '
+            b'properties="cover-image"/>'
+            b"</manifest>",
+        )
+        current_conflict = EpubPackageExtractor().extract(
+            request(
+                epub_bytes(
+                    package=current_conflict_package,
+                    extra_entries=(
+                        ("EPUB/cover2.jpg", b"opaque", zipfile.ZIP_STORED),
+                    ),
+                )
+            )
+        )
+        self.assertEqual(current_conflict.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn(
+            "contradictory_cover_declaration",
+            {item.code for item in current_conflict.warnings},
+        )
+        self.assertNotIn(
+            LocalEvidenceField.COVER,
+            {item.field for item in current_conflict.observations},
         )
 
     def test_hostile_path_reference_matrix_is_typed_and_never_resolved_externally(self) -> None:
@@ -344,7 +575,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             b"</metadata>",
             b'<meta refines="#chapter" property="role">aut</meta></metadata>',
         )
-        for package in (reordered, unknown_child, missing_target, wrong_target):
+        for package in (reordered, unknown_child):
             with self.subTest(package=hashlib.sha256(package).hexdigest()):
                 self.assertEqual(
                     EpubPackageExtractor().extract(
@@ -352,6 +583,16 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     ).outcome,
                     LocalEvidenceOutcome.MALFORMED,
                 )
+        for package, warning in (
+            (missing_target, "unresolved_metadata_refinement"),
+            (wrong_target, "inapplicable_metadata_refinement"),
+        ):
+            with self.subTest(compatible_package=hashlib.sha256(package).hexdigest()):
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(warning, {item.code for item in report.warnings})
         trailing_cases = (
             (b'<collection role="index"/>', LocalEvidenceOutcome.SUCCESS),
             (
@@ -415,6 +656,115 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 self.assertNotIn(private, serialized)
                 self.assertIn("unsafe-source-text-sha256", serialized)
                 self.assertIn("unsafe_metadata_redacted", serialized)
+
+    def test_untrusted_xml_namespaces_are_one_way_projected_in_citations(self) -> None:
+        namespaces = (
+            "https://user:synthetic-secret@example.invalid/ns",
+            "file:///Users/example/private",
+            "urn:synthetic:spoof\u202econtrol",
+            "urn:synthetic:ordinary",
+        )
+        for namespace in namespaces:
+            with self.subTest(namespace=hashlib.sha256(namespace.encode()).hexdigest()):
+                foreign = (
+                    f'<x:quiet xmlns:x="{namespace}" id="bad id"/>'.encode("utf-8")
+                )
+                package = EPUB3_PACKAGE.replace(
+                    b"</metadata>", foreign + b"</metadata>"
+                )
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                serialized = report.to_json()
+                warning = next(
+                    item
+                    for item in report.warnings
+                    if item.code == "invalid_package_id" and item.citation is not None
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertNotIn(namespace, serialized)
+                self.assertTrue(
+                    warning.citation.expanded_name.startswith("{urn:sha256:")
+                )
+
+        for foreign in (
+            b'<syntheticPrivateTokenSentinel xmlns="" id="bad id"/>',
+            b'<syntheticPrivateTokenSentinel id="bad id"/>',
+        ):
+            with self.subTest(foreign=hashlib.sha256(foreign).hexdigest()):
+                package = EPUB3_PACKAGE.replace(
+                    b"</metadata>", foreign + b"</metadata>"
+                )
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                warning = next(
+                    item
+                    for item in report.warnings
+                    if item.code == "invalid_package_id" and item.citation is not None
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertNotIn("syntheticPrivateTokenSentinel", report.to_json())
+                self.assertTrue(
+                    warning.citation.expanded_name.startswith("{urn:sha256:")
+                )
+
+    def test_metadata_value_projection_preserves_exact_limit_and_hashes_above(self) -> None:
+        maximum = EpubPackageLimits.MAX_RAW_VALUE_CHARACTERS
+        for length in (maximum - 1, maximum, maximum + 1):
+            with self.subTest(length=length):
+                value = "x" * length
+                package = EPUB3_PACKAGE.replace(
+                    b"A Synthetic Book", value.encode("utf-8")
+                )
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                title = next(
+                    item
+                    for item in report.observations
+                    if item.field is LocalEvidenceField.TITLE
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                if length <= maximum:
+                    self.assertEqual(title.raw_value, value)
+                    self.assertNotIn(
+                        "oversized_metadata_redacted",
+                        {item.code for item in report.warnings},
+                    )
+                else:
+                    self.assertNotEqual(title.raw_value, value)
+                    self.assertTrue(
+                        title.raw_value.startswith("oversized-source-text-sha256:")
+                    )
+                    self.assertNotIn(value, report.to_json())
+                    self.assertIn(
+                        "oversized_metadata_redacted",
+                        {item.code for item in report.warnings},
+                    )
+
+    def test_warning_occurrences_are_aggregated_within_report_bound(self) -> None:
+        invalid_nodes = b"".join(
+            f'<meta id="bad id {ordinal}"/>'.encode("ascii")
+            for ordinal in range(40)
+        )
+        package = EPUB3_PACKAGE.replace(
+            b"</metadata>", invalid_nodes + b"</metadata>"
+        )
+        report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
+        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertLessEqual(len(report.warnings), EpubPackageLimits.MAX_WARNINGS)
+        self.assertIn(
+            "warning_occurrences_aggregated",
+            {item.code for item in report.warnings},
+        )
+        self.assertIsNone(
+            next(
+                item
+                for item in report.warnings
+                if item.code == "invalid_package_id"
+            ).citation
+        )
 
     def test_normalization_preserves_roles_ambiguity_and_unknown_identifier_applicability(self) -> None:
         additions = b'''\n    <dc:identifier>urn:synthetic:alternate</dc:identifier>
@@ -617,6 +967,28 @@ class EpubPackageExtractorTests(unittest.TestCase):
         self.assertIn(
             "contradictory_cover_declaration",
             {item.code for item in conflict_report.warnings},
+        )
+
+        creator_display = EPUB3_PACKAGE.replace(
+            b"<dc:creator>", b'<dc:creator id="creator">'
+        ).replace(
+            b"</metadata>",
+            b'<meta refines="#creator" property="display-seq">2</meta></metadata>',
+        )
+        creator_report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=creator_display))
+        )
+        self.assertEqual(creator_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn(
+            "inapplicable_metadata_refinement",
+            {item.code for item in creator_report.warnings},
+        )
+        self.assertTrue(
+            all(
+                item.declared_display_sequence is None
+                for item in creator_report.observations
+                if item.field is LocalEvidenceField.CREATOR
+            )
         )
 
     def test_invalid_language_is_malformed_not_a_resource_failure(self) -> None:
@@ -826,6 +1198,148 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 LocalEvidenceOutcome.INTEGRITY_FAILURE,
                 LocalEvidenceOutcome.MALFORMED,
             ),
+        )
+
+    def test_common_inert_zip_flags_and_directory_entries_are_tolerated(self) -> None:
+        def add_flags(value: bytes, mask: int, *, central_only: bool = False) -> bytes:
+            mutated = bytearray(value)
+            position = 0
+            while True:
+                central = mutated.find(b"PK\x01\x02", position)
+                if central < 0:
+                    break
+                local = struct.unpack_from("<L", mutated, central + 42)[0]
+                struct.pack_into(
+                    "<H",
+                    mutated,
+                    central + 8,
+                    struct.unpack_from("<H", mutated, central + 8)[0] | mask,
+                )
+                if not central_only:
+                    struct.pack_into(
+                        "<H",
+                        mutated,
+                        local + 6,
+                        struct.unpack_from("<H", mutated, local + 6)[0] | mask,
+                    )
+                position = central + 46
+            return bytes(mutated)
+
+        for method in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            with self.subTest(directory_method=method):
+                directory = epub_bytes(extra_entries=(("EPUB/", b"", method),))
+                self.assertEqual(
+                    EpubPackageExtractor().extract(request(directory)).outcome,
+                    LocalEvidenceOutcome.SUCCESS,
+                )
+
+        compatible = add_flags(
+            epub_bytes(extra_entries=(("EPUB/", b"", zipfile.ZIP_DEFLATED),)),
+            0x16,
+        )
+        report = EpubPackageExtractor().extract(request(compatible))
+        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn("noncanonical_zip_flags", {item.code for item in report.warnings})
+
+        for value in (
+            add_flags(epub_bytes(), 0x10),
+            add_flags(epub_bytes(), 0x20),
+            add_flags(epub_bytes(), 0x40),
+            add_flags(epub_bytes(), 0x2000),
+            add_flags(epub_bytes(), 0x16, central_only=True),
+            epub_bytes(extra_entries=(("EPUB/", b"not-empty", zipfile.ZIP_STORED),)),
+            epub_bytes(
+                extra_entries=(
+                    ("EPUB/", b"", zipfile.ZIP_STORED),
+                    ("EPUB", b"opaque", zipfile.ZIP_STORED),
+                )
+            ),
+        ):
+            with self.subTest(rejected_sha256=hashlib.sha256(value).hexdigest()):
+                self.assertEqual(
+                    EpubPackageExtractor().extract(request(value)).outcome,
+                    LocalEvidenceOutcome.MALFORMED,
+                )
+
+    def test_common_noncanonical_packaging_preserves_trustworthy_evidence(self) -> None:
+        variants = (
+            epub_bytes(mimetype_first=False),
+            epub_bytes(mimetype_compression=zipfile.ZIP_DEFLATED),
+            epub_bytes(mimetype_value=b"\xef\xbb\xbfapplication/epub+zip\r\n"),
+        )
+        for value in variants:
+            with self.subTest(variant=hashlib.sha256(value).hexdigest()):
+                report = EpubPackageExtractor().extract(request(value))
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(
+                    "noncanonical_mimetype",
+                    {item.code for item in report.warnings},
+                )
+
+        self.assertEqual(
+            EpubPackageExtractor().extract(
+                request(epub_bytes(mimetype_value=b"application/not-epub"))
+            ).outcome,
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+        )
+
+        long_description = "Synthetic description " + "x" * 6_600
+        package = EPUB3_PACKAGE.replace(
+            b"</metadata>",
+            f"<dc:description>{long_description}</dc:description></metadata>".encode(),
+        )
+        report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
+        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn(
+            long_description,
+            {
+                item.raw_value
+                for item in report.observations
+                if item.field is LocalEvidenceField.DESCRIPTION
+            },
+        )
+
+        legacy_version = EPUB2_PACKAGE.replace(b'version="2.0"', b'version="1.0"')
+        legacy_report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=legacy_version))
+        )
+        self.assertEqual(legacy_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertIn(
+            "noncanonical_package_version",
+            {item.code for item in legacy_report.warnings},
+        )
+
+        optional_defects = (
+            (
+                EPUB3_PACKAGE.replace(b'<item id="nav"', b'<item id="chapter"', 1),
+                (),
+                "invalid_manifest_item",
+            ),
+            (
+                EPUB3_PACKAGE.replace(b'href="cover.jpg"', b'href="missing.jpg"'),
+                (),
+                "missing_manifest_resource",
+            ),
+            (
+                EPUB3_PACKAGE.replace(
+                    b'<dc:identifier id="pub-id">9780306406157</dc:identifier>',
+                    b"",
+                ),
+                (),
+                "incomplete_required_metadata",
+            ),
+        )
+        for package, extra_entries, warning in optional_defects:
+            with self.subTest(optional_warning=warning):
+                compatible = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package, extra_entries=extra_entries))
+                )
+                self.assertEqual(compatible.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(warning, {item.code for item in compatible.warnings})
+
+        self.assertEqual(
+            EpubPackageExtractor().extract(request(epub_bytes()[:-22])).outcome,
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
         )
 
     def test_configured_archive_xml_and_compression_bounds_fail_without_partial_success(self) -> None:

@@ -99,7 +99,7 @@ class ConfigurationBoundaryTests(unittest.TestCase):
         self.assertEqual(
             epub["source_archive_bytes"],
             {
-                "default": 67_108_864,
+                "default": 268_435_456,
                 "maximum": 536_870_912,
                 "minimum": 1,
                 "title": "Source Archive Bytes",

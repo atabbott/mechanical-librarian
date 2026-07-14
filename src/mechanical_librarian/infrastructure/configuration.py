@@ -190,17 +190,17 @@ class EpubPackageInput(BaseModel):
     model_config = _MODEL_CONFIG
 
     profile: Literal["epub-package-limits-v1"] = "epub-package-limits-v1"
-    source_archive_bytes: Annotated[StrictInt, Field(ge=1, le=536_870_912)] = 67_108_864
+    source_archive_bytes: Annotated[StrictInt, Field(ge=1, le=536_870_912)] = 268_435_456
     archive_entries: Annotated[StrictInt, Field(ge=1, le=8_192)] = 2_048
     compressed_bytes_per_member: Annotated[
         StrictInt, Field(ge=1, le=536_870_912)
-    ] = 67_108_864
+    ] = 268_435_456
     expanded_bytes_per_member: Annotated[
         StrictInt, Field(ge=1, le=536_870_912)
-    ] = 67_108_864
+    ] = 268_435_456
     expanded_bytes_per_archive: Annotated[
         StrictInt, Field(ge=1, le=2_147_483_648)
-    ] = 536_870_912
+    ] = 1_073_741_824
     compression_ratio_per_member: Annotated[StrictInt, Field(ge=1, le=1_000)] = 200
     container_xml_bytes: Annotated[StrictInt, Field(ge=1, le=1_048_576)] = 65_536
     opf_package_bytes: Annotated[StrictInt, Field(ge=1, le=16_777_216)] = 4_194_304
@@ -216,7 +216,7 @@ class EpubPackageInput(BaseModel):
     metadata_nodes: Annotated[StrictInt, Field(ge=1, le=2_048)] = 512
     manifest_items: Annotated[StrictInt, Field(ge=1, le=8_192)] = 4_096
     spine_items: Annotated[StrictInt, Field(ge=1, le=8_192)] = 4_096
-    guide_references: Annotated[StrictInt, Field(ge=1, le=512)] = 128
+    guide_references: Annotated[StrictInt, Field(ge=1, le=512)] = 256
     prefix_mappings: Annotated[StrictInt, Field(ge=1, le=256)] = 64
 
 

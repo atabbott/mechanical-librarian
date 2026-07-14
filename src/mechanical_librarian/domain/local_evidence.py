@@ -42,8 +42,8 @@ MAX_OBSERVATIONS = 256
 MAX_VALUES_PER_FIELD = 32
 MAX_WARNINGS = 32
 MAX_DECLARATIONS = 8_192
-MAX_RAW_VALUE_CHARACTERS = 1_024
-MAX_NORMALIZED_VALUE_CHARACTERS = 4_096
+MAX_RAW_VALUE_CHARACTERS = 16_384
+MAX_NORMALIZED_VALUE_CHARACTERS = 16_384
 MAX_PUBLIC_REPORT_BYTES = 524_288
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -168,11 +168,11 @@ _FIELD_ORDER = {field: index for index, field in enumerate(LocalEvidenceField)}
 class EpubPackageLimits:
     """Configured values bounded by immutable ``epub-package-limits-v1`` caps."""
 
-    source_archive_bytes: int = 67_108_864
+    source_archive_bytes: int = 268_435_456
     archive_entries: int = 2_048
-    compressed_bytes_per_member: int = 67_108_864
-    expanded_bytes_per_member: int = 67_108_864
-    expanded_bytes_per_archive: int = 536_870_912
+    compressed_bytes_per_member: int = 268_435_456
+    expanded_bytes_per_member: int = 268_435_456
+    expanded_bytes_per_archive: int = 1_073_741_824
     compression_ratio_per_member: int = 200
     container_xml_bytes: int = 65_536
     opf_package_bytes: int = 4_194_304
@@ -184,7 +184,7 @@ class EpubPackageLimits:
     metadata_nodes: int = 512
     manifest_items: int = 4_096
     spine_items: int = 4_096
-    guide_references: int = 128
+    guide_references: int = 256
     prefix_mappings: int = 64
 
     HARD_CAPS: ClassVar[Mapping[str, int]] = MappingProxyType({
@@ -689,8 +689,16 @@ def _expanded_name(value: object) -> str:
             or "\\" in namespace
         ):
             raise EvidenceValueError("citation expanded name is malformed")
+        validate_projection_text(
+            namespace, "citation expanded namespace", 512
+        )
+        validate_projection_text(
+            local_name, "citation expanded local name", 512
+        )
     elif _XML_NAME.fullmatch(text) is None:
         raise EvidenceValueError("citation expanded name is malformed")
+    else:
+        validate_projection_text(text, "citation expanded local name", 512)
     return text
 
 

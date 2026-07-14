@@ -182,36 +182,55 @@ limits, and qualified producer-tool variants. Unknown or malformed files remain
 visible as unsupported evidence sources; they must not block the rest of a
 library scan.
 
-### Frozen EPUB package baseline for F06
+### EPUB package compatibility baseline for F06
 
-F06 targets these authoritative revisions; the links and hashes freeze the
-contract independently of platform qualification:
+F06 uses these authoritative revisions to interpret package semantics while
+preferring useful bounded extraction over rejecting common producer defects:
 
 - [Open Container Format (OCF) 2.0.1](https://idpf.org/doc_library/epub/OCF_2.0.1_draft.doc), document version 1.0.1, Recommended
   Specification dated 2010-09-04. The frozen official Word source
   has SHA-256
   `aa64a61ca430257f1aa22fe555bb1281053a9cf3741b2d645c27d77a8a0d09d9`.
 - [Open Packaging Format (OPF) 2.0.1](https://idpf.org/epub/20/spec/OPF_2.0.1_draft.htm), Recommended Specification dated
-  2010-09-04, limited to package documents declaring `version="2.0"`.
-- [EPUB 3.3](https://www.w3.org/TR/2026/REC-epub-33-20260113/), W3C Recommendation dated 2026-01-13, limited to package documents
-  declaring `version="3.0"`.
+  2010-09-04. Legacy `version="1.0"` and other 2.x declarations use the
+  bounded OPF 2 interpretation and emit a compatibility warning.
+- [EPUB 3.3](https://www.w3.org/TR/2026/REC-epub-33-20260113/), W3C Recommendation dated 2026-01-13. Package documents in the 3.x
+  family use EPUB 3 semantics; noncanonical versions emit a warning.
 
 The package subset supports bounded ZIP64 plus stored and Deflate members. A
 component name over 255 UTF-8 bytes is `malformed`; a complete member name over
 1,024 UTF-8 bytes is `resource_limit`. Identical repeated rootfile declarations
 are malformed rather than filtered. Multiple distinct canonical rootfiles are
-`unsupported_multiple_renditions`. Package graph defects are malformed. CRC is
-checked for each required member that is opened; F06 makes no integrity claim
-for opaque, unopened content members.
+`unsupported_multiple_renditions`. Required container/rootfile ambiguity
+remains fatal; defects in optional metadata, manifest, spine, navigation,
+guide, cover, tour, and refinement declarations are omitted or preserved as
+applicable with typed warnings. CRC is checked for each required member that is
+opened; F06 makes no integrity claim for opaque, unopened content members.
+
+For read-only interoperability, zero-length trailing-slash directory entries
+remain opaque. The exact known producer-residue pattern with ZIP bits 1, 2 and
+4 all set is tolerated on stored or Deflated entries when the local and central
+headers agree, and emits `noncanonical_zip_flags`. A bounded `mimetype` member
+with the exact media type after BOM/whitespace normalization may be compressed
+or appear out of order and emits `noncanonical_mimetype`. The compression method
+still controls decoding; partial or adjacent flag patterns, encryption, patched
+data, strong encryption, unknown flags, unsafe names and header disagreement
+remain rejected. EPUB 3 `display-seq` refinements on properties with their own
+precedence are accepted but do not override document order.
 
 Every DOCTYPE and general, parameter, unparsed, or external entity declaration
 or reference is intentionally unsupported and maps to `malformed`. OPF 2
 multi-file/entity package forms are likewise outside the supported subset.
-F06 preserves bounded manifest, spine, guide, NCX, navigation, cover, and
-encryption declarations but does not dereference or parse their content. EPUB
-3 container `links`, package `collection` elements, deprecated `bindings`, and
-XML Encryption `EncryptedKey` elements are accepted as bounded opaque package
-structure; encrypted resource classification still requires a complete local
+F06 preserves bounded trustworthy manifest, spine, guide, NCX, navigation,
+cover, and encryption declarations but does not dereference or parse their
+content. Missing or ambiguous optional graph declarations are warned rather
+than failing unrelated metadata evidence. EPUB 2 deprecated `tours` structure
+is inspected without exposing its titles or dereferencing its sites and emits
+`deprecated_tours`; invalid or EPUB 3 tour structure is ignored with an
+additional warning. EPUB 3 container `links`,
+package `collection` elements, deprecated `bindings`, and XML Encryption
+`EncryptedKey` elements are accepted as bounded opaque package structure;
+encrypted resource classification still requires a complete local
 `EncryptedData`/`CipherReference` declaration. Runtime memory, CPU, descriptor
 and elapsed-time peaks remain qualification
 evidence; canonical reports contain deterministic logical counters only.
@@ -219,12 +238,12 @@ evidence; canonical reports contain deterministic logical counters only.
 The closed generated manifest executes the ordinary archive, package,
 encryption, malformed-input, resource and unsafe-metadata partitions and runs
 each process-only partition through its named integration test. The complete
-584-test repository suite is tested on macOS arm64 with CPython 3.13.14 (Expat 2.8.1,
+593-test repository suite is tested on macOS arm64 with CPython 3.13.14 (Expat 2.8.1,
 zlib 1.2.12) and CPython 3.14.6 (Expat 2.7.4, zlib 1.2.12); macOS remains a
 development target for F06 because framework Python cannot install the Linux
 address-space cap.
 
-The 110-test F06 parser/process cohort is separately tested as UID/GID
+The 119-test F06 parser/process cohort is separately tested as UID/GID
 65534:65534 on Linux arm64 with CPython 3.13.11, Expat 2.7.3 and zlib 1.2.13 in
 `ghcr.io/astral-sh/uv@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca`.
 That qualification disables networking, mounts both repository and installed

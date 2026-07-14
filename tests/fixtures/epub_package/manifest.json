@@ -67,6 +67,10 @@
       "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_raw_zip_preflight_rejects_nul_aliases_crc_and_compression_before_xml"
     },
     {
+      "partition": "zip-directory-and-known-flag-residue",
+      "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_common_inert_zip_flags_and_directory_entries_are_tolerated"
+    },
+    {
       "partition": "path-and-zip-encryption",
       "test_id": "tests.unit.test_epub_package_extractor.EpubPackageExtractorTests.test_hostile_path_reference_matrix_is_typed_and_never_resolved_externally"
     },
@@ -221,10 +225,10 @@
       "spdx": "AGPL-3.0-or-later"
     },
     {
-      "expected_exit": 5,
-      "expected_outcome": "malformed",
-      "expected_projection": "empty",
-      "expected_projection_sha256": "194f4798a2f3715ebcb256e0c3d044c777dfed598002a200ece7d59f29bef73f",
+      "expected_exit": 0,
+      "expected_outcome": "success",
+      "expected_projection": "epub3-ambiguous-id",
+      "expected_projection_sha256": "b0f8b8630c9a838ac5e43b8c8f334b08bae73edea6afb9883dcc41a9ccbf8822",
       "generation_inputs": {"recipe": "mutate_duplicate_global_id", "seed": "deterministic"},
       "generator": "mutate_duplicate_global_id",
       "id": "duplicate-global-id",
@@ -436,6 +440,11 @@
       "citation_sections": {"cover": 1, "manifest": 3, "metadata": 14, "navigation": 1, "package": 2, "spine": 1},
       "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "cover"],
       "warnings": ["contradictory_series", "identifier_applicability_unknown", "unsupported_vendor_metadata"]
+    },
+    "epub3-ambiguous-id": {
+      "citation_sections": {"cover": 1, "manifest": 2, "metadata": 14, "package": 2, "spine": 1},
+      "observation_fields": ["package_version", "identifier", "identifier_scheme", "package_identifier", "title", "creator", "language", "modification_date", "collection", "collection_position", "collection", "collection_position", "cover"],
+      "warnings": ["ambiguous_package_id", "contradictory_series", "identifier_applicability_unknown", "invalid_manifest_item", "invalid_navigation_declaration", "unsupported_vendor_metadata"]
     },
     "opf2": {
       "citation_sections": {"cover": 1, "guide": 1, "manifest": 3, "metadata": 12, "navigation": 1, "package": 2, "spine": 1},
