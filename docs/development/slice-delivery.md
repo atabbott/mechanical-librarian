@@ -144,7 +144,8 @@ The slice-first rule is intentionally strongest while the application lacks
 stable executable seams and every new capability tends to cross domain,
 application, persistence, adapter, and interface boundaries.
 
-At 1.0.0 release qualification, maintainers review this rule. After stable
+At the 1.0.0 checkpoint's qualification boundary, maintainers review this rule.
+After stable
 contracts, test harnesses, adapters, repositories, and operator surfaces exist,
 a small new feature may use an ordinary `feature/<issue>-<slug>` branch and
 ticket-level PR when all of the following are true:

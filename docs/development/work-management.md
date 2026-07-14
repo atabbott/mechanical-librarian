@@ -58,8 +58,20 @@ The M0–M7 outcome milestones in the [roadmap](../product/roadmap.md) are a
 separate product progression. `WP` always means implementation work package;
 `M` always means product milestone.
 
-Milestones represent release trains such as `0.1.0`, `0.2.0`, and `1.0.0`.
-They do not duplicate work packages.
+During pre-release development, numbered milestones such as `0.1.0`, `0.2.0`,
+and `1.0.0` are internal delivery checkpoints. They do not duplicate work
+packages, and completing one does not authorize or imply a tag, GitHub Release,
+supported version, or published release artifact. Milestone exit criteria remain
+authoritative independently of release publication.
+
+The first release publication requires an explicit maintainer decision selecting
+a checkpoint whose genuinely usable functionality provides value to the owner
+or another user, followed by every applicable release gate and
+release-publication gate. This policy selects neither the checkpoint for the
+first published release nor its version. After the first published release,
+maintainers may explicitly designate later milestones as release trains;
+neither that first published release nor checkpoint completion converts later
+milestones automatically.
 
 ### Functional slice trackers
 
@@ -126,9 +138,11 @@ must normally be decomposed before it becomes `Ready`.
 
 ### Target release and work package
 
-Target release connects work to a release milestone. Work package maps work to
-WP0–WP9 for implementation reporting. Parent relationships remain the
-authoritative hierarchy.
+During pre-release development, the existing `Target release` field groups work
+by its intended delivery checkpoint. Assigning that field does not commit the
+checkpoint to release publication. Work package maps work to WP0–WP9 for
+implementation reporting. Parent relationships remain the authoritative
+hierarchy.
 
 ### Work kind
 
@@ -311,7 +325,12 @@ During initial solo development:
   obscure or destabilize the active slice;
 - review blocked work weekly;
 - update parent Epic status when sub-issue scope changes; and
-- publish a Project status update at each release milestone.
+- publish a Project status update at each delivery checkpoint.
+
+Checkpoint status reporting records delivery progress and exit-criterion state;
+it is not release-publication activity. Tags, GitHub Releases, supported
+versions, and published release artifacts follow the separate maintainer
+decision and release engineering gates.
 
 The cadence may evolve with the contributor community, but status meanings and
 quality gates must not silently change.

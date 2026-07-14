@@ -1,5 +1,24 @@
 # Release Engineering
 
+## Checkpoint and release-publication boundary
+
+The currently numbered delivery milestones are internal pre-release checkpoints.
+Completing one does not itself create a tag, GitHub Release, supported version,
+or published release artifact, even when release-qualification evidence is one
+of its exit criteria.
+
+The first release publication occurs only when a maintainer explicitly selects a
+checkpoint containing genuinely usable functionality that provides value to the
+owner or another user. This policy deliberately sets no numeric, checklist-based,
+or automatic threshold for that judgment and selects neither the checkpoint nor
+its version. Once release publication is selected, every applicable build, tag,
+signing, provenance, SBOM, release-candidate, qualification, and
+release-publication gate in this document remains mandatory.
+
+After the first published release, maintainers may explicitly designate later
+milestones as release trains. That designation is not an automatic consequence
+of release publication or checkpoint completion.
+
 ## Release goals
 
 Releases must be reproducible, attributable, upgradeable, recoverable, and

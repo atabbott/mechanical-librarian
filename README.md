@@ -40,6 +40,15 @@ trip exist, but no production image or supported release exists yet. See the
 [Audiobookshelf connection check](docs/operations/audiobookshelf-connection.md) for the current
 executable operator surface.
 
+The currently numbered delivery milestones are internal pre-release checkpoints,
+not release-publication commitments. Completing one does not create a tag,
+GitHub Release, supported version, or published release artifact. The first
+release publication will occur only after a maintainer explicitly selects a
+checkpoint whose genuinely usable functionality provides value to the owner or
+another user and every applicable release gate and release-publication gate
+passes. No checkpoint or version has been selected for that first published
+release.
+
 The earlier Ebook Management workspace is a prototype and evidence source. Its
 completed DUX dashboard work is frozen as a traceable baseline and informs the
 production [review experience](docs/product/review-experience.md), but it is not
@@ -56,7 +65,7 @@ Start with the [documentation index](docs/README.md).
 - [Bounded EPUB package and opening-matter evidence](docs/product/opening-ebook-evidence.md)
 - [Bounded opening-audio evidence](docs/product/opening-audio-evidence.md)
 - [Review experience](docs/product/review-experience.md)
-- [Post-1.0 reviewer backends](docs/product/future-reviewer-backends.md)
+- [Reviewer backends after the 1.0 checkpoint](docs/product/future-reviewer-backends.md)
 - [Initial build plan](docs/product/initial-build-plan.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Security model](docs/architecture/security.md)
