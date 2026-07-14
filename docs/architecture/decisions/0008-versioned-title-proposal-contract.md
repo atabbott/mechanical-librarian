@@ -36,6 +36,24 @@ proposal. Provider spelling and comparison keys are never proposal values. A
 provider may corroborate only through the application-owned, report-only
 provider port and grants no human, AI, or write authority.
 
+Treat the F06-title slot as successful only when a current successful F06 report
+has no `ambiguous_title` or `ambiguous_metadata_refinement` warning and contains
+exactly one applicable `TITLE` observation. The existing F06 citation selector
+must be exactly `title-type-main@<source-ordinal>` or
+`title-type-main@<source-ordinal>;display-seq@<source-ordinal>`, using base-10
+source ordinals; the optional display component is provenance and never selects
+the title. Either warning binds `f06_title_ambiguous` before the remaining
+cardinality, role, projection, and value-bound partitions. Its exact retained
+value is at most 4,096 characters and does not use F06's reserved unsafe or
+oversized one-way projection prefixes. Selector-less
+titles produce `f06_title_role_unproven` because F06 cannot distinguish absent
+refinements from discarded invalid refinements; `short` and `expanded` produce
+`f06_title_ineligible_role`. Multiple, redacted, oversized, or absent values
+produce exact typed
+`f06_title_ambiguous`, `f06_title_redacted`, `f06_title_out_of_bounds`, or
+`f06_title_missing` slots. Document order, `display-seq`, and provider agreement
+never select an F06 primary title.
+
 Identify every proposal set using an ordered `proposal-input-slot-v1` identity
 for the current-title, F06-title, and provider-title roles. Each slot binds its
 target/snapshot/field scope, role, and contract version plus exactly one tagged
@@ -112,6 +130,14 @@ ability to explain why F10 correctly created no case.
 - Exercise successful and every required typed F06/provider zero-result slot,
   including provider disabled, unsupported, incompatible, failed, empty, and
   no-match outcomes.
+- Prove one exact in-bound `main` F06 title is eligible, while selector-less,
+  repeated, distinct, conflicting/invalid refinement, `main` plus
+  `short`/`expanded`, sole `short`/`expanded`, redacted, and 4,097-character
+  observations bind exact typed zero-result slots even when the provider agrees
+  with one value. A retained `main` plus duplicate `display-seq` proves warning
+  precedence. Assert the exact F06 main, main-plus-display, short, and expanded
+  selector components. Prove 4,095- and 4,096-character `main` values remain
+  eligible.
 - Prove identical replay reuses set and case identities, while any slot state,
   value, evidence, scope, normalization, or policy change supersedes without
   rewriting history.

@@ -175,6 +175,17 @@ canonical typed state rather than a synthetic value or shared sentinel.
 For the 0.2 title path the ordered roles are current title, F06 title, and
 provider title. The current-title role preserves `PRESENT`, `MISSING`, `NULL`,
 `EMPTY`, `MALFORMED`, and `UNSUPPORTED`; only `EMPTY` permits fill-empty policy.
+The F06 role is successful only for one applicable primary `TITLE` observation
+from a successful current report with no `ambiguous_title` or
+`ambiguous_metadata_refinement` warning. The observation has a retained
+F06 citation selector of `title-type-main@<source-ordinal>`, optionally followed
+by `;display-seq@<source-ordinal>`; the optional component is non-selecting. It
+has an exact value no longer than 4,096 characters and
+no reserved F06 redaction or oversize-marker prefix. Either warning binds
+`f06_title_ambiguous` before other title partitions. Missing, multiple,
+selector-less, `short`, `expanded`, redacted, and out-of-bounds title inputs
+remain distinct typed zero-result identities rather than being selected by
+order or provider agreement.
 The provider role keeps disabled, unsupported, incompatible, failed,
 successful-empty, and no-match outcomes distinct. Changing any tag, exact
 value, evidence identity, scope, or contract version changes the slot identity.

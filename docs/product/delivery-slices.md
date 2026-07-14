@@ -70,7 +70,7 @@ write or review-decision authority.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
-| F09a Provider-neutral title proposal | #145 | Canonical current Audiobookshelf title, a successful current F06 package-title result, and one fake provider title candidate produce one immutable, versioned proposal set containing at most one provider-neutral title proposal. Every typed zero-proposal outcome is also a proposal set. Conservative normalization requires local/provider agreement: canonical current-title `EMPTY` produces a fill proposal; `PRESENT` produces a replacement only when materially different and no proposal when equivalent; `MISSING`, `NULL`, `MALFORMED`, and `UNSUPPORTED` remain distinct zero-proposal states. Disagreement and missing, failed, stale, duplicate, or unjoinable evidence also produce typed zero-proposal sets without hiding unrelated inventory or local evidence. | #222 | `slice/f09a-title-proposal` |
+| F09a Provider-neutral title proposal | #145 | Canonical current Audiobookshelf title, exactly one eligible successful F06 package-title observation, and one fake provider title candidate produce one immutable, versioned proposal set containing at most one provider-neutral title proposal. Every typed zero-proposal outcome is also a proposal set. Conservative normalization requires local/provider agreement: canonical current-title `EMPTY` produces a fill proposal; `PRESENT` produces a replacement only when materially different and no proposal when equivalent; `MISSING`, `NULL`, `MALFORMED`, and `UNSUPPORTED` remain distinct zero-proposal states. Ambiguous, non-unique, role-ineligible, missing, failed, stale, duplicate, or unjoinable evidence produces a typed zero-proposal set without hiding unrelated inventory or local evidence. | #222 | `slice/f09a-title-proposal` |
 | F09b Bounded Hardcover title evidence | #204 | A disabled-by-default Hardcover adapter replaces the F09a fake behind the existing provider port. It submits one fixed read-only POST query to `https://api.hardcover.app/v1/graphql` through a dedicated bounded client, preserves the same provider-neutral comparison grouping, and retains only a bounded canonical title candidate and opaque provenance. Provider disablement or failure creates a typed zero-proposal set while local evidence remains visible. The API revision remains `experimental` while qualification is fake-transport-only. | #223 | `slice/f09b-hardcover-title` |
 | F10 Persistent title review case | #146 | Only the current proposal set containing exactly one current `needs_review` title proposal becomes one durable review case. Persistence, restart, idempotent replay, immutable history, and stale-input supersession are demonstrable; zero-proposal sets create no empty case, and no human or AI decision or write authority is introduced. | #224 | `slice/f10-title-review-case` |
 
@@ -99,6 +99,26 @@ The provider only corroborates: when F06 and provider keys agree, an eligible
 proposal always retains the bounded original F06 package title, never the
 provider spelling or comparison key.
 
+F09a accepts an F06 package title only from a successful, current report with
+no `ambiguous_title` or `ambiguous_metadata_refinement` warning and exactly one
+applicable `TITLE` observation whose citation selector is exactly
+`title-type-main@<source-ordinal>` or
+`title-type-main@<source-ordinal>;display-seq@<source-ordinal>`, using base-10
+F06 source ordinals. The optional display component records provenance and does
+not select the title.
+Either disqualifying warning maps to `f06_title_ambiguous` before the remaining
+cardinality, role, projection, and value-bound partitions are evaluated.
+The exact retained value must be at most 4,096 characters and must not use the
+reserved `unsafe-source-text-sha256:` or `oversized-source-text-sha256:`
+projection prefixes. Unrefined titles are role-unproven because F06 cannot
+distinguish a genuinely absent refinement from a discarded invalid one;
+`short` and `expanded` are role-ineligible. Multiple observations are never
+selected by document order, display sequence, or provider agreement. The F06
+slot instead records the exact typed `f06_title_missing`,
+`f06_title_ambiguous`, `f06_title_role_unproven`,
+`f06_title_ineligible_role`, `f06_title_redacted`, or
+`f06_title_out_of_bounds` zero-result outcome, as applicable.
+
 Each evaluated input combination has one immutable proposal-set version bound
 to the exact target, snapshot, `proposal-input-slot-v1` identity for the current
 title, F06 title, and provider title, `title-normalization-v1`, and policy
@@ -117,15 +137,16 @@ set or case history.
 | Current title is canonical `PRESENT` and equivalent; current F06 and provider keys agree | Typed current-equivalent zero-proposal set | No case | Inventory, F06 evidence, bounded provider evidence, and proposal set |
 | Current title is canonical `MISSING`, `NULL`, `MALFORMED`, or `UNSUPPORTED` | Distinct typed current-observation zero-proposal set; it is never treated as empty | No case | Inventory with exact current observation state, other bounded evidence, and proposal set |
 | Current F06 and provider keys disagree | Typed conflict zero-proposal set | No case | Inventory, both source observations, conflict, and proposal set |
-| F06 evidence missing, failed, or unsupported | Typed no-proposal set | No case | Inventory, typed F06 outcome, any bounded provider evidence, and proposal set |
+| F06 title missing, ambiguous, non-unique, role-unproven, role-ineligible, redacted, out of proposal bounds, failed, or unsupported | Exact typed F06 zero-proposal set | No case | Inventory, retained F06 report and exact title-selection outcome, any bounded provider evidence, and proposal set |
 | Provider disabled, unsupported, incompatible, failed, empty, or no match | Distinct typed provider zero-proposal set | No case | Inventory, F06 evidence, exact provider outcome, and proposal set |
 | Required input stale, duplicate, or unjoinable | Typed no-proposal set; prior set becomes non-current where applicable | No case | Immutable inputs, typed blocker, prior history, and proposal set |
 | Identical replay of an accepted input combination | Same semantic proposal-set identity; no duplicate set or proposal | No new case; replay returns the same case identity when one exists | Existing immutable set, case, evidence, and replay outcome |
 
 ### 0.2.0 release exit
 
-- the current Audiobookshelf title, current successful F06 package title, and
-  one provider title are version-bound to the same target and snapshot;
+- the current Audiobookshelf title, exactly one eligible current F06 package
+  title observation, and one provider title are version-bound to the same
+  target and snapshot;
 - F09a proves the title decision matrix with a deterministic fake provider, and
   F09b proves the same provider-neutral contract with a fake transport for the
   bounded Hardcover adapter and no live token; that Hardcover API revision is

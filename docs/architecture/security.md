@@ -120,7 +120,17 @@ comparison key documented in the compatibility contract using the complete
 frozen Unicode 16.0.0 normalization, whitespace, and case-folding baseline
 rather than host-runtime Unicode data. Provider data only corroborates; the
 retained proposal value is always the bounded original F06 package title, never
-the provider spelling or comparison key. Only canonical current-title `EMPTY`
+the provider spelling or comparison key. F09a accepts it only when the validated
+current F06 report has no `ambiguous_title` or
+`ambiguous_metadata_refinement` warning and exactly one applicable `TITLE`
+observation whose F06 citation selector is
+`title-type-main@<source-ordinal>` with only the optional non-selecting
+`;display-seq@<source-ordinal>` component. The exact value must fit the
+4,096-character proposal bound and must not be an F06 redaction or oversize
+marker. Either warning binds `f06_title_ambiguous` before other partitions.
+Provider agreement cannot choose among selector-less, multiple,
+`short`, `expanded`, redacted, or out-of-bounds local title observations; those
+states remain typed zero-proposal outcomes. Only canonical current-title `EMPTY`
 can enter fill-empty policy; `PRESENT` is partitioned into equivalent or
 different values, while `MISSING`, `NULL`, `MALFORMED`, and `UNSUPPORTED`
 remain distinct zero-proposal outcomes. Missing, failed, unsupported, stale,

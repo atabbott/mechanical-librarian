@@ -173,8 +173,9 @@ Exit criteria:
 ### Delivery staging for WP5 and WP6
 
 The 0.2 technical preview implements only the current Audiobookshelf title plus
-current successful F06 package title plus one provider title path, ending at
-one persistent, undecided `needs_review` case. F09a proves an immutable,
+exactly one eligible title observation from a current successful F06 report
+plus one provider title path, ending at one persistent, undecided
+`needs_review` case. F09a proves an immutable,
 version-bound proposal-set contract—including typed zero-proposal sets—with a
 fake; F09b substitutes a bounded disabled-by-default Hardcover adapter; and F10
 binds only the current set containing exactly one current `needs_review`

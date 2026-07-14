@@ -151,8 +151,9 @@ bounded proposals, and human review need not require a catalogue provider in
 the long-term architecture.
 
 The narrower 0.2 title technical preview deliberately does require
-`title-normalization-v1` agreement between the current successful F06 package
-title and one provider title before its immutable proposal set contains a
+`title-normalization-v1` agreement between exactly one eligible title from the
+current successful F06 package report and one provider title before its
+immutable proposal set contains a
 proposal. The current Audiobookshelf title determines whether that agreed value
 is a typed zero-proposal no-op or one `needs_review` proposal: only canonical
 `EMPTY` permits a fill, `PRESENT` is compared as equivalent or different, and

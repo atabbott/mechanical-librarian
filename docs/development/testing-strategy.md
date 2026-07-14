@@ -189,8 +189,27 @@ series/order text, words, and token order are neither stripped nor replaced.
 Provider data only corroborates. Every eligible proposal retains the bounded
 original F06 package title, never the provider spelling or comparison key.
 
-The decision matrix binds the current Audiobookshelf title, a current successful
-F06 package title, and one provider title to the same target and snapshot:
+The F06-title input cohort accepts only a successful current report with no
+`ambiguous_title` or `ambiguous_metadata_refinement` warning and exactly one
+applicable `TITLE` observation whose citation selector is exactly
+`title-type-main@<source-ordinal>` or
+`title-type-main@<source-ordinal>;display-seq@<source-ordinal>`, with base-10
+ordinals. The optional display component is provenance only.
+Either warning maps first to the exact `f06_title_ambiguous` slot, including
+when a retained `main` title is otherwise unique and valid.
+Its exact retained value must be at most 4,096 characters and must not use an
+F06 reserved one-way redaction or oversize-marker prefix. Multiple applicable
+titles, a selector-less title, a sole `short` or `expanded` title, a redaction
+marker, and an oversized exact value become the exact typed
+`f06_title_ambiguous`, `f06_title_role_unproven`,
+`f06_title_ineligible_role`, `f06_title_redacted`, or
+`f06_title_out_of_bounds` zero-result slot; no applicable title produces
+`f06_title_missing`. Provider agreement, document order, and `display-seq`
+never select among local title observations.
+
+The decision matrix binds the current Audiobookshelf title, exactly one eligible
+title from a current successful F06 report, and one provider title to the same
+target and snapshot:
 
 - equal local and provider comparison keys plus canonical current state `EMPTY`
   produce a set with exactly one fill-empty `needs_review` proposal;
@@ -300,6 +319,17 @@ Fixture families include:
   unsupported, stale, and unjoinable F06 input; and provider disabled,
   unsupported, incompatible, timed out, malformed, empty, unmatched, stale,
   and successful through a fake Hardcover transport;
+- F06 title-selection fixtures asserting exact selector components for one
+  valid `title-type-main@<n>` title and
+  `title-type-main@<n>;display-seq@<m>`; selector-less input; repeated identical
+  and distinct titles; `main` plus `short` or `expanded`; sole
+  `title-type-short@<n>` and `title-type-expanded@<n>`; duplicate, conflicting,
+  invalid, and
+  unsupported title-type refinements; retained `main` plus duplicate
+  `display-seq`; cited unsafe/oversized projections; and
+  exact retained lengths 4,095, 4,096, and 4,097. Every non-unique, ambiguous,
+  role-unproven, role-ineligible, redacted, or out-of-bounds case creates its
+  exact zero-result slot even when the provider agrees with one local value;
 - immutable proposal-set fixtures covering typed zero-proposal outcomes, exact
   tagged identity for all three required slots, duplicate/unjoinable input,
   identical replay identity, and state-, value-, evidence-, or outcome-changed

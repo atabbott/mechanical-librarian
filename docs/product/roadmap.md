@@ -28,8 +28,9 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
 ## M2: Title-curation technical preview (0.2.0)
 
 - Preserve the F06 bounded EPUB package-title evidence outcome unchanged.
-- Join one current Audiobookshelf title, one current successful F06 title, and
-  one provider title under explicit target, snapshot, and contract versions.
+- Join one current Audiobookshelf title, exactly one eligible title observation
+  from a current successful F06 report, and one provider title under explicit
+  target, snapshot, and contract versions.
 - Prove one provider-neutral, immutable, version-bound proposal set containing
   at most one title proposal with a deterministic fake provider, then substitute
   a disabled-by-default bounded Hardcover adapter behind the same provider
