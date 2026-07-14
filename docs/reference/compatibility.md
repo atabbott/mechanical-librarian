@@ -242,12 +242,12 @@ evidence; canonical reports contain deterministic logical counters only.
 The closed generated manifest executes the ordinary archive, package,
 encryption, malformed-input, resource and unsafe-metadata partitions and runs
 each process-only partition through its named integration test. The complete
-604-test repository suite is tested on macOS arm64 with CPython 3.13.14 (Expat 2.8.1,
+609-test repository suite is tested on macOS arm64 with CPython 3.13.14 (Expat 2.8.1,
 zlib 1.2.12) and CPython 3.14.6 (Expat 2.7.4, zlib 1.2.12); macOS remains a
 development target for F06 because framework Python cannot install the Linux
 address-space cap.
 
-The 127-test F06 parser/process cohort is separately tested as UID/GID
+The 135-test F06 parser/process cohort is separately tested as UID/GID
 65534:65534 on Linux arm64 with CPython 3.13.11, Expat 2.7.3 and zlib 1.2.13 in
 `ghcr.io/astral-sh/uv@sha256:531f855bda2c73cd6ef67d56b733b357cea384185b3022bd09f05e002cd144ca`.
 That qualification disables networking, mounts both repository and installed

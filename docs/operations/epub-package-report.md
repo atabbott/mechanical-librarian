@@ -102,10 +102,16 @@ an installed wheel with:
 
 ```console
 python -m unittest \
+  tests.architecture.test_import_boundaries \
+  tests.contract.test_local_evidence_extractor \
+  tests.integration.test_epub_package_report \
+  tests.unit.test_cli \
+  tests.unit.test_configuration \
+  tests.unit.test_configuration_boundary \
+  tests.unit.test_epub_child \
   tests.unit.test_epub_package_fixture_manifest \
   tests.unit.test_epub_package_extractor \
-  tests.contract.test_local_evidence_extractor \
-  tests.integration.test_epub_package_report
+  tests.unit.test_local_evidence
 ```
 
 Expected output ends in `OK`. The process cases inject cancellation, timeout,
@@ -121,10 +127,14 @@ exit 0 on stdout; those hostile cases are respectively exit 5 `malformed`, exit
 4 `encrypted`, and exit 5 `resource_limit` on stderr, with the opposite stream
 empty and private temporary paths absent.
 
-Actual resource measurements are produced by the public-safe synthetic runner:
+Actual resource measurements are produced by the public-safe synthetic runner.
+Run it from the repository root with the exact candidate wheel installed in the
+selected interpreter. Add only the repository root for `tests.support`; do not
+add `src`, because the isolated child deliberately ignores `PYTHONPATH` and
+must import the same installed wheel as the parent:
 
 ```console
-PYTHONPATH=src:. python scripts/qualify_epub_package.py
+PYTHONPATH=. /path/to/installed-wheel/bin/python scripts/qualify_epub_package.py
 ```
 
 The committed Linux result is
@@ -132,8 +142,8 @@ The committed Linux result is
 It was measured as UID/GID `65534:65534` in the digest-pinned CPython 3.13 image
 already listed in the compatibility policy, with networking disabled, a
 read-only container root and repository mount, 512 MiB container memory and a
-64-process container ceiling. The run observed 26,712 KiB child peak RSS,
-0.20201 seconds combined child CPU, 0.32338 seconds elapsed, five child file
+64-process container ceiling. The run observed 26,732 KiB child peak RSS,
+0.203998 seconds combined child CPU, 0.336964 seconds elapsed, six child file
 descriptors, one process-group member, 24,935 output bytes, zero parent
 descriptor delta and zero surviving children. The artifact is schema-checked
 and its measurements are asserted against the child gates by the cohort tests.

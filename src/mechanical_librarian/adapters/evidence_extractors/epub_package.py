@@ -16,7 +16,7 @@ import time
 import unicodedata
 import zipfile
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from xml.parsers import expat
 
@@ -994,6 +994,21 @@ def _package_report(
     metadata = metadata_groups[0]
     manifest = manifest_groups[0]
     spine = spine_groups[0]
+    metadata_nodes: tuple[_Node, ...] = tuple(
+        nested
+        for node in metadata.children
+        for nested in (
+            tuple(node.children)
+            if version == "2.0"
+            and node.name
+            in {
+                f"{{{_OPF_NS}}}dc-metadata",
+                f"{{{_OPF_NS}}}x-metadata",
+            }
+            else (node,)
+        )
+    )
+    usage = replace(usage, metadata_nodes=len(metadata_nodes))
     supported_sequence = [
         f"{{{_OPF_NS}}}metadata",
         f"{{{_OPF_NS}}}manifest",
@@ -1029,7 +1044,7 @@ def _package_report(
             raise _Rejected(LocalEvidenceOutcome.MALFORMED)
     if not manifest.children or not spine.children:
         raise _Rejected(LocalEvidenceOutcome.MALFORMED)
-    if len(metadata.children) > request.limits.metadata_nodes:
+    if len(metadata_nodes) > request.limits.metadata_nodes:
         raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
     if len(manifest.children) > request.limits.manifest_items or len(spine.children) > request.limits.spine_items:
         raise _Rejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
@@ -1103,25 +1118,25 @@ def _package_report(
         id_registry[identifier] = node
     standard_collection = any(
         _attribute(node, "property") == "belongs-to-collection" and bool(node.text)
-        for node in metadata.children
+        for node in metadata_nodes
     )
     standard_position = any(
         _attribute(node, "property") == "group-position"
         and _valid_group_position(node.text)
-        for node in metadata.children
+        for node in metadata_nodes
     )
     calibre: dict[str, list[tuple[str, _Node]]] = {
         "calibre:series": [],
         "calibre:series_index": [],
     }
-    for node in metadata.children:
+    for node in metadata_nodes:
         legacy_name = _attribute(node, "name")
         if legacy_name in calibre:
             calibre[legacy_name].append(
                 (_attribute(node, "content") or node.text, node)
             )
     refinement_graph: dict[str, str] = {}
-    for node in metadata.children:
+    for node in metadata_nodes:
         identifier = _attribute(node, "id")
         refines = _attribute(node, "refines")
         if refines:
@@ -1145,7 +1160,7 @@ def _package_report(
     title_types: dict[str, tuple[str, _Node]] = {}
     title_sequences: dict[str, tuple[int, _Node]] = {}
     duplicate_title_refinements: set[tuple[str, str]] = set()
-    for node in metadata.children:
+    for node in metadata_nodes:
         if node.name != f"{{{_OPF_NS}}}meta":
             continue
         resolved_property = _resolved_property(_attribute(node, "property"), prefixes)
@@ -1190,7 +1205,7 @@ def _package_report(
             warnings.append(LocalEvidenceWarning("invalid_metadata_refinement"))
             continue
         title_sequences[key] = (display_value, node)
-    for node in metadata.children:
+    for node in metadata_nodes:
         local = node.name.rsplit("}", 1)[-1]
         identifier = _attribute(node, "id")
         if node.name.startswith("{" + _DC_NS + "}") and local in _DC_FIELDS:
@@ -1770,10 +1785,25 @@ def _package_report(
             )
         )
     toc = _attribute(spine, "toc")
-    if toc:
+    if version == "2.0" and not toc:
+        warnings.append(LocalEvidenceWarning("invalid_ncx_declaration"))
+    elif toc:
+        manifest_node = manifest_nodes.get(toc)
         if (
             toc not in local_manifest_ids
             or manifest_media_types.get(toc) != "application/x-dtbncx+xml"
+            or manifest_node is None
+            or (
+                version == "2.0"
+                and any(
+                    _attribute(manifest_node, attribute) is not None
+                    for attribute in (
+                        "fallback",
+                        "fallback-style",
+                        "required-namespace",
+                    )
+                )
+            )
         ):
             warnings.append(LocalEvidenceWarning("invalid_ncx_declaration"))
         else:
@@ -1863,7 +1893,7 @@ def _package_report(
     if encryption_present:
         warnings.append(LocalEvidenceWarning("encryption_declarations_present"))
     legacy_covers: list[tuple[str, _Node]] = []
-    for node in metadata.children:
+    for node in metadata_nodes:
         if node.name == f"{{{_OPF_NS}}}meta" and _attribute(node, "name") == "cover":
             cover_id = _attribute(node, "content")
             if (
@@ -2171,7 +2201,7 @@ class EpubPackageExtractor:
                 xml_nodes=container_usage.nodes + encryption_usage.nodes + package_usage.nodes,
                 xml_attributes=container_usage.attributes + encryption_usage.attributes + package_usage.attributes,
                 xml_text_characters=container_usage.text_characters + encryption_usage.text_characters + package_usage.text_characters,
-                metadata_nodes=sum(len(node.children) for node in _children(package_root, "metadata", _OPF_NS)),
+                metadata_nodes=0,
                 manifest_items=sum(len(node.children) for node in _children(package_root, "manifest", _OPF_NS)),
                 spine_items=sum(len(node.children) for node in _children(package_root, "spine", _OPF_NS)),
                 guide_references=sum(len(node.children) for node in _children(package_root, "guide", _OPF_NS)),

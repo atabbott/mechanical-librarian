@@ -242,6 +242,112 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     {item.code for item in invalid_tour_report.warnings},
                 )
 
+    def test_epub2_deprecated_metadata_wrappers_preserve_evidence_and_bounds(self) -> None:
+        wrapped = EPUB2_PACKAGE.replace(
+            b'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" '
+            b'xmlns:opf="http://www.idpf.org/2007/opf">',
+            b'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/" '
+            b'xmlns:opf="http://www.idpf.org/2007/opf"><dc-metadata>',
+        ).replace(
+            b'    <meta name="cover" content="cover"/>',
+            b'  </dc-metadata><x-metadata>'
+            b'<meta name="cover" content="cover"/></x-metadata>',
+        )
+        value = epub_bytes(version=2, package=wrapped)
+        first = EpubPackageExtractor().extract(request(value))
+        second = EpubPackageExtractor().extract(request(value))
+
+        self.assertEqual(first.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(first.to_json(), second.to_json())
+        self.assertEqual(first.usage.metadata_nodes, 6)
+        self.assertTrue(
+            {
+                LocalEvidenceField.TITLE,
+                LocalEvidenceField.CREATOR,
+                LocalEvidenceField.LANGUAGE,
+                LocalEvidenceField.PACKAGE_IDENTIFIER,
+                LocalEvidenceField.COVER,
+            }
+            <= {item.field for item in first.observations}
+        )
+        self.assertEqual(
+            EpubPackageExtractor().extract(
+                request_with_limits(value, EpubPackageLimits(metadata_nodes=6))
+            ).outcome,
+            LocalEvidenceOutcome.SUCCESS,
+        )
+        self.assertEqual(
+            EpubPackageExtractor().extract(
+                request_with_limits(value, EpubPackageLimits(metadata_nodes=5))
+            ).outcome,
+            LocalEvidenceOutcome.RESOURCE_LIMIT,
+        )
+
+    def test_epub2_ncx_reference_is_required_and_rejects_fallback_information(self) -> None:
+        ncx_item = (
+            b'<item id="ncx" href="toc.ncx" '
+            b'media-type="application/x-dtbncx+xml"/>'
+        )
+        invalid_packages = (
+            EPUB2_PACKAGE.replace(b'<spine toc="ncx">', b"<spine>"),
+            EPUB2_PACKAGE.replace(b'<spine toc="ncx">', b'<spine toc="">'),
+            *(
+                EPUB2_PACKAGE.replace(
+                    ncx_item,
+                    ncx_item[:-2]
+                    + b" "
+                    + attribute
+                    + b'="chapter"/>',
+                )
+                for attribute in (
+                    b"fallback",
+                    b"fallback-style",
+                    b"required-namespace",
+                )
+            ),
+        )
+        for package in invalid_packages:
+            with self.subTest(package=hashlib.sha256(package).hexdigest()):
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(version=2, package=package))
+                )
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertIn(
+                    "invalid_ncx_declaration",
+                    {item.code for item in report.warnings},
+                )
+                self.assertFalse(
+                    any(
+                        item.kind is DeclarationKind.NCX
+                        for item in report.declarations
+                    )
+                )
+
+        epub3 = EpubPackageExtractor().extract(request(epub_bytes()))
+        self.assertNotIn(
+            "invalid_ncx_declaration", {item.code for item in epub3.warnings}
+        )
+
+        epub3_with_fallback = EPUB3_PACKAGE.replace(
+            b'<item id="chapter" href="chapter.xhtml" '
+            b'media-type="application/xhtml+xml"/>',
+            b'<item id="ncx" href="toc.ncx" '
+            b'media-type="application/x-dtbncx+xml" fallback="chapter"/>'
+            b'<item id="chapter" href="chapter.xhtml" '
+            b'media-type="application/xhtml+xml"/>',
+        ).replace(b"<spine>", b'<spine toc="ncx">')
+        fallback_report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=epub3_with_fallback))
+        )
+        self.assertNotIn(
+            "invalid_ncx_declaration",
+            {item.code for item in fallback_report.warnings},
+        )
+        self.assertIn(
+            DeclarationKind.NCX,
+            {item.kind for item in fallback_report.declarations},
+        )
+
     def test_remote_manifest_resource_is_hashed_and_never_fetched_or_disclosed(self) -> None:
         package = EPUB3_PACKAGE.replace(
             b"</manifest>",
