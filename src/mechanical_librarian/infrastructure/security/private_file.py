@@ -36,6 +36,7 @@ def read_private_secret(reference: SecretReference) -> PrivateSecretMaterial | N
         information = os.fstat(descriptor)
         if (
             not stat.S_ISREG(information.st_mode)
+            or not (information.st_mode & stat.S_IRUSR)
             or not 1 <= information.st_size <= 2_048
             or information.st_mode & 0o077
         ):

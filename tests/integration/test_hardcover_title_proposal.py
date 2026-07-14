@@ -19,8 +19,10 @@ from mechanical_librarian.bootstrap.composition import (
     _run_hardcover_title_proposal_report,
     _run_synthetic_title_proposal_report,
 )
+from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.title_proposals import (
     TitleProposalResult,
+    TitleProposalSet,
     proposal_set_from_manifest,
 )
 from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate
@@ -246,6 +248,77 @@ class HardcoverTitleProposalIntegrationTests(unittest.TestCase):
             self.assertNotEqual(current.proposal_set.set_id, legacy.set_id)
             connection = sqlite3.connect(database)
             try:
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT COUNT(*) FROM synthetic_title_proposal_sets"
+                    ).fetchone(),
+                    (2,),
+                )
+            finally:
+                connection.close()
+
+    def test_v1_and_v2_candidate_history_coexists_with_provider_neutral_id(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "state.sqlite"
+            current = _run_hardcover_title_proposal_report(
+                database,
+                _secret(root),
+                transport=_transport(_payload([{"title": TITLE}])),
+                resolver=lambda _host, _port, _budget: (PUBLIC_IP,),
+            ).proposal_set
+            legacy_manifest = copy.deepcopy(current.to_data()["manifest"])
+            provider = legacy_manifest["provider"]
+            provider["version"] = "hardcover-title-poc-v1"
+            legacy_fingerprint = Fingerprint.from_canonical_value(
+                {"contract": "hardcover-f09b-contract-v1", "title": TITLE},
+                schema=SchemaVersion("hardcover-title-candidate-v1"),
+            )
+            candidate = provider["candidate"]
+            candidate["fingerprint"] = legacy_fingerprint.digest
+            candidate["correlation_id"] = (
+                f"hardcover-poc-{legacy_fingerprint.digest[:48]}"
+            )
+            digest = hashlib.sha256(
+                json.dumps(
+                    provider,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            legacy_manifest["lineage"] = f"hardcover-poc-{digest[:48]}"
+            legacy = proposal_set_from_manifest(
+                manifest=legacy_manifest,
+                result=TitleProposalResult.NEEDS_REVIEW,
+                proposed_value=TITLE,
+            )
+
+            self.assertEqual(TitleProposalSet.from_json(legacy.to_json()), legacy)
+            self.assertEqual(legacy.proposals[0].id, current.proposals[0].id)
+            self.assertNotEqual(legacy.lineage, current.lineage)
+            self.assertNotEqual(legacy.identity_digest, current.identity_digest)
+            self.assertNotEqual(legacy.set_id, current.set_id)
+            self.assertFalse(legacy.production_applicable)
+            self.assertFalse(current.production_applicable)
+
+            connection = connect(database)
+            try:
+                migrate(connection)
+                repository = SQLiteTitleProposalRepository(connection)
+                self.assertFalse(repository.store(legacy).replayed)
+                self.assertTrue(repository.store(legacy).replayed)
+                self.assertTrue(repository.store(current).replayed)
+            finally:
+                connection.close()
+
+            connection = connect(database)
+            try:
+                repository = SQLiteTitleProposalRepository(connection)
+                self.assertEqual(repository.current(legacy.lineage), legacy)
+                self.assertEqual(repository.current(current.lineage), current)
                 self.assertEqual(
                     connection.execute(
                         "SELECT COUNT(*) FROM synthetic_title_proposal_sets"

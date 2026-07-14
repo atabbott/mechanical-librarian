@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
@@ -18,6 +20,52 @@ from mechanical_librarian.infrastructure.security.provider_secrets import (
 
 
 class ProviderSecretTests(unittest.TestCase):
+    def test_owner_read_bit_is_required_after_successful_descriptor_open(self) -> None:
+        handle = SecretHandle(
+            SecretReference("/synthetic/provider-token"),
+            SecretScope.METADATA_PROVIDER,
+        )
+        for mode, accepted in (
+            (0o000, False),
+            (0o200, False),
+            (0o400, True),
+            (0o600, True),
+        ):
+            with (
+                self.subTest(mode=oct(mode)),
+                patch(
+                    "mechanical_librarian.infrastructure.security.private_file.os.open",
+                    return_value=41,
+                ),
+                patch(
+                    "mechanical_librarian.infrastructure.security.private_file.os.fstat",
+                    return_value=os.stat_result(
+                        (stat.S_IFREG | mode, 0, 0, 1, 0, 0, 5, 0, 0, 0)
+                    ),
+                ),
+                patch(
+                    "mechanical_librarian.infrastructure.security.private_file.os.read",
+                    return_value=b"token",
+                ),
+                patch(
+                    "mechanical_librarian.infrastructure.security.private_file.os.close"
+                ) as close,
+                patch(
+                    "mechanical_librarian.infrastructure.security.provider_secrets.httpx.AsyncClient"
+                ) as client,
+            ):
+                if accepted:
+                    self.assertIs(
+                        PrivateFileProviderCredentials().hardcover_client(handle),
+                        client.return_value,
+                    )
+                    client.assert_called_once()
+                else:
+                    with self.assertRaises(ProviderSecretUnavailable):
+                        PrivateFileProviderCredentials().hardcover_client(handle)
+                    client.assert_not_called()
+                close.assert_called_once_with(41)
+
     def test_private_file_rules_match_the_existing_bounded_token_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -84,6 +132,35 @@ class ProviderSecretTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ProviderSecretUnavailable):
                         PrivateFileProviderCredentials().hardcover_client(handle)
+
+    def test_hardcover_client_construction_preserves_transport_restrictions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "token"
+            secret.write_text("provider-token", encoding="utf-8")
+            secret.chmod(0o400)
+            transport = httpx.MockTransport(lambda _request: httpx.Response(200))
+            with patch(
+                "mechanical_librarian.infrastructure.security.provider_secrets.httpx.AsyncClient"
+            ) as constructor:
+                result = PrivateFileProviderCredentials().hardcover_client(
+                    SecretHandle(
+                        SecretReference(str(secret)),
+                        SecretScope.METADATA_PROVIDER,
+                    ),
+                    transport=transport,
+                )
+
+            self.assertIs(result, constructor.return_value)
+            constructor.assert_called_once()
+            options = constructor.call_args.kwargs
+            self.assertTrue(options["verify"])
+            self.assertFalse(options["trust_env"])
+            self.assertFalse(options["follow_redirects"])
+            self.assertIsNone(options["cookies"])
+            self.assertIs(options["transport"], transport)
+            self.assertEqual(options["limits"].max_connections, 1)
+            self.assertEqual(options["limits"].max_keepalive_connections, 0)
+            self.assertEqual(options["limits"].keepalive_expiry, 0.0)
 
     def test_hardcover_auth_builds_one_bearer_header_only_for_the_fixed_request(
         self,

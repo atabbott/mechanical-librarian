@@ -9,7 +9,7 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import httpx
 
@@ -145,6 +145,8 @@ class HardcoverTitleProviderContractTests(unittest.TestCase):
             transport=httpx.MockTransport(handler),
         )
         self.addCleanup(lambda: asyncio.run(client.aclose()))
+        if resolver is None:
+            return HardcoverTitleProvider(client)
         return HardcoverTitleProvider(client, resolver=resolver)
 
     def _lookup_payload(self, payload: object):
@@ -624,6 +626,137 @@ class HardcoverTitleProviderContractTests(unittest.TestCase):
             lambda _request: _response(_success(None), peer="93.184.216.35")
         ).lookup(_query(), PageRequest(None, 1), _context())
         self.assertEqual(mismatch.failure.kind, FailureKind.INTEGRITY_FAILURE)  # type: ignore[union-attr]
+
+    def test_production_default_uses_the_system_resolver(self) -> None:
+        with patch.object(
+            hardcover_title,
+            "_system_resolver",
+            return_value=(PUBLIC_IP,),
+        ) as resolver:
+            result = self._provider(
+                lambda _request: _response(_success(None)),
+                resolver=None,
+            ).lookup(_query(), PageRequest(None, 1), _context())
+
+        self.assertIsNone(result.failure)
+        resolver.assert_called_once()
+        host, port, budget = resolver.call_args.args
+        self.assertEqual((host, port), ("api.hardcover.app", 443))
+        self.assertIsInstance(budget, hardcover_title._OperationBudget)
+
+    def test_system_resolver_uses_isolated_bounded_subprocess(self) -> None:
+        process = Mock(returncode=0)
+        process.poll.return_value = 0
+        process.communicate.return_value = (
+            json.dumps([PUBLIC_IP, "2606:2800:220:1:248:1893:25c8:1946"]).encode(
+                "ascii"
+            ),
+            b"",
+        )
+        with patch.object(
+            hardcover_title.subprocess,
+            "Popen",
+            return_value=process,
+        ) as popen:
+            result = hardcover_title._system_resolver(
+                "api.hardcover.app",
+                443,
+                hardcover_title._OperationBudget(_context()),
+            )
+
+        self.assertEqual(
+            result,
+            (PUBLIC_IP, "2606:2800:220:1:248:1893:25c8:1946"),
+        )
+        command = popen.call_args.args[0]
+        self.assertEqual(
+            command,
+            [
+                hardcover_title.sys.executable,
+                "-I",
+                "-c",
+                hardcover_title._RESOLVER_SCRIPT,
+                "api.hardcover.app",
+                "443",
+            ],
+        )
+        options = popen.call_args.kwargs
+        self.assertIs(options["stdin"], hardcover_title.subprocess.DEVNULL)
+        self.assertIs(options["stdout"], hardcover_title.subprocess.PIPE)
+        self.assertIs(options["stderr"], hardcover_title.subprocess.DEVNULL)
+        self.assertTrue(options["close_fds"])
+        self.assertEqual(options["cwd"], "/")
+        self.assertEqual(options["env"], {})
+        process.communicate.assert_called_once_with(timeout=0.1)
+        process.kill.assert_not_called()
+
+    def test_system_resolver_rejects_process_and_output_failures(self) -> None:
+        cases = (
+            (1, json.dumps([PUBLIC_IP]).encode("ascii")),
+            (0, b""),
+            (0, b"{"),
+            (0, json.dumps({"address": PUBLIC_IP}).encode("ascii")),
+            (0, json.dumps([PUBLIC_IP, 1]).encode("ascii")),
+            (0, b"x" * 8_193),
+        )
+        for returncode, output in cases:
+            process = Mock(returncode=returncode)
+            process.poll.return_value = returncode
+            process.communicate.return_value = (output, b"")
+            with (
+                self.subTest(returncode=returncode, output_size=len(output)),
+                patch.object(
+                    hardcover_title.subprocess,
+                    "Popen",
+                    return_value=process,
+                ),
+                self.assertRaises(OSError),
+            ):
+                hardcover_title._system_resolver(
+                    "api.hardcover.app",
+                    443,
+                    hardcover_title._OperationBudget(_context()),
+                )
+
+    def test_system_resolver_kills_and_reaps_on_deadline_or_cancellation(self) -> None:
+        for kind, expected in (
+            (FailureKind.TIMEOUT, hardcover_title._ResolverTimeout),
+            (FailureKind.CANCELLED, hardcover_title._ResolverCancelled),
+        ):
+            process = Mock(returncode=None)
+
+            def poll(selected=process):
+                return selected.returncode
+
+            def kill(selected=process):
+                selected.returncode = -9
+
+            process.poll.side_effect = poll
+            process.kill.side_effect = kill
+            process.wait.return_value = -9
+            budget = Mock()
+            budget.failure.return_value = hardcover_title._failure(
+                kind,
+                "synthetic resolver stop",
+            )
+            budget.remaining.return_value = 0.01
+            with (
+                self.subTest(kind=kind),
+                patch.object(
+                    hardcover_title.subprocess,
+                    "Popen",
+                    return_value=process,
+                ),
+                self.assertRaises(expected),
+            ):
+                hardcover_title._system_resolver(
+                    "api.hardcover.app",
+                    443,
+                    budget,
+                )
+            process.kill.assert_called_once_with()
+            process.wait.assert_called_once_with(timeout=0.1)
+            process.communicate.assert_not_called()
 
     def test_cancelled_and_invalid_application_requests_send_nothing(self) -> None:
         calls = []

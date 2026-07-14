@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -927,7 +928,7 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "api-key"
             path.write_text("first-token\n", encoding="utf-8")
-            path.chmod(0o600)
+            path.chmod(0o400)
             credentials = PrivateFileTargetCredentials()
             reference = SecretReference(str(path))
             self.assertTrue(credentials.configured(reference))
@@ -936,6 +937,7 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
                 handle, ServiceEndpoint("https://synthetic.invalid")
             ).close()
 
+            path.chmod(0o600)
             path.write_text("replacement-token\n", encoding="utf-8")
             path.chmod(0o600)
             captured = {}
@@ -980,6 +982,45 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
                 self.assertEqual(bounded.timeout.read, 19.0)
             finally:
                 bounded.close()
+
+    def test_target_clients_require_owner_read_after_successful_descriptor_open(
+        self,
+    ) -> None:
+        credentials = PrivateFileTargetCredentials()
+        reference = SecretReference("/synthetic/target-token")
+        handle = SecretHandle(reference, SecretScope.TARGET_SERVICE)
+        endpoint = ServiceEndpoint("https://synthetic.invalid")
+        for mode in (0o000, 0o200):
+            with (
+                self.subTest(mode=oct(mode)),
+                patch(
+                    "mechanical_librarian.infrastructure.security.private_file.os.open",
+                    return_value=43,
+                ),
+                patch(
+                    "mechanical_librarian.infrastructure.security.private_file.os.fstat",
+                    return_value=os.stat_result(
+                        (stat.S_IFREG | mode, 0, 0, 1, 0, 0, 5, 0, 0, 0)
+                    ),
+                ),
+                patch(
+                    "mechanical_librarian.infrastructure.security.private_file.os.read",
+                    return_value=b"token",
+                ),
+                patch(
+                    "mechanical_librarian.infrastructure.security.private_file.os.close"
+                ) as close,
+                patch(
+                    "mechanical_librarian.infrastructure.security.target_secrets.httpx.Client"
+                ) as client,
+            ):
+                self.assertFalse(credentials.configured(reference))
+                with self.assertRaises(SecretFileUnavailable):
+                    credentials.target_client(handle, endpoint)
+                with self.assertRaises(SecretFileUnavailable):
+                    credentials.inventory_client(handle, endpoint)
+                client.assert_not_called()
+                self.assertEqual(close.call_count, 3)
 
     def test_missing_and_overpermissive_files_are_safe(self) -> None:
         credentials = PrivateFileTargetCredentials()
