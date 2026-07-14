@@ -48,7 +48,10 @@ from mechanical_librarian.domain.local_evidence import (
     LocalEvidenceReport,
 )
 from mechanical_librarian.interfaces.cli import main
-from mechanical_librarian.bootstrap.composition import _run_synthetic_title_proposal_report
+from mechanical_librarian.bootstrap.composition import (
+    _run_hardcover_title_proposal_report,
+    _run_synthetic_title_proposal_report,
+)
 from mechanical_librarian.infrastructure.persistence import sqlite as sqlite_foundation
 from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate
 
@@ -592,6 +595,91 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(output.getvalue(), "")
         self.assertEqual(errors.getvalue(), "Synthetic title preview failed safely.\n")
+
+    def test_hardcover_title_invalid_secret_syntax_precedes_runner_and_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "private-state.sqlite"
+            for reference in ("relative-token", "https://private.invalid/token", " bad "):
+                with self.subTest(reference=reference):
+                    runner = Mock()
+                    output = io.StringIO()
+                    errors = io.StringIO()
+                    exit_code = main(
+                        [
+                            "hardcover-title-proposal-report",
+                            "--database", str(database),
+                            "--secret-reference", reference,
+                        ],
+                        state_check_runner=lambda _path: StateCheckResult(
+                            StateCheckOutcome.READY
+                        ),
+                        hardcover_title_proposal_runner=runner,
+                        stdout=output,
+                        stderr=errors,
+                    )
+                    self.assertEqual(exit_code, 2)
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertEqual(
+                        errors.getvalue(),
+                        "Hardcover title preview invocation is invalid.\n",
+                    )
+                    runner.assert_not_called()
+                    self.assertFalse(database.exists())
+
+    def test_hardcover_title_json_and_text_use_the_existing_bounded_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.sqlite"
+            report = _run_hardcover_title_proposal_report(source, None)
+            secret = root / "missing-provider-token"
+            for output_format in ("json", "text"):
+                with self.subTest(output_format=output_format):
+                    output = io.StringIO()
+                    errors = io.StringIO()
+                    target = root / f"unused-{output_format}.sqlite"
+                    runner = Mock(return_value=report)
+                    exit_code = main(
+                        [
+                            "hardcover-title-proposal-report",
+                            "--database", str(target),
+                            "--secret-reference", str(secret),
+                            "--format", output_format,
+                        ],
+                        state_check_runner=lambda _path: StateCheckResult(
+                            StateCheckOutcome.READY
+                        ),
+                        hardcover_title_proposal_runner=runner,
+                        stdout=output,
+                        stderr=errors,
+                    )
+                    self.assertEqual(exit_code, 0)
+                    self.assertEqual(errors.getvalue(), "")
+                    runner.assert_called_once_with(target, secret)
+                    self.assertNotIn(str(target), output.getvalue())
+                    self.assertNotIn(str(secret), output.getvalue())
+                    if output_format == "json":
+                        self.assertEqual(json.loads(output.getvalue()), report.to_data())
+                    else:
+                        self.assertIn(
+                            'authority="synthetic-report-only"\n', output.getvalue()
+                        )
+
+    def test_hardcover_title_unexpected_failure_has_exit_one_and_fixed_stderr(self) -> None:
+        def hostile(_database: Path, _secret: Path | None):
+            raise RuntimeError("/private/path authorization=secret")
+
+        output = io.StringIO()
+        errors = io.StringIO()
+        exit_code = main(
+            ["hardcover-title-proposal-report", "--database", "state.sqlite"],
+            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+            hardcover_title_proposal_runner=hostile,
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "Hardcover title preview failed safely.\n")
 
 
 if __name__ == "__main__":

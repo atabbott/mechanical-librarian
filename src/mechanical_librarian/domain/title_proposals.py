@@ -293,7 +293,7 @@ def _deterministic_proposal_id(
     # Proposal identity has its own non-circular semantic seed. The proposal ID
     # is then included in the proposal-set identity payload above.
     seed = {
-        "manifest": _deep_thaw(manifest),
+        "manifest": _proposal_identity_manifest(manifest),
         "proposal": {
             "current_value": current_value,
             "disposition": disposition,
@@ -307,11 +307,60 @@ def _deterministic_proposal_id(
     return f"proposal-{digest[:55]}"
 
 
+def _proposal_identity_manifest(manifest: Mapping[str, object]) -> object:
+    """Preserve F09a IDs while removing the F09b provider as an ID dimension."""
+
+    provider = manifest.get("provider")
+    if not isinstance(provider, Mapping) or provider.get("version") != "hardcover-title-poc-v1":
+        return _deep_thaw(manifest)
+    f06 = manifest.get("f06")
+    if not isinstance(f06, Mapping):
+        raise TitleProposalValueError("proposal identity evidence is invalid")
+    observation = f06.get("chosen_observation")
+    if not isinstance(observation, Mapping):
+        raise TitleProposalValueError("proposal identity evidence is invalid")
+    title = observation.get("normalized_value")
+    if type(title) is not str:
+        raise TitleProposalValueError("proposal identity evidence is invalid")
+    projected = _deep_thaw(manifest)
+    if type(projected) is not dict:
+        raise TitleProposalValueError("proposal identity manifest is invalid")
+    candidate_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "scenario": "agree-empty",
+                "title": title,
+                "version": "synthetic-title-provider-v1",
+            },
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    projected["lineage"] = "synthetic-title-preview-agree-empty"
+    projected["provider"] = {
+        "candidate": {
+            "correlation_id": "scenario-agree-empty",
+            "field": "title",
+            "fingerprint": candidate_fingerprint,
+            "source_id": "synthetic-title-provider",
+            "values": [title],
+        },
+        "outcome": "candidate",
+        "version": "synthetic-title-provider-v1",
+    }
+    return projected
+
+
 def _validate_proposal_projection(
     manifest: Mapping[str, object],
     result: TitleProposalResult,
     proposals: tuple[SyntheticTitleProposal, ...],
 ) -> None:
+    provider = manifest.get("provider")
+    if isinstance(provider, Mapping) and provider.get("version") == "hardcover-title-poc-v1":
+        _validate_hardcover_projection(manifest, result)
     if result is not TitleProposalResult.NEEDS_REVIEW:
         if proposals:
             raise TitleProposalValueError("zero-proposal result carries a proposal")
@@ -351,6 +400,46 @@ def _validate_proposal_projection(
         or proposal.id != expected_id
     ):
         raise TitleProposalValueError("proposal is not the deterministic evidence projection")
+
+
+def _validate_hardcover_projection(
+    manifest: Mapping[str, object], result: TitleProposalResult
+) -> None:
+    provider = manifest["provider"]
+    f06 = manifest["f06"]
+    snapshot = manifest["snapshot"]
+    if not all(isinstance(value, Mapping) for value in (provider, f06, snapshot)):
+        raise TitleProposalValueError("Hardcover projection is invalid")
+    shape = snapshot["shape"]
+    if (
+        not isinstance(shape, Mapping)
+        or shape.get("state") != "loaded"
+        or not isinstance(shape.get("metadata"), Mapping)
+        or shape["metadata"].get("title") is not None
+    ):
+        raise TitleProposalValueError("Hardcover proof of concept snapshot is invalid")
+    expected_outcomes = {
+        TitleProposalResult.PROVIDER_DISABLED: "disabled",
+        TitleProposalResult.PROVIDER_FAILED: "failed",
+        TitleProposalResult.PROVIDER_EMPTY: "empty",
+        TitleProposalResult.PROVIDER_NO_MATCH: "no_match",
+        TitleProposalResult.NEEDS_REVIEW: "candidate",
+        TitleProposalResult.LOCAL_PROVIDER_CONFLICT: "candidate",
+    }
+    if expected_outcomes.get(result) != provider.get("outcome"):
+        raise TitleProposalValueError("Hardcover result disagrees with its provider outcome")
+    if provider.get("outcome") == "candidate":
+        candidate = provider.get("candidate")
+        observation = f06.get("chosen_observation")
+        if not isinstance(candidate, Mapping) or not isinstance(observation, Mapping):
+            raise TitleProposalValueError("Hardcover candidate evidence is invalid")
+        values = candidate.get("values")
+        local_title = observation.get("normalized_value")
+        if type(values) is not tuple or len(values) != 1 or type(local_title) is not str:
+            raise TitleProposalValueError("Hardcover candidate evidence is invalid")
+        agrees = normalized_title_key(values[0]) == normalized_title_key(local_title)
+        if (result is TitleProposalResult.NEEDS_REVIEW) != agrees:
+            raise TitleProposalValueError("Hardcover candidate agreement is invalid")
 
 
 def _deep_freeze(value: object) -> object:
@@ -439,9 +528,40 @@ def _validate_manifest(value: Mapping[str, object]) -> None:
             _title(observation["normalized_value"], "F06 normalized title")
 
     provider = value["provider"]
-    if not isinstance(provider, Mapping) or set(provider) != {"candidate", "outcome", "version"}:
+    if not isinstance(provider, Mapping):
         raise TitleProposalValueError("proposal-set provider manifest is invalid")
-    if provider["outcome"] not in {"candidate", "disabled", "failed", "empty", "no_match", "not_invoked"} or provider["version"] != "synthetic-title-provider-v1":
+    provider_version = provider.get("version")
+    if provider_version == "synthetic-title-provider-v1":
+        if set(provider) != {"candidate", "outcome", "version"} or provider["outcome"] not in {
+            "candidate", "disabled", "failed", "empty", "no_match", "not_invoked"
+        }:
+            raise TitleProposalValueError("proposal-set provider outcome is invalid")
+    elif provider_version == "hardcover-title-poc-v1":
+        if (
+            set(provider) != {"candidate", "failure_kind", "outcome", "version"}
+            or provider["outcome"] not in {
+                "candidate", "disabled", "failed", "empty", "no_match"
+            }
+            or value["scenario"] != "agree-empty"
+            or value["lineage_revision"] != 1
+            or value["previous_set_id"] is not None
+            or type(value["lineage"]) is not str
+            or re.fullmatch(r"hardcover-poc-[0-9a-f]{48}", value["lineage"]) is None
+        ):
+            raise TitleProposalValueError("Hardcover proposal scope is invalid")
+        failure_kind = provider["failure_kind"]
+        allowed_failures = {
+            "authentication", "authorization", "unavailable", "rate_limited",
+            "timeout", "cancelled", "unsupported", "incompatible",
+            "invalid_response", "conflict", "resource_exhausted",
+            "integrity_failure",
+        }
+        valid_failure = type(failure_kind) is str and failure_kind in allowed_failures
+        if (provider["outcome"] == "failed") != valid_failure:
+            raise TitleProposalValueError("Hardcover provider failure is invalid")
+        if provider["outcome"] != "failed" and failure_kind is not None:
+            raise TitleProposalValueError("Hardcover non-failure carries a failure kind")
+    else:
         raise TitleProposalValueError("proposal-set provider outcome is invalid")
     candidate = provider["candidate"]
     if candidate is not None:
@@ -455,8 +575,21 @@ def _validate_manifest(value: Mapping[str, object]) -> None:
         if type(candidate_values) is not tuple or len(candidate_values) != 1:
             raise TitleProposalValueError("proposal-set provider title is invalid")
         _title(candidate_values[0], "provider title")
+        if provider_version == "hardcover-title-poc-v1" and (
+            candidate["source_id"] != "hardcover-title-poc"
+            or type(candidate["correlation_id"]) is not str
+            or re.fullmatch(
+                r"hardcover-poc-[0-9a-f]{48}", candidate["correlation_id"]
+            ) is None
+        ):
+            raise TitleProposalValueError("Hardcover provider provenance is invalid")
     if (provider["outcome"] == "candidate") != (candidate is not None):
         raise TitleProposalValueError("proposal-set provider candidate disagrees with outcome")
+    if provider_version == "hardcover-title-poc-v1":
+        observation = _canonical_json(provider).encode("utf-8")
+        expected_lineage = f"hardcover-poc-{hashlib.sha256(observation).hexdigest()[:48]}"
+        if value["lineage"] != expected_lineage:
+            raise TitleProposalValueError("Hardcover proposal lineage is not canonical")
 
     snapshot = value["snapshot"]
     if not isinstance(snapshot, Mapping) or set(snapshot) != {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import unittest
 from dataclasses import FrozenInstanceError
@@ -74,7 +75,43 @@ def manifest() -> dict[str, object]:
     }
 
 
+def hardcover_manifest() -> dict[str, object]:
+    value = manifest()
+    provider = {
+        "candidate": None,
+        "failure_kind": None,
+        "outcome": "disabled",
+        "version": "hardcover-title-poc-v1",
+    }
+    digest = hashlib.sha256(
+        json.dumps(provider, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    value["lineage"] = f"hardcover-poc-{digest[:48]}"
+    value["provider"] = provider
+    return value
+
+
 class TitleProposalDomainTests(unittest.TestCase):
+    def test_hardcover_profile_is_closed_canonical_and_does_not_relax_f09a(self) -> None:
+        value = proposal_set_from_manifest(
+            manifest=hardcover_manifest(),
+            result=TitleProposalResult.PROVIDER_DISABLED,
+        )
+        self.assertEqual(TitleProposalSet.from_json(value.to_json()), value)
+        for mutate in (
+            lambda data: data["manifest"]["provider"].__setitem__("version", "other"),
+            lambda data: data["manifest"]["provider"].__setitem__("failure_kind", "timeout"),
+            lambda data: data["manifest"].__setitem__("lineage", "hardcover-poc-" + "0" * 48),
+            lambda data: data["manifest"].__setitem__("scenario", "agree-different"),
+        ):
+            with self.subTest(mutate=mutate):
+                data = json.loads(value.to_json())
+                mutate(data)
+                with self.assertRaises(TitleProposalValueError):
+                    TitleProposalSet.from_json(
+                        json.dumps(data, separators=(",", ":"), sort_keys=True)
+                    )
+
     def test_unicode_comparison_is_nfc_casefold_nfc_and_unicode_space_collapsed(self) -> None:
         equivalent = (
             ("Café", "CAFE\u0301"),
