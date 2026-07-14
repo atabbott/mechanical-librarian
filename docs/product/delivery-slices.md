@@ -49,8 +49,6 @@ Production metadata and cover writes remain disabled throughout these slices.
 | F05a Persisted Audiobookshelf inventory | #141 | One real isolated Audiobookshelf book library is boundedly paged twice through the pinned 2.35.1 API, translated at the adapter boundary into canonical vendor-neutral inventory, fingerprinted, persisted, safely reconciled, restarted, and inspected. | #62-#64 | `slice/f05a-audiobookshelf-inventory` |
 | F05b Audiobookshelf reconciliation | #215 | Persisted polling triggers duplicate-safe reconciliation with bounded retry/backoff, restart recovery, and explicit compatibility-drift states; Socket.IO notifications remain excluded. | #66, #67 | `slice/f05b-audiobookshelf-reconciliation` |
 | F06 EPUB package evidence report | #142 | Ordinary, noncanonical, and partially defective EPUBs are parsed within hostile-input bounds through the supported CLI; every trustworthy package-metadata fact is cited and bounded, optional defects warn and are omitted without silent resolution, and an external private-corpus shadow qualification records aggregate compatibility without retaining copyrighted content or private reports. | #26-#29; #13 and #21 are non-closing inputs | `slice/f06-epub-package-evidence` |
-| F07 EPUB opening-matter evidence report | #143 | The same isolated workflow selects bounded opening matter, extracts edition-aware claims with exact provenance, persists them, and explains unsupported or rejected input. | #25, #26, #30-#32, #188 | `slice/f07-epub-opening-evidence` |
-| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
 
 ### 0.1.0 release exit
 
@@ -65,108 +63,77 @@ Production metadata and cover writes remain disabled throughout these slices.
 ## Release 0.2.0: title-curation technical preview
 
 This release proves one deliberately narrow, report-only path from local and
-provider title evidence to one persistent review case. It grants no production
-write or review-decision authority.
+provider title evidence to one persistent undecided review case. It grants no
+human or AI decision, approval, production write, or destructive authority.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
-| F09a Provider-neutral title proposal | #145 | Canonical current Audiobookshelf title, exactly one eligible successful F06 package-title observation, and one fake provider title candidate produce one immutable, versioned proposal set containing at most one provider-neutral title proposal. Every typed zero-proposal outcome is also a proposal set. Conservative normalization requires local/provider agreement: canonical current-title `EMPTY` produces a fill proposal; `PRESENT` produces a replacement only when materially different and no proposal when equivalent; `MISSING`, `NULL`, `MALFORMED`, and `UNSUPPORTED` remain distinct zero-proposal states. Ambiguous, non-unique, role-ineligible, missing, failed, stale, duplicate, or unjoinable evidence produces a typed zero-proposal set without hiding unrelated inventory or local evidence. | #222 | `slice/f09a-title-proposal` |
-| F09b Bounded Hardcover title evidence | #204 | A disabled-by-default Hardcover adapter replaces the F09a fake behind the existing provider port. It submits one fixed read-only POST query to `https://api.hardcover.app/v1/graphql` through a dedicated bounded client, preserves the same provider-neutral comparison grouping, and retains only a bounded canonical title candidate and opaque provenance. Provider disablement or failure creates a typed zero-proposal set while local evidence remains visible. The API revision remains `experimental` while qualification is fake-transport-only. | #223 | `slice/f09b-hardcover-title` |
-| F10 Persistent title review case | #146 | Only the current proposal set containing exactly one current `needs_review` title proposal becomes one durable review case. Persistence, restart, idempotent replay, immutable history, and stale-input supersession are demonstrable; zero-proposal sets create no empty case, and no human or AI decision or write authority is introduced. | #224 | `slice/f10-title-review-case` |
+| F09a Provider-neutral title proposal | #145 | The current Audiobookshelf title, exactly one eligible title from a current successful unambiguous applicable F06 `TITLE` observation, and one deterministic fake candidate supplied through an application-owned provider-neutral port produce one immutable versioned title proposal set containing at most one `needs_review` proposal. The F06 `normalized_value` must be non-empty, bounded, and usable rather than an unsafe, oversized, or redaction marker; selector-less titles remain valid. Agreement creates a proposal only when the current title field is present and loaded with an empty value or the current title is materially different. Its value is the exact F06 `normalized_value`; F06 `raw_value` remains evidence/provenance and provider evidence only corroborates. A missing, unloaded, or unavailable current title, current equivalence, disagreement, an empty or unusable F06/provider title, or another failed, unsupported, disabled, no-match, stale, duplicate, or unjoinable input produces an exact typed no-proposal result. | #222 | `slice/f09a-title-proposal` |
+| F09b Bounded Hardcover title evidence | #204 | A disabled-by-default bounded Hardcover adapter replaces the fake behind the same provider-neutral port. It uses one fixed read-only query at one fixed HTTPS endpoint through a dedicated bounded client, keeps its account-capable token isolated and redacted, and retains only bounded canonical title evidence plus minimal provenance. It never caches raw provider traffic or turns provider failure or disagreement into negative local evidence. | #223 | `slice/f09b-hardcover-title` |
+| F10 Persistent title review case | #146 | One current immutable proposal set containing exactly one current `needs_review` title proposal becomes one durable undecided review case; no other proposal or set creates a case. Persistence, restart, identical replay, inspection, immutable history, and changed-input supersession are demonstrable; zero-proposal results create no empty case. | #224 | `slice/f10-title-review-case` |
 
-The explicit entry chain is `#221 + completed F06 #142 -> F09a -> F09b -> F10`.
-F07a, F07b, and F08 remain planned under their existing 0.1 trackers, but their
-execution is deferred. After this planning change, F09a is the next selected
-functional slice.
+The only active delivery chain is:
 
-For 0.2, `title-normalization-v1` creates a comparison key using the Unicode
-16.0.0 definition of NFC and a frozen, byte-exact Unicode 16.0.0 data bundle:
-`UnicodeData.txt`, `DerivedNormalizationProps.txt`,
-`CompositionExclusions.txt`, `PropList.txt`, and `CaseFolding.txt`. The bundle
-records a SHA-256 digest for each source file and is verified against the full
-Unicode 16.0.0 `NormalizationTest.txt` conformance data. It first applies NFC
-under Unicode 16.0.0, maps each maximal
-run of code points whose Unicode 16.0.0 `PropList.txt` property is
-`White_Space=Yes` to U+0020, removes leading and trailing U+0020, applies the
-Unicode 16.0.0 Default Case Folding mappings with status C or F from
-`CaseFolding.txt`, and applies NFC under Unicode 16.0.0 again. Resulting keys
-are compared byte-for-byte. Implementations use this complete frozen baseline
-rather than host-runtime Unicode data.
+```text
+completed F06 #142 + planning #221 -> F09a #145/#222
+                                      -> F09b #204/#223
+                                      -> F10 #146/#224
+```
 
-The normalization does not strip or replace punctuation, diacritics, subtitle
-separators or content, series/order text, or words, and it does not reorder
-tokens. Equal keys are equivalent; different keys are materially different.
-The provider only corroborates: when F06 and provider keys agree, an eligible
-proposal always retains the bounded original F06 package title, never the
-provider spelling or comparison key.
+F09a derives a conservative deterministic comparison key in this exact order:
+supported-runtime NFC normalization, Unicode default case folding, final NFC
+normalization, then trimming leading/trailing Unicode whitespace and collapsing
+each internal Unicode-whitespace run to U+0020. The comparison-policy version
+and runtime Unicode-data version are bound. This is comparison-only: it does
+not alter proposal or evidence values, strip punctuation, diacritics, subtitle
+or series text, words, or token order. Proposal sets include typed zero-proposal
+results, bind the current inputs and contract versions, resolve identical replay
+without duplication, and are superseded rather than rewritten when inputs
+change. The implementation need not introduce speculative general-purpose slot
+identity or migration machinery beyond this outcome.
 
-F09a accepts an F06 package title only from a successful, current report with
-no `ambiguous_title` or `ambiguous_metadata_refinement` warning and exactly one
-applicable `TITLE` observation whose citation selector is exactly
-`title-type-main@<source-ordinal>` or
-`title-type-main@<source-ordinal>;display-seq@<source-ordinal>`, using base-10
-F06 source ordinals. The optional display component records provenance and does
-not select the title.
-Either disqualifying warning maps to `f06_title_ambiguous` before the remaining
-cardinality, role, projection, and value-bound partitions are evaluated.
-The exact retained value must be at most 4,096 characters and must not use the
-reserved `unsafe-source-text-sha256:` or `oversized-source-text-sha256:`
-projection prefixes. Unrefined titles are role-unproven because F06 cannot
-distinguish a genuinely absent refinement from a discarded invalid one;
-`short` and `expanded` are role-ineligible. Multiple observations are never
-selected by document order, display sequence, or provider agreement. The F06
-slot instead records the exact typed `f06_title_missing`,
-`f06_title_ambiguous`, `f06_title_role_unproven`,
-`f06_title_ineligible_role`, `f06_title_redacted`, or
-`f06_title_out_of_bounds` zero-result outcome, as applicable.
+| Current/F06/provider condition | Proposal-set result | F10 case |
+| --- | --- | --- |
+| F06 and provider usable titles normalize equally; current title field is present and loaded with an empty value, or the current title is materially different | One `needs_review` proposal whose value is the exact F06 `normalized_value`; F06 `raw_value` remains evidence/provenance | One current undecided case |
+| F06 and provider normalize equally; current title is equivalent | Typed no-op with no proposal | No case |
+| Current title is missing, unloaded, or unavailable | Exact typed current-title no-proposal result | No case |
+| F06 and provider disagree | Typed conflict with no proposal | No case |
+| F06/provider title is empty, unsafe, oversized, redacted, or otherwise unusable; or another required input is missing, failed, unsupported, disabled, no-match, stale, duplicate, or unjoinable | Exact typed unusable-title or other no-proposal result | No case |
+| Identical replay | Same semantic set and, where applicable, case | No duplicate |
+| A bound input changes | New superseding set; prior history remains immutable | Only a qualifying new current set may have a current case |
 
-Each evaluated input combination has one immutable proposal-set version bound
-to the exact target, snapshot, `proposal-input-slot-v1` identity for the current
-title, F06 title, and provider title, `title-normalization-v1`, and policy
-versions. Each slot identity is a tagged success value/evidence identity or the
-exact typed missing, null, malformed, unsupported, disabled, failed, empty, or
-no-match outcome with its scope and contract version. Zero-result paths never
-invent a value or provider candidate. An idempotent replay resolves to the same
-semantic proposal-set identity. A changed state, value, evidence identity, or
-stale input creates a superseding applicability result without mutating prior
-set or case history.
+F09b's disabled state constructs no adapter or client, resolves no provider
+secret, and performs no DNS lookup or egress. When enabled, the adapter owns its
+fixed HTTPS origin, path, method, and read-only query; validates TLS; follows no
+redirects; rejects private or reserved DNS destinations; uses a dedicated
+client; and applies finite request, response, parser, deadline, retry, and
+single-request concurrency bounds. The closed response shape is untrusted.
+Only the minimum allowlisted facts needed for a title lookup leave the
+application. The account-capable token is never logged or shared with the
+target service or a reviewer. Raw requests, responses, headers, tokens, request
+bodies, upstream identifiers, and provider caches are never persisted.
 
-| Current/F06/provider condition | Proposal-set result | F10 case | Retained visibility |
-| --- | --- | --- | --- |
-| Current title is canonical `EMPTY`; current F06 and provider keys agree | Exactly one current `needs_review` fill-empty proposal retaining the bounded original F06 package title | Exactly one current case | Inventory, F06 evidence, bounded provider evidence, proposal set, and case |
-| Current title is canonical `PRESENT` and materially different; current F06 and provider keys agree | Exactly one current `needs_review` replacement proposal retaining the bounded original F06 package title | Exactly one current case | Inventory, F06 evidence, bounded provider evidence, proposal set, and case |
-| Current title is canonical `PRESENT` and equivalent; current F06 and provider keys agree | Typed current-equivalent zero-proposal set | No case | Inventory, F06 evidence, bounded provider evidence, and proposal set |
-| Current title is canonical `MISSING`, `NULL`, `MALFORMED`, or `UNSUPPORTED` | Distinct typed current-observation zero-proposal set; it is never treated as empty | No case | Inventory with exact current observation state, other bounded evidence, and proposal set |
-| Current F06 and provider keys disagree | Typed conflict zero-proposal set | No case | Inventory, both source observations, conflict, and proposal set |
-| F06 title missing, ambiguous, non-unique, role-unproven, role-ineligible, redacted, out of proposal bounds, failed, or unsupported | Exact typed F06 zero-proposal set | No case | Inventory, retained F06 report and exact title-selection outcome, any bounded provider evidence, and proposal set |
-| Provider disabled, unsupported, incompatible, failed, empty, or no match | Distinct typed provider zero-proposal set | No case | Inventory, F06 evidence, exact provider outcome, and proposal set |
-| Required input stale, duplicate, or unjoinable | Typed no-proposal set; prior set becomes non-current where applicable | No case | Immutable inputs, typed blocker, prior history, and proposal set |
-| Identical replay of an accepted input combination | Same semantic proposal-set identity; no duplicate set or proposal | No new case; replay returns the same case identity when one exists | Existing immutable set, case, evidence, and replay outcome |
+Ordinary CI remains credential-free and fake-based. F09b completion also
+requires one opt-in bounded read-only smoke/contract qualification against the
+fixed real endpoint using a dedicated non-production account and token. It
+retains only a redacted aggregate result.
 
 ### 0.2.0 release exit
 
-- the current Audiobookshelf title, exactly one eligible current F06 package
-  title observation, and one provider title are version-bound to the same
-  target and snapshot;
-- F09a proves the title decision matrix with a deterministic fake provider, and
-  F09b proves the same provider-neutral contract with a fake transport for the
-  bounded Hardcover adapter and no live token; that Hardcover API revision is
-  published as `experimental`, not `tested` or `supported`, until a separate
-  opt-in release qualification succeeds against a dedicated synthetic account;
-- `title-normalization-v1` and the decision table produce one immutable,
-  version-bound proposal set containing at most one `needs_review` title
-  proposal; current equivalence, disagreement, missing or failed input,
-  unsupported capability, and stale, duplicate, or unjoinable evidence produce
-  the documented typed zero-proposal or conflict set;
-- provider disablement constructs no adapter or client, resolves no provider
-  secret, performs no DNS lookup or egress, and provider failure never hides
-  unrelated inventory or F06 evidence;
-- only a current proposal set containing exactly one current `needs_review`
-  proposal creates a durable case; restart, identical replay, immutable
-  history, and supersession pass without duplicate sets, proposals, cases, or
-  empty cases; and
-- no automatic approval, human or AI decision, production write, cover,
-  rich-field, or multi-provider workflow enters the technical preview.
+- F09a demonstrates the complete decision table with the deterministic fake;
+- F09b demonstrates the same provider-neutral contract, disabled behavior,
+  bounded transport, isolated credential handling, and opt-in qualification;
+- F10 persists, restarts, inspects, replays, and supersedes one current
+  case from one current immutable proposal set containing exactly one current
+  `needs_review` title proposal, without creating any other, empty, or duplicate
+  case; and
+- the preview contains no AI, human decision, approval, cover, rich-field,
+  multi-provider-fusion, production-write, or destructive behavior.
+
+F07a #143 (#30, #31, and #188), F07b #228 (#32), and F08 #144 (#33 and
+#34) remain intact as planned 1.0.0 work and are not prerequisites for this
+0.2.0 chain. F11 #147 and #74-#80, the broader #16, #46, #50, and #68-#73
+program, and rich Hardcover work #209 also remain 1.0.0 scope.
 
 ## Release 1.0.0: guarded mutation and product operation
 
@@ -175,6 +142,9 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
+| F07a EPUB opening-matter evidence report | #143 | One safely readable EPUB produces a bounded transient opening-matter claim report with exact provenance or a typed no-applicable/rejected outcome. | #30, #31, #188; #25 and #26 are non-closing inputs | `slice/f07a-epub-opening-evidence` |
+| F07b Durable EPUB evidence round trip | #228 | Completed F07a evidence executes durably for one isolated target and snapshot, survives restart, reuses compatible results, supersedes stale applicability, and remains inspectable without persistence of decoded content. | #32; #25 is a non-closing input | `slice/f07b-durable-epub-evidence` |
+| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
 | F11 AI shadow recommendation | #147 | An isolated reviewer receives a complete bounded vendor-neutral packet carrying the exact normalized current snapshot and explicit field-load state only after required authoritative inputs join successfully, without target-service or provider credentials or vendor payloads, then returns one direct closed-schema `AIDecision` for every proposal; its required `problems` list contains adverse or unresolved problem codes, with `problems: []` for a clean approval. Malformed output, unknown fields, missing required fields, duplicate or partial decisions, trailing content, or semantic repair becomes a typed failure without authorizing apply. A zero-proposal selection terminates without invocation, and optional provider failure remains operational. | #74-#80 | `slice/f11-ai-shadow-review` |
 | F12a Authenticated API foundation | #189 | The supported HTTP service exposes deterministic versioned OpenAPI, minimal anonymous liveness, and one bounded authenticated owner diagnostic; invalid sessions, origins, CSRF, proxy and rate-limit contexts fail closed. | #96, #97 | `slice/f12a-authenticated-api` |
 | F12b Human decision round trip | #148 | An authenticated owner accepts, keeps, or rejects one field, restarts and retrieves the immutable decision/history, then observes a safe stale-version conflict. | #19 | `slice/f12b-human-decision` |
@@ -188,12 +158,6 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 
 ### 1.0.0 release exit
 
-- AI completion is independently audited rather than inferred from process or
-  artifact success; zero proposals cause no reviewer invocation, while every
-  invoked packet has exact per-proposal output coverage;
-- reviewer timeout, malformed output, unknown or missing fields, duplicate or
-  partial decisions, trailing content, citation failure, and authentication
-  recovery are typed safe states and create no apply authority;
 - every write is current, authorized, backed up, idempotent, verified, audited,
   and recoverable;
 - read-only discovery and diagnosis continue when writes are disabled;
@@ -210,10 +174,6 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 - release, upgrade, restore, isolation, and end-to-end qualification evidence is
   complete.
 
-The broader candidate, field, provider, and review program in #16, #46, #50,
-#68-#73, and #209 remains 1.0.0 backlog. It requires separately ready slice
-assignment and is not part of the 0.2.0 exit.
-
 ## Deferred slice series
 
 Opening-audio transcription (#24 and #104-#110), additional adapters,
@@ -222,7 +182,8 @@ embedded-file updates, plugin loading, and the
 backlog work until their prerequisite design and qualification decisions are
 accepted. When scheduled, they receive new functional slice IDs and executable
 outcomes; they are not appended opportunistically to an active branch. The
-reviewer-backend plan does not alter F11, the F01-F17 order, or the 1.0.0 exit.
+reviewer-backend plan does not alter the documented active chain, later 1.0
+slice placement, or the 1.0.0 exit.
 
 ## Planning rules
 

@@ -163,57 +163,17 @@ mode. An unconfigured, unsupported, unavailable, degraded, failed, successful-
 empty, or missing provider state remains scoped and typed. It cannot become
 negative metadata evidence, manufacture consensus, or block unrelated lanes.
 
-### ProposalInputSlotIdentity
-
-Versioned identity for one required proposal input. `proposal-input-slot-v1`
-binds the canonical target, snapshot, field, slot role, and contract version.
-Its tagged payload is either a successful exact value plus immutable evidence
-or candidate identity, or the exact typed observation, capability, execution,
-or candidate-count outcome for that scope. Absence is represented by its
-canonical typed state rather than a synthetic value or shared sentinel.
-
-For the 0.2 title path the ordered roles are current title, F06 title, and
-provider title. The current-title role preserves `PRESENT`, `MISSING`, `NULL`,
-`EMPTY`, `MALFORMED`, and `UNSUPPORTED`; only `EMPTY` permits fill-empty policy.
-The F06 role is successful only for one applicable primary `TITLE` observation
-from a successful current report with no `ambiguous_title` or
-`ambiguous_metadata_refinement` warning. The observation has a retained
-F06 citation selector of `title-type-main@<source-ordinal>`, optionally followed
-by `;display-seq@<source-ordinal>`; the optional component is non-selecting. It
-has an exact value no longer than 4,096 characters and
-no reserved F06 redaction or oversize-marker prefix. Either warning binds
-`f06_title_ambiguous` before other title partitions. Missing, multiple,
-selector-less, `short`, `expanded`, redacted, and out-of-bounds title inputs
-remain distinct typed zero-result identities rather than being selected by
-order or provider agreement.
-The provider role keeps disabled, unsupported, incompatible, failed,
-successful-empty, and no-match outcomes distinct. Changing any tag, exact
-value, evidence identity, scope, or contract version changes the slot identity.
-
-### ProposalSet
-
-Immutable result of evaluating one ordered set of proposal input-slot
-identities under exact normalization and policy versions. It contains at most
-one current title proposal in the 0.2 path and otherwise retains a typed
-zero-proposal outcome. Its semantic identity binds every input slot even when
-one or more slots did not produce a value. Identical replay resolves to the
-same set identity; any state, value, evidence, scope, normalization, or policy
-change creates a superseding set without rewriting history.
-
 ### FieldProposal
 
 One proposed value for one field on one item snapshot. It references supporting
 and contradicting evidence and declares whether it fills an empty field,
 replaces a populated field, or represents no change.
 
-Provider-neutral comparison grouping uses the canonical target, snapshot,
-field, normalized comparison value, proposal schema, and applicable policy
-identity. The provider or source-adapter name is provenance, not a grouping
-component: equivalent values collapse without losing their distinct evidence,
-lineage, or correlation records. An immutable proposal version additionally
-binds its exact retained proposed value and immutable supporting-evidence
-identities. A changed exact retained value therefore supersedes the prior
-proposal even when both values share a comparison key.
+Semantic proposal identity is the canonical target, snapshot, field, normalized
+value, proposal schema, and applicable policy identity. The provider or source
+adapter name is provenance, not an identity component: equivalent values for
+the same target/snapshot/field collapse without losing their distinct evidence,
+lineage, or correlation records.
 
 ### ReviewCase
 

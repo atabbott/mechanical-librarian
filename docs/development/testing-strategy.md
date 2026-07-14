@@ -159,139 +159,81 @@ breaker behavior.
 
 #### 0.2 title technical-preview cohort
 
-The 0.2 cohort stops at one persistent, undecided title review case and runs
-without production credentials or writes. F09a uses a deterministic fake
-provider. F09b runs the bounded Hardcover adapter against a fake transport; CI
-never uses a live provider token. That revision remains `experimental` while
-qualification is fake-transport-only. Both variants exercise the same immutable,
-versioned, provider-neutral candidate and proposal-set contracts. Each evaluated
-input combination persists one proposal-set version bound to the exact target,
-snapshot, three `proposal-input-slot-v1` identities, normalization, and policy
-versions. The current-title, F06-title, and provider-title slots each contain a
-tagged successful value/evidence identity or the exact typed non-success outcome
-with its scope and contract version. This makes typed zero-proposal sets
-constructible without sentinel values or nonexistent provider candidates.
+The credential-free F09a cohort binds the current Audiobookshelf title, exactly
+one eligible title from a current successful unambiguous applicable F06 `TITLE`
+observation, and one deterministic fake candidate to the same target and
+snapshot. Its `normalized_value` must be non-empty, bounded, and usable rather
+than an unsafe, oversized, or redaction marker. Selector-less F06 titles are
+valid; document order or provider agreement never chooses among multiple
+applicable observations.
 
-The `title-normalization-v1` cohort uses the Unicode 16.0.0 definition of NFC
-and frozen, byte-exact copies of `UnicodeData.txt`,
-`DerivedNormalizationProps.txt`, `CompositionExclusions.txt`, `PropList.txt`,
-and `CaseFolding.txt`, with a recorded SHA-256 digest for each file. It runs the
-full Unicode 16.0.0 `NormalizationTest.txt` conformance data and proves the
-exact sequence: NFC under Unicode 16.0.0; map each maximal run of code
-points with `White_Space=Yes` in Unicode 16.0.0 `PropList.txt` to U+0020 and
-remove leading/trailing U+0020; apply Unicode 16.0.0 Default Case Folding status
-C/F mappings from `CaseFolding.txt`; apply NFC under Unicode 16.0.0 again; and
-compare resulting keys byte-for-byte. Golden fixtures prove implementations use
-the complete frozen baseline rather than host-runtime Unicode data.
+The conservative deterministic comparison applies, in order,
+supported-runtime NFC normalization, Unicode default case folding, final NFC
+normalization, then trims leading/trailing Unicode whitespace and collapses
+each internal Unicode-whitespace run to U+0020. It binds the comparison-policy
+version and runtime Unicode-data version. Comparison never alters proposal or
+evidence values or strips punctuation, diacritics, subtitle or series text,
+words, or token order.
 
-The cohort also proves punctuation, diacritics, subtitle separators and content,
-series/order text, words, and token order are neither stripped nor replaced.
-Provider data only corroborates. Every eligible proposal retains the bounded
-original F06 package title, never the provider spelling or comparison key.
+The decision matrix proves:
 
-The F06-title input cohort accepts only a successful current report with no
-`ambiguous_title` or `ambiguous_metadata_refinement` warning and exactly one
-applicable `TITLE` observation whose citation selector is exactly
-`title-type-main@<source-ordinal>` or
-`title-type-main@<source-ordinal>;display-seq@<source-ordinal>`, with base-10
-ordinals. The optional display component is provenance only.
-Either warning maps first to the exact `f06_title_ambiguous` slot, including
-when a retained `main` title is otherwise unique and valid.
-Its exact retained value must be at most 4,096 characters and must not use an
-F06 reserved one-way redaction or oversize-marker prefix. Multiple applicable
-titles, a selector-less title, a sole `short` or `expanded` title, a redaction
-marker, and an oversized exact value become the exact typed
-`f06_title_ambiguous`, `f06_title_role_unproven`,
-`f06_title_ineligible_role`, `f06_title_redacted`, or
-`f06_title_out_of_bounds` zero-result slot; no applicable title produces
-`f06_title_missing`. Provider agreement, document order, and `display-seq`
-never select among local title observations.
+- normalized usable F06/provider agreement plus a current title field that is
+  present and loaded with an empty value, or a materially different current
+  title, creates exactly one `needs_review` proposal whose value is the exact
+  F06 `normalized_value`; F06 `raw_value` remains evidence/provenance and
+  provider evidence only corroborates;
+- an equivalent current title records a typed no-op and creates no proposal;
+- local/provider disagreement records a typed conflict and creates no proposal;
+- a missing, unloaded, or unavailable current title records its exact typed
+  no-proposal result; an empty, unsafe, oversized, redacted, or otherwise
+  unusable F06/provider title records an exact typed unusable-title no-proposal
+  result; and another failed, unsupported, disabled, no-match, stale,
+  duplicate, or unjoinable input records its own exact typed no-proposal
+  result; and
+- provider failure never erases valid local evidence or becomes negative
+  bibliographic evidence.
 
-The decision matrix binds the current Audiobookshelf title, exactly one eligible
-title from a current successful F06 report, and one provider title to the same
-target and snapshot:
+Every evaluation creates an immutable versioned proposal set, including
+zero-proposal results. Tests prove identical inputs replay without duplicates,
+changed inputs supersede current applicability without mutating history, and
+F10 creates one current case only from one current immutable proposal set
+containing exactly one current `needs_review` title proposal; no other proposal
+or set creates a case. Restart and inspection retain the case; no-op, conflict,
+failure, or zero-proposal results create no empty case.
 
-- equal local and provider comparison keys plus canonical current state `EMPTY`
-  produce a set with exactly one fill-empty `needs_review` proposal;
-- equal local and provider comparison keys plus canonical current state
-  `PRESENT` produce one replacement proposal when materially different and a
-  typed zero-proposal set when equivalent;
-- canonical current states `MISSING`, `NULL`, `MALFORMED`, and `UNSUPPORTED`
-  each produce their own typed zero-proposal set and never enter the empty row;
-- local/provider key disagreement produces a typed conflict zero-proposal set;
-- missing, failed, unsupported, stale, or unjoinable required evidence produces
-  a typed zero-proposal set; and
-- provider disablement, unsupported or incompatible capability, timeout,
-  malformed response, empty result, or no match leaves inventory and F06
-  evidence visible and creates its exact typed zero-proposal set.
+F09b runs the same contract through a fake transport in ordinary CI. Tests cover
+disabled composition with no adapter, client, secret resolution, DNS, or
+egress; the fixed HTTPS origin, path, POST method, and read-only query; TLS
+validation; redirect denial; private and reserved DNS rejection; a dedicated
+client; finite request, response, parser, deadline, retry, backoff, and
+single-request concurrency bounds; cancellation; closed-shape parsing; the
+minimum outbound title lookup allowlist and disclosure purposes; and redaction
+of the isolated account-capable token. Only bounded canonical title evidence
+and minimal provenance may persist. Raw requests, responses, headers, tokens,
+request bodies, upstream identifiers, and provider caches must not persist.
 
-Duplicate and unjoinable input tests create no current proposal. Identical
-replay resolves to the same semantic proposal-set identity and, where
-applicable, the same case identity without a duplicate. Changed or stale input
-supersedes current applicability while preserving every prior set, proposal,
-case, and typed outcome.
+F09b completion also requires one opt-in bounded read-only smoke/contract
+qualification against the fixed real endpoint with a dedicated non-production
+account and token. It retains only a redacted aggregate result; ordinary CI and
+fixtures remain credential-free. Negative spies prove the preview invokes no
+AI, human-decision, approval, apply, cover, rich-field, multi-provider-fusion,
+or production-write path.
 
-The identity cohort includes exact-value drift that normalization deliberately
-hides: replacing retained F06 title `DUNE` with `Dune` keeps the same comparison
-key but creates a new immutable proposal-set version bound to the new exact F06
-value and evidence identity. It supersedes current applicability; it is not an
-idempotent replay of the prior proposal.
-
-F10 tests prove that only a current set containing exactly one current
-`needs_review` proposal creates one case, and that persistence, restart,
-idempotent replay, immutable history, and stale-input supersession create
-neither duplicates nor empty cases. Negative spies prove the cohort invokes no
-AI reviewer, human-decision path, apply path,
-cover path, rich-field policy, multi-provider fusion, raw-response cache, or
-production network service.
-
-Before F09b can become Ready or implementation begins, its supported contract
-freezes the exact outbound field allowlist and a disclosure purpose for every
-field; tests assert that the adapter sends exactly that allowlist and no
-undeclared field. Fake-transport qualification covers:
-
-- the fixed HTTPS origin, `/v1/graphql` path, POST method, fixed read-only query,
-  frozen outbound fields, TLS validation, redirect denial, DNS and SSRF
-  rejection, and a dedicated client isolated from target credentials, cookies,
-  endpoints, and write transports;
-- request bytes, response bytes, JSON nesting, retained text, result count,
-  per-attempt and total deadline, one-request concurrency, attempt count,
-  backoff, and retry bounds, including cancellation without unbounded retry;
-- typed authentication, rate-limit, cancellation, outage, GraphQL error,
-  malformed JSON, oversized response, incompatible schema, successful-empty,
-  and no-match outcomes; and
-- token and authorization-header redaction plus evidence-retention tests proving
-  that only bounded canonical candidate/evidence and opaque provenance are
-  inspectable and exportable by the owner; expiry under
-  `retention.evidence_days` and owner deletion purge private retained values;
-  any referential-history tombstone is minimal and non-private; and raw
-  requests, responses, headers, and upstream identifiers are never cached or
-  persisted.
-
-Ordinary CI and the technical-preview release remain token-free. Before the
-Hardcover API revision can move from `experimental` to `tested` or `supported`,
-an opt-in release job must use a dedicated synthetic Hardcover account and
-short-lived account token to run the exact fixed read-only query against the
-frozen schema and authentication contract. The job retains only the redacted,
-aggregate qualification result; the token and provider payload never become
-fixtures or artifacts. Absence of this live credential does not block the
-experimental technical preview.
-
-The broader 1.0 report-only cohort disables every external metadata provider
-and still completes inventory, local evidence extraction, deterministic no-op
-and rejection handling, bounded proposal creation, and human-review projection.
-A paired configured-provider scenario may improve evidence but must preserve
-the same canonical proposal identity rules. Versioned per-field sufficiency
+The broader 1.0 report-only end-to-end scenario disables every external
+metadata provider and still completes inventory, local evidence extraction,
+deterministic no-op and rejection handling, bounded proposal creation, and
+human-review projection. A paired configured-provider scenario may improve
+evidence but must preserve the same canonical proposal identity rules.
+Versioned per-field sufficiency
 fixtures span media type, operation, and change class—including fill-empty,
 replace-populated, no-op, rejection, and edition-sensitive work—and prove
 provider-required cases route to review or explicit unsupported outcomes rather
-than disappearing. These broader field, providerless-proposal, multi-target,
-and AI-review scenarios are not 0.2 release gates.
+than disappearing.
 
 The provider-disabled variant asserts that composition constructs no provider
 adapter or provider network client, resolves no provider secret, and performs no
-provider DNS lookup or network request. It is a configuration variant against
-the same target fake, never a substitute providerless target adapter.
+provider network request. It is a configuration variant against the same target
+fake, never a substitute providerless target adapter.
 
 ### Container security tests
 
@@ -311,32 +253,6 @@ read-only media mounts, and preserves state across upgrade/restart tests.
 
 Fixture families include:
 
-- the exact 0.2 title matrix: canonical current title `PRESENT`, `MISSING`,
-  `NULL`, `EMPTY`, `MALFORMED`, and `UNSUPPORTED`, with `PRESENT` partitioned
-  into different and equivalent values and only `EMPTY` eligible to fill;
-  agreeing and disagreeing `title-normalization-v1` keys with preservation of
-  the bounded original F06 package title; missing, failed,
-  unsupported, stale, and unjoinable F06 input; and provider disabled,
-  unsupported, incompatible, timed out, malformed, empty, unmatched, stale,
-  and successful through a fake Hardcover transport;
-- F06 title-selection fixtures asserting exact selector components for one
-  valid `title-type-main@<n>` title and
-  `title-type-main@<n>;display-seq@<m>`; selector-less input; repeated identical
-  and distinct titles; `main` plus `short` or `expanded`; sole
-  `title-type-short@<n>` and `title-type-expanded@<n>`; duplicate, conflicting,
-  invalid, and
-  unsupported title-type refinements; retained `main` plus duplicate
-  `display-seq`; cited unsafe/oversized projections; and
-  exact retained lengths 4,095, 4,096, and 4,097. Every non-unique, ambiguous,
-  role-unproven, role-ineligible, redacted, or out-of-bounds case creates its
-  exact zero-result slot even when the provider agrees with one local value;
-- immutable proposal-set fixtures covering typed zero-proposal outcomes, exact
-  tagged identity for all three required slots, duplicate/unjoinable input,
-  identical replay identity, and state-, value-, evidence-, or outcome-changed
-  supersession without history mutation;
-- F10 case creation, restart, idempotent replay, and supersession fixtures that
-  retain immutable set, proposal, and case history and reject zero-proposal-set
-  or stale case creation;
 - valid and malformed EPUB packages;
 - EPUB package and opening-matter variants covering title, copyright, imprint,
   edition, contributor, identifier, series, translation, illustration,
@@ -366,8 +282,7 @@ Fixture families include:
   sensitive cases;
 - equal normalized candidates from different source adapters/providers proving
   generic provenance and correlation survive while provider name does not alter
-  provider-neutral comparison grouping for the same target, snapshot, field,
-  and value;
+  semantic proposal identity for the same target, snapshot, field, and value;
 - repeated and projected records from one evidence family that must not count
   as independent agreement;
 - identity-backed title cleanup with supported target and work identity, plus

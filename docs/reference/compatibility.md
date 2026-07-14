@@ -49,105 +49,53 @@ capable lanes.
 
 ## 0.2 title technical-preview contract
 
-The planned 0.2 path defines one provider-neutral title contract before the
-broader candidate program. It version-binds the canonical target and current
-Audiobookshelf snapshot, the exact eligible-title outcome from the current F06
-report, the provider-query and provider-response contracts, the conservative
-normalization policy, and the resulting candidate and proposal set. Every evaluated input
-combination has one immutable proposal-set version, including a typed
-zero-proposal outcome. A stale, mismatched, missing, failed, unsupported,
-duplicated, or otherwise unjoinable input cannot be interpreted as a current
-proposal.
+The preview binds one current Audiobookshelf title, exactly one current
+successful unambiguous applicable F06 `TITLE` observation whose
+`normalized_value` is non-empty, bounded, and usable rather than an unsafe,
+oversized, or redaction marker, and one provider-neutral title candidate to the
+same target and snapshot. Selector-less F06 titles are valid. Multiple
+applicable titles remain ambiguous; provider agreement or source order never
+selects one.
 
-Every proposal set binds three ordered `proposal-input-slot-v1` identities:
-current title, F06 title, and provider title. A slot is a tagged successful
-value/evidence identity or its exact typed non-success outcome, target/snapshot
-scope, and contract version. The current-title slot preserves `PRESENT`,
-`MISSING`, `NULL`, `EMPTY`, `MALFORMED`, and `UNSUPPORTED`; only `EMPTY` is
-eligible for fill-empty policy, while `PRESENT` is partitioned by equivalent or
-different comparison keys. Provider disabled, unsupported, incompatible,
-failed, successful-empty, and no-match outcomes remain distinct. No zero-result
-slot invents an evidence value, candidate, or shared sentinel identity.
+A conservative deterministic comparison applies, in order, supported-runtime
+NFC normalization, Unicode default case folding, final NFC normalization, then
+trims leading/trailing Unicode whitespace and collapses each internal
+Unicode-whitespace run to U+0020. It binds the comparison-policy version and
+runtime Unicode-data version. Comparison never alters proposal or evidence
+values or removes punctuation, diacritics, subtitle or series text, words, or
+token order. When F06 and provider values compare equally, the exact F06
+`normalized_value` is the proposed value; F06 `raw_value` remains
+evidence/provenance and provider evidence only corroborates.
 
-`title-normalization-v1` derives only a comparison key from the Unicode 16.0.0
-definition of NFC and frozen, byte-exact Unicode 16.0.0
-`UnicodeData.txt`, `DerivedNormalizationProps.txt`,
-`CompositionExclusions.txt`, `PropList.txt`, and `CaseFolding.txt` files. The
-baseline records each file's SHA-256 digest and is verified against the full
-Unicode 16.0.0 `NormalizationTest.txt` conformance data. Files come only from
-the versioned `https://www.unicode.org/Public/16.0.0/ucd/` source and NFC follows
-the UAX #15 definition incorporated by Unicode 16.0.0. It first applies NFC
-under Unicode 16.0.0, maps each maximal run of
-code points whose Unicode 16.0.0 `PropList.txt` property is
-`White_Space=Yes` to U+0020, removes leading and trailing U+0020, applies the
-Unicode 16.0.0 Default Case Folding mappings with status C or F from
-`CaseFolding.txt`, and applies NFC under Unicode 16.0.0 again. Resulting keys
-are compared byte-for-byte. Implementations must use this complete frozen
-baseline rather than host-runtime Unicode data; changing a source file or
-algorithm requires a new normalization version.
+Each evaluation records an immutable versioned proposal set, including typed
+zero-proposal results. Agreement plus a current title field that is present and
+loaded with an empty value, or a materially different current title, produces
+exactly one `needs_review` proposal. A missing, unloaded, or unavailable current
+title produces a typed current-title no-proposal result; current equivalence a
+typed no-op; disagreement a typed conflict; an empty, unsafe, oversized,
+redacted, or otherwise unusable F06/provider title a typed unusable-title
+result; and another failed, unsupported, disabled, no-match, stale, duplicate,
+or unjoinable input its exact typed no-proposal result. Provider failure never
+erases local evidence or
+becomes negative bibliographic evidence. Identical inputs replay without
+duplication; changed inputs produce a superseding set without rewriting
+history. F10 accepts only one current immutable proposal set containing exactly
+one current `needs_review` title proposal; no other proposal or set creates a
+case.
 
-Normalization does not strip or replace punctuation, diacritics, subtitle
-separators or content, series/order text, or words, and it does not reorder
-tokens. Equal keys are equivalent and different keys are materially different.
-The provider only corroborates. An eligible proposal always retains the bounded
-original F06 package title, never the provider spelling or comparison key.
+F09a supplies a deterministic fake candidate through the application-owned
+provider port. F09b implements the same port with disabled-by-default bounded
+Hardcover at fixed HTTPS endpoint `https://api.hardcover.app/v1/graphql` and a
+fixed read-only query. Only bounded canonical title evidence and minimal
+provenance are compatibility data. Raw provider requests, responses, headers,
+tokens, request bodies, upstream identifiers, and caches are not retained
+artifacts.
 
-The F06-title slot is successful only when a current successful F06 report has
-no `ambiguous_title` or `ambiguous_metadata_refinement` warning and contains
-exactly one applicable `TITLE` observation. Its citation selector is exactly
-`title-type-main@<source-ordinal>` or
-`title-type-main@<source-ordinal>;display-seq@<source-ordinal>`, where ordinals
-are base-10 F06 source ordinals. The optional display component is non-selecting
-provenance. Either warning binds `f06_title_ambiguous` before the remaining
-cardinality, role, projection, and value-bound partitions. Its exact retained
-value is at most the domain proposal bound of 4,096 characters and does not
-start with F06's reserved
-`unsafe-source-text-sha256:` or `oversized-source-text-sha256:` one-way
-projection markers. Multiple applicable titles, including repeated values, are
-not reduced by document order, `display-seq`, or provider agreement. A
-selector-less title is role-unproven because discarded invalid refinements are
-not title-locally distinguishable in F06; `short` and `expanded` are
-role-ineligible. These paths retain the report and bind the exact typed
-`f06_title_missing`, `f06_title_ambiguous`, `f06_title_role_unproven`,
-`f06_title_ineligible_role`, `f06_title_redacted`, or
-`f06_title_out_of_bounds` zero-result slot instead of a candidate value.
-
-F09a supplies a deterministic fake provider candidate. F09b substitutes a
-bounded Hardcover adapter behind the same application-owned provider port.
-Provider name is provenance, not part of provider-neutral comparison grouping:
-the same target, snapshot, field, comparison key, and contract versions group
-regardless of those two sources. Immutable proposal versions additionally bind
-the exact retained F06 package-title value and immutable F06 evidence identity.
-The proposal-set version binds the exact target, snapshot, all three tagged
-input-slot identities, normalization, and policy versions. Source
-observations and assessments remain distinct so agreement, contradiction, and
-supersession can be explained without overwriting history.
-
-Identical replay resolves to the same semantic set identity and cannot create a
-duplicate proposal or case. Changed or stale input records a superseding
-applicability result without mutating prior set or case history. F10 accepts only
-the current set containing exactly one current `needs_review` proposal; every
-zero-proposal set creates no case.
-
-Only bounded canonical title evidence and opaque provenance cross the provider
-boundary. Raw provider responses, raw provider identifiers, headers, and
-requests are not compatibility artifacts and are not cached or persisted. The
-0.2 schema has no cover, rich-field, cross-target, multi-provider-fusion,
-reviewer, decision, or apply-plan semantics.
-
-The F09b Hardcover API revision is `experimental` while only the fake transport
-has been qualified. It may be called `tested` or `supported` only after an
-opt-in release qualification runs the exact fixed read-only query and frozen
-authentication/schema contract with a dedicated synthetic Hardcover account
-and token. Ordinary CI stays token-free, and lack of a live token does not block
-the experimental technical preview.
-
-Future providers and fields extend the contracts additively through declared
-schema and policy versions. They must not reinterpret existing title identity,
-change preserved set, proposal-version, or case history, or silently make an old
-zero-proposal outcome current. The broader providerless-proposal, candidate-lane, reviewer,
-CWA-shaped target, cover, and rich-field cohorts remain 1.0 qualification, not
-0.2 release criteria.
+Ordinary CI is fake-based and credential-free. F09b completion requires one
+opt-in bounded read-only smoke/contract qualification against the fixed
+endpoint using a dedicated non-production account and token, retaining only a
+redacted aggregate result. The preview adds no AI, human decision, cover,
+rich-field, multi-provider, or apply compatibility promise.
 
 ## Audiobookshelf support
 

@@ -68,80 +68,62 @@ provider secret, and permits no provider egress.
 
 ### 0.2 title technical-preview boundary
 
-The planned 0.2 path remains report-only. F06 parses one generated EPUB using
-bounded read-only input and has no network client, credential, application
-repository, or persistence authority; only its bounded canonical package-title
-outcome may later enter the title join. F09a substitutes a deterministic fake
-provider. F09b uses the same application-owned provider port and supplies the
-Hardcover adapter only the minimum bounded title-query facts, its own
-account-capable provider token, and a dedicated outbound client.
+The 0.2 path remains report-only. F09a supplies a deterministic fake candidate
+through an application-owned provider-neutral port. F09b implements the same
+port with a disabled-by-default Hardcover adapter. Disabled composition creates
+no adapter or network client, resolves no provider secret, performs no DNS
+lookup, and permits no provider egress.
 
-Before F09b can be marked Ready or implementation begins, its supported
-contract must freeze the exact outbound field allowlist and record the
-disclosure purpose for each field. This threat model does not invent that list.
-Any undeclared field is denied rather than sent.
+The enabled adapter owns one fixed read-only GraphQL query sent only by HTTPS
+POST to `https://api.hardcover.app/v1/graphql`. The origin, path, method, and
+query are not operator-controlled. TLS validation is mandatory, redirects are
+not followed, and loopback, link-local, private, multicast, and reserved DNS
+destinations are rejected. A dedicated client has finite request, response,
+parser, deadline, retry, backoff, and one-request concurrency bounds.
+Cancellation stops further attempts.
 
-That client is fixed to HTTPS POST at
-`https://api.hardcover.app/v1/graphql` and one fixed read-only GraphQL query.
-Neither endpoint nor query is operator-controlled. It sends no target-service
-credential, cookies, raw service rows, external item identifiers, private
-paths, media, or mutation capability. TLS validation is mandatory; redirects
-are not followed; DNS results resolving to loopback, link-local, multicast,
-private, or reserved space are rejected. Request bytes, response bytes, content
-type, JSON depth, collection count, retained title length, per-attempt and total
-deadline, attempt count, and retry backoff have fixed finite limits; concurrency
-is one in-flight provider request. Cancellation stops further attempts. Logs,
-diagnostics, exceptions, and test fixtures redact the provider token and
-authorization headers.
+The application sends only an allowlisted minimum title lookup projection, with
+a documented disclosure purpose for each field. It never sends target-service
+credentials, cookies, raw target rows, private paths, media, or write
+capability. The account-capable provider token is isolated from target and
+reviewer credentials and is redacted from logs, diagnostics, exceptions, and
+test output.
 
-Provider responses remain untrusted. The adapter validates a closed response
-shape and retains only a bounded canonical title candidate with opaque
-provider provenance. That canonical candidate/evidence and provenance are
-classified as retained evidence. Before F09b can be marked Ready, #223 must
-define their exact lifecycle: bind expiry to `retention.evidence_days`; provide
-owner inspection and export; purge private retained values and provenance on
-owner deletion or expiry; and preserve only a minimal non-private tombstone or
-referential-history record needed to explain immutable proposal history. Until
-that contract and its tests exist, the project makes no claim that these
-behaviors are supported. Raw responses, upstream
-provider identifiers, headers, and request bodies are neither persisted nor
-cached. Disabled configuration constructs no provider adapter or client,
-resolves no provider secret, performs no DNS lookup, and permits no egress.
+Provider responses are untrusted and must match a closed bounded shape. Only a
+bounded canonical title value and the minimum provenance needed to explain its
+source may be retained. Raw requests, responses, headers, tokens, request
+bodies, upstream identifiers, and caches are never persisted. Provider failure
+or disagreement cannot erase valid F06 evidence, become negative
+bibliographic evidence, or grant proposal, decision, review, or write
+authority.
 
-The current target snapshot, F06 result, provider result, normalization policy,
-candidate, and proposal set are joined by explicit versions and scope. Each
-evaluated combination has one immutable versioned set bound to the ordered
-`proposal-input-slot-v1` identities for current title, F06 title, and provider
-title, including typed zero-proposal outcomes. Each slot carries a successful
-exact value/evidence identity or its exact typed scoped outcome and contract
-version; missing or failed inputs do not manufacture candidate values.
-`title-normalization-v1` derives only the conservative
-comparison key documented in the compatibility contract using the complete
-frozen Unicode 16.0.0 normalization, whitespace, and case-folding baseline
-rather than host-runtime Unicode data. Provider data only corroborates; the
-retained proposal value is always the bounded original F06 package title, never
-the provider spelling or comparison key. F09a accepts it only when the validated
-current F06 report has no `ambiguous_title` or
-`ambiguous_metadata_refinement` warning and exactly one applicable `TITLE`
-observation whose F06 citation selector is
-`title-type-main@<source-ordinal>` with only the optional non-selecting
-`;display-seq@<source-ordinal>` component. The exact value must fit the
-4,096-character proposal bound and must not be an F06 redaction or oversize
-marker. Either warning binds `f06_title_ambiguous` before other partitions.
-Provider agreement cannot choose among selector-less, multiple,
-`short`, `expanded`, redacted, or out-of-bounds local title observations; those
-states remain typed zero-proposal outcomes. Only canonical current-title `EMPTY`
-can enter fill-empty policy; `PRESENT` is partitioned into equivalent or
-different values, while `MISSING`, `NULL`, `MALFORMED`, and `UNSUPPORTED`
-remain distinct zero-proposal outcomes. Missing, failed, unsupported, stale,
-duplicate, or unjoinable input cannot create a proposal; local/provider
-disagreement creates a typed
-conflict set. Identical replay resolves to the same
-semantic set and case identity without duplication. Current-state drift
-supersedes applicability of the set and any derived case while preserving
-immutable history. No outcome in this path grants automatic approval, a human
-or AI decision, cover or rich-field processing, multi-provider fusion, or
-production write authority. Future writes still require every gate below.
+The current target snapshot, current title, successful F06 report, provider
+outcome, comparison policy, and proposal set are bound explicitly. An eligible
+F06 `TITLE` has a non-empty bounded usable `normalized_value`, not an unsafe,
+oversized, or redaction marker. A proposal value is that exact F06
+`normalized_value`; F06 `raw_value` remains evidence/provenance and provider
+evidence only corroborates.
+
+Comparison applies, in order, supported-runtime NFC normalization, Unicode
+default case folding, final NFC normalization, then trims leading/trailing
+Unicode whitespace and collapses each internal Unicode-whitespace run to
+U+0020. Both the comparison-policy version and runtime Unicode-data version are
+bound. Comparison never alters proposal or evidence values. A current title
+field that is present and loaded with an empty value remains a valid fill-empty
+case when usable F06 and provider titles corroborate; a materially different
+current title also remains eligible. A missing, unloaded, or unavailable
+current title, current equivalence, disagreement, an empty or unusable
+F06/provider title, or another failed, unsupported, disabled, no-match, stale,
+duplicate, or unjoinable input creates its exact typed no-proposal result.
+Identical replay does not duplicate state, while changed inputs supersede
+current applicability without rewriting history.
+
+Ordinary CI and automated tests use fakes and no provider credential. F09b
+completion additionally requires one opt-in bounded read-only smoke/contract
+qualification against the fixed endpoint using a dedicated non-production
+account and token; only a redacted aggregate result is retained. Nothing in the
+preview invokes AI, records a human decision, handles covers or rich fields,
+fuses multiple providers, or authorizes a production write.
 
 ## Primary threats and mitigations
 

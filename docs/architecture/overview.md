@@ -147,25 +147,27 @@ observed to contain and for no-op detection, optimistic concurrency, planning,
 and verification. It is one versioned bibliographic observation, not privileged
 bibliographic truth. Providerless report-only operation remains a planned valid
 flow: inventory, local evidence, deterministic no-op and rejection handling,
-bounded proposals, and human review need not require a catalogue provider in
-the long-term architecture.
+bounded proposals, and human review do not require a catalogue provider.
 
-The narrower 0.2 title technical preview deliberately does require
-`title-normalization-v1` agreement between exactly one eligible title from the
-current successful F06 package report and one provider title before its
-immutable proposal set contains a
-proposal. The current Audiobookshelf title determines whether that agreed value
-is a typed zero-proposal no-op or one `needs_review` proposal: only canonical
-`EMPTY` permits a fill, `PRESENT` is compared as equivalent or different, and
-`MISSING`, `NULL`, `MALFORMED`, or `UNSUPPORTED` produces its own typed
-zero-proposal outcome. Every evaluated combination has a version-bound proposal
-set whose identity binds successful values or exact typed outcomes for all
-three required input slots. Provider disablement, failure,
-disagreement, duplicate input, or stale or unjoinable evidence produces a typed
-zero-proposal set while unrelated inventory and F06 evidence remain visible.
-Providerless proposal policy, additional fields, covers, multiple providers,
-and AI review remain 1.0 scope; this staging choice does not narrow the
-application-owned ports or long-term adapter model.
+The narrower 0.2 title preview uses the same application-owned seams but
+requires three current, joinable inputs: the current Audiobookshelf title,
+exactly one eligible F06 `TITLE` whose `normalized_value` is non-empty, bounded,
+and usable rather than an unsafe, oversized, or redaction marker, and one
+candidate from a provider-neutral port. F09a supplies a deterministic fake;
+F09b later substitutes disabled-by-default bounded Hardcover. Agreement creates
+at most one `needs_review` proposal whose value is the exact F06
+`normalized_value`; F06 `raw_value` remains evidence/provenance and provider
+evidence only corroborates. A current title field that is present and loaded
+with an empty value is a valid fill-empty case, and a materially different
+current title remains eligible. A missing, unloaded, or unavailable current
+title, equivalence, disagreement, an empty or unusable F06/provider title, or
+another unavailable input records a typed no-proposal result without hiding
+valid local evidence. Immutable versioned sets replay
+identical inputs and supersede changed inputs. F10 persists one current
+immutable proposal set containing exactly one current `needs_review` title
+proposal as one undecided case; no other proposal or set creates a case. AI,
+human decisions, covers, rich fields, multi-provider fusion, and writes remain
+outside the preview.
 
 ### Apply
 
