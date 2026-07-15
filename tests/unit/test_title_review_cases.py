@@ -5,6 +5,10 @@ import json
 import unittest
 from dataclasses import FrozenInstanceError
 
+from mechanical_librarian.application.title_review_cases import (
+    ReviewAdmission,
+    ReviewTransitionKind,
+)
 from mechanical_librarian.domain.title_proposals import (
     TitleProposalResult,
     proposal_set_from_manifest,
@@ -14,6 +18,7 @@ from mechanical_librarian.domain.title_review_cases import (
     SYNTHETIC_REVIEW_CONNECTION,
     SYNTHETIC_REVIEW_LIBRARY,
     SYNTHETIC_TITLE_REVIEW_BINDING_VERSION,
+    SyntheticReviewTarget,
     SyntheticTitleReviewCase,
     TitleReviewCaseValueError,
     review_case_from_proposal_set,
@@ -30,6 +35,76 @@ def qualifying_case() -> SyntheticTitleReviewCase:
     result = review_case_from_proposal_set(proposal_set)
     assert result is not None
     return result
+
+
+def qualifying_case_revision(
+    revision: int,
+    *,
+    previous_set_id: str | None,
+    lineage: str = "synthetic-title-preview-agree-empty",
+    external_item: str = "synthetic-item",
+) -> SyntheticTitleReviewCase:
+    source_manifest = manifest()
+    source_manifest["lineage"] = lineage
+    source_manifest["lineage_revision"] = revision
+    source_manifest["previous_set_id"] = previous_set_id
+    source_manifest["snapshot"]["id"] = f"synthetic-snapshot-{revision}"  # type: ignore[index]
+    proposal_set = proposal_set_from_manifest(
+        manifest=source_manifest,
+        result=TitleProposalResult.NEEDS_REVIEW,
+        proposed_value="A Synthetic Book",
+        previous_set_id=previous_set_id,
+    )
+    result = review_case_from_proposal_set(proposal_set)
+    assert result is not None
+    if external_item != result.target.external_item:
+        # Model a corrupted typed readback; canonical sources close this value.
+        object.__setattr__(
+            result,
+            "target",
+            SyntheticReviewTarget(
+                SYNTHETIC_REVIEW_ADAPTER,
+                SYNTHETIC_REVIEW_CONNECTION,
+                SYNTHETIC_REVIEW_LIBRARY,
+                external_item,
+            ),
+        )
+    return result
+
+
+def admission_values(
+    kind: ReviewTransitionKind,
+    *,
+    source_result: TitleProposalResult,
+    previous_case: SyntheticTitleReviewCase | None,
+    current_case: SyntheticTitleReviewCase | None,
+    replayed: bool = False,
+    case_history_count: int,
+    transition_count: int,
+) -> dict[str, object]:
+    reasons = {
+        ReviewTransitionKind.CREATED: "admit current synthetic review case",
+        ReviewTransitionKind.SUPERSEDED: "supersede current synthetic review case",
+        ReviewTransitionKind.RETIRED: "retire current synthetic review case",
+        ReviewTransitionKind.NO_CASE: "record current synthetic no-case result",
+    }
+    return {
+        "source_set_id": (
+            current_case.source_set_id
+            if current_case is not None
+            else "ps-current-nonqualifying"
+        ),
+        "source_result": source_result,
+        "current_case": current_case,
+        "previous_case": previous_case,
+        "current_case_id": None if current_case is None else current_case.case_id,
+        "transition_id": f"transition-{kind.value}",
+        "transition_kind": kind,
+        "transition_reason": reasons[kind],
+        "replayed": replayed,
+        "case_history_count": case_history_count,
+        "transition_count": transition_count,
+    }
 
 
 class SyntheticTitleReviewCaseTests(unittest.TestCase):
@@ -124,6 +199,251 @@ class SyntheticTitleReviewCaseTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(TitleReviewCaseValueError, "duplicate"):
             SyntheticTitleReviewCase.from_json(duplicate)
+
+
+class ReviewAdmissionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.previous = qualifying_case()
+        self.current = qualifying_case_revision(
+            2,
+            previous_set_id=self.previous.source_set_id,
+        )
+
+    def test_all_valid_transition_kinds_accept_replay_variants(self) -> None:
+        fresh_nonqualifying = set(TitleProposalResult) - {
+            TitleProposalResult.NEEDS_REVIEW,
+            TitleProposalResult.STALE_INPUT,
+        }
+        qualifying_cases = (
+            (
+                ReviewTransitionKind.CREATED,
+                None,
+                self.previous,
+                1,
+                1,
+            ),
+            (
+                ReviewTransitionKind.SUPERSEDED,
+                self.previous,
+                self.current,
+                2,
+                2,
+            ),
+        )
+        for kind, previous, current, case_count, transition_count in qualifying_cases:
+            for replayed in (False, True):
+                with self.subTest(kind=kind, replayed=replayed):
+                    values = admission_values(
+                        kind,
+                        source_result=TitleProposalResult.NEEDS_REVIEW,
+                        previous_case=previous,
+                        current_case=current,
+                        replayed=replayed,
+                        case_history_count=case_count,
+                        transition_count=transition_count,
+                    )
+                    self.assertEqual(ReviewAdmission(**values).replayed, replayed)  # type: ignore[arg-type]
+
+        nonqualifying_cases = (
+            (ReviewTransitionKind.RETIRED, self.previous, 1, 2),
+            (ReviewTransitionKind.NO_CASE, None, 0, 1),
+        )
+        for kind, previous, case_count, transition_count in nonqualifying_cases:
+            for source_result in fresh_nonqualifying:
+                for replayed in (False, True):
+                    with self.subTest(
+                        kind=kind,
+                        source_result=source_result,
+                        replayed=replayed,
+                    ):
+                        values = admission_values(
+                            kind,
+                            source_result=source_result,
+                            previous_case=previous,
+                            current_case=None,
+                            replayed=replayed,
+                            case_history_count=case_count,
+                            transition_count=transition_count,
+                        )
+                        self.assertEqual(ReviewAdmission(**values).replayed, replayed)  # type: ignore[arg-type]
+
+    def test_invalid_lifecycle_relationships_fail_closed(self) -> None:
+        created = admission_values(
+            ReviewTransitionKind.CREATED,
+            source_result=TitleProposalResult.NEEDS_REVIEW,
+            previous_case=None,
+            current_case=self.previous,
+            case_history_count=1,
+            transition_count=1,
+        )
+        superseded = admission_values(
+            ReviewTransitionKind.SUPERSEDED,
+            source_result=TitleProposalResult.NEEDS_REVIEW,
+            previous_case=self.previous,
+            current_case=self.current,
+            case_history_count=2,
+            transition_count=2,
+        )
+        retired = admission_values(
+            ReviewTransitionKind.RETIRED,
+            source_result=TitleProposalResult.NO_CHANGE,
+            previous_case=self.previous,
+            current_case=None,
+            case_history_count=1,
+            transition_count=2,
+        )
+        no_case = admission_values(
+            ReviewTransitionKind.NO_CASE,
+            source_result=TitleProposalResult.NO_CHANGE,
+            previous_case=None,
+            current_case=None,
+            case_history_count=0,
+            transition_count=1,
+        )
+        wrong_lineage = qualifying_case_revision(
+            2,
+            previous_set_id=self.previous.source_set_id,
+            lineage="synthetic-title-preview-other",
+        )
+        wrong_target = qualifying_case_revision(
+            2,
+            previous_set_id=self.previous.source_set_id,
+            external_item="synthetic-item-other",
+        )
+        wrong_predecessor = qualifying_case_revision(
+            2,
+            previous_set_id="ps-not-the-predecessor",
+        )
+        skipped_revision = qualifying_case_revision(
+            3,
+            previous_set_id=self.previous.source_set_id,
+        )
+        invalid = (
+            ("missing replacement", {**superseded, "current_case": None, "current_case_id": None}),
+            (
+                "self supersession",
+                {
+                    **superseded,
+                    "source_set_id": self.previous.source_set_id,
+                    "current_case": self.previous,
+                    "current_case_id": self.previous.case_id,
+                },
+            ),
+            (
+                "cross lineage",
+                {
+                    **superseded,
+                    "source_set_id": wrong_lineage.source_set_id,
+                    "current_case": wrong_lineage,
+                    "current_case_id": wrong_lineage.case_id,
+                },
+            ),
+            (
+                "cross target",
+                {
+                    **superseded,
+                    "source_set_id": wrong_target.source_set_id,
+                    "current_case": wrong_target,
+                    "current_case_id": wrong_target.case_id,
+                },
+            ),
+            (
+                "broken predecessor",
+                {
+                    **superseded,
+                    "source_set_id": wrong_predecessor.source_set_id,
+                    "current_case": wrong_predecessor,
+                    "current_case_id": wrong_predecessor.case_id,
+                },
+            ),
+            (
+                "skipped revision",
+                {
+                    **superseded,
+                    "source_set_id": skipped_revision.source_set_id,
+                    "current_case": skipped_revision,
+                    "current_case_id": skipped_revision.case_id,
+                },
+            ),
+            ("mismatched current source", {**created, "source_set_id": "ps-other"}),
+            (
+                "mismatched superseded source",
+                {**superseded, "source_set_id": "ps-other"},
+            ),
+            (
+                "mismatched current pointer",
+                {**created, "current_case_id": "case-other"},
+            ),
+            (
+                "stale retirement",
+                {**retired, "source_result": TitleProposalResult.STALE_INPUT},
+            ),
+            (
+                "stale no case",
+                {**no_case, "source_result": TitleProposalResult.STALE_INPUT},
+            ),
+            (
+                "needs review retirement",
+                {**retired, "source_result": TitleProposalResult.NEEDS_REVIEW},
+            ),
+            (
+                "needs review no case",
+                {**no_case, "source_result": TitleProposalResult.NEEDS_REVIEW},
+            ),
+        )
+        for name, values in invalid:
+            for replayed in (False, True):
+                with self.subTest(name=name, replayed=replayed):
+                    with self.assertRaises(ValueError):
+                        ReviewAdmission(**{**values, "replayed": replayed})  # type: ignore[arg-type]
+
+    def test_each_transition_rejects_invalid_count_siblings(self) -> None:
+        valid = (
+            admission_values(
+                ReviewTransitionKind.CREATED,
+                source_result=TitleProposalResult.NEEDS_REVIEW,
+                previous_case=None,
+                current_case=self.previous,
+                case_history_count=1,
+                transition_count=1,
+            ),
+            admission_values(
+                ReviewTransitionKind.SUPERSEDED,
+                source_result=TitleProposalResult.NEEDS_REVIEW,
+                previous_case=self.previous,
+                current_case=self.current,
+                case_history_count=2,
+                transition_count=2,
+            ),
+            admission_values(
+                ReviewTransitionKind.RETIRED,
+                source_result=TitleProposalResult.NO_CHANGE,
+                previous_case=self.previous,
+                current_case=None,
+                case_history_count=1,
+                transition_count=2,
+            ),
+            admission_values(
+                ReviewTransitionKind.NO_CASE,
+                source_result=TitleProposalResult.NO_CHANGE,
+                previous_case=None,
+                current_case=None,
+                case_history_count=0,
+                transition_count=1,
+            ),
+        )
+        for values in valid:
+            kind = values["transition_kind"]
+            for field in ("case_history_count", "transition_count"):
+                for offset in (-1, 1):
+                    changed = int(values[field]) + offset
+                    if field == "transition_count" and changed < 1:
+                        continue
+                    if field == "case_history_count" and changed < 0:
+                        continue
+                    with self.subTest(kind=kind, field=field, changed=changed):
+                        with self.assertRaises(ValueError):
+                            ReviewAdmission(**{**values, field: changed})  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":

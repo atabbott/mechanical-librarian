@@ -27,6 +27,12 @@ class ReviewTransitionKind(StrEnum):
     NO_CASE = "no_case"
 
 
+_FRESH_NONQUALIFYING_RESULTS = frozenset(TitleProposalResult) - {
+    TitleProposalResult.NEEDS_REVIEW,
+    TitleProposalResult.STALE_INPUT,
+}
+
+
 @dataclass(frozen=True)
 class ReviewAdmission:
     source_set_id: str
@@ -81,6 +87,46 @@ class ReviewAdmission:
             raise ValueError("review retirement projection is invalid")
         if self.transition_kind is ReviewTransitionKind.NO_CASE and (
             self.previous_case is not None or self.current_case is not None
+        ):
+            raise ValueError("review no-case projection is invalid")
+        if self.transition_kind is ReviewTransitionKind.CREATED and (
+            self.source_result is not TitleProposalResult.NEEDS_REVIEW
+            or self.current_case is None
+            or self.current_case.source_set_id != self.source_set_id
+            or self.case_history_count != 1
+            or self.transition_count != 1
+        ):
+            raise ValueError("review creation projection is invalid")
+        if self.transition_kind is ReviewTransitionKind.SUPERSEDED and (
+            self.source_result is not TitleProposalResult.NEEDS_REVIEW
+            or self.previous_case is None
+            or self.current_case is None
+            or self.previous_case.case_id == self.current_case.case_id
+            or self.current_case.source_set_id != self.source_set_id
+            or self.previous_case.binding_version != self.current_case.binding_version
+            or self.previous_case.target != self.current_case.target
+            or self.previous_case.lineage != self.current_case.lineage
+            or self.current_case.source_revision != self.previous_case.source_revision + 1
+            or self.current_case.manifest["previous_set_id"]
+            != self.previous_case.source_set_id
+            or self.case_history_count != 2
+            or self.transition_count != 2
+        ):
+            raise ValueError("review supersession projection is invalid")
+        if self.transition_kind is ReviewTransitionKind.RETIRED and (
+            self.source_result not in _FRESH_NONQUALIFYING_RESULTS
+            or self.previous_case is None
+            or self.current_case is not None
+            or self.case_history_count != 1
+            or self.transition_count != 2
+        ):
+            raise ValueError("review retirement projection is invalid")
+        if self.transition_kind is ReviewTransitionKind.NO_CASE and (
+            self.source_result not in _FRESH_NONQUALIFYING_RESULTS
+            or self.previous_case is not None
+            or self.current_case is not None
+            or self.case_history_count != 0
+            or self.transition_count != 1
         ):
             raise ValueError("review no-case projection is invalid")
         expected_reason = {
