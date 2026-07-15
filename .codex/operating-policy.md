@@ -44,10 +44,12 @@ Do not fold an unrelated discovery into the current change. Record it in the
 handoff evidence and create follow-up tracking only when repository policy or
 the user requires it.
 
-Changes confined to repository workflow skills and their `.codex` controls do
-not require a tracking ticket. Product, release, dependency, security,
-architecture, schema, and CI changes retain the repository's normal tracking
-rules.
+Repository skills are not tracked work. Changes confined to `.codex/skills/**`,
+their supporting `.codex` controls and tests, delivery-control documentation,
+or the dedicated validation workflow must not create or require a ticket. Use
+the repository's tracking-exemption PR path. Product, release, dependency,
+security, architecture, application schema, and application CI changes retain
+the normal tracking rules.
 
 ## Evidence and qualification
 

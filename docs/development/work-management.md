@@ -273,20 +273,25 @@ using GitHub's rendered closing-keyword and issue-link annotations without
 treating examples, custom links, formatting, quotations, or code as closing
 instructions.
 
-The narrow exception is trivial cleanup that consists only of spelling,
-formatting, broken-link, or comment-only corrections. A maintainer authorizes
-the exception by applying the exact `tracking-exempt` label and adding visible
-prose beneath the single top-level `Tracking exemption` heading in the pull
-request description. The label and rationale are both required; the gate does
+Repository skills are not tracked work. A change confined to
+`.codex/skills/**`, their supporting `.codex` declarations, policies, helpers,
+tests and documentation, or the dedicated delivery-control validation workflow
+must not create or require a ticket. A maintainer applies the exact
+`tracking-exempt` label and adds visible prose beneath the single top-level
+`Tracking exemption` heading in the pull request description.
+
+The same mechanism covers trivial spelling, formatting, broken-link, or
+comment-only cleanup. The label and rationale are both required; the gate does
 not inspect or classify the diff. Quoted, commented, code-formatted, nested,
 empty, or duplicate rationale sections do not qualify.
 
-The exception is unavailable when a change affects executable behavior,
-dependencies or lockfiles, builds, CI or workflows, releases, configuration,
-migrations, security, architecture, governance, the product contract, or the
-delivery plan. Those changes require an open repository issue and a supported
-closing reference. Issue #198 and pull request #196 are material tracked work,
-not examples eligible for the exemption.
+Outside the repository-skill boundary, the exception is unavailable when a
+change affects executable product behavior, dependencies or lockfiles,
+application builds, CI or workflows, releases, configuration, migrations,
+security, architecture, governance, the product contract, or the delivery
+plan. Those changes require an open repository issue and a supported closing
+reference. Issue #198 and pull request #196 are material tracked work, not
+examples eligible for the exemption.
 
 The workflow runs from protected base-branch context with explicit read-only
 permissions, checks out only the recorded base SHA, and treats pull-request

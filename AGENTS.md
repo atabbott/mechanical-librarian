@@ -45,13 +45,18 @@ Run the static architecture-boundary test whenever imports or packages move.
 ## Change requirements
 
 Ready pull requests normally require a supported closing reference to an open
-repository issue. Only spelling, formatting, broken-link, or comment-only
-cleanup with no material impact may use the maintainer-applied exact
+repository issue. Repository skills are explicitly not tracked work: changes
+confined to `.codex/skills/**`, their supporting `.codex` declarations,
+policies, helpers, tests and documentation, or the dedicated delivery-control
+validation workflow must not create or require a ticket. Use the exact
 `tracking-exempt` label plus visible prose under one top-level
-`Tracking exemption` heading. Never use the exemption for executable behavior,
-dependencies or lockfiles, build/CI/workflow, release, configuration,
-migration, security, architecture, governance, product-contract, or
-delivery-plan changes.
+`Tracking exemption` heading.
+
+The same exemption may cover spelling, formatting, broken-link, or comment-only
+cleanup with no material impact. Outside the repository-skill boundary, never
+use it for executable product behavior, dependencies or lockfiles, application
+build/CI/workflows, release, configuration, migration, security, architecture,
+governance, product-contract, or delivery-plan changes.
 
 Every change must include the smallest appropriate combination of:
 

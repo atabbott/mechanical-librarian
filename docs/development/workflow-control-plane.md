@@ -80,6 +80,8 @@ record remained in `REMEDIATION` after 51 artifacts, 27 events, and 18 findings;
 it was not qualified. The sanitized counts and qualification basis are retained
 in the baseline, while the private runtime artifacts remain ignored.
 
-Workflow-only `.codex` changes do not require a ticket. If the same change
-alters product, release, dependency, security, architecture, schema, or CI
-behavior, the repository's normal tracking rules still apply.
+Repository skills are not tracked work and must not create or require a ticket.
+Use the `tracking-exempt` PR path for changes confined to the skills, supporting
+`.codex` controls, this guide, or the dedicated validation workflow. Normal
+tracking rules still apply when product, release, dependency, security,
+architecture, application schema, or application CI behavior also changes.

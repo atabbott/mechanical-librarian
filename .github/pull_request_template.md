@@ -11,7 +11,8 @@ Closes #
 <!--
 Leave this section blank for normal tracked work. A maintainer may apply the
 exact `tracking-exempt` label and replace this comment with a concise rationale
-only for eligible trivial cleanup described in the work-management policy.
+for repository-skill maintenance or eligible trivial cleanup described in the
+work-management policy. Never create a ticket solely for repository-skill work.
 -->
 
 ## Delivery mode

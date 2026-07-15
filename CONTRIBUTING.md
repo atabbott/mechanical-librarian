@@ -61,13 +61,15 @@ changes.
 
 ## Delivery-control qualification
 
-The tracked `.codex` tree contains the canonical delivery workflows, profiles,
-and deterministic control tests. Changes confined to that workflow-control
-tree do not require a tracking ticket, but still require the qualification
-commands in [the delivery-control guide](docs/development/workflow-control-plane.md).
-Normal tracking rules still apply when a change also affects product, release,
-dependency, security, architecture, schema, or CI behavior. Private run
-records, local resource paths, and session artifacts remain untracked.
+Repository skills are not tracked work. Changes confined to `.codex/skills/**`,
+their supporting `.codex` controls and tests, the delivery-control guide, or
+the dedicated validation workflow must not create or require a ticket. Use the
+exact `tracking-exempt` label and a visible `Tracking exemption` rationale on
+the pull request, and run the commands in
+[the delivery-control guide](docs/development/workflow-control-plane.md).
+Normal tracking rules still apply if product, release, dependency, security,
+architecture, application schema, or application CI behavior also changes.
+Private run records, local paths, and session artifacts remain untracked.
 
 ## Pull requests
 
