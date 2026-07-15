@@ -14,6 +14,7 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
 )
 from mechanical_librarian.domain.inventory import SecretReference, ServiceEndpoint
+from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.local_evidence import EpubPackageLimits
 
 
@@ -213,8 +214,9 @@ class ResourceLimits:
 class EvidenceConfiguration:
     enabled_formats: tuple[str, ...] = ("epub", "m4b", "mp3")
     maximum_document_bytes: int = 67_108_864
-    maximum_text_characters: int = 262_144
+    maximum_text_characters: int = 524_288
     epub_package: EpubPackageLimits = field(default_factory=EpubPackageLimits)
+    epub_opening: EpubOpeningLimits = field(default_factory=EpubOpeningLimits)
 
     def __post_init__(self) -> None:
         if (
@@ -243,6 +245,11 @@ class EvidenceConfiguration:
             raise ConfigurationError("evidence text limit is outside safe bounds")
         if type(self.epub_package) is not EpubPackageLimits:
             raise ConfigurationError("EPUB package limits are malformed")
+        if (
+            type(self.epub_opening) is not EpubOpeningLimits
+            or self.epub_opening.package != self.epub_package
+        ):
+            raise ConfigurationError("EPUB opening limits are malformed")
 
 
 @dataclass(frozen=True)
@@ -436,6 +443,13 @@ class ApplicationConfiguration:
                 "maximum_document_bytes": self.evidence.maximum_document_bytes,
                 "maximum_text_characters": self.evidence.maximum_text_characters,
                 "epub_package": self.evidence.epub_package.to_data(),
+                "epub_opening": {
+                    "profile": self.evidence.epub_opening.profile,
+                    **{
+                        name: getattr(self.evidence.epub_opening, name)
+                        for name in EpubOpeningLimits.HARD_CAPS
+                    },
+                },
             },
             "providers": list(self.providers),
             "reviewers": list(self.reviewers),
@@ -510,9 +524,11 @@ _EVIDENCE_FIELDS = frozenset(
         "maximum_document_bytes",
         "maximum_text_characters",
         "epub_package",
+        "epub_opening",
     }
 )
 _EPUB_PACKAGE_FIELDS = frozenset({"profile", *EpubPackageLimits.HARD_CAPS})
+_EPUB_OPENING_FIELDS = frozenset({"profile", *EpubOpeningLimits.HARD_CAPS})
 _RETENTION_FIELDS = frozenset(
     {"evidence_days", "job_log_days", "maximum_artifact_bytes"}
 )
@@ -567,6 +583,22 @@ def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration
                 for name in EpubPackageLimits.HARD_CAPS
             }
         )
+        epub_opening_source = evidence_source.get("epub_opening", {})
+        _only(epub_opening_source, _EPUB_OPENING_FIELDS, "EPUB opening limits")
+        if (
+            epub_opening_source.get("profile", "epub-opening-limits-v1")
+            != "epub-opening-limits-v1"
+        ):
+            raise ConfigurationError("EPUB opening limit profile is unsupported")
+        epub_opening = EpubOpeningLimits(
+            package=epub_package,
+            **{
+                name: epub_opening_source.get(
+                    name, getattr(EpubOpeningLimits(), name)
+                )
+                for name in EpubOpeningLimits.HARD_CAPS
+            },
+        )
         evidence = EvidenceConfiguration(
             enabled_formats=_set_text_tuple(
                 evidence_source.get("enabled_formats", ("epub", "m4b", "mp3")),
@@ -577,9 +609,10 @@ def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration
                 "maximum_document_bytes", 67_108_864
             ),
             maximum_text_characters=evidence_source.get(
-                "maximum_text_characters", 262_144
+                "maximum_text_characters", 524_288
             ),
             epub_package=epub_package,
+            epub_opening=epub_opening,
         )
         policy_source = source.get("policy", {})
         _only(policy_source, _POLICY_FIELDS, "policy")
@@ -791,6 +824,16 @@ _IMPACT_MATRIX: tuple[
             (_R, _RX),
         )
         for name in EpubPackageLimits.HARD_CAPS
+    ),
+    *(
+        (
+            f"evidence.epub_opening.{name}",
+            lambda configuration, attribute=name: getattr(
+                configuration.evidence.epub_opening, attribute
+            ),
+            (_R, _RX),
+        )
+        for name in EpubOpeningLimits.HARD_CAPS
     ),
     ("providers", _projection("providers"), (_R, _C, _V)),
     ("reviewers", _projection("reviewers"), (_R, _V)),

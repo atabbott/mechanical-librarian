@@ -103,6 +103,118 @@
       "title": "ConnectionInput",
       "type": "object"
     },
+    "EpubOpeningInput": {
+      "additionalProperties": false,
+      "properties": {
+        "child_cpu_seconds": {
+          "const": 30,
+          "default": 30,
+          "title": "Child Cpu Seconds",
+          "type": "integer"
+        },
+        "document_depth": {
+          "default": 64,
+          "maximum": 128,
+          "minimum": 1,
+          "title": "Document Depth",
+          "type": "integer"
+        },
+        "excerpt_characters": {
+          "const": 280,
+          "default": 280,
+          "title": "Excerpt Characters",
+          "type": "integer"
+        },
+        "expanded_bytes_per_resource": {
+          "default": 1048576,
+          "maximum": 4194304,
+          "minimum": 1,
+          "title": "Expanded Bytes Per Resource",
+          "type": "integer"
+        },
+        "expanded_bytes_per_selection": {
+          "default": 5242880,
+          "maximum": 33554432,
+          "minimum": 1,
+          "title": "Expanded Bytes Per Selection",
+          "type": "integer"
+        },
+        "facts": {
+          "const": 64,
+          "default": 64,
+          "title": "Facts",
+          "type": "integer"
+        },
+        "navigation_links": {
+          "default": 2048,
+          "maximum": 8192,
+          "minimum": 1,
+          "title": "Navigation Links",
+          "type": "integer"
+        },
+        "nodes_per_resource": {
+          "default": 25000,
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Nodes Per Resource",
+          "type": "integer"
+        },
+        "nodes_per_selection": {
+          "default": 100000,
+          "maximum": 400000,
+          "minimum": 1,
+          "title": "Nodes Per Selection",
+          "type": "integer"
+        },
+        "profile": {
+          "const": "epub-opening-limits-v1",
+          "default": "epub-opening-limits-v1",
+          "title": "Profile",
+          "type": "string"
+        },
+        "report_bytes": {
+          "const": 524288,
+          "default": 524288,
+          "title": "Report Bytes",
+          "type": "integer"
+        },
+        "selected_documents": {
+          "default": 5,
+          "maximum": 8,
+          "minimum": 1,
+          "title": "Selected Documents",
+          "type": "integer"
+        },
+        "termination_grace_seconds": {
+          "const": 2,
+          "default": 2,
+          "title": "Termination Grace Seconds",
+          "type": "integer"
+        },
+        "text_characters_per_selection": {
+          "default": 524288,
+          "maximum": 2097152,
+          "minimum": 1,
+          "title": "Text Characters Per Selection",
+          "type": "integer"
+        },
+        "wall_seconds": {
+          "default": 60,
+          "maximum": 3600,
+          "minimum": 1,
+          "title": "Wall Seconds",
+          "type": "integer"
+        },
+        "warnings": {
+          "const": 32,
+          "default": 32,
+          "title": "Warnings",
+          "type": "integer"
+        }
+      },
+      "title": "EpubOpeningInput",
+      "type": "object"
+    },
     "EpubPackageInput": {
       "additionalProperties": false,
       "properties": {
@@ -265,6 +377,27 @@
           "type": "array",
           "uniqueItems": true
         },
+        "epub_opening": {
+          "$ref": "#/$defs/EpubOpeningInput",
+          "default": {
+            "child_cpu_seconds": 30,
+            "document_depth": 64,
+            "excerpt_characters": 280,
+            "expanded_bytes_per_resource": 1048576,
+            "expanded_bytes_per_selection": 5242880,
+            "facts": 64,
+            "navigation_links": 2048,
+            "nodes_per_resource": 25000,
+            "nodes_per_selection": 100000,
+            "profile": "epub-opening-limits-v1",
+            "report_bytes": 524288,
+            "selected_documents": 5,
+            "termination_grace_seconds": 2,
+            "text_characters_per_selection": 524288,
+            "wall_seconds": 60,
+            "warnings": 32
+          }
+        },
         "epub_package": {
           "$ref": "#/$defs/EpubPackageInput",
           "default": {
@@ -297,7 +430,7 @@
           "type": "integer"
         },
         "maximum_text_characters": {
-          "default": 262144,
+          "default": 524288,
           "maximum": 4194304,
           "minimum": 1024,
           "title": "Maximum Text Characters",
@@ -562,6 +695,24 @@
           "m4b",
           "mp3"
         ],
+        "epub_opening": {
+          "child_cpu_seconds": 30,
+          "document_depth": 64,
+          "excerpt_characters": 280,
+          "expanded_bytes_per_resource": 1048576,
+          "expanded_bytes_per_selection": 5242880,
+          "facts": 64,
+          "navigation_links": 2048,
+          "nodes_per_resource": 25000,
+          "nodes_per_selection": 100000,
+          "profile": "epub-opening-limits-v1",
+          "report_bytes": 524288,
+          "selected_documents": 5,
+          "termination_grace_seconds": 2,
+          "text_characters_per_selection": 524288,
+          "wall_seconds": 60,
+          "warnings": 32
+        },
         "epub_package": {
           "archive_entries": 2048,
           "attributes_per_element": 64,
@@ -584,7 +735,7 @@
           "xml_nodes_per_document": 50000
         },
         "maximum_document_bytes": 67108864,
-        "maximum_text_characters": 262144
+        "maximum_text_characters": 524288
       }
     },
     "instance_name": {

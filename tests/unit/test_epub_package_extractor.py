@@ -85,26 +85,42 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 "coverage_matrix",
                 "fixtures",
                 "generator_module",
+                "materialization",
                 "projections",
                 "schema",
             },
         )
         required = {
+            "classification",
+            "classification_reason",
+            "consumer_ownership",
+            "deterministic_recipe",
+            "expected",
+            "generation_inputs",
+            "id",
+            "materialized_filename",
+            "provenance",
+            "provenance_kind",
+            "spdx",
+            "stable_identity",
+        }
+        package_only = {
             "expected_exit",
             "expected_outcome",
             "expected_projection",
             "expected_projection_sha256",
-            "generation_inputs",
             "generator",
-            "id",
-            "provenance",
             "resource_partition",
-            "spdx",
         }
         self.assertGreaterEqual(len(value["fixtures"]), 8)
         self.assertEqual(len({item["id"] for item in value["fixtures"]}), len(value["fixtures"]))
         for item in value["fixtures"]:
-            self.assertEqual(set(item), required)
+            expected_keys = (
+                required | package_only
+                if "f06-package-qualification" in item["consumer_ownership"]
+                else required | ({"generator"} if item["classification"] == "linked" else set())
+            )
+            self.assertEqual(set(item), expected_keys)
             self.assertEqual(item["spdx"], "AGPL-3.0-or-later")
             self.assertNotIn("/Users/", repr(item))
     def test_epub3_package_is_deterministic_cited_and_does_not_retain_artifacts(self) -> None:

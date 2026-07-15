@@ -54,7 +54,7 @@ hidden fields or environment behavior.
 | Library connections | `id`, `adapter`, `endpoint`, `secret_reference`, `enabled_libraries`, `capability_overrides` |
 | Media mounts | `name`, `library_type`, `container_path`, `service_path`, `read_only` |
 | Inventory traversal and polling | `page_size`, `max_pages`, `max_items`, `max_response_bytes`, `timeout_seconds`, `stability_delay_seconds`, `poll_generation`, `max_attempts`, `max_elapsed_seconds`, `initial_backoff_seconds`, `max_backoff_seconds`, `connect_timeout_seconds`, `read_timeout_seconds`, `max_in_flight_requests` |
-| Evidence extraction | `enabled_formats`, `maximum_document_bytes`, `maximum_text_characters`, and the versioned `epub_package` resource profile; shared parser limits remain under `limits` |
+| Evidence extraction | `enabled_formats`, `maximum_document_bytes`, `maximum_text_characters`, and the versioned `epub_package` and `epub_opening` resource profiles; shared parser limits remain under `limits` |
 | Providers | ordered, unique provider identifiers; an empty list disables providers |
 | Reviewers | ordered, unique reviewer identifiers; an empty list disables reviewers |
 | Policy | `policy_version` |
@@ -90,6 +90,7 @@ re-evaluation, notification reconfiguration, and backup-readiness revalidation.
 | `evidence.maximum_document_bytes` | restart, EPUB package evidence re-extraction, and evidence re-evaluation |
 | `evidence.maximum_text_characters` | restart and evidence re-evaluation |
 | Any `evidence.epub_package` numeric field | restart and EPUB package evidence re-extraction |
+| Any `evidence.epub_opening` numeric field | restart and EPUB opening evidence re-extraction |
 | `providers` | restart, candidate and review re-evaluation |
 | `reviewers` | restart and review re-evaluation |
 | `policy.policy_version` | restart and review re-evaluation |
@@ -178,7 +179,7 @@ schemas.
 - changes that require evidence invalidation and re-extraction.
 
 Current defaults enable `epub`, `m4b`, and `mp3`, bound one document to
-67,108,864 bytes, and bound retained text processing to 262,144 characters.
+67,108,864 bytes, and bound retained text processing to 524,288 characters.
 The closed current format vocabulary is `epub`, `m4b`, and `mp3`.
 
 `evidence.epub_package` is the closed `epub-package-limits-v1` profile. Its
@@ -215,6 +216,35 @@ The profile additionally fixes a 1,024-byte UTF-8 whole-member-name cap, a
 observations, 32 values per controlled field, 32 warnings, 16,384 Unicode scalar
 values per raw or normalized observation, and 524,288 UTF-8 bytes
 per public report. These constants are not configurable.
+
+`evidence.epub_opening` is the closed `epub-opening-limits-v1` profile. It is
+composed with the same effective `epub_package` profile; changing either
+invalidates compatible opening extraction. Strict integer fields may be
+lowered, or raised only to these immutable caps. The CPU, termination-grace,
+fact, warning, excerpt, and report values are fixed literals.
+
+| Field | Default | Immutable hard cap |
+| --- | ---: | ---: |
+| `selected_documents` | 5 | 8 |
+| `expanded_bytes_per_resource` | 1,048,576 | 4,194,304 |
+| `expanded_bytes_per_selection` | 5,242,880 | 33,554,432 |
+| `text_characters_per_selection` | 524,288 | 2,097,152 |
+| `nodes_per_resource` | 25,000 | 100,000 |
+| `nodes_per_selection` | 100,000 | 400,000 |
+| `document_depth` | 64 | 128 |
+| `navigation_links` | 2,048 | 8,192 |
+| `wall_seconds` | 60 | 3,600 |
+| `child_cpu_seconds` | 30 | 30 |
+| `termination_grace_seconds` | 2 | 2 |
+| `facts` | 64 | 64 |
+| `warnings` | 32 | 32 |
+| `excerpt_characters` | 280 | 280 |
+| `report_bytes` | 524,288 | 524,288 |
+
+The shared `maximum_document_bytes` and `maximum_text_characters` values lower
+the effective archive and opening text ceilings respectively. They never raise
+a capability profile. F07a does not use retention configuration because it
+retains no decoded or diagnostic markup artifact.
 
 ### Providers
 

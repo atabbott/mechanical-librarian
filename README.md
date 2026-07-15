@@ -37,7 +37,9 @@ trip exist, but no production image or supported release exists yet. See the
 [synthetic job heartbeat](docs/operations/job-heartbeat.md), and
 [synthetic inventory](docs/operations/synthetic-inventory.md),
 [Audiobookshelf inventory](docs/operations/audiobookshelf-inventory.md), and
-[Audiobookshelf connection check](docs/operations/audiobookshelf-connection.md) for the current
+[Audiobookshelf connection check](docs/operations/audiobookshelf-connection.md),
+[EPUB package report](docs/operations/epub-package-report.md), and
+[EPUB opening-matter report](docs/operations/epub-opening-report.md) for the current
 executable operator surface.
 
 The currently numbered delivery milestones are internal pre-release checkpoints,

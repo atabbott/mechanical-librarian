@@ -109,6 +109,16 @@ class ConfigurationBoundaryTests(unittest.TestCase):
         self.assertEqual(epub["xml_depth"]["default"], 64)
         self.assertEqual(epub["xml_depth"]["maximum"], 128)
         self.assertEqual(len(epub), 19)
+        opening = definitions["EpubOpeningInput"]["properties"]
+        self.assertEqual(
+            opening["profile"]["const"], "epub-opening-limits-v1"
+        )
+        self.assertEqual(opening["selected_documents"]["default"], 5)
+        self.assertEqual(opening["selected_documents"]["maximum"], 8)
+        self.assertEqual(opening["wall_seconds"]["default"], 60)
+        self.assertEqual(opening["wall_seconds"]["maximum"], 3_600)
+        self.assertEqual(opening["child_cpu_seconds"]["const"], 30)
+        self.assertEqual(opening["termination_grace_seconds"]["const"], 2)
 
     def test_checked_in_synthetic_file_maps_to_immutable_secret_free_values(
         self,

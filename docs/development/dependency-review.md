@@ -63,3 +63,29 @@ The isolated Linux F06 cohort covers CPython 3.13.11, Expat 2.7.3 and zlib
 of the 256 MiB `RLIMIT_AS`, one-process `RLIMIT_NPROC`, CPU, descriptor and core
 gates. Future published combinations require their own exact patch and
 container evidence.
+
+F07a retains the F06 runtime graph and adds no runtime dependency. Strict
+opening XHTML uses the same fresh `xml.parsers.expat` boundary. Bounded
+deterministic XHTML/HTML recovery uses `html.parser.HTMLParser` from the
+targeted CPython standard library. It receives only already selected local
+member bytes and has no browser, CSS, script, URL/base resolution, network,
+filesystem extraction, source rewrite, or retained-tree authority. Parser,
+recovery, projection, selection, normalizer, vocabulary, limits, extractor,
+and report versions are all compatibility identity.
+
+F07a adds one pinned development-only property-testing dependency. It is
+locked in the development group and absent from runtime wheel/sdist contents
+and production imports.
+
+| Package | Version | Relationship | SPDX licence | Product authority |
+| --- | --- | --- | --- | --- |
+| Hypothesis | 6.156.6 | direct development only | MPL-2.0 | generates bounded in-memory parser/configuration test cases only |
+| sortedcontainers | 2.4.0 | transitive development only | Apache-2.0 | Hypothesis internal data structures only |
+
+Hypothesis 6.156.6 was released 2026-07-10, declares Python 3.10 or newer and
+the project-targeted 3.13/3.14 classifiers, and is maintained under MPL-2.0.
+It receives no production media, private corpus, credential, network client,
+database, persistence, reviewer, provider, subprocess, or write authority.
+Property cases use repository-authored synthetic EPUB structures. Both
+development licences are compatible with the project distribution; neither
+package is included in the application runtime dependency graph.

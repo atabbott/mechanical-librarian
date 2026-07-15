@@ -26,6 +26,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  "hypothesis==6.156.6",
   "setuptools==83.0.0",
 ]
 

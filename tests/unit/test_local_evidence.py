@@ -34,6 +34,7 @@ from mechanical_librarian.domain.local_evidence import (
     LocalEvidenceSource,
     LocalEvidenceWarning,
     ObservationApplicability,
+    local_file_lineage,
     local_resource_identity,
 )
 from mechanical_librarian.application.local_evidence import render_local_evidence_text
@@ -71,7 +72,7 @@ def observation(
         compatibility_version=CompatibilityVersion("epub-3.3"),
         declared_display_sequence=display,
         language="en-GB",
-        same_file_lineage="c" * 64,
+        same_file_lineage=local_file_lineage(fingerprint()),
     )
 
 
@@ -203,6 +204,33 @@ class LocalEvidenceTests(unittest.TestCase):
             LocalEvidenceReport.from_json('{"artifact":null,"artifact":null}')
         with self.assertRaises(EvidenceValueError):
             LocalEvidenceReport.from_json(json.dumps(report.to_data()))
+
+        forged_lineage = json.loads(report.to_json())
+        for key in ("observations", "normalized_observations"):
+            for item in forged_lineage[key]:
+                item["same_file_lineage"] = "0" * 64
+        with self.assertRaises(EvidenceValueError):
+            LocalEvidenceReport.from_json(
+                json.dumps(
+                    forged_lineage,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
+        missing_lineage = json.loads(report.to_json())
+        for key in ("observations", "normalized_observations"):
+            for item in missing_lineage[key]:
+                item["same_file_lineage"] = None
+        with self.assertRaises(EvidenceValueError):
+            LocalEvidenceReport.from_json(
+                json.dumps(
+                    missing_lineage,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
 
     def test_outcomes_are_complete_typed_envelopes_and_failures_cannot_look_partial(self) -> None:
         self.assertEqual(
