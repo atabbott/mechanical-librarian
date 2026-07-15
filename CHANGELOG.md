@@ -7,6 +7,12 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added `synthetic-title-review-case-report`, a closed F10a inspection command
+  that admits one current synthetic needs-review title proposal into immutable
+  schema-7 case history, replays idempotently, supersedes or retires atomically,
+  and remains visibly report-only and ineligible for production decisions or
+  writes.
+
 - Added `hardcover-title-proposal-report`, a disabled-by-default F09b proof of
   concept that runs only the generated `agree-empty` title case through a
   fixed, bounded Hardcover query seam. An omitted provider secret performs no

@@ -41,7 +41,7 @@ Current focused work includes:
 - durability and architecture corrections #127, #130, and #131 before F01;
 - port, scope, and configuration corrections #129, #132, and #134 before F03;
 - evidence-bound correction #133 before F06; and
-- lifecycle and authorization correction #128 before F10; and
+- lifecycle and authorization correction #128 before F10a; and
 - frontend architecture decision #192 before F16a.
 
 ## Delivery checkpoint 0.1.0: trustworthy report-only product spine
@@ -83,14 +83,14 @@ human or AI decision, approval, production write, or destructive authority.
 | --- | --- | --- | --- | --- |
 | F09a Provider-neutral title proposal | #145 | `synthetic-title-proposal-report` runs one of a closed set of generated, licence-safe scenarios through the real F06 EPUB child, an in-memory Audiobookshelf-shaped synthetic snapshot, and a deterministic fake behind the provider-neutral port. It persists one immutable `synthetic_preview` proposal set for every valid scenario, including typed zero-proposal results, and demonstrates replay plus same-lineage supersession. The mode is identity-bearing and structurally derives `production_applicable=false`; no live target, configured media, credential, network, review, approval, apply, or write surface is accepted or constructed. | #222 | `slice/f09a-title-proposal` |
 | F09b Bounded Hardcover title evidence | #204 | `hardcover-title-proposal-report` runs only the fixed generated `agree-empty` case. Omitting its optional secret-file reference constructs no adapter/client and performs no secret access, DNS, or egress; the enabled seam uses one fixed read-only query and endpoint with finite bounds. A structural fake and the exact installed artifact qualify the closed live title-response seam. It changes no `config-v1` field, retains no raw provider traffic or upstream ID, and preserves local evidence on provider failure. | #223 | `slice/f09b-hardcover-title` |
-| F10 Persistent title review case | #146 | One current immutable proposal set containing exactly one current `needs_review` title proposal may become one durable undecided review case only while retaining the visibly synthetic, apply-ineligible preview lineage. No other proposal or set creates a case. Persistence, restart, identical replay, inspection, immutable history, and changed-input supersession are demonstrable; zero-proposal results create no empty case. | #224 | `slice/f10-title-review-case` |
+| F10a Synthetic title review case | #146 | `synthetic-title-review-case-report` admits only the already-persisted current F09a lineage selected by a closed scenario. One qualifying set creates one deterministic undecided synthetic case; replay is duplicate-safe, a qualifying successor supersedes it, and a nonqualifying successor retires it without an empty replacement. | #224 | `slice/f10a-title-review-case` |
 
 The only active delivery chain is:
 
 ```text
 completed F06 #142 + planning #221 -> F09a #145/#222
                                       -> F09b #204/#223
-                                      -> F10 #146/#224
+                                      -> F10a #146/#224
 ```
 
 F09a derives a conservative deterministic comparison key in this exact order:
@@ -113,17 +113,18 @@ mode versions. It does not accept configuration, live identifiers, titles,
 paths, media, provider payloads, endpoints, or credentials. Connecting a real
 F06 report to a current Audiobookshelf snapshot is deferred until a later slice
 defines the live join, freshness, file-identity, and recovery contract. F09b or
-F10 may consume F09a state only by preserving the same `synthetic_preview`
+F10a may consume F09a state only by preserving the same `synthetic_preview`
 identity and false production applicability; neither may reinterpret it as
 production evidence.
 
-| Current/F06/provider condition | Proposal-set result | F10 case |
+| Current/F06/provider condition | Proposal-set result | F10a case |
 | --- | --- | --- |
 | F06 and provider usable titles normalize equally; current title field is present and loaded with an empty value, or the current title is materially different | One `needs_review` proposal whose value is the exact F06 `normalized_value`; F06 `raw_value` remains evidence/provenance | One current undecided case |
 | F06 and provider normalize equally; current title is equivalent | Typed no-op with no proposal | No case |
 | Current title is missing, unloaded, or unavailable | Exact typed current-title no-proposal result | No case |
 | F06 and provider disagree | Typed conflict with no proposal | No case |
-| F06/provider title is empty, unsafe, oversized, redacted, or otherwise unusable; or another required input is missing, failed, unsupported, disabled, no-match, stale, duplicate, or unjoinable | Exact typed unusable-title or other no-proposal result | No case |
+| F06/provider title is empty, unsafe, oversized, redacted, or otherwise unusable; or another required input is missing, failed, unsupported, disabled, no-match, duplicate, or unjoinable | Exact typed unusable-title or other no-proposal result | No case |
+| The current proposal set is stale | Exact typed `stale_input` proposal result | Rejected without an F10a transition or current-state mutation |
 | Identical replay | Same semantic set and, where applicable, case | No duplicate |
 | A bound input changes | New superseding set; prior history remains immutable | Only a qualifying new current set may have a current case |
 
@@ -156,10 +157,9 @@ live-target binding.
 - F09b demonstrates the fixed provider-neutral PoC, disabled behavior, bounded
   transport, isolated credential handling, structural fake qualification, and
   exact-installed-artifact live response compatibility;
-- F10 persists, restarts, inspects, replays, and supersedes one current
-  case from one current immutable proposal set containing exactly one current
-  `needs_review` title proposal, without creating any other, empty, or duplicate
-  case; and
+- F10a persists, restarts, inspects, and replays one current case, supersedes it
+  for a qualifying current successor, and retires it for a nonqualifying current
+  successor without creating another, empty, revived, or duplicate case; and
 - the preview contains no AI, human decision, approval, cover, rich-field,
   multi-provider-fusion, production-write, or destructive behavior.
 
@@ -178,6 +178,10 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 | F07a EPUB opening-matter evidence report | #143 | One safely readable EPUB produces a bounded transient opening-matter claim report with exact provenance or a typed no-applicable/rejected outcome. | #30, #31, #188; #25 and #26 are non-closing inputs | `slice/f07a-epub-opening-evidence` |
 | F07b Durable EPUB evidence round trip | #228 | Completed F07a evidence executes durably for one isolated target and snapshot, survives restart, reuses compatible results, supersedes stale applicability, and remains inspectable without persistence of decoded content. | #32; #25 is a non-closing input | `slice/f07b-durable-epub-evidence` |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
+| F09c Work identity fallback | #205 | Bounded Open Library work/edition discovery and optional LibraryThing ISBN-family clustering preserve ambiguity, lineage, independent-provider limits, and disabled/failure behavior. | #210, #211; unresolved prerequisite #68 | `slice/f09c-work-identity-fallback` |
+| F09f Supported Hardcover title provider | #239 | Disabled-by-default configured Hardcover title work persists one bounded current compatible canonical observation with restart, reuse, freshness, invalidation, and live qualification, without live-target or mutation authority. | #242; completed F09b #204 | `slice/f09f-supported-hardcover-title` |
+| F09g Live Audiobookshelf title proposal | #238 | One exact current Audiobookshelf ebook snapshot, selected durable local evidence, current compatible F09c identity, and optional supported Hardcover observation produce one immutable `production_report_only` title proposal set without review admission or write authority. | #243; F07b #228, F09c #205, F09f #239 | `slice/f09g-live-title-proposal` |
+| F10b Production title review case | #240 | Exactly one current qualifying `production_report_only` title proposal becomes one durable undecided production review case while preserving exact freshness, evidence, version, replay, and supersession proof. | #241; F10a #146 and F09g #238 | `slice/f10b-production-title-case` |
 | F11 AI shadow recommendation | #147 | An isolated reviewer receives a complete bounded vendor-neutral packet carrying the exact normalized current snapshot and explicit field-load state only after required authoritative inputs join successfully, without target-service or provider credentials or vendor payloads, then returns one direct closed-schema `AIDecision` for every proposal; its required `problems` list contains adverse or unresolved problem codes, with `problems: []` for a clean approval. Malformed output, unknown fields, missing required fields, duplicate or partial decisions, trailing content, or semantic repair becomes a typed failure without authorizing apply. A zero-proposal selection terminates without invocation, and optional provider failure remains operational. | #74-#80 | `slice/f11-ai-shadow-review` |
 | F12a Authenticated API foundation | #189 | The supported HTTP service exposes deterministic versioned OpenAPI, minimal anonymous liveness, and one bounded authenticated owner diagnostic; invalid sessions, origins, CSRF, proxy and rate-limit contexts fail closed. | #96, #97 | `slice/f12a-authenticated-api` |
 | F12b Human decision round trip | #148 | An authenticated owner accepts, keeps, or rejects one field, restarts and retrieves the immutable decision/history, then observes a safe stale-version conflict. | #19 | `slice/f12b-human-decision` |
@@ -188,6 +192,13 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 | F16a Browser review case round trip | #152 | In a real browser, an authenticated owner finds one target, inspects decision-first detail and progressive evidence, navigates siblings, makes one individual decision, refreshes/restarts, and observes server-authoritative persistence. | #18, #99, #100; focused prerequisite #192 | `slice/f16a-review-case-browser` |
 | F16b Browser summaries, bulk, and qualification | #195 | The browser presents server-authoritative summaries/history, commits one exact-version bulk decision, reverses one unapplied decision, and qualifies every applicable category across the supported browser matrix. | #20, #101-#103, #193, #194 | `slice/f16b-review-bulk-qualification` |
 | F17 Continuous-operation qualification | #153 | The same canonical target/evidence/candidate scenario passes Audiobookshelf and CWA-shaped target fakes, each with provider-disabled and configured-provider variants, without schema changes; provider-disabled runs construct no provider adapter/client, resolve no provider secret, and make no provider network call, while the CWA-shaped fake traps database, UI, maintenance-container, media-write, unsupported-API, and production-mutation fallbacks. Events, reconciliation, review, guarded apply, circuit breakers, immutable workflow upgrades, dependency fan-out and fan-in, duplicate-safe resume, cancellation, worker and scheduler death, candidate-lane reuse and retry, physical JSONL framing, report-only authority isolation, browser-category coverage, advisory progress, restart, upgrade, backup, restore, release provenance, and support diagnostics pass the release cohort. | #94, #95 and a slice-specific release cohort | `slice/f17-release-qualification` |
+
+The productionisation dependencies are deliberately not one serial chain.
+F09f depends only on completed F09b. F09c remains separately blocked on its
+declared prerequisite #68. F09g starts after F07b, F09c, and F09f; F10b starts
+after F10a and F09g. F11 remains independently deliverable against its
+synthetic shadow input. The production title and synthetic reviewer paths
+converge only in F17 qualification.
 
 ### 1.0.0 checkpoint exit
 

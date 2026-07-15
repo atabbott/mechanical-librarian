@@ -38,6 +38,16 @@ the newer schema. Transaction interruption during migration or inventory
 publication leaves the previous committed schema and current observation
 usable and is covered by deterministic fault-injection tests.
 
+Before the forward-only F10a schema-7 migration of important state, retain and
+verify a pre-schema-7 curator-data copy. Migration interruption rolls back to
+the complete schema-6 prefix, and F10a publication failure preserves both the
+already-committed F09a proposal input and the prior authoritative case state.
+Downgrade is restore-only: stop the newer process, restore the verified copy,
+and never delete the new tables or start an older binary against schema 7.
+After restore, verify integrity with `state-check`, replay the applicable F09a
+proposal scenario, and inspect it with `synthetic-title-review-case-report`
+before resuming report-only operation.
+
 ### Host snapshots
 
 Filesystem or ZFS snapshots are defense in depth. Document dataset coverage,

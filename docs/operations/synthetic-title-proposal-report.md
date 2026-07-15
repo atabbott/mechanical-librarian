@@ -49,11 +49,15 @@ The closed scenarios are:
 | `stale-input` | `stale_input` |
 | `supersede-before` | First same-lineage `needs_review` set |
 | `supersede-after` | Exact successor that supersedes `supersede-before` |
+| `retire-before` | First same-lineage `needs_review` set for F10a retirement |
+| `retire-after` | Exact `no_change` successor that retires the F10a case |
 
-Run `supersede-before` before `supersede-after`. Repeating an identical scenario
-after restart reuses its immutable history. Replaying `supersede-before` after
-`supersede-after` reports the older set as non-current and never rewinds the
-pointer.
+Run each `*-before` scenario before its paired `*-after` scenario. Repeating an
+identical scenario after restart reuses its immutable history. Replaying a
+`*-before` scenario after its successor reports the older set as non-current and
+never rewinds the pointer. The retirement pair exists for the
+[`synthetic-title-review-case-report`](synthetic-title-review-case-report.md)
+demonstration and does not alter existing scenario identities.
 
 ## Exit and state behavior
 
@@ -65,8 +69,9 @@ pointer.
   serialization, or unexpected failures emit one fixed diagnostic on stderr;
   stdout is empty and no partial proposal set is published.
 
-On first use, complete schema-6 state is prepared privately and published
-atomically. Existing state is preflighted before migration. Proposal history is
+The proposal tables were introduced by schema 6; the current application
+prepares or migrates to its complete current schema before use. Existing state
+is preflighted before migration. Proposal history is
 append-only and its synthetic current pointer advances in the same transaction;
 malformed, tampered, unknown-mode, dangling, cross-lineage, or non-exact
 predecessor state fails closed without repair.

@@ -184,6 +184,15 @@ ID, distinguishes disposition from any human decision, and exposes apply
 eligibility without owning an apply plan. A newer fingerprint or materially
 changed proposal set supersedes, but does not delete, the previous case.
 
+F10a uses a deliberately narrower `SyntheticTitleReviewCase` rather than
+relaxing this production model. It binds one closed synthetic target and the
+complete validated F09a set, proposal, and manifest projection, remains
+undecided and structurally apply-ineligible, and stores bounded provenance
+directly without fabricating ordinary evidence-reference history. Its scoped
+current-state record can point to one case or retain a nonqualifying successor
+as an explicit retired state; append-only transitions preserve creation,
+supersession, and retirement actor/reason history.
+
 ### ReviewGroup
 
 Display/query projection connecting confirmed instances of the same work, such

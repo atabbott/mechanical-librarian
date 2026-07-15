@@ -164,6 +164,19 @@ those responsibilities remain F09f scope. Nothing in the preview invokes AI,
 records a human decision, handles covers or rich
 fields, fuses multiple providers, or authorizes a production write.
 
+F10a consumes only an already-persisted current F09a lineage selected by the
+closed scenario vocabulary. `synthetic-title-review-binding-v1` binds closed
+synthetic target constants to the validated manifest-derived item, snapshot,
+fingerprint, set, proposal, policy, and bounded provenance. Schema 7 revalidates
+the exact current set inside one write transaction, then commits the immutable
+case when applicable, scoped current or retired state, lifecycle link, actor,
+and reason atomically. Exact replay adds no transition; stale, reverse,
+cross-lineage, arbitrary, malformed, destructive, or AI-shaped input cannot
+rewind or gain authority. `production_applicable=false` remains derived and no
+case row can carry reviewer, decision, approval, apply, target-write, or
+destructive capability. F09c, F09f, F09g, and F10b own later productionisation;
+F11 remains independently synthetic and the paths converge only at F17.
+
 ## Primary threats and mitigations
 
 ### Prompt injection in books or provider metadata
