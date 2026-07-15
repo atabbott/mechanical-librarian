@@ -20,7 +20,15 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.materialize_epub_fixtures import MaterializationError, _manifest
+from scripts.materialize_epub_fixtures import (
+    MaterializationError,
+    OPENING_CLAIM_FIELDS,
+    OPENING_RESOURCE_DISPOSITIONS,
+    OPENING_USAGE_FIELDS,
+    OPENING_WARNING_CODES,
+    _manifest,
+    is_opening_selection_path,
+)
 
 
 MAX_REPORT_BYTES = 524_288
@@ -37,36 +45,9 @@ _PACKAGE_OUTCOMES = {
 _REJECTION_OUTCOMES = {
     "resource_limit", "timeout", "unavailable_source", "unstable_source",
 }
-_CLAIM_FIELDS = {
-    "title", "subtitle", "contributor", "contributor_role", "publisher",
-    "imprint", "publication_date", "copyright_date", "edition", "printing",
-    "revision", "translation", "illustration", "series", "series_order",
-    "omnibus_membership", "anthology_membership", "identifier",
-}
-_WARNINGS = {
-    "ambiguous_edition", "ambiguous_guide_reference", "ambiguous_identifier",
-    "ambiguous_navigation_document", "ambiguous_navigation_landmark",
-    "ambiguous_title", "body_transition_reached", "contradictory_series",
-    "duplicate_manifest_resource",
-    "encrypted_navigation_document", "encrypted_optional_resource",
-    "explicitly_excluded_resource", "identifier_applicability_unknown",
-    "image_only_resource", "invalid_guide_reference", "invalid_manifest_fallback",
-    "invalid_manifest_item", "invalid_navigation_declaration",
-    "invalid_navigation_target", "invalid_ncx_declaration", "invalid_spine_item",
-    "malformed_selected_resource", "missing_manifest_resource",
-    "missing_selected_resource", "navigation_resource_limit",
-    "opaque_resource_encrypted", "recovered_markup", "unsafe_construct",
-    "selected_document_limit_reached", "selected_resource_limit",
-    "unsafe_claim_suppressed", "unsupported_encoding",
-    "unsupported_resource_media", "unmanifested_guide_target",
-    "unmanifested_navigation_target", "unusable_navigation_document",
-    "unusable_spine_relationship",
-}
-_RESOURCE_DISPOSITIONS = {
-    "selected", "no_claims", "missing", "image_only", "malformed",
-    "unsupported_media", "unsupported_encoding", "encrypted", "resource_limit",
-    "excluded",
-}
+_CLAIM_FIELDS = OPENING_CLAIM_FIELDS
+_WARNINGS = OPENING_WARNING_CODES
+_RESOURCE_DISPOSITIONS = OPENING_RESOURCE_DISPOSITIONS
 _PARSER_MODES = {"strict", "recovered"}
 _EXIT_BY_OUTCOME = {
     "invalid_invocation": 2, "success": 0, "no_applicable_evidence": 0,
@@ -116,11 +97,7 @@ _PACKAGE_LIMITS = {
     "guide_references": 256,
     "prefix_mappings": 64,
 }
-_USAGE_FIELDS = {
-    "selected_documents", "opened_resources", "expanded_bytes",
-    "text_characters", "nodes", "navigation_links", "strict_documents",
-    "recovered_documents",
-}
+_USAGE_FIELDS = OPENING_USAGE_FIELDS
 _ROOT_CAUSE_CATEGORIES = {
     "f06_no_applicable_evidence", "f06_invalid_reference",
     "f06_unsupported_format", "f06_unsupported_version",
@@ -128,14 +105,6 @@ _ROOT_CAUSE_CATEGORIES = {
     "f06_encrypted", "f06_malformed", "f06_integrity_failure",
     "f06_resource_limit", "encrypted", "unsupported_media", "unsupported_encoding",
     "unsafe_construct", "unstable_source", "resource_limit", "timeout",
-}
-_EPUB3_LANDMARKS = {
-    "titlepage", "halftitlepage", "copyright-page", "dedication",
-    "contributors", "imprint", "frontmatter", "seriespage", "other-credits",
-}
-_EPUB2_GUIDE_TYPES = {
-    "title_page", "copyright_page", "dedication", "acknowledgements",
-    "preface", "foreword", "other.ms_firstpage",
 }
 
 
@@ -198,12 +167,14 @@ def _configuration(mount: Path) -> dict[str, object]:
     }
 
 
-def _synthetic_cases(manifest_path: Path, cohort: Path) -> list[tuple[str, int, str]]:
+def _synthetic_cases(
+    manifest_path: Path, cohort: Path
+) -> list[tuple[str, int, str, dict[str, object]]]:
     try:
         manifest = _manifest(manifest_path)
     except (OSError, UnicodeError, json.JSONDecodeError, MaterializationError):
         raise QualificationError("synthetic registry schema is unsupported") from None
-    result: list[tuple[str, int, str]] = []
+    result: list[tuple[str, int, str, dict[str, object]]] = []
     for entry in manifest.get("fixtures", []):
         if (
             type(entry) is not dict
@@ -220,7 +191,7 @@ def _synthetic_cases(manifest_path: Path, cohort: Path) -> list[tuple[str, int, 
             or not (cohort / filename).is_file()
         ):
             raise QualificationError("synthetic cohort is incomplete")
-        result.append((filename, expected["exit"], expected["outcome"]))
+        result.append((filename, expected["exit"], expected["outcome"], expected))
     if not result:
         raise QualificationError("synthetic cohort has no F07a consumers")
     return sorted(result)
@@ -315,7 +286,7 @@ def _invoke(
 def qualify(
     executable: Path,
     cohort: Path,
-    cases: list[tuple[str, int, str]],
+    cases: list[tuple[str, int, str] | tuple[str, int, str, dict[str, object]]],
     *,
     private: bool,
     timeout: int,
@@ -342,7 +313,9 @@ def qualify(
             json.dumps(_configuration(cohort), separators=(",", ":"), sort_keys=True),
             encoding="utf-8",
         )
-        for relative, expected_exit, expected_outcome in cases:
+        for case in cases:
+            relative, expected_exit, expected_outcome = case[:3]
+            expected_details = case[3] if len(case) == 4 else None
             if private:
                 package_exit, package = _invoke(
                     executable, "epub-package-report", config, relative, timeout
@@ -468,17 +441,7 @@ def qualify(
                 ):
                     raise QualificationError("resource aggregate is malformed")
                 path = resource["selection_path"]
-                if not (
-                    path == ["epub3_navigation"]
-                    or path == ["linear_spine_fallback"]
-                    or (
-                        len(path) == 2
-                        and (
-                            (path[0] == "epub3_landmark" and path[1] in _EPUB3_LANDMARKS)
-                            or (path[0] == "epub2_guide" and path[1] in _EPUB2_GUIDE_TYPES)
-                        )
-                    )
-                ):
+                if not is_opening_selection_path(path):
                     raise QualificationError("resource selection path is malformed")
                 if path != ["epub3_navigation"]:
                     content_resources += 1
@@ -579,6 +542,33 @@ def qualify(
                 or (outcome == "no_applicable_evidence" and claim_values)
             ):
                 raise QualificationError("opening aggregate relationships are malformed")
+            if expected_details is not None and set(expected_details) != {"exit", "outcome"}:
+                expected_claims = expected_details["claims"]
+                expected_resources = expected_details["resources"]
+                if (
+                    [
+                        {"field": claim["field"], "raw_value": claim["raw_value"]}
+                        for claim in claim_values
+                    ]
+                    != expected_claims
+                    or [
+                        {
+                            "disposition": resource["disposition"],
+                            "selection_path": resource["selection_path"],
+                            "warnings": resource["warnings"],
+                        }
+                        for resource in resource_values
+                    ]
+                    != expected_resources
+                    or warning_values != expected_details["warnings"]
+                    or any(
+                        usage_value[name] != amount
+                        for name, amount in expected_details.get("usage", {}).items()
+                    )
+                ):
+                    raise QualificationError(
+                        "synthetic discriminating expectation did not match"
+                    )
             report = None
     normalized_required = {
         relative: frozenset(categories)
@@ -662,7 +652,7 @@ def main(argv: list[str] | None = None) -> int:
             "schema": "epub-opening-qualification-v1",
         }
         serialized = json.dumps(result, separators=(",", ":"), sort_keys=True)
-        if any(relative in serialized for relative, _exit, _outcome in cases) or ".epub" in serialized.casefold():
+        if any(case[0] in serialized for case in cases) or ".epub" in serialized.casefold():
             raise QualificationError("aggregate output contains a private case identity")
         print(serialized)
         return 0

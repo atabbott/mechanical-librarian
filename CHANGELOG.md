@@ -24,6 +24,35 @@ versioning after the first public release.
   evidence calibrates the default projected-text selection ceiling to 524,288
   characters, below the unchanged 2,097,152-character hard cap; the public
   report remains capped at 524,288 UTF-8 bytes.
+  Hostile-input handling preserves same-resource fragment boundaries and role
+  semantics, admits raw spine annotations only for F06-accepted itemrefs,
+  recognizes recovery encodings only from real supported declarations, gates
+  semantic consumers by namespace capability, and binds every post-open report
+  to its source-derived lineage and selection digest.
+  Fragment roles now resolve path-free against unique HTML/XHTML IDs, enforce
+  earliest body and scoped exclusion positions, and select the
+  highest-precedence tier with a surviving valid opening role while preserving
+  valid higher-tier boundary suppression. Recovery also rejects duplicate
+  declaration attributes, non-exact raw `linear` annotations, BOM-less
+  UTF-16/UTF-32 signatures, treats missing or empty named-prefix bindings as
+  unknown,
+  requires ordered XML declaration grammar, removes duplicate recovered
+  namespace/semantic/relationship/identity authority, suppresses invalid-only
+  optional roles, and keeps RCDATA, templates, foreign meta, and implicit
+  SVG/MathML semantics inert beneath XHTML defaults. Installed-wheel fixtures
+  now assert exact hostile-case claims, warnings, dispositions, paths, and link
+  usage. Recovery also keeps implied/end-tag stack operations namespace-safe,
+  scans the complete bounded payload for NULs, classifies duplicate namespaces
+  as malformed after independent supported-charset discovery, resolves
+  namespace declarations per prefix so unrelated unique bindings remain
+  authoritative, confines recovered end-tag searches to the current contiguous
+  namespace region (including a matching foreign boundary), stops before HTML
+  ancestors below an open foreign boundary, assigns unresolved qualified names
+  opaque prefix-specific identities, resolves unqualified ends through the
+  current default namespace, couples self-closing ends to starts that actually
+  pushed, treats a unique empty default declaration as an HTML/no-namespace
+  reset while keeping named empty prefixes opaque, and charges duplicate href
+  anchors before validation.
 
 - Added `synthetic-title-review-case-report`, a closed F10a inspection command
   that admits one current synthetic needs-review title proposal into immutable

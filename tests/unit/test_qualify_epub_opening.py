@@ -27,6 +27,94 @@ class EpubOpeningQualificationTests(unittest.TestCase):
         )
         self.assertEqual(_PACKAGE_LIMITS["source_archive_bytes"], 268_435_456)
 
+    def test_fragment_target_warning_is_safe_to_aggregate(self) -> None:
+        report = self._report(warnings=["invalid_fragment_target"])
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "scripts.qualify_epub_opening._invoke",
+                return_value=(0, report),
+            ),
+        ):
+            aggregate = qualify(
+                Path("/installed/mechanical-librarian"),
+                Path(directory),
+                [("case.epub", 0, "no_applicable_evidence")],
+                private=False,
+                timeout=65,
+            )
+
+        self.assertEqual(aggregate["warnings"], {"invalid_fragment_target": 1})
+
+    def test_synthetic_discriminating_expectation_rejects_extra_claims(self) -> None:
+        resource = {"disposition": "selected", "parse_mode": "strict"}
+        claim = {
+            "field": "title",
+            "raw_value": "Expected Synthetic Title",
+            "citation": {
+                "resource_identity": f"{1:064x}",
+                "parse_mode": "strict",
+                "selection_path": ["linear_spine_fallback"],
+            },
+        }
+        report = self._report(
+            outcome="success", resources=[resource], claims=[claim]
+        )
+        expected = {
+            "exit": 0,
+            "outcome": "success",
+            "claims": [
+                {"field": "title", "raw_value": "Expected Synthetic Title"}
+            ],
+            "resources": [
+                {
+                    "disposition": "selected",
+                    "selection_path": ["linear_spine_fallback"],
+                    "warnings": [],
+                }
+            ],
+            "warnings": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "scripts.qualify_epub_opening._invoke", return_value=(0, report)
+            ):
+                aggregate = qualify(
+                    Path("/installed/mechanical-librarian"),
+                    Path(directory),
+                    [("case.epub", 0, "success", expected)],
+                    private=False,
+                    timeout=65,
+                )
+            self.assertEqual(aggregate["claims_by_field"], {"title": 1})
+
+            forged = json.loads(json.dumps(report))
+            forged["claims"].append(dict(forged["claims"][0]))
+            with patch(
+                "scripts.qualify_epub_opening._invoke", return_value=(0, forged)
+            ):
+                with self.assertRaises(QualificationError):
+                    qualify(
+                        Path("/installed/mechanical-librarian"),
+                        Path(directory),
+                        [("case.epub", 0, "success", expected)],
+                        private=False,
+                        timeout=65,
+                    )
+
+            wrong_usage = {**expected, "usage": {"navigation_links": 1}}
+            with patch(
+                "scripts.qualify_epub_opening._invoke", return_value=(0, report)
+            ):
+                with self.assertRaises(QualificationError):
+                    qualify(
+                        Path("/installed/mechanical-librarian"),
+                        Path(directory),
+                        [("case.epub", 0, "success", wrong_usage)],
+                        private=False,
+                        timeout=65,
+                    )
+
     def _report(
         self,
         *,

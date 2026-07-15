@@ -309,6 +309,9 @@ and XInclude while enforcing XML and package-graph counters. F06 keeps opaque
 navigation, content, cover, and linked-resource declarations undereferenced.
 F07a composes the completed F06 report into a separate adapter and opens only
 bounded package-local navigation plus selected declared XHTML/HTML resources.
+The hostile-parser and process extension is governed by
+[ADR-0008](decisions/0008-transient-epub-opening-parser.md); ADR-0007 remains
+the accepted package-only isolation decision.
 Strict XHTML uses a fresh Expat parser; recovery uses a fresh standard-library
 `HTMLParser` over only those bounded bytes. Neither parser has a renderer,
 network client, URL/base resolver, stylesheet engine, script runtime, XSLT,
@@ -324,10 +327,42 @@ lineage is independently derived from the source fingerprint and validated in
 the canonical report; coordinated child-supplied lineage fields are
 insufficient.
 Recovered closing and self-closing tags use the same resolved namespace model
-as start tags; SVG and other foreign-namespace active elements are inert too.
+as start tags; implicit SVG/MathML subtrees and other foreign-namespace active
+elements are inert too, including beneath an inherited XHTML default.
 Only unprefixed controlled Structural Semantics Vocabulary tokens have F07a
 authority, so extension-prefix lookalikes cannot fabricate claims or selection
 boundaries.
+HTML/XHTML namespace capability also gates navigation, claim, body-transition,
+and exclusion consumers; foreign local-name collisions remain bounded text but
+cannot acquire those semantics.
+Missing or empty named-prefix bindings resolve to a closed unknown foreign
+identity.
+Fragment roles carry only hashed decoded targets internally and require one
+unique HTML/XHTML `id` or `xml:id`; raw identifiers are never published. Only the
+highest-precedence tier with a surviving valid opening role can authorize
+recognition under its canonical path; a valid but boundary-suppressed higher
+tier prevents lower-tier fallback, while invalid-only optional roles suppress
+claims without a valid lower association. Active recovery encodings ignore
+RCDATA, templates, foreign meta, and other inert syntax; XML declarations must
+follow the exact version/encoding/standalone grammar. Duplicate namespace
+declarations are malformed; duplicate controlled authority attributes cannot
+select by order. Implied closes stop at foreign boundaries; explicit end-tag
+searches stay within the current contiguous namespace region, may close a
+matching foreign boundary, and cannot reach an HTML/XHTML ancestor beneath it.
+Qualified ends retain their binding; unqualified ends resolve through the
+current default namespace rather than acting as wildcards. Missing, empty, and
+duplicated qualified prefixes use opaque prefix-specific identities, and
+self-closing syntax cannot close an older element when its own start was not
+pushed. A unique empty default explicitly re-enters the HTML-equivalent
+no-namespace model beneath foreign content; empty named prefixes remain opaque.
+Namespace declarations are resolved per prefix, so a unique foreign default
+remains authoritative when an unrelated prefix is duplicated.
+Duplicate-namespace malformedness is independent of supported active charset
+discovery, while foreign meta remains inert.
+Malformed declarations, any NUL in the bounded
+payload, and BOM-less wide-character signatures retain no codec-detection
+authority beyond the closed allowlist. Invalid and duplicate href anchors are
+charged before target validation so they cannot bypass navigation-link limits.
 Active and structurally hidden elements are excluded from the deterministic
 projection. Navigation bytes/nodes/text/links and selected content share the
 closed aggregate profile; aggregate exhaustion discards partial claims. The

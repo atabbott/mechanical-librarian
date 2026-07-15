@@ -438,6 +438,19 @@ class EpubOpeningReport:
             object.__setattr__(self, "selection_digest", expected_selection_digest)
         elif self.selection_digest != expected_selection_digest:
             raise EvidenceValueError("opening selection digest is inconsistent")
+        post_open = self.outcome.succeeded and (
+            bool(self.resources) or self.usage != EpubOpeningUsage()
+        )
+        if self.same_file_lineage is not None and self.source_fingerprint is None:
+            raise EvidenceValueError("opening lineage requires a source fingerprint")
+        if post_open and (
+            self.source_fingerprint is None
+            or self.same_file_lineage is None
+            or self.selection_digest is None
+        ):
+            raise EvidenceValueError(
+                "post-open report requires bound source provenance"
+            )
         if len(self.claims) > self.limits.facts or len(self.warnings) > self.limits.warnings:
             raise EvidenceValueError("EPUB opening report bounds are exceeded")
         if any(

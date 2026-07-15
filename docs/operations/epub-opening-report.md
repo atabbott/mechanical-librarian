@@ -34,6 +34,22 @@ relationships are omitted with controlled warnings. Explicit `bodymatter`
 semantics stop fallback. Preview, sample, and advertisement resources are
 excluded only when a controlled semantic marker says so. Filenames and plain
 headings never establish a body transition or exclusion.
+Same-resource fragment targets remain distinct controlled boundaries: a body
+or exclusion role for one fragment does not erase an opening role for another.
+No fragment and empty `#` are equivalent; other fragments are decoded and
+matched path-free against exactly one HTML/XHTML `id` or `xml:id`. Missing or
+duplicate targets omit the role with `invalid_fragment_target`. The earliest
+valid body target stops recognition, while a fragment exclusion suppresses
+claims only in its target element scope. Fragment validity is resolved before
+source-tier precedence: only the highest-precedence tier with at least one
+surviving valid opening role may authorize claims, and the surviving canonical
+role supplies the published selection path. A valid higher tier suppressed by
+body or exclusion semantics still prevents lower-tier fallback. Invalid-only
+optional roles suppress claims when no valid guide or spine association exists.
+Raw OPF ordering and `linear` annotations are consulted only for itemrefs that
+the package capability already accepted; rejected markup cannot re-enter the
+opening candidate graph. Raw `linear` is valid only when absent or exactly
+`yes` or `no`; other values are omitted with `unusable_spine_relationship`.
 
 Candidate resources must be package-local and declared. XHTML is attempted as
 strict XML first. Safely recoverable XHTML and declared HTML use a fresh,
@@ -41,6 +57,40 @@ bounded, deterministic `HTMLParser` projection. Recovery does not repair the
 source or add base-URL, filesystem, browser, CSS, script, entity, XInclude,
 XSLT, or network authority. Scripts, styles, templates, frames, embedded
 objects, and structurally hidden elements do not enter the text projection.
+Recovery encoding is selected only from a real XML declaration, a supported
+HTML `meta charset`, or a supported `meta http-equiv="content-type"`; comments,
+prose, arbitrary attributes, and script/style lookalikes are inert. Conflicting
+or duplicate active attributes and unsupported declarations fail that resource
+closed; equivalent separate supported declarations remain valid. XML
+declarations must contain a valid version first, then optional encoding and
+standalone fields in grammar order; malformed or arbitrary pseudo-attributes
+fail closed. Title,
+textarea, template, and foreign-namespace meta lookalikes are also inert, and
+BOM-less UTF-16/UTF-32 signatures or a NUL anywhere in the already bounded
+selected payload are unsupported. Foreign-namespace
+local-name collisions never establish navigation, claims, body transitions,
+or exclusions. Missing or empty QName prefix bindings never fall back to HTML
+identity. Implicit recovered SVG and MathML subtrees remain foreign even when
+their namespace declaration is omitted or the inherited default is XHTML.
+Implied HTML closing-rule searches stop at foreign boundaries. Unqualified end
+tag searches stay within the current contiguous namespace region and may close
+the matching foreign boundary itself, but cannot reach an HTML/XHTML ancestor
+beneath an open foreign boundary. Qualified ends use their binding, and
+unqualified ends use the current default namespace with only explicit
+empty-HTML/XHTML equivalence. Missing, empty-bound, and duplicated qualified
+prefixes have opaque prefix-specific identities, so different unresolved
+prefixes never alias. A self-closing end is processed only when its start was
+actually pushed, and unmatched ends cannot mutate ancestor state. Namespace
+declarations are grouped per prefix: unique bindings, including a unique
+foreign default, remain active. A unique empty default explicitly resets to
+HTML-equivalent no namespace, while a unique empty named prefix stays opaque;
+only a duplicated prefix becomes ambiguous and unknown. A duplicated prefix is
+malformed, not an unsupported encoding; real supported
+active charset declarations still select decoding before that classification,
+while foreign meta remains inert. Duplicate recovered semantic,
+relationship, identity, or hiding attributes grant no order-dependent
+authority. Landmark anchors with valid, invalid, or duplicate href authority
+consume the navigation-link budget before target validation.
 Image-only resources are classified without OCR. A defective optional
 resource does not suppress claims from a safe sibling.
 
@@ -117,12 +167,12 @@ The qualifier also reconstructs the canonical resource state equations. Every
 resource explicitly records whether it was opened; that count must equal
 `usage.opened_resources`, parser-mode counts must equal parsed resources, and
 pre-open dispositions cannot claim parser work. Navigation has one exact path,
-is optional but first, and cannot exist without a content selection. Each claim
+is optional but first, and may be the sole parsed resource without a content
+selection. Each claim
 citation must identify a selected content resource with the same parser mode
 and selection path. These checks prevent an aggregate from relabelling content
 as navigation or inventing parser work, opened resources, or claim provenance.
 The canonical report binds the ordered resource identities and selection paths
 to the same-file lineage with `epub-opening-selection-v1`; path roles use the
 closed EPUB 3 landmark and EPUB 2 guide vocabularies and resource identities
-are unique. A parsed navigation document is still a valid sole resource when
-the package has no eligible linear opening candidate.
+are unique.

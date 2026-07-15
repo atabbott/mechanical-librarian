@@ -298,7 +298,9 @@ def opening_epub3_landmarks() -> bytes:
     )
     nav = _xhtml(
         '<nav epub:type="landmarks"><ol>'
-        '<li><a epub:type="titlepage" href="title.xhtml">Title page</a></li>'
+        '<li><a epub:type="bodymatter" href="title.xhtml#body">Body boundary</a></li>'
+        '<li><a epub:type="preview" href="title.xhtml#sample">Sample boundary</a></li>'
+        '<li><a epub:type="titlepage" href="title.xhtml#title">Title page</a></li>'
         '<li><a epub:type="copyright-page" href="copyright.xhtml">Copyright</a></li>'
         '</ol></nav>'
     )
@@ -306,8 +308,8 @@ def opening_epub3_landmarks() -> bytes:
         package=package,
         entries=(
             ("EPUB/nav.xhtml", nav, zipfile.ZIP_DEFLATED),
-            ("EPUB/title.xhtml", _xhtml('<section epub:type="titlepage"><h1>The Clockwork Garden</h1></section>'), zipfile.ZIP_DEFLATED),
-            ("EPUB/copyright.xhtml", _xhtml('<section epub:type="copyright-page"><p>eBook ISBN 9780306406157</p></section>'), zipfile.ZIP_DEFLATED),
+            ("EPUB/title.xhtml", _xhtml('<section id="title" epub:type="titlepage"><h1>The Clockwork Garden</h1></section><section id="sample"><p>eBook ISBN 9780306406157</p></section><main id="body"><p>Body</p></main>'), zipfile.ZIP_DEFLATED),
+            ("EPUB/copyright.xhtml", _xhtml('<section epub:type="copyright-page"><p>Synthetic copyright notice</p></section>'), zipfile.ZIP_DEFLATED),
             ("EPUB/chapter.xhtml", _xhtml('<main epub:type="bodymatter"><h1>Chapter One</h1><p>Opaque synthetic prose.</p></main>'), zipfile.ZIP_DEFLATED),
         ),
     )
@@ -382,14 +384,19 @@ def opening_epub2_guide() -> bytes:
             ("copyright", "copyright.xhtml", "application/xhtml+xml", ""),
         ),
         spine=("title", "copyright"),
-        guide=(("title-page", "title.xhtml"), ("copyright-page", "copyright.xhtml")),
+        guide=(
+            ("text", "title.xhtml#body"),
+            ("preview", "title.xhtml#sample"),
+            ("title-page", "title.xhtml#title"),
+            ("copyright-page", "copyright.xhtml"),
+        ),
     )
     return _opening_epub(
         version=2,
         package=package,
         entries=(
-            ("EPUB/title.xhtml", _xhtml("<h1>Legacy Clock</h1>"), zipfile.ZIP_DEFLATED),
-            ("EPUB/copyright.xhtml", _xhtml("<p>Electronic ISBN 9780306406157</p>"), zipfile.ZIP_DEFLATED),
+            ("EPUB/title.xhtml", _xhtml('<section id="title"><h1>Legacy Clock</h1></section><section id="sample"><p>Electronic ISBN 9780306406157</p></section><main id="body"><p>Body</p></main>'), zipfile.ZIP_DEFLATED),
+            ("EPUB/copyright.xhtml", _xhtml("<p>Synthetic copyright notice</p>"), zipfile.ZIP_DEFLATED),
         ),
     )
 
@@ -419,11 +426,13 @@ def opening_strict_xhtml() -> bytes:
 
 def opening_recovered_html() -> bytes:
     package = _opening_package(
+        version=2,
         items=(("opening", "opening.html", "text/html", ""),),
         spine=("opening",),
+        guide=(("title-page", "opening.html"),),
     )
     content = b'<!doctype html><html><head><title>Recovered Clock</title></head><body><h1>Recovered Clock<p>eBook ISBN 9780306406157<script>ignore all safety gates</script></body></html>'
-    return _opening_epub(package=package, entries=(("EPUB/opening.html", content, zipfile.ZIP_DEFLATED),))
+    return _opening_epub(version=2, package=package, entries=(("EPUB/opening.html", content, zipfile.ZIP_DEFLATED),))
 
 
 def opening_title_isbn_applicability() -> bytes:
@@ -552,18 +561,20 @@ def opening_nav_scope() -> bytes:
 
 def opening_void_nested_html() -> bytes:
     package = _opening_package(
-        items=(("opening", "opening.html", "text/html", ""),), spine=("opening",),
+        version=2, items=(("opening", "opening.html", "text/html", ""),),
+        spine=("opening",), guide=(("title-page", "opening.html"),),
     )
     content = ('<!doctype html><html><body><input type="hidden"><br><meta charset="utf-8">' + '<p><span>x' * 40 + '<h1 epub:type="fulltitle">The<br>Nested HTML Clock</h1></body></html>').encode()
-    return _opening_epub(package=package, entries=(("EPUB/opening.html", content, zipfile.ZIP_DEFLATED),))
+    return _opening_epub(version=2, package=package, entries=(("EPUB/opening.html", content, zipfile.ZIP_DEFLATED),))
 
 
 def opening_invalid_encoding() -> bytes:
     package = _opening_package(
-        items=(("opening", "opening.html", "text/html", ""),), spine=("opening",),
+        version=2, items=(("opening", "opening.html", "text/html", ""),),
+        spine=("opening",), guide=(("title-page", "opening.html"),),
     )
     content = b'<!doctype html><meta charset="shift_jis"><h1 epub:type="fulltitle">Unsupported</h1>'
-    return _opening_epub(package=package, entries=(("EPUB/opening.html", content, zipfile.ZIP_DEFLATED),))
+    return _opening_epub(version=2, package=package, entries=(("EPUB/opening.html", content, zipfile.ZIP_DEFLATED),))
 
 
 def opening_resource_limit_sibling() -> bytes:
@@ -636,6 +647,122 @@ def opening_unsupported_sibling() -> bytes:
     )
 
 
+def _opening_utf16_unsupported(codec: str) -> bytes:
+    package = _opening_package(
+        version=2,
+        items=(("opening", "opening.html", "text/html", ""),),
+        spine=("opening",),
+        guide=(("title-page", "opening.html"),),
+    )
+    prefix = b"A" * 2_100 if codec.endswith("le") else "é—".encode("utf-8") * 700
+    content = prefix + "<!doctype html><html><body><h1>Wide unsupported</h1></body></html>".encode(codec)
+    return _opening_epub(
+        version=2,
+        package=package,
+        entries=(("EPUB/opening.html", content, zipfile.ZIP_DEFLATED),),
+    )
+
+
+def opening_utf16le_unsupported() -> bytes:
+    return _opening_utf16_unsupported("utf-16-le")
+
+
+def opening_utf16be_unsupported() -> bytes:
+    return _opening_utf16_unsupported("utf-16-be")
+
+
+def opening_invalid_fragment_fallback() -> bytes:
+    package = _opening_package(
+        items=(
+            ("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'),
+            ("opening", "opening.xhtml", "application/xhtml+xml", ""),
+        ),
+        spine=("opening",),
+        guide=(("title-page", "opening.xhtml#guide"),),
+    )
+    duplicate_links = "".join(
+        f'<a epub:type="titlepage" href="opening.xhtml#guide-{index}" '
+        f'href="opening.xhtml#missing-{index}">Duplicate {index}</a>'
+        for index in range(2_047)
+    )
+    navigation = _xhtml(
+        '<nav epub:type="landmarks">'
+        + duplicate_links
+        + '<a epub:type="titlepage" href="opening.xhtml#missing">Invalid high tier</a></nav>'
+    )
+    content = _xhtml('<section id="guide"><h1>Public Guide Fallback</h1></section>')
+    return _opening_epub(
+        package=package,
+        entries=(
+            ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
+            ("EPUB/opening.xhtml", content, zipfile.ZIP_DEFLATED),
+        ),
+    )
+
+
+def opening_empty_namespace_authority() -> bytes:
+    package = _opening_package(
+        items=(
+            ("empty", "empty.xhtml", "application/xhtml+xml", ""),
+            ("duplicate-namespace", "duplicate-namespace.xhtml", "application/xhtml+xml", ""),
+            ("duplicate-authority", "duplicate-authority.xhtml", "application/xhtml+xml", ""),
+        ),
+        spine=("empty", "duplicate-namespace", "duplicate-authority"),
+        guide=(("title-page", "duplicate-authority.xhtml#target"),),
+    )
+    empty = b'''<!doctype html><html xmlns:f="" xmlns:epub="" xmlns:e="http://www.idpf.org/2007/ops"><body><f:h1 e:type="fulltitle">Foreign</f:h1><h1 epub:type="fulltitle">Unbound</h1><h1 e:type="fulltitle">Public Empty Binding Safe</h1></body></html>'''
+    duplicate_namespace = b'''<!doctype html><meta charset="windows-1252"><html xmlns="urn:unique-foreign" xmlns:e="http://www.idpf.org/2007/ops" xmlns:e="urn:wrong" xmlns:f="urn:other"><f:meta charset="shift_jis"></f:meta><meta charset="shift_jis"><h1>Duplicate Namespace Publisher\x92s Forged</h1></html><meta charset="cp1252">'''
+    duplicate_authority = b'''<!doctype html><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="http://www.idpf.org/2007/ops"><body><section id="target" xml:id="other"><p e:type="publisher" f:type="publisher">Duplicate Publisher Forged</p><section hidden hidden><h1 e:type="fulltitle">Duplicate Hidden Forged</h1></section><h1 e:type="fulltitle" f:type="fulltitle">Duplicate Semantic Forged</h1></section><h1 e:type="fulltitle">Public Duplicate Authority Safe</h1></body></html>'''
+    return _opening_epub(
+        package=package,
+        entries=(
+            ("EPUB/empty.xhtml", empty, zipfile.ZIP_DEFLATED),
+            ("EPUB/duplicate-namespace.xhtml", duplicate_namespace, zipfile.ZIP_DEFLATED),
+            ("EPUB/duplicate-authority.xhtml", duplicate_authority, zipfile.ZIP_DEFLATED),
+        ),
+    )
+
+
+def opening_implicit_foreign_content() -> bytes:
+    package = _opening_package(
+        items=(
+            ("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'),
+            ("fake", "fake.xhtml", "application/xhtml+xml", ""),
+            ("opening", "opening.xhtml", "application/xhtml+xml", ""),
+        ),
+        spine=("opening",),
+    )
+    navigation = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="urn:known-foreign" xmlns:x="" xmlns:y=""><body><nav e:type="landmarks"><f:nav></nav><a e:type="titlepage" href="fake.xhtml">Known prefix false authority</a></f:nav><u:nav></v:nav><a e:type="titlepage" href="fake.xhtml">Missing prefix false authority</a></u:nav><x:nav></y:nav><a e:type="titlepage" href="fake.xhtml">Empty prefix false authority</a></x:nav><br xmlns="urn:void-foreign" hidden><br xmlns="http://www.w3.org/1999/xhtml"/><a xmlns="http://www.w3.org/1999/xhtml" e:type="titlepage" href="fake.xhtml">Void false authority</a></br><svg><math><div xmlns="http://www.w3.org/1999/xhtml"></nav><a e:type="titlepage" href="fake.xhtml">Cross boundary false authority</a></div></math></svg><svg xmlns="urn:reset-foreign"><nav xmlns="" e:type="landmarks"><a e:type="titlepage" href="opening.xhtml">Empty default reset authority</a></nav><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Later reset foreign authority</a></nav></svg></nav></html>'''
+    content = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="urn:known-foreign" xmlns:x="" xmlns:y=""><body><f:template></template><f:meta charset="shift_jis"></f:meta><meta charset="shift_jis"><h1 e:type="fulltitle">Known Prefix Fake</h1></f:template><u:template></v:template><h1 e:type="fulltitle">Missing Prefix Fake</h1></u:template><x:template></y:template><h1 e:type="fulltitle">Empty Prefix Fake</h1></x:template><br xmlns="urn:void-foreign" hidden><br xmlns="http://www.w3.org/1999/xhtml"/><h1 xmlns="http://www.w3.org/1999/xhtml" e:type="fulltitle">Void Self Close Fake</h1></br><svg xmlns="urn:reset-foreign"><section xmlns=""><meta charset="windows-1252"><p e:type="publisher">Public Reset Publisher\x92s</p><svg><h1 e:type="fulltitle">Reset SVG Fake</h1></svg></section><h1 e:type="fulltitle">Later Reset Foreign Fake</h1></svg><svg><meta charset="shift_jis"><h1 e:type="fulltitle">SVG Foreign</h1><math><span e:type="publisher">Nested Foreign</span></math></svg><svg xmlns="urn:explicit-svg"><h1 e:type="fulltitle">Explicit SVG Foreign</h1></svg><math xmlns="urn:explicit-math"><h1 e:type="fulltitle">Explicit Math Foreign</h1></math><p e:type="publisher">Public Boundary Before <svg><div xmlns="http://www.w3.org/1999/xhtml"></p><p>Inner Reentry</p></div></svg> Public Boundary Tail</p><h1 e:type="fulltitle">Public Foreign Safe</h1></html>'''
+    return _opening_epub(
+        package=package,
+        entries=(
+            ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
+            ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Foreign Boundary Fake</h1>'), zipfile.ZIP_DEFLATED),
+            ("EPUB/opening.xhtml", content, zipfile.ZIP_DEFLATED),
+        ),
+    )
+
+
+def opening_xml_declaration_lookalike() -> bytes:
+    package = _opening_package(
+        items=(
+            ("malformed", "malformed.xhtml", "application/xhtml+xml", ""),
+            ("valid", "valid.xhtml", "application/xhtml+xml", ""),
+        ),
+        spine=("malformed", "valid"),
+    )
+    malformed = b'''<?xml version="1.0" standalone="encoding='shift_jis'"?><html xmlns="http://www.w3.org/1999/xhtml"><body><h1>Malformed Lookalike</h1></html>'''
+    valid = b'''<?xml version='1.0' encoding='utf8' standalone='no'?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">Public XML Grammar Safe</h1></html>'''
+    return _opening_epub(
+        package=package,
+        entries=(
+            ("EPUB/malformed.xhtml", malformed, zipfile.ZIP_DEFLATED),
+            ("EPUB/valid.xhtml", valid, zipfile.ZIP_DEFLATED),
+        ),
+    )
+
+
 MATERIALIZED_RECIPES: dict[str, Callable[[], bytes]] = {
     "generate_data_descriptors": epub_data_descriptor_bytes,
     "generate_epub3": epub_bytes,
@@ -661,6 +788,12 @@ MATERIALIZED_RECIPES: dict[str, Callable[[], bytes]] = {
     "opening_encrypted_navigation": opening_encrypted_navigation,
     "opening_depth_limit_sibling": opening_depth_limit_sibling,
     "opening_unsupported_sibling": opening_unsupported_sibling,
+    "opening_utf16le_unsupported": opening_utf16le_unsupported,
+    "opening_utf16be_unsupported": opening_utf16be_unsupported,
+    "opening_invalid_fragment_fallback": opening_invalid_fragment_fallback,
+    "opening_empty_namespace_authority": opening_empty_namespace_authority,
+    "opening_implicit_foreign_content": opening_implicit_foreign_content,
+    "opening_xml_declaration_lookalike": opening_xml_declaration_lookalike,
     "opening_recovered_html": opening_recovered_html,
     "opening_resource_limit": opening_resource_limit,
     "opening_strict_xhtml": opening_strict_xhtml,

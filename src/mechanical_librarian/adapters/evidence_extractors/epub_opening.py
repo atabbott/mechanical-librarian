@@ -44,6 +44,12 @@ _CONTENT_MEDIA = {"application/xhtml+xml", "text/html"}
 _IMAGE_MEDIA = {"image/gif", "image/jpeg", "image/png", "image/svg+xml"}
 _ACTIVE = {"script", "style", "template", "object", "iframe", "frame", "embed", "canvas"}
 _EPUB_NS = "http://www.idpf.org/2007/ops"
+_XHTML_NS = "http://www.w3.org/1999/xhtml"
+_OPF_NS = "http://www.idpf.org/2007/opf"
+_XML_NS = "http://www.w3.org/XML/1998/namespace"
+_UNKNOWN_NS = "urn:mechanical-librarian:unknown-prefix"
+_SVG_NS = "http://www.w3.org/2000/svg"
+_MATHML_NS = "http://www.w3.org/1998/Math/MathML"
 _XINCLUDE_NS = "http://www.w3.org/2001/XInclude"
 _XSLT_NS = "http://www.w3.org/1999/XSL/Transform"
 _HTML_VOID = {
@@ -64,6 +70,22 @@ _OPENING_SEMANTICS = {
     "titlepage", "halftitlepage", "copyright-page", "dedication", "contributors",
     "imprint", "frontmatter", "seriespage", "other-credits",
 }
+_SOURCE_RANK = {
+    "epub3_landmark": 0,
+    "epub2_guide": 1,
+    "linear_spine_fallback": 2,
+}
+_ROLE_ORDER = {
+    role: index
+    for index, role in enumerate(
+        (
+            "titlepage", "title_page", "halftitlepage", "copyright-page",
+            "copyright_page", "contributors", "other-credits", "imprint",
+            "seriespage", "dedication", "acknowledgements", "preface",
+            "foreword", "frontmatter", "other.ms_firstpage",
+        )
+    )
+}
 _BODY_SEMANTICS = {"bodymatter"}
 _CLAIM_SEMANTICS = {"title", "fulltitle", "subtitle", "publisher", "imprint", "contributor", "creator"}
 _SPACE = re.compile(r"\s+")
@@ -82,10 +104,17 @@ _PAPERBACK_LABEL = re.compile(r"(?<![\w])paperback(?![\w])", re.I)
 _HARDCOVER_LABEL = re.compile(
     r"(?<![\w])(?:hardback|hardcover)(?![\w])", re.I
 )
-_DECLARED_ENCODING = re.compile(
-    rb"(?:encoding\s*=\s*['\"]|charset\s*=\s*['\"]?)([A-Za-z0-9._-]+)",
-    re.I,
+_CHARSET_PARAMETER = re.compile(
+    rb"(?:^|;)\s*charset\s*=\s*([A-Za-z0-9._-]+)(?:\s*;|\s*$)", re.I
 )
+_SUPPORTED_CODECS = {
+    "utf-8": "utf-8-sig",
+    "utf8": "utf-8-sig",
+    "windows-1252": "windows-1252",
+    "cp1252": "windows-1252",
+    "iso-8859-1": "iso-8859-1",
+    "latin-1": "iso-8859-1",
+}
 _PACKAGE_WARNING_CODES = {
     "invalid_navigation_declaration",
     "missing_manifest_resource",
@@ -144,6 +173,8 @@ class _Element:
     ancestors: tuple[int, ...] = ()
     namespaces: dict[str, str] = field(default_factory=dict)
     namespace: str = ""
+    fragment_ids: tuple[str, ...] = ()
+    invalid_attributes: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -159,11 +190,37 @@ class _Projection:
 
 
 @dataclass(frozen=True)
+class _RoleAssociation:
+    identity: str
+    source_tier: str
+    role: str
+    fragment: str | None
+    selection_path: tuple[str, ...]
+    order: int
+
+
+@dataclass(frozen=True)
 class _Candidate:
     identity: str
     media_type: str
     selection_path: tuple[str, ...]
     order: int
+    target_fragment: str | None = None
+    recognition_semantics: frozenset[str] = frozenset()
+    opening_boundaries: frozenset[str | None] = frozenset()
+    role_associations: tuple[_RoleAssociation, ...] = ()
+
+
+@dataclass(frozen=True)
+class _RecognitionContext:
+    selection_path: tuple[str, ...]
+    recognition_semantics: frozenset[str]
+    title_scopes: tuple[int | None, ...]
+    body_ordinal: int | None
+    body_scopes: tuple[int, ...]
+    excluded_scopes: tuple[int | None, ...]
+    warnings: tuple[str, ...]
+    suppress_claims: bool = False
 
 
 class _SourceIO(io.RawIOBase):
@@ -209,6 +266,127 @@ def _check(request: LocalEvidenceRequest) -> None:
 def _tokens(attributes: dict[str, str]) -> set[str]:
     value = attributes.get(f"{{{_EPUB_NS}}}type", attributes.get("epub:type", ""))
     return {token.casefold() for token in value.split() if ":" not in token}
+
+
+def _is_html_namespace(namespace: str) -> bool:
+    return namespace in {"", _XHTML_NS}
+
+
+def _same_namespace_region(left: str, right: str) -> bool:
+    return left == right or (
+        _is_html_namespace(left) and _is_html_namespace(right)
+    )
+
+
+def _unknown_namespace(prefix: str, state: str) -> str:
+    identity = hashlib.sha256(
+        f"epub-opening-unknown-namespace-v1\0{state}\0{prefix}".encode("utf-8")
+    ).hexdigest()
+    return f"{_UNKNOWN_NS}:{identity}"
+
+
+def _qualified_namespace(namespaces: dict[str, str], prefix: str) -> str:
+    namespace = namespaces.get(prefix)
+    if namespace is None:
+        return _unknown_namespace(prefix, "missing")
+    if not namespace:
+        return _unknown_namespace(prefix, "empty")
+    return namespace
+
+
+def _element_namespace(
+    namespaces: dict[str, str],
+    prefix: str,
+    qualified: bool,
+    local_name: str,
+    parent_namespace: str | None,
+    *,
+    default_declared: bool = False,
+) -> str:
+    if qualified:
+        return _qualified_namespace(namespaces, prefix)
+    namespace = namespaces.get("", "")
+    if not default_declared or namespace in {"", _XHTML_NS}:
+        if local_name == "svg":
+            namespaces[""] = _SVG_NS
+            return _SVG_NS
+        if local_name == "math":
+            namespaces[""] = _MATHML_NS
+            return _MATHML_NS
+    if default_declared:
+        return namespace
+    if namespace:
+        return namespace
+    if parent_namespace in {_SVG_NS, _MATHML_NS}:
+        return parent_namespace
+    return ""
+
+
+def _recovery_namespaces(
+    inherited: dict[str, str],
+    attributes: list[tuple[str, str]],
+) -> tuple[dict[str, str], bool, bool]:
+    namespaces = dict(inherited)
+    declarations: dict[str, list[str]] = {}
+    for name, value in attributes:
+        if name == "xmlns":
+            declarations.setdefault("", []).append(value)
+        elif name.startswith("xmlns:"):
+            declarations.setdefault(name.partition(":")[2], []).append(value)
+    duplicate = any(len(values) > 1 for values in declarations.values())
+    for prefix, values in declarations.items():
+        if len(values) > 1:
+            namespaces[prefix] = _unknown_namespace(prefix, "duplicate")
+        elif values[0]:
+            namespaces[prefix] = values[0]
+        elif not prefix:
+            namespaces[prefix] = ""
+        else:
+            namespaces[prefix] = _unknown_namespace(prefix, "empty")
+    return namespaces, "" in declarations, duplicate
+
+
+def _recovery_attributes(
+    attributes: list[tuple[str, str]],
+    namespaces: dict[str, str],
+) -> tuple[dict[str, str], tuple[str, ...], frozenset[str]]:
+    values: dict[str, list[str]] = {}
+    for name, value in attributes:
+        if name == "xmlns" or name.startswith("xmlns:"):
+            continue
+        prefix, separator, local_name = name.partition(":")
+        namespace = _qualified_namespace(namespaces, prefix) if separator else ""
+        mapped_name = f"{{{namespace}}}{local_name}" if namespace else name
+        values.setdefault(mapped_name, []).append(value)
+
+    controlled = {
+        "aria-hidden",
+        "hidden",
+        "href",
+        "id",
+        "type",
+        f"{{{_EPUB_NS}}}type",
+        f"{{{_XML_NS}}}id",
+    }
+    invalid = {
+        name
+        for name, candidates in values.items()
+        if name in controlled and len(candidates) != 1
+    }
+    identity_names = {"id", f"{{{_XML_NS}}}id"}
+    if sum(len(values.get(name, ())) for name in identity_names) > 1:
+        invalid.update(identity_names & values.keys())
+    mapped = {
+        name: candidates[-1]
+        for name, candidates in values.items()
+        if name not in invalid
+    }
+    fragment_ids = tuple(
+        mapped[name]
+        for name in ("id", f"{{{_XML_NS}}}id")
+        if mapped.get(name)
+    )
+    return mapped, fragment_ids, frozenset(invalid)
 
 
 def _local(name: str) -> str:
@@ -371,10 +549,17 @@ def _project_strict(data: bytes, limits: EpubOpeningLimits, request: LocalEviden
             )
         )
         element = _Element(
-            len(elements) + 1, local_name, mapped, _tokens(mapped), len(stack) + 1,
+            len(elements) + 1, local_name, mapped,
+            _tokens(mapped) if _is_html_namespace(namespace) else set(),
+            len(stack) + 1,
             active=parent_active or hidden or local_name in _ACTIVE,
             ancestors=tuple(value.ordinal for value in stack),
             namespace=namespace,
+            fragment_ids=tuple(
+                value
+                for key, value in mapped.items()
+                if key in {"id", f"{{{_XML_NS}}}id"} and value
+            ),
         )
         elements.append(element)
         if local_name in {"br", "wbr"} and stack and not stack[-1].active:
@@ -424,49 +609,58 @@ class _RecoveryParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         _check(self.request)
-        raw_attributes = {
-            name.casefold(): "" if value is None else value for name, value in attrs
-        }
-        namespaces = dict(self.stack[-1].namespaces) if self.stack else {}
-        for name, value in raw_attributes.items():
-            if name == "xmlns":
-                namespaces[""] = value
-            elif name.startswith("xmlns:"):
-                namespaces[name.partition(":")[2]] = value
+        raw_attributes = [
+            (name.casefold(), "" if value is None else value)
+            for name, value in attrs
+        ]
+        namespaces, default_declared, duplicate_namespace = _recovery_namespaces(
+            self.stack[-1].namespaces if self.stack else {"xml": _XML_NS},
+            raw_attributes,
+        )
+        if duplicate_namespace:
+            raise ValueError("duplicate namespace declaration")
         raw_name = tag.casefold()
         prefix, separator, unqualified = raw_name.partition(":")
         local_name = unqualified if separator else raw_name
-        namespace = namespaces.get(prefix if separator else "", "")
+        namespace = _element_namespace(
+            namespaces,
+            prefix,
+            bool(separator),
+            local_name,
+            self.stack[-1].namespace if self.stack else None,
+            default_declared=default_declared,
+        )
         if namespace in {_XINCLUDE_NS, _XSLT_NS}:
             raise _UnsafeConstruct(
                 "unsupported foreign inclusion construct",
                 nodes=len(self.elements),
                 text_characters=_projected_text_usage(self.events),
             )
-        mapped: dict[str, str] = {}
-        for name, value in raw_attributes.items():
-            attribute_prefix, attribute_separator, attribute_local = name.partition(":")
-            attribute_namespace = namespaces.get(attribute_prefix, "") if attribute_separator else ""
-            mapped[
-                f"{{{attribute_namespace}}}{attribute_local}"
-                if attribute_namespace
-                else name
-            ] = value
-        for opened, closing in _HTML_IMPLIED_CLOSE.items():
-            if local_name not in closing:
-                continue
-            for index in range(len(self.stack) - 1, -1, -1):
-                if self.stack[index].name == opened:
-                    del self.stack[index:]
-                    break
+        mapped, fragment_ids, invalid_attributes = _recovery_attributes(
+            raw_attributes, namespaces
+        )
+        if _is_html_namespace(namespace):
+            for opened, closing in _HTML_IMPLIED_CLOSE.items():
+                if local_name not in closing:
+                    continue
+                for index in range(len(self.stack) - 1, -1, -1):
+                    if not _is_html_namespace(self.stack[index].namespace):
+                        break
+                    if self.stack[index].name == opened:
+                        del self.stack[index:]
+                        break
         if len(self.elements) >= self.limits.nodes_per_resource or len(self.stack) + 1 > self.limits.document_depth:
             raise _ResourceRejected(
                 nodes=len(self.elements),
                 text_characters=_projected_text_usage(self.events),
             )
         parent_active = bool(self.stack and self.stack[-1].active)
+        invalid_hiding = bool(
+            invalid_attributes & {"aria-hidden", "hidden", "type"}
+        )
         hidden = (
-            "hidden" in mapped
+            invalid_hiding
+            or "hidden" in mapped
             or mapped.get("aria-hidden", "").casefold() == "true"
             or (
                 local_name == "input"
@@ -474,33 +668,62 @@ class _RecoveryParser(HTMLParser):
             )
         )
         element = _Element(
-            len(self.elements) + 1, local_name, mapped, _tokens(mapped), len(self.stack) + 1,
+            len(self.elements) + 1, local_name, mapped,
+            _tokens(mapped) if _is_html_namespace(namespace) else set(),
+            len(self.stack) + 1,
             active=parent_active or hidden or local_name in _ACTIVE,
             ancestors=tuple(value.ordinal for value in self.stack),
             namespaces=namespaces,
             namespace=namespace,
+            fragment_ids=fragment_ids,
+            invalid_attributes=invalid_attributes,
         )
         self.elements.append(element)
         if local_name in {"br", "wbr"} and self.stack and not self.stack[-1].active:
             self.events.append((" ", tuple(value.ordinal for value in self.stack)))
-        if local_name not in _HTML_VOID or namespace not in {"", "http://www.w3.org/1999/xhtml"}:
+        if local_name not in _HTML_VOID or not _is_html_namespace(namespace):
             self.stack.append(element)
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        element_count = len(self.elements)
         self.handle_starttag(tag, attrs)
-        self.handle_endtag(tag)
+        if (
+            len(self.elements) > element_count
+            and self.stack
+            and self.stack[-1] is self.elements[-1]
+        ):
+            self.handle_endtag(tag)
 
     def handle_endtag(self, tag: str) -> None:
         raw_name = tag.casefold()
         prefix, separator, unqualified = raw_name.partition(":")
         wanted = unqualified if separator else raw_name
-        namespaces = self.stack[-1].namespaces if self.stack else {}
-        namespace = namespaces.get(prefix if separator else "", "")
+        if not self.stack:
+            return
+        namespace = (
+            _qualified_namespace(self.stack[-1].namespaces, prefix)
+            if separator
+            else self.stack[-1].namespaces.get("", "")
+        )
+        region = self.stack[-1].namespace if self.stack else ""
         for index in range(len(self.stack) - 1, -1, -1):
-            if (
-                self.stack[index].name == wanted
-                and self.stack[index].namespace == namespace
-            ):
+            element = self.stack[index]
+            matches = (
+                element.name == wanted
+                and (
+                    element.namespace == namespace
+                    or (
+                        not separator
+                        and _is_html_namespace(element.namespace)
+                        and _is_html_namespace(namespace)
+                    )
+                )
+            )
+            if not _same_namespace_region(element.namespace, region):
+                if matches and not _is_html_namespace(element.namespace):
+                    del self.stack[index:]
+                return
+            if matches:
                 del self.stack[index:]
                 return
 
@@ -518,30 +741,291 @@ class _RecoveryParser(HTMLParser):
         raise ValueError("unsupported HTML declaration")
 
 
-def _project_recovered(data: bytes, limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> _Projection:
-    if data.startswith((b"\xff\xfe", b"\xfe\xff", b"\x00<")):
-        raise _UnsupportedEncoding(
-            "unsupported encoding", nodes=0, text_characters=0
+class _EncodingScanner(HTMLParser):
+    """Collect active HTML charset declarations without decoding publication text."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.declarations: list[str] = []
+        self.invalid = False
+        self.stack: list[tuple[str, str, dict[str, str], bool, bool]] = []
+        self.namespace_invalid = False
+
+    @staticmethod
+    def _encoding_name(value: str) -> str:
+        return (
+            value.casefold()
+            if re.fullmatch(r"[A-Za-z0-9._-]+", value) is not None
+            else "unsupported-nonascii-encoding"
         )
-    declared_match = _DECLARED_ENCODING.search(data[:2_048])
-    declared = (
-        declared_match.group(1).decode("ascii", "strict").casefold()
-        if declared_match is not None
-        else "utf-8"
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        lowered = [
+            (name.casefold(), "" if value is None else value)
+            for name, value in attrs
+        ]
+        namespaces, default_declared, duplicate_namespace = _recovery_namespaces(
+            self.stack[-1][2] if self.stack else {"xml": _XML_NS}, lowered
+        )
+        self.namespace_invalid = self.namespace_invalid or duplicate_namespace
+        namespace_prefixes = [
+            "" if name == "xmlns" else name.partition(":")[2]
+            for name, _value in lowered
+            if name == "xmlns" or name.startswith("xmlns:")
+        ]
+        duplicate_default = namespace_prefixes.count("") > 1
+        raw_name = tag.casefold()
+        prefix, separator, unqualified = raw_name.partition(":")
+        local_name = unqualified if separator else raw_name
+        namespace = _element_namespace(
+            namespaces,
+            prefix,
+            bool(separator),
+            local_name,
+            self.stack[-1][1] if self.stack else None,
+            default_declared=default_declared,
+        )
+        parent_inert = bool(self.stack and self.stack[-1][3])
+        inherited_ambiguous_default = bool(self.stack and self.stack[-1][4])
+        ambiguous_default = duplicate_default or (
+            inherited_ambiguous_default and not default_declared
+        )
+        if (
+            not default_declared
+            and local_name in {"svg", "math"}
+            and namespace in {_SVG_NS, _MATHML_NS}
+        ):
+            ambiguous_default = False
+        inert = parent_inert or local_name == "template"
+        active_unqualified_meta = (
+            not separator
+            and local_name == "meta"
+            and (_is_html_namespace(namespace) or ambiguous_default)
+        )
+        if active_unqualified_meta and not inert:
+            values: dict[str, list[str]] = {}
+            for name, value in lowered:
+                if ":" not in name:
+                    values.setdefault(name, []).append(value.strip())
+            if any(
+                len(values.get(name, ())) > 1
+                for name in ("charset", "http-equiv", "content")
+            ):
+                self.invalid = True
+            else:
+                charset = values.get("charset", [])
+                if charset and charset[0]:
+                    self.declarations.append(self._encoding_name(charset[0]))
+                http_equiv = values.get("http-equiv", [])
+                content = values.get("content", [])
+                if (
+                    http_equiv
+                    and http_equiv[0].casefold() == "content-type"
+                    and content
+                ):
+                    parameter = _CHARSET_PARAMETER.search(
+                        content[0].encode("latin-1", "strict")
+                    )
+                    if parameter is not None:
+                        self.declarations.append(
+                            parameter.group(1)
+                            .decode("ascii", "strict")
+                            .casefold()
+                        )
+        if local_name not in _HTML_VOID or not _is_html_namespace(namespace):
+            self.stack.append(
+                (local_name, namespace, namespaces, inert, ambiguous_default)
+            )
+
+    def handle_startendtag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        size = len(self.stack)
+        self.handle_starttag(tag, attrs)
+        if len(self.stack) > size:
+            self.stack.pop()
+
+    def handle_endtag(self, tag: str) -> None:
+        raw_name = tag.casefold()
+        prefix, separator, unqualified = raw_name.partition(":")
+        local_name = unqualified if separator else raw_name
+        if not self.stack:
+            return
+        namespace = (
+            _qualified_namespace(self.stack[-1][2], prefix)
+            if separator
+            else self.stack[-1][2].get("", "")
+        )
+        region = self.stack[-1][1] if self.stack else ""
+        for index in range(len(self.stack) - 1, -1, -1):
+            element = self.stack[index]
+            matches = (
+                element[0] == local_name
+                and (
+                    element[1] == namespace
+                    or (
+                        not separator
+                        and _is_html_namespace(element[1])
+                        and _is_html_namespace(namespace)
+                    )
+                )
+            )
+            if not _same_namespace_region(element[1], region):
+                if matches and not _is_html_namespace(element[1]):
+                    del self.stack[index:]
+                return
+            if matches:
+                del self.stack[index:]
+                return
+
+
+def _xml_declaration_encoding(
+    head: bytes, offset: int
+) -> tuple[tuple[str, ...], bool]:
+    declaration = head[offset:]
+    if declaration[:5].lower() != b"<?xml":
+        return (), False
+    if len(declaration) == 5:
+        return (), True
+    if declaration[5] not in b" \t\r\n":
+        return (), declaration[5:6] != b"-"
+    if not declaration.startswith(b"<?xml"):
+        return (), True
+
+    quote: int | None = None
+    closing = -1
+    index = 5
+    while index + 1 < len(declaration):
+        value = declaration[index]
+        if quote is not None:
+            if value == quote:
+                quote = None
+        elif value in {ord("'"), ord('"')}:
+            quote = value
+        elif declaration[index:index + 2] == b"?>":
+            closing = index
+            break
+        index += 1
+    if closing < 0 or quote is not None:
+        return (), True
+    body = declaration[5:closing]
+    attributes: list[tuple[str, bytes]] = []
+    index = 0
+    while index < len(body):
+        while index < len(body) and body[index] in b" \t\r\n":
+            index += 1
+        if index == len(body):
+            break
+        name = re.match(br"[A-Za-z_:][A-Za-z0-9_.:-]*", body[index:])
+        if name is None:
+            return (), True
+        raw_name = name.group(0)
+        index += name.end()
+        while index < len(body) and body[index] in b" \t\r\n":
+            index += 1
+        if index >= len(body) or body[index] != ord("="):
+            return (), True
+        index += 1
+        while index < len(body) and body[index] in b" \t\r\n":
+            index += 1
+        if index >= len(body) or body[index] not in {ord("'"), ord('"')}:
+            return (), True
+        value_quote = body[index]
+        index += 1
+        end = body.find(bytes((value_quote,)), index)
+        if end < 0:
+            return (), True
+        attribute_value = body[index:end]
+        index = end + 1
+        if index < len(body) and body[index] not in b" \t\r\n":
+            return (), True
+        attributes.append(
+            (raw_name.decode("ascii", "strict"), attribute_value)
+        )
+
+    names = [name for name, _value in attributes]
+    if not attributes or len(names) != len(set(names)):
+        return (), True
+    if names[0] != "version" or attributes[0][1] not in {b"1.0", b"1.1"}:
+        return (), True
+    position = 1
+    encodings: tuple[str, ...] = ()
+    if position < len(attributes) and attributes[position][0] == "encoding":
+        encoding = attributes[position][1]
+        if re.fullmatch(br"[A-Za-z][A-Za-z0-9._-]*", encoding) is None:
+            return (), True
+        encodings = (encoding.decode("ascii", "strict").casefold(),)
+        position += 1
+    if position < len(attributes) and attributes[position][0] == "standalone":
+        if attributes[position][1] not in {b"yes", b"no"}:
+            return (), True
+        position += 1
+    if position != len(attributes):
+        return (), True
+    return encodings, False
+
+
+def _real_encoding_declarations(
+    data: bytes,
+) -> tuple[tuple[str, ...], bool, bool]:
+    """Return declarations plus independent encoding and namespace invalidity."""
+
+    head = data[:2_048]
+    declarations: list[str] = []
+    offset = 3 if head.startswith(b"\xef\xbb\xbf") else 0
+    xml_encodings, invalid = _xml_declaration_encoding(head, offset)
+    declarations.extend(xml_encodings)
+    scanner = _EncodingScanner()
+    try:
+        scanner.feed(head.decode("latin-1", "strict"))
+        scanner.close()
+    except (UnicodeError, ValueError, RecursionError):
+        invalid = True
+    declarations.extend(scanner.declarations)
+    return (
+        tuple(declarations),
+        invalid or scanner.invalid,
+        scanner.namespace_invalid,
     )
-    codecs = {
-        "utf-8": "utf-8-sig",
-        "utf8": "utf-8-sig",
-        "windows-1252": "windows-1252",
-        "cp1252": "windows-1252",
-        "iso-8859-1": "iso-8859-1",
-        "latin-1": "iso-8859-1",
-    }
-    codec = codecs.get(declared)
-    if codec is None:
+
+
+def _looks_wide_encoded(data: bytes) -> bool:
+    if data.startswith(
+        (b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff", b"\xff\xfe\x00\x00")
+    ):
+        return True
+    return b"\x00" in data
+
+
+def _recovery_codec(data: bytes) -> tuple[str, bool]:
+    if _looks_wide_encoded(data):
         raise _UnsupportedEncoding(
             "unsupported encoding", nodes=0, text_characters=0
         )
+    declarations, invalid, namespace_invalid = _real_encoding_declarations(data)
+    if invalid:
+        raise _UnsupportedEncoding(
+            "unsupported encoding", nodes=0, text_characters=0
+        )
+    declarations = list(declarations)
+    if data.startswith(b"\xef\xbb\xbf"):
+        declarations.append("utf-8")
+    if not declarations:
+        return "utf-8-sig", namespace_invalid
+    codecs = {_SUPPORTED_CODECS.get(value) for value in declarations}
+    if None in codecs or len(codecs) != 1:
+        raise _UnsupportedEncoding(
+            "unsupported encoding", nodes=0, text_characters=0
+        )
+    codec = codecs.pop()
+    assert codec is not None
+    return codec, namespace_invalid
+
+
+def _project_recovered(data: bytes, limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> _Projection:
+    codec, namespace_invalid = _recovery_codec(data)
     try:
         text = data.decode(codec, "strict")
     except UnicodeDecodeError:
@@ -552,6 +1036,8 @@ def _project_recovered(data: bytes, limits: EpubOpeningLimits, request: LocalEvi
     try:
         parser.feed(text)
         parser.close()
+        if namespace_invalid:
+            raise ValueError("duplicate namespace declaration")
     except (_AggregateRejected, _ResourceRejected, _UnsafeConstruct):
         raise
     except (ValueError, RecursionError):
@@ -692,7 +1178,23 @@ def _read_member(archive: zipfile.ZipFile, name: str, maximum: int, request: Loc
         raise ValueError("member read failed") from None
 
 
-def _safe_target(base_name: str, href: str, names: set[str]) -> str | None:
+def _target_fragment(href: str) -> str | None:
+    if "#" not in href:
+        return None
+    try:
+        fragment = unquote(href.partition("#")[2], errors="strict")
+    except (UnicodeError, ValueError):
+        raise ValueError("invalid fragment") from None
+    if not fragment:
+        return None
+    return hashlib.sha256(
+        unicodedata.normalize("NFC", fragment).encode("utf-8")
+    ).hexdigest()
+
+
+def _safe_target(
+    base_name: str, href: str, names: set[str]
+) -> tuple[str, str | None] | None:
     raw = href.split("#", 1)[0]
     if not raw or "?" in raw or "\\" in raw or raw.startswith("/") or ":" in raw.split("/", 1)[0]:
         return None
@@ -703,7 +1205,11 @@ def _safe_target(base_name: str, href: str, names: set[str]) -> str | None:
     normalized = posixpath.normpath(posixpath.join(posixpath.dirname(base_name), decoded))
     if normalized.startswith("../") or normalized == ".." or normalized not in names:
         return None
-    return normalized
+    try:
+        boundary = _target_fragment(href)
+    except ValueError:
+        return None
+    return normalized, boundary
 
 
 def _manifest(package_report: LocalEvidenceReport) -> tuple[dict[str, tuple[str, str, tuple[str, ...]]], dict[str, str], set[str], str | None]:
@@ -723,54 +1229,122 @@ def _manifest(package_report: LocalEvidenceReport) -> tuple[dict[str, tuple[str,
     return by_id, spine, encrypted, package_identity
 
 
-def _raw_spine(package_data: bytes) -> tuple[tuple[str, bool], ...]:
+def _raw_package_annotations(
+    package_data: bytes,
+    package_report: LocalEvidenceReport,
+) -> tuple[tuple[tuple[str, bool], ...] | None, dict[int, str | None], bool]:
+    """Recover annotations only for exact declarations already accepted by F06."""
+
     if b"<!DOCTYPE" in package_data.upper() or b"<!ENTITY" in package_data.upper():
-        return ()
+        return None, {}, False
     try:
         root = ElementTree.fromstring(package_data)
     except (ElementTree.ParseError, RecursionError):
-        return ()
-    result: list[tuple[str, bool]] = []
-    for node in root.iter():
-        if _local(node.tag) == "itemref":
-            identifier = node.attrib.get("idref")
-            if identifier:
-                result.append((identifier, node.attrib.get("linear", "yes").casefold() != "no"))
-    return tuple(result)
+        return None, {}, False
+    accepted_spine = {
+        declaration.source_ordinal: declaration
+        for declaration in package_report.declarations
+        if declaration.kind is DeclarationKind.SPINE_ITEM
+        and declaration.identifier
+        and declaration.resource_identity
+    }
+    accepted_guides = {
+        declaration.source_ordinal: declaration
+        for declaration in package_report.declarations
+        if declaration.kind is DeclarationKind.GUIDE_REFERENCE
+        and declaration.identifier
+        and declaration.resource_identity
+    }
+    parents = {child: parent for parent in root.iter() for child in parent}
+    spine: list[tuple[str, bool]] = []
+    guide_fragments: dict[int, str | None] = {}
+    invalid_linear = False
+    for ordinal, node in enumerate(root.iter(), 1):
+        parent = parents.get(node)
+        if ordinal in accepted_spine:
+            declaration = accepted_spine[ordinal]
+            if (
+                node.tag == f"{{{_OPF_NS}}}itemref"
+                and parent is not None
+                and parent.tag == f"{{{_OPF_NS}}}spine"
+                and not list(node)
+                and not (node.text or "").strip()
+                and node.attrib.get("idref") == declaration.identifier
+            ):
+                linear = node.attrib.get("linear")
+                if linear is None or linear == "yes":
+                    spine.append((declaration.identifier, True))
+                elif linear == "no":
+                    spine.append((declaration.identifier, False))
+                else:
+                    invalid_linear = True
+        if ordinal in accepted_guides:
+            declaration = accepted_guides[ordinal]
+            href = node.attrib.get("href")
+            if (
+                node.tag == f"{{{_OPF_NS}}}reference"
+                and parent is not None
+                and parent.tag == f"{{{_OPF_NS}}}guide"
+                and not list(node)
+                and not (node.text or "").strip()
+                and node.attrib.get("type") == declaration.identifier
+                and href
+            ):
+                try:
+                    guide_fragments[ordinal] = _target_fragment(href)
+                except ValueError:
+                    pass
+    return tuple(spine), guide_fragments, invalid_linear
 
 
-def _navigation_targets(projection: _Projection, nav_name: str, names: set[str], identity_by_name: dict[str, str], manifest_by_identity: dict[str, tuple[str, tuple[str, ...]]], limits: EpubOpeningLimits) -> tuple[list[_Candidate], list[str], int, set[str], set[str]]:
+def _navigation_targets(projection: _Projection, nav_name: str, names: set[str], identity_by_name: dict[str, str], manifest_by_identity: dict[str, tuple[str, tuple[str, ...]]], limits: EpubOpeningLimits) -> tuple[list[_Candidate], list[str], int, list[_RoleAssociation], list[_RoleAssociation]]:
     targets: list[_Candidate] = []
     warnings: list[str] = []
     links = 0
     seen_by_semantic: dict[str, set[str]] = {}
-    body_targets: set[str] = set()
-    excluded_targets: set[str] = set()
+    body_targets: list[_RoleAssociation] = []
+    excluded_targets: list[_RoleAssociation] = []
     by_ordinal = {element.ordinal: element for element in projection.elements}
     for element in projection.elements:
-        if element.active or element.name != "a" or "href" not in element.attributes:
+        if (
+            element.active
+            or not _is_html_namespace(element.namespace)
+            or element.name != "a"
+        ):
+            continue
+        landmarks = False
+        for ordinal in reversed(element.ancestors):
+            ancestor = by_ordinal[ordinal]
+            if not _is_html_namespace(ancestor.namespace):
+                break
+            if (
+                ancestor.name == "nav"
+                and not ancestor.active
+                and "landmarks" in ancestor.semantics
+            ):
+                landmarks = True
+                break
+        if not landmarks:
+            continue
+        invalid_href = "href" in element.invalid_attributes
+        if "href" not in element.attributes and not invalid_href:
             continue
         links += 1
         if links > limits.navigation_links:
             raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
-        landmarks = any(
-            ancestor.name == "nav"
-            and not ancestor.active
-            and "landmarks" in ancestor.semantics
-            for ordinal in element.ancestors
-            if (ancestor := by_ordinal[ordinal])
-        )
-        if not landmarks:
+        if invalid_href:
+            warnings.append("invalid_navigation_target")
             continue
         semantics = element.semantics & (
             _OPENING_SEMANTICS | _BODY_SEMANTICS | _EXCLUDED_SEMANTICS
         )
         if not semantics:
             continue
-        name = _safe_target(nav_name, element.attributes["href"], names)
-        if name is None:
+        target = _safe_target(nav_name, element.attributes["href"], names)
+        if target is None:
             warnings.append("invalid_navigation_target")
             continue
+        name, target_fragment = target
         identity = identity_by_name[name]
         declared = manifest_by_identity.get(identity)
         if declared is None:
@@ -778,20 +1352,50 @@ def _navigation_targets(projection: _Projection, nav_name: str, names: set[str],
             continue
         media_type, _properties = declared
         if semantics & _BODY_SEMANTICS:
-            body_targets.add(identity)
+            body_targets.append(
+                _RoleAssociation(
+                    identity, "epub3_landmark", "bodymatter", target_fragment,
+                    ("epub3_landmark", "bodymatter"), element.ordinal,
+                )
+            )
         if semantics & _EXCLUDED_SEMANTICS:
-            excluded_targets.add(identity)
+            for semantic in sorted(semantics & _EXCLUDED_SEMANTICS):
+                excluded_targets.append(
+                    _RoleAssociation(
+                        identity, "epub3_landmark", semantic, target_fragment,
+                        ("epub3_landmark", semantic), element.ordinal,
+                    )
+                )
         for semantic in sorted(semantics):
             if semantic not in _OPENING_SEMANTICS:
                 continue
             seen_by_semantic.setdefault(semantic, set()).add(identity)
-            targets.append(_Candidate(identity, media_type, ("epub3_landmark", semantic), element.ordinal))
+            association = _RoleAssociation(
+                identity,
+                "epub3_landmark",
+                semantic,
+                target_fragment,
+                ("epub3_landmark", semantic),
+                element.ordinal,
+            )
+            targets.append(
+                _Candidate(
+                    identity,
+                    media_type,
+                    ("epub3_landmark", semantic),
+                    element.ordinal,
+                    target_fragment,
+                    frozenset({semantic}),
+                    frozenset({target_fragment}),
+                    (association,),
+                )
+            )
     if any(len(values) > 1 for values in seen_by_semantic.values()):
         warnings.append("ambiguous_navigation_landmark")
     return targets, warnings, links, body_targets, excluded_targets
 
 
-def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFile, names_by_identity: dict[str, str], limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> tuple[list[_Candidate], list[str], list[OpeningResourceResult], int, set[str], set[str], set[str], tuple[int, int, int, int, int, int]]:
+def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFile, names_by_identity: dict[str, str], limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> tuple[list[_Candidate], list[str], list[OpeningResourceResult], int, set[str], list[_RoleAssociation], list[_RoleAssociation], tuple[int, int, int, int, int, int]]:
     by_id, declared_spine, encrypted, package_identity = _manifest(package_report)
     manifest_by_identity = {identity: (media, properties) for identity, media, properties in by_id.values()}
     names = set(names_by_identity.values())
@@ -806,8 +1410,8 @@ def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFi
     navigation_links = 0
     navigation_expanded = navigation_text = navigation_nodes = 0
     navigation_opened = navigation_strict = navigation_recovered = 0
-    body_targets: set[str] = set()
-    excluded_targets: set[str] = set()
+    body_targets: list[_RoleAssociation] = []
+    excluded_targets: list[_RoleAssociation] = []
     navigation = [value for value in package_report.declarations if value.kind is DeclarationKind.NAVIGATION and value.resource_identity]
     if (
         len(navigation) == 1
@@ -840,8 +1444,8 @@ def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFi
                 manifest_by_identity,
                 limits,
             )
-            body_targets.update(nav_body_targets)
-            excluded_targets.update(nav_excluded_targets)
+            body_targets.extend(nav_body_targets)
+            excluded_targets.extend(nav_excluded_targets)
             candidates.extend(selected)
             warnings.extend(projection.warnings)
             warnings.extend(nav_warnings)
@@ -922,15 +1526,45 @@ def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFi
         )
     elif navigation:
         warnings.append("ambiguous_navigation_document")
+    raw_spine: tuple[tuple[str, bool], ...] | None = None
+    guide_fragments: dict[int, str | None] = {}
+    if package_identity in names_by_identity:
+        try:
+            package_data = _read_member(
+                archive,
+                names_by_identity[package_identity],
+                limits.package.opf_package_bytes,
+                request,
+            )
+            raw_spine, guide_fragments, invalid_linear = _raw_package_annotations(
+                package_data, package_report
+            )
+            if invalid_linear:
+                warnings.append("unusable_spine_relationship")
+        except (_ResourceRejected, ValueError):
+            warnings.append("unusable_spine_relationship")
     for declaration in package_report.declarations:
         if declaration.kind is not DeclarationKind.GUIDE_REFERENCE or not declaration.resource_identity or not declaration.identifier:
             continue
         semantic = declaration.identifier.casefold()
+        target_fragment = guide_fragments.get(declaration.source_ordinal)
         if semantic in {"text", "bodymatter"}:
-            body_targets.add(declaration.resource_identity)
+            body_targets.append(
+                _RoleAssociation(
+                    declaration.resource_identity, "epub2_guide", semantic,
+                    target_fragment, ("epub2_guide", semantic),
+                    declaration.source_ordinal,
+                )
+            )
             continue
         if semantic in {"preview", "sample", "advertisement"}:
-            excluded_targets.add(declaration.resource_identity)
+            excluded_targets.append(
+                _RoleAssociation(
+                    declaration.resource_identity, "epub2_guide", semantic,
+                    target_fragment, ("epub2_guide", semantic),
+                    declaration.source_ordinal,
+                )
+            )
             continue
         if semantic not in {"title-page", "copyright-page", "dedication", "acknowledgements", "preface", "foreword", "other.ms-firstpage"}:
             continue
@@ -938,34 +1572,96 @@ def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFi
         if declared is None:
             warnings.append("unmanifested_guide_target")
             continue
-        candidates.append(_Candidate(declaration.resource_identity, declared[0], ("epub2_guide", semantic.replace("-", "_")), declaration.source_ordinal))
+        normalized_semantic = semantic.replace("-", "_")
+        association = _RoleAssociation(
+            declaration.resource_identity,
+            "epub2_guide",
+            normalized_semantic,
+            target_fragment,
+            ("epub2_guide", normalized_semantic),
+            declaration.source_ordinal,
+        )
+        candidates.append(
+            _Candidate(
+                declaration.resource_identity,
+                declared[0],
+                ("epub2_guide", normalized_semantic),
+                declaration.source_ordinal,
+                target_fragment,
+                frozenset({normalized_semantic}),
+                frozenset({target_fragment}),
+                (association,),
+            )
+        )
     guide_targets: dict[str, set[str]] = {}
     for candidate in candidates:
         if candidate.selection_path[0] == "epub2_guide":
             guide_targets.setdefault(candidate.selection_path[-1], set()).add(candidate.identity)
     if any(len(values) > 1 for values in guide_targets.values()):
         warnings.append("ambiguous_guide_reference")
-    raw_spine: tuple[tuple[str, bool], ...] = ()
-    if package_identity in names_by_identity:
-        try:
-            package_data = _read_member(archive, names_by_identity[package_identity], limits.package.opf_package_bytes, request)
-            raw_spine = _raw_spine(package_data)
-        except (_ResourceRejected, ValueError):
-            warnings.append("unusable_spine_relationship")
-    if not raw_spine:
+    if raw_spine is None:
         raw_spine = tuple((identifier, True) for identifier in declared_spine)
     for order, (identifier, linear) in enumerate(raw_spine, 1):
         declared = by_id.get(identifier)
         if not linear or declared is None:
             continue
         identity, media_type, _properties = declared
-        candidates.append(_Candidate(identity, media_type, ("linear_spine_fallback",), 1_000_000 + order))
+        association = _RoleAssociation(
+            identity, "linear_spine_fallback", "linear_spine_fallback", None,
+            ("linear_spine_fallback",), 1_000_000 + order,
+        )
+        candidates.append(
+            _Candidate(
+                identity,
+                media_type,
+                ("linear_spine_fallback",),
+                1_000_000 + order,
+                opening_boundaries=frozenset({None}),
+                role_associations=(association,),
+            )
+        )
+
+    def candidate_key(value: _Candidate) -> tuple[int, int, int, tuple[str, ...]]:
+        return (
+            _SOURCE_RANK[value.selection_path[0]],
+            _ROLE_ORDER.get(value.selection_path[-1], len(_ROLE_ORDER)),
+            value.order,
+            value.selection_path,
+        )
+
+    grouped: dict[str, list[_Candidate]] = {}
+    for candidate in candidates:
+        grouped.setdefault(candidate.identity, []).append(candidate)
     deduplicated: list[_Candidate] = []
-    seen: set[str] = set()
-    for candidate in sorted(candidates, key=lambda value: (0 if value.selection_path[0] == "epub3_landmark" else 1 if value.selection_path[0] == "epub2_guide" else 2, value.order)):
-        if candidate.identity not in seen:
-            seen.add(candidate.identity)
-            deduplicated.append(candidate)
+    for group in grouped.values():
+        canonical = min(group, key=candidate_key)
+        role_candidates = tuple(
+            candidate for candidate in group if candidate.recognition_semantics
+        )
+        deduplicated.append(
+            _Candidate(
+                canonical.identity,
+                canonical.media_type,
+                canonical.selection_path,
+                canonical.order,
+                canonical.target_fragment,
+                frozenset().union(
+                    *(candidate.recognition_semantics for candidate in group)
+                ),
+                frozenset().union(
+                    *(
+                        candidate.opening_boundaries
+                        for candidate in (role_candidates or tuple(group))
+                    )
+                ),
+                tuple(
+                    association
+                    for candidate in group
+                    for association in candidate.role_associations
+                ),
+            )
+        )
+    deduplicated.sort(key=candidate_key)
     return (
         deduplicated,
         warnings,
@@ -1064,37 +1760,231 @@ def _claim(field: OpeningField, value: str, applicability: ObservationApplicabil
         return None
 
 
-def _recognize(projection: _Projection, source, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int) -> tuple[list[OpeningClaim], list[str], bool, bool]:
-    claims: list[OpeningClaim] = []
-    warnings: list[str] = list(projection.warnings)
-    body_transition = any(not element.active and element.semantics & _BODY_SEMANTICS for element in projection.elements)
-    excluded = any(not element.active and element.semantics & _EXCLUDED_SEMANTICS for element in projection.elements)
-    if excluded:
-        return [], warnings + ["explicitly_excluded_resource"], body_transition, True
-    title_context = selection_path[0] in {"epub3_landmark", "epub2_guide"} and any(value in {"titlepage", "halftitlepage", "title_page"} for value in selection_path[1:])
-    by_ordinal = {element.ordinal: element for element in projection.elements}
-    body_elements = tuple(
-        element
-        for element in projection.elements
-        if not element.active and element.semantics & _BODY_SEMANTICS
+def _association_key(
+    association: _RoleAssociation,
+) -> tuple[int, int, int, tuple[str, ...]]:
+    return (
+        _SOURCE_RANK[association.source_tier],
+        _ROLE_ORDER.get(association.role, len(_ROLE_ORDER)),
+        association.order,
+        association.selection_path,
     )
+
+
+def _fragment_index(projection: _Projection) -> dict[str, list[_Element]]:
+    result: dict[str, list[_Element]] = {}
+    for element in projection.elements:
+        if not _is_html_namespace(element.namespace):
+            continue
+        for identifier in element.fragment_ids:
+            digest = hashlib.sha256(
+                unicodedata.normalize("NFC", identifier).encode("utf-8")
+            ).hexdigest()
+            result.setdefault(digest, []).append(element)
+    return result
+
+
+def _scope_contains(scope: int | None, element: _Element) -> bool:
+    return scope is None or scope == element.ordinal or scope in element.ancestors
+
+
+def _recognition_context(
+    projection: _Projection,
+    candidate: _Candidate,
+    body_targets: list[_RoleAssociation],
+    excluded_targets: list[_RoleAssociation],
+) -> _RecognitionContext:
+    fragments = _fragment_index(projection)
+    warnings: list[str] = []
+
+    def resolve(
+        association: _RoleAssociation,
+    ) -> _Element | None | bool:
+        if association.fragment is None:
+            return None
+        matches = fragments.get(association.fragment, [])
+        if len(matches) != 1:
+            warnings.append("invalid_fragment_target")
+            return False
+        return matches[0]
+
+    relevant_body = [
+        association
+        for association in body_targets
+        if association.identity == candidate.identity
+    ]
+    relevant_excluded = [
+        association
+        for association in excluded_targets
+        if association.identity == candidate.identity
+    ]
+    body_positions = [
+        element.ordinal
+        for element in projection.elements
+        if _is_html_namespace(element.namespace)
+        and not element.active
+        and element.semantics & _BODY_SEMANTICS
+    ]
+    for association in relevant_body:
+        target = resolve(association)
+        if target is False:
+            continue
+        body_positions.append(0 if target is None else target.ordinal)
+    body_ordinal = min(body_positions) if body_positions else None
+    body_scopes = tuple(position for position in body_positions if position > 0)
+
+    excluded_scopes: list[int | None] = [
+        element.ordinal
+        for element in projection.elements
+        if _is_html_namespace(element.namespace)
+        and not element.active
+        and element.semantics & _EXCLUDED_SEMANTICS
+    ]
+    for association in relevant_excluded:
+        target = resolve(association)
+        if target is False:
+            continue
+        excluded_scopes.append(None if target is None else target.ordinal)
+
+    opening_roles = [
+        association
+        for association in candidate.role_associations
+        if association.source_tier != "linear_spine_fallback"
+    ]
+    resolved_roles: list[tuple[_RoleAssociation, _Element | None]] = []
+    for association in opening_roles:
+        target = resolve(association)
+        if target is not False:
+            resolved_roles.append((association, target))
+    if resolved_roles:
+        canonical_tier = min(
+            (association.source_tier for association, _target in resolved_roles),
+            key=_SOURCE_RANK.__getitem__,
+        )
+        tier_roles = [
+            (association, target)
+            for association, target in resolved_roles
+            if association.source_tier == canonical_tier
+        ]
+    else:
+        tier_roles = []
+    surviving: list[tuple[_RoleAssociation, _Element | None]] = []
+    for association, target in tier_roles:
+        position = 0 if target is None else target.ordinal
+        if body_ordinal is not None and position >= body_ordinal:
+            continue
+        if any(
+            scope is None
+            or (
+                target is not None
+                and _scope_contains(scope, target)
+            )
+            for scope in excluded_scopes
+        ):
+            continue
+        surviving.append((association, target))
+
+    if surviving:
+        canonical = min(
+            (association for association, _target in surviving),
+            key=_association_key,
+        )
+        selection_path = canonical.selection_path
+        semantics = frozenset(
+            association.role for association, _target in surviving
+        )
+        title_scopes = tuple(
+            None if target is None else target.ordinal
+            for association, target in surviving
+            if association.role in {"titlepage", "halftitlepage", "title_page"}
+        )
+        suppress_claims = False
+    elif tier_roles:
+        selection_path = min(
+            (association for association, _target in tier_roles),
+            key=_association_key,
+        ).selection_path
+        semantics = frozenset()
+        title_scopes = ()
+        suppress_claims = True
+    else:
+        fallback_roles = [
+            association
+            for association in candidate.role_associations
+            if association.source_tier == "linear_spine_fallback"
+        ]
+        selection_path = (
+            min(
+                fallback_roles or opening_roles,
+                key=_association_key,
+            ).selection_path
+            if fallback_roles or opening_roles
+            else candidate.selection_path
+        )
+        semantics = frozenset()
+        title_scopes = ()
+        suppress_claims = bool(opening_roles and not fallback_roles)
+    return _RecognitionContext(
+        selection_path,
+        semantics,
+        title_scopes,
+        body_ordinal,
+        tuple(dict.fromkeys(body_scopes)),
+        tuple(dict.fromkeys(excluded_scopes)),
+        tuple(sorted(set(warnings))),
+        suppress_claims,
+    )
+
+
+def _recognize(projection: _Projection, source, resource_identity: str, resource_digest: str, context: _RecognitionContext, lineage: str, excerpt_characters: int) -> tuple[list[OpeningClaim], list[str], bool, bool]:
+    claims: list[OpeningClaim] = []
+    warnings: list[str] = [*projection.warnings, *context.warnings]
+    body_transition = context.body_ordinal is not None
+    excluded = None in context.excluded_scopes
+    if body_transition:
+        warnings.append("body_transition_reached")
+    if context.excluded_scopes:
+        warnings.append("explicitly_excluded_resource")
+    if excluded or context.suppress_claims:
+        return [], warnings, body_transition, excluded
+    by_ordinal = {element.ordinal: element for element in projection.elements}
     claim_elements = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "dt", "dd", "li", "address", "figcaption"}
     for element in projection.elements:
         text = element.exact_text
-        if element.active:
+        if element.active or not _is_html_namespace(element.namespace):
+            continue
+        if (
+            context.body_ordinal is not None
+            and element.ordinal >= context.body_ordinal
+        ):
+            break
+        if any(
+            element.ordinal in by_ordinal[scope].ancestors
+            for scope in context.body_scopes
+        ):
+            continue
+        if any(
+            _scope_contains(scope, element)
+            or (
+                scope is not None
+                and element.ordinal in by_ordinal[scope].ancestors
+            )
+            for scope in context.excluded_scopes
+        ):
             continue
         semantic = element.semantics
-        if semantic & _BODY_SEMANTICS:
-            break
-        if any(element.ordinal in body.ancestors for body in body_elements):
-            continue
         if not text or element.end <= element.start:
             continue
         lowered = text.casefold()
         if element.name not in claim_elements and not semantic & _CLAIM_SEMANTICS:
             continue
+        title_context = any(
+            scope is None or scope == element.ordinal or scope in element.ancestors
+            for scope in context.title_scopes
+        )
         title_ancestor = any(
-            by_ordinal[ordinal].semantics & {"titlepage", "halftitlepage"}
+            _is_html_namespace(by_ordinal[ordinal].namespace)
+            and by_ordinal[ordinal].semantics & {"titlepage", "halftitlepage"}
             for ordinal in element.ancestors
         )
         candidates: list[
@@ -1227,7 +2117,9 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                     (
                         candidate
                         for candidate in reversed(projection.elements)
-                        if candidate.end <= element.start and candidate.exact_text
+                        if candidate.end <= element.start
+                        and candidate.exact_text
+                        and _is_html_namespace(candidate.namespace)
                     ),
                     None,
                 )
@@ -1309,7 +2201,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                 source,
                 resource_identity,
                 resource_digest,
-                selection_path,
+                context.selection_path,
                 lineage,
                 excerpt_characters,
                 normalized=normalized,
@@ -1401,35 +2293,13 @@ class EpubOpeningExtractor:
                 or nodes > limits.nodes_per_selection
             ):
                 raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+
             for candidate in candidates:
                 _check(request)
                 if selected >= limits.selected_documents:
                     warnings.append("selected_document_limit_reached")
                     break
-                if candidate.identity in body_targets:
-                    selected += 1
-                    resources.append(
-                        OpeningResourceResult(
-                            candidate.identity,
-                            OpeningResourceDisposition.EXCLUDED,
-                            candidate.selection_path,
-                            warnings=("body_transition_reached",),
-                        )
-                    )
-                    warnings.append("body_transition_reached")
-                    break
                 selected += 1
-                if candidate.identity in excluded_targets:
-                    resources.append(
-                        OpeningResourceResult(
-                            candidate.identity,
-                            OpeningResourceDisposition.EXCLUDED,
-                            candidate.selection_path,
-                            warnings=("explicitly_excluded_resource",),
-                        )
-                    )
-                    warnings.append("explicitly_excluded_resource")
-                    continue
                 if candidate.identity in encrypted:
                     resources.append(OpeningResourceResult(candidate.identity, OpeningResourceDisposition.ENCRYPTED, candidate.selection_path))
                     warnings.append("encrypted_optional_resource")
@@ -1463,16 +2333,19 @@ class EpubOpeningExtractor:
                         strict += 1
                     else:
                         recovered += 1
+                    context = _recognition_context(
+                        projection, candidate, body_targets, excluded_targets
+                    )
                     resource_claims, resource_warnings, body_transition, excluded = _recognize(
                         projection, request.expected_source, candidate.identity,
-                        hashlib.sha256(data).hexdigest(), candidate.selection_path,
+                        hashlib.sha256(data).hexdigest(), context,
                         package_lineage,
                         limits.excerpt_characters,
                     )
                     claims.extend(resource_claims)
                     warnings.extend(resource_warnings)
                     disposition = OpeningResourceDisposition.EXCLUDED if excluded else OpeningResourceDisposition.SELECTED if resource_claims else OpeningResourceDisposition.NO_CLAIMS
-                    resources.append(OpeningResourceResult(candidate.identity, disposition, candidate.selection_path, projection.mode, tuple(sorted(set(resource_warnings))), opened=True))
+                    resources.append(OpeningResourceResult(candidate.identity, disposition, context.selection_path, projection.mode, tuple(sorted(set(resource_warnings))), opened=True))
                     if body_transition:
                         warnings.append("body_transition_reached")
                         break

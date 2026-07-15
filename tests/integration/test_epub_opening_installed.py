@@ -97,9 +97,9 @@ class InstalledEpubOpeningCohortTests(unittest.TestCase):
             evidence = json.loads(qualify.stdout)
             self.assertEqual(evidence["schema"], "epub-opening-qualification-v1")
             self.assertEqual(evidence["artifact"], "installed-wheel-cli")
-            self.assertEqual(evidence["aggregate"]["total"], 23)
+            self.assertEqual(evidence["aggregate"]["total"], 29)
             self.assertEqual(
-                sum(evidence["aggregate"]["opening_outcomes"].values()), 23
+                sum(evidence["aggregate"]["opening_outcomes"].values()), 29
             )
             self.assertNotIn(str(root), qualify.stdout)
             self.assertNotIn(".epub", qualify.stdout)

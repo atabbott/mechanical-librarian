@@ -88,6 +88,58 @@ class MaterializeEpubFixturesTests(unittest.TestCase):
                 with self.assertRaises(MaterializationError):
                     _manifest(candidate)
 
+    def test_discriminating_opening_expectations_are_closed_and_privacy_safe(self) -> None:
+        original = json.loads(MANIFEST.read_text(encoding="utf-8"))
+
+        def expectation(value: dict[str, object]) -> dict[str, object]:
+            entry = next(
+                item
+                for item in value["fixtures"]
+                if item["id"] == "opening-utf16le-unsupported"
+            )
+            return entry["expected"]["opening"]
+
+        mutations = (
+            lambda value: expectation(value).pop("claims"),
+            lambda value: expectation(value).__setitem__("unknown", []),
+            lambda value: expectation(value)["claims"].append(
+                {"field": "title", "raw_value": "private/path"}
+            ),
+            lambda value: expectation(value)["claims"].append(
+                {"field": "invented", "raw_value": "Synthetic"}
+            ),
+            lambda value: expectation(value)["resources"][0].__setitem__(
+                "disposition", 1
+            ),
+            lambda value: expectation(value)["resources"][0].__setitem__(
+                "disposition", "invented"
+            ),
+            lambda value: expectation(value)["resources"][0].__setitem__(
+                "selection_path", ["private", "path"]
+            ),
+            lambda value: expectation(value)["resources"][0]["warnings"].append(
+                "invented_warning"
+            ),
+            lambda value: expectation(value).__setitem__("warnings", "warning"),
+            lambda value: expectation(value)["warnings"].append(
+                "invented_warning"
+            ),
+            lambda value: expectation(value).__setitem__(
+                "usage", {"invented": 1}
+            ),
+            lambda value: expectation(value).__setitem__(
+                "usage", {"navigation_links": -1}
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            candidate = Path(temporary) / "manifest.json"
+            for mutate in mutations:
+                value = json.loads(json.dumps(original))
+                mutate(value)
+                candidate.write_text(json.dumps(value), encoding="utf-8")
+                with self.assertRaises(MaterializationError):
+                    _manifest(candidate)
+
     def test_two_clean_offline_runs_are_environment_and_order_independent(self) -> None:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         reversed_manifest = dict(manifest)

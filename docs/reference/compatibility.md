@@ -61,9 +61,11 @@ Strict XHTML and bounded deterministic recovery are supported outcomes.
 Recovery is compatibility behavior, not conformance repair: it never rewrites
 the EPUB or adds rendering, CSS, active-content, base-URL, external-resource,
 filesystem, or network authority. UTF-8, Windows-1252, and ISO-8859-1 recovery
-are supported when safely declared; other recovered encodings are typed
-unsupported. Ordinary HTML/XHTML doctypes and their external identifiers are
-inert recovery syntax and are never resolved. Entity declarations, internal
+are supported when a real XML declaration or supported HTML charset declaration
+selects them; conflicting declarations and other recovered encodings are typed
+unsupported. Declaration lookalikes in comments, prose, arbitrary attributes,
+scripts, or styles are inert. Ordinary HTML/XHTML doctypes and their external
+identifiers are inert recovery syntax and are never resolved. Entity declarations, internal
 subsets, non-HTML doctypes, and external resolution remain rejected. Parser,
 recovery, projection, selection, normalizer, vocabulary,
 limits, extractor, and schema versions all invalidate later reuse when changed.
@@ -74,6 +76,38 @@ Structural Semantics Vocabulary and have no F07a semantic authority.
 F06 and F07 use the same capability-independent, source-fingerprint-derived
 lineage value; a child payload cannot establish correlation by coordinating
 forged report and citation fields.
+Raw OPF annotations never re-admit an itemref that F06 rejected. Same-resource
+opening, body, and exclusion fragment targets retain distinct boundaries, and
+all recognition-material opening roles survive deterministic one-open
+deduplication. Fragment validity is resolved before precedence, and only the
+highest-precedence tier with a surviving valid opening role can authorize
+recognition; one surviving role from that tier supplies canonical provenance.
+A valid higher tier suppressed by body or exclusion semantics prevents
+lower-tier fallback. Invalid-only optional roles cannot authorize claims when
+no valid guide or spine association exists. Empty and absent fragments are equivalent; nonempty decoded
+fragments require one unique HTML/XHTML `id` or `xml:id`. Body targets stop at
+the earliest valid position and exclusions are scoped to their target element.
+Raw `linear` accepts only absent, exact `yes`, or exact `no` values.
+Duplicate declaration and controlled recovery attributes, malformed or
+reordered XML declarations, inert RCDATA/template/foreign-meta lookalikes,
+BOM-less UTF-16/UTF-32 signatures or NULs anywhere in a bounded payload,
+missing or empty named-prefix bindings, and undeclared-prefix HTML lookalikes all
+fail or remain inert according to the closed recovery profile. Implicit
+recovered SVG and MathML subtrees remain foreign beneath an XHTML default;
+HTML implied-close searches stop at foreign boundaries. Explicit end-tag
+searches stay within the current contiguous namespace region, may close its
+matching foreign boundary, and cannot reach an HTML/XHTML ancestor below that
+boundary. Unqualified ends resolve through the current default namespace, and
+missing, empty-bound, or duplicated qualified prefixes use opaque
+prefix-specific identities. Self-closing syntax cannot close an older element
+when its own start was not pushed. Namespace declarations are grouped per
+prefix, preserving unique bindings (including a foreign default), treating an
+explicit unique empty default as an HTML-equivalent no-namespace reset, and
+keeping empty named prefixes opaque. Only a duplicated prefix is unknown. Any
+duplicated prefix is malformed rather than an encoding failure, while supported
+active charset declarations remain available for decoding before malformed
+classification and foreign meta remains inert. Duplicate href anchors are
+charged before target validation.
 
 The reusable generated registry is `epub-evidence-f07a-v2`. Its F07a
 file-backed cohort is materialized offline and every declared consumer runs

@@ -76,20 +76,119 @@ _EXIT_BY_OUTCOME = {
     "cancellation": 5, "unstable_source": 5, "child_failure": 70,
     "internal_failure": 70,
 }
+OPENING_CLAIM_FIELDS = frozenset({
+    "title", "subtitle", "contributor", "contributor_role", "publisher",
+    "imprint", "publication_date", "copyright_date", "edition", "printing",
+    "revision", "translation", "illustration", "series", "series_order",
+    "omnibus_membership", "anthology_membership", "identifier",
+})
+OPENING_WARNING_CODES = frozenset({
+    "ambiguous_edition", "ambiguous_guide_reference", "ambiguous_identifier",
+    "ambiguous_navigation_document", "ambiguous_navigation_landmark",
+    "ambiguous_title", "body_transition_reached", "contradictory_series",
+    "duplicate_manifest_resource", "encrypted_navigation_document",
+    "encrypted_optional_resource", "explicitly_excluded_resource",
+    "identifier_applicability_unknown", "image_only_resource",
+    "invalid_fragment_target", "invalid_guide_reference",
+    "invalid_manifest_fallback", "invalid_manifest_item",
+    "invalid_navigation_declaration", "invalid_navigation_target",
+    "invalid_ncx_declaration", "invalid_spine_item",
+    "malformed_selected_resource", "missing_manifest_resource",
+    "missing_selected_resource", "navigation_resource_limit",
+    "opaque_resource_encrypted", "recovered_markup", "unsafe_construct",
+    "selected_document_limit_reached", "selected_resource_limit",
+    "unsafe_claim_suppressed", "unsupported_encoding",
+    "unsupported_resource_media", "unmanifested_guide_target",
+    "unmanifested_navigation_target", "unusable_navigation_document",
+    "unusable_spine_relationship",
+})
+OPENING_RESOURCE_DISPOSITIONS = frozenset({
+    "selected", "no_claims", "missing", "image_only", "malformed",
+    "unsupported_media", "unsupported_encoding", "encrypted",
+    "resource_limit", "excluded",
+})
+OPENING_USAGE_FIELDS = frozenset({
+    "selected_documents", "opened_resources", "expanded_bytes",
+    "text_characters", "nodes", "navigation_links", "strict_documents",
+    "recovered_documents",
+})
+_EPUB3_LANDMARKS = frozenset({
+    "titlepage", "halftitlepage", "copyright-page", "dedication",
+    "contributors", "imprint", "frontmatter", "seriespage", "other-credits",
+})
+_EPUB2_GUIDE_TYPES = frozenset({
+    "title_page", "copyright_page", "dedication", "acknowledgements",
+    "preface", "foreword", "other.ms_firstpage",
+})
+
+
+def is_opening_selection_path(value: object) -> bool:
+    if type(value) is not list or any(type(part) is not str for part in value):
+        return False
+    return (
+        value == ["epub3_navigation"]
+        or value == ["linear_spine_fallback"]
+        or (
+            len(value) == 2
+            and (
+                (value[0] == "epub3_landmark" and value[1] in _EPUB3_LANDMARKS)
+                or (value[0] == "epub2_guide" and value[1] in _EPUB2_GUIDE_TYPES)
+            )
+        )
+    )
 
 
 def _expected(value: object, label: str) -> dict[str, object] | None:
     if value is None and label == "opening":
         return None
+    allowed = {"exit", "outcome"}
+    if label == "opening":
+        allowed.update({"claims", "resources", "usage", "warnings"})
     if (
         type(value) is not dict
-        or set(value) != {"exit", "outcome"}
+        or not {"exit", "outcome"} <= set(value) <= allowed
         or type(value.get("outcome")) is not str
         or value["outcome"] not in _EXIT_BY_OUTCOME
         or type(value.get("exit")) is not int
         or value["exit"] != _EXIT_BY_OUTCOME[value["outcome"]]
     ):
         raise MaterializationError(f"fixture {label} expectation is malformed")
+    if label == "opening" and set(value) != {"exit", "outcome"}:
+        claims = value.get("claims")
+        resources = value.get("resources")
+        usage = value.get("usage", {})
+        warnings = value.get("warnings")
+        if (
+            type(claims) is not list
+            or any(
+                type(claim) is not dict
+                or set(claim) != {"field", "raw_value"}
+                or claim["field"] not in OPENING_CLAIM_FIELDS
+                or type(claim["raw_value"]) is not str
+                or not claim["raw_value"]
+                or len(claim["raw_value"]) > 280
+                or any(marker in claim["raw_value"].casefold() for marker in (".epub", "/", "\\"))
+                for claim in claims
+            )
+            or type(resources) is not list
+            or any(
+                type(resource) is not dict
+                or set(resource) != {"disposition", "selection_path", "warnings"}
+                or resource["disposition"] not in OPENING_RESOURCE_DISPOSITIONS
+                or not is_opening_selection_path(resource["selection_path"])
+                or type(resource["warnings"]) is not list
+                or any(warning not in OPENING_WARNING_CODES for warning in resource["warnings"])
+                for resource in resources
+            )
+            or type(usage) is not dict
+            or not set(usage) <= OPENING_USAGE_FIELDS
+            or any(type(amount) is not int or amount < 0 for amount in usage.values())
+            or type(warnings) is not list
+            or any(warning not in OPENING_WARNING_CODES for warning in warnings)
+        ):
+            raise MaterializationError(
+                "fixture opening discriminating expectation is malformed"
+            )
     return value
 
 
