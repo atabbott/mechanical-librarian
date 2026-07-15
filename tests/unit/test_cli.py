@@ -51,6 +51,7 @@ from mechanical_librarian.interfaces.cli import main
 from mechanical_librarian.bootstrap.composition import (
     _run_hardcover_title_proposal_report,
     _run_synthetic_title_proposal_report,
+    _run_synthetic_title_review_case_report,
 )
 from mechanical_librarian.infrastructure.persistence import sqlite as sqlite_foundation
 from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate
@@ -595,6 +596,114 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertEqual(output.getvalue(), "")
         self.assertEqual(errors.getvalue(), "Synthetic title preview failed safely.\n")
+
+    def test_title_review_invalid_and_extra_inputs_precede_runner_and_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "schema-six-private.sqlite"
+            connection = connect(database)
+            try:
+                with patch.object(
+                    sqlite_foundation, "MIGRATIONS", sqlite_foundation.MIGRATIONS[:6]
+                ):
+                    self.assertEqual(migrate(connection), 6)
+            finally:
+                connection.close()
+            invocations = (
+                ["--scenario", "unknown"],
+                ["--scenario", "agree-empty", "--proposal-id", "proposal-arbitrary"],
+                ["--scenario", "agree-empty", "--title", "Private title"],
+                ["--scenario", "agree-empty", "--disposition", "auto_apply"],
+            )
+            for extra in invocations:
+                with self.subTest(extra=extra):
+                    runner = Mock()
+                    output = io.StringIO()
+                    errors = io.StringIO()
+                    exit_code = main(
+                        [
+                            "synthetic-title-review-case-report",
+                            "--database", str(database),
+                            *extra,
+                        ],
+                        state_check_runner=lambda _path: StateCheckResult(
+                            StateCheckOutcome.READY
+                        ),
+                        synthetic_title_review_case_runner=runner,
+                        stdout=output,
+                        stderr=errors,
+                    )
+                    self.assertEqual(exit_code, 2)
+                    self.assertEqual(output.getvalue(), "")
+                    self.assertEqual(
+                        errors.getvalue(),
+                        "Synthetic title review case invocation is invalid.\n",
+                    )
+                    runner.assert_not_called()
+            inspected = sqlite_foundation.sqlite3.connect(database)
+            try:
+                self.assertEqual(
+                    inspected.execute("SELECT MAX(version) FROM schema_migrations").fetchone(),
+                    (6,),
+                )
+            finally:
+                inspected.close()
+
+    def test_title_review_json_and_text_use_one_bounded_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.sqlite"
+            _run_synthetic_title_proposal_report(source, "agree-empty")
+            report = _run_synthetic_title_review_case_report(source, "agree-empty")
+            for output_format in ("json", "text"):
+                with self.subTest(output_format=output_format):
+                    target = Path(directory) / "unused-private.sqlite"
+                    runner = Mock(return_value=report)
+                    output = io.StringIO()
+                    errors = io.StringIO()
+                    exit_code = main(
+                        [
+                            "synthetic-title-review-case-report",
+                            "--database", str(target),
+                            "--scenario", "agree-empty",
+                            "--format", output_format,
+                        ],
+                        state_check_runner=lambda _path: StateCheckResult(
+                            StateCheckOutcome.READY
+                        ),
+                        synthetic_title_review_case_runner=runner,
+                        stdout=output,
+                        stderr=errors,
+                    )
+                    self.assertEqual(exit_code, 0)
+                    self.assertEqual(errors.getvalue(), "")
+                    runner.assert_called_once_with(target, "agree-empty")
+                    self.assertNotIn(str(target), output.getvalue())
+                    if output_format == "json":
+                        self.assertEqual(json.loads(output.getvalue()), report.to_data())
+                    else:
+                        self.assertIn('authority="synthetic-report-only"\n', output.getvalue())
+
+    def test_title_review_failure_has_exit_one_and_fixed_redacted_stderr(self) -> None:
+        def hostile(_database: Path, _scenario: str):
+            raise RuntimeError("/private/path authorization=secret")
+
+        output = io.StringIO()
+        errors = io.StringIO()
+        exit_code = main(
+            [
+                "synthetic-title-review-case-report",
+                "--database", "private.sqlite",
+                "--scenario", "agree-empty",
+            ],
+            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+            synthetic_title_review_case_runner=hostile,
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(
+            errors.getvalue(), "Synthetic title review case failed safely.\n"
+        )
 
     def test_hardcover_title_invalid_secret_syntax_precedes_runner_and_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -53,6 +53,8 @@ EXPECTED = {
     "stale-input": "stale_input",
     "supersede-before": "needs_review",
     "supersede-after": "needs_review",
+    "retire-before": "needs_review",
+    "retire-after": "no_change",
 }
 
 
@@ -91,8 +93,9 @@ class SyntheticTitleProposalIntegrationTests(unittest.TestCase):
             database = Path(directory) / "state.sqlite"
             for name, expected in EXPECTED.items():
                 with self.subTest(name=name):
-                    if name == "supersede-after":
-                        _run_synthetic_title_proposal_report(database, "supersede-before")
+                    if name in {"supersede-after", "retire-after"}:
+                        predecessor = name.replace("after", "before")
+                        _run_synthetic_title_proposal_report(database, predecessor)
                     report = _run_synthetic_title_proposal_report(database, name)
                     data = report.to_data()
                     self.assertEqual(data["result"], expected)
@@ -128,6 +131,25 @@ class SyntheticTitleProposalIntegrationTests(unittest.TestCase):
                 (after.proposal_set.lineage,),
             ).fetchone()
             self.assertEqual(pointer, (after.proposal_set.set_id,))
+
+            retired_before = _run_synthetic_title_proposal_report(
+                database, "retire-before"
+            )
+            retired_after = _run_synthetic_title_proposal_report(
+                database, "retire-after"
+            )
+            retired_reverse = _run_synthetic_title_proposal_report(
+                database, "retire-before"
+            )
+            self.assertEqual(
+                retired_after.proposal_set.previous_set_id,
+                retired_before.proposal_set.set_id,
+            )
+            self.assertEqual(
+                retired_after.proposal_set.result, TitleProposalResult.NO_CHANGE
+            )
+            self.assertTrue(retired_reverse.persistence.replayed)
+            self.assertFalse(retired_reverse.persistence.current)
 
     def test_current_holds_one_read_snapshot_across_concurrent_supersession(self) -> None:
         class InterleavingCursor:

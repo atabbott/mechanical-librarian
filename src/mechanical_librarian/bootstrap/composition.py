@@ -44,6 +44,9 @@ from mechanical_librarian.adapters.evidence_extractors.synthetic_epub import (
 from mechanical_librarian.adapters.persistence.title_proposals import (
     SQLiteTitleProposalRepository,
 )
+from mechanical_librarian.adapters.persistence.title_review_cases import (
+    SQLiteTitleReviewCaseRepository,
+)
 from mechanical_librarian.adapters.providers.synthetic_title import (
     SyntheticTitleProvider,
 )
@@ -105,7 +108,12 @@ from mechanical_librarian.application.title_proposals import (
     ProposeSyntheticTitle,
     SyntheticScenario,
     SyntheticTitleProposalReport,
+    scenario_lineage,
     scenario_named,
+)
+from mechanical_librarian.application.title_review_cases import (
+    InspectSyntheticTitleReviewCase,
+    SyntheticTitleReviewCaseReport,
 )
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
@@ -1125,6 +1133,28 @@ def _store_precomputed_title_proposal(
             connection.close()
 
 
+def _run_synthetic_title_review_case_report(
+    database: Path, scenario_name: str
+) -> SyntheticTitleReviewCaseReport:
+    """Admit only the already-persisted current F09a lineage selected by scenario."""
+
+    lineage = scenario_lineage(scenario_name)
+    preflight(database)
+    if not path_entry_exists(database):
+        raise SchemaError("synthetic title review state is unavailable")
+    preflight(database)
+    connection = None
+    try:
+        connection = connect_existing(database)
+        migrate(connection)
+        return InspectSyntheticTitleReviewCase(
+            SQLiteTitleReviewCaseRepository(connection)
+        ).run(lineage)
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Assemble the current process and delegate to its CLI interface."""
 
@@ -1141,6 +1171,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         epub_package_report_runner=_run_epub_package_report,
         synthetic_title_proposal_runner=_run_synthetic_title_proposal_report,
         hardcover_title_proposal_runner=_run_hardcover_title_proposal_report,
+        synthetic_title_review_case_runner=_run_synthetic_title_review_case_report,
     )
 
 

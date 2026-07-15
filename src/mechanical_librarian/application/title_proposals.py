@@ -110,6 +110,21 @@ SCENARIOS: dict[str, SyntheticScenario] = {
         "supersede-after", lineage_revision=2, current_title="Original Synthetic Title",
         local_titles=("Second Proposed Title",),
     ),
+    "retire-before": SyntheticScenario(
+        "retire-before", current_title="Original Synthetic Title",
+        local_titles=("Retiring Proposed Title",),
+    ),
+    "retire-after": SyntheticScenario(
+        "retire-after", lineage_revision=2, current_title="Retiring Proposed Title",
+        local_titles=("Retiring Proposed Title",),
+    ),
+}
+
+_LINKED_SCENARIOS = {
+    "supersede-before": ("supersession", 1, None),
+    "supersede-after": ("supersession", 2, "supersede-before"),
+    "retire-before": ("retirement", 1, None),
+    "retire-after": ("retirement", 2, "retire-before"),
 }
 
 
@@ -291,23 +306,25 @@ class ProposeSyntheticTitle:
         lineage = _proposal_lineage(scenario, self._profile, provider_data)
         previous = self._repository.current(lineage)
         previous_set_id = None
-        if scenario.lineage_revision == 2:
+        linked = _LINKED_SCENARIOS.get(scenario.name)
+        expected_predecessor = None if linked is None else linked[2]
+        if expected_predecessor is not None:
             if (
                 previous is not None
                 and previous.lineage_revision == 1
-                and previous.scenario == "supersede-before"
+                and previous.scenario == expected_predecessor
             ):
                 previous_set_id = previous.set_id
             elif (
                 previous is not None
                 and previous.lineage_revision == 2
-                and previous.scenario == "supersede-after"
+                and previous.scenario == scenario.name
                 and previous.previous_set_id is not None
             ):
                 previous_set_id = previous.previous_set_id
             else:
-                raise TitleProposalRunError("synthetic supersession predecessor is missing")
-        elif previous is not None and scenario.name.startswith("supersede-"):
+                raise TitleProposalRunError("synthetic linked predecessor is missing")
+        elif previous is not None and linked is not None:
             if previous.set_id != previous_set_id and previous.lineage_revision >= scenario.lineage_revision:
                 # Replay remains valid and the repository must not rewind its pointer.
                 previous_set_id = None
@@ -567,9 +584,16 @@ def _proposal_lineage(
 
 
 def _scenario_lineage(scenario: SyntheticScenario) -> str:
-    if scenario.name in {"supersede-before", "supersede-after"}:
-        return f"{SYNTHETIC_LINEAGE}-supersession"
+    linked = _LINKED_SCENARIOS.get(scenario.name)
+    if linked is not None:
+        return f"{SYNTHETIC_LINEAGE}-{linked[0]}"
     return f"{SYNTHETIC_LINEAGE}-{scenario.name}"
+
+
+def scenario_lineage(name: str) -> str:
+    """Resolve only the closed synthetic scenario vocabulary to a lineage."""
+
+    return _scenario_lineage(scenario_named(name))
 
 
 __all__ = [
@@ -577,5 +601,5 @@ __all__ = [
     "HARDCOVER_POC_PROVIDER_VERSION", "ProposalPersistence", "ProposeSyntheticTitle",
     "ProviderPreviewProfile", "SCENARIOS", "SCENARIO_REVISION", "SYNTHETIC_LINEAGE", "SyntheticScenario",
     "SyntheticTitleProposalReport", "TitleProposalRepository", "TitleProposalRunError",
-    "render_title_proposal_text", "scenario_named",
+    "render_title_proposal_text", "scenario_lineage", "scenario_named",
 ]
