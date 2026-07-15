@@ -7,6 +7,10 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Fixed Hardcover provider-secret validation so leading or trailing space, tab,
+  carriage return, or line feed is rejected before client construction, DNS,
+  or transport activity while preserving existing target-secret compatibility.
+
 - Added `epub-opening-report`, a transient F07a command that composes the F06
   archive/package gate with bounded EPUB 3 landmark, EPUB 2 guide, and linear-
   spine selection; strict and deterministic recovered XHTML/HTML projection;

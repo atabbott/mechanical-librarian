@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import stat
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from mechanical_librarian.domain.inventory import SecretReference
@@ -18,7 +19,18 @@ class PrivateSecretMaterial:
         return "PrivateSecretMaterial(<redacted>)"
 
 
-def read_private_secret(reference: SecretReference) -> PrivateSecretMaterial | None:
+class BoundaryWhitespacePolicy(Enum):
+    """Control compatibility handling at private-secret file boundaries."""
+
+    TRIM = "trim"
+    REJECT = "reject"
+
+
+def read_private_secret(
+    reference: SecretReference,
+    *,
+    boundary_whitespace: BoundaryWhitespacePolicy = BoundaryWhitespacePolicy.TRIM,
+) -> PrivateSecretMaterial | None:
     descriptor: int | None = None
     try:
         if type(reference) is not SecretReference:
@@ -44,7 +56,11 @@ def read_private_secret(reference: SecretReference) -> PrivateSecretMaterial | N
         payload = os.read(descriptor, information.st_size + 1)
         if len(payload) != information.st_size:
             return None
-        value = payload.decode("utf-8").strip()
+        value = payload.decode("utf-8")
+        if boundary_whitespace is BoundaryWhitespacePolicy.TRIM:
+            value = value.strip()
+        elif boundary_whitespace is not BoundaryWhitespacePolicy.REJECT:
+            return None
         if (
             not value
             or len(value.encode("utf-8")) > 2_048
@@ -62,4 +78,8 @@ def read_private_secret(reference: SecretReference) -> PrivateSecretMaterial | N
             os.close(descriptor)
 
 
-__all__ = ["PrivateSecretMaterial", "read_private_secret"]
+__all__ = [
+    "BoundaryWhitespacePolicy",
+    "PrivateSecretMaterial",
+    "read_private_secret",
+]
