@@ -93,6 +93,9 @@ class ReviewAdmission:
             self.source_result is not TitleProposalResult.NEEDS_REVIEW
             or self.current_case is None
             or self.current_case.source_set_id != self.source_set_id
+            or self.current_case.source_revision not in {1, 2}
+            or (self.current_case.source_revision == 1)
+            != (self.current_case.manifest["previous_set_id"] is None)
             or self.case_history_count != 1
             or self.transition_count != 1
         ):
@@ -106,6 +109,9 @@ class ReviewAdmission:
             or self.previous_case.binding_version != self.current_case.binding_version
             or self.previous_case.target != self.current_case.target
             or self.previous_case.lineage != self.current_case.lineage
+            or self.previous_case.source_revision != 1
+            or self.previous_case.manifest["previous_set_id"] is not None
+            or self.current_case.source_revision != 2
             or self.current_case.source_revision != self.previous_case.source_revision + 1
             or self.current_case.manifest["previous_set_id"]
             != self.previous_case.source_set_id
@@ -117,6 +123,8 @@ class ReviewAdmission:
             self.source_result not in _FRESH_NONQUALIFYING_RESULTS
             or self.previous_case is None
             or self.current_case is not None
+            or self.previous_case.source_revision != 1
+            or self.previous_case.manifest["previous_set_id"] is not None
             or self.case_history_count != 1
             or self.transition_count != 2
         ):

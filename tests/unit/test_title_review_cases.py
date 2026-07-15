@@ -223,6 +223,13 @@ class ReviewAdmissionTests(unittest.TestCase):
                 1,
             ),
             (
+                ReviewTransitionKind.CREATED,
+                None,
+                self.current,
+                1,
+                1,
+            ),
+            (
                 ReviewTransitionKind.SUPERSEDED,
                 self.previous,
                 self.current,
@@ -389,6 +396,118 @@ class ReviewAdmissionTests(unittest.TestCase):
             (
                 "needs review no case",
                 {**no_case, "source_result": TitleProposalResult.NEEDS_REVIEW},
+            ),
+        )
+        for name, values in invalid:
+            for replayed in (False, True):
+                with self.subTest(name=name, replayed=replayed):
+                    with self.assertRaises(ValueError):
+                        ReviewAdmission(**{**values, "replayed": replayed})  # type: ignore[arg-type]
+
+    def test_lifecycle_revisions_are_closed_to_f10a_window(self) -> None:
+        created_revision_3 = qualifying_case_revision(3, previous_set_id=None)
+        superseded_revision_2 = qualifying_case_revision(2, previous_set_id=None)
+        superseded_revision_3 = qualifying_case_revision(
+            3,
+            previous_set_id=superseded_revision_2.source_set_id,
+        )
+        retired_revision_2 = qualifying_case_revision(2, previous_set_id=None)
+        invalid = (
+            admission_values(
+                ReviewTransitionKind.CREATED,
+                source_result=TitleProposalResult.NEEDS_REVIEW,
+                previous_case=None,
+                current_case=created_revision_3,
+                case_history_count=1,
+                transition_count=1,
+            ),
+            admission_values(
+                ReviewTransitionKind.SUPERSEDED,
+                source_result=TitleProposalResult.NEEDS_REVIEW,
+                previous_case=superseded_revision_2,
+                current_case=superseded_revision_3,
+                case_history_count=2,
+                transition_count=2,
+            ),
+            admission_values(
+                ReviewTransitionKind.RETIRED,
+                source_result=TitleProposalResult.NO_CHANGE,
+                previous_case=retired_revision_2,
+                current_case=None,
+                case_history_count=1,
+                transition_count=2,
+            ),
+        )
+        for values in invalid:
+            for replayed in (False, True):
+                with self.subTest(
+                    kind=values["transition_kind"],
+                    replayed=replayed,
+                ):
+                    with self.assertRaises(ValueError):
+                        ReviewAdmission(**{**values, "replayed": replayed})  # type: ignore[arg-type]
+
+    def test_lifecycle_predecessor_shapes_are_closed_to_f10a_window(self) -> None:
+        created_revision_1_with_predecessor = qualifying_case_revision(
+            1,
+            previous_set_id="ps-claimed-predecessor",
+        )
+        created_revision_2_without_predecessor = qualifying_case_revision(
+            2,
+            previous_set_id=None,
+        )
+        malformed_predecessor = qualifying_case_revision(
+            1,
+            previous_set_id="ps-claimed-predecessor",
+        )
+        linked_replacement = qualifying_case_revision(
+            2,
+            previous_set_id=malformed_predecessor.source_set_id,
+        )
+        invalid = (
+            (
+                "created revision 1 with predecessor",
+                admission_values(
+                    ReviewTransitionKind.CREATED,
+                    source_result=TitleProposalResult.NEEDS_REVIEW,
+                    previous_case=None,
+                    current_case=created_revision_1_with_predecessor,
+                    case_history_count=1,
+                    transition_count=1,
+                ),
+            ),
+            (
+                "created revision 2 without predecessor",
+                admission_values(
+                    ReviewTransitionKind.CREATED,
+                    source_result=TitleProposalResult.NEEDS_REVIEW,
+                    previous_case=None,
+                    current_case=created_revision_2_without_predecessor,
+                    case_history_count=1,
+                    transition_count=1,
+                ),
+            ),
+            (
+                "superseded malformed predecessor",
+                admission_values(
+                    ReviewTransitionKind.SUPERSEDED,
+                    source_result=TitleProposalResult.NEEDS_REVIEW,
+                    previous_case=malformed_predecessor,
+                    current_case=linked_replacement,
+                    case_history_count=2,
+                    transition_count=2,
+                ),
+            ),
+            (
+                "retired malformed predecessor",
+                admission_values(
+                    ReviewTransitionKind.RETIRED,
+                    source_result=TitleProposalResult.NO_CHANGE,
+                    previous_case=malformed_predecessor,
+                    current_case=None,
+                    case_history_count=1,
+                    transition_count=2,
+                ),
             ),
         )
         for name, values in invalid:

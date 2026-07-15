@@ -137,6 +137,42 @@ class SyntheticTitleReviewCaseIntegrationTests(unittest.TestCase):
             self.assertEqual(data["authority"], "synthetic-report-only")
             self.assertIs(data["production_applicable"], False)
 
+    def test_first_admission_accepts_current_qualifying_revision_two(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "state.sqlite"
+            before = _run_synthetic_title_proposal_report(
+                database, "supersede-before"
+            )
+            after = _run_synthetic_title_proposal_report(database, "supersede-after")
+
+            first = _run_synthetic_title_review_case_report(database, "supersede-after")
+            state = _review_rows(database)
+            replay = _run_synthetic_title_review_case_report(
+                database, "supersede-after"
+            )
+
+            self.assertEqual(before.proposal_set.lineage_revision, 1)
+            self.assertEqual(after.proposal_set.lineage_revision, 2)
+            self.assertEqual(
+                after.proposal_set.previous_set_id,
+                before.proposal_set.set_id,
+            )
+            current = first.admission.current_case
+            self.assertIsNotNone(current)
+            assert current is not None
+            self.assertEqual(current.source_revision, 2)
+            self.assertIsNone(first.admission.previous_case)
+            self.assertEqual(
+                first.admission.transition_kind,
+                ReviewTransitionKind.CREATED,
+            )
+            self.assertEqual(first.admission.case_history_count, 1)
+            self.assertEqual(first.admission.transition_count, 1)
+            self.assertFalse(first.admission.replayed)
+            self.assertEqual(replay.admission.current_case, first.admission.current_case)
+            self.assertTrue(replay.admission.replayed)
+            self.assertEqual(_review_rows(database), state)
+
     def test_every_current_zero_proposal_result_records_no_case(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             for scenario in ZERO_SCENARIOS:
