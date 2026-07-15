@@ -61,12 +61,13 @@ changes.
 
 ## Delivery-control qualification
 
-The tracked `.codex` tree contains the canonical delivery workflows, role
-declarations, schemas, and deterministic control tests. Material changes to
-that tree require a tracked focused change and the qualification commands in
-[the delivery-control guide](docs/development/workflow-control-plane.md).
-Private run records, local resource paths, and session artifacts remain
-untracked.
+The tracked `.codex` tree contains the canonical delivery workflows, profiles,
+and deterministic control tests. Changes confined to that workflow-control
+tree do not require a tracking ticket, but still require the qualification
+commands in [the delivery-control guide](docs/development/workflow-control-plane.md).
+Normal tracking rules still apply when a change also affects product, release,
+dependency, security, architecture, schema, or CI behavior. Private run
+records, local resource paths, and session artifacts remain untracked.
 
 ## Pull requests
 

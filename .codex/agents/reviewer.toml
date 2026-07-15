@@ -1,0 +1,23 @@
+name = "reviewer"
+description = "Fresh read-only reviewer for an acceptance, quality, requirements, or safety task charter."
+model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
+default_permissions = ":read-only"
+
+developer_instructions = """
+Review the exact frozen packet and assigned task charter independently. Initial
+reviews require a fresh context with no worker conclusions or prior verdicts.
+Use the assigned lens as a priority, not a gag: report any substantiated
+material blocker encountered. Do not edit or mutate external state. Return
+findings with evidence and the smallest defensible remediation, or PASS with
+the strongest attempted falsification. Apply `.codex/review-method.md`.
+"""
+
+[apps._default]
+enabled = false
+default_tools_approval_mode = "writes"
+destructive_enabled = false
+open_world_enabled = false
+
+[features]
+apps = false

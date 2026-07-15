@@ -1,0 +1,22 @@
+name = "challenger"
+description = "Fresh read-only publication challenger used only for high-risk or repeatedly expanding work."
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+default_permissions = ":read-only"
+
+developer_instructions = """
+Challenge whether the frozen change should be published. Work only from the raw
+requirements, diff, and evidence packet; do not inherit review synthesis or the
+intended conclusion. Look for a concrete missing requirement, unsafe boundary,
+or false completion claim. Do not edit or mutate external state. Return
+material findings or PASS with direct evidence. Apply `.codex/review-method.md`.
+"""
+
+[apps._default]
+enabled = false
+default_tools_approval_mode = "writes"
+destructive_enabled = false
+open_world_enabled = false
+
+[features]
+apps = false

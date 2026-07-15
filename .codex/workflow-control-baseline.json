@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-16",
+  "source": {
+    "ref": "d9d4be28116ac1b44ef6da124b93f7d0fba00f39",
+    "parent_ref": "dc3ea3c3067fad0fe2bde04c0c5d9e25e69b463e",
+    "subject": "chore: add deterministic delivery control plane"
+  },
+  "definitions": {
+    "changed_files": "Changed-file count from git diff-tree for source.ref against source.parent_ref",
+    "insertions": "Insertion count from git diff-tree for source.ref against source.parent_ref",
+    "runtime_python_lines": "Logical lines in .codex/scripts/*.py at source.ref",
+    "test_python_lines": "Logical lines in .codex/tests/test_*.py at source.ref",
+    "skill_entry_lines": "Logical lines in the six .codex/skills/*/SKILL.md files at source.ref",
+    "skill_entry_lines_max": "Largest individual skill_entry_lines value",
+    "mandatory_shared_reads_max": "Largest count of unique .codex/<name>.md references in one skill entry",
+    "profiles": "Count of .codex/agents/*.toml files at source.ref",
+    "workflows": "Count of workflow tables in .codex/team.toml at source.ref",
+    "validator_lines": "Logical lines in .codex/scripts/validate_team.py at source.ref"
+  },
+  "metrics": {
+    "changed_files": 72,
+    "insertions": 17050,
+    "profiles": 19,
+    "workflows": 6,
+    "runtime_python_lines": 8383,
+    "test_python_lines": 4179,
+    "skill_entry_lines": 1207,
+    "skill_entry_lines_max": 259,
+    "mandatory_shared_reads_max": 12,
+    "validator_lines": 5509
+  },
+  "forward_run_observation": {
+    "run_id": "workflow-controls-251-forward-20260715",
+    "record_schema_version": 3,
+    "status": "REMEDIATION",
+    "record_top_level_fields": 26,
+    "artifact_files": 51,
+    "events": 27,
+    "findings": 18,
+    "reviews": 0,
+    "capability_receipt_files": 0,
+    "qualified": false,
+    "basis": "The ignored run record was still REMEDIATION; the source qualification gate required DELIVERED or AWAITING_EXTERNAL. Runtime artifacts remain untracked."
+  }
+}

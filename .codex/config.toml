@@ -2,81 +2,21 @@ model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 
 [agents]
-max_threads = 7
+max_threads = 4
 max_depth = 1
 
-[agents.acceptance_reviewer]
-description = "Independent functional-slice acceptance verifier."
-config_file = "agents/acceptance-reviewer.toml"
+[agents.reader]
+description = "Read-only discovery, research, triage, and reproduction."
+config_file = "agents/reader.toml"
 
-[agents.code_quality_reviewer]
-description = "Independent whole-diff code-quality reviewer."
-config_file = "agents/code-quality-reviewer.toml"
+[agents.worker]
+description = "Sole bounded implementation or remediation writer."
+config_file = "agents/worker.toml"
 
-[agents.defect_reproducer]
-description = "Read-only deterministic defect reproducer."
-config_file = "agents/defect-reproducer.toml"
+[agents.reviewer]
+description = "Fresh read-only task-charter reviewer."
+config_file = "agents/reviewer.toml"
 
-[agents.defect_triager]
-description = "Read-only defect queue triager."
-config_file = "agents/defect-triager.toml"
-
-[agents.defect_verifier]
-description = "Independent defect acceptance and regression verifier."
-config_file = "agents/defect-verifier.toml"
-
-[agents.defect_worker]
-description = "Sole normal writer for one focused defect."
-config_file = "agents/defect-worker.toml"
-
-[agents.focused_explorer]
-description = "Read-only explorer for focused non-slice work."
-config_file = "agents/focused-explorer.toml"
-
-[agents.focused_verifier]
-description = "Independent verifier for focused non-slice work."
-config_file = "agents/focused-verifier.toml"
-
-[agents.focused_worker]
-description = "Sole normal writer for one focused non-slice change."
-config_file = "agents/focused-worker.toml"
-
-[agents.idea_researcher]
-description = "Read-only researcher for one bounded product-idea evidence stream."
-config_file = "agents/idea-researcher.toml"
-
-[agents.pr_feedback_reviewer]
-description = "Thread-aware pull-request feedback evaluator."
-config_file = "agents/pr-feedback-reviewer.toml"
-
-[agents.pr_remediation_worker]
-description = "Sole writer for bounded pull-request remediation."
-config_file = "agents/pr-remediation-worker.toml"
-
-[agents.pr_requirements_reviewer]
-description = "Independent pull-request requirements verifier."
-config_file = "agents/pr-requirements-reviewer.toml"
-
-[agents.publication_challenger]
-description = "Fresh independent challenger of publication readiness."
-config_file = "agents/publication-challenger.toml"
-
-[agents.readiness_analyst]
-description = "Read-only analyst for preparing executable work proposals."
-config_file = "agents/readiness-analyst.toml"
-
-[agents.readiness_reviewer]
-description = "Independent reviewer of proposed Ready work packets."
-config_file = "agents/readiness-reviewer.toml"
-
-[agents.safety_reviewer]
-description = "Independent security, privacy, and operational safety reviewer."
-config_file = "agents/safety-reviewer.toml"
-
-[agents.slice_explorer]
-description = "Read-only functional-slice explorer."
-config_file = "agents/slice-explorer.toml"
-
-[agents.slice_worker]
-description = "Sole normal writer for one functional slice."
-config_file = "agents/slice-worker.toml"
+[agents.challenger]
+description = "Fresh high-effort publication challenger."
+config_file = "agents/challenger.toml"

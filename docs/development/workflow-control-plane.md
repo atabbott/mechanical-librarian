@@ -1,29 +1,52 @@
-# Delivery control plane
+# Delivery workflows
 
-The tracked `.codex` tree is the canonical source for Mechanical Librarian's
-delivery workflows, specialist declarations, evidence schemas, and deterministic
-control scripts. Changes to these files are ordinary reviewed repository changes;
-local copies must not become an unreviewed second policy source.
+The tracked `.codex` tree defines six repository workflows using four authority
+profiles. A workflow names the profiles it may use and review tasks it normally
+needs; it does not create a separate role for every specialty.
 
-## Tracked and private boundaries
+## Proportional control
 
-Track reusable controls:
+- Tier 0 is read-only work and normally needs no durable record or review.
+- Tier 1 is one bounded repository change with current checks and the
+  workflow's review tasks.
+- Tier 2 is high-risk or repeatedly expanding work and adds safety review,
+  durable evidence, and an independent challenger.
 
-- workflow skills and their one-level references;
-- role and capability declarations;
-- team, review, concurrency, escalation, and evidence policies;
-- schemas and deterministic helper scripts; and
-- tests that prove structural wiring and semantic completion gates.
+The four profiles are `reader`, `worker`, `reviewer`, and `challenger`.
+Acceptance, quality, requirements, safety, and readiness are task charters for
+a reviewer, not permanent identities. See `.codex/operating-policy.md` for the
+authority and stopping rules.
 
-Never track runtime records, private idea dossiers, machine paths, private test
-resource locations, credentials, caches, or session logs. `.codex/.gitignore`
-defines that private boundary. A local `.git/info/exclude` entry may hide the
-tree in an existing checkout, but it does not replace the tracked canonical
-files; use explicit staging for reviewed control changes in such a checkout.
+## Evidence boundary
 
-## Local qualification
+Track reusable skills, profile declarations, policy, small deterministic
+helpers, tests, and `.codex/workflow-control-baseline.json`. Never track private
+run records, credentials, local paths, caches, connector payloads, or session
+logs.
 
-Run the complete control-plane gate from the repository root:
+For a Tier 1 or Tier 2 change, a minimal run record can preserve the target,
+checks, reviews, findings, connector state, and delivery ref. Runtime thread and
+sandbox fields are operator observations, not cryptographic proof. Review
+packets embed the raw Git diff and requirements and are re-derived against live
+Git during verification.
+
+## Review and connector stopping rules
+
+Use one fresh review wave, one coherent remediation cohort, and one targeted
+re-review per accepted finding family. A remaining blocker stops delivery; an
+unrelated improvement is deferred instead of reopening refinement.
+
+Automatic GitHub review is C1. The 👀 reaction on the PR description means it
+was picked up, and 👍 there means clean when no conflicting result exists. A
+requested C2 uses its exact request comment as the reaction anchor. Pickup is
+normally visible within a minute; stop polling after two minutes without it.
+After pickup, a large review may take more than ten minutes, so hand off
+`IN_PROGRESS` unless the user explicitly asks to keep monitoring. Never send a
+duplicate request or infer success from silence.
+
+## Qualification
+
+Run this single bounded gate from the repository root:
 
 ```text
 python3 .codex/scripts/validate_team.py --self-test
@@ -32,91 +55,31 @@ python3 -m unittest discover -s .codex/tests -p 'test_*.py'
 python3 -m py_compile .codex/scripts/*.py
 ```
 
-The ordinary validator proves declarations and record structure. It does not
-claim that delivery completed. A run may claim completion only when its current
-version-3 record passes:
+The validator checks generic manifest wiring and complexity budgets; it has no
+hard-coded workflow-name matrix. The JSON report emits both current metrics and
+the preserved baseline, making later comparisons reproducible.
 
-```text
-python3 .codex/scripts/validate_team.py \
-  --record .codex/runs/<run-id>/team-run.json \
-  --assert-qualified
-```
+## Preserved comparison
 
-Version-1 and version-2 records remain readable historical evidence. Upgrade
-creates a separate version-3 continuation and never turns missing historical
-evidence into a qualification claim.
+The superseded implementation is anchored to commit
+`d9d4be28116ac1b44ef6da124b93f7d0fba00f39`. These measurements use the exact
+definitions stored in `.codex/workflow-control-baseline.json`:
 
-The run-record helper is an atomic public interface to version-3 records. Its
-typed `check`, `criterion`, `handoff`, binding, finding, delivery, and
-`finalize` commands emit the exact current schema or fail without changing the
-record. The `event` command records ordered review stages, qualification,
-connector observations, family expansion, and other lifecycle evidence. Do not
-use ad hoc file editing to work around a rejected command.
+| Measure | Superseded | Simplified |
+| --- | ---: | ---: |
+| Authority profiles | 19 | 4 |
+| Runtime Python lines | 8,383 | 1,306 |
+| Test Python lines | 4,179 | 443 |
+| Skill entry lines | 1,207 | 280 |
+| Largest skill entry | 259 | 56 |
+| Maximum mandatory shared reads | 12 | 3 |
+| Validator lines | 5,509 | 265 |
 
-Freeze and verify context-isolated reviewer packets with
-`.codex/scripts/review_packet.py`. It is the canonical serializer for packet
-IDs, exact staged, committed, or non-Git artifact targets, role charters,
-invocation binding IDs, generated capability receipts, raw artifact
-declarations, exclusions, and packet SHA-256; hand-authored JSON is a draft,
-not dispatchable review evidence.
-Qualification uses the repository containing the control plane as its trusted
-root and re-derives Git trees, diffs, name-status, repository blobs, and
-restricted run requirements there. A packet cannot select a substitute
-worktree or qualify through consistently recomputed but forged hashes.
+The original commit added 17,050 lines across 72 files. Its ignored forward-run
+record remained in `REMEDIATION` after 51 artifacts, 27 events, and 18 findings;
+it was not qualified. The sanitized counts and qualification basis are retained
+in the baseline, while the private runtime artifacts remain ignored.
 
-## Independent review contract
-
-Initial independent reviewers and publication challengers use fresh threads
-with `fork_turns: "none"`. Their canonical packet contains the frozen target,
-raw requirements and artifacts, one primary attack lens, and a SHA-256 digest;
-it excludes worker conclusions, previous verdicts, remediation history, and
-named green tests. A reviewer may still report any substantiated blocker.
-
-Runtime role, model, effort, permission, and thread evidence must be verified or
-recorded as an explicit safe fallback. An unavailable custom role is not silently
-treated as successfully bound. Targeted re-review uses a new binding at the
-resulting ref, the exact original reviewer thread, and the smallest affected
-packet. Proven thread loss uses `REPLACEMENT_ISOLATED`, a new binding/thread,
-complete origin lineage, and a full affected-charter packet; fresh reviews and
-challenges always use new threads.
-
-## Evidence and external state
-
-Bind checks and reviews to the exact final revision, artifact identity,
-environment, and observation time. Classify evidence as `FRESH`, `INHERITED`,
-`NOT_APPLICABLE`, or `UNAVAILABLE`; inherited evidence records its source and
-invalidation rule. Expected skips name the exact test, platform, reason, and
-owning gate.
-
-Connector pickup and completion are separate events. A two-minute unobserved
-pickup ends the current wait but not the review request. Later invocations
-refresh state. Off-target terminal results and inconsistent reactions are
-reported explicitly rather than converted to clean or left pending forever.
-Every connector event embeds and hashes the exact canonical read-only helper
-report; qualification recomputes its state and cross-checks the PR/comment
-anchor, actor, signal, head, target, raw event ID, and timing.
-
-Review preflight accepts only packet schema version 2. The packet identifies a
-nonsymlink, worktree-local immutable snapshot of a structurally valid
-version-3 run record by exact raw-byte SHA-256 and run ID. Each qualification or
-gate declaration points to one check, review, or external-gate entry in that
-snapshot and independently declares its exact command or operation, artifact
-IDs, environment digest, and invalidation rule. Preflight resolves and
-cross-checks those fields, target/ref, result, evidence state, timing, artifact
-environment, reviewer binding, and external source identity. Missing entries,
-snapshot drift, stale policy, substituted commands or artifacts, and
-off-target evidence fail closed. Reports include command and invalidation-rule
-digests rather than potentially private command text.
-
-Packet schema version 1 and free-form `PASS` assertions are deliberately not
-accepted as qualification evidence. Create a frozen snapshot before running
-preflight; later append-only changes belong in a new snapshot and packet so the
-original proof remains reproducible.
-
-## Changing the controls
-
-Use a tracked issue and focused branch for material workflow, schema, helper, or
-CI changes. Run adversarial tests for false completion, stale evidence,
-capability drift, context contamination, connector protocol variance, and unsafe
-path handling. Forward-test complex changes in fresh read-only threads using raw
-artifacts rather than the intended conclusion.
+Workflow-only `.codex` changes do not require a ticket. If the same change
+alters product, release, dependency, security, architecture, schema, or CI
+behavior, the repository's normal tracking rules still apply.

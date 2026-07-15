@@ -4,269 +4,69 @@ schema_version = 1
 model = "gpt-5.6-sol"
 reasoning = "high"
 
-[roles.acceptance_reviewer]
-config = "agents/acceptance-reviewer.toml"
-kind = "reviewer"
-model = "gpt-5.6-sol"
-reasoning = "medium"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md", ".codex/review-method.md"]
-capabilities = ["repository_read", "read_only_diagnostics", "raw_packet_review", "fresh_isolated_review", "targeted_continuation", "report_any_substantiated_blocker"]
-forbidden_capabilities = ["repository_write", "external_write", "review_submission", "thread_mutation"]
-initial_context = "FRESH_ISOLATED"
-spawn_fork_turns = "none"
-targeted_context = "TARGETED_CONTINUATION"
-
-[roles.code_quality_reviewer]
-config = "agents/code-quality-reviewer.toml"
-kind = "reviewer"
-model = "gpt-5.6-sol"
-reasoning = "high"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md", ".codex/review-method.md"]
-capabilities = ["repository_read", "read_only_diagnostics", "raw_packet_review", "fresh_isolated_review", "targeted_continuation", "report_any_substantiated_blocker"]
-forbidden_capabilities = ["repository_write", "external_write", "review_submission", "thread_mutation"]
-initial_context = "FRESH_ISOLATED"
-spawn_fork_turns = "none"
-targeted_context = "TARGETED_CONTINUATION"
-
-[roles.defect_reproducer]
-config = "agents/defect-reproducer.toml"
+[profiles.reader]
+config = "agents/reader.toml"
 kind = "reader"
-model = "gpt-5.6-terra"
-reasoning = "medium"
 permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md"]
-capabilities = ["repository_read", "read_only_diagnostics", "bounded_reproduction"]
-forbidden_capabilities = ["repository_write", "external_write"]
+capabilities = ["repository_read", "external_read", "read_only_diagnostics"]
 
-[roles.defect_triager]
-config = "agents/defect-triager.toml"
-kind = "reader"
-model = "gpt-5.6-terra"
-reasoning = "medium"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md"]
-capabilities = ["repository_read", "external_read", "queue_triage"]
-forbidden_capabilities = ["repository_write", "external_write"]
-
-[roles.defect_verifier]
-config = "agents/defect-verifier.toml"
-kind = "reviewer"
-model = "gpt-5.6-sol"
-reasoning = "medium"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md", ".codex/review-method.md"]
-capabilities = ["repository_read", "read_only_diagnostics", "raw_packet_review", "fresh_isolated_review", "targeted_continuation", "report_any_substantiated_blocker"]
-forbidden_capabilities = ["repository_write", "external_write", "review_submission", "thread_mutation"]
-initial_context = "FRESH_ISOLATED"
-spawn_fork_turns = "none"
-targeted_context = "TARGETED_CONTINUATION"
-
-[roles.defect_worker]
-config = "agents/defect-worker.toml"
+[profiles.worker]
+config = "agents/worker.toml"
 kind = "writer"
-model = "gpt-5.6-terra"
-reasoning = "medium"
 permissions = ":workspace"
-required_policies = [".codex/engineering-judgment.md", ".codex/worker-scope-control.md", ".codex/model-selection.md"]
 capabilities = ["repository_read", "workspace_write", "targeted_checks"]
-forbidden_capabilities = ["external_write"]
 
-[roles.focused_explorer]
-config = "agents/focused-explorer.toml"
-kind = "reader"
-model = "gpt-5.6-terra"
-reasoning = "medium"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md"]
-capabilities = ["repository_read", "read_only_diagnostics", "bounded_exploration"]
-forbidden_capabilities = ["repository_write", "external_write"]
-
-[roles.focused_verifier]
-config = "agents/focused-verifier.toml"
+[profiles.reviewer]
+config = "agents/reviewer.toml"
 kind = "reviewer"
-model = "gpt-5.6-sol"
-reasoning = "medium"
 permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md", ".codex/review-method.md"]
-capabilities = ["repository_read", "read_only_diagnostics", "raw_packet_review", "fresh_isolated_review", "targeted_continuation", "report_any_substantiated_blocker"]
-forbidden_capabilities = ["repository_write", "external_write", "review_submission", "thread_mutation"]
-initial_context = "FRESH_ISOLATED"
-spawn_fork_turns = "none"
-targeted_context = "TARGETED_CONTINUATION"
+capabilities = ["repository_read", "read_only_diagnostics", "fresh_review", "targeted_continuation"]
 
-[roles.focused_worker]
-config = "agents/focused-worker.toml"
-kind = "writer"
-model = "gpt-5.6-terra"
-reasoning = "medium"
-permissions = ":workspace"
-required_policies = [".codex/engineering-judgment.md", ".codex/worker-scope-control.md", ".codex/model-selection.md"]
-capabilities = ["repository_read", "workspace_write", "targeted_checks"]
-forbidden_capabilities = ["external_write"]
-
-[roles.idea_researcher]
-config = "agents/idea-researcher.toml"
-kind = "reader"
-model = "gpt-5.6-terra"
-reasoning = "medium"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md"]
-capabilities = ["repository_read", "external_read", "bounded_research"]
-forbidden_capabilities = ["repository_write", "external_write"]
-
-[roles.pr_feedback_reviewer]
-config = "agents/pr-feedback-reviewer.toml"
+[profiles.challenger]
+config = "agents/challenger.toml"
 kind = "reviewer"
-model = "gpt-5.6-sol"
-reasoning = "medium"
 permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md", ".codex/review-method.md"]
-capabilities = ["repository_read", "external_read", "thread_aware_read", "raw_packet_review", "fresh_isolated_review", "targeted_continuation", "report_any_substantiated_blocker"]
-forbidden_capabilities = ["repository_write", "external_write", "review_submission", "thread_mutation"]
-initial_context = "FRESH_ISOLATED"
-spawn_fork_turns = "none"
-targeted_context = "TARGETED_CONTINUATION"
-
-[roles.pr_remediation_worker]
-config = "agents/pr-remediation-worker.toml"
-kind = "writer"
-model = "gpt-5.6-terra"
-reasoning = "medium"
-permissions = ":workspace"
-required_policies = [".codex/engineering-judgment.md", ".codex/worker-scope-control.md", ".codex/model-selection.md"]
-capabilities = ["repository_read", "workspace_write", "targeted_checks"]
-forbidden_capabilities = ["external_write"]
-
-[roles.pr_requirements_reviewer]
-config = "agents/pr-requirements-reviewer.toml"
-kind = "reviewer"
-model = "gpt-5.6-sol"
-reasoning = "medium"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md", ".codex/review-method.md"]
-capabilities = ["repository_read", "external_read", "read_only_diagnostics", "raw_packet_review", "fresh_isolated_review", "targeted_continuation", "report_any_substantiated_blocker"]
-forbidden_capabilities = ["repository_write", "external_write", "review_submission", "thread_mutation"]
-initial_context = "FRESH_ISOLATED"
-spawn_fork_turns = "none"
-targeted_context = "TARGETED_CONTINUATION"
-
-[roles.publication_challenger]
-config = "agents/publication-challenger.toml"
-kind = "reviewer"
-model = "gpt-5.6-sol"
-reasoning = "high"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md"]
-capabilities = ["repository_read", "read_only_diagnostics", "raw_packet_review", "fresh_publication_challenge", "targeted_continuation", "report_any_substantiated_blocker"]
-forbidden_capabilities = ["repository_write", "external_write", "review_submission", "thread_mutation"]
-initial_context = "FRESH_ISOLATED"
-spawn_fork_turns = "none"
-targeted_context = "TARGETED_CONTINUATION"
-
-[roles.readiness_analyst]
-config = "agents/readiness-analyst.toml"
-kind = "reader"
-model = "gpt-5.6-terra"
-reasoning = "medium"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md"]
-capabilities = ["repository_read", "external_read", "bounded_readiness_analysis"]
-forbidden_capabilities = ["repository_write", "external_write"]
-
-[roles.readiness_reviewer]
-config = "agents/readiness-reviewer.toml"
-kind = "reviewer"
-model = "gpt-5.6-sol"
-reasoning = "medium"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md", ".codex/review-method.md"]
-capabilities = ["repository_read", "external_read", "raw_packet_review", "fresh_isolated_review", "targeted_continuation", "report_any_substantiated_blocker"]
-forbidden_capabilities = ["repository_write", "external_write", "review_submission", "thread_mutation"]
-initial_context = "FRESH_ISOLATED"
-spawn_fork_turns = "none"
-targeted_context = "TARGETED_CONTINUATION"
-
-[roles.safety_reviewer]
-config = "agents/safety-reviewer.toml"
-kind = "reviewer"
-model = "gpt-5.6-sol"
-reasoning = "high"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md", ".codex/review-method.md"]
-capabilities = ["repository_read", "read_only_diagnostics", "raw_packet_review", "fresh_isolated_review", "targeted_continuation", "report_any_substantiated_blocker"]
-forbidden_capabilities = ["repository_write", "external_write", "review_submission", "thread_mutation"]
-initial_context = "FRESH_ISOLATED"
-spawn_fork_turns = "none"
-targeted_context = "TARGETED_CONTINUATION"
-
-[roles.slice_explorer]
-config = "agents/slice-explorer.toml"
-kind = "reader"
-model = "gpt-5.6-terra"
-reasoning = "medium"
-permissions = ":read-only"
-required_policies = [".codex/engineering-judgment.md"]
-capabilities = ["repository_read", "external_read", "read_only_diagnostics", "bounded_exploration"]
-forbidden_capabilities = ["repository_write", "external_write"]
-
-[roles.slice_worker]
-config = "agents/slice-worker.toml"
-kind = "writer"
-model = "gpt-5.6-terra"
-reasoning = "medium"
-permissions = ":workspace"
-required_policies = [".codex/engineering-judgment.md", ".codex/worker-scope-control.md", ".codex/model-selection.md"]
-capabilities = ["repository_read", "workspace_write", "targeted_checks"]
-forbidden_capabilities = ["external_write"]
+capabilities = ["repository_read", "read_only_diagnostics", "fresh_review", "publication_challenge"]
 
 [workflows.clear-defect-backlog]
 skill = "skills/clear-defect-backlog/SKILL.md"
-roles = ["defect_triager", "defect_reproducer", "defect_worker", "defect_verifier", "code_quality_reviewer", "safety_reviewer", "publication_challenger"]
-writer = "defect_worker"
-max_parallel_readers = 3
-evidence_before_review = true
-review_barrier = true
-family_expansion_thresholds = [1, 2, 3]
+profiles = ["reader", "worker", "reviewer", "challenger"]
+writer_profile = "worker"
+default_review_tasks = ["ticket_acceptance", "code_quality"]
 
 [workflows.deliver-focused-change]
 skill = "skills/deliver-focused-change/SKILL.md"
-roles = ["focused_explorer", "focused_worker", "focused_verifier", "code_quality_reviewer", "safety_reviewer", "publication_challenger"]
-writer = "focused_worker"
-max_parallel_readers = 3
-evidence_before_review = true
-review_barrier = true
-family_expansion_thresholds = [1, 2, 3]
+profiles = ["reader", "worker", "reviewer", "challenger"]
+writer_profile = "worker"
+default_review_tasks = ["acceptance", "code_quality"]
 
 [workflows.deliver-functional-slice]
 skill = "skills/deliver-functional-slice/SKILL.md"
-roles = ["slice_explorer", "slice_worker", "acceptance_reviewer", "code_quality_reviewer", "safety_reviewer", "publication_challenger"]
-writer = "slice_worker"
-max_parallel_readers = 3
-evidence_before_review = true
-review_barrier = true
-family_expansion_thresholds = [1, 2, 3]
+profiles = ["reader", "worker", "reviewer", "challenger"]
+writer_profile = "worker"
+default_review_tasks = ["slice_acceptance", "code_quality"]
 
 [workflows.explore-product-ideas]
 skill = "skills/explore-product-ideas/SKILL.md"
-roles = ["idea_researcher"]
-writer = ""
-max_parallel_readers = 3
+profiles = ["reader"]
+writer_profile = ""
+default_review_tasks = []
 
 [workflows.maintain-open-prs]
 skill = "skills/maintain-open-prs/SKILL.md"
-roles = ["pr_feedback_reviewer", "pr_remediation_worker", "pr_requirements_reviewer", "code_quality_reviewer", "safety_reviewer", "publication_challenger", "slice_worker", "defect_worker"]
-writer = "pr_remediation_worker"
-max_parallel_readers = 3
-evidence_before_review = true
-review_barrier = true
-family_expansion_thresholds = [1, 2, 3]
+profiles = ["reader", "worker", "reviewer", "challenger"]
+writer_profile = "worker"
+default_review_tasks = ["requirements", "code_quality"]
 
 [workflows.prepare-ready-work]
 skill = "skills/prepare-ready-work/SKILL.md"
-roles = ["readiness_analyst", "readiness_reviewer", "safety_reviewer", "publication_challenger"]
-writer = ""
-max_parallel_readers = 2
-review_barrier = true
-family_expansion_thresholds = [1, 2, 3]
+profiles = ["reader", "reviewer", "challenger"]
+writer_profile = ""
+default_review_tasks = ["readiness"]
+
+[budgets]
+profiles_max = 4
+runtime_python_lines_max = 2500
+test_python_lines_max = 2500
+skill_entry_lines_max = 180
+mandatory_shared_reads_max = 3
