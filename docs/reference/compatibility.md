@@ -47,6 +47,60 @@ remain orthogonal. Unconfigured, unsupported, unavailable, degraded, failed,
 and successful-empty states are not interchangeable and cannot block unrelated
 capable lanes.
 
+## F07a EPUB opening compatibility
+
+`epub-opening-report-v1` is a transient local compatibility surface for EPUBs
+that first pass the F06 package gate. EPUB 3.3 package/navigation semantics and
+Structural Semantics Vocabulary 1.1 landmarks are supported. Legacy EPUB 2
+OPF/OPS 2.0.1 guide declarations participate in opening selection. Candidate
+content media are declared `application/xhtml+xml` and `text/html`; image
+resources are typed image-only and receive no OCR. ZIP compression and package
+compatibility remain exactly the F06 contract.
+
+Strict XHTML and bounded deterministic recovery are supported outcomes.
+Recovery is compatibility behavior, not conformance repair: it never rewrites
+the EPUB or adds rendering, CSS, active-content, base-URL, external-resource,
+filesystem, or network authority. UTF-8, Windows-1252, and ISO-8859-1 recovery
+are supported when safely declared; other recovered encodings are typed
+unsupported. Ordinary HTML/XHTML doctypes and their external identifiers are
+inert recovery syntax and are never resolved. Entity declarations, internal
+subsets, non-HTML doctypes, and external resolution remain rejected. Parser,
+recovery, projection, selection, normalizer, vocabulary,
+limits, extractor, and schema versions all invalidate later reuse when changed.
+Recovered qualified start/end tags share resolved namespace identity. Active
+local elements remain inert across XHTML, SVG, and foreign namespaces.
+Extension-prefixed `epub:type` values remain distinct from the unprefixed
+Structural Semantics Vocabulary and have no F07a semantic authority.
+F06 and F07 use the same capability-independent, source-fingerprint-derived
+lineage value; a child payload cannot establish correlation by coordinating
+forged report and citation fields.
+
+The reusable generated registry is `epub-evidence-f07a-v2`. Its F07a
+file-backed cohort is materialized offline and every declared consumer runs
+through the exact installed wheel in normal tests. The external private gate is
+348 EPUBs, of which the F06 baseline identifies 347 safely readable packages.
+Every eligible F06-readable resource within the hard F07a profile must be
+`success` or `no_applicable_evidence`; only root-caused encrypted, unsupported
+media/encoding, unsafe external/active construct, unstable source, or hard
+resource/time/output rejection categories are permitted. Only aggregate
+categories may be published. Private qualification requires an external closed
+root-cause record that exactly covers every permitted rejection and cannot
+publish its case identities. This is not a promise that every book contains an
+opening claim. To reproduce the closed F06 denominator, the private qualifier
+sets the shared document ceiling to the EPUB package profile's 268,435,456-byte
+default; this does not change the ordinary deployment default. The safe
+aggregate records that accepted qualification profile and allowlisted usage
+totals and maxima, without case names, resource names, citations, excerpts,
+identifiers, or source hashes.
+The qualifier independently validates the complete registry schema, nested F06
+and F07 limit profiles, exact opened/parser/resource/path/citation equations,
+exit/outcome mapping, and the closed resource-rejection decision table before
+aggregation. Rejected parser work is charged by the nodes and projected text
+actually consumed before rejection, including both a failed strict attempt and
+the following recovery attempt. A safe sibling remains eligible at the exact
+aggregate boundary and is rejected only above it. Ordered selection paths are
+bound to the source-derived lineage with the versioned selection digest.
+
 ## 0.2 title technical-preview contract
 
 F09a binds one in-memory Audiobookshelf-shaped synthetic title snapshot,

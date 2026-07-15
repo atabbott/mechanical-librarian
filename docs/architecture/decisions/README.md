@@ -21,7 +21,7 @@ context and consequences rather than reproducing code.
 | [0004](0004-ai-is-untrusted.md) | accepted | Treat AI as an untrusted reviewer |
 | [0005](0005-agpl-3-or-later.md) | accepted | License the project under AGPL-3.0-or-later |
 | [0006](0006-port-adapters-and-composition-root.md) | accepted | Separate port adapters from runtime infrastructure and use one composition root |
-| [0007](0007-transient-epub-package-child.md) | accepted | Isolate EPUB package extraction in a transient descriptor-bound child |
+| [0007](0007-transient-epub-package-child.md) | accepted | Isolate EPUB package and opening extraction in a transient descriptor-bound child |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

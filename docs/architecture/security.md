@@ -305,8 +305,32 @@ required XML members retain their separate small byte/tree limits, and the
 child address-space and public-report caps are unchanged.
 
 Fresh Expat parsers reject DOCTYPE/entity declarations, external resolution,
-and XInclude while enforcing XML and package-graph counters. Opaque navigation,
-content, cover, and linked-resource declarations are never dereferenced. The
+and XInclude while enforcing XML and package-graph counters. F06 keeps opaque
+navigation, content, cover, and linked-resource declarations undereferenced.
+F07a composes the completed F06 report into a separate adapter and opens only
+bounded package-local navigation plus selected declared XHTML/HTML resources.
+Strict XHTML uses a fresh Expat parser; recovery uses a fresh standard-library
+`HTMLParser` over only those bounded bytes. Neither parser has a renderer,
+network client, URL/base resolver, stylesheet engine, script runtime, XSLT,
+XInclude, filesystem extraction, temporary-file, or source-repair seam.
+An ordinary HTML/XHTML doctype, including an inert external identifier, may be
+treated as recovery syntax; it is never resolved. Any entity declaration,
+internal subset, non-HTML declaration, or actual resolution attempt remains
+rejected and gains no DTD or network authority.
+Namespace declarations are resolved before the recovery allowlist is applied,
+so default or aliased XInclude/XSLT namespaces and aliased XHTML active
+elements cannot gain authority through tolerant parsing. F06 and F07 same-file
+lineage is independently derived from the source fingerprint and validated in
+the canonical report; coordinated child-supplied lineage fields are
+insufficient.
+Recovered closing and self-closing tags use the same resolved namespace model
+as start tags; SVG and other foreign-namespace active elements are inert too.
+Only unprefixed controlled Structural Semantics Vocabulary tokens have F07a
+authority, so extension-prefix lookalikes cannot fabricate claims or selection
+boundaries.
+Active and structurally hidden elements are excluded from the deterministic
+projection. Navigation bytes/nodes/text/links and selected content share the
+closed aggregate profile; aggregate exhaustion discards partial claims. The
 parent concurrently caps child stdout/stderr, validates one canonical closed
 report, and terminates/reaps on cancellation, deadline, overflow, crash, or
 parent loss. These composition controls deny delegated application authority;
@@ -317,6 +341,14 @@ macOS qualification is development-only for this command until an enforceable
 memory boundary is available. The Linux F06 cohort is qualified non-root with
 networking disabled and the container root, repository, and installed Python
 environment read-only.
+
+F07a does not treat tolerant parsing as additional authority and does not
+weaken F06 archive, path, codec, encryption, CRC, source-stability, output,
+process, cancellation, or reaping controls. Complete decoded resources,
+navigation trees, recovered trees, and diagnostic markup are never retained.
+The exact local command response is private owner output; CI and private-shadow
+qualification reduce it in memory to controlled aggregate categories before
+printing anything.
 
 ### Stale or conflicting writes
 

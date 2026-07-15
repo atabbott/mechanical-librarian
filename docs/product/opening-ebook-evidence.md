@@ -2,7 +2,7 @@
 
 ## Status and purpose
 
-This document defines an initial-scope capability for EPUB evidence extraction.
+This document defines the F06/F07 EPUB evidence extraction capability.
 It turns embedded package metadata and the opening matter of the owned file into
 first-class, edition-aware evidence before catalogue lookup or reviewer input.
 
@@ -41,14 +41,20 @@ audit gates.
 ## Standards baseline
 
 The extractor follows the package, manifest, spine, navigation, and metadata
-contracts in [EPUB 3.3](https://www.w3.org/TR/epub-33/) and the semantic terms in
-the [EPUB Structural Semantics Vocabulary](https://www.w3.org/TR/epub-ssv-11/).
+contracts in the [13 January 2026 EPUB 3.3 Recommendation](https://www.w3.org/TR/2026/REC-epub-33-20260113/)
+and the semantic terms in the
+[28 May 2026 EPUB Structural Semantics Vocabulary 1.1 Note](https://www.w3.org/TR/2026/NOTE-epub-ssv-11-20260528/).
+Legacy OPF/OPS 2.0.1 guide and NCX declarations remain bounded package
+compatibility inputs; guide semantics participate in F07a selection.
 Supported EPUB versions and tolerated legacy behavior belong in the published
 compatibility matrix and contract fixtures.
 
 Vendor extensions are observations with explicit source identity. They cannot
 silently override standard metadata, but may supply useful candidates when
-their meaning is documented and tested.
+their meaning is documented and tested. F07a does not enable an extension
+vocabulary: prefixed lookalikes such as `vendor:fulltitle` never acquire the
+selection, claim, body-transition, or exclusion authority of an unprefixed
+Structural Semantics Vocabulary term.
 
 ## Evidence sources
 
@@ -81,7 +87,7 @@ Prefer resources explicitly identified as title page, half-title page,
 copyright page, imprint, contributors, front matter, or another applicable
 semantic role. Use landmarks and navigation before filename guesses.
 
-Opening matter may support:
+F07a opening matter supports:
 
 - displayed title and subtitle;
 - author, editor, translator, illustrator, adapter, and other contributor
@@ -118,10 +124,11 @@ and semantic terms that caused each resource to be inspected.
 ### Reading-order fallback
 
 When semantic coverage is missing, inspect the earliest eligible linear spine
-resources in order. The initial implementation should target no more than five
-qualifying opening documents and enforce a separately configured hard document
-and decoded-text limit. Exact defaults are finalized through synthetic and
-representative fixture benchmarks.
+resources in order. `epub-opening-limits-v1` defaults to five qualifying
+opening documents and closes the document, resource/selection byte, text,
+node, depth, navigation-link, time, fact, warning, excerpt, and report bounds.
+The immutable values are published in the
+[operator contract](../operations/epub-opening-report.md).
 
 Skip or separately classify:
 
@@ -131,6 +138,11 @@ Skip or separately classify:
 - samples, previews, advertisements, and unrelated excerpts when detectable;
 - documents after an evidenced transition into body matter; and
 - encrypted, unsupported, or unreadable resources.
+
+Namespace-qualified start, end, and self-closing tags use one resolved-name
+model during recovery. Active elements remain inert in XHTML, SVG, and foreign
+namespaces, while their closing tags cannot strand active state and suppress a
+later visible sibling.
 
 Selection stops when the required opening roles have been inspected, the body
 transition is reached, or any hard resource budget is exhausted.
@@ -149,9 +161,11 @@ Each observation records:
 - resource-relative element path and bounded text offsets;
 - exact supporting text or raw metadata value;
 - normalized field, value, type, and contributor role;
-- extractor, normalization, schema, and vocabulary versions;
+- extractor, normalization, schema, vocabulary, projection, selection, and
+  actual parser-runtime versions;
 - language and encoding facts;
-- same-file lineage or correlation identity; and
+- a capability-independent lineage derived from the source fingerprint and
+  shared by F06 and F07 for same-file correlation; and
 - ambiguity, malformed-input, edition-applicability, and contradiction
   warnings.
 
@@ -231,9 +245,11 @@ request secrets, invoke tools, or become reviewer instruction.
 Package metadata and opening matter are private library and content evidence
 under the [data-privacy policy](../architecture/data-privacy.md).
 
-- Retain normalized facts and the minimum cited spans required for explanation.
-- Keep complete decoded documents transient unless a separate bounded artifact
-  is required for diagnosis and covered by retention policy.
+- F07a returns normalized facts and minimum cited spans only in the
+  owner-invoked transient response; it persists none of them.
+- Keep complete decoded documents transient. F07a and F07b do not retain a
+  decoded document, repaired tree, or diagnostic markup artifact. Any future
+  diagnostic retention requires separately tracked policy and acceptance.
 - Never place whole opening documents, images, or unrestricted XHTML in logs,
   ordinary API lists, reviewer packets, exports, or support bundles.
 - Stage only cited spans and explicit facts for a reviewer.

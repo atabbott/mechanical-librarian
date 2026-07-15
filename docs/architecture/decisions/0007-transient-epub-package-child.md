@@ -1,4 +1,4 @@
-# ADR-0007: Isolate EPUB package extraction in a transient child
+# ADR-0007: Isolate EPUB package and opening extraction in a transient child
 
 - Status: accepted
 - Date: 2026-07-14
@@ -8,8 +8,9 @@
 
 ## Context
 
-EPUB package evidence requires interpreting attacker-controlled ZIP headers,
-compressed streams, XML, declaration graphs, and metadata text. The normal
+EPUB package and opening evidence require interpreting attacker-controlled ZIP
+headers, compressed streams, XML/XHTML/HTML, declaration graphs, and metadata
+or projected text. The normal
 deployment remains one container and the extractor needs read access to one
 configured media file, but it must not acquire service credentials, network,
 database, persistence, reviewer, provider, shell, temporary-file, or write
@@ -36,13 +37,16 @@ a typed report.
    read-only source descriptor and a parent-liveness control descriptor. A
    bounded canonical
    JSON context supplies the expected fingerprint, a parent-derived child
-   deadline, and the closed `epub-package-limits-v1` profile. The module runs
+   deadline, and either the closed `epub-package-limits-v1` profile or the
+   capability-tagged `epub-opening-limits-v1` profile containing its exact F06
+   package subprofile. The module runs
    below an inert package initializer, so network, database, persistence and
    secret implementations are not imported into the child. The context contains
    no path, endpoint, credential, database handle, client, or mutation capability.
 4. The child receives a minimal secret-free environment, uses no temporary
-   files, and emits exactly one canonical `local-evidence-report-v1` JSON object
-   followed by one newline. Stderr is empty on a valid protocol exchange.
+   files, and emits exactly one canonical `local-evidence-report-v1` package
+   object or `epub-opening-report-v1` opening object followed by one newline.
+   Stderr is empty on a valid protocol exchange.
 5. The parent drains stdout and stderr concurrently into hard caps of 1 MiB and
    64 KiB. It validates UTF-8, canonical JSON, duplicate-free closed fields,
    declared limits, capability, and source fingerprint. Invalid, excessive, or
@@ -52,8 +56,10 @@ a typed report.
    verifies the parent PID passed at spawn, installs `PR_SET_PDEATHSIG`, verifies
    the same PID again, and only then closes the control descriptor and applies
    the process cap; Darwin uses the parent-pipe watcher. The parent enforces the
-   configured parser deadline up to an immutable 60-second wall cap, and the
-   child deadline is always shorter. Timeout or cancellation terminates the process group, waits
+   configured package deadline up to an immutable 60-second wall cap. F07a has
+   its own 60-second default and 3,600-second immutable wall cap. Both retain a
+   30-second child CPU cap; their child deadline is shorter than the parent
+   wall. Timeout or cancellation terminates the process group, waits
    up to two seconds, kills if necessary, and reaps it. Parent-pipe EOF causes
    immediate child exit.
 7. Darwin framework Python reserves an address space larger than 256 MiB before
@@ -74,6 +80,24 @@ a typed report.
 10. The child-process boundary is least-authority composition, not a claim of a
     kernel syscall sandbox. A future sandbox may strengthen the boundary only
     with a new or superseding decision and container evidence.
+11. F07a first completes the unchanged F06 archive/package validation in the
+    child. Bootstrap composition then passes that typed package report to a
+    separate opening adapter; concrete adapters do not import each other. The
+    opening adapter may reopen only package-declared local members through the
+    already validated descriptor and `ZipFile.open`. It never extracts files.
+12. Each selected XHTML resource gets a fresh Expat parser first. An ordinary
+    HTML doctype may trigger bounded recovery and remains inert; entity
+    declarations, internal subsets, and non-HTML doctypes are rejected.
+    External identifiers are never resolved. Safely recoverable XHTML and
+    declared HTML get a fresh bounded standard-library `HTMLParser` with
+    no renderer, URL loader, CSS, script, base-URL, XInclude, XSLT, filesystem,
+    or network integration. Recovery receives only already-selected bounded
+    member bytes and never rewrites the source.
+13. A versioned deterministic text projection excludes active and structurally
+    hidden elements. Exact excerpts use half-open Unicode-scalar offsets in
+    that projection; recovered coordinates are not original-byte coordinates.
+    No decoded document, navigation tree, repaired tree, or diagnostic markup
+    artifact is retained.
 
 ## Consequences
 
@@ -84,8 +108,8 @@ a typed report.
   semantics and bounded memory in the parent.
 - Source replacement and in-place mutation are detected before evidence can be
   accepted.
-- Navigation, content, covers, and linked resources remain opaque for F07 or
-  later capabilities.
+- F06 keeps navigation and content opaque. F07a opens only bounded declared
+  navigation and selected opening resources under its separate capability.
 
 ### Negative
 
@@ -125,6 +149,11 @@ descriptor-bound child is easier to reap, audit, and reason about.
 - Integration cohorts exercise the real child, canonical protocol, no-follow
   references, cancellation/reaping followed by sibling success, composed CLI
   privacy, and concurrent source mutation.
+- F07a unit/property cohorts cover semantic/guide/spine selection, ambiguity,
+  strict and recovered markup, every claim family, typed ISBN applicability,
+  active/hidden content, image-only siblings, limits, and canonical
+  coordinates. Normal CI builds an exact wheel, materializes the registry
+  offline, and runs every F07a consumer through the installed CLI.
 - Architecture tests keep parsing/process implementations outside domain and
   application code and prohibit cross-family adapter imports.
 - The F06 cohort passes non-root on Linux CPython 3.13.11 with Expat 2.7.3 and

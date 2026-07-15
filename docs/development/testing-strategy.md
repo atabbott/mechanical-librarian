@@ -367,6 +367,16 @@ Fixture families include:
   omnibus, navigation, same-file contradiction, and edition applicability
   under the
   [opening-ebook evidence contract](../product/opening-ebook-evidence.md);
+- one versioned reusable EPUB registry classifies file-backed, virtual, and
+  linked F06/F07a cases. Its offline materializer must be deterministic across
+  order, locale, timezone, home, and hash seed and emit a canonical SHA-256
+  index. Virtual and linked entries select only their exact closed
+  repository-owned target; alternate registries cannot name arbitrary targets
+  or substitute one owned target for a different evidence row.
+  Normal CI builds the exact wheel, installs it without repository test
+  support, and drives every materialized F07a consumer through the installed
+  `epub-opening-report` command. Property tests use the pinned development-only
+  Hypothesis dependency; private corpus runs publish aggregate categories only;
 - bounded synthetic audio tags and chapter data;
 - generated opening-credit audio covering speech, silence, music, delayed
   credits, spoken roles, multilingual cases, no-credit controls, and hostile

@@ -38,10 +38,21 @@ Evidence extraction should prefer structured fields over prose. Whole books, who
 
 Initial EPUB extraction follows the
 [opening-ebook evidence contract](../product/opening-ebook-evidence.md). It
-retains package facts and minimum cited spans from bounded opening resources;
-complete decoded documents, unrestricted XHTML, and unrelated body prose are
-transient and excluded from ordinary APIs, reviewer packets, exports, and
-support bundles.
+returns package facts or minimum cited spans from bounded opening resources in
+an explicitly owner-invoked local response. F07a persists none of that response.
+Complete decoded documents, navigation trees, repaired trees, unrestricted
+XHTML, and unrelated body prose are transient and excluded from logs, ordinary
+APIs, reviewer packets, exports, and support bundles. Future durable F07b state
+may retain only the accepted bounded evidence contract, never decoded or
+diagnostic markup.
+
+Private EPUB compatibility qualification captures raw local reports only in
+bounded process memory, reduces them to controlled aggregate outcome, field,
+warning, parser-mode, limit, runtime, and privacy categories, and then discards
+them. Repository, CI, issue, and pull-request evidence contains no private
+filename, path, member name, title, author, identifier, corpus/source hash,
+metadata value, excerpt, citation, per-book result, raw report, or publication
+content.
 
 The F10a synthetic review case retains only the bounded canonical F09a manifest
 and F06 title provenance needed to explain the case. It persists no database or

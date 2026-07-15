@@ -7,6 +7,20 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added `epub-opening-report`, a transient F07a command that composes the F06
+  archive/package gate with bounded EPUB 3 landmark, EPUB 2 guide, and linear-
+  spine selection; strict and deterministic recovered XHTML/HTML projection;
+  edition-aware cited claim recognition; typed ISBN applicability; exact
+  source/resource/version provenance with lineage-bound selection paths;
+  cumulative strict/recovery work accounting; and legitimate no-applicable or typed
+  rejection outcomes. The command retains no decoded document or diagnostic
+  markup, uses no network/rendering/script/style/persistence/write authority,
+  and is qualified through a reusable offline fixture registry, property tests,
+  isolated-process cohorts, and the exact installed wheel. Private compatibility
+  evidence calibrates the default projected-text selection ceiling to 524,288
+  characters, below the unchanged 2,097,152-character hard cap; the public
+  report remains capped at 524,288 UTF-8 bytes.
+
 - Added `synthetic-title-review-case-report`, a closed F10a inspection command
   that admits one current synthetic needs-review title proposal into immutable
   schema-7 case history, replays idempotently, supersedes or retires atomically,

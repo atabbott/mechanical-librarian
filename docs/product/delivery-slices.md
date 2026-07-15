@@ -184,6 +184,17 @@ target or media writes, destructive authority, or a tag.
 | F09f Supported Hardcover title and identity provider | #239 | Disabled-by-default configured Hardcover work persists one bounded current title plus strict ISBN-backed book and compatible ebook-edition identity as one provider lineage, with restart, reuse, freshness, invalidation, and live qualification. It remains target-independent and owns no proposal authority. | #242; completed F09b #204 | `slice/f09f-hardcover-title-identity` |
 | F09g Live Audiobookshelf title proposal | #238 | One exact current Audiobookshelf ebook snapshot, selected durable local title and edition-applicable ISBN evidence, and one current compatible Hardcover observation produce either one immutable `needs_review`, `production_report_only` proposal whose value is the exact current F07 normalized title or an exact typed zero-proposal result without review admission or write authority. | #243; F07b #228 and F09f #239 | `slice/f09g-live-title-proposal` |
 
+F07a freezes `epub-opening-report-v1`, `epub-opening-limits-v1`, and the
+selection/parser/projection/normalization/vocabulary compatibility identities.
+It composes the unchanged F06 package gate into a distinct transient opening
+adapter, selects EPUB 3 landmarks then EPUB 2 guide semantics then linear-spine
+fallback, and returns cited claims, legitimate no-applicable evidence, or a
+typed rejection. It introduces no persistence, durable job, provider, reviewer,
+target/media write, or decoded-markup retention. Its shared fixture registry,
+offline materializer, exact-installed-wheel cohort, external private aggregate
+qualification, configuration/schema, security/ADR, compatibility, and operator
+evidence close together through #143 only.
+
 The checkpoint graph is:
 
 ```text
