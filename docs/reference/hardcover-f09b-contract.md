@@ -166,5 +166,6 @@ Credential-free fake qualification and an exact installed-wheel real-endpoint
 qualification are required. The live run uses the fixed generated query, a
 dedicated non-production token, and disposable state, and retains only a
 redacted aggregate result. F09f retains production configuration, persisted
-provider work, retry/restart, freshness, reusable-observation, and later live-
-target responsibilities.
+target-independent provider work, retry/restart, freshness,
+reusable-observation, and strict ISBN-backed book/edition identity. F09g owns
+the later live target/source join and proposal-applicability decision.

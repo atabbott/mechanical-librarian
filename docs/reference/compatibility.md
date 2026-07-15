@@ -107,15 +107,63 @@ redacted aggregate result is retained. This proves the narrow F09b request,
 authentication, parser, and canonical title seam described by the
 [F09b Hardcover proof-of-concept contract](hardcover-f09b-contract.md). It does
 not provide F09f's configured production operation, durable provider work,
-freshness/reuse, retry/restart, or live-target binding, and adds no AI, human
-decision, cover, rich-field, multi-provider, or apply compatibility promise.
+freshness/reuse, retry/restart, or ISBN-backed identity, nor F09g's live-target
+binding, and adds no AI, human decision, cover, rich-field, multi-provider, or
+apply compatibility promise.
 
 Schema 7 adds only the F10a synthetic case, current-or-retired state, and
 append-only attributable transitions. It remains forward-only and does not
-reclassify schema-6 `synthetic_preview` history. F09c work identity, F09f
-configured Hardcover operation, F09g live report-only proposals, and F10b
-production case admission remain separate 1.0 compatibility claims. F11 is an
+reclassify schema-6 `synthetic_preview` history. F09f configured Hardcover
+title/identity and F09g live report-only proposals are separate planned 0.3
+compatibility boundaries and must not reclassify F09a, F09b, or F10a preview
+history. They create no tested or supported compatibility claim until their
+slices qualify and merge. F09c fallback identity and F10b production case
+admission remain separate planned 1.0 compatibility claims. F11 is an
 independent synthetic reviewer path; F17 is their convergence gate.
+
+## Planned 0.3 live title-report compatibility contract
+
+F07b will supply one current durable local evidence lineage. F09f will supply a
+separate current configured Hardcover lineage containing a bounded title and
+strict ISBN-backed book and compatible ebook-edition identity. The provider
+query, configuration, authentication, parser, response/error shape,
+cardinality, compatibility policy, bounds, fixtures, and live-qualification
+versions will be compatibility dimensions; F09f remains Triaged until those
+exact external contracts are frozen. F09f will remain target-independent and
+will claim no target join or proposal compatibility.
+
+F09g will bind the current target, snapshot, source/file identity, F07b
+evidence, F09f observation, comparison policy, and proposal policy. Exactly one
+distinct canonical checksum-valid edition-applicable local ISBN must be
+equivalent to the ISBN of one unique compatible Hardcover ebook edition
+belonging to one book, and the one usable current F07 title and Hardcover title
+must agree. With a loaded current Audiobookshelf title that is empty or
+materially different, the sole positive output will be one `needs_review`,
+`production_report_only` proposal whose value is the exact current F07
+normalized title.
+
+A missing or unloaded current title; a missing or invalid local ISBN;
+conflicting or ambiguously applicable ISBN claims; multiple distinct canonical
+local ISBNs; no match; multiple, ambiguous, or incompatible provider matches;
+stale target, local, or provider state; disabled or failed provider;
+current-title equivalence; or local/provider title disagreement will have its
+own typed zero-proposal compatibility outcome. Repeated equivalent claims of
+the same canonical local ISBN will remain one ISBN and will not alone force a
+zero-proposal result. Valid local evidence will be retained.
+Semantically duplicate provider rows may be normalized only under the frozen
+F09f cardinality contract; genuinely distinct compatible editions remain
+ambiguous. The Hardcover book, edition, and title are a single provider
+lineage, so compatibility claims independence only between local EPUB evidence
+and the external catalogue.
+
+Identical current inputs will replay without duplicate state. A changed bound
+input will create a superseding result and cannot rewrite or revive earlier
+history. Only the one positive `needs_review`, `production_report_only` result
+will derive production applicability for the report; zero-proposal results and
+all 0.2 synthetic history will remain structurally ineligible. This planned
+contract adds no current tested or supported compatibility claim and promises
+no review admission, decision, approval, AI, apply, target/media write,
+destructive, tagging, or release publication.
 
 ## Audiobookshelf support
 

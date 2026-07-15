@@ -149,7 +149,8 @@ requires the exact installed artifact to parse one bounded real-endpoint result
 with a dedicated non-production token and disposable state, retaining only a
 redacted aggregate. This narrow compatibility does not add F09f production
 configuration, persisted provider work, freshness/reuse, restart behavior, or
-live-target binding.
+ISBN-backed book/edition identity, nor F09g's live target/source join or
+proposal-applicability decision.
 
 ### 0.2.0 checkpoint exit
 
@@ -163,10 +164,76 @@ live-target binding.
 - the preview contains no AI, human decision, approval, cover, rich-field,
   multi-provider-fusion, production-write, or destructive behavior.
 
-F07a #143 (#30, #31, and #188), F07b #228 (#32), and F08 #144 (#33 and
-#34) remain intact as planned 1.0.0 work and are not prerequisites for this
-0.2.0 chain. F11 #147 and #74-#80, the broader #16, #46, #50, and #68-#73
-program, and rich Hardcover work #209 also remain 1.0.0 scope.
+F07a #143 (#30, #31, and #188) and F07b #228 (#32) are not prerequisites for
+this 0.2.0 chain; they begin the later 0.3.0 checkpoint. F08 #144 (#33 and
+#34), F11 #147 and #74-#80, the broader #16, #46, #50, and #68-#73 program,
+and rich Hardcover work #209 remain 1.0.0 scope.
+
+## Delivery checkpoint 0.3.0: first trustworthy live title report
+
+This internal checkpoint connects current Audiobookshelf state, durable local
+EPUB evidence, and one configured Hardcover observation to report one
+trustworthy live title proposal or an exact typed zero-proposal result. It does
+not publish a release or add review admission, a human or AI decision, apply,
+target or media writes, destructive authority, or a tag.
+
+| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
+| --- | --- | --- | --- | --- |
+| F07a EPUB opening-matter evidence report | #143 | One safely readable EPUB produces a bounded transient opening-matter claim report with exact provenance or a typed no-applicable/rejected outcome. | #30, #31, #188; #25 and #26 are non-closing inputs | `slice/f07a-epub-opening-evidence` |
+| F07b Durable EPUB evidence round trip | #228 | Completed F07a evidence executes durably for one isolated target and snapshot, survives restart, reuses compatible results, supersedes stale applicability, and remains inspectable without persistence of decoded content. | #32; #25 is a non-closing input | `slice/f07b-durable-epub-evidence` |
+| F09f Supported Hardcover title and identity provider | #239 | Disabled-by-default configured Hardcover work persists one bounded current title plus strict ISBN-backed book and compatible ebook-edition identity as one provider lineage, with restart, reuse, freshness, invalidation, and live qualification. It remains target-independent and owns no proposal authority. | #242; completed F09b #204 | `slice/f09f-hardcover-title-identity` |
+| F09g Live Audiobookshelf title proposal | #238 | One exact current Audiobookshelf ebook snapshot, selected durable local title and edition-applicable ISBN evidence, and one current compatible Hardcover observation produce either one immutable `needs_review`, `production_report_only` proposal whose value is the exact current F07 normalized title or an exact typed zero-proposal result without review admission or write authority. | #243; F07b #228 and F09f #239 | `slice/f09g-live-title-proposal` |
+
+The checkpoint graph is:
+
+```text
+completed F06 #142 -> F07a #143/#30/#31/#188 -> F07b #228/#32
+completed F09b #204/#223 -> F09f #239/#242
+F07b + F09f -> F09g #238/#243 -> 0.3.0 checkpoint exit
+```
+
+F09f is the target-independent configured provider lane. It owns the bounded
+Hardcover title and strict ISBN-backed book/compatible ebook-edition
+observation, including its durable provider work, restart, reuse, freshness,
+invalidation, disabled and failure behavior, and live compatibility
+qualification. The book, edition, and title are one Hardcover provider lineage;
+they are not independent provider votes. F09f remains Triaged until its exact
+external query, authentication, response and error contract, cardinality and
+compatibility rules, bounds, fixtures, and live qualification are frozen. It
+does not inspect or join a live target and cannot decide proposal eligibility.
+
+F09g owns the live target/source join. It produces exactly one `needs_review`,
+`production_report_only` proposal only when the current inputs supply one
+usable F07 title, exactly one distinct canonical checksum-valid
+edition-applicable local ISBN, one unique ISBN-equivalent compatible Hardcover
+ebook edition belonging to one book with an agreeing title, and a loaded
+Audiobookshelf title that is empty or materially different. Repeated equivalent
+claims of that same canonical local ISBN do not force a zero-proposal result;
+conflicting, ambiguously applicable, or multiple distinct ISBNs do. The sole
+positive proposal value is the exact current F07 normalized title. Missing,
+unloaded, invalid, conflicting, ambiguously applicable, multiple distinct,
+ambiguous, incompatible, stale, disabled, failed, equivalent, or disagreeing
+inputs produce their exact typed zero-proposal result while preserving usable
+local evidence. The independence claim is the local EPUB evidence versus the
+external Hardcover catalogue lineage.
+
+### 0.3.0 checkpoint exit
+
+- F07a produces one bounded transient opening-matter title and
+  edition-applicable ISBN evidence report from a safely readable EPUB;
+- F07b binds accepted F07a evidence durably to one current isolated target and
+  snapshot, with restart, compatible reuse, invalidation, and inspection;
+- F09f produces one bounded, current, qualified Hardcover title and strict
+  ISBN-backed book/ebook-edition observation or its typed disabled, failed,
+  empty, unmatched, ambiguous, or incompatible outcome;
+- F09g atomically revalidates the live target and both evidence lineages, then
+  persists and reports the one eligible `needs_review`,
+  `production_report_only` proposal whose value is the exact current F07
+  normalized title, or the exact zero-proposal result, with replay,
+  supersession, and evidence preservation; and
+- the checkpoint contains no review admission, human or AI decision, approval,
+  apply, target or media write, destructive authority, tag, GitHub Release, or
+  release publication.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
@@ -175,12 +242,8 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
-| F07a EPUB opening-matter evidence report | #143 | One safely readable EPUB produces a bounded transient opening-matter claim report with exact provenance or a typed no-applicable/rejected outcome. | #30, #31, #188; #25 and #26 are non-closing inputs | `slice/f07a-epub-opening-evidence` |
-| F07b Durable EPUB evidence round trip | #228 | Completed F07a evidence executes durably for one isolated target and snapshot, survives restart, reuses compatible results, supersedes stale applicability, and remains inspectable without persistence of decoded content. | #32; #25 is a non-closing input | `slice/f07b-durable-epub-evidence` |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
 | F09c Work identity fallback | #205 | Bounded Open Library work/edition discovery and optional LibraryThing ISBN-family clustering preserve ambiguity, lineage, independent-provider limits, and disabled/failure behavior. | #210, #211; unresolved prerequisite #68 | `slice/f09c-work-identity-fallback` |
-| F09f Supported Hardcover title provider | #239 | Disabled-by-default configured Hardcover title work persists one bounded current compatible canonical observation with restart, reuse, freshness, invalidation, and live qualification, without live-target or mutation authority. | #242; completed F09b #204 | `slice/f09f-supported-hardcover-title` |
-| F09g Live Audiobookshelf title proposal | #238 | One exact current Audiobookshelf ebook snapshot, selected durable local evidence, current compatible F09c identity, and optional supported Hardcover observation produce one immutable `production_report_only` title proposal set without review admission or write authority. | #243; F07b #228, F09c #205, F09f #239 | `slice/f09g-live-title-proposal` |
 | F10b Production title review case | #240 | Exactly one current qualifying `production_report_only` title proposal becomes one durable undecided production review case while preserving exact freshness, evidence, version, replay, and supersession proof. | #241; F10a #146 and F09g #238 | `slice/f10b-production-title-case` |
 | F11 AI shadow recommendation | #147 | An isolated reviewer receives a complete bounded vendor-neutral packet carrying the exact normalized current snapshot and explicit field-load state only after required authoritative inputs join successfully, without target-service or provider credentials or vendor payloads, then returns one direct closed-schema `AIDecision` for every proposal; its required `problems` list contains adverse or unresolved problem codes, with `problems: []` for a clean approval. Malformed output, unknown fields, missing required fields, duplicate or partial decisions, trailing content, or semantic repair becomes a typed failure without authorizing apply. A zero-proposal selection terminates without invocation, and optional provider failure remains operational. | #74-#80 | `slice/f11-ai-shadow-review` |
 | F12a Authenticated API foundation | #189 | The supported HTTP service exposes deterministic versioned OpenAPI, minimal anonymous liveness, and one bounded authenticated owner diagnostic; invalid sessions, origins, CSRF, proxy and rate-limit contexts fail closed. | #96, #97 | `slice/f12a-authenticated-api` |
@@ -193,10 +256,13 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 | F16b Browser summaries, bulk, and qualification | #195 | The browser presents server-authoritative summaries/history, commits one exact-version bulk decision, reverses one unapplied decision, and qualifies every applicable category across the supported browser matrix. | #20, #101-#103, #193, #194 | `slice/f16b-review-bulk-qualification` |
 | F17 Continuous-operation qualification | #153 | The same canonical target/evidence/candidate scenario passes Audiobookshelf and CWA-shaped target fakes, each with provider-disabled and configured-provider variants, without schema changes; provider-disabled runs construct no provider adapter/client, resolve no provider secret, and make no provider network call, while the CWA-shaped fake traps database, UI, maintenance-container, media-write, unsupported-API, and production-mutation fallbacks. Events, reconciliation, review, guarded apply, circuit breakers, immutable workflow upgrades, dependency fan-out and fan-in, duplicate-safe resume, cancellation, worker and scheduler death, candidate-lane reuse and retry, physical JSONL framing, report-only authority isolation, browser-category coverage, advisory progress, restart, upgrade, backup, restore, release provenance, and support diagnostics pass the release cohort. | #94, #95 and a slice-specific release cohort | `slice/f17-release-qualification` |
 
-The productionisation dependencies are deliberately not one serial chain.
-F09f depends only on completed F09b. F09c remains separately blocked on its
-declared prerequisite #68. F09g starts after F07b, F09c, and F09f; F10b starts
-after F10a and F09g. F11 remains independently deliverable against its
+The remaining productionisation dependencies are deliberately not one serial
+chain. F09c remains separately blocked on its declared prerequisite #68 and is
+not a prerequisite for the 0.3 F09g report. Its fallback identity remains a
+separate report/provider lane; later provider-neutral candidate work #69/#70
+consumes compatible F09c identity, with qualification in #73 and F17 #153.
+F10b starts after completed F10a and F09g and is the first production review-case
+admission for this path. F11 remains independently deliverable against its
 synthetic shadow input. The production title and synthetic reviewer paths
 converge only in F17 qualification.
 

@@ -50,6 +50,30 @@ request or response, provider upstream identifier, or fabricated ordinary
 evidence-reference record. The supported report uses the same bounded local
 projection and never sends it to a provider or reviewer.
 
+The 0.3 F09f integration discloses only the minimum allowlisted local title and
+one canonical edition-applicable ISBN needed for its bounded Hardcover lookup.
+It does not send a target-service identifier, library or connection identity,
+filename, media or database path, excerpt, cover, rich metadata, raw provider
+payload, or unrelated library field. The account credential remains a secret
+reference resolved only when the provider is enabled and is never shared with
+the target service or another consumer.
+
+Durable F09f state contains only the bounded canonical provider title, minimum
+provider-scoped book and compatible ebook-edition identity, query and
+configuration identity, outcome, and provenance needed to explain freshness,
+replay, or invalidation. Raw requests, responses, headers, tokens, secret
+reference values, paths, unrestricted upstream identifiers, traffic captures,
+and provider caches are not retained. F09g retains the minimum bounded local,
+target, and provider projections needed to explain its proposal or exact typed
+zero-proposal result; valid local evidence survives provider failure.
+
+F09f/F09g provider observations and report results use documented provider-data
+retention and deletion classes and are included in project-owned export and
+deletion behavior without implying deletion at Hardcover, Audiobookshelf, or
+the filesystem. Private live qualification uses disposable state and may
+retain only a redacted aggregate result; it retains no library field values,
+ISBN, provider identity, raw traffic, secret, path, or private report.
+
 A planned post-foundation capability may derive evidence from bounded audiobook
 opening windows under the
 [opening-audio evidence contract](../product/opening-audio-evidence.md). Raw

@@ -190,8 +190,9 @@ secret-file reference performs no secret access, DNS, or egress and records
 `provider_failed`. It changes no `config-v1` field. Required qualification uses
 a sanitized live-shape fake through the same adapter seam and the exact
 installed artifact against the bounded real endpoint. Production provider
-configuration, durable work, freshness/reuse, restart, and live-target binding
-remain F09f scope. F10a admits one current undecided synthetic case only from
+configuration, durable work, freshness/reuse, restart, and strict ISBN-backed
+Hardcover identity remain F09f scope; the live-target join remains F09g scope.
+F10a admits one current undecided synthetic case only from
 one current immutable proposal set containing exactly one current
 `needs_review` title proposal. It replays idempotently, supersedes for a
 qualifying successor, and retires for a nonqualifying successor without an
@@ -201,27 +202,54 @@ This staging uses the exact F06 `normalized_value` as the proposal value, keeps
 F06 `raw_value` as evidence/provenance, uses provider evidence only for
 corroboration, records exact typed no-proposal outcomes, and supports replay
 and supersession without introducing AI, human decisions, covers, rich fields,
-multiple providers, or writes. F07a #143, F07b #228, and
-F08 #144 remain intact as planned 1.0 work and do not block the 0.2 preview.
-The broader #16, #46, #50, #68-#73, and #209 program and F11 #147/#74-#80
-also remain 1.0 scope. The WP5 and WP6 contracts below describe that long-term
-architecture; they are not 0.2 exit criteria.
+multiple providers, or writes. F07a #143 and F07b #228 begin the later 0.3
+checkpoint and do not block the 0.2 preview. F08 #144, the broader #16, #46,
+#50, #68-#73, and #209 program, and F11 #147/#74-#80 remain 1.0 scope. The WP5
+and WP6 contracts below describe that long-term architecture; they are not 0.2
+exit criteria.
 
 Every F09a set carries the closed `synthetic_preview` mode in its identity and
 derives `production_applicable=false`; it cannot enter production review or
 apply authority. The command accepts no configuration, live IDs, operator
 titles, media references, provider payloads, endpoints, or credentials. A live
-F06-to-current-Audiobookshelf binding, configured-media resolution, and their
-freshness and recovery semantics are deliberately deferred to explicit future
-work. F09b and F10a may continue the preview only without erasing that synthetic
-lineage or granting it production applicability.
+local-evidence-to-current-Audiobookshelf binding, configured-media resolution,
+and their freshness and recovery semantics are deliberately deferred to the
+explicit 0.3 work. F09b and F10a may continue the preview only without erasing
+that synthetic lineage or granting it production applicability.
 
-The later productionisation work remains separately tracked. F09f #239 depends
-only on completed F09b. F09c #205 remains blocked on its declared prerequisite
-#68. F09g #238 depends on F07b, F09c, and F09f, and F10b #240 depends on F10a
-and F09g. F11 remains an independently deliverable synthetic shadow path; F17
-is the convergence qualification gate. These planning relationships add no
-production behavior to F10a.
+The next internal checkpoint is 0.3.0, the first trustworthy live title report.
+Completed F06 leads to F07a #143/#30/#31/#188 and then F07b #228/#32.
+Completed F09b leads separately to F09f #239/#242. F07b and F09f then converge
+at F09g #238/#243, the checkpoint exit. F09f is a target-independent configured
+Hardcover lane: one bounded title plus strict ISBN-backed book and compatible
+ebook-edition identity form one provider lineage. Its exact external query,
+authentication, response/error contract, cardinality rules, bounds, fixtures,
+and live qualification must be frozen before it moves from Triaged to Ready.
+F09f owns no live target join or proposal authority.
+
+F09g owns the live target/source join. One current usable F07 title, exactly one
+distinct canonical checksum-valid edition-applicable local ISBN, one unique
+ISBN-equivalent compatible Hardcover ebook edition belonging to one book with
+an agreeing title, and a loaded empty or materially different Audiobookshelf
+title produce the sole positive output: one `needs_review`,
+`production_report_only` proposal whose value is the exact current F07
+normalized title. Repeated equivalent claims of the same canonical local ISBN
+do not force a zero-proposal result. Missing, unloaded, invalid, conflicting,
+ambiguously applicable, multiple distinct, ambiguous, incompatible, stale,
+disabled, failed, equivalent, or disagreeing inputs create their exact typed
+zero-proposal result while preserving usable evidence. The independent
+observations are the local EPUB and external Hardcover catalogue, not separate
+Hardcover book, edition, and title votes.
+
+This 0.3 checkpoint adds no review admission, human or AI decision, approval,
+apply, target or media write, destructive authority, tag, or release
+publication. F09c #205/#210/#211 remains a separate 1.0 fallback report/provider
+lane and does not block F09g; #69/#70 later consume compatible F09c identity,
+with qualification in #73 and F17 #153. F10b #240/#241 remains 1.0 work after
+completed F10a and F09g and owns production review-case admission. F11 remains
+an independently deliverable synthetic shadow path; F17 is the convergence
+qualification gate. These planning relationships add no production behavior
+to F10a.
 
 ## WP5: candidate and policy engine
 
