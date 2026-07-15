@@ -7,6 +7,10 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Fixed Hardcover provider-secret validation so leading or trailing space, tab,
+  carriage return, or line feed is rejected before client construction, DNS,
+  or transport activity while preserving existing target-secret compatibility.
+
 - Added `synthetic-title-review-case-report`, a closed F10a inspection command
   that admits one current synthetic needs-review title proposal into immutable
   schema-7 case history, replays idempotently, supersedes or retires atomically,
