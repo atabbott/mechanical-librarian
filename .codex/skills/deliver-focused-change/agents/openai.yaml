@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deliver Focused Change"
+  short_description: "Deliver bounded non-slice project changes"
+  default_prompt: "Use $deliver-focused-change to deliver the highest-priority Ready focused change with proportionate independent review."

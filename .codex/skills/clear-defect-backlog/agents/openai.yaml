@@ -1,0 +1,4 @@
+interface:
+  display_name: "Clear Defect Backlog"
+  short_description: "Safely triage and deliver focused defect fixes"
+  default_prompt: "Use $clear-defect-backlog to work through this defect-ticket list with independent reproduction and review."

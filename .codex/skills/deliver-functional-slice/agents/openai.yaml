@@ -1,0 +1,4 @@
+interface:
+  display_name: "Deliver Functional Slice"
+  short_description: "Orchestrate safe end-to-end slice delivery"
+  default_prompt: "Use $deliver-functional-slice to deliver the highest-priority Ready functional slice with independent reviews."

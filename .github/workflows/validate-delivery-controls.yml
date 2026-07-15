@@ -1,0 +1,41 @@
+name: Validate delivery controls
+
+on:
+  pull_request:
+    paths:
+      - ".codex/**"
+      - ".github/workflows/validate-delivery-controls.yml"
+      - "docs/development/workflow-control-plane.md"
+      - "CONTRIBUTING.md"
+  push:
+    branches: [main]
+    paths:
+      - ".codex/**"
+      - ".github/workflows/validate-delivery-controls.yml"
+      - "docs/development/workflow-control-plane.md"
+      - "CONTRIBUTING.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: delivery-controls-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the control plane
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Validate declarations and deterministic controls
+        run: |
+          set -euo pipefail
+          python3 .codex/scripts/validate_team.py --self-test
+          python3 .codex/scripts/validate_team.py --json > /tmp/team-validation.json
+          python3 -m unittest discover -s .codex/tests -p 'test_*.py'
+          python3 -m py_compile .codex/scripts/*.py

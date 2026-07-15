@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+ideas/
+runs/
+private-test-resources.md

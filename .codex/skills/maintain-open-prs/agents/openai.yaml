@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain Open PRs"
+  short_description: "Maintain and close out pull requests safely"
+  default_prompt: "Use $maintain-open-prs to maintain my pull requests, address valid feedback, and close out merged work with evidence-backed ticket and dependency updates."

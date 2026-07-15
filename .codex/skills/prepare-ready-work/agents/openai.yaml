@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare Ready Work"
+  short_description: "Turn rough work into executable proposals"
+  default_prompt: "Use $prepare-ready-work to classify and prepare this work as a concise Ready proposal for maintainer approval."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Explore Product Ideas"
+  short_description: "Challenge ideas and shape future ML work"
+  default_prompt: "Use $explore-product-ideas to collaboratively test this Mechanical Librarian idea and decide how it could fit the future work plan."

@@ -14,6 +14,7 @@ Read:
 5. [Documentation standards](docs/development/documentation-standards.md)
 6. [Work management](docs/development/work-management.md)
 7. [Functional slice delivery](docs/development/slice-delivery.md)
+8. [Delivery control plane](docs/development/workflow-control-plane.md)
 
 Use a discussion or design issue before implementing:
 
@@ -57,6 +58,15 @@ source so tests exercise the same installed shape as a built wheel.
 Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph
 changes.
+
+## Delivery-control qualification
+
+The tracked `.codex` tree contains the canonical delivery workflows, role
+declarations, schemas, and deterministic control tests. Material changes to
+that tree require a tracked focused change and the qualification commands in
+[the delivery-control guide](docs/development/workflow-control-plane.md).
+Private run records, local resource paths, and session artifacts remain
+untracked.
 
 ## Pull requests
 
