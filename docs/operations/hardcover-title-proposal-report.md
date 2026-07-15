@@ -83,4 +83,7 @@ See the [frozen F09b contract](../reference/hardcover-f09b-contract.md).
 
 This qualification does not add provider configuration, durable provider work,
 freshness or reuse, retry/restart behavior, live-target binding, or production
-applicability. Those production responsibilities remain F09f scope.
+applicability. F09f owns the later target-independent configured provider work,
+title plus strict ISBN-backed book/edition identity, retry/restart, freshness,
+and reuse. F09g owns the later live target/source join and
+proposal-applicability decision.

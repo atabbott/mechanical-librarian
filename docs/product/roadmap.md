@@ -62,8 +62,9 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
   reinterpret F09a's `synthetic_preview` history as live or
   production-applicable evidence. A sanitized live-shape fake qualifies normal
   automation, and the exact installed artifact must also parse one bounded live
-  response. F09f retains production configuration, provider-work persistence,
-  freshness/reuse, restart, and live-target responsibilities.
+  response. F09f retains configured provider-work persistence,
+  freshness/reuse, restart, and strict ISBN-backed Hardcover identity; F09g
+  retains the later live-target join and proposal authority.
 - F10a adds `synthetic-title-review-case-report`. It persists, restarts,
   inspects, and replays one visibly synthetic undecided case only from one
   current immutable proposal set containing exactly one `needs_review` title
@@ -75,29 +76,68 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
 The active sequence is completed F06 #142 plus #221, then F09a #145/#222,
 F09b #204/#223, and F10a #146/#224.
 
-Binding a production F06 report to a current Audiobookshelf snapshot, resolving
-configured media, and defining live freshness/recovery semantics are deferred.
-They require an explicit later slice; they are not hidden acceptance criteria
-for this proof of concept.
+Binding production local evidence to a current Audiobookshelf snapshot,
+resolving configured media, and defining live freshness/recovery semantics are
+deferred to the 0.3 slices. They are not hidden acceptance criteria for this
+proof of concept.
 
 Exit: one deterministic, bounded, explainable title proposal path survives
 restart through one undecided case without gaining decision or write authority.
 
 ### Planned 1.0 evidence and review breadth
 
-F07a #143 (#30, #31, and #188), F07b #228 (#32), and F08 #144 (#33 and
-#34) retain their planned scope but are not 0.2 prerequisites. The broader
-candidate and provider program in #16, #46, #50, #68-#73, and #209, and F11
-#147/#74-#80 AI shadow review, likewise remain 1.0 work. They extend the
+F07a #143 (#30, #31, and #188) and F07b #228 (#32) retain their planned scope
+but are not 0.2 prerequisites; they begin the 0.3 checkpoint. F08 #144 (#33 and
+#34), the broader candidate and provider program in #16, #46, #50, #68-#73,
+and #209, and F11 #147/#74-#80 AI shadow review remain 1.0 work. They extend the
 provider-neutral seams and immutable history proven by the preview rather than
 being partially implemented inside it.
 
-The approved 1.0 productionisation path keeps independent prerequisites
-visible: F09f #239 follows completed F09b; F09c #205 remains separately blocked
-on #68; F09g #238 follows F07b, F09c, and F09f; and F10b #240 follows F10a and
-F09g. F11 remains an independently deliverable synthetic shadow path. Its
-reviewer work and the production title/case path converge only at F17 release
-qualification.
+## M2a: First trustworthy live title report (0.3.0)
+
+- F07a extracts one bounded opening-matter title and edition-applicable ISBN
+  report from a safely readable EPUB; F07b binds that evidence durably to one
+  current isolated target and snapshot with restart, reuse, and invalidation.
+- F09f follows completed F09b and adds the disabled-by-default configured
+  Hardcover lane. It persists one bounded title plus strict ISBN-backed book
+  and compatible ebook-edition identity as one provider lineage, but remains
+  target-independent and has no proposal authority. F09f stays Triaged until
+  its exact external query, authentication, response/error contract,
+  cardinality rules, bounds, fixtures, and live qualification are frozen.
+- F09g follows F07b and F09f and owns the current Audiobookshelf target/source
+  join. One usable current F07 title, exactly one distinct canonical
+  checksum-valid edition-applicable local ISBN, one unique compatible
+  ISBN-equivalent Hardcover ebook edition and book with an agreeing title, and
+  a loaded empty or materially different current title produce the sole
+  positive output: one `needs_review`, `production_report_only` proposal whose
+  value is the exact current F07 normalized title.
+- Repeated equivalent claims of the same canonical local ISBN do not force a
+  zero-proposal result. Missing, unloaded, invalid, conflicting, ambiguously
+  applicable, multiple distinct, ambiguous, incompatible, stale, disabled,
+  failed, equivalent, and disagreeing inputs produce exact typed zero-proposal
+  results without discarding valid evidence. The independence claim is local
+  EPUB evidence versus the external Hardcover catalogue; the Hardcover book,
+  edition, and title are one provider lineage.
+- Keep review admission, human and AI decisions, approval, apply, target and
+  media writes, destructive authority, tagging, and release publication out of
+  the checkpoint.
+
+The active sequence is completed F06 #142 to F07a #143/#30/#31/#188 to F07b
+#228/#32; completed F09b #204/#223 to F09f #239/#242; then F07b plus F09f to
+F09g #238/#243. F09g is the 0.3.0 checkpoint exit. Completing this internal
+checkpoint does not publish a release.
+
+F09c #205/#210/#211 remains separately planned for 1.0 as a fallback
+report/provider lane and is not an F09g blocker. Later provider-neutral work
+#69/#70 consumes compatible F09c identity, with qualification in #73 and F17
+#153. F10b #240/#241 remains 1.0 work after completed F10a and F09g; it admits a
+qualifying live report into production review. F11 remains an independently
+deliverable synthetic shadow path, and the production title/case and reviewer
+paths converge only at F17 qualification.
+
+Exit: one current Audiobookshelf ebook produces a restartable, evidence-backed
+live title proposal or exact zero-proposal report without gaining review,
+decision, mutation, destructive, or release-publication authority.
 
 ## M3: AI review in shadow mode
 

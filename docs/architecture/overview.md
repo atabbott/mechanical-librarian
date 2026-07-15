@@ -177,17 +177,45 @@ The harness persists only identity-bound `synthetic_preview` sets with derived
 false production applicability and a separate synthetic current pointer. It
 never adds rows to inventory history or current inventory pointers, and it has
 no review or apply adapter. Connecting a configured media item and current live
-snapshot to F06 is a later application use case, not an implicit adapter hidden
-inside F09a.
+snapshot to local evidence is a later application use case, not an implicit
+adapter hidden inside F09a.
 
 F09b ordinary automation uses a credential-free structural fake through the
 same adapter seam. Completion also requires the exact installed artifact to
 parse one bounded real-endpoint result without a parser or compatibility
-failure, retaining only redacted aggregate evidence. Production provider
-configuration, persisted work, freshness/reuse, restart behavior, and live-
-target binding remain F09f scope. Production work/edition identity remains
-F09c scope; the live target/evidence proposal join remains F09g scope; and
-production review-case admission remains F10b scope. F11 remains independently
+failure, retaining only redacted aggregate evidence.
+
+The 0.3 title-report path introduces two production-report-only lanes without
+changing these authority boundaries. F09f is a target-independent configured
+Hardcover adapter/application lane. It accepts a bounded ISBN-and-title query,
+persists the minimum title plus strict ISBN-backed book and compatible
+ebook-edition observation as one provider lineage, and owns provider-work
+restart, reuse, freshness, invalidation, disabled/failure behavior, and live
+compatibility qualification. It does not inspect an Audiobookshelf target or
+decide whether a proposal is eligible. Its exact external contract must be
+frozen before the slice becomes Ready.
+
+F09g is the application use case that joins the current Audiobookshelf target
+and source, current durable F07b local evidence, and current F09f observation.
+Only one usable current F07 title, exactly one distinct canonical checksum-valid
+edition-applicable local ISBN, one unique compatible ISBN-equivalent Hardcover
+ebook edition and book with an agreeing title, and a loaded empty or materially
+different current target title produce the sole positive output: one
+`needs_review`, `production_report_only` proposal whose value is the exact
+current F07 normalized title. Repeated equivalent claims of the same canonical
+local ISBN remain one ISBN; conflicting, ambiguously applicable, or multiple
+distinct ISBNs produce an explicit zero-proposal result. Every other missing,
+unloaded, invalid, ambiguous, incompatible, stale, disabled, failed,
+equivalent, or disagreeing outcome is likewise an explicit zero-proposal result
+that preserves valid evidence. The independence is local EPUB evidence versus
+the external catalogue lineage, not separate Hardcover book, edition, and
+title votes.
+
+F09c remains a separate 1.0 fallback identity report/provider lane and is not a
+dependency of F09g. Later provider-neutral candidate work consumes compatible
+F09c identity. F10b, after completed F10a and F09g, owns production review-case
+admission. The 0.3 path adds no review, decision, AI, apply, target/media write,
+destructive, or release-publication capability. F11 remains independently
 synthetic, with production and reviewer paths converging only at F17.
 
 ### Apply

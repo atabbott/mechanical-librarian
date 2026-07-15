@@ -22,6 +22,7 @@ release standards as code.
 - [Post-1.0 reviewer backends](product/future-reviewer-backends.md)
 - [Roadmap](product/roadmap.md)
 - [Initial build plan](product/initial-build-plan.md)
+- [Delivery slices](product/delivery-slices.md)
 - [Licence decision](product/license-decision.md)
 
 ## Architecture

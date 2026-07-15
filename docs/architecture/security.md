@@ -159,8 +159,9 @@ through the same adapter seam and no provider credential. F09b also requires
 the exact installed artifact to parse one bounded real-endpoint result with a
 dedicated non-production account and disposable state; only a redacted
 aggregate result may be retained. This proves no production configuration,
-provider-work persistence, freshness/reuse, restart, or live-target behavior;
-those responsibilities remain F09f scope. Nothing in the preview invokes AI,
+provider-work persistence, freshness/reuse, restart, identity, or live-target
+behavior. F09f later owns the configured target-independent provider lane;
+F09g owns the live join. Nothing in the preview invokes AI,
 records a human decision, handles covers or rich
 fields, fuses multiple providers, or authorizes a production write.
 
@@ -174,8 +175,39 @@ and reason atomically. Exact replay adds no transition; stale, reverse,
 cross-lineage, arbitrary, malformed, destructive, or AI-shaped input cannot
 rewind or gain authority. `production_applicable=false` remains derived and no
 case row can carry reviewer, decision, approval, apply, target-write, or
-destructive capability. F09c, F09f, F09g, and F10b own later productionisation;
-F11 remains independently synthetic and the paths converge only at F17.
+destructive capability.
+
+The 0.3 path remains report-only and least-authority. Before scheduling or
+binding new F09f provider work, F09g must validate that the selected target,
+snapshot, source, and bounded F07b evidence are current and that exactly one
+distinct canonical checksum-valid edition-applicable local ISBN may form the
+bounded provider query. Repeated equivalent claims of that same canonical ISBN
+remain one input; conflicting, ambiguously applicable, or multiple distinct
+ISBNs fail closed. This preflight does not make target state an authorization
+input to F09f's target-independent durable retry/restart. F09f resolves
+credentials only when its
+versioned configuration enables the provider; disabled composition constructs
+no provider client, resolves no secret, and performs no DNS or egress. The
+application, not target or provider data, fixes the allowed request shape and
+bounds. Provider responses are untrusted, bounded, and fail closed on malformed,
+oversized, ambiguous, multiple, incompatible, stale, or failed results.
+
+F09f persists only the minimum provider-scoped title, book/ebook-edition
+identity, query/configuration identity, and outcome provenance needed for
+restart and explanation. It retains no raw request or response, header, token,
+secret reference value, path, unrestricted upstream identifier, or cache. The
+Hardcover title, book, and edition remain one trust lineage. Only F09g may join
+that external lineage with independently derived local EPUB evidence, and it
+must revalidate every current input atomically before deriving the sole
+positive output: one `needs_review`, `production_report_only` proposal whose
+value is the exact current F07 normalized title. Every other condition fails
+closed as an exact zero-proposal result without erasing usable evidence.
+
+The 0.3 checkpoint constructs no reviewer, decision, approval, AI, apply,
+target-write, media-write, destructive, tagging, or release-publication
+authority. F09c remains a separate 1.0 fallback report/provider lane; F10b owns
+later production review-case admission. F11 remains independently synthetic,
+and the paths converge only at F17.
 
 ## Primary threats and mitigations
 

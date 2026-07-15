@@ -259,6 +259,74 @@ retain only a redacted aggregate result. Negative spies prove the preview
 invokes no AI, human-decision, approval, apply, cover, rich-field, multi-
 provider-fusion, or production-write path.
 
+#### 0.3 live title-report cohort
+
+F07a tests prove bounded transient opening-matter title and ISBN extraction from
+ordinary, malformed, ambiguous, and inapplicable synthetic EPUBs without media
+mutation or decoded-content persistence. F07b tests bind the accepted evidence
+to one isolated current target, snapshot, and source, then cover durable work,
+restart, compatible reuse, changed-source invalidation, supersession, stale
+applicability, and inspectability without retaining decoded content.
+
+F09f ordinary automation is credential-free and fake-based through the same
+target-independent configured provider seam. Tests freeze and exercise the
+exact ISBN/title query and authentication contract, sanitized response and
+error shapes, ISBN-10/ISBN-13 equivalence, compatible ebook-edition and book
+cardinality, semantically duplicate versus genuinely ambiguous results,
+request/response/parser/deadline/retry/concurrency bounds, and configuration,
+query, parser, policy, and fixture compatibility identity. Disabled composition
+must construct no adapter or client, resolve no secret, and perform no DNS or
+egress. Enabled-only secret resolution, redaction, cancellation, restart,
+identical replay, reuse, invalidation, supersession, and atomic outcome
+publication are covered.
+
+F09f parser and outcome tests cover disabled, unavailable credential,
+authentication failure, rate limiting, timeout, outage, malformed or oversized
+response, empty result, no match, multiple or ambiguous match, incompatible
+edition, and the one unique compatible ebook edition/book/title observation.
+Every failure retains usable local evidence. Persistence and negative-leak
+tests allow only the bounded title, minimum provider-scoped book/edition
+identity, compatibility/query/configuration identity, outcome, and provenance;
+they reject raw traffic, headers, tokens, secret references or paths,
+unrestricted identifiers, target/library identifiers, media paths, and caches.
+Private exact-installed-artifact qualification uses a dedicated non-production
+account and disposable state, retaining only a redacted aggregate.
+
+F09g tests first reject a stale or mismatched target, snapshot, source, file, or
+F07b evidence before provider disclosure or scheduling/binding new F09f work;
+F09f durable retry/restart remains target-independent after that handoff. The
+F09g positive case requires one usable current F07 title and exactly one
+distinct canonical checksum-valid edition-applicable local ISBN, plus one
+unique ISBN-equivalent
+compatible Hardcover ebook edition belonging to one book with an agreeing
+title, and a loaded current Audiobookshelf title that is empty or materially
+different. Its sole positive output is one `needs_review`,
+`production_report_only` proposal whose value is the exact current F07
+normalized title, and it derives production applicability only for that
+positive report.
+
+The F09g decision matrix separately covers a missing or unloaded current title;
+missing or invalid local ISBNs; conflicting or ambiguously applicable ISBN
+claims; multiple distinct canonical local ISBNs; empty or unusable local title;
+disabled or failed provider; empty, unmatched, multiple, ambiguous,
+incompatible, malformed, or stale provider observation; equivalent current
+title; local/provider disagreement; and a stale input detected during final
+revalidation. Repeated equivalent claims of the same canonical local ISBN must
+remain one ISBN and must not alone force a zero-proposal result. Every listed
+negative condition produces the exact typed zero-proposal result and preserves
+usable evidence. Tests prove Hardcover book/edition/title are one lineage and
+that only local EPUB versus catalogue evidence is independent. Identical replay
+is duplicate-safe; changed inputs supersede without mutation; reverse or stale
+replay cannot rewind current applicability; publication is atomic across
+injected failures and concurrency.
+
+Negative authority tests for the complete 0.3 cohort deny review-case
+admission, human and AI decision, approval, cover/rich-field work, apply,
+target/media write, destructive action, tagging, and release publication. F09c
+is not constructed or required by F09g. F09c's separate later fallback lane is
+consumed by provider-neutral #69/#70 and qualified through #73 and F17 #153;
+F10b separately qualifies production review admission after F09g.
+
 The broader 1.0 report-only end-to-end scenario disables every external
 metadata provider and still completes inventory, local evidence extraction,
 deterministic no-op and rejection handling, bounded proposal creation, and

@@ -249,6 +249,32 @@ provider must define its own versioned structured configuration, persisted
 work, freshness/reuse, and restart behavior rather than turning this proof-of-
 concept CLI into an implicit schema extension.
 
+### Planned F09f configuration boundary
+
+F09f will extend the documented versioned configuration contract rather than
+reuse F09b's command-only secret reference or add hidden environment behavior.
+Before F09f can move from Triaged to Ready, its exact configuration fields,
+defaults, validation, compatibility identity, and migration impact must be
+frozen together with its external query/authentication and response contract.
+This plan does not add a current `config-v1` field or define that future schema.
+
+The frozen F09f configuration must be disabled by default and identify
+credentials only by a validated secret reference. Configuration loading may
+validate the reference shape, but secret resolution occurs only for enabled
+provider work after the application-built bounded query input has passed
+validation.
+Disabled composition constructs no provider adapter or client, resolves no
+secret, and performs no DNS or egress. Tokens, secret values, and secret paths
+are never configuration exports, persisted provider observations, logs,
+diagnostics, audit fields, or report values.
+
+The configured operation must allowlist only the application-built bounded
+ISBN-and-title lookup, supported provider capability, expected host, and finite
+transport/work policy. It cannot accept raw query text, arbitrary endpoints,
+target rows, library identifiers, paths, media content, provider payloads, or
+write capability. Changing any compatibility-relevant provider configuration
+invalidates reuse rather than reinterpreting existing F09b or F09f history.
+
 ### AI reviewers
 
 Structured reviewer authentication references are likewise planned beyond the
