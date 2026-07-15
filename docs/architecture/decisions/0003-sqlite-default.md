@@ -1,10 +1,10 @@
 # ADR-0003: Use SQLite as the Default State Store
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-07-10
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: none
+- Superseded by: ADR-0009
 
 ## Context
 

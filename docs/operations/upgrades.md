@@ -8,6 +8,57 @@ Production examples must pin a released version or immutable image digest. A flo
 
 Automatic update checks may report that a release exists. The application must not replace its own container or silently perform a major-version upgrade.
 
+## Planned pre-stable 0.4 state reset
+
+0.4.0 is an internal checkpoint, not a published release, and no pre-0.4
+development database is a supported 0.4 upgrade source. The governing decision
+is
+[ADR-0009](../architecture/decisions/0009-pre-stable-consolidation-baseline.md).
+The exact final-0.3 schema inventory must be refreshed after #238 closes before
+implementation selects the clean-state baseline; this planning contract does
+not invent a migration number.
+
+A 0.4 binary presented with pre-0.4, newer, partial, checksum-mismatched,
+tampered, or unknown state must stop before changing `schema_migrations`, any
+schema object, or any application row. It reports the unsupported-state class
+and bounded retain-and-rebuild steps without printing the database path,
+metadata values, credentials, or media content. It never deletes, renames,
+resets, repairs, copies, or upgrades that state automatically.
+
+The following steps define the operator-facing outcome owned by #254; they are
+not an available transition procedure in current pre-0.4 builds. #254's
+approved clean-state, reject-before-mutation, retain/rebuild, backup/restore,
+and operations-documentation criteria govern how implementation and
+qualification make this outline executable. Until #254 replaces the outline
+with exact, qualified guidance for a stopped, sidecar-consistent retention
+copy, verification without source migration, and restore/readback, do not
+attempt a 0.4 transition from this planning text alone.
+
+Once that qualified procedure exists, the operator must:
+
+1. Stop Mechanical Librarian and confirm no process is using the application
+   database or its SQLite sidecars.
+2. Retain the database and any present WAL or shared-memory sidecars together in
+   an access-controlled location; do not edit `schema_migrations` or delete
+   legacy tables.
+3. Following the [backup and recovery contract](backups-and-recovery.md), use
+   the exact retention procedure delivered by #254 to verify the stopped copy
+   and its restore/readback without mutating or migrating the source. Record the
+   source build and schema identity without exposing private paths.
+4. Configure a separate empty 0.4 state location. Do not point 0.4 at the
+   retained database expecting a migration.
+5. Start 0.4 and allow it to create its versioned clean-state baseline
+   atomically. An interruption must leave no partial usable baseline.
+6. Re-run the supported report-only inventory and evidence commands against the
+   configured read-only sources to rebuild observations; do not import old
+   internal rows as current evidence.
+7. Run `state-check` and the final-0.3 live title-report qualification before
+   treating the rebuilt state as current.
+
+Keep the retained copy until the rebuilt report-only state and required
+qualification evidence are verified. This procedure grants no target or media
+write, review, apply, destructive, tag, or release-publication authority.
+
 ## Upgrade contract
 
 Every release that changes durable state must publish:
@@ -62,6 +113,13 @@ prefix. It refuses newer, tampered, partial, or unrecognized state without
 deleting or rewriting it. Operators must inspect that state and restore a
 verified backup when the documented recovery procedure requires it; ordinary
 startup does not attempt an unbounded repair loop.
+
+### Historical pre-0.4 internal checkpoints
+
+The migration descriptions below document the internal checkpoint history and
+remain applicable when reproducing those exact older builds. They do not create
+a supported direct path from that state into 0.4. The pre-stable reset above is
+the only documented transition into the 0.4 clean-state baseline.
 
 The F02 durable-job migration is additive and forward-only. It supports empty
 state and the genuine F01 schema as starting points and is exercised by the

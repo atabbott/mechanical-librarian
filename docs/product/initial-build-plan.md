@@ -217,39 +217,26 @@ and their freshness and recovery semantics are deliberately deferred to the
 explicit 0.3 work. F09b and F10a may continue the preview only without erasing
 that synthetic lineage or granting it production applicability.
 
-The next internal checkpoint is 0.3.0, the first trustworthy live title report.
-Completed F06 leads to F07a #143/#30/#31/#188 and then F07b #228/#32.
-Completed F09b leads separately to F09f #239/#242. F07b and F09f then converge
-at F09g #238/#243, the checkpoint exit. F09f is a target-independent configured
-Hardcover lane: one bounded title plus strict ISBN-backed book and compatible
-ebook-edition identity form one provider lineage. Its exact external query,
-authentication, response/error contract, cardinality rules, bounds, fixtures,
-and live qualification must be frozen before it moves from Triaged to Ready.
-F09f owns no live target join or proposal authority.
+The 0.3 internal checkpoint turns the preview into the first trustworthy live
+title report: durable local EPUB title and edition-applicable ISBN evidence and
+one target-independent Hardcover title/book/compatible-ebook lineage join one
+current Audiobookshelf snapshot to produce one immutable
+`production_report_only` proposal or its exact typed zero-proposal result. It
+adds no review admission, decision, approval, apply, target or media write,
+destructive authority, tag, or release publication. The exact slice graph,
+issue ownership, outcome partitions, and exit criteria are maintained in
+[Delivery checkpoint 0.3.0](delivery-slices.md#delivery-checkpoint-030-first-trustworthy-live-title-report).
 
-F09g owns the live target/source join. One current usable F07 title, exactly one
-distinct canonical checksum-valid edition-applicable local ISBN, one unique
-ISBN-equivalent compatible Hardcover ebook edition belonging to one book with
-an agreeing title, and a loaded empty or materially different Audiobookshelf
-title produce the sole positive output: one `needs_review`,
-`production_report_only` proposal whose value is the exact current F07
-normalized title. Repeated equivalent claims of the same canonical local ISBN
-do not force a zero-proposal result. Missing, unloaded, invalid, conflicting,
-ambiguously applicable, multiple distinct, ambiguous, incompatible, stale,
-disabled, failed, equivalent, or disagreeing inputs create their exact typed
-zero-proposal result while preserving usable evidence. The independent
-observations are the local EPUB and external Hardcover catalogue, not separate
-Hardcover book, edition, and title votes.
-
-This 0.3 checkpoint adds no review admission, human or AI decision, approval,
-apply, target or media write, destructive authority, tag, or release
-publication. F09c #205/#210/#211 remains a separate 1.0 fallback report/provider
-lane and does not block F09g; #69/#70 later consume compatible F09c identity,
-with qualification in #73 and F17 #153. F10b #240/#241 remains 1.0 work after
-completed F10a and F09g and owns production review-case admission. F11 remains
-an independently deliverable synthetic shadow path; F17 is the convergence
-qualification gate. These planning relationships add no production behavior
-to F10a.
+The following 0.4 internal checkpoint is a focused pre-stable consolidation,
+not a product slice. It preserves that complete report while reducing the
+application to one current inventory model, durable-work substrate, EPUB
+isolation and qualification control plane, and least-authority executable
+boundary. It also retires obsolete demonstrations and future-only runtime
+surfaces, corrects stale DUX ownership, and rejects pre-0.4 state before
+mutation with explicit retain-and-rebuild guidance. Its exact issue order,
+dependencies, native parents, compatibility decision, and exit criteria are
+maintained in
+[Delivery checkpoint 0.4.0](delivery-slices.md#delivery-checkpoint-040-pre-stable-consolidation).
 
 ## WP5: candidate and policy engine
 

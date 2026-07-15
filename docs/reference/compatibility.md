@@ -22,6 +22,34 @@ The matrix should distinguish:
 - **experimental**: available without stability guarantees; and
 - **unsupported**: known not to work or outside the support boundary.
 
+## Pre-stable 0.4 checkpoint compatibility
+
+Mechanical Librarian has no published release or supported upgrade source. The
+0.4 internal checkpoint therefore establishes a new clean-state baseline under
+[ADR-0009](../architecture/decisions/0009-pre-stable-consolidation-baseline.md)
+after the final-0.3 schema and symbol inventory is refreshed when #238 closes.
+No migration or baseline number is selected by the planning decision.
+
+Pre-0.4 internal development databases are unsupported 0.4 inputs. A 0.4
+binary must reject pre-0.4, newer, partial, checksum-mismatched, tampered, or
+otherwise unrecognized state before changing migration metadata, schema
+objects, or application rows. It emits only bounded redacted guidance to retain
+a verified copy and rebuild report-only state explicitly from configured
+sources. It never deletes, resets, automatically repairs, or reinterprets the
+unsupported state.
+
+The F02 `job-heartbeat` and F03 `synthetic-inventory` commands and their
+dedicated runtime contracts have no 0.4 compatibility aliases. Applicable
+safety invariants remain qualification inputs for the current durable-work and
+inventory models. Future-only runtime contracts may be removed only after the
+final-0.3 consumer inventory preserves every current F07b, F09f, and F09g
+consumer and records an open issue or authoritative document for each deferred
+requirement.
+
+This reset is limited to unpublished pre-stable checkpoints. Compatibility
+from the first published release onward follows the documented release,
+deprecation, configuration, database, and upgrade contracts.
+
 ## Adapter capability negotiation
 
 An adapter must report capabilities based on the connected target, not only on the Mechanical Librarian build. Examples include:
@@ -484,9 +512,17 @@ See [HTTP API](../architecture/http-api.md).
 
 ## Configuration and database compatibility
 
-Unknown configuration keys should produce actionable diagnostics. Renamed or removed keys require a migration warning and, where safe, an automated conversion.
+Unknown configuration keys should produce actionable diagnostics. Once a
+published version owns a configuration contract, renamed or removed keys
+require a migration warning and, where safe, an automated conversion. Before
+the first published release, a recorded checkpoint decision may instead remove
+an internal-only surface without an alias when the changelog and operator
+guidance state the exact reset boundary.
 
-Database compatibility follows [Upgrades and migrations](../operations/upgrades.md). The project supports documented upgrade paths, not arbitrary downgrades or skipped major versions.
+Database compatibility follows
+[Upgrades and migrations](../operations/upgrades.md). The project supports only
+documented upgrade paths. It does not infer support for arbitrary downgrades,
+skipped versions, or unpublished internal state.
 
 ## Durable domain representations
 

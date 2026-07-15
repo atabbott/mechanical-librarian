@@ -7,6 +7,16 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Established the 0.4.0 pre-stable consolidation checkpoint and compatibility
+  boundary. After final 0.3 delivery, focused work will preserve the live
+  report-only title outcome while consolidating inventory, durable execution,
+  EPUB isolation and qualification, configuration, and executable composition;
+  correcting stale DUX ownership; and removing obsolete F02/F03 demonstrations
+  and future-only runtime surfaces. Pre-0.4 internal state is not a supported
+  upgrade source: 0.4 must reject it before mutation and require an explicit
+  redacted retain-and-rebuild procedure. This planning change adds no executable
+  behavior, product authority, tag, release, or publication.
+
 - Fixed Hardcover provider-secret validation so leading or trailing space, tab,
   carriage return, or line feed is rejected before client construction, DNS,
   or transport activity while preserving existing target-secret compatibility.

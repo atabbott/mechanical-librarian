@@ -34,6 +34,7 @@ release standards as code.
 - [AI trust boundary](architecture/ai-boundary.md)
 - [HTTP API contract](architecture/http-api.md)
 - [Architecture decisions](architecture/decisions/README.md)
+- [Pre-stable 0.4 state-baseline decision](architecture/decisions/0009-pre-stable-consolidation-baseline.md)
 
 ## Development
 

@@ -95,49 +95,43 @@ being partially implemented inside it.
 
 ## M2a: First trustworthy live title report (0.3.0)
 
-- F07a extracts one bounded opening-matter title and edition-applicable ISBN
-  report from a safely readable EPUB; F07b binds that evidence durably to one
-  current isolated target and snapshot with restart, reuse, and invalidation.
-- F09f follows completed F09b and adds the disabled-by-default configured
-  Hardcover lane. It persists one bounded title plus strict ISBN-backed book
-  and compatible ebook-edition identity as one provider lineage, but remains
-  target-independent and has no proposal authority. F09f stays Triaged until
-  its exact external query, authentication, response/error contract,
-  cardinality rules, bounds, fixtures, and live qualification are frozen.
-- F09g follows F07b and F09f and owns the current Audiobookshelf target/source
-  join. One usable current F07 title, exactly one distinct canonical
-  checksum-valid edition-applicable local ISBN, one unique compatible
-  ISBN-equivalent Hardcover ebook edition and book with an agreeing title, and
-  a loaded empty or materially different current title produce the sole
-  positive output: one `needs_review`, `production_report_only` proposal whose
-  value is the exact current F07 normalized title.
-- Repeated equivalent claims of the same canonical local ISBN do not force a
-  zero-proposal result. Missing, unloaded, invalid, conflicting, ambiguously
-  applicable, multiple distinct, ambiguous, incompatible, stale, disabled,
-  failed, equivalent, and disagreeing inputs produce exact typed zero-proposal
-  results without discarding valid evidence. The independence claim is local
-  EPUB evidence versus the external Hardcover catalogue; the Hardcover book,
-  edition, and title are one provider lineage.
-- Keep review admission, human and AI decisions, approval, apply, target and
-  media writes, destructive authority, tagging, and release publication out of
-  the checkpoint.
+- Bind bounded local EPUB title and edition-applicable ISBN evidence durably to
+  one current isolated Audiobookshelf target and snapshot.
+- Join that evidence with one disabled-by-default, target-independent Hardcover
+  title and strict ISBN-backed book and compatible ebook-edition lineage.
+- Report one immutable `needs_review`, `production_report_only` title proposal
+  or its exact typed zero-proposal result while preserving restart, replay,
+  freshness, evidence, and least-authority boundaries.
+- Keep review admission, decisions, approval, apply, target and media writes,
+  destructive authority, tagging, and release publication outside the
+  checkpoint.
 
-The active sequence is completed F06 #142 to F07a #143/#30/#31/#188 to F07b
-#228/#32; completed F09b #204/#223 to F09f #239/#242; then F07b plus F09f to
-F09g #238/#243. F09g is the 0.3.0 checkpoint exit. Completing this internal
-checkpoint does not publish a release.
-
-F09c #205/#210/#211 remains separately planned for 1.0 as a fallback
-report/provider lane and is not an F09g blocker. Later provider-neutral work
-#69/#70 consumes compatible F09c identity, with qualification in #73 and F17
-#153. F10b #240/#241 remains 1.0 work after completed F10a and F09g; it admits a
-qualifying live report into production review. F11 remains an independently
-deliverable synthetic shadow path, and the production title/case and reviewer
-paths converge only at F17 qualification.
+The exact slice order, issue ownership, decision table, and exit criteria are
+maintained only in
+[Delivery checkpoint 0.3.0](delivery-slices.md#delivery-checkpoint-030-first-trustworthy-live-title-report).
 
 Exit: one current Audiobookshelf ebook produces a restartable, evidence-backed
 live title proposal or exact zero-proposal report without gaining review,
 decision, mutation, destructive, or release-publication authority.
+
+## M2b: Pre-stable consolidation (0.4.0)
+
+- Preserve the complete 0.3 live title-report outcome while establishing one
+  current inventory model, durable-work model, EPUB isolation and qualification
+  control plane, and least-authority executable composition boundary.
+- Retire obsolete F02/F03 demonstrations and future-only runtime surfaces,
+  correct stale DUX ownership, and retain every current safety, provenance,
+  restart, and exact-result contract.
+- Reject pre-0.4 internal state before mutation and require explicit
+  retain-and-rebuild operation; publish no tag, supported version, or release.
+
+The exact focused-issue order, dependencies, native parents, and exit criteria
+are maintained only in
+[Delivery checkpoint 0.4.0](delivery-slices.md#delivery-checkpoint-040-pre-stable-consolidation).
+
+Exit: the final-0.3 report runs through the consolidated current boundaries from
+clean state, while unsupported state and forbidden cross-lane authority fail
+closed without mutation or private disclosure.
 
 ## M3: AI review in shadow mode
 
