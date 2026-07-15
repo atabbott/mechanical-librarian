@@ -102,9 +102,12 @@ child report must not survive if its source provenance is stripped or forged.
    diagnostic markup artifact is retained.
 8. Any succeeded report that carries resources or nonzero parser usage binds
    its source fingerprint, fingerprint-derived same-file lineage, and ordered
-   selection digest as one set. Canonical hydration and the parent protocol
-   reject missing, inconsistent, or arbitrary lineage. A pristine pre-open
-   no-applicable report and every failed envelope remain empty of parser state.
+   selection digest as one set. Parsed resource records carry the exact
+   resource-byte digest used by their citations, and that digest also
+   participates in the selection digest. Canonical hydration and the parent
+   protocol reject missing or inconsistent resource, citation, and lineage
+   provenance. A pristine pre-open no-applicable report and every failed
+   envelope remain empty of parser state.
 9. The opening capability retains the transient child controls from ADR-0007,
    uses its closed `epub-opening-limits-v1` profile, emits one canonical
    `epub-opening-report-v1` object, and treats a parsed navigation document as a

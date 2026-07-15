@@ -168,11 +168,11 @@ resource explicitly records whether it was opened; that count must equal
 `usage.opened_resources`, parser-mode counts must equal parsed resources, and
 pre-open dispositions cannot claim parser work. Navigation has one exact path,
 is optional but first, and may be the sole parsed resource without a content
-selection. Each claim
-citation must identify a selected content resource with the same parser mode
-and selection path. These checks prevent an aggregate from relabelling content
-as navigation or inventing parser work, opened resources, or claim provenance.
-The canonical report binds the ordered resource identities and selection paths
-to the same-file lineage with `epub-opening-selection-v1`; path roles use the
-closed EPUB 3 landmark and EPUB 2 guide vocabularies and resource identities
-are unique.
+selection. Each claim citation must identify a selected content resource with
+the same parser mode and selection path, and its resource-byte digest must
+equal the digest on that selected resource. These checks prevent an aggregate
+from relabelling content as navigation or inventing parser work, opened
+resources, or claim provenance. The canonical report binds the ordered
+resource identities, byte digests, and selection paths to the same-file
+lineage with `epub-opening-selection-v1`; path roles use the closed EPUB 3
+landmark and EPUB 2 guide vocabularies and resource identities are unique.

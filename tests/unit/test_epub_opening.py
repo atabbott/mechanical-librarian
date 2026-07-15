@@ -463,6 +463,57 @@ class EpubOpeningTests(unittest.TestCase):
             preceding_identifier.citation.exact_excerpt,
         )
 
+        following = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page">'
+                    '<p>ISBN 9780306406157</p><p>Electronic edition</p>'
+                    '</section>'
+                )
+            )
+        )
+        following_identifier = next(
+            claim
+            for claim in following.claims
+            if claim.field is OpeningField.IDENTIFIER
+        )
+        self.assertEqual(following_identifier.applicability_label, "ebook")
+        self.assertIn(
+            "Electronic edition", following_identifier.citation.exact_excerpt
+        )
+        self.assertIn(
+            following_identifier.raw_value,
+            following_identifier.citation.exact_excerpt,
+        )
+
+        for semantic in ("bodymatter", "sample"):
+            scoped = _extract(
+                self._single(
+                    _xhtml(
+                        '<p>ISBN 9780306406157</p>'
+                        f'<section epub:type="{semantic}"><p>Electronic edition</p></section>'
+                    )
+                )
+            )
+            scoped_identifier = next(
+                claim
+                for claim in scoped.claims
+                if claim.field is OpeningField.IDENTIFIER
+            )
+            with self.subTest(semantic=semantic):
+                self.assertEqual(
+                    scoped_identifier.applicability,
+                    ObservationApplicability.UNKNOWN,
+                )
+                self.assertEqual(
+                    scoped_identifier.applicability_label,
+                    "unlabelled",
+                )
+                self.assertNotIn(
+                    "Electronic edition",
+                    scoped_identifier.citation.exact_excerpt,
+                )
+
         conflicting = _extract(
             self._single(
                 _xhtml(
@@ -524,6 +575,9 @@ class EpubOpeningTests(unittest.TestCase):
             ),
             lambda value: value["claims"][0]["citation"].__setitem__(
                 "selection_path", ["epub2_guide", "title_page"]
+            ),
+            lambda value: value["claims"][0]["citation"].__setitem__(
+                "resource_digest", "0" * 64
             ),
             lambda value: value["usage"].update({name: 0 for name in value["usage"]}),
             lambda value: (value.__setitem__("claims", []), value.__setitem__("resources", []), value.__setitem__("same_file_lineage", None), value["usage"].update({name: 0 for name in value["usage"]})),
@@ -1567,12 +1621,24 @@ class EpubOpeningTests(unittest.TestCase):
             b'<textarea><meta charset="shift_jis"></textarea><h1>Textarea Safe</h1>',
             b'<title><meta charset="shift_jis"></title><h1>Title Safe</h1>',
             b'<template><meta charset="shift_jis"></template><h1>Template Safe</h1>',
-            b'<f:meta xmlns:f="urn:foreign" charset="shift_jis"><h1>Foreign Meta Safe</h1>',
+            b'<f:meta xmlns:f="urn:foreign" charset="shift_jis"></f:meta><h1>Foreign Meta Safe</h1>',
         )
         for body in inert:
             report = _extract(self._single(body, media_type="text/html"))
             with self.subTest(body=hashlib.sha256(body).hexdigest()):
                 self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+
+        unclosed_foreign = _extract(
+            self._single(
+                b'<f:section xmlns:f="urn:foreign"><h1 epub:type="fulltitle">Foreign Child</h1>',
+                media_type="text/html",
+            )
+        )
+        self.assertEqual(
+            unclosed_foreign.outcome,
+            LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE,
+        )
+        self.assertFalse(unclosed_foreign.claims)
 
         equivalent = _extract(
             self._single(
@@ -1619,6 +1685,21 @@ class EpubOpeningTests(unittest.TestCase):
                     report.resources[0].disposition,
                     OpeningResourceDisposition.UNSUPPORTED_ENCODING,
                 )
+
+        strict_wide = _extract(
+            self._single(
+                '<?xml version="1.0" encoding="utf-16"?>'
+                '<html xmlns="http://www.w3.org/1999/xhtml" '
+                'xmlns:epub="http://www.idpf.org/2007/ops">'
+                '<body><h1 epub:type="fulltitle">Wide Strict</h1></body></html>'.encode(
+                    "utf-16"
+                )
+            )
+        )
+        self.assertEqual(
+            strict_wide.resources[0].disposition,
+            OpeningResourceDisposition.UNSUPPORTED_ENCODING,
+        )
 
         wide_tail = "<html><body><h1>Late wide</h1></body></html>".encode(
             "utf-16-le"
@@ -2152,6 +2233,85 @@ class EpubOpeningTests(unittest.TestCase):
                     [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE],
                     ["Identity Fallback Safe"],
                 )
+
+    def test_duplicate_manifest_media_and_valid_fallback_are_order_independent(self) -> None:
+        navigation = _xhtml(
+            '<nav epub:type="landmarks"><a epub:type="titlepage" '
+            'href="opening.xhtml">Opening</a></nav>'
+        )
+        content = _xhtml(
+            '<h1 epub:type="fulltitle">Duplicate Manifest Safe</h1>'
+        )
+        duplicate_items = (
+            ("content", "opening.xhtml", "application/xhtml+xml", ""),
+            ("alias", "opening.xhtml", "image/png", ""),
+        )
+        for declarations in (duplicate_items, tuple(reversed(duplicate_items))):
+            package = _opening_package(
+                items=(
+                    ("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'),
+                    *declarations,
+                ),
+                spine=("content",),
+            )
+            report = _extract(
+                _opening_epub(
+                    package=package,
+                    entries=(
+                        ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
+                        ("EPUB/opening.xhtml", content, zipfile.ZIP_DEFLATED),
+                    ),
+                )
+            )
+            with self.subTest(declarations=declarations):
+                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(
+                    [
+                        claim.raw_value
+                        for claim in report.claims
+                        if claim.field is OpeningField.TITLE
+                    ],
+                    ["Duplicate Manifest Safe"],
+                )
+                self.assertEqual(
+                    report.resources[-1].selection_path,
+                    ("linear_spine_fallback",),
+                )
+
+        fallback_package = _opening_package(
+            items=(
+                (
+                    "source",
+                    "source.bin",
+                    "application/octet-stream",
+                    ' fallback="content"',
+                ),
+                ("content", "opening.xhtml", "application/xhtml+xml", ""),
+            ),
+            spine=("source",),
+        )
+        fallback = _extract(
+            _opening_epub(
+                package=fallback_package,
+                entries=(
+                    ("EPUB/source.bin", b"unsupported", zipfile.ZIP_STORED),
+                    ("EPUB/opening.xhtml", content, zipfile.ZIP_DEFLATED),
+                ),
+            )
+        )
+        self.assertEqual(fallback.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(
+            [
+                claim.raw_value
+                for claim in fallback.claims
+                if claim.field is OpeningField.TITLE
+            ],
+            ["Duplicate Manifest Safe"],
+        )
+        self.assertEqual(
+            fallback.resources[0].selection_path,
+            ("linear_spine_fallback",),
+        )
 
     def test_duplicate_navigation_hrefs_count_before_validation(self) -> None:
         package = _opening_package(

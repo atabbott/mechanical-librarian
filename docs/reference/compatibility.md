@@ -69,6 +69,9 @@ identifiers are inert recovery syntax and are never resolved. Entity declaration
 subsets, non-HTML doctypes, and external resolution remain rejected. Parser,
 recovery, projection, selection, normalizer, vocabulary,
 limits, extractor, and schema versions all invalidate later reuse when changed.
+Parsed resource records and their citations share one exact resource-byte
+digest, and the ordered selection digest binds that byte digest alongside the
+resource identity and selection path.
 Recovered qualified start/end tags share resolved namespace identity. Active
 local elements remain inert across XHTML, SVG, and foreign namespaces.
 Extension-prefixed `epub:type` values remain distinct from the unprefixed

@@ -115,6 +115,7 @@ def _selection_digest(
         [
             {
                 "resource_identity": resource["resource_identity"],
+                "resource_digest": resource["resource_digest"],
                 "selection_path": resource["selection_path"],
             }
             for resource in resources
@@ -267,11 +268,13 @@ def _invoke(
     except (OSError, subprocess.TimeoutExpired):
         raise QualificationError("installed CLI did not complete within its envelope") from None
     payload = completed.stdout if completed.returncode == 0 else completed.stderr
+    unused = completed.stderr if completed.returncode == 0 else completed.stdout
     if (
-        not payload.endswith(b"\n")
+        unused
+        or len(completed.stdout) > MAX_REPORT_BYTES + 1
+        or len(completed.stderr) > MAX_REPORT_BYTES + 1
+        or not payload.endswith(b"\n")
         or payload.count(b"\n") != 1
-        or len(payload) > MAX_REPORT_BYTES + 1
-        or (completed.stderr and completed.returncode == 0)
     ):
         raise QualificationError("installed CLI returned an invalid envelope")
     try:
@@ -409,6 +412,12 @@ def qualify(
                     or claim.get("field") not in _CLAIM_FIELDS
                     or type(citation) is not dict
                     or type(citation.get("resource_identity")) is not str
+                    or type(citation.get("resource_digest")) is not str
+                    or len(citation["resource_digest"]) != 64
+                    or any(
+                        value not in "0123456789abcdef"
+                        for value in citation["resource_digest"]
+                    )
                     or citation.get("parse_mode") not in _PARSER_MODES
                     or type(citation.get("selection_path")) is not list
                 ):
@@ -427,12 +436,23 @@ def qualify(
             for resource in resource_values:
                 if (
                     type(resource) is not dict
-                    or set(resource) != {"disposition", "opened", "parse_mode", "resource_identity", "selection_path", "warnings"}
+                    or set(resource) != {"disposition", "opened", "parse_mode", "resource_digest", "resource_identity", "selection_path", "warnings"}
                     or resource.get("disposition") not in _RESOURCE_DISPOSITIONS
                     or type(resource.get("opened")) is not bool
                     or type(resource.get("resource_identity")) is not str
                     or len(resource["resource_identity"]) != 64
                     or any(value not in "0123456789abcdef" for value in resource["resource_identity"])
+                    or (
+                        resource.get("resource_digest") is not None
+                        and (
+                            type(resource["resource_digest"]) is not str
+                            or len(resource["resource_digest"]) != 64
+                            or any(
+                                value not in "0123456789abcdef"
+                                for value in resource["resource_digest"]
+                            )
+                        )
+                    )
                     or type(resource.get("selection_path")) is not list
                     or not resource["selection_path"]
                     or any(type(value) is not str for value in resource["selection_path"])
@@ -474,7 +494,14 @@ def qualify(
                 if (
                     (mode is not None and disposition not in parsed_dispositions)
                     or (mode is not None and not opened)
-                    or (disposition in {"selected", "no_claims"} and (mode is None or not opened))
+                    or (
+                        disposition in {"selected", "no_claims"}
+                        and (
+                            mode is None
+                            or not opened
+                            or resource["resource_digest"] is None
+                        )
+                    )
                     or (
                         disposition in {"missing", "image_only", "unsupported_media", "encrypted"}
                         and (mode is not None or opened)
@@ -531,6 +558,7 @@ def qualify(
                     selected is None
                     or selected["parse_mode"] != citation["parse_mode"]
                     or selected["selection_path"] != citation["selection_path"]
+                    or selected["resource_digest"] != citation["resource_digest"]
                 ):
                     raise QualificationError("claim resource provenance is inconsistent")
             if (

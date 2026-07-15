@@ -317,7 +317,7 @@ def _element_namespace(
         return namespace
     if namespace:
         return namespace
-    if parent_namespace in {_SVG_NS, _MATHML_NS}:
+    if parent_namespace is not None and not _is_html_namespace(parent_namespace):
         return parent_namespace
     return ""
 
@@ -1104,6 +1104,10 @@ def _finalize_projection(
 
 
 def _parse(data: bytes, media_type: str, limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> _Projection:
+    if _looks_wide_encoded(data):
+        raise _UnsupportedEncoding(
+            "unsupported encoding", nodes=0, text_characters=0
+        )
     _preflight_declarations(data)
     if media_type == "application/xhtml+xml":
         try:
@@ -1232,15 +1236,27 @@ def _manifest(package_report: LocalEvidenceReport) -> tuple[dict[str, tuple[str,
 def _raw_package_annotations(
     package_data: bytes,
     package_report: LocalEvidenceReport,
-) -> tuple[tuple[tuple[str, bool], ...] | None, dict[int, str | None], bool]:
+) -> tuple[
+    tuple[tuple[str, bool], ...] | None,
+    dict[int, str | None],
+    dict[str, str],
+    bool,
+]:
     """Recover annotations only for exact declarations already accepted by F06."""
 
     if b"<!DOCTYPE" in package_data.upper() or b"<!ENTITY" in package_data.upper():
-        return None, {}, False
+        return None, {}, {}, False
     try:
         root = ElementTree.fromstring(package_data)
     except (ElementTree.ParseError, RecursionError):
-        return None, {}, False
+        return None, {}, {}, False
+    accepted_manifest = {
+        declaration.source_ordinal: declaration
+        for declaration in package_report.declarations
+        if declaration.kind is DeclarationKind.MANIFEST_ITEM
+        and declaration.identifier
+        and declaration.resource_identity
+    }
     accepted_spine = {
         declaration.source_ordinal: declaration
         for declaration in package_report.declarations
@@ -1258,9 +1274,23 @@ def _raw_package_annotations(
     parents = {child: parent for parent in root.iter() for child in parent}
     spine: list[tuple[str, bool]] = []
     guide_fragments: dict[int, str | None] = {}
+    manifest_fallbacks: dict[str, str] = {}
     invalid_linear = False
     for ordinal, node in enumerate(root.iter(), 1):
         parent = parents.get(node)
+        if ordinal in accepted_manifest:
+            declaration = accepted_manifest[ordinal]
+            if (
+                node.tag == f"{{{_OPF_NS}}}item"
+                and parent is not None
+                and parent.tag == f"{{{_OPF_NS}}}manifest"
+                and not list(node)
+                and not (node.text or "").strip()
+                and node.attrib.get("id") == declaration.identifier
+            ):
+                fallback = node.attrib.get("fallback")
+                if fallback:
+                    manifest_fallbacks[declaration.identifier] = fallback
         if ordinal in accepted_spine:
             declaration = accepted_spine[ordinal]
             if (
@@ -1294,7 +1324,19 @@ def _raw_package_annotations(
                     guide_fragments[ordinal] = _target_fragment(href)
                 except ValueError:
                     pass
-    return tuple(spine), guide_fragments, invalid_linear
+    accepted_identifiers = {
+        declaration.identifier for declaration in accepted_manifest.values()
+    }
+    return (
+        tuple(spine),
+        guide_fragments,
+        {
+            source: target
+            for source, target in manifest_fallbacks.items()
+            if target in accepted_identifiers
+        },
+        invalid_linear,
+    )
 
 
 def _navigation_targets(projection: _Projection, nav_name: str, names: set[str], identity_by_name: dict[str, str], manifest_by_identity: dict[str, tuple[str, tuple[str, ...]]], limits: EpubOpeningLimits) -> tuple[list[_Candidate], list[str], int, list[_RoleAssociation], list[_RoleAssociation]]:
@@ -1397,7 +1439,16 @@ def _navigation_targets(projection: _Projection, nav_name: str, names: set[str],
 
 def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFile, names_by_identity: dict[str, str], limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> tuple[list[_Candidate], list[str], list[OpeningResourceResult], int, set[str], list[_RoleAssociation], list[_RoleAssociation], tuple[int, int, int, int, int, int]]:
     by_id, declared_spine, encrypted, package_identity = _manifest(package_report)
-    manifest_by_identity = {identity: (media, properties) for identity, media, properties in by_id.values()}
+    declarations_by_identity: dict[str, set[tuple[str, tuple[str, ...]]]] = {}
+    for identity, media, properties in by_id.values():
+        declarations_by_identity.setdefault(identity, set()).add(
+            (media, properties)
+        )
+    manifest_by_identity = {
+        identity: next(iter(declarations))
+        for identity, declarations in declarations_by_identity.items()
+        if len(declarations) == 1
+    }
     names = set(names_by_identity.values())
     identity_by_name = {name: identity for identity, name in names_by_identity.items()}
     candidates: list[_Candidate] = []
@@ -1457,6 +1508,7 @@ def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFi
                     projection.mode,
                     tuple(sorted(set((*projection.warnings, *nav_warnings)))),
                     opened=True,
+                    resource_digest=hashlib.sha256(data).hexdigest(),
                 )
             )
         except _ResourceRejected as error:
@@ -1528,6 +1580,7 @@ def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFi
         warnings.append("ambiguous_navigation_document")
     raw_spine: tuple[tuple[str, bool], ...] | None = None
     guide_fragments: dict[int, str | None] = {}
+    manifest_fallbacks: dict[str, str] = {}
     if package_identity in names_by_identity:
         try:
             package_data = _read_member(
@@ -1536,9 +1589,12 @@ def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFi
                 limits.package.opf_package_bytes,
                 request,
             )
-            raw_spine, guide_fragments, invalid_linear = _raw_package_annotations(
-                package_data, package_report
-            )
+            (
+                raw_spine,
+                guide_fragments,
+                manifest_fallbacks,
+                invalid_linear,
+            ) = _raw_package_annotations(package_data, package_report)
             if invalid_linear:
                 warnings.append("unusable_spine_relationship")
         except (_ResourceRejected, ValueError):
@@ -1601,8 +1657,28 @@ def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFi
         warnings.append("ambiguous_guide_reference")
     if raw_spine is None:
         raw_spine = tuple((identifier, True) for identifier in declared_spine)
+
+    def resolved_spine_declaration(
+        identifier: str,
+    ) -> tuple[str, str, tuple[str, ...]] | None:
+        current = identifier
+        visited: set[str] = set()
+        original = by_id.get(identifier)
+        while current not in visited:
+            visited.add(current)
+            declared = by_id.get(current)
+            if declared is None:
+                return original
+            if declared[1] in _CONTENT_MEDIA:
+                return declared
+            fallback = manifest_fallbacks.get(current)
+            if fallback is None:
+                return declared
+            current = fallback
+        return original
+
     for order, (identifier, linear) in enumerate(raw_spine, 1):
-        declared = by_id.get(identifier)
+        declared = resolved_spine_declaration(identifier)
         if not linear or declared is None:
             continue
         identity, media_type, _properties = declared
@@ -1948,6 +2024,30 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
     if excluded or context.suppress_claims:
         return [], warnings, body_transition, excluded
     by_ordinal = {element.ordinal: element for element in projection.elements}
+
+    def admissible_context_element(candidate: _Element) -> bool:
+        return not (
+            candidate.active
+            or not candidate.exact_text
+            or not _is_html_namespace(candidate.namespace)
+            or (
+                context.body_ordinal is not None
+                and candidate.ordinal >= context.body_ordinal
+            )
+            or any(
+                candidate.ordinal in by_ordinal[scope].ancestors
+                for scope in context.body_scopes
+            )
+            or any(
+                _scope_contains(scope, candidate)
+                or (
+                    scope is not None
+                    and candidate.ordinal in by_ordinal[scope].ancestors
+                )
+                for scope in context.excluded_scopes
+            )
+        )
+
     claim_elements = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "dt", "dd", "li", "address", "figcaption"}
     for element in projection.elements:
         text = element.exact_text
@@ -2118,17 +2218,35 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                         candidate
                         for candidate in reversed(projection.elements)
                         if candidate.end <= element.start
-                        and candidate.exact_text
-                        and _is_html_namespace(candidate.namespace)
+                        and admissible_context_element(candidate)
                     ),
                     None,
                 )
-                previous_text = (
-                    "" if previous is None else previous.exact_text.casefold()[-48:]
+                following = next(
+                    (
+                        candidate
+                        for candidate in projection.elements
+                        if candidate.start >= element.end
+                        and admissible_context_element(candidate)
+                    ),
+                    None,
                 )
-                vicinity = previous_text + " " + vicinity
+                previous_text = "" if previous is None else previous.exact_text.casefold()[-48:]
+                following_text = "" if following is None else following.exact_text.casefold()[:48]
+                if _EBOOK_LABEL.search(previous_text) or _PRINT_LABEL.search(previous_text):
+                    neighbor = previous
+                    neighbor_before = True
+                    vicinity = previous_text + " " + vicinity
+                elif _EBOOK_LABEL.search(following_text) or _PRINT_LABEL.search(following_text):
+                    neighbor = following
+                    neighbor_before = False
+                    vicinity = vicinity + " " + following_text
+                else:
+                    neighbor = None
+                    neighbor_before = False
             else:
-                previous = None
+                neighbor = None
+                neighbor_before = False
             ebook = bool(_EBOOK_LABEL.search(vicinity))
             printed = bool(_PRINT_LABEL.search(vicinity))
             if ebook and not printed:
@@ -2147,18 +2265,26 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                     element.start + left_boundary,
                     element.start + right_boundary,
                 )
-            elif previous is not None and (ebook or printed):
-                shared = set(previous.ancestors) & set(element.ancestors)
+            elif neighbor is not None and (ebook or printed):
+                shared = set(neighbor.ancestors) & set(element.ancestors)
                 context_element = next(
                     (
                         by_ordinal[ordinal]
-                        for ordinal in reversed(previous.ancestors)
+                        for ordinal in reversed(neighbor.ancestors)
                         if ordinal in shared
                     ),
                     None,
                 )
-                context_start = max(previous.start, previous.end - 48)
-                context_end = element.start + right_boundary
+                context_start = (
+                    max(neighbor.start, neighbor.end - 48)
+                    if neighbor_before
+                    else element.start + left_boundary
+                )
+                context_end = (
+                    element.start + right_boundary
+                    if neighbor_before
+                    else min(neighbor.end, neighbor.start + 48)
+                )
                 if (
                     context_element is not None
                     and context_end - context_start <= excerpt_characters
@@ -2336,16 +2462,27 @@ class EpubOpeningExtractor:
                     context = _recognition_context(
                         projection, candidate, body_targets, excluded_targets
                     )
+                    resource_digest = hashlib.sha256(data).hexdigest()
                     resource_claims, resource_warnings, body_transition, excluded = _recognize(
                         projection, request.expected_source, candidate.identity,
-                        hashlib.sha256(data).hexdigest(), context,
+                        resource_digest, context,
                         package_lineage,
                         limits.excerpt_characters,
                     )
                     claims.extend(resource_claims)
                     warnings.extend(resource_warnings)
                     disposition = OpeningResourceDisposition.EXCLUDED if excluded else OpeningResourceDisposition.SELECTED if resource_claims else OpeningResourceDisposition.NO_CLAIMS
-                    resources.append(OpeningResourceResult(candidate.identity, disposition, context.selection_path, projection.mode, tuple(sorted(set(resource_warnings))), opened=True))
+                    resources.append(
+                        OpeningResourceResult(
+                            candidate.identity,
+                            disposition,
+                            context.selection_path,
+                            projection.mode,
+                            tuple(sorted(set(resource_warnings))),
+                            opened=True,
+                            resource_digest=resource_digest,
+                        )
+                    )
                     if body_transition:
                         warnings.append("body_transition_reached")
                         break

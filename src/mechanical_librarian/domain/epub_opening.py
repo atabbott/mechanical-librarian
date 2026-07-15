@@ -59,6 +59,7 @@ def opening_selection_digest(
         [
             {
                 "resource_identity": resource.resource_identity,
+                "resource_digest": resource.resource_digest,
                 "selection_path": list(resource.selection_path),
             }
             for resource in resources
@@ -293,6 +294,7 @@ class OpeningResourceResult:
     parse_mode: OpeningParseMode | None = None
     warnings: tuple[str, ...] = ()
     opened: bool = False
+    resource_digest: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -304,6 +306,13 @@ class OpeningResourceResult:
             or (self.parse_mode is not None and type(self.parse_mode) is not OpeningParseMode)
             or type(self.warnings) is not tuple
             or type(self.opened) is not bool
+            or (
+                self.resource_digest is not None
+                and (
+                    type(self.resource_digest) is not str
+                    or _DIGEST.fullmatch(self.resource_digest) is None
+                )
+            )
         ):
             raise EvidenceValueError("opening resource result is malformed")
         for value in (*self.selection_path, *self.warnings):
@@ -340,7 +349,11 @@ class OpeningResourceResult:
                     OpeningResourceDisposition.SELECTED,
                     OpeningResourceDisposition.NO_CLAIMS,
                 }
-                and (self.parse_mode is None or not self.opened)
+                and (
+                    self.parse_mode is None
+                    or not self.opened
+                    or self.resource_digest is None
+                )
             )
             or (
                 self.disposition
@@ -547,6 +560,8 @@ class EpubOpeningReport:
             is not claim.citation.parse_mode
             or selected_by_identity[claim.citation.resource_identity].selection_path
             != claim.citation.selection_path
+            or selected_by_identity[claim.citation.resource_identity].resource_digest
+            != claim.citation.resource_digest
             for claim in self.claims
         ):
             raise EvidenceValueError("opening claim resource provenance is inconsistent")
@@ -683,12 +698,12 @@ def _claim_from_data(value: object) -> OpeningClaim:
 
 
 def _resource_data(value: OpeningResourceResult) -> dict[str, object]:
-    return {"disposition": value.disposition.value, "opened": value.opened, "parse_mode": None if value.parse_mode is None else value.parse_mode.value, "resource_identity": value.resource_identity, "selection_path": list(value.selection_path), "warnings": list(value.warnings)}
+    return {"disposition": value.disposition.value, "opened": value.opened, "parse_mode": None if value.parse_mode is None else value.parse_mode.value, "resource_digest": value.resource_digest, "resource_identity": value.resource_identity, "selection_path": list(value.selection_path), "warnings": list(value.warnings)}
 
 
 def _resource_from_data(value: object) -> OpeningResourceResult:
-    item = _object(value, {"disposition", "opened", "parse_mode", "resource_identity", "selection_path", "warnings"})
-    return OpeningResourceResult(item["resource_identity"], OpeningResourceDisposition(item["disposition"]), tuple(_list(item["selection_path"])), None if item["parse_mode"] is None else OpeningParseMode(item["parse_mode"]), tuple(_list(item["warnings"])), item["opened"])
+    item = _object(value, {"disposition", "opened", "parse_mode", "resource_digest", "resource_identity", "selection_path", "warnings"})
+    return OpeningResourceResult(item["resource_identity"], OpeningResourceDisposition(item["disposition"]), tuple(_list(item["selection_path"])), None if item["parse_mode"] is None else OpeningParseMode(item["parse_mode"]), tuple(_list(item["warnings"])), item["opened"], item["resource_digest"])
 
 
 def _limits_from_data(value: object) -> EpubOpeningLimits:

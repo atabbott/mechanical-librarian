@@ -28,7 +28,9 @@ versioning after the first public release.
   semantics, admits raw spine annotations only for F06-accepted itemrefs,
   recognizes recovery encodings only from real supported declarations, gates
   semantic consumers by namespace capability, and binds every post-open report
-  to its source-derived lineage and selection digest.
+  to its source-derived lineage and selection digest. Parsed resource records,
+  citations, and the selection digest share the exact resource-byte digest so
+  canonical hydration rejects resource-substitution provenance.
   Fragment roles now resolve path-free against unique HTML/XHTML IDs, enforce
   earliest body and scoped exclusion positions, and select the
   highest-precedence tier with a surviving valid opening role while preserving

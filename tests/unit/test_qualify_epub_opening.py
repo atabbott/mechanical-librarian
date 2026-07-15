@@ -4,6 +4,7 @@ import json
 import hashlib
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -12,12 +13,29 @@ from scripts.qualify_epub_opening import (
     _OPENING_LIMITS,
     _PACKAGE_LIMITS,
     _configuration,
+    _invoke,
     _root_causes,
     qualify,
 )
 
 
 class EpubOpeningQualificationTests(unittest.TestCase):
+    def test_invoke_rejects_output_on_the_unused_stream(self) -> None:
+        completed = SimpleNamespace(
+            returncode=5,
+            stdout=b"/private/library/secret.epub\n",
+            stderr=b'{"outcome":"malformed"}\n',
+        )
+        with patch("scripts.qualify_epub_opening.subprocess.run", return_value=completed):
+            with self.assertRaises(QualificationError):
+                _invoke(
+                    Path("/installed/mechanical-librarian"),
+                    "epub-opening-report",
+                    Path("/configuration.json"),
+                    "case.epub",
+                    65,
+                )
+
     def test_private_profile_reproduces_the_closed_f06_archive_ceiling(self) -> None:
         configuration = _configuration(Path("/private/cohort"))
 
@@ -132,7 +150,25 @@ class EpubOpeningQualificationTests(unittest.TestCase):
                 **resource,
             }
             normalized.setdefault("opened", normalized.get("parse_mode") is not None)
+            normalized.setdefault(
+                "resource_digest",
+                (
+                    f"{index + 101:064x}"
+                    if normalized.get("disposition") in {"selected", "no_claims"}
+                    else None
+                ),
+            )
             normalized_resources.append(normalized)
+        normalized_claims = json.loads(json.dumps([] if claims is None else claims))
+        resources_by_identity = {
+            resource["resource_identity"]: resource
+            for resource in normalized_resources
+        }
+        for claim in normalized_claims:
+            citation = claim.get("citation", {})
+            resource = resources_by_identity.get(citation.get("resource_identity"))
+            if resource is not None:
+                citation.setdefault("resource_digest", resource["resource_digest"])
         strict = sum(item.get("parse_mode") == "strict" for item in normalized_resources)
         recovered = sum(item.get("parse_mode") == "recovered" for item in normalized_resources)
         succeeded = outcome in {"success", "no_applicable_evidence"}
@@ -148,6 +184,7 @@ class EpubOpeningQualificationTests(unittest.TestCase):
             [
                 {
                     "resource_identity": resource["resource_identity"],
+                    "resource_digest": resource["resource_digest"],
                     "selection_path": resource["selection_path"],
                 }
                 for resource in normalized_resources
@@ -159,7 +196,7 @@ class EpubOpeningQualificationTests(unittest.TestCase):
         return {
             "outcome": outcome,
             "schema": "epub-opening-report-v1",
-            "claims": [] if claims is None else claims,
+            "claims": normalized_claims,
             "warnings": [] if warnings is None else warnings,
             "resources": normalized_resources,
             "same_file_lineage": lineage,
