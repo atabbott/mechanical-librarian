@@ -36,6 +36,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_inventory imp
     AudiobookshelfInventoryReader,
 )
 from mechanical_librarian.adapters.evidence_extractors.process import (
+    run_epub_opening_child,
     run_epub_package_child,
 )
 from mechanical_librarian.adapters.evidence_extractors.synthetic_epub import (
@@ -122,6 +123,7 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     canonical_json,
 )
+from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.local_evidence import (
     EpubPackageLimits,
     LocalEvidenceCapability,
@@ -956,6 +958,112 @@ def _run_epub_package_report(
                     pass
 
 
+def _opening_failure(
+    outcome: LocalEvidenceOutcome,
+    limits: EpubOpeningLimits | None = None,
+) -> EpubOpeningReport:
+    return EpubOpeningReport(
+        outcome,
+        EpubOpeningLimits() if limits is None else limits,
+    )
+
+
+def _run_epub_opening_report(
+    configuration_path: Path, mount_name: str, relative_reference: str
+) -> EpubOpeningReport:
+    """Extract one source-stable opening report without persistence or paths."""
+
+    try:
+        configuration = load_configuration_file(configuration_path)
+    except ConfigurationError:
+        return _opening_failure(LocalEvidenceOutcome.INVALID_CONFIGURATION)
+    package_limits = replace(
+        configuration.evidence.epub_package,
+        source_archive_bytes=min(
+            configuration.evidence.epub_package.source_archive_bytes,
+            configuration.evidence.maximum_document_bytes,
+        ),
+    )
+    limits = replace(
+        configuration.evidence.epub_opening,
+        package=package_limits,
+        text_characters_per_selection=min(
+            configuration.evidence.epub_opening.text_characters_per_selection,
+            configuration.evidence.maximum_text_characters,
+        ),
+    )
+    if "epub" not in configuration.evidence.enabled_formats:
+        return _opening_failure(LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE, limits)
+    try:
+        validate_relative_reference(relative_reference)
+    except LocalMediaError:
+        return _opening_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
+    mounts = tuple(
+        mount for mount in configuration.media_mounts if mount.name == mount_name
+    )
+    if len(mounts) != 1 or not mounts[0].read_only:
+        return _opening_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
+    opened = replacement = None
+    baseline_established = False
+    try:
+        opened = open_local_media(mounts[0].container_path, relative_reference)
+        if opened.length > package_limits.source_archive_bytes:
+            return _opening_failure(LocalEvidenceOutcome.RESOURCE_LIMIT, limits)
+        before_identity = opened.identity
+        before_digest = sha256_descriptor(
+            opened.descriptor,
+            opened.length,
+            maximum=package_limits.source_archive_bytes,
+        )
+        baseline_established = True
+        expected = Fingerprint("sha256", SchemaVersion("source-v1"), before_digest)
+        logical_identity = hashlib.sha256(
+            f"{mount_name}\x00{relative_reference}".encode("utf-8")
+        ).hexdigest()
+        report = run_epub_opening_child(
+            opened.descriptor,
+            expected,
+            limits,
+            logical_identity=logical_identity,
+        )
+        after_digest = sha256_descriptor(
+            opened.descriptor,
+            opened.length,
+            maximum=package_limits.source_archive_bytes,
+        )
+        after_identity = descriptor_identity(opened.descriptor)
+        replacement = open_local_media(mounts[0].container_path, relative_reference)
+        replacement_digest = sha256_descriptor(
+            replacement.descriptor,
+            replacement.length,
+            maximum=package_limits.source_archive_bytes,
+        )
+        if (
+            before_identity != after_identity
+            or replacement.identity != before_identity
+            or before_digest != after_digest
+            or replacement_digest != before_digest
+        ):
+            return _opening_failure(LocalEvidenceOutcome.UNSTABLE_SOURCE, limits)
+        return report
+    except LocalMediaError:
+        return _opening_failure(
+            LocalEvidenceOutcome.UNSTABLE_SOURCE
+            if baseline_established
+            else LocalEvidenceOutcome.UNAVAILABLE_SOURCE,
+            limits,
+        )
+    except Exception:
+        return _opening_failure(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
+    finally:
+        for value in (opened, replacement):
+            if value is not None:
+                try:
+                    os.close(value.descriptor)
+                except OSError:
+                    pass
+
+
 def _run_synthetic_title_proposal_report(
     database: Path, scenario_name: str
 ) -> SyntheticTitleProposalReport:
@@ -1169,6 +1277,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         audiobookshelf_poll_runner=_run_audiobookshelf_poll,
         inventory_poll_inspection_runner=_inspect_audiobookshelf_poll,
         epub_package_report_runner=_run_epub_package_report,
+        epub_opening_report_runner=_run_epub_opening_report,
         synthetic_title_proposal_runner=_run_synthetic_title_proposal_report,
         hardcover_title_proposal_runner=_run_hardcover_title_proposal_report,
         synthetic_title_review_case_runner=_run_synthetic_title_review_case_report,

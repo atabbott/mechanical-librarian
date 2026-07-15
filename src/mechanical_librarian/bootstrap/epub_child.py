@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from mechanical_librarian.adapters.evidence_extractors.epub_package import EpubPackageExtractor
+from mechanical_librarian.adapters.evidence_extractors.epub_opening import EpubOpeningExtractor
 from mechanical_librarian.application.local_evidence import extract_local_evidence
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
@@ -22,6 +23,7 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     TargetId,
 )
+from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.inventory import FileReference
 from mechanical_librarian.domain.local_evidence import (
     EpubPackageLimits,
@@ -77,10 +79,16 @@ def _read_context() -> dict[str, object]:
     value = sys.stdin.buffer.read(_CONTEXT_LIMIT + 1)
     if len(value) > _CONTEXT_LIMIT:
         raise ValueError("invalid child context")
-    return _closed_object(
-        json.loads(value),
-        {"child_seconds", "expected_source", "limits", "logical_identity"},
-    )
+    decoded = json.loads(value)
+    if type(decoded) is not dict:
+        raise ValueError("invalid child context")
+    expected = {"child_seconds", "expected_source", "limits", "logical_identity"}
+    if frozenset(decoded) not in {
+        frozenset(expected),
+        frozenset({*expected, "capability"}),
+    }:
+        raise ValueError("invalid child context")
+    return decoded
 
 
 def _limits(value: object) -> EpubPackageLimits:
@@ -88,6 +96,19 @@ def _limits(value: object) -> EpubPackageLimits:
     if item["profile"] != "epub-package-limits-v1":
         raise ValueError("invalid child context")
     return EpubPackageLimits(**{name: item[name] for name in EpubPackageLimits.HARD_CAPS})
+
+
+def _opening_limits(value: object) -> EpubOpeningLimits:
+    item = _closed_object(
+        value,
+        {"package", "profile", *EpubOpeningLimits.HARD_CAPS},
+    )
+    if item["profile"] != "epub-opening-limits-v1":
+        raise ValueError("invalid child context")
+    return EpubOpeningLimits(
+        package=_limits(item["package"]),
+        **{name: item[name] for name in EpubOpeningLimits.HARD_CAPS},
+    )
 
 
 def _fingerprint(value: object) -> Fingerprint:
@@ -126,7 +147,7 @@ def _install_parent_guard(
     watcher.start()
 
 
-def _write_report(report: LocalEvidenceReport) -> None:
+def _write_report(report: LocalEvidenceReport | EpubOpeningReport) -> None:
     payload = (report.to_json() + "\n").encode("utf-8")
     if len(payload) > _STDOUT_LIMIT:
         raise ValueError("child report exceeded protocol")
@@ -143,20 +164,37 @@ def main(argv: list[str] | None = None) -> int:
     control_descriptor = int(arguments[1])
     expected_parent = int(arguments[2])
     done = threading.Event()
-    limits = EpubPackageLimits()
+    limits: EpubPackageLimits | EpubOpeningLimits = EpubPackageLimits()
+    capability = LocalEvidenceCapability.PACKAGE
     sys.dont_write_bytecode = True
     try:
         _install_parent_guard(control_descriptor, done, expected_parent)
         _apply_limits()
         signal.signal(signal.SIGXCPU, lambda *_arguments: os._exit(71))
         context = _read_context()
-        limits = _limits(context["limits"])
+        if "capability" in context and context["capability"] != "opening_matter":
+            raise ValueError("invalid child context")
+        capability = (
+            LocalEvidenceCapability.OPENING_MATTER
+            if context.get("capability") == "opening_matter"
+            else LocalEvidenceCapability.PACKAGE
+        )
+        limits = (
+            _opening_limits(context["limits"])
+            if capability is LocalEvidenceCapability.OPENING_MATTER
+            else _limits(context["limits"])
+        )
+        package_limits = limits.package if type(limits) is EpubOpeningLimits else limits
         expected = _fingerprint(context["expected_source"])
         child_seconds = context["child_seconds"]
         logical_identity = context["logical_identity"]
         if (
             type(child_seconds) is not float
-            or not 0 < child_seconds <= 55.0
+            or not 0 < child_seconds <= (
+                float(limits.wall_seconds)
+                if type(limits) is EpubOpeningLimits
+                else 55.0
+            )
             or
             type(logical_identity) is not str
             or len(logical_identity) != 64
@@ -169,18 +207,45 @@ def main(argv: list[str] | None = None) -> int:
             FileReference("local", f"{logical_identity}.epub"),
             LocalEvidenceSource(length, lambda offset, size: os.pread(source_descriptor, size, offset)),
             expected,
-            LocalEvidenceCapability.PACKAGE,
-            limits,
+            capability,
+            package_limits,
             datetime.now(timezone.utc) + timedelta(seconds=child_seconds),
             time.monotonic() + child_seconds,
             LocalEvidenceCancellation("epub-child", lambda: False),
         )
-        report = extract_local_evidence(EpubPackageExtractor(), request)
+        if type(limits) is EpubOpeningLimits:
+            package_request = LocalEvidenceRequest(
+                request.target,
+                request.file,
+                request.source,
+                request.expected_source,
+                LocalEvidenceCapability.PACKAGE,
+                request.limits,
+                request.deadline,
+                request.monotonic_deadline,
+                request.cancellation,
+            )
+            package_report = extract_local_evidence(
+                EpubPackageExtractor(), package_request
+            )
+            report = EpubOpeningExtractor().extract(
+                request, limits, package_report
+            )
+        else:
+            report = extract_local_evidence(EpubPackageExtractor(), request)
         _write_report(report)
         return 0
     except BaseException:
         try:
-            _write_report(LocalEvidenceReport(LocalEvidenceOutcome.INTERNAL_FAILURE, LocalEvidenceCapability.PACKAGE, limits))
+            _write_report(
+                EpubOpeningReport(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
+                if type(limits) is EpubOpeningLimits
+                else LocalEvidenceReport(
+                    LocalEvidenceOutcome.INTERNAL_FAILURE,
+                    LocalEvidenceCapability.PACKAGE,
+                    limits,
+                )
+            )
             return 0
         except BaseException:
             return 70

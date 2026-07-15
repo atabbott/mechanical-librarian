@@ -40,6 +40,11 @@ from mechanical_librarian.application.local_evidence import (
     internal_failure_report,
     render_local_evidence_text,
 )
+from mechanical_librarian.application.epub_opening import (
+    EpubOpeningReportRunner,
+    internal_opening_failure_report,
+    render_epub_opening_text,
+)
 from mechanical_librarian.application.title_proposals import (
     SCENARIOS,
     SyntheticTitleProposalReport,
@@ -55,6 +60,7 @@ from mechanical_librarian.domain.local_evidence import (
     LocalEvidenceOutcome,
     LocalEvidenceReport,
 )
+from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.inventory import SecretReference
 
 
@@ -149,6 +155,15 @@ def _epub_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _epub_opening_parser() -> argparse.ArgumentParser:
+    parser = _EpubArgumentParser(prog="mechanical-librarian epub-opening-report")
+    parser.add_argument("--config", required=True, metavar="PATH", type=Path)
+    parser.add_argument("--mount", required=True, metavar="NAME", type=_bounded_identifier)
+    parser.add_argument("--file", required=True, metavar="RELATIVE")
+    parser.add_argument("--format", choices=("json", "text"), default="json")
+    return parser
+
+
 def _title_proposal_parser() -> argparse.ArgumentParser:
     parser = _TitleArgumentParser(
         prog="mechanical-librarian synthetic-title-proposal-report"
@@ -193,6 +208,22 @@ def _write_epub_report(
         report.to_json() + "\n"
         if output_format == "json"
         else render_local_evidence_text(report)
+    )
+    return exit_status
+
+
+def _write_epub_opening_report(
+    report: EpubOpeningReport,
+    output_format: str,
+    output: TextIO,
+    errors: TextIO,
+) -> int:
+    exit_status = _EPUB_PACKAGE_EXIT[report.outcome]
+    destination = output if exit_status == 0 else errors
+    destination.write(
+        report.to_json() + "\n"
+        if output_format == "json"
+        else render_epub_opening_text(report)
     )
     return exit_status
 
@@ -310,6 +341,18 @@ def _parser() -> argparse.ArgumentParser:
     epub_package.add_argument(
         "--format", choices=("json", "text"), default="json"
     )
+    epub_opening = commands.add_parser(
+        "epub-opening-report",
+        help="emit one bounded cited EPUB opening-matter report",
+    )
+    epub_opening.add_argument("--config", required=True, metavar="PATH", type=Path)
+    epub_opening.add_argument(
+        "--mount", required=True, metavar="NAME", type=_bounded_identifier
+    )
+    epub_opening.add_argument("--file", required=True, metavar="RELATIVE")
+    epub_opening.add_argument(
+        "--format", choices=("json", "text"), default="json"
+    )
     title_proposal = commands.add_parser(
         "synthetic-title-proposal-report",
         help="emit one persisted apply-ineligible synthetic title proposal preview",
@@ -354,6 +397,7 @@ def main(
     audiobookshelf_poll_runner: AudiobookshelfPollRunner | None = None,
     inventory_poll_inspection_runner: InventoryPollInspectionRunner | None = None,
     epub_package_report_runner: EpubPackageReportRunner | None = None,
+    epub_opening_report_runner: EpubOpeningReportRunner | None = None,
     synthetic_title_proposal_runner: SyntheticTitleProposalRunner | None = None,
     hardcover_title_proposal_runner: HardcoverTitleProposalRunner | None = None,
     synthetic_title_review_case_runner: SyntheticTitleReviewCaseRunner | None = None,
@@ -365,6 +409,57 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    if raw_arguments[:1] == ["epub-opening-report"]:
+        requested_format = "json"
+        index = 1
+        while index < len(raw_arguments):
+            argument = raw_arguments[index]
+            candidate: str | None = None
+            if argument.startswith("--format="):
+                candidate = argument.partition("=")[2]
+            elif argument == "--format" and index + 1 < len(raw_arguments):
+                index += 1
+                candidate = raw_arguments[index]
+            if candidate in {"json", "text"}:
+                requested_format = candidate
+            index += 1
+        try:
+            epub_arguments = _epub_opening_parser().parse_args(raw_arguments[1:])
+        except _EpubArgumentError:
+            return _write_epub_opening_report(
+                EpubOpeningReport(
+                    LocalEvidenceOutcome.INVALID_INVOCATION,
+                    EpubOpeningLimits(),
+                ),
+                requested_format,
+                output,
+                errors,
+            )
+        try:
+            report = (
+                internal_opening_failure_report()
+                if epub_opening_report_runner is None
+                else epub_opening_report_runner(
+                    epub_arguments.config,
+                    epub_arguments.mount,
+                    epub_arguments.file,
+                )
+            )
+        except KeyboardInterrupt:
+            report = EpubOpeningReport(
+                LocalEvidenceOutcome.CANCELLATION,
+                EpubOpeningLimits(),
+            )
+        except Exception:
+            report = internal_opening_failure_report()
+        if type(report) is not EpubOpeningReport:
+            report = internal_opening_failure_report()
+        return _write_epub_opening_report(
+            report,
+            epub_arguments.format,
+            output,
+            errors,
+        )
     if raw_arguments[:1] == ["synthetic-title-review-case-report"]:
         try:
             review_arguments = _title_review_case_parser().parse_args(raw_arguments[1:])

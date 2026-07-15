@@ -220,6 +220,27 @@ class EpubPackageInput(BaseModel):
     prefix_mappings: Annotated[StrictInt, Field(ge=1, le=256)] = 64
 
 
+class EpubOpeningInput(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    profile: Literal["epub-opening-limits-v1"] = "epub-opening-limits-v1"
+    selected_documents: Annotated[StrictInt, Field(ge=1, le=8)] = 5
+    expanded_bytes_per_resource: Annotated[StrictInt, Field(ge=1, le=4_194_304)] = 1_048_576
+    expanded_bytes_per_selection: Annotated[StrictInt, Field(ge=1, le=33_554_432)] = 5_242_880
+    text_characters_per_selection: Annotated[StrictInt, Field(ge=1, le=2_097_152)] = 524_288
+    nodes_per_resource: Annotated[StrictInt, Field(ge=1, le=100_000)] = 25_000
+    nodes_per_selection: Annotated[StrictInt, Field(ge=1, le=400_000)] = 100_000
+    document_depth: Annotated[StrictInt, Field(ge=1, le=128)] = 64
+    navigation_links: Annotated[StrictInt, Field(ge=1, le=8_192)] = 2_048
+    wall_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 60
+    child_cpu_seconds: Literal[30] = 30
+    termination_grace_seconds: Literal[2] = 2
+    facts: Literal[64] = 64
+    warnings: Literal[32] = 32
+    excerpt_characters: Literal[280] = 280
+    report_bytes: Literal[524_288] = 524_288
+
+
 class EvidenceInput(BaseModel):
     model_config = _MODEL_CONFIG
 
@@ -231,9 +252,10 @@ class EvidenceInput(BaseModel):
         StrictInt, Field(ge=1_048_576, le=536_870_912)
     ] = 67_108_864
     maximum_text_characters: Annotated[StrictInt, Field(ge=1_024, le=4_194_304)] = (
-        262_144
+        524_288
     )
     epub_package: EpubPackageInput = EpubPackageInput()
+    epub_opening: EpubOpeningInput = EpubOpeningInput()
 
 
 class PolicyInput(BaseModel):

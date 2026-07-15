@@ -43,6 +43,7 @@ from mechanical_librarian.domain.local_evidence import (
     LocalEvidenceWarning,
     MAX_DECLARATIONS,
     ObservationApplicability,
+    local_file_lineage,
     local_resource_identity,
 )
 
@@ -924,7 +925,7 @@ def _observation(
         _compatibility(version),
         display,
         language,
-        local_resource_identity(resource),
+        local_file_lineage(request.expected_source),
     )
 
 

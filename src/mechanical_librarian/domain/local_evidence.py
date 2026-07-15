@@ -590,6 +590,16 @@ class LocalEvidenceReport:
             item.source_fingerprint != self.source_fingerprint for item in citations
         ):
             raise EvidenceValueError("local evidence citations must match source identity")
+        if (
+            self.capability is LocalEvidenceCapability.PACKAGE
+            and self.source_fingerprint is not None
+            and any(
+                item.same_file_lineage
+                != local_file_lineage(self.source_fingerprint)
+                for item in self.observations
+            )
+        ):
+            raise EvidenceValueError("package evidence file lineage is not derived")
         if len({item.identity for item in (entry.citation for entry in self.observations)}) != len(
             self.observations
         ):
@@ -681,6 +691,18 @@ def local_resource_identity(normalized_member_name: str) -> str:
     ):
         raise EvidenceValueError("normalized member name is malformed")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def local_file_lineage(source: Fingerprint) -> str:
+    """Return one capability-independent lineage for an immutable local file."""
+
+    if type(source) is not Fingerprint:
+        raise EvidenceValueError("local file lineage source is malformed")
+    return hashlib.sha256(
+        (source.schema.value + "\x00" + source.digest + "\x00local-file-v1").encode(
+            "ascii"
+        )
+    ).hexdigest()
 
 
 def _expanded_name(value: object) -> str:
@@ -982,5 +1004,6 @@ __all__ = [
     "LocalEvidenceUsage",
     "LocalEvidenceWarning",
     "ObservationApplicability",
+    "local_file_lineage",
     "local_resource_identity",
 ]
