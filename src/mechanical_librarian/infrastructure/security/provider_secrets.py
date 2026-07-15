@@ -5,7 +5,10 @@ from __future__ import annotations
 import httpx
 
 from mechanical_librarian.domain.security import SecretHandle, SecretScope
-from mechanical_librarian.infrastructure.security.private_file import read_private_secret
+from mechanical_librarian.infrastructure.security.private_file import (
+    BoundaryWhitespacePolicy,
+    read_private_secret,
+)
 
 
 class ProviderSecretUnavailable(Exception):
@@ -24,7 +27,10 @@ class PrivateFileProviderCredentials:
             or handle.scope is not SecretScope.METADATA_PROVIDER
         ):
             raise ProviderSecretUnavailable()
-        material = read_private_secret(handle.reference)
+        material = read_private_secret(
+            handle.reference,
+            boundary_whitespace=BoundaryWhitespacePolicy.REJECT,
+        )
         if material is None:
             raise ProviderSecretUnavailable()
         return httpx.AsyncClient(

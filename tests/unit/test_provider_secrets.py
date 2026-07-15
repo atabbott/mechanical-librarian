@@ -20,6 +20,54 @@ from mechanical_librarian.infrastructure.security.provider_secrets import (
 
 
 class ProviderSecretTests(unittest.TestCase):
+    def test_raw_token_boundaries_construct_one_client(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "token"
+            for size in (1, 2_048):
+                with self.subTest(size=size):
+                    secret.write_bytes(b"x" * size)
+                    secret.chmod(0o600)
+                    with patch(
+                        "mechanical_librarian.infrastructure.security.provider_secrets.httpx.AsyncClient"
+                    ) as client:
+                        result = PrivateFileProviderCredentials().hardcover_client(
+                            SecretHandle(
+                                SecretReference(str(secret)),
+                                SecretScope.METADATA_PROVIDER,
+                            )
+                        )
+                    self.assertIs(result, client.return_value)
+                    client.assert_called_once()
+
+    def test_raw_token_rejects_whitespace_in_every_partition_before_client(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "token"
+            for name, whitespace in (
+                ("space", b" "),
+                ("tab", b"\t"),
+                ("carriage-return", b"\r"),
+                ("line-feed", b"\n"),
+            ):
+                for partition, payload in (
+                    ("leading", whitespace + b"token"),
+                    ("trailing", b"token" + whitespace),
+                    ("internal", b"to" + whitespace + b"ken"),
+                ):
+                    with self.subTest(whitespace=name, partition=partition):
+                        secret.write_bytes(payload)
+                        secret.chmod(0o600)
+                        with patch(
+                            "mechanical_librarian.infrastructure.security.provider_secrets.httpx.AsyncClient"
+                        ) as client:
+                            with self.assertRaises(ProviderSecretUnavailable):
+                                PrivateFileProviderCredentials().hardcover_client(
+                                    SecretHandle(
+                                        SecretReference(str(secret)),
+                                        SecretScope.METADATA_PROVIDER,
+                                    )
+                                )
+                        client.assert_not_called()
+
     def test_owner_read_bit_is_required_after_successful_descriptor_open(self) -> None:
         handle = SecretHandle(
             SecretReference("/synthetic/provider-token"),

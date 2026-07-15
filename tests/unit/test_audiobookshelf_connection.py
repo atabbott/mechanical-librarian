@@ -1056,7 +1056,7 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
     def test_inventory_credential_is_exact_origin_get_route_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "inventory-key"
-            path.write_text("private-inventory-token\n", encoding="utf-8")
+            path.write_text("\t private-inventory-token\r\n ", encoding="utf-8")
             path.chmod(0o600)
             credentials = PrivateFileTargetCredentials()
             handle = SecretHandle(
@@ -1075,7 +1075,10 @@ class SecretAndClientBoundaryTests(unittest.TestCase):
                 for url in allowed:
                     request = httpx.Request("GET", url)
                     next(auth.auth_flow(request))
-                    self.assertIn("authorization", request.headers)
+                    self.assertEqual(
+                        request.headers["authorization"],
+                        "Bearer private-inventory-token",
+                    )
                 for method, url in (
                     ("POST", "https://synthetic.invalid/api/libraries"),
                     ("GET", "https://other.invalid/api/libraries"),

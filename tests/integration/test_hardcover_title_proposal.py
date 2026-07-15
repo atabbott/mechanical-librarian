@@ -166,6 +166,59 @@ class HardcoverTitleProposalIntegrationTests(unittest.TestCase):
                 TITLE,
             )
 
+    def test_whitespace_secrets_fail_before_client_resolution_or_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secret = root / "provider-token"
+            for name, whitespace in (
+                ("space", b" "),
+                ("tab", b"\t"),
+                ("carriage-return", b"\r"),
+                ("line-feed", b"\n"),
+            ):
+                for partition, payload in (
+                    ("leading", whitespace + b"token"),
+                    ("trailing", b"token" + whitespace),
+                    ("internal", b"to" + whitespace + b"ken"),
+                ):
+                    with self.subTest(whitespace=name, partition=partition):
+                        secret.write_bytes(payload)
+                        secret.chmod(0o600)
+                        resolution_calls = []
+                        transport_calls = []
+
+                        def resolver(host, port, budget):
+                            resolution_calls.append((host, port, budget))
+                            return (PUBLIC_IP,)
+
+                        with (
+                            patch("socket.socket") as network_socket,
+                            patch(
+                                "mechanical_librarian.infrastructure.security.provider_secrets.httpx.AsyncClient"
+                            ) as client,
+                        ):
+                            report = _run_hardcover_title_proposal_report(
+                                root / f"{name}-{partition}.sqlite",
+                                secret,
+                                transport=_transport(
+                                    _payload([{"title": TITLE}]),
+                                    calls=transport_calls,
+                                ),
+                                resolver=resolver,
+                            )
+
+                        client.assert_not_called()
+                        network_socket.assert_not_called()
+                        self.assertEqual(resolution_calls, [])
+                        self.assertEqual(transport_calls, [])
+                        self.assertEqual(
+                            report.proposal_set.result.value, "provider_failed"
+                        )
+                        chosen = report.proposal_set.to_data()["manifest"]["f06"][
+                            "chosen_observation"
+                        ]
+                        self.assertEqual(chosen["normalized_value"], TITLE)
+
     def test_observation_lineages_replay_and_coexist_without_supersession(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
