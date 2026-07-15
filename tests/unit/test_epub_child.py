@@ -23,6 +23,33 @@ from mechanical_librarian.domain.local_evidence import (
 
 
 class EpubChildCompositionTests(unittest.TestCase):
+    def test_unknown_capability_is_rejected_without_package_dispatch(self) -> None:
+        context = {
+            "capability": "unknown",
+            "child_seconds": 4.5,
+            "expected_source": {
+                "algorithm": "sha256",
+                "digest": "a" * 64,
+                "schema": "source-v1",
+            },
+            "limits": EpubPackageLimits().to_data(),
+            "logical_identity": "b" * 64,
+        }
+        written: list[LocalEvidenceReport] = []
+        with (
+            patch.object(child, "_install_parent_guard"),
+            patch.object(child, "_apply_limits"),
+            patch.object(child, "_read_context", return_value=context),
+            patch.object(child, "_write_report", side_effect=written.append),
+            patch.object(child.signal, "signal"),
+            patch.object(child.os, "close"),
+            patch.object(child, "extract_local_evidence") as extract,
+        ):
+            self.assertEqual(child.main(["10", "11", "123"]), 0)
+        self.assertEqual(len(written), 1)
+        self.assertEqual(written[0].outcome, LocalEvidenceOutcome.INTERNAL_FAILURE)
+        extract.assert_not_called()
+
     def test_entrypoint_import_does_not_load_network_database_or_secret_implementations(
         self,
     ) -> None:

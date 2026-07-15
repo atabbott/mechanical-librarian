@@ -231,7 +231,9 @@ else:
         descendant = int(leader.stdout.readline().decode("ascii"))
         leader.stdout.close()
         leader.wait(timeout=5)
+        started = time.monotonic()
         _stop(leader)
+        self.assertLess(time.monotonic() - started, 2.75)
 
         deadline = time.monotonic() + 2.0
         alive = True

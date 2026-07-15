@@ -43,6 +43,7 @@ from tests.support.epub_packages import (
     CONTAINER_ONE,
     EPUB2_PACKAGE,
     EPUB3_PACKAGE,
+    MATERIALIZED_RECIPES,
     epub_bytes,
     epub_data_descriptor_bytes,
     epub_zip64_bytes,
@@ -382,21 +383,29 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                 "coverage_matrix",
                 "fixtures",
                 "generator_module",
+                "materialization",
                 "projections",
                 "schema",
             },
         )
+        self.assertEqual(manifest["schema"], "synthetic-fixture-manifest-v2")
+        self.assertEqual(manifest["cohort"], "epub-evidence-f07a-v2")
         self.assertEqual(
             manifest["generator_module"],
             "tests.unit.test_epub_package_fixture_manifest",
         )
         entries = manifest["fixtures"]
+        package_entries = [
+            entry
+            for entry in entries
+            if "f06-package-qualification" in entry["consumer_ownership"]
+        ]
         self.assertEqual(
-            {entry["generator"] for entry in entries}, set(DISPATCH)
+            {entry["generator"] for entry in package_entries}, set(DISPATCH)
         )
         self.assertEqual(len({entry["id"] for entry in entries}), len(entries))
 
-        for entry in entries:
+        for entry in package_entries:
             with self.subTest(fixture=entry["id"]):
                 dispatch = DISPATCH[entry["generator"]]
                 expected = LocalEvidenceOutcome(entry["expected_outcome"])
@@ -449,6 +458,88 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                     self.assertNotIn(UNSAFE_METADATA, serialized)
                     self.assertIn("unsafe-source-text-sha256", serialized)
                     self.assertIn("unsafe_metadata_redacted", serialized)
+        for entry in entries:
+            if (
+                entry["consumer_ownership"] == ["f07a-opening-qualification"]
+                and entry["classification"] == "linked"
+            ):
+                with self.subTest(linked_fixture=entry["id"]):
+                    _run_test_id(entry["generator"])
+
+    def test_registry_v2_declares_stable_identity_ownership_and_materialization(self) -> None:
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        materialization = manifest["materialization"]
+        self.assertEqual(
+            materialization,
+            {
+                "flat_output": True,
+                "sha256_index": "SHA256SUMS",
+                "network": "forbidden",
+                "generated_files_committed": False,
+                "limits": {
+                    "maximum_fixture_count": 64,
+                    "maximum_fixture_bytes": 8_388_608,
+                    "maximum_total_bytes": 67_108_864,
+                },
+            },
+        )
+        materialized_recipes = {
+            entry["deterministic_recipe"]
+            for entry in manifest["fixtures"]
+            if entry["classification"] == "materialized"
+        }
+        self.assertEqual(materialized_recipes, set(MATERIALIZED_RECIPES))
+        for entry in manifest["fixtures"]:
+            with self.subTest(fixture=entry["id"]):
+                self.assertEqual(
+                    entry["stable_identity"], f"epub-fixture:{entry['id']}:v1"
+                )
+                self.assertIn(
+                    entry["classification"], {"materialized", "virtual", "linked"}
+                )
+                self.assertTrue(entry["classification_reason"])
+                self.assertTrue(entry["consumer_ownership"])
+                self.assertEqual(entry["spdx"], "AGPL-3.0-or-later")
+                self.assertEqual(
+                    entry["generation_inputs"],
+                    {
+                        "recipe": entry.get(
+                            "generator", entry["deterministic_recipe"]
+                        ),
+                        "seed": "deterministic",
+                    },
+                )
+                package = entry["expected"]["package"]
+                self.assertIsInstance(package["outcome"], str)
+                self.assertIsInstance(package["exit"], int)
+                opening = entry["expected"]["opening"]
+                if opening is not None:
+                    self.assertIn(
+                        opening["outcome"],
+                        {
+                            "success",
+                            "no_applicable_evidence",
+                            "malformed",
+                            "encrypted",
+                            "unsupported_format",
+                            "unsupported_version",
+                            "unsupported_compression",
+                            "resource_limit",
+                            "timeout",
+                            "cancellation",
+                            "unstable_source",
+                            "child_failure",
+                            "internal_failure",
+                        },
+                    )
+                    self.assertIsInstance(opening["exit"], int)
+                if entry["classification"] == "materialized":
+                    self.assertEqual(
+                        entry["materialized_filename"], f"{entry['id']}.epub"
+                    )
+                else:
+                    self.assertIsNone(entry["deterministic_recipe"])
+                    self.assertIsNone(entry["materialized_filename"])
 
     def test_every_configurable_limit_has_default_and_hard_cap_boundary_cases(self) -> None:
         manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))

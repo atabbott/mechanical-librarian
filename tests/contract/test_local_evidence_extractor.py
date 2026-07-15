@@ -30,6 +30,7 @@ from mechanical_librarian.domain.local_evidence import (
     LocalEvidenceRequest,
     LocalEvidenceSource,
     ObservationApplicability,
+    local_file_lineage,
 )
 
 
@@ -137,6 +138,9 @@ class LocalEvidenceExtractorContractTests(unittest.TestCase):
                 SchemaVersion("package-observation-v1"),
                 ExtractorVersion("fake-extractor-v1"),
                 CompatibilityVersion("epub-3.3"),
+                same_file_lineage=local_file_lineage(
+                    extraction_request.expected_source
+                ),
             )
             for ordinal, value in ((1, "Second alphabetically"), (2, "First alphabetically"))
         )

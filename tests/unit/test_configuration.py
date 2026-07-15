@@ -281,6 +281,53 @@ class ConfigurationTests(unittest.TestCase):
         with self.assertRaises(ConfigurationError):
             load_configuration(invalid_profile)
 
+    def test_epub_opening_limits_are_closed_composed_and_require_reextraction(
+        self,
+    ) -> None:
+        configured = self.proposed()
+        configured["evidence"] = {
+            "epub_package": {"archive_entries": 1_024},
+            "epub_opening": {
+                "profile": "epub-opening-limits-v1",
+                "selected_documents": 4,
+                "document_depth": 32,
+                "wall_seconds": 120,
+            },
+        }
+        evidence = load_configuration(configured).evidence
+        self.assertEqual(evidence.epub_opening.profile, "epub-opening-limits-v1")
+        self.assertEqual(evidence.epub_opening.selected_documents, 4)
+        self.assertEqual(evidence.epub_opening.document_depth, 32)
+        self.assertEqual(evidence.epub_opening.wall_seconds, 120)
+        self.assertEqual(evidence.epub_opening.package, evidence.epub_package)
+        self.assertEqual(
+            tuple(change.path for change in plan_import(self.source, configured).changes),
+            (
+                "evidence.epub_package.archive_entries",
+                "evidence.epub_opening.selected_documents",
+                "evidence.epub_opening.document_depth",
+                "evidence.epub_opening.wall_seconds",
+            ),
+        )
+        for field, value in (
+            ("selected_documents", 9),
+            ("wall_seconds", 3_601),
+            ("child_cpu_seconds", 29),
+            ("termination_grace_seconds", 3),
+        ):
+            with self.subTest(field=field):
+                invalid = self.proposed()
+                invalid["evidence"] = {"epub_opening": {field: value}}
+                with self.assertRaises(ConfigurationError):
+                    load_configuration(invalid)
+
+        invalid_profile = self.proposed()
+        invalid_profile["evidence"] = {
+            "epub_opening": {"profile": "epub-opening-limits-v2"}
+        }
+        with self.assertRaises(ConfigurationError):
+            load_configuration(invalid_profile)
+
     def test_multiple_changes_have_fixed_path_and_impact_order(self) -> None:
         proposed = self.proposed()
         proposed["connections"][0]["endpoint"] = "https://replacement.example"
