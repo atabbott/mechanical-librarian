@@ -7,6 +7,19 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added `hardcover-title-proposal-report`, a disabled-by-default F09b proof of
+  concept that runs only the generated `agree-empty` title case through a
+  fixed, bounded Hardcover query seam. An omitted provider secret performs no
+  secret access, DNS, or egress and records `provider_disabled`; unavailable
+  credentials and provider failures preserve the local F06 evidence and record
+  `provider_failed`. The command remains `synthetic_preview`, is never
+  production-applicable, adds no `config-v1` fields, constructs the provider-
+  specific `Bearer` header from a raw secret, validates the closed bounded live
+  Typesense response shape, records the live contract as durable provider
+  manifest v2 while retaining v1 readability, and is qualified with both a
+  credential-free structural fake and one redacted exact-installed-artifact
+  live run.
+
 - Added `synthetic-title-proposal-report`, a credential-free F09a technical
   preview that runs a closed scenario through a licence-safe generated EPUB,
   the real descriptor-bound F06 child, an in-memory Audiobookshelf-shaped

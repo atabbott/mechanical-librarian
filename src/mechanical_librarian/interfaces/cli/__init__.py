@@ -51,6 +51,7 @@ from mechanical_librarian.domain.local_evidence import (
     LocalEvidenceOutcome,
     LocalEvidenceReport,
 )
+from mechanical_librarian.domain.inventory import SecretReference
 
 
 StateCheckRunner = Callable[[Path], StateCheckResult]
@@ -61,6 +62,7 @@ AudiobookshelfInventoryRunner = Callable[[Path, Path], InventoryRunResult]
 AudiobookshelfPollRunner = Callable[[Path, Path, str], InventoryPollResult]
 InventoryPollInspectionRunner = Callable[[Path, str], InventoryPollResult]
 SyntheticTitleProposalRunner = Callable[[Path, str], SyntheticTitleProposalReport]
+HardcoverTitleProposalRunner = Callable[[Path, Path | None], SyntheticTitleProposalReport]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -88,6 +90,8 @@ _ABS_INVENTORY_FAILURE = "Audiobookshelf inventory failed safely.\n"
 _ABS_POLL_FAILURE = "Audiobookshelf poll failed safely.\n"
 _TITLE_PROPOSAL_FAILURE = "Synthetic title preview failed safely.\n"
 _TITLE_PROPOSAL_INVALID = "Synthetic title preview invocation is invalid.\n"
+_HARDCOVER_TITLE_PROPOSAL_FAILURE = "Hardcover title preview failed safely.\n"
+_HARDCOVER_TITLE_PROPOSAL_INVALID = "Hardcover title preview invocation is invalid.\n"
 _EPUB_PACKAGE_EXIT = {
     LocalEvidenceOutcome.INVALID_INVOCATION: 2,
     LocalEvidenceOutcome.SUCCESS: 0,
@@ -148,6 +152,18 @@ def _title_proposal_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _hardcover_title_proposal_parser() -> argparse.ArgumentParser:
+    parser = _TitleArgumentParser(
+        prog="mechanical-librarian hardcover-title-proposal-report"
+    )
+    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
+    parser.add_argument(
+        "--secret-reference", metavar="PATH", type=_provider_secret_reference
+    )
+    parser.add_argument("--format", choices=("json", "text"), default="json")
+    return parser
+
+
 def _write_epub_report(
     report: LocalEvidenceReport,
     output_format: str,
@@ -168,6 +184,17 @@ def _database_path(value: str) -> Path:
     path = Path(value)
     if path == Path(":memory:"):
         raise argparse.ArgumentTypeError("database must be a durable filesystem path")
+    return path
+
+
+def _provider_secret_reference(value: str) -> Path:
+    try:
+        reference = SecretReference(value)
+        path = Path(reference.value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("secret reference is invalid") from None
+    if not path.is_absolute():
+        raise argparse.ArgumentTypeError("secret reference must be absolute")
     return path
 
 
@@ -275,6 +302,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     title_proposal.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
     title_proposal.add_argument("--format", choices=("json", "text"), default="json")
+    hardcover_title = commands.add_parser(
+        "hardcover-title-proposal-report",
+        help="emit one persisted apply-ineligible Hardcover title proof of concept",
+    )
+    hardcover_title.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
+    hardcover_title.add_argument(
+        "--secret-reference", metavar="PATH", type=_provider_secret_reference
+    )
+    hardcover_title.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
 
@@ -291,6 +329,7 @@ def main(
     inventory_poll_inspection_runner: InventoryPollInspectionRunner | None = None,
     epub_package_report_runner: EpubPackageReportRunner | None = None,
     synthetic_title_proposal_runner: SyntheticTitleProposalRunner | None = None,
+    hardcover_title_proposal_runner: HardcoverTitleProposalRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -299,6 +338,38 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    if raw_arguments[:1] == ["hardcover-title-proposal-report"]:
+        try:
+            title_arguments = _hardcover_title_proposal_parser().parse_args(
+                raw_arguments[1:]
+            )
+        except _TitleArgumentError:
+            errors.write(_HARDCOVER_TITLE_PROPOSAL_INVALID)
+            return 2
+        if hardcover_title_proposal_runner is None:
+            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
+            return 1
+        try:
+            report = hardcover_title_proposal_runner(
+                title_arguments.database, title_arguments.secret_reference
+            )
+        except (KeyboardInterrupt, Exception):
+            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
+            return 1
+        if type(report) is not SyntheticTitleProposalReport:
+            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
+            return 1
+        try:
+            rendered = (
+                report.to_json() + "\n"
+                if title_arguments.format == "json"
+                else render_title_proposal_text(report)
+            )
+        except Exception:
+            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
+            return 1
+        output.write(rendered)
+        return 0
     if raw_arguments[:1] == ["synthetic-title-proposal-report"]:
         try:
             title_arguments = _title_proposal_parser().parse_args(raw_arguments[1:])

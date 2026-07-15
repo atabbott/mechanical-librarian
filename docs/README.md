@@ -57,6 +57,7 @@ release standards as code.
 - [Audiobookshelf connection check](operations/audiobookshelf-connection.md)
 - [EPUB package evidence report](operations/epub-package-report.md)
 - [Synthetic title proposal report](operations/synthetic-title-proposal-report.md)
+- [Hardcover title proposal report](operations/hardcover-title-proposal-report.md)
 - [Deployment model](operations/deployment.md)
 - [Backups and recovery](operations/backups-and-recovery.md)
 - [Observability and supportability](operations/observability.md)
@@ -66,6 +67,7 @@ release standards as code.
 
 - [Configuration contract](reference/configuration.md)
 - [Compatibility policy](reference/compatibility.md)
+- [F09b Hardcover proof-of-concept contract](reference/hardcover-f09b-contract.md)
 - [Lifecycle and state machines](reference/state-machines.md)
 - [Glossary](reference/glossary.md)
 

@@ -153,8 +153,10 @@ The narrower 0.2 title preview uses the same application-owned seams but F09a
 constructs all three inputs inside a closed synthetic harness: an in-memory
 Audiobookshelf-shaped title snapshot, exactly one eligible `TITLE` from the real
 F06 child reading an application-generated EPUB, and one candidate from a
-provider-neutral port. F09a supplies a deterministic fake;
-F09b later substitutes disabled-by-default bounded Hardcover. Agreement creates
+provider-neutral port. F09a supplies a deterministic fake; F09b's separate
+`hardcover-title-proposal-report` substitutes bounded Hardcover for only the
+generated `agree-empty` case and is disabled when its optional secret-file
+reference is omitted. It changes no `config-v1` field. Agreement creates
 at most one `needs_review` proposal whose value is the exact F06
 `normalized_value`; F06 `raw_value` remains evidence/provenance and provider
 evidence only corroborates. A current title field that is present and loaded
@@ -175,6 +177,13 @@ never adds rows to inventory history or current inventory pointers, and it has
 no review or apply adapter. Connecting a configured media item and current live
 snapshot to F06 is a later application use case, not an implicit adapter hidden
 inside F09a.
+
+F09b ordinary automation uses a credential-free structural fake through the
+same adapter seam. Completion also requires the exact installed artifact to
+parse one bounded real-endpoint result without a parser or compatibility
+failure, retaining only redacted aggregate evidence. Production provider
+configuration, persisted work, freshness/reuse, restart behavior, and live-
+target binding remain F09f scope.
 
 ### Apply
 

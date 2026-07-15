@@ -82,7 +82,7 @@ human or AI decision, approval, production write, or destructive authority.
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
 | --- | --- | --- | --- | --- |
 | F09a Provider-neutral title proposal | #145 | `synthetic-title-proposal-report` runs one of a closed set of generated, licence-safe scenarios through the real F06 EPUB child, an in-memory Audiobookshelf-shaped synthetic snapshot, and a deterministic fake behind the provider-neutral port. It persists one immutable `synthetic_preview` proposal set for every valid scenario, including typed zero-proposal results, and demonstrates replay plus same-lineage supersession. The mode is identity-bearing and structurally derives `production_applicable=false`; no live target, configured media, credential, network, review, approval, apply, or write surface is accepted or constructed. | #222 | `slice/f09a-title-proposal` |
-| F09b Bounded Hardcover title evidence | #204 | A disabled-by-default bounded Hardcover adapter replaces the fake behind the same provider-neutral port. It uses one fixed read-only query at one fixed HTTPS endpoint through a dedicated bounded client, keeps its account-capable token isolated and redacted, and retains only bounded canonical title evidence plus minimal provenance. It never caches raw provider traffic or turns provider failure or disagreement into negative local evidence. | #223 | `slice/f09b-hardcover-title` |
+| F09b Bounded Hardcover title evidence | #204 | `hardcover-title-proposal-report` runs only the fixed generated `agree-empty` case. Omitting its optional secret-file reference constructs no adapter/client and performs no secret access, DNS, or egress; the enabled seam uses one fixed read-only query and endpoint with finite bounds. A structural fake and the exact installed artifact qualify the closed live title-response seam. It changes no `config-v1` field, retains no raw provider traffic or upstream ID, and preserves local evidence on provider failure. | #223 | `slice/f09b-hardcover-title` |
 | F10 Persistent title review case | #146 | One current immutable proposal set containing exactly one current `needs_review` title proposal may become one durable undecided review case only while retaining the visibly synthetic, apply-ineligible preview lineage. No other proposal or set creates a case. Persistence, restart, identical replay, inspection, immutable history, and changed-input supersession are demonstrable; zero-proposal results create no empty case. | #224 | `slice/f10-title-review-case` |
 
 The only active delivery chain is:
@@ -127,27 +127,35 @@ production evidence.
 | Identical replay | Same semantic set and, where applicable, case | No duplicate |
 | A bound input changes | New superseding set; prior history remains immutable | Only a qualifying new current set may have a current case |
 
-F09b's disabled state constructs no adapter or client, resolves no provider
-secret, and performs no DNS lookup or egress. When enabled, the adapter owns its
+F09b's omitted-secret state constructs no adapter or client, resolves no
+provider secret, and performs no DNS lookup or egress. It records
+`provider_disabled`; valid-but-unavailable credentials and provider failures
+record `provider_failed` without discarding F06 evidence. When enabled, the adapter owns its
 fixed HTTPS origin, path, method, and read-only query; validates TLS; follows no
 redirects; rejects private or reserved DNS destinations; uses a dedicated
 client; and applies finite request, response, parser, deadline, retry, and
-single-request concurrency bounds. The closed response shape is untrusted.
+single-request concurrency bounds. The command fixes the generated
+`agree-empty` input and accepts no configuration, title, scenario, endpoint, or
+query. The closed response shape is untrusted.
 Only the minimum allowlisted facts needed for a title lookup leave the
 application. The account-capable token is never logged or shared with the
 target service or a reviewer. Raw requests, responses, headers, tokens, request
 bodies, upstream identifiers, and provider caches are never persisted.
 
-Ordinary CI remains credential-free and fake-based. F09b completion also
-requires one opt-in bounded read-only smoke/contract qualification against the
-fixed real endpoint using a dedicated non-production account and token. It
-retains only a redacted aggregate result.
+Ordinary CI remains credential-free and fake-based through the same command and
+adapter seam using the sanitized live key/type/cardinality shape. F09b also
+requires the exact installed artifact to parse one bounded real-endpoint result
+with a dedicated non-production token and disposable state, retaining only a
+redacted aggregate. This narrow compatibility does not add F09f production
+configuration, persisted provider work, freshness/reuse, restart behavior, or
+live-target binding.
 
 ### 0.2.0 checkpoint exit
 
 - F09a demonstrates the complete decision table with the deterministic fake;
-- F09b demonstrates the same provider-neutral contract, disabled behavior,
-  bounded transport, isolated credential handling, and opt-in qualification;
+- F09b demonstrates the fixed provider-neutral PoC, disabled behavior, bounded
+  transport, isolated credential handling, structural fake qualification, and
+  exact-installed-artifact live response compatibility;
 - F10 persists, restarts, inspects, replays, and supersedes one current
   case from one current immutable proposal set containing exactly one current
   `needs_review` title proposal, without creating any other, empty, or duplicate

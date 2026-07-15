@@ -215,23 +215,32 @@ applicability, and remains structurally ineligible for production review or
 apply. The live F06/current-Audiobookshelf binding is not simulated as a
 production contract and remains deferred.
 
-F09b runs the same contract through a fake transport in ordinary CI. Tests cover
-disabled composition with no adapter, client, secret resolution, DNS, or
-egress; the fixed HTTPS origin, path, POST method, and read-only query; TLS
-validation; redirect denial; private and reserved DNS rejection; a dedicated
-client; finite request, response, parser, deadline, retry, backoff, and
-single-request concurrency bounds; cancellation; closed-shape parsing; the
-minimum outbound title lookup allowlist and disclosure purposes; and redaction
-of the isolated account-capable token. Only bounded canonical title evidence
-and minimal provenance may persist. Raw requests, responses, headers, tokens,
-request bodies, upstream identifiers, and provider caches must not persist.
+F09b runs the fixed generated `agree-empty` case through a structurally faithful
+synthetic live-shape fixture and fake transport in ordinary CI. Tests cover
+omitted-secret disabled composition with no adapter,
+client, secret resolution, DNS, or egress; syntax failure before state access;
+valid-but-unavailable secret failure without a request; the fixed HTTPS origin,
+path, POST method, and read-only query; TLS validation; redirect denial;
+validated-IP connection, SNI/certificate validation, peer equality, and private
+or reserved destination rejection; no environment proxy, cookies, or
+compression; exact `Bearer` construction; exact request, response, result,
+title, parser, deadline, retry, backoff, and concurrency bounds; cancellation;
+closed-shape parsing across every live wrapper; and token redaction. Parser
+tests cover duplicate, missing, null, wrong-type, bool-as-integer, non-finite,
+unknown, over-bound, echo/count mismatch, empty, and multiple-hit variants.
+Tests also prove exact disabled, failed, empty, no-match, and agreeing
+outcomes, deterministic `hardcover-poc-*` replay, and coexistence without
+cross-outcome supersession. Only bounded canonical title evidence and minimal
+provenance may persist; raw traffic, credentials, secret paths, upstream
+identifiers, and caches must not persist.
 
-F09b completion also requires one opt-in bounded read-only smoke/contract
-qualification against the fixed real endpoint with a dedicated non-production
-account and token. It retains only a redacted aggregate result; ordinary CI and
-fixtures remain credential-free. Negative spies prove the preview invokes no
-AI, human-decision, approval, apply, cover, rich-field, multi-provider-fusion,
-or production-write path.
+A bounded real-endpoint qualification with a dedicated non-production account,
+the exact installed artifact, fixed generated query, and disposable database is
+required for F09b. It must produce a parsed canonical candidate or evidence-
+supported typed no-proposal result without parser/compatibility failure and may
+retain only a redacted aggregate result. Negative spies prove the preview
+invokes no AI, human-decision, approval, apply, cover, rich-field, multi-
+provider-fusion, or production-write path.
 
 The broader 1.0 report-only end-to-end scenario disables every external
 metadata provider and still completes inventory, local evidence extraction,

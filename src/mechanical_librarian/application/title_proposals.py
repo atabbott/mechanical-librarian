@@ -1,4 +1,4 @@
-"""Synthetic-only F09a title proposal orchestration."""
+"""Closed synthetic-preview title proposal orchestration for F09a and F09b."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import json
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from enum import StrEnum
 from typing import Protocol
 
 from mechanical_librarian.application.ports import (
@@ -53,6 +54,13 @@ GENERATOR_VERSION = "synthetic-epub-generator-v1"
 FIXTURE_VERSION = "synthetic-title-scenarios-v1"
 PROVIDER_SCHEMA = SchemaVersion("synthetic-title-query-v1")
 SYNTHETIC_LINEAGE = "synthetic-title-preview"
+HARDCOVER_POC_LINEAGE = "hardcover-poc"
+HARDCOVER_POC_PROVIDER_VERSION = "hardcover-title-poc-v2"
+
+
+class ProviderPreviewProfile(StrEnum):
+    SYNTHETIC = "synthetic"
+    HARDCOVER_POC = "hardcover_poc"
 
 
 class TitleProposalRunError(RuntimeError):
@@ -110,6 +118,7 @@ class _ProviderObservation:
     outcome: str
     result: TitleProposalResult | None
     candidate: MetadataCandidate | None
+    failure_kind: FailureKind | None = None
 
 
 @dataclass(frozen=True)
@@ -189,9 +198,28 @@ def scenario_named(name: str) -> SyntheticScenario:
 
 
 class ProposeSyntheticTitle:
-    def __init__(self, provider: MetadataProvider, repository: TitleProposalRepository) -> None:
+    def __init__(
+        self,
+        provider: MetadataProvider | None,
+        repository: TitleProposalRepository,
+        *,
+        profile: ProviderPreviewProfile = ProviderPreviewProfile.SYNTHETIC,
+        unavailable_kind: FailureKind | None = None,
+    ) -> None:
+        if type(profile) is not ProviderPreviewProfile:
+            raise ValueError("title proposal provider profile is invalid")
+        if profile is ProviderPreviewProfile.SYNTHETIC and (
+            provider is None or unavailable_kind is not None
+        ):
+            raise ValueError("synthetic title preview requires its deterministic provider")
+        if provider is not None and unavailable_kind is not None:
+            raise ValueError("provider availability state is ambiguous")
+        if unavailable_kind is not None and type(unavailable_kind) is not FailureKind:
+            raise ValueError("provider availability failure is invalid")
         self._provider = provider
         self._repository = repository
+        self._profile = profile
+        self._unavailable_kind = unavailable_kind
 
     def run(
         self,
@@ -215,6 +243,7 @@ class ProposeSyntheticTitle:
         provider_candidate: MetadataCandidate | None = None
         provider_state = "not_invoked"
         provider_result: TitleProposalResult | None = None
+        provider_failure_kind: FailureKind | None = None
         if local_result is None and selected is not None:
             provider = self._lookup_provider(
                 selected.normalized_value or selected.raw_value
@@ -222,6 +251,7 @@ class ProposeSyntheticTitle:
             provider_state = provider.outcome
             provider_result = provider.result
             provider_candidate = provider.candidate
+            provider_failure_kind = provider.failure_kind
 
         result = local_result
         proposed_value: str | None = None
@@ -252,7 +282,13 @@ class ProposeSyntheticTitle:
                 proposed_value = local_value
                 current_value = scenario.current_title
 
-        lineage = _scenario_lineage(scenario)
+        provider_data = _provider_manifest(
+            self._profile,
+            provider_candidate,
+            provider_state,
+            provider_failure_kind,
+        )
+        lineage = _proposal_lineage(scenario, self._profile, provider_data)
         previous = self._repository.current(lineage)
         previous_set_id = None
         if scenario.lineage_revision == 2:
@@ -277,8 +313,8 @@ class ProposeSyntheticTitle:
                 previous_set_id = None
 
         manifest = _manifest(
-            scenario, local_report, selected, provider_candidate,
-            provider_state, epub_digest, opaque_file_identity, previous_set_id,
+            scenario, local_report, selected, provider_data, lineage,
+            epub_digest, opaque_file_identity, previous_set_id,
         )
         proposal_set = proposal_set_from_manifest(
             manifest=manifest,
@@ -311,11 +347,13 @@ class ProposeSyntheticTitle:
 
     def _lookup_provider(self, local_title: str) -> _ProviderObservation:
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        live_clock = self._profile is ProviderPreviewProfile.HARDCOVER_POC
+        observed_now = datetime.now(timezone.utc) if live_clock else now
         context = OperationContext(
-            Deadline(now + timedelta(seconds=5)),
+            Deadline(observed_now + timedelta(seconds=5)),
             CancellationProbe(CancellationId("synthetic-preview"), lambda: False),
             ResourceBounds(16, 65_536),
-            TimeProbe(lambda: now),
+            TimeProbe(lambda: datetime.now(timezone.utc) if live_clock else now),
         )
         query = ProviderQuery(
             MediaType.EBOOK,
@@ -323,19 +361,45 @@ class ProposeSyntheticTitle:
             (ProviderFact(ProviderFactCode.TITLE, (local_title,)),),
             PROVIDER_SCHEMA,
         )
-        page_request = PageRequest(None, 2)
+        if self._provider is None:
+            if self._unavailable_kind is None:
+                return _ProviderObservation(
+                    "disabled", TitleProposalResult.PROVIDER_DISABLED, None
+                )
+            return _ProviderObservation(
+                "failed",
+                TitleProposalResult.PROVIDER_FAILED,
+                None,
+                self._unavailable_kind,
+            )
+        page_request = PageRequest(
+            None, 1 if self._profile is ProviderPreviewProfile.HARDCOVER_POC else 2
+        )
         result = self._provider.lookup(query, page_request, context)
         if type(result) is not PortResult:
             raise TitleProposalRunError("provider output is malformed")
         if result.failure is not None:
-            mapped = {
-                FailureKind.UNSUPPORTED: ("disabled", TitleProposalResult.PROVIDER_DISABLED),
-                FailureKind.UNAVAILABLE: ("failed", TitleProposalResult.PROVIDER_FAILED),
-                FailureKind.NOT_FOUND: ("no_match", TitleProposalResult.PROVIDER_NO_MATCH),
-            }.get(result.failure.kind)
-            if mapped is not None:
-                return _ProviderObservation(mapped[0], mapped[1], None)
-            raise TitleProposalRunError("provider lookup failed unexpectedly")
+            if self._profile is ProviderPreviewProfile.SYNTHETIC:
+                mapped = {
+                    FailureKind.UNSUPPORTED: ("disabled", TitleProposalResult.PROVIDER_DISABLED),
+                    FailureKind.UNAVAILABLE: ("failed", TitleProposalResult.PROVIDER_FAILED),
+                    FailureKind.NOT_FOUND: ("no_match", TitleProposalResult.PROVIDER_NO_MATCH),
+                }.get(result.failure.kind)
+                if mapped is not None:
+                    return _ProviderObservation(mapped[0], mapped[1], None)
+                raise TitleProposalRunError("provider lookup failed unexpectedly")
+            if result.failure.kind is FailureKind.INVALID_REQUEST:
+                raise TitleProposalRunError("provider rejected a valid application request")
+            if result.failure.kind is FailureKind.NOT_FOUND:
+                return _ProviderObservation(
+                    "no_match", TitleProposalResult.PROVIDER_NO_MATCH, None
+                )
+            return _ProviderObservation(
+                "failed",
+                TitleProposalResult.PROVIDER_FAILED,
+                None,
+                result.failure.kind,
+            )
         if type(result.value) is not Page or result.value.next_cursor is not None:
             raise TitleProposalRunError("provider output is malformed")
         if not all(type(item) is MetadataCandidate for item in result.value.items):
@@ -389,8 +453,8 @@ def _manifest(
     scenario: SyntheticScenario,
     report: LocalEvidenceReport,
     selected,
-    provider_candidate: MetadataCandidate | None,
-    provider_state: str,
+    provider_data: dict[str, object],
+    lineage: str,
     epub_digest: str,
     opaque_file_identity: str,
     previous_set_id: str | None,
@@ -422,19 +486,6 @@ def _manifest(
             "raw_value": selected.raw_value,
             "schema_version": selected.schema_version.value,
         }
-    provider_data: dict[str, object] = {
-        "candidate": None,
-        "outcome": provider_state,
-        "version": "synthetic-title-provider-v1",
-    }
-    if provider_candidate is not None:
-        provider_data["candidate"] = {
-            "correlation_id": provider_candidate.provenance.correlation_id,
-            "field": provider_candidate.field.value,
-            "fingerprint": provider_candidate.provenance.fingerprint.digest,
-            "source_id": provider_candidate.provenance.source_id,
-            "values": list(provider_candidate.value.values),
-        }
     return {
         "comparison_version": TITLE_COMPARISON_VERSION,
         "epub_digest": epub_digest,
@@ -448,7 +499,7 @@ def _manifest(
         },
         "fixture_version": FIXTURE_VERSION,
         "generator_version": GENERATOR_VERSION,
-        "lineage": _scenario_lineage(scenario),
+        "lineage": lineage,
         "lineage_revision": scenario.lineage_revision,
         "mode": ProposalExecutionMode.SYNTHETIC_PREVIEW.value,
         "opaque_file_identity": opaque_file_identity,
@@ -469,6 +520,52 @@ def _manifest(
     }
 
 
+def _provider_manifest(
+    profile: ProviderPreviewProfile,
+    provider_candidate: MetadataCandidate | None,
+    provider_state: str,
+    failure_kind: FailureKind | None,
+) -> dict[str, object]:
+    provider_data: dict[str, object] = {
+        "candidate": None,
+        "outcome": provider_state,
+        "version": (
+            "synthetic-title-provider-v1"
+            if profile is ProviderPreviewProfile.SYNTHETIC
+            else HARDCOVER_POC_PROVIDER_VERSION
+        ),
+    }
+    if profile is ProviderPreviewProfile.HARDCOVER_POC:
+        provider_data["failure_kind"] = (
+            None if failure_kind is None else failure_kind.value
+        )
+    if provider_candidate is not None:
+        provider_data["candidate"] = {
+            "correlation_id": provider_candidate.provenance.correlation_id,
+            "field": provider_candidate.field.value,
+            "fingerprint": provider_candidate.provenance.fingerprint.digest,
+            "source_id": provider_candidate.provenance.source_id,
+            "values": list(provider_candidate.value.values),
+        }
+    return provider_data
+
+
+def _proposal_lineage(
+    scenario: SyntheticScenario,
+    profile: ProviderPreviewProfile,
+    provider_data: dict[str, object],
+) -> str:
+    if profile is ProviderPreviewProfile.SYNTHETIC:
+        return _scenario_lineage(scenario)
+    observation = json.dumps(
+        provider_data,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return f"{HARDCOVER_POC_LINEAGE}-{hashlib.sha256(observation).hexdigest()[:48]}"
+
+
 def _scenario_lineage(scenario: SyntheticScenario) -> str:
     if scenario.name in {"supersede-before", "supersede-after"}:
         return f"{SYNTHETIC_LINEAGE}-supersession"
@@ -476,8 +573,9 @@ def _scenario_lineage(scenario: SyntheticScenario) -> str:
 
 
 __all__ = [
-    "FIXTURE_VERSION", "GENERATOR_VERSION", "ProposalPersistence", "ProposeSyntheticTitle",
-    "SCENARIOS", "SCENARIO_REVISION", "SYNTHETIC_LINEAGE", "SyntheticScenario",
+    "FIXTURE_VERSION", "GENERATOR_VERSION", "HARDCOVER_POC_LINEAGE",
+    "HARDCOVER_POC_PROVIDER_VERSION", "ProposalPersistence", "ProposeSyntheticTitle",
+    "ProviderPreviewProfile", "SCENARIOS", "SCENARIO_REVISION", "SYNTHETIC_LINEAGE", "SyntheticScenario",
     "SyntheticTitleProposalReport", "TitleProposalRepository", "TitleProposalRunError",
     "render_title_proposal_text", "scenario_named",
 ]

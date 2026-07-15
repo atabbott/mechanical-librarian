@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-import sqlite3
+import asyncio
 import hashlib
 import os
+import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TypeVar
+
+import httpx
 
 from mechanical_librarian.adapters.persistence.audit import SQLiteAuditRepository
 from mechanical_librarian.adapters.persistence.jobs import SQLiteJobHeartbeatRepository
@@ -43,6 +46,10 @@ from mechanical_librarian.adapters.persistence.title_proposals import (
 )
 from mechanical_librarian.adapters.providers.synthetic_title import (
     SyntheticTitleProvider,
+)
+from mechanical_librarian.adapters.providers.hardcover_title import (
+    AddressResolver,
+    HardcoverTitleProvider,
 )
 from mechanical_librarian.application.connection_probe import (
     ConnectionProbeOutcome,
@@ -78,6 +85,7 @@ from mechanical_librarian.application.ports import (
     Deadline,
     OperationContext,
     FailureKind,
+    MetadataProvider as _MetadataProvider,
     PortFailure,
     PortResult,
     ResourceBounds,
@@ -93,6 +101,7 @@ from mechanical_librarian.application.synthetic_inventory import (
     SyntheticInventoryResult,
 )
 from mechanical_librarian.application.title_proposals import (
+    ProviderPreviewProfile,
     ProposeSyntheticTitle,
     SyntheticScenario,
     SyntheticTitleProposalReport,
@@ -115,6 +124,7 @@ from mechanical_librarian.domain.inventory import (
     AdapterCapabilities,
     LibraryConnection,
     MediaType,
+    SecretReference,
 )
 from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanState, ScanUsage
 from mechanical_librarian.domain.inventory_polling import PollPolicy, PollRequest
@@ -133,6 +143,10 @@ from mechanical_librarian.infrastructure.security.target_secrets import (
     PrivateFileTargetCredentials,
     SecretFileUnavailable,
     target_endpoint_allowed,
+)
+from mechanical_librarian.infrastructure.security.provider_secrets import (
+    PrivateFileProviderCredentials,
+    ProviderSecretUnavailable,
 )
 from mechanical_librarian.infrastructure.persistence.sqlite import (
     SchemaError,
@@ -961,13 +975,86 @@ def _run_synthetic_title_proposal_report(
     )
 
 
+def _run_hardcover_title_proposal_report(
+    database: Path,
+    secret_reference: Path | None,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    resolver: AddressResolver | None = None,
+) -> SyntheticTitleProposalReport:
+    """Run one fixed generated-title proof of concept without live target authority."""
+
+    scenario = scenario_named("agree-empty")
+    limits = EpubPackageLimits(source_archive_bytes=4 * 1024 * 1024)
+    with generated_synthetic_epub(scenario) as generated:
+        expected = Fingerprint("sha256", SchemaVersion("source-v1"), generated.digest)
+        local_report = run_epub_package_child(
+            generated.descriptor,
+            expected,
+            limits,
+            wall_seconds=30,
+            logical_identity=generated.opaque_identity,
+        )
+        epub_digest = generated.digest
+        opaque_identity = generated.opaque_identity
+    if local_report.outcome is not LocalEvidenceOutcome.SUCCESS:
+        raise SchemaError("Hardcover title evidence extraction failed")
+
+    provider = None
+    unavailable_kind = None
+    client: httpx.AsyncClient | None = None
+    if secret_reference is not None:
+        try:
+            handle = SecretHandle(
+                SecretReference(str(secret_reference)),
+                SecretScope.METADATA_PROVIDER,
+            )
+            client = PrivateFileProviderCredentials().hardcover_client(
+                handle, transport=transport
+            )
+            provider = HardcoverTitleProvider(client, resolver=resolver)
+        except (ProviderSecretUnavailable, TypeError, ValueError):
+            unavailable_kind = FailureKind.UNAVAILABLE
+    try:
+        return _persist_synthetic_title_proposal(
+            database,
+            scenario,
+            local_report,
+            epub_digest,
+            opaque_identity,
+            profile=ProviderPreviewProfile.HARDCOVER_POC,
+            provider=provider,
+            unavailable_kind=unavailable_kind,
+        )
+    finally:
+        if client is not None:
+            asyncio.run(client.aclose())
+
+
 def _persist_synthetic_title_proposal(
     database: Path,
     scenario: SyntheticScenario,
     local_report: LocalEvidenceReport,
     epub_digest: str,
     opaque_identity: str,
+    *,
+    profile: ProviderPreviewProfile = ProviderPreviewProfile.SYNTHETIC,
+    provider: _MetadataProvider | None = None,
+    unavailable_kind: FailureKind | None = None,
 ) -> SyntheticTitleProposalReport:
+    def service(repository: SQLiteTitleProposalRepository) -> ProposeSyntheticTitle:
+        selected_provider = (
+            SyntheticTitleProvider(scenario)
+            if profile is ProviderPreviewProfile.SYNTHETIC
+            else provider
+        )
+        return ProposeSyntheticTitle(
+            selected_provider,
+            repository,
+            profile=profile,
+            unavailable_kind=unavailable_kind,
+        )
+
     preflight(database)
     if path_entry_exists(database):
         preflight(database)
@@ -975,10 +1062,7 @@ def _persist_synthetic_title_proposal(
         try:
             connection = connect_existing(database)
             migrate(connection)
-            return ProposeSyntheticTitle(
-                SyntheticTitleProvider(scenario),
-                SQLiteTitleProposalRepository(connection),
-            ).run(
+            return service(SQLiteTitleProposalRepository(connection)).run(
                 scenario,
                 local_report,
                 epub_digest=epub_digest,
@@ -993,10 +1077,7 @@ def _persist_synthetic_title_proposal(
         try:
             connection = connect(staged)
             migrate(connection)
-            report = ProposeSyntheticTitle(
-                SyntheticTitleProvider(scenario),
-                SQLiteTitleProposalRepository(connection),
-            ).run(
+            report = service(SQLiteTitleProposalRepository(connection)).run(
                 scenario,
                 local_report,
                 epub_digest=epub_digest,
@@ -1009,11 +1090,39 @@ def _persist_synthetic_title_proposal(
         published = publish_staged_state(staged, database)
     if published:
         return report
+    if profile is ProviderPreviewProfile.HARDCOVER_POC:
+        return _store_precomputed_title_proposal(database, report)
     # A concurrent complete initializer won. Reuse the already-extracted,
     # deterministic input against that winner without regenerating resources.
     return _persist_synthetic_title_proposal(
-        database, scenario, local_report, epub_digest, opaque_identity
+        database,
+        scenario,
+        local_report,
+        epub_digest,
+        opaque_identity,
+        profile=profile,
+        provider=provider,
+        unavailable_kind=unavailable_kind,
     )
+
+
+def _store_precomputed_title_proposal(
+    database: Path, report: SyntheticTitleProposalReport
+) -> SyntheticTitleProposalReport:
+    preflight(database)
+    connection = None
+    try:
+        connection = connect_existing(database)
+        migrate(connection)
+        persistence = SQLiteTitleProposalRepository(connection).store(
+            report.proposal_set
+        )
+        restored = SyntheticTitleProposalReport(persistence)
+        restored.to_json()
+        return restored
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1031,6 +1140,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         inventory_poll_inspection_runner=_inspect_audiobookshelf_poll,
         epub_package_report_runner=_run_epub_package_report,
         synthetic_title_proposal_runner=_run_synthetic_title_proposal_report,
+        hardcover_title_proposal_runner=_run_hardcover_title_proposal_report,
     )
 
 
