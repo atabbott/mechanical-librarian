@@ -10,6 +10,8 @@ from unittest.mock import Mock, patch
 from mechanical_librarian.domain import audit_values
 from mechanical_librarian.infrastructure.persistence import sqlite
 from mechanical_librarian.infrastructure.persistence.sqlite import MIGRATIONS, Migration, SchemaError, connect, migrate, transaction
+from mechanical_librarian.domain.title_proposals import TitleProposalResult, proposal_set_from_manifest
+from tests.unit.test_title_proposals import manifest as title_manifest
 
 
 CURRENT_VERSION = len(MIGRATIONS)
@@ -18,6 +20,124 @@ CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
+    def test_f10a_migration_is_additive_from_genuine_schema_six_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "state.sqlite")
+            self.addCleanup(connection.close)
+            with patch.object(sqlite, "MIGRATIONS", MIGRATIONS[:6]):
+                self.assertEqual(migrate(connection), 6)
+            proposal = proposal_set_from_manifest(
+                manifest=title_manifest(),
+                result=TitleProposalResult.NEEDS_REVIEW,
+                proposed_value="A Synthetic Book",
+            )
+            connection.execute(
+                "INSERT INTO synthetic_title_proposal_sets("
+                "set_id, identity_digest, lineage, lineage_revision, previous_set_id, mode, canonical_set"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    proposal.set_id,
+                    proposal.identity_digest,
+                    proposal.lineage,
+                    proposal.lineage_revision,
+                    proposal.previous_set_id,
+                    proposal.mode.value,
+                    proposal.to_json(),
+                ),
+            )
+            connection.execute(
+                "INSERT INTO current_synthetic_title_proposals(lineage, set_id) VALUES (?, ?)",
+                (proposal.lineage, proposal.set_id),
+            )
+
+            self.assertEqual(migrate(connection), 7)
+            self.assertEqual(migrate(connection), 7)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT canonical_set FROM synthetic_title_proposal_sets WHERE set_id = ?",
+                    (proposal.set_id,),
+                ).fetchone(),
+                (proposal.to_json(),),
+            )
+            objects = {
+                (kind, name)
+                for kind, name in connection.execute(
+                    "SELECT type, name FROM sqlite_master WHERE name LIKE '%synthetic_title_review%'"
+                )
+            }
+            self.assertIn(("table", "synthetic_title_review_cases"), objects)
+            self.assertIn(("table", "synthetic_title_review_case_transitions"), objects)
+            self.assertIn(("table", "current_synthetic_title_review_cases"), objects)
+            self.assertIn(("trigger", "synthetic_title_review_cases_no_update"), objects)
+            self.assertIn(("trigger", "synthetic_title_review_case_transitions_no_delete"), objects)
+
+    def test_every_supported_schema_prefix_upgrades_to_schema_seven(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            for version in range(1, 7):
+                with self.subTest(version=version):
+                    path = Path(directory) / f"schema-{version}.sqlite"
+                    connection = connect(path)
+                    try:
+                        with patch.object(sqlite, "MIGRATIONS", MIGRATIONS[:version]):
+                            self.assertEqual(migrate(connection), version)
+                        connection.execute(
+                            "INSERT INTO instance_metadata(key, value) VALUES (?, ?)",
+                            (f"schema-{version}-sentinel", "preserved"),
+                        )
+                        self.assertEqual(migrate(connection), 7)
+                        self.assertEqual(
+                            connection.execute(
+                                "SELECT value FROM instance_metadata WHERE key = ?",
+                                (f"schema-{version}-sentinel",),
+                            ).fetchone(),
+                            ("preserved",),
+                        )
+                    finally:
+                        connection.close()
+
+    def test_interrupted_schema_seven_migration_rolls_back_and_retries_cleanly(self) -> None:
+        class FailingConnection:
+            def __init__(self, connection: sqlite3.Connection, statement: str) -> None:
+                self._connection = connection
+                self._statement = statement
+                self._failed = False
+
+            def execute(self, statement: str, parameters: tuple[object, ...] = ()):
+                if statement == self._statement and not self._failed:
+                    self._failed = True
+                    raise sqlite3.OperationalError("injected full/interruption")
+                return self._connection.execute(statement, parameters)
+
+            def __getattr__(self, name: str):
+                return getattr(self._connection, name)
+
+        migration = MIGRATIONS[6]
+        indexes = (0, len(migration.statements) // 2, len(migration.statements) - 1)
+        with tempfile.TemporaryDirectory() as directory:
+            for index in indexes:
+                with self.subTest(index=index):
+                    connection = connect(Path(directory) / f"failure-{index}.sqlite")
+                    try:
+                        with patch.object(sqlite, "MIGRATIONS", MIGRATIONS[:6]):
+                            self.assertEqual(migrate(connection), 6)
+                        with self.assertRaisesRegex(SchemaError, "rolled back"):
+                            migrate(FailingConnection(connection, migration.statements[index]))  # type: ignore[arg-type]
+                        self.assertEqual(
+                            connection.execute(
+                                "SELECT version FROM schema_migrations ORDER BY version"
+                            ).fetchall(),
+                            [(version,) for version in range(1, 7)],
+                        )
+                        self.assertEqual(
+                            connection.execute(
+                                "SELECT name FROM sqlite_master WHERE name LIKE '%synthetic_title_review%'"
+                            ).fetchall(),
+                            [],
+                        )
+                        self.assertEqual(migrate(connection), 7)
+                    finally:
+                        connection.close()
+
     def test_f09a_migration_is_additive_from_genuine_version_five_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")

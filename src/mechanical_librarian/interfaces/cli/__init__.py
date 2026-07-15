@@ -45,6 +45,10 @@ from mechanical_librarian.application.title_proposals import (
     SyntheticTitleProposalReport,
     render_title_proposal_text,
 )
+from mechanical_librarian.application.title_review_cases import (
+    SyntheticTitleReviewCaseReport,
+    render_title_review_case_text,
+)
 from mechanical_librarian.domain.local_evidence import (
     EpubPackageLimits,
     LocalEvidenceCapability,
@@ -63,6 +67,7 @@ AudiobookshelfPollRunner = Callable[[Path, Path, str], InventoryPollResult]
 InventoryPollInspectionRunner = Callable[[Path, str], InventoryPollResult]
 SyntheticTitleProposalRunner = Callable[[Path, str], SyntheticTitleProposalReport]
 HardcoverTitleProposalRunner = Callable[[Path, Path | None], SyntheticTitleProposalReport]
+SyntheticTitleReviewCaseRunner = Callable[[Path, str], SyntheticTitleReviewCaseReport]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -92,6 +97,8 @@ _TITLE_PROPOSAL_FAILURE = "Synthetic title preview failed safely.\n"
 _TITLE_PROPOSAL_INVALID = "Synthetic title preview invocation is invalid.\n"
 _HARDCOVER_TITLE_PROPOSAL_FAILURE = "Hardcover title preview failed safely.\n"
 _HARDCOVER_TITLE_PROPOSAL_INVALID = "Hardcover title preview invocation is invalid.\n"
+_TITLE_REVIEW_CASE_FAILURE = "Synthetic title review case failed safely.\n"
+_TITLE_REVIEW_CASE_INVALID = "Synthetic title review case invocation is invalid.\n"
 _EPUB_PACKAGE_EXIT = {
     LocalEvidenceOutcome.INVALID_INVOCATION: 2,
     LocalEvidenceOutcome.SUCCESS: 0,
@@ -160,6 +167,16 @@ def _hardcover_title_proposal_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--secret-reference", metavar="PATH", type=_provider_secret_reference
     )
+    parser.add_argument("--format", choices=("json", "text"), default="json")
+    return parser
+
+
+def _title_review_case_parser() -> argparse.ArgumentParser:
+    parser = _TitleArgumentParser(
+        prog="mechanical-librarian synthetic-title-review-case-report"
+    )
+    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
+    parser.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
     parser.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
@@ -313,6 +330,15 @@ def _parser() -> argparse.ArgumentParser:
         "--secret-reference", metavar="PATH", type=_provider_secret_reference
     )
     hardcover_title.add_argument("--format", choices=("json", "text"), default="json")
+    title_review = commands.add_parser(
+        "synthetic-title-review-case-report",
+        help="admit and inspect one apply-ineligible synthetic title review case",
+    )
+    title_review.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
+    title_review.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
+    title_review.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
 
@@ -330,6 +356,7 @@ def main(
     epub_package_report_runner: EpubPackageReportRunner | None = None,
     synthetic_title_proposal_runner: SyntheticTitleProposalRunner | None = None,
     hardcover_title_proposal_runner: HardcoverTitleProposalRunner | None = None,
+    synthetic_title_review_case_runner: SyntheticTitleReviewCaseRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -338,6 +365,36 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    if raw_arguments[:1] == ["synthetic-title-review-case-report"]:
+        try:
+            review_arguments = _title_review_case_parser().parse_args(raw_arguments[1:])
+        except _TitleArgumentError:
+            errors.write(_TITLE_REVIEW_CASE_INVALID)
+            return 2
+        if synthetic_title_review_case_runner is None:
+            errors.write(_TITLE_REVIEW_CASE_FAILURE)
+            return 1
+        try:
+            report = synthetic_title_review_case_runner(
+                review_arguments.database, review_arguments.scenario
+            )
+        except (KeyboardInterrupt, Exception):
+            errors.write(_TITLE_REVIEW_CASE_FAILURE)
+            return 1
+        if type(report) is not SyntheticTitleReviewCaseReport:
+            errors.write(_TITLE_REVIEW_CASE_FAILURE)
+            return 1
+        try:
+            rendered = (
+                report.to_json() + "\n"
+                if review_arguments.format == "json"
+                else render_title_review_case_text(report)
+            )
+        except Exception:
+            errors.write(_TITLE_REVIEW_CASE_FAILURE)
+            return 1
+        output.write(rendered)
+        return 0
     if raw_arguments[:1] == ["hardcover-title-proposal-report"]:
         try:
             title_arguments = _hardcover_title_proposal_parser().parse_args(
@@ -704,5 +761,6 @@ __all__ = [
     "AudiobookshelfInventoryRunner",
     "EpubPackageReportRunner",
     "SyntheticTitleProposalRunner",
+    "SyntheticTitleReviewCaseRunner",
     "main",
 ]

@@ -74,6 +74,22 @@ unresolved case. History remains immutable. Rejected automatic work is normally
 hidden from the active queue but remains queryable. Operational failures do not
 move a case into `human_resolved`; they retain job, health, or capability state.
 
+F10a's closed synthetic preview has no human or AI transition:
+
+```text
+no admitted state -> undecided synthetic case
+undecided synthetic case -> superseded by qualifying current successor
+undecided synthetic case -> retired by nonqualifying current successor
+no admitted state -> current typed no-case state
+```
+
+Exact replay adds no state or transition. The scoped current record retains the
+latest admitted set even when no case is current, so stale or reverse replay
+cannot revive a retired case. Case and transition history remain immutable;
+`production_applicable=false` is derived and no preview state is an
+authorization source. Both current no-case and retired states are terminal in
+the bounded two-revision preview; only exact replay may inspect them again.
+
 ## Field proposal decision
 
 ```text

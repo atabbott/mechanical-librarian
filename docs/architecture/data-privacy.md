@@ -43,6 +43,13 @@ complete decoded documents, unrestricted XHTML, and unrelated body prose are
 transient and excluded from ordinary APIs, reviewer packets, exports, and
 support bundles.
 
+The F10a synthetic review case retains only the bounded canonical F09a manifest
+and F06 title provenance needed to explain the case. It persists no database or
+media path, generated EPUB bytes or descriptors, credential, raw provider
+request or response, provider upstream identifier, or fabricated ordinary
+evidence-reference record. The supported report uses the same bounded local
+projection and never sends it to a provider or reviewer.
+
 A planned post-foundation capability may derive evidence from bounded audiobook
 opening windows under the
 [opening-audio evidence contract](../product/opening-audio-evidence.md). Raw

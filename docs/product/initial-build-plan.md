@@ -173,7 +173,7 @@ Exit criteria:
 
 The initial proof deliberately narrows WP5 to a provider-neutral title path.
 Completed F06 plus planning ticket #221 leads to F09a #145/#222, then F09b
-#204/#223, then F10 #146/#224. F09a combines a closed in-memory
+#204/#223, then F10a #146/#224. F09a combines a closed in-memory
 Audiobookshelf-shaped synthetic snapshot, one current successful unambiguous
 applicable `TITLE` produced by the real F06 child from an application-generated
 EPUB, and a deterministic fake provider candidate. The F06 title's
@@ -191,9 +191,11 @@ secret-file reference performs no secret access, DNS, or egress and records
 a sanitized live-shape fake through the same adapter seam and the exact
 installed artifact against the bounded real endpoint. Production provider
 configuration, durable work, freshness/reuse, restart, and live-target binding
-remain F09f scope. F10 persists one current undecided case only from one
-current immutable proposal set containing exactly one current `needs_review`
-title proposal; no other proposal or set creates a case.
+remain F09f scope. F10a admits one current undecided synthetic case only from
+one current immutable proposal set containing exactly one current
+`needs_review` title proposal. It replays idempotently, supersedes for a
+qualifying successor, and retires for a nonqualifying successor without an
+empty replacement; no other proposal or set creates a case.
 
 This staging uses the exact F06 `normalized_value` as the proposal value, keeps
 F06 `raw_value` as evidence/provenance, uses provider evidence only for
@@ -211,8 +213,15 @@ apply authority. The command accepts no configuration, live IDs, operator
 titles, media references, provider payloads, endpoints, or credentials. A live
 F06-to-current-Audiobookshelf binding, configured-media resolution, and their
 freshness and recovery semantics are deliberately deferred to explicit future
-work. F09b and F10 may continue the preview only without erasing that synthetic
+work. F09b and F10a may continue the preview only without erasing that synthetic
 lineage or granting it production applicability.
+
+The later productionisation work remains separately tracked. F09f #239 depends
+only on completed F09b. F09c #205 remains blocked on its declared prerequisite
+#68. F09g #238 depends on F07b, F09c, and F09f, and F10b #240 depends on F10a
+and F09g. F11 remains an independently deliverable synthetic shadow path; F17
+is the convergence qualification gate. These planning relationships add no
+production behavior to F10a.
 
 ## WP5: candidate and policy engine
 

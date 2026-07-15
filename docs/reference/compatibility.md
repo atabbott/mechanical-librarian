@@ -80,9 +80,13 @@ or unjoinable input its exact typed no-proposal result. Provider failure never
 erases local evidence or
 becomes negative bibliographic evidence. Identical inputs replay without
 duplication; changed inputs produce a superseding set without rewriting
-history. F10 accepts only one current immutable synthetic-preview proposal set containing exactly
-one current `needs_review` title proposal; no other proposal or set creates a
-case.
+history. F10a's `synthetic-title-review-case-report` accepts only the
+already-persisted current F09a lineage selected by a closed scenario. Exactly
+one current immutable synthetic-preview set containing one `needs_review` title
+proposal creates a deterministic undecided case. Exact replay creates no
+duplicate; a qualifying current successor supersedes it, and a nonqualifying
+current successor retires it without an empty replacement. No other proposal or
+set creates or revives a case.
 
 F09a supplies a deterministic fake candidate through the application-owned
 provider port. The closed `synthetic_preview` mode and derived false production
@@ -105,6 +109,13 @@ authentication, parser, and canonical title seam described by the
 not provide F09f's configured production operation, durable provider work,
 freshness/reuse, retry/restart, or live-target binding, and adds no AI, human
 decision, cover, rich-field, multi-provider, or apply compatibility promise.
+
+Schema 7 adds only the F10a synthetic case, current-or-retired state, and
+append-only attributable transitions. It remains forward-only and does not
+reclassify schema-6 `synthetic_preview` history. F09c work identity, F09f
+configured Hardcover operation, F09g live report-only proposals, and F10b
+production case admission remain separate 1.0 compatibility claims. F11 is an
+independent synthetic reviewer path; F17 is their convergence gate.
 
 ## Audiobookshelf support
 

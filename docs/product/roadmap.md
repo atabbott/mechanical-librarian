@@ -64,15 +64,16 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
   automation, and the exact installed artifact must also parse one bounded live
   response. F09f retains production configuration, provider-work persistence,
   freshness/reuse, restart, and live-target responsibilities.
-- F10 persists, restarts, inspects, replays, and supersedes one current
-  visibly synthetic undecided case only from one current immutable proposal set containing
-  exactly one current `needs_review` title proposal; no other proposal or set
-  creates a case.
+- F10a adds `synthetic-title-review-case-report`. It persists, restarts,
+  inspects, and replays one visibly synthetic undecided case only from one
+  current immutable proposal set containing exactly one `needs_review` title
+  proposal. A qualifying current successor supersedes the case; a
+  nonqualifying current successor retires it without an empty replacement.
 - Keep AI, human decisions, approval, covers, rich fields, multi-provider
   fusion, and production writes outside the preview.
 
 The active sequence is completed F06 #142 plus #221, then F09a #145/#222,
-F09b #204/#223, and F10 #146/#224.
+F09b #204/#223, and F10a #146/#224.
 
 Binding a production F06 report to a current Audiobookshelf snapshot, resolving
 configured media, and defining live freshness/recovery semantics are deferred.
@@ -90,6 +91,13 @@ candidate and provider program in #16, #46, #50, #68-#73, and #209, and F11
 #147/#74-#80 AI shadow review, likewise remain 1.0 work. They extend the
 provider-neutral seams and immutable history proven by the preview rather than
 being partially implemented inside it.
+
+The approved 1.0 productionisation path keeps independent prerequisites
+visible: F09f #239 follows completed F09b; F09c #205 remains separately blocked
+on #68; F09g #238 follows F07b, F09c, and F09f; and F10b #240 follows F10a and
+F09g. F11 remains an independently deliverable synthetic shadow path. Its
+reviewer work and the production title/case path converge only at F17 release
+qualification.
 
 ## M3: AI review in shadow mode
 

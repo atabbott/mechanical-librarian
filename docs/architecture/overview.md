@@ -165,9 +165,11 @@ current title remains eligible. A missing, unloaded, or unavailable current
 title, equivalence, disagreement, an empty or unusable F06/provider title, or
 another unavailable input records a typed no-proposal result without hiding
 valid local evidence. Immutable versioned sets replay
-identical inputs and supersede changed inputs. F10 persists one current
-immutable proposal set containing exactly one current `needs_review` title
-proposal as one undecided case; no other proposal or set creates a case. AI,
+identical inputs and supersede changed inputs. F10a's
+`synthetic-title-review-case-report` reads only an already-persisted current
+F09a lineage. It admits one deterministic undecided case from one qualifying
+set, replays without duplication, supersedes for a qualifying successor, and
+retires for a nonqualifying successor without creating an empty case. AI,
 human decisions, covers, rich fields, multi-provider fusion, and writes remain
 outside the preview.
 
@@ -183,7 +185,10 @@ same adapter seam. Completion also requires the exact installed artifact to
 parse one bounded real-endpoint result without a parser or compatibility
 failure, retaining only redacted aggregate evidence. Production provider
 configuration, persisted work, freshness/reuse, restart behavior, and live-
-target binding remain F09f scope.
+target binding remain F09f scope. Production work/edition identity remains
+F09c scope; the live target/evidence proposal join remains F09g scope; and
+production review-case admission remains F10b scope. F11 remains independently
+synthetic, with production and reviewer paths converging only at F17.
 
 ### Apply
 

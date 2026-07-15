@@ -375,6 +375,90 @@ _CURRENT_SYNTHETIC_TITLE_PROPOSALS_NO_DELETE_SQL = (
     "CREATE TRIGGER current_synthetic_title_proposals_no_delete BEFORE DELETE ON current_synthetic_title_proposals "
     "BEGIN SELECT RAISE(ABORT, 'synthetic title proposal current pointers cannot be deleted'); END"
 )
+_SYNTHETIC_TITLE_REVIEW_CASES_TABLE_SQL = (
+    "CREATE TABLE synthetic_title_review_cases ("
+    "case_id TEXT PRIMARY KEY CHECK (typeof(case_id) = 'text' AND length(case_id) BETWEEN 1 AND 64 "
+    "AND case_id GLOB '[a-z]*' AND case_id NOT GLOB '*[^a-z0-9_-]*'), "
+    "identity_digest TEXT NOT NULL UNIQUE CHECK (length(identity_digest) = 64 AND identity_digest NOT GLOB '*[^0-9a-f]*'), "
+    "binding_version TEXT NOT NULL CHECK (binding_version = 'synthetic-title-review-binding-v1'), "
+    "adapter_id TEXT NOT NULL CHECK (adapter_id = 'synthetic-target-service'), "
+    "connection_id TEXT NOT NULL CHECK (connection_id = 'synthetic-connection'), "
+    "library_id TEXT NOT NULL CHECK (library_id = 'synthetic-library'), "
+    "external_item TEXT NOT NULL CHECK (typeof(external_item) = 'text' AND length(external_item) BETWEEN 1 AND 64 "
+    "AND external_item GLOB '[a-z]*' AND external_item NOT GLOB '*[^a-z0-9_-]*'), "
+    "target_digest TEXT NOT NULL CHECK (length(target_digest) = 64 AND target_digest NOT GLOB '*[^0-9a-f]*'), "
+    "lineage TEXT NOT NULL, source_set_id TEXT NOT NULL, "
+    "canonical_case TEXT NOT NULL CHECK (typeof(canonical_case) = 'text' "
+    "AND length(CAST(canonical_case AS BLOB)) BETWEEN 2 AND 196608), "
+    "UNIQUE (lineage, source_set_id), "
+    "UNIQUE (binding_version, adapter_id, connection_id, library_id, external_item, lineage, case_id), "
+    "FOREIGN KEY (lineage, source_set_id) REFERENCES synthetic_title_proposal_sets(lineage, set_id))"
+)
+_SYNTHETIC_TITLE_REVIEW_TRANSITIONS_TABLE_SQL = (
+    "CREATE TABLE synthetic_title_review_case_transitions ("
+    "transition_id TEXT PRIMARY KEY CHECK (typeof(transition_id) = 'text' AND length(transition_id) BETWEEN 1 AND 64 "
+    "AND transition_id GLOB '[a-z]*' AND transition_id NOT GLOB '*[^a-z0-9_-]*'), "
+    "binding_version TEXT NOT NULL CHECK (binding_version = 'synthetic-title-review-binding-v1'), "
+    "adapter_id TEXT NOT NULL CHECK (adapter_id = 'synthetic-target-service'), "
+    "connection_id TEXT NOT NULL CHECK (connection_id = 'synthetic-connection'), "
+    "library_id TEXT NOT NULL CHECK (library_id = 'synthetic-library'), "
+    "external_item TEXT NOT NULL, lineage TEXT NOT NULL, "
+    "sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 1000000), "
+    "successor_set_id TEXT NOT NULL, prior_case_id TEXT, replacement_case_id TEXT, "
+    "kind TEXT NOT NULL CHECK (kind IN ('created','superseded','retired','no_case')), "
+    "actor TEXT NOT NULL CHECK (actor = 'synthetic review admission'), "
+    "reason TEXT NOT NULL CHECK (reason IN ('admit current synthetic review case','supersede current synthetic review case','retire current synthetic review case','record current synthetic no-case result')), "
+    f"occurred_at TEXT NOT NULL CHECK ({_timestamp_constraint('occurred_at')}), "
+    "UNIQUE (binding_version, lineage, successor_set_id), "
+    "UNIQUE (binding_version, adapter_id, connection_id, library_id, external_item, lineage, sequence), "
+    "UNIQUE (binding_version, adapter_id, connection_id, library_id, external_item, lineage, transition_id), "
+    "FOREIGN KEY (lineage, successor_set_id) REFERENCES synthetic_title_proposal_sets(lineage, set_id), "
+    "FOREIGN KEY (binding_version, adapter_id, connection_id, library_id, external_item, lineage, prior_case_id) "
+    "REFERENCES synthetic_title_review_cases(binding_version, adapter_id, connection_id, library_id, external_item, lineage, case_id), "
+    "FOREIGN KEY (binding_version, adapter_id, connection_id, library_id, external_item, lineage, replacement_case_id) "
+    "REFERENCES synthetic_title_review_cases(binding_version, adapter_id, connection_id, library_id, external_item, lineage, case_id), "
+    "CHECK ((kind = 'created' AND prior_case_id IS NULL AND replacement_case_id IS NOT NULL) "
+    "OR (kind = 'superseded' AND prior_case_id IS NOT NULL AND replacement_case_id IS NOT NULL AND prior_case_id != replacement_case_id) "
+    "OR (kind = 'retired' AND prior_case_id IS NOT NULL AND replacement_case_id IS NULL) "
+    "OR (kind = 'no_case' AND prior_case_id IS NULL AND replacement_case_id IS NULL)))"
+)
+_CURRENT_SYNTHETIC_TITLE_REVIEW_CASES_TABLE_SQL = (
+    "CREATE TABLE current_synthetic_title_review_cases ("
+    "binding_version TEXT NOT NULL CHECK (binding_version = 'synthetic-title-review-binding-v1'), "
+    "adapter_id TEXT NOT NULL CHECK (adapter_id = 'synthetic-target-service'), "
+    "connection_id TEXT NOT NULL CHECK (connection_id = 'synthetic-connection'), "
+    "library_id TEXT NOT NULL CHECK (library_id = 'synthetic-library'), "
+    "external_item TEXT NOT NULL, lineage TEXT NOT NULL, latest_set_id TEXT NOT NULL, "
+    "current_case_id TEXT, sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 1000000), "
+    "last_transition_id TEXT NOT NULL, "
+    "PRIMARY KEY (binding_version, adapter_id, connection_id, library_id, external_item, lineage), "
+    "UNIQUE (binding_version, lineage), "
+    "FOREIGN KEY (lineage, latest_set_id) REFERENCES synthetic_title_proposal_sets(lineage, set_id), "
+    "FOREIGN KEY (binding_version, adapter_id, connection_id, library_id, external_item, lineage, current_case_id) "
+    "REFERENCES synthetic_title_review_cases(binding_version, adapter_id, connection_id, library_id, external_item, lineage, case_id), "
+    "FOREIGN KEY (binding_version, adapter_id, connection_id, library_id, external_item, lineage, last_transition_id) "
+    "REFERENCES synthetic_title_review_case_transitions(binding_version, adapter_id, connection_id, library_id, external_item, lineage, transition_id))"
+)
+_SYNTHETIC_TITLE_REVIEW_CASES_NO_UPDATE_SQL = (
+    "CREATE TRIGGER synthetic_title_review_cases_no_update BEFORE UPDATE ON synthetic_title_review_cases "
+    "BEGIN SELECT RAISE(ABORT, 'synthetic title review case history is append-only'); END"
+)
+_SYNTHETIC_TITLE_REVIEW_CASES_NO_DELETE_SQL = (
+    "CREATE TRIGGER synthetic_title_review_cases_no_delete BEFORE DELETE ON synthetic_title_review_cases "
+    "BEGIN SELECT RAISE(ABORT, 'synthetic title review case history is append-only'); END"
+)
+_SYNTHETIC_TITLE_REVIEW_TRANSITIONS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER synthetic_title_review_case_transitions_no_update BEFORE UPDATE ON synthetic_title_review_case_transitions "
+    "BEGIN SELECT RAISE(ABORT, 'synthetic title review transitions are append-only'); END"
+)
+_SYNTHETIC_TITLE_REVIEW_TRANSITIONS_NO_DELETE_SQL = (
+    "CREATE TRIGGER synthetic_title_review_case_transitions_no_delete BEFORE DELETE ON synthetic_title_review_case_transitions "
+    "BEGIN SELECT RAISE(ABORT, 'synthetic title review transitions are append-only'); END"
+)
+_CURRENT_SYNTHETIC_TITLE_REVIEW_CASES_NO_DELETE_SQL = (
+    "CREATE TRIGGER current_synthetic_title_review_cases_no_delete BEFORE DELETE ON current_synthetic_title_review_cases "
+    "BEGIN SELECT RAISE(ABORT, 'synthetic title review current state cannot be deleted'); END"
+)
 MIGRATIONS = (
     Migration(
         1,
@@ -482,6 +566,28 @@ MIGRATIONS = (
             {
                 "synthetic_title_proposal_sets",
                 "current_synthetic_title_proposals",
+            }
+        ),
+    ),
+    Migration(
+        7,
+        (
+            _SYNTHETIC_TITLE_REVIEW_CASES_TABLE_SQL,
+            _SYNTHETIC_TITLE_REVIEW_TRANSITIONS_TABLE_SQL,
+            _CURRENT_SYNTHETIC_TITLE_REVIEW_CASES_TABLE_SQL,
+            _SYNTHETIC_TITLE_REVIEW_CASES_NO_UPDATE_SQL,
+            _SYNTHETIC_TITLE_REVIEW_CASES_NO_DELETE_SQL,
+            _SYNTHETIC_TITLE_REVIEW_TRANSITIONS_NO_UPDATE_SQL,
+            _SYNTHETIC_TITLE_REVIEW_TRANSITIONS_NO_DELETE_SQL,
+            _CURRENT_SYNTHETIC_TITLE_REVIEW_CASES_NO_DELETE_SQL,
+            "CREATE INDEX synthetic_title_review_cases_by_lineage ON synthetic_title_review_cases(lineage, source_set_id, case_id)",
+            "CREATE INDEX synthetic_title_review_transitions_by_lineage ON synthetic_title_review_case_transitions(lineage, sequence, transition_id)",
+        ),
+        frozenset(
+            {
+                "synthetic_title_review_cases",
+                "synthetic_title_review_case_transitions",
+                "current_synthetic_title_review_cases",
             }
         ),
     ),

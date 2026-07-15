@@ -105,6 +105,23 @@ schema-6 state, and operators must not delete preview tables or edit
 [`synthetic-title-proposal-report`](synthetic-title-proposal-report.md) scenario
 against non-production state before resuming normal operation.
 
+The F10a review-case migration is additive and forward-only from genuine
+schema 6. Migration 7 preserves all proposal, inventory, poll, job, workflow,
+and audit rows and adds immutable synthetic review-case history, append-only
+attributable lifecycle transitions, and one scoped current-or-retired pointer.
+Migration and F10a admission are independently atomic. Injected interruption
+after early, middle, and final schema-7 statements rolls every new object and
+the version row back to usable schema 6; a clean retry applies migration 7
+once. Case insert, transition insert, pointer advance, and readback failure
+likewise roll the F10a transaction back without changing the already-committed
+F09a input. Before upgrading important state, retain a verified pre-schema-7
+copy. Downgrade requires stopping the service and restoring that copy; an older
+binary must not open schema-7 state, and operators must not delete review tables
+or edit `schema_migrations`. After upgrade or restore, run `state-check`, the
+applicable F09a proposal scenario, and
+[`synthetic-title-review-case-report`](synthetic-title-review-case-report.md)
+against non-production state.
+
 ## Verification
 
 After upgrade:

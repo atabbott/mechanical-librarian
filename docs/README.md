@@ -58,6 +58,7 @@ release standards as code.
 - [EPUB package evidence report](operations/epub-package-report.md)
 - [Synthetic title proposal report](operations/synthetic-title-proposal-report.md)
 - [Hardcover title proposal report](operations/hardcover-title-proposal-report.md)
+- [Synthetic title review case report](operations/synthetic-title-review-case-report.md)
 - [Deployment model](operations/deployment.md)
 - [Backups and recovery](operations/backups-and-recovery.md)
 - [Observability and supportability](operations/observability.md)
