@@ -28,10 +28,13 @@ to `main`. It has read-only repository contents permission and:
 7. exercises the installed `state-check` operator command against synthetic
    temporary state.
 
-The concurrency key distinguishes pull-request work from `main` commits. A new
-head may cancel obsolete work for the same pull request. A later push cannot
-cancel qualification of an earlier `main` commit: each merged commit receives
-its own complete public-gate result.
+The concurrency key distinguishes pull-request work from `main` push events. A
+new head may cancel obsolete work for the same pull request. Each push event
+creates one non-cancelled run bound to that event's tip SHA; a later push cannot
+cancel it. A batched multi-commit push does not create one run per included
+commit and is outside the autonomous transaction contract. Autonomous merges
+are emitted as individual pushes, and the local controller requires the
+resulting merge SHA's post-`main` `public-gate` result before terminal success.
 
 Public CI contains no service credential, private corpus, merge permission, or
 branch-protection override. Private qualification remains local and may expose
@@ -50,9 +53,9 @@ protection-weakening path.
 
 After mutation, the local terminal control must prove that the returned merge
 commit has the qualified base as its sole parent, is contained by remote
-`main`, and has completed its commit-specific public gate. Ambiguous responses
-and post-mutation failures remain explicit recovery states; they are not
-reported as success and are not automatically rolled back.
+`main`, and is the tip SHA qualified by its own post-`main` `public-gate` run.
+Ambiguous responses and post-mutation failures remain explicit recovery states;
+they are not reported as success and are not automatically rolled back.
 
 Candidate code is evidence to inspect, never merge authority. In particular:
 

@@ -10,8 +10,8 @@ permissions:
 
 concurrency:
   group: public-gate-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.event.pull_request.number }}
-  # A superseding pull-request head may cancel obsolete work. Every commit that
-  # lands on main must finish its own post-merge qualification.
+  # A superseding pull-request head may cancel obsolete work. Each push event
+  # to main runs at its tip SHA and cannot be cancelled by a later push.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
