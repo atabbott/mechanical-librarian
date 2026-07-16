@@ -36,6 +36,10 @@ history, or allowing a stale worker to publish.
    binding, source generation, F07a extractor/parser/recovery/projection/
    normalization/vocabulary/selection/schema contracts, limits, and material
    configuration. Strict or recovered parser mode is a result, not a prework key.
+   The internal execution result separately carries the descriptor-bound source
+   digest evaluated by extraction. Publication rejects absent or mismatched
+   execution provenance even when the path-free public report legitimately
+   omits a source fingerprint for a negative outcome.
 4. Work and attempts are persisted before child extraction. Claims are
    retry-bounded, lease-owned, fenced, cancellable, and recover expired workers.
    Operational resource, timeout, cancellation, and infrastructure failures

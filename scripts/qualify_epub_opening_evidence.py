@@ -59,6 +59,32 @@ class _TemporarilyRemoved:
         self._removed.replace(self._source)
 
 
+def _selector_roles(
+    selectors: list[dict[str, object]],
+    durable: set[tuple[str, str, int]],
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    """Return three distinct durable selectors for mutation/isolation roles."""
+
+    distinct: dict[tuple[str, str, int], dict[str, object]] = {}
+    for selector in selectors:
+        try:
+            key = (
+                str(selector["target"]),
+                str(selector["snapshot"]),
+                int(selector["file_index"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        if key in durable:
+            distinct.setdefault(key, selector)
+    if len(distinct) < 3:
+        raise QualificationError(
+            "qualification requires at least three distinct durable selectors"
+        )
+    changed, isolated, continuation = tuple(distinct.values())[:3]
+    return changed, isolated, continuation
+
+
 def _configuration(cohort: Path) -> dict[str, object]:
     return {
         "schema_version": "config-v1",
@@ -306,15 +332,8 @@ def main() -> int:
                 raise QualificationError("restart reuse was not identity-stable")
             reused += 1
 
-        changed_selector = next(
-            value
-            for value in selector_map
-            if (
-                str(value["target"]),
-                str(value["snapshot"]),
-                int(value["file_index"]),
-            )
-            in initial
+        changed_selector, isolated, continuation = _selector_roles(
+            selector_map, set(initial)
         )
         changed_path = shadow / str(changed_selector["relative_path"])
         original = changed_path.read_bytes()
@@ -347,40 +366,30 @@ def main() -> int:
         ):
             raise QualificationError("reverse replay rewrote current applicability")
 
-        isolated = next(
-            (value for value in selector_map if value is not changed_selector),
-            None,
-        )
         failure_isolated = 0
-        if isolated is not None:
-            isolated_path = shadow / str(isolated["relative_path"])
-            with _TemporarilyRemoved(isolated_path):
-                succeeded, _ = _evidence(
-                    arguments.executable, config, database, isolated
-                )
-                if succeeded:
-                    raise QualificationError("unavailable source did not fail closed")
-                continuation = next(
-                    value
-                    for value in selector_map
-                    if value is not isolated and value is not changed_selector
-                )
-                continued, continued_value = _evidence(
-                    arguments.executable, config, database, continuation
-                )
-                continued_key = (
-                    str(continuation["target"]),
-                    str(continuation["snapshot"]),
-                    int(continuation["file_index"]),
-                )
-                if (
-                    not continued
-                    or continued_value["mode"] != "reused"
-                    or continued_value["evidence"] != initial[continued_key]["evidence"]
-                    or continued_value["current"] != "true"
-                ):
-                    raise QualificationError("unrelated evidence did not continue")
-                failure_isolated = 1
+        isolated_path = shadow / str(isolated["relative_path"])
+        with _TemporarilyRemoved(isolated_path):
+            succeeded, _ = _evidence(
+                arguments.executable, config, database, isolated
+            )
+            if succeeded:
+                raise QualificationError("unavailable source did not fail closed")
+            continued, continued_value = _evidence(
+                arguments.executable, config, database, continuation
+            )
+            continued_key = (
+                str(continuation["target"]),
+                str(continuation["snapshot"]),
+                int(continuation["file_index"]),
+            )
+            if (
+                not continued
+                or continued_value["mode"] != "reused"
+                or continued_value["evidence"] != initial[continued_key]["evidence"]
+                or continued_value["current"] != "true"
+            ):
+                raise QualificationError("unrelated evidence did not continue")
+            failure_isolated = 1
 
         selector_map_path.unlink(missing_ok=True)
         database.unlink(missing_ok=True)

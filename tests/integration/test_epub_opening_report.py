@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from mechanical_librarian.adapters.evidence_extractors import process as process_module
 from mechanical_librarian.adapters.evidence_extractors.process import run_epub_opening_child
+from mechanical_librarian.application.epub_opening_evidence import EpubOpeningExecution
 from mechanical_librarian.bootstrap import composition as bootstrap
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
@@ -199,6 +200,33 @@ class EpubOpeningProcessTests(unittest.TestCase):
                 )
         self.assertEqual(report.outcome, LocalEvidenceOutcome.UNSTABLE_SOURCE)
         self.assertFalse(report.claims)
+
+    def test_internal_execution_provenance_covers_success_and_negative_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            mount = root / "media"
+            mount.mkdir()
+            config = root / "configuration.json"
+            config.write_text(json.dumps(_configuration(mount)), encoding="utf-8")
+            cases = (
+                ("success.epub", opening_strict_xhtml(), LocalEvidenceOutcome.SUCCESS),
+                ("negative.epub", b"not-an-epub", LocalEvidenceOutcome.UNSUPPORTED_FORMAT),
+            )
+            for filename, payload, expected_outcome in cases:
+                with self.subTest(outcome=expected_outcome):
+                    (mount / filename).write_bytes(payload)
+                    execution = bootstrap._run_epub_opening_execution(
+                        config, "books", filename
+                    )
+                    self.assertIsInstance(execution, EpubOpeningExecution)
+                    assert isinstance(execution, EpubOpeningExecution)
+                    self.assertEqual(execution.report.outcome, expected_outcome)
+                    self.assertEqual(
+                        execution.source_fingerprint,
+                        hashlib.sha256(payload).hexdigest(),
+                    )
+                    if expected_outcome is LocalEvidenceOutcome.UNSUPPORTED_FORMAT:
+                        self.assertIsNone(execution.report.source_fingerprint)
 
     def test_invalid_invocation_is_a_closed_typed_failure(self) -> None:
         output = io.StringIO()

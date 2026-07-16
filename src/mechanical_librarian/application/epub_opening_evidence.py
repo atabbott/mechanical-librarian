@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -21,6 +23,24 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     epub_work_key,
 )
 from mechanical_librarian.domain.local_evidence import LocalEvidenceOutcome
+
+
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class EpubOpeningExecution:
+    """Internal report paired with descriptor-bound execution provenance."""
+
+    report: EpubOpeningReport
+    source_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.report) is not EpubOpeningReport
+            or _DIGEST.fullmatch(self.source_fingerprint) is None
+        ):
+            raise ValueError("EPUB opening execution provenance is malformed")
 
 
 class EpubOpeningEvidenceRepository(Protocol):
@@ -55,6 +75,7 @@ class EpubOpeningEvidenceRepository(Protocol):
         claim: EpubEvidenceClaim,
         source: ResolvedEpubSource,
         source_fingerprint: str,
+        execution_source_fingerprint: str | None,
         governing_digest: str,
         report: EpubOpeningReport,
         published_at: datetime,
@@ -99,7 +120,9 @@ class RunEpubOpeningEvidence:
         worker_id: str,
         now: Callable[[], datetime],
         fingerprint: Callable[[ResolvedEpubSource], str],
-        execute: Callable[[ResolvedEpubSource], EpubOpeningReport],
+        execute: Callable[
+            [ResolvedEpubSource], EpubOpeningExecution | EpubOpeningReport
+        ],
         revalidate: Callable[[ResolvedEpubSource, str], bool] = lambda _source, _digest: True,
         lease_duration: timedelta = timedelta(seconds=120),
         capacity: int = 1,
@@ -134,7 +157,17 @@ class RunEpubOpeningEvidence:
                 return _failed(claim)
             if claim is None or claim.work_key != work_key:
                 return _failed(EpubEvidenceFailure.BUSY)
-            report = execute(source)
+            execution = execute(source)
+            report = (
+                execution.report
+                if type(execution) is EpubOpeningExecution
+                else execution
+            )
+            execution_source_fingerprint = (
+                execution.source_fingerprint
+                if type(execution) is EpubOpeningExecution
+                else None
+            )
             if type(report) is not EpubOpeningReport:
                 return self._repository.fail(
                     claim,
@@ -158,10 +191,27 @@ class RunEpubOpeningEvidence:
                 return self._repository.fail(
                     claim, failure, now(), retryable=retryable, failure_clock=now
                 )
+            if execution_source_fingerprint is None:
+                return self._repository.fail(
+                    claim,
+                    EpubEvidenceFailure.INTEGRITY_FAILURE,
+                    now(),
+                    retryable=False,
+                    failure_clock=now,
+                )
+            if execution_source_fingerprint != source_fingerprint:
+                return self._repository.fail(
+                    claim,
+                    EpubEvidenceFailure.SOURCE_CHANGED,
+                    now(),
+                    retryable=True,
+                    failure_clock=now,
+                )
             published = self._repository.publish(
                 claim,
                 source,
                 source_fingerprint,
+                execution_source_fingerprint,
                 governing_digest,
                 report,
                 now(),
@@ -213,7 +263,9 @@ class RunEpubOpeningEvidence:
         worker_id: str,
         now: Callable[[], datetime],
         fingerprint: Callable[[ResolvedEpubSource], str],
-        execute: Callable[[ResolvedEpubSource], EpubOpeningReport],
+        execute: Callable[
+            [ResolvedEpubSource], EpubOpeningExecution | EpubOpeningReport
+        ],
         revalidate: Callable[[ResolvedEpubSource, str], bool],
         lease_duration: timedelta = timedelta(seconds=120),
         capacity: int = 1,
@@ -263,7 +315,17 @@ class RunEpubOpeningEvidence:
                     retryable=False,
                     failure_clock=now,
                 )
-            report = execute(source)
+            execution = execute(source)
+            report = (
+                execution.report
+                if type(execution) is EpubOpeningExecution
+                else execution
+            )
+            execution_source_fingerprint = (
+                execution.source_fingerprint
+                if type(execution) is EpubOpeningExecution
+                else None
+            )
             if type(report) is not EpubOpeningReport:
                 return self._repository.fail(
                     claim,
@@ -291,10 +353,27 @@ class RunEpubOpeningEvidence:
                     retryable=retryable,
                     failure_clock=now,
                 )
+            if execution_source_fingerprint is None:
+                return self._repository.fail(
+                    claim,
+                    EpubEvidenceFailure.INTEGRITY_FAILURE,
+                    now(),
+                    retryable=False,
+                    failure_clock=now,
+                )
+            if execution_source_fingerprint != work.source_fingerprint:
+                return self._repository.fail(
+                    claim,
+                    EpubEvidenceFailure.SOURCE_CHANGED,
+                    now(),
+                    retryable=False,
+                    failure_clock=now,
+                )
             published = self._repository.publish(
                 claim,
                 source,
                 work.source_fingerprint,
+                execution_source_fingerprint,
                 governing_digest,
                 report,
                 now(),
@@ -398,6 +477,7 @@ EpubOpeningEvidenceRunner = Callable[
 
 
 __all__ = [
+    "EpubOpeningExecution",
     "EpubOpeningEvidenceRepository",
     "EpubOpeningEvidenceRunner",
     "EpubSourceFingerprintError",

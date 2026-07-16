@@ -27,7 +27,11 @@ versioning after the first public release.
   commit inconsistent durable history. Schema 8 retains locator identities for
   unavailable snapshots, and a present source above the configured archive-byte
   limit now fails as `resource_limit` before work is enqueued rather than being
-  reported as unavailable.
+  reported as unavailable. Durable publication now also requires an internal,
+  descriptor-bound execution-source digest for every publishable report, even
+  when a negative public report omits source provenance. Missing or malformed
+  optional Audiobookshelf EPUB path projection now suppresses only that private
+  selector while preserving the valid inventory snapshot and scan.
 
 - Fixed Hardcover provider-secret validation so leading or trailing space, tab,
   carriage return, or line feed is rejected before client construction, DNS,

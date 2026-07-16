@@ -13,10 +13,38 @@ from scripts.qualify_epub_opening_evidence import (
     _TemporarilyRemoved,
     _entrypoint,
     _evidence,
+    _selector_roles,
 )
 
 
 class QualifyEpubOpeningEvidenceTests(unittest.TestCase):
+    def test_selector_roles_require_zero_one_two_or_three_distinct_durable_values(self) -> None:
+        selectors = [
+            {
+                "target": "target_" + str(index) * 32,
+                "snapshot": "snapshot_" + str(index) * 32,
+                "file_index": index,
+                "relative_path": f"book-{index}.epub",
+            }
+            for index in range(3)
+        ]
+        keys = [
+            (str(value["target"]), str(value["snapshot"]), int(value["file_index"]))
+            for value in selectors
+        ]
+        for count in range(3):
+            with (
+                self.subTest(count=count),
+                self.assertRaisesRegex(
+                    QualificationError, "at least three distinct durable selectors"
+                ),
+            ):
+                _selector_roles(selectors[:count], set(keys[:count]))
+        self.assertEqual(
+            _selector_roles(selectors + [dict(selectors[0])], set(keys)),
+            tuple(selectors),
+        )
+
     def test_failure_isolation_removes_and_restores_source_without_permissions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "book.epub"

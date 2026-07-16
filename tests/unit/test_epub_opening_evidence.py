@@ -11,6 +11,7 @@ from mechanical_librarian.application.inventory_reconciliation import (
     InventoryMountMapping,
 )
 from mechanical_librarian.application.epub_opening_evidence import (
+    EpubOpeningExecution,
     EpubSourceFingerprintError,
     RunEpubOpeningEvidence,
 )
@@ -147,6 +148,41 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
         mismatch["metadata"] = dict(item["metadata"], relPath="other.epub")
         self.assertIsNone(_epub_binding(mismatch, (mapping,)))
 
+    def test_optional_epub_projection_partition_matrix_returns_no_binding(self) -> None:
+        mapping = InventoryMountMapping(
+            "books", "ebook", "/library/books", "a" * 64
+        )
+        valid = {
+            "ino": "synthetic-inode",
+            "ebookFormat": "epub",
+            "metadata": {
+                "path": "/library/books/series/book.epub",
+                "relPath": "series/book.epub",
+            },
+        }
+        partitions = {
+            "missing": dict(valid, metadata={}),
+            "malformed": dict(
+                valid,
+                metadata={
+                    "path": "/library/books/series/book.epub",
+                    "relPath": ["series/book.epub"],
+                },
+            ),
+            "mismatch": dict(
+                valid,
+                metadata={
+                    "path": "/library/books/series/book.epub",
+                    "relPath": "other.epub",
+                },
+            ),
+            "ambiguous": valid,
+        }
+        for label, value in partitions.items():
+            with self.subTest(partition=label):
+                mappings = (mapping, mapping) if label == "ambiguous" else (mapping,)
+                self.assertIsNone(_epub_binding(value, mappings))
+
     def test_source_change_after_child_result_never_publishes_evidence(self) -> None:
         source = self.source
 
@@ -191,9 +227,12 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
             "worker",
             lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
             lambda _source: next(fingerprints),
-            lambda _source: EpubOpeningReport(
-                LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
-                EpubOpeningLimits(),
+            lambda _source: EpubOpeningExecution(
+                EpubOpeningReport(
+                    LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+                    EpubOpeningLimits(),
+                ),
+                "5" * 64,
             ),
         )
         self.assertEqual(result.failure, EpubEvidenceFailure.SOURCE_CHANGED)
@@ -230,6 +269,103 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
         )
         self.assertEqual(result.failure, EpubEvidenceFailure.RESOURCE_LIMIT)
         self.assertFalse(repository.accepted)
+
+    def test_publishable_execution_provenance_invariant_matrix(self) -> None:
+        source = self.source
+
+        class Repository:
+            published = False
+
+            def resolve(self, *_args):
+                return EpubSourceResolution(source=source)
+
+            def accept(self, value, fingerprint, governing, _at, _authority):
+                key = epub_work_key(value, fingerprint, governing)
+                return "epub_work_" + key[:32], None
+
+            def claim(self, work_id, *_args):
+                return EpubEvidenceClaim(
+                    work_id,
+                    epub_work_key(source, "5" * 64, "6" * 64),
+                    1,
+                    1,
+                    "worker",
+                )
+
+            def publish(
+                self,
+                _claim,
+                _source,
+                accepted_source,
+                execution_source,
+                _governing,
+                report,
+                *_args,
+            ):
+                self.published = True
+                self.provenance = (accepted_source, execution_source)
+                return EpubEvidenceResult(
+                    EpubEvidenceMode.EXECUTED,
+                    report.outcome,
+                    evidence_id="evidence_" + "7" * 32,
+                    current_applicable=True,
+                )
+
+            def fail(
+                self,
+                _claim,
+                failure,
+                _at,
+                *,
+                retryable,
+                failure_clock=None,
+            ):
+                self.failed = (failure, retryable, failure_clock)
+                return EpubEvidenceResult(EpubEvidenceMode.FAILED, failure=failure)
+
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        cases = (
+            (
+                "missing",
+                report,
+                EpubEvidenceFailure.INTEGRITY_FAILURE,
+                False,
+            ),
+            (
+                "a-to-b-to-a",
+                EpubOpeningExecution(report, "8" * 64),
+                EpubEvidenceFailure.SOURCE_CHANGED,
+                False,
+            ),
+            (
+                "stable-negative",
+                EpubOpeningExecution(report, "5" * 64),
+                None,
+                True,
+            ),
+        )
+        for label, execution, expected_failure, expected_publish in cases:
+            with self.subTest(partition=label):
+                repository = Repository()
+                fingerprints = iter(("5" * 64, "5" * 64))
+                result = RunEpubOpeningEvidence(repository).run(
+                    self.locator,
+                    source.mount_configuration_digest,
+                    "6" * 64,
+                    "worker",
+                    lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    lambda _source: next(fingerprints),
+                    lambda _source, value=execution: value,
+                )
+                self.assertEqual(result.failure, expected_failure)
+                self.assertEqual(repository.published, expected_publish)
+                if expected_publish:
+                    self.assertTrue(result.succeeded)
+                    self.assertEqual(
+                        repository.provenance, ("5" * 64, "5" * 64)
+                    )
 
     def test_closed_operational_failures_are_durable_attempts_not_evidence(self) -> None:
         source = self.source

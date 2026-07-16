@@ -16,7 +16,10 @@ from mechanical_librarian.adapters.persistence.epub_opening_evidence import (
 from mechanical_librarian.adapters.persistence.inventory_v2 import (
     SQLiteInventoryV2Repository,
 )
-from mechanical_librarian.application.epub_opening_evidence import RunEpubOpeningEvidence
+from mechanical_librarian.application.epub_opening_evidence import (
+    EpubOpeningExecution,
+    RunEpubOpeningEvidence,
+)
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceFailure,
@@ -162,7 +165,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             EpubOpeningLimits(),
         )
         published = self.repository.publish(
-            claim, source, "3" * 64, "4" * 64, report, self.now
+            claim, source, "3" * 64, "3" * 64, "4" * 64, report, self.now
         )
         self.assertEqual(published.mode, EpubEvidenceMode.EXECUTED)
         reopened = SQLiteEpubOpeningEvidenceRepository(self.connection)
@@ -181,7 +184,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         replacement = reopened.publish(
             changed_claim,
             source,
-            "5" * 64,
+            "5" * 64, "5" * 64,
             "4" * 64,
             report,
             self.now + timedelta(seconds=2),
@@ -232,7 +235,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
                 published = self.repository.publish(
                     claim,
                     source,
-                    "f" * 64,
+                    "f" * 64, "f" * 64,
                     governing_digest,
                     EpubOpeningReport(outcome, EpubOpeningLimits()),
                     self.now,
@@ -261,7 +264,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             self.repository.publish(
                 stale,
                 source,
-                "6" * 64,
+                "6" * 64, "6" * 64,
                 "7" * 64,
                 report,
                 self.now + timedelta(seconds=2),
@@ -271,7 +274,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             self.repository.publish(
                 replacement,
                 source,
-                "6" * 64,
+                "6" * 64, "6" * 64,
                 "7" * 64,
                 report,
                 self.now + timedelta(seconds=2),
@@ -291,7 +294,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             self.repository.publish(
                 claim,
                 source,
-                "6" * 64,
+                "6" * 64, "6" * 64,
                 "8" * 64,
                 report,
                 self.now,
@@ -329,7 +332,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             self.repository.publish(
                 claim,
                 source,
-                "6" * 64,
+                "6" * 64, "6" * 64,
                 "9" * 64,
                 report,
                 self.now,
@@ -376,8 +379,11 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             "worker",
             lambda: next(clock_values),
             lambda _source: "b" * 64,
-            lambda _source: EpubOpeningReport(
-                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            lambda _source: EpubOpeningExecution(
+                EpubOpeningReport(
+                    LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+                ),
+                "b" * 64,
             ),
             lease_duration=timedelta(seconds=1),
         )
@@ -464,7 +470,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         backwards = self.repository.publish(
             claim,
             source,
-            "1" * 64,
+            "1" * 64, "1" * 64,
             "2" * 64,
             report,
             self.now + timedelta(seconds=5),
@@ -483,7 +489,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             self.repository.publish(
                 claim,
                 source,
-                "1" * 64,
+                "1" * 64, "1" * 64,
                 "2" * 64,
                 report,
                 self.now + timedelta(seconds=11),
@@ -584,7 +590,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         published = self.repository.publish(
             claim,
             source,
-            "2" * 64,
+            "2" * 64, "2" * 64,
             "3" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -692,8 +698,8 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         newer = self.repository.accept(source, "a" * 64, "c" * 64, self.now)
         newer_claim = self.repository.claim(newer[0], "newer", self.now, timedelta(seconds=30), 2)
         report = EpubOpeningReport(LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits())
-        newest = self.repository.publish(newer_claim, source, "a" * 64, "c" * 64, report, self.now)
-        delayed = self.repository.publish(older_claim, source, "a" * 64, "b" * 64, report, self.now)
+        newest = self.repository.publish(newer_claim, source, "a" * 64, "a" * 64, "c" * 64, report, self.now)
+        delayed = self.repository.publish(older_claim, source, "a" * 64, "a" * 64, "b" * 64, report, self.now)
         self.assertTrue(newest.current_applicable)
         self.assertFalse(delayed.current_applicable)
         self.assertEqual(
@@ -712,7 +718,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
         )
         delayed = self.repository.publish(
-            older_claim, source, "a" * 64, "d" * 64, report, self.now
+            older_claim, source, "a" * 64, "a" * 64, "d" * 64, report, self.now
         )
         self.assertFalse(delayed.current_applicable)
         self.assertIsNone(
@@ -842,7 +848,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         )
         self.assertIsNone(
             self.repository.publish(
-                claim, source, "a" * 64, "b" * 64, report, self.now
+                claim, source, "a" * 64, "a" * 64, "b" * 64, report, self.now
             )
         )
         self.assertEqual(
@@ -946,7 +952,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         result = self.repository.publish(
             claim,
             source,
-            "a" * 64,
+            "a" * 64, "a" * 64,
             "b" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -978,7 +984,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
         )
         published = self.repository.publish(
-            older_claim, source, "e" * 64, "f" * 64, report, self.now
+            older_claim, source, "e" * 64, "e" * 64, "f" * 64, report, self.now
         )
         self.assertTrue(published.current_applicable)
 
@@ -1025,7 +1031,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
         )
         published = self.repository.publish(
-            older_claim, source, "1" * 64, "2" * 64, report, self.now
+            older_claim, source, "1" * 64, "1" * 64, "2" * 64, report, self.now
         )
         self.connection.execute(
             "CREATE TRIGGER injected_epub_acceptance_failure BEFORE INSERT ON "
@@ -1445,7 +1451,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         self.repository.publish(
             second_claim,
             source,
-            "2" * 64,
+            "2" * 64, "2" * 64,
             "0" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -1484,12 +1490,12 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         claim = self.repository.claim(accepted[0], "worker", self.now, timedelta(seconds=30))
         report = EpubOpeningReport(LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits())
         rejected = self.repository.publish(
-            claim, source, "3" * 64, "4" * 64, report, self.now, lambda: False
+            claim, source, "3" * 64, "3" * 64, "4" * 64, report, self.now, lambda: False
         )
         self.assertEqual(rejected.failure, EpubEvidenceFailure.SOURCE_CHANGED)
         self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM epub_opening_evidence").fetchone(), (0,))
         self.assertTrue(self.repository.cancel(accepted[0], "operator", self.now))
-        self.assertIsNone(self.repository.publish(claim, source, "3" * 64, "4" * 64, report, self.now))
+        self.assertIsNone(self.repository.publish(claim, source, "3" * 64, "3" * 64, "4" * 64, report, self.now))
         self.assertEqual(
             self.connection.execute("SELECT state,terminal_failure FROM epub_evidence_jobs WHERE work_id=?", (accepted[0],)).fetchone(),
             ("cancelled", "cancelled"),
@@ -1529,8 +1535,11 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             "first-worker",
             lambda: self.now,
             lambda _source: "7" * 64,
-            lambda _source: EpubOpeningReport(
-                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            lambda _source: EpubOpeningExecution(
+                EpubOpeningReport(
+                    LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+                ),
+                "7" * 64,
             ),
             lambda _source, _expected: False,
             capacity=1,
@@ -1562,8 +1571,11 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             "recovery-worker",
             lambda: next(clock_values),
             lambda _source: "3" * 64,
-            lambda _source: EpubOpeningReport(
-                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            lambda _source: EpubOpeningExecution(
+                EpubOpeningReport(
+                    LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+                ),
+                "3" * 64,
             ),
             lambda _source, _expected: True,
             lease_duration=timedelta(seconds=1),
@@ -1716,7 +1728,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
         )
         published = self.repository.publish(
-            claim, source, "d" * 64, "e" * 64, report, self.now
+            claim, source, "d" * 64, "d" * 64, "e" * 64, report, self.now
         )
         restored_path = Path(self.temporary.name) / "restored.sqlite3"
         restored_raw = sqlite3.connect(restored_path)
@@ -2092,7 +2104,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         )
         self.assertIsNone(
             self.repository.publish(
-                claim, source, "8" * 64, "9" * 64, report, self.now
+                claim, source, "8" * 64, "8" * 64, "9" * 64, report, self.now
             )
         )
         self.assertEqual(
@@ -2110,7 +2122,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         )
         self.connection.execute("DROP TRIGGER injected_epub_publication_failure")
         published = self.repository.publish(
-            claim, source, "8" * 64, "9" * 64, report, self.now
+            claim, source, "8" * 64, "8" * 64, "9" * 64, report, self.now
         )
         self.assertIsNotNone(published)
         with self.assertRaises(sqlite3.IntegrityError):
@@ -2122,6 +2134,91 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
                 "UPDATE inventory_snapshot_file_bindings SET media_kind='epub'"
             )
 
+    def test_repository_requires_exact_execution_provenance_before_publication(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "8" * 64, "9" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        for label, execution_source in (
+            ("missing", None),
+            ("mismatched", "7" * 64),
+        ):
+            with self.subTest(partition=label):
+                self.assertIsNone(
+                    self.repository.publish(
+                        claim,
+                        source,
+                        "8" * 64,
+                        execution_source,
+                        "9" * 64,
+                        report,
+                        self.now,
+                    )
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT state,evidence_id FROM epub_evidence_jobs "
+                        "WHERE work_id=?",
+                        (claim.work_id,),
+                    ).fetchone(),
+                    ("running", None),
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT COUNT(*) FROM epub_opening_evidence"
+                    ).fetchone(),
+                    (0,),
+                )
+        published = self.repository.publish(
+            claim,
+            source,
+            "8" * 64,
+            "8" * 64,
+            "9" * 64,
+            report,
+            self.now,
+        )
+        self.assertTrue(published.succeeded)
+
+    def test_a_to_b_to_a_execution_provenance_never_publishes_evidence(self) -> None:
+        fingerprints = iter(("8" * 64, "8" * 64))
+        result = RunEpubOpeningEvidence(self.repository).run(
+            self.locator,
+            self.binding_configuration,
+            "9" * 64,
+            "worker",
+            lambda: self.now,
+            lambda _source: next(fingerprints),
+            lambda _source: EpubOpeningExecution(
+                EpubOpeningReport(
+                    LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+                    EpubOpeningLimits(),
+                ),
+                "7" * 64,
+            ),
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.SOURCE_CHANGED)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,terminal_failure FROM epub_evidence_jobs"
+            ).fetchone(),
+            ("retry_wait", "source_changed"),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_opening_evidence"
+            ).fetchone(),
+            (0,),
+        )
+
     def test_reuse_recomputes_immutable_evidence_identity_after_tamper(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
         accepted = self.repository.accept(source, "4" * 64, "5" * 64, self.now)
@@ -2132,7 +2229,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
         )
         self.repository.publish(
-            claim, source, "4" * 64, "5" * 64, report, self.now
+            claim, source, "4" * 64, "4" * 64, "5" * 64, report, self.now
         )
         trigger = self.connection.execute(
             "SELECT sql FROM sqlite_master WHERE type='trigger' "
@@ -2165,7 +2262,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         self.repository.publish(
             claim,
             source,
-            "4" * 64,
+            "4" * 64, "4" * 64,
             "5" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -2194,7 +2291,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         self.repository.publish(
             claim,
             source,
-            "4" * 64,
+            "4" * 64, "4" * 64,
             "5" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -2245,7 +2342,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         published = self.repository.publish(
             claim,
             source,
-            "4" * 64,
+            "4" * 64, "4" * 64,
             "5" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -2293,7 +2390,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         self.repository.publish(
             claim,
             source,
-            "4" * 64,
+            "4" * 64, "4" * 64,
             "5" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -2359,7 +2456,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         self.repository.publish(
             claim,
             source,
-            "4" * 64,
+            "4" * 64, "4" * 64,
             "5" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -2629,7 +2726,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         published = self.repository.publish(
             claim,
             source,
-            "4" * 64,
+            "4" * 64, "4" * 64,
             "5" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -2673,7 +2770,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         published = self.repository.publish(
             claim,
             source,
-            "4" * 64,
+            "4" * 64, "4" * 64,
             "5" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -2708,7 +2805,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         published = self.repository.publish(
             second_claim,
             source,
-            "4" * 64,
+            "4" * 64, "4" * 64,
             "5" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
@@ -2749,7 +2846,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         published = self.repository.publish(
             claim,
             source,
-            "4" * 64,
+            "4" * 64, "4" * 64,
             "5" * 64,
             EpubOpeningReport(
                 LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()

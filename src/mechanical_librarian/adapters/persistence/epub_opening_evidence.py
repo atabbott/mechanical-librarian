@@ -561,6 +561,7 @@ class SQLiteEpubOpeningEvidenceRepository:
         claim: EpubEvidenceClaim,
         source: ResolvedEpubSource,
         source_fingerprint: str,
+        execution_source_fingerprint: str | None,
         governing_digest: str,
         report: EpubOpeningReport,
         published_at: datetime,
@@ -573,6 +574,8 @@ class SQLiteEpubOpeningEvidenceRepository:
             or not _digest(source_fingerprint)
             or not _digest(governing_digest)
             or type(report) is not EpubOpeningReport
+            or not _digest(execution_source_fingerprint)
+            or execution_source_fingerprint != source_fingerprint
             or not _valid_time(published_at)
             or not callable(source_is_current)
             or (publication_clock is not None and not callable(publication_clock))

@@ -603,7 +603,7 @@ def _epub_binding(
         return None
     metadata = ebook_file.get("metadata")
     if not isinstance(metadata, dict):
-        raise ValueError("ebook metadata is malformed")
+        return None
     provider_path = metadata.get("path")
     provider_relative = metadata.get("relPath")
     inode = ebook_file.get("ino")
@@ -618,11 +618,14 @@ def _epub_binding(
         or "\x00" in provider_relative
         or posixpath.normpath(provider_relative) != provider_relative
         or any(part in {"", ".", ".."} for part in provider_relative.split("/"))
-        or type(inode) not in {str, int}
+    ):
+        return None
+    if (
+        type(inode) not in {str, int}
         or not str(inode).strip()
         or len(str(inode)) > 512
     ):
-        raise ValueError("ebook source reference is malformed")
+        raise ValueError("ebook file identity is malformed")
     matches = tuple(
         mapping
         for mapping in mount_mappings
@@ -637,12 +640,16 @@ def _epub_binding(
     derived = provider_path.removeprefix(prefix)
     if derived != provider_relative:
         return None
+    try:
+        reference = FileReference(mapping.name, provider_relative)
+    except ValueError:
+        return None
     return InventoryFileBinding(
         0,
         _file_identity(ebook_file),
         "epub",
         mapping.configuration_digest,
-        FileReference(mapping.name, provider_relative),
+        reference,
     )
 
 

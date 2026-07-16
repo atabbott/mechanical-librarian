@@ -23,6 +23,9 @@ contains no service ID, mount, filename, relative path, title, source hash, or
 content. A snapshot created before migration 8, or one whose path projection
 was missing, malformed, mismatched, or ambiguous, emits no selector; run a new
 complete reconciliation rather than supplying a path manually.
+Missing, malformed, mismatched, or ambiguous optional EPUB path projection
+suppresses only that selector; the otherwise valid item snapshot and complete
+inventory scan remain available.
 
 ## Result
 
@@ -79,8 +82,11 @@ newer current lane.
 
 The source is opened through the configured container path with no-follow
 component traversal and is hashed before acceptance and again by the F07a
-stable-source execution. No target credential or network call is needed after
-inventory. The command has no write route to Audiobookshelf or the media mount.
+stable-source execution. An internal execution envelope pairs every publishable
+result with the independently captured descriptor digest; persistence rejects
+missing or mismatched provenance without changing the public report schema. No
+target credential or network call is needed after inventory. The command has no
+write route to Audiobookshelf or the media mount.
 
 Migration 8 is forward-only. Before upgrading important state, verify a backup.
 On migration failure, stop and restore the pre-schema-8 copy. Never delete the

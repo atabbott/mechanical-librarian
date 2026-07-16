@@ -48,6 +48,7 @@ from mechanical_librarian.application.ports import (
 )
 from mechanical_librarian.application.inventory_reconciliation import (
     InventoryConnectionVerification,
+    InventoryMountMapping,
     InventoryOutcome,
     ReconcileInventory,
 )
@@ -85,6 +86,7 @@ from mechanical_librarian.domain.inventory_v2 import (
     ScanBounds,
     ScanState,
     ScanUsage,
+    opaque_target_reference,
 )
 from mechanical_librarian.domain.inventory_polling import PollPolicy, PollRequest
 from mechanical_librarian.infrastructure.persistence.sqlite import migrate
@@ -155,6 +157,87 @@ def json_response(value: object) -> httpx.Response:
 
 
 class AudiobookshelfInventoryReaderTests(unittest.TestCase):
+    def test_optional_epub_projection_partitions_preserve_valid_snapshot(self) -> None:
+        mapping = InventoryMountMapping(
+            "books", "ebook", "/library/books", "a" * 64
+        )
+        base = self._detail(
+            EBOOK,
+            {
+                "ebookFile": {
+                    "ino": "ebook-inode",
+                    "ebookFormat": "epub",
+                    "metadata": {
+                        "path": "/library/books/book.epub",
+                        "relPath": "book.epub",
+                        "size": 123,
+                    },
+                }
+            },
+        )
+        summary = {
+            key: base[key]
+            for key in (
+                "id",
+                "libraryId",
+                "mediaType",
+                "updatedAt",
+                "isMissing",
+                "isInvalid",
+            )
+        }
+        partitions = {
+            "missing": {},
+            "malformed": {
+                "path": "/library/books/book.epub",
+                "relPath": ["book.epub"],
+            },
+            "mismatch": {
+                "path": "/library/books/book.epub",
+                "relPath": "other.epub",
+            },
+        }
+        for label, metadata in partitions.items():
+            with self.subTest(partition=label):
+                detail = copy.deepcopy(base)
+                detail["media"]["ebookFile"]["metadata"] = metadata
+                normalized = _normalize(
+                    detail,
+                    summary,
+                    connection(),
+                    LIBRARY,
+                    operation_context(),
+                    (mapping,),
+                )
+                self.assertIsNone(normalized.failure)
+                self.assertEqual(normalized.value[0].file_bindings, ())
+                self.assertEqual(
+                    normalized.value[0].observation.lifecycle,
+                    ItemLifecycle.ACTIVE,
+                )
+        ambiguous = _normalize(
+            base,
+            summary,
+            connection(),
+            LIBRARY,
+            operation_context(),
+            (mapping, mapping),
+        )
+        self.assertIsNone(ambiguous.failure)
+        self.assertEqual(ambiguous.value[0].file_bindings, ())
+
+        malformed_authoritative = copy.deepcopy(base)
+        malformed_authoritative["media"]["ebookFile"]["ino"] = []
+        rejected = _normalize(
+            malformed_authoritative,
+            summary,
+            connection(),
+            LIBRARY,
+            operation_context(),
+            (mapping,),
+        )
+        self.assertEqual(rejected.failure.kind, FailureKind.INVALID_RESPONSE)
+
     def test_f05b_machine_profile_keeps_unavailable_capabilities_explicit(self) -> None:
         profile = json.loads(
             (
@@ -842,6 +925,77 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
             ).fetchone(),
             (ScanState.COMPLETE.value,),
         )
+
+    def test_bad_optional_epub_projection_does_not_abort_multi_item_scan(self) -> None:
+        mapping = InventoryMountMapping(
+            "books", "ebook", "/library/books", "a" * 64
+        )
+
+        def normalized(identity: str, relative: object) -> InventorySnapshotV2:
+            detail = AudiobookshelfInventoryReaderTests._detail(
+                identity,
+                {
+                    "ebookFile": {
+                        "ino": identity,
+                        "ebookFormat": "epub",
+                        "metadata": {
+                            "path": f"/library/books/{identity}.epub",
+                            "relPath": relative,
+                            "size": 123,
+                        },
+                    }
+                },
+            )
+            summary = {
+                key: detail[key]
+                for key in (
+                    "id",
+                    "libraryId",
+                    "mediaType",
+                    "updatedAt",
+                    "isMissing",
+                    "isInvalid",
+                )
+            }
+            result = _normalize(
+                detail,
+                summary,
+                connection(),
+                LIBRARY,
+                operation_context(),
+                (mapping,),
+            )
+            self.assertIsNone(result.failure)
+            return result.value[0]
+
+        good = normalized(EBOOK, f"{EBOOK}.epub")
+        bad = normalized("31234567-89ab-4def-8123-456789abcdef", ["bad.epub"])
+        self._publish("scan-good-projection-seed", good)
+        inspection = self._publish_many(
+            "scan-optional-projection", (good, bad)
+        )
+        self.assertEqual(inspection.state, ScanState.COMPLETE)
+        self.assertEqual(inspection.item_count, 2)
+        self.assertEqual(inspection.active_count, 2)
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM current_inventory_v2"
+            ).fetchone(),
+            (2,),
+        )
+        self.assertEqual(
+            self.database.execute(
+                "SELECT COUNT(*) FROM inventory_snapshot_file_bindings"
+            ).fetchone(),
+            (1,),
+        )
+        selectors = SQLiteInventoryV2Repository(
+            self.database,
+            binding_configuration_digests=frozenset({mapping.configuration_digest}),
+            owner_id="projection-selector-test",
+        )._selectors("audiobookshelf", "primary", LIBRARY.value)
+        self.assertEqual(len(selectors), 1)
+        self.assertEqual(selectors[0].target_reference, opaque_target_reference(good.observation.target))
 
     def test_late_cancellation_rolls_back_every_publication_write(self) -> None:
         start = self.repository.begin(

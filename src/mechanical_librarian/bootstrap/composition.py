@@ -78,6 +78,7 @@ from mechanical_librarian.application.inventory_reconciliation import (
     ReconcileInventory,
 )
 from mechanical_librarian.application.epub_opening_evidence import (
+    EpubOpeningExecution,
     EpubSourceFingerprintError,
     RunEpubOpeningEvidence,
 )
@@ -1030,6 +1031,24 @@ def _run_epub_opening_report(
 ) -> EpubOpeningReport:
     """Extract one source-stable opening report without persistence or paths."""
 
+    execution = _run_epub_opening_execution(
+        configuration_path,
+        mount_name,
+        relative_reference,
+        frozen_configuration=frozen_configuration,
+    )
+    return execution.report if type(execution) is EpubOpeningExecution else execution
+
+
+def _run_epub_opening_execution(
+    configuration_path: Path,
+    mount_name: str,
+    relative_reference: str,
+    *,
+    frozen_configuration=None,
+) -> EpubOpeningExecution | EpubOpeningReport:
+    """Pair a stable internal report with independently captured provenance."""
+
     if frozen_configuration is None:
         try:
             configuration = load_configuration_file(configuration_path)
@@ -1105,7 +1124,7 @@ def _run_epub_opening_report(
             or replacement_digest != before_digest
         ):
             return _opening_failure(LocalEvidenceOutcome.UNSTABLE_SOURCE, limits)
-        return report
+        return EpubOpeningExecution(report, before_digest)
     except LocalMediaError:
         return _opening_failure(
             LocalEvidenceOutcome.UNSTABLE_SOURCE
@@ -1217,7 +1236,7 @@ def _run_epub_opening_evidence(
                 "epub_evidence_worker",
                 lambda: datetime.now(timezone.utc),
                 fingerprint,
-                lambda value: _run_epub_opening_report(
+                lambda value: _run_epub_opening_execution(
                     configuration_path,
                     value.mount_name,
                     value.relative_path,
