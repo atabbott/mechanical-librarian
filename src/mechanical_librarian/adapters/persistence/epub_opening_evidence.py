@@ -132,8 +132,12 @@ class SQLiteEpubOpeningEvidenceRepository:
             "s.adapter_id,s.connection_id,s.library_id,s.external_item "
             "FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
             "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-            "JOIN inventory_snapshot_file_bindings b USING "
+            "JOIN current_inventory_snapshot_binding_sets bs USING "
             "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+            "JOIN inventory_snapshot_binding_set_members m "
+            "ON m.binding_set_digest=bs.binding_set_digest "
+            "JOIN inventory_snapshot_file_bindings b "
+            "ON b.binding_digest=m.binding_digest AND b.file_index=m.file_index "
             "WHERE b.target_reference=? AND b.snapshot_reference=? "
             "AND b.file_index=? AND b.media_kind='epub' "
             "AND b.mount_configuration_digest=?",
@@ -246,9 +250,9 @@ class SQLiteEpubOpeningEvidenceRepository:
         current = self._connection.execute(
             "SELECT 1 FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
             "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-            "JOIN inventory_snapshot_file_bindings b USING "
+            "JOIN inventory_snapshot_locator_index i USING "
             "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-            "WHERE b.target_reference=? AND b.snapshot_reference=? LIMIT 1",
+            "WHERE i.target_reference=? AND i.snapshot_reference=? LIMIT 1",
             (locator.target_reference, locator.snapshot_reference),
         ).fetchone()
         if current is None:
@@ -263,6 +267,33 @@ class SQLiteEpubOpeningEvidenceRepository:
         if any(str(row[1]) != "epub" for row in index_row):
             return EpubEvidenceFailure.NON_EPUB
         if all(str(row[0]) != mount_configuration_digest for row in index_row):
+            return EpubEvidenceFailure.MOUNT_MISMATCH
+        current_index_rows = self._connection.execute(
+            "SELECT b.mount_configuration_digest,b.media_kind "
+            "FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
+            "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+            "JOIN current_inventory_snapshot_binding_sets bs USING "
+            "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+            "JOIN inventory_snapshot_binding_set_members m "
+            "ON m.binding_set_digest=bs.binding_set_digest "
+            "JOIN inventory_snapshot_file_bindings b "
+            "ON b.binding_digest=m.binding_digest AND b.file_index=m.file_index "
+            "WHERE b.target_reference=? AND b.snapshot_reference=? "
+            "AND b.file_index=? LIMIT 2",
+            (
+                locator.target_reference,
+                locator.snapshot_reference,
+                locator.file_index,
+            ),
+        ).fetchall()
+        if not current_index_rows:
+            return EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
+        if any(str(row[1]) != "epub" for row in current_index_rows):
+            return EpubEvidenceFailure.NON_EPUB
+        if all(
+            str(row[0]) != mount_configuration_digest
+            for row in current_index_rows
+        ):
             return EpubEvidenceFailure.MOUNT_MISMATCH
         return EpubEvidenceFailure.BINDING_INTEGRITY_FAILURE
 

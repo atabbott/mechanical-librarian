@@ -531,6 +531,106 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             (2,),
         )
 
+    def test_evidence_resolution_uses_only_the_current_binding_set(self) -> None:
+        original = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        inventory = SQLiteInventoryV2Repository(
+            self.connection,
+            binding_configuration_digests=frozenset(
+                {self.binding_configuration, "a" * 64}
+            ),
+        )
+
+        without_binding = InventorySnapshotV2.create(self.snapshot.observation)
+        inventory._persist_or_reuse(without_binding)
+        inventory._set_current_binding_set(without_binding, without_binding.id)
+        self.assertEqual(
+            self.repository.resolve(
+                self.locator, self.binding_configuration
+            ).failure,
+            EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE,
+        )
+        self.assertIsNone(
+            self.repository.accept(original, "a" * 64, "b" * 64, self.now)
+        )
+
+        replacement = InventorySnapshotV2.create(
+            self.snapshot.observation,
+            file_bindings=(
+                InventoryFileBinding(
+                    0,
+                    "1" * 64,
+                    "epub",
+                    "a" * 64,
+                    FileReference("replacement", "book.epub"),
+                ),
+            ),
+        )
+        inventory._persist_or_reuse(replacement)
+        inventory._set_current_binding_set(replacement, replacement.id)
+        self.assertEqual(
+            self.repository.resolve(
+                self.locator, self.binding_configuration
+            ).failure,
+            EpubEvidenceFailure.MOUNT_MISMATCH,
+        )
+        current = self.repository.resolve(self.locator, "a" * 64).source
+        self.assertEqual(current.relative_path, "book.epub")
+        self.assertEqual(current.mount_name, "replacement")
+
+    def test_binding_set_change_before_publish_rolls_back_success(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "a" * 64, "b" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        inventory = SQLiteInventoryV2Repository(self.connection)
+        without_binding = InventorySnapshotV2.create(self.snapshot.observation)
+        inventory._persist_or_reuse(without_binding)
+        inventory._set_current_binding_set(without_binding, without_binding.id)
+
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        self.assertIsNone(
+            self.repository.publish(
+                claim, source, "a" * 64, "b" * 64, report, self.now
+            )
+        )
+        self.assertEqual(
+            tuple(
+                self.connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()[0]
+                for table in (
+                    "epub_opening_evidence",
+                    "current_epub_opening_evidence",
+                    "epub_evidence_checkpoints",
+                )
+            ),
+            (0, 0, 0),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,evidence_id FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("running", None),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_evidence_events "
+                "WHERE work_id=? AND kind='published'",
+                (accepted[0],),
+            ).fetchone(),
+            (0,),
+        )
+
     def test_newer_acceptance_retires_old_current_even_if_new_work_fails(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
         older = self.repository.accept(source, "e" * 64, "f" * 64, self.now)
@@ -753,8 +853,33 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
 
     def test_recovery_selects_one_oldest_job_across_multiple_mounts(self) -> None:
         second_configuration = "a" * 64
+        second_target = TargetId(
+            AdapterId("audiobookshelf"),
+            ConnectionId("connection"),
+            LibraryId("library"),
+            ExternalItemId("second-item"),
+        )
+        second_observation = InventoryObservation.create(
+            target=second_target,
+            media_type=MediaType.EBOOK,
+            lifecycle=ItemLifecycle.ACTIVE,
+            fields=(
+                FieldObservation(
+                    ObservationField.TITLE,
+                    ObservationState.PRESENT,
+                    ("Second synthetic",),
+                ),
+            ),
+            file_identities=("a" * 64,),
+            cover_identity=None,
+            adapter_version=AdapterVersion("abs-inventory-v1"),
+            normalizer_version=SchemaVersion("abs-book-normalizer-v1"),
+            service_version=ServiceVersion("2.35.1"),
+            warnings=(),
+            observed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
         second_snapshot = InventorySnapshotV2.create(
-            self.snapshot.observation,
+            second_observation,
             file_bindings=(
                 InventoryFileBinding(
                     0,
@@ -765,8 +890,25 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
                 ),
             ),
         )
-        SQLiteInventoryV2Repository(self.connection)._persist_or_reuse(second_snapshot)
-        second_locator = self.locator
+        inventory = SQLiteInventoryV2Repository(self.connection)
+        inventory._persist_or_reuse(second_snapshot)
+        self.connection.execute(
+            "INSERT INTO current_inventory_v2(adapter_id,connection_id,library_id,"
+            "external_item,snapshot_id) VALUES (?,?,?,?,?)",
+            (
+                second_target.adapter.value,
+                second_target.connection.value,
+                second_target.library.value,
+                second_target.external_item.value,
+                second_snapshot.id.value,
+            ),
+        )
+        inventory._set_current_binding_set(second_snapshot, second_snapshot.id)
+        second_locator = EpubEvidenceLocator(
+            opaque_target_reference(second_target),
+            opaque_snapshot_reference(second_snapshot),
+            0,
+        )
         first_source = self.repository.resolve(
             self.locator, self.binding_configuration
         ).source
