@@ -1613,13 +1613,14 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             source, "4" * 64, "5" * 64, self.now + timedelta(seconds=1)
         )[1]
         self.assertEqual(retried.failure, EpubEvidenceFailure.CORRUPT_STATE)
-        self.assertIsNone(
+        self.assertEqual(
             self.repository.claim(
                 accepted[0],
                 "replacement-worker",
                 self.now + timedelta(seconds=1),
                 timedelta(seconds=30),
-            )
+            ),
+            EpubEvidenceFailure.CORRUPT_STATE,
         )
         self.assertEqual(
             self.connection.execute(
@@ -1652,6 +1653,46 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             lambda: self.now + timedelta(seconds=31),
             lambda _source: "4" * 64,
             lambda _source: self.fail("inconsistent lease work executed"),
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.CORRUPT_STATE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt,lease_owner FROM epub_evidence_jobs "
+                "WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("running", 1, "replacement-worker"),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_opening_evidence"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_resume_reports_inconsistent_lease_owner_as_corrupt(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        self.repository.claim(
+            accepted[0], "first-worker", self.now, timedelta(seconds=30)
+        )
+        self.connection.execute(
+            "UPDATE epub_evidence_jobs SET lease_owner='replacement-worker' "
+            "WHERE work_id=?",
+            (accepted[0],),
+        )
+        result = RunEpubOpeningEvidence(self.repository).resume(
+            frozenset({self.binding_configuration}),
+            "5" * 64,
+            "recovery-worker",
+            lambda: self.now + timedelta(seconds=31),
+            lambda _source: "4" * 64,
+            lambda _source: self.fail("inconsistent lease recovery executed"),
+            lambda _source, _expected: True,
         )
         self.assertEqual(result.failure, EpubEvidenceFailure.CORRUPT_STATE)
         self.assertEqual(

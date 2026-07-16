@@ -48,7 +48,7 @@ class EpubOpeningEvidenceRepository(Protocol):
         claimed_at: datetime,
         lease_duration: timedelta,
         capacity: int,
-    ) -> EpubEvidenceClaim | None: ...
+    ) -> EpubEvidenceClaim | EpubEvidenceFailure | None: ...
 
     def publish(
         self,
@@ -118,6 +118,8 @@ class RunEpubOpeningEvidence:
             claim = self._repository.claim(
                 work_id, worker_id, now(), lease_duration, capacity
             )
+            if type(claim) is EpubEvidenceFailure:
+                return _failed(claim)
             if claim is None or claim.work_key != work_key:
                 return _failed(EpubEvidenceFailure.BUSY)
             report = execute(source)
@@ -213,6 +215,8 @@ class RunEpubOpeningEvidence:
         claim = self._repository.claim(
             work.work_id, worker_id, now(), lease_duration, capacity
         )
+        if type(claim) is EpubEvidenceFailure:
+            return _failed(claim)
         if claim is None or claim.work_key != work.work_key:
             return _failed(EpubEvidenceFailure.BUSY)
         resolution = self._repository.resolve(

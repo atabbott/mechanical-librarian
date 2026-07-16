@@ -414,7 +414,7 @@ class SQLiteEpubOpeningEvidenceRepository:
         claimed_at: datetime,
         lease_duration: timedelta,
         capacity: int = 1,
-    ) -> EpubEvidenceClaim | None:
+    ) -> EpubEvidenceClaim | EpubEvidenceFailure | None:
         if (
             type(work_id) is not str
             or not work_id.startswith("epub_work_")
@@ -544,7 +544,9 @@ class SQLiteEpubOpeningEvidenceRepository:
                 return EpubEvidenceClaim(
                     work_id, str(row[0]), next_attempt, next_fence, worker_id
                 )
-        except (sqlite3.Error, ValueError):
+        except ValueError:
+            return EpubEvidenceFailure.CORRUPT_STATE
+        except sqlite3.Error:
             return None
 
     def publish(
