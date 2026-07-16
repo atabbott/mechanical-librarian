@@ -19,6 +19,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceFailure,
     EpubEvidenceLocator,
     EpubEvidenceMode,
+    PUBLISHABLE_EPUB_OUTCOMES,
 )
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
@@ -35,9 +36,11 @@ from mechanical_librarian.domain.inventory_v2 import (
     FieldObservation,
     InventoryFileBinding,
     InventoryObservation,
+    InventoryPass,
     InventorySnapshotV2,
     ObservationField,
     ObservationState,
+    ScanUsage,
     opaque_snapshot_reference,
     opaque_target_reference,
 )
@@ -104,6 +107,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
                 self.snapshot.id.value,
             ),
         )
+        inventory._set_current_binding_set(self.snapshot, self.snapshot.id)
         self.locator = EpubEvidenceLocator(
             opaque_target_reference(target),
             opaque_snapshot_reference(self.snapshot),
@@ -199,6 +203,38 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             ).fetchone(),
             (replacement.evidence_id, 2),
         )
+
+    def test_closed_publishable_outcomes_are_durable_evidence(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        rejection_outcomes = PUBLISHABLE_EPUB_OUTCOMES - {
+            LocalEvidenceOutcome.SUCCESS,
+            LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE,
+        }
+        for index, outcome in enumerate(
+            sorted(rejection_outcomes, key=lambda value: value.value), start=1
+        ):
+            with self.subTest(outcome=outcome):
+                governing_digest = f"{index:064x}"
+                accepted = self.repository.accept(
+                    source, "f" * 64, governing_digest, self.now
+                )
+                claim = self.repository.claim(
+                    accepted[0],
+                    f"worker-{index}",
+                    self.now,
+                    timedelta(seconds=30),
+                )
+                published = self.repository.publish(
+                    claim,
+                    source,
+                    "f" * 64,
+                    governing_digest,
+                    EpubOpeningReport(outcome, EpubOpeningLimits()),
+                    self.now,
+                )
+                self.assertEqual(published.mode, EpubEvidenceMode.EXECUTED)
+                self.assertEqual(published.outcome, outcome)
+                self.assertIsNotNone(published.evidence_id)
 
     def test_expired_fence_cannot_publish(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
@@ -447,6 +483,52 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
                 (newer[0],),
             ).fetchone(),
             ("pending", 2),
+        )
+
+    def test_current_binding_set_tracks_absence_and_configuration_revision(self) -> None:
+        inventory = SQLiteInventoryV2Repository(
+            self.connection,
+            binding_configuration_digests=frozenset(
+                {self.binding_configuration, "a" * 64}
+            ),
+        )
+        self.assertEqual(len(inventory._selectors("audiobookshelf", "connection", "library")), 1)
+
+        without_binding = InventorySnapshotV2.create(self.snapshot.observation)
+        inventory._persist_or_reuse(without_binding)
+        inventory._set_current_binding_set(without_binding, without_binding.id)
+        self.assertEqual(
+            inventory._selectors("audiobookshelf", "connection", "library"), ()
+        )
+        self.assertNotEqual(
+            InventoryPass((self.snapshot,), ScanUsage()).digest,
+            InventoryPass((without_binding,), ScanUsage()).digest,
+        )
+
+        replacement = InventorySnapshotV2.create(
+            self.snapshot.observation,
+            file_bindings=(
+                InventoryFileBinding(
+                    0,
+                    "1" * 64,
+                    "epub",
+                    "a" * 64,
+                    FileReference("replacement", "book.epub"),
+                ),
+            ),
+        )
+        inventory._persist_or_reuse(replacement)
+        inventory._set_current_binding_set(replacement, replacement.id)
+        current = inventory._current_values(
+            "audiobookshelf", "connection", "library"
+        )
+        self.assertEqual(current[0].file_bindings, replacement.file_bindings)
+        self.assertEqual(len(inventory._selectors("audiobookshelf", "connection", "library")), 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM inventory_snapshot_file_bindings"
+            ).fetchone(),
+            (2,),
         )
 
     def test_newer_acceptance_retires_old_current_even_if_new_work_fails(self) -> None:
@@ -976,6 +1058,67 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             self.connection.execute(
                 "UPDATE inventory_snapshot_file_bindings SET media_kind='epub'"
             )
+
+    def test_reuse_recomputes_immutable_evidence_identity_after_tamper(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        accepted = self.repository.accept(source, "4" * 64, "5" * 64, self.now)
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        self.repository.publish(
+            claim, source, "4" * 64, "5" * 64, report, self.now
+        )
+        trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_opening_evidence_no_update'"
+        ).fetchone()[0]
+        self.connection.execute("DROP TRIGGER epub_opening_evidence_no_update")
+        replacement = EpubOpeningReport(
+            LocalEvidenceOutcome.MALFORMED, EpubOpeningLimits()
+        )
+        self.connection.execute(
+            "UPDATE epub_opening_evidence SET report_json=?",
+            (replacement.to_json(),),
+        )
+        self.connection.execute(str(trigger))
+        reused = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(reused.failure, EpubEvidenceFailure.CORRUPT_STATE)
+
+    def test_resume_recomputes_persisted_work_identity_after_tamper(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        accepted = self.repository.accept(source, "6" * 64, "7" * 64, self.now)
+        self.connection.execute(
+            "UPDATE epub_evidence_jobs SET work_key=? WHERE work_id=?",
+            ("8" * 64, accepted[0]),
+        )
+        result = RunEpubOpeningEvidence(self.repository).resume(
+            frozenset({self.binding_configuration}),
+            "7" * 64,
+            "recovery-worker",
+            lambda: self.now,
+            lambda _source: "6" * 64,
+            lambda _source: self.fail("corrupt work executed"),
+            lambda _source, _expected: True,
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.CORRUPT_STATE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,terminal_failure FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("failed_terminal", "corrupt_state"),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_opening_evidence"
+            ).fetchone(),
+            (0,),
+        )
 
     def test_legacy_snapshot_without_binding_has_no_source(self) -> None:
         self.connection.execute("DELETE FROM current_inventory_v2")

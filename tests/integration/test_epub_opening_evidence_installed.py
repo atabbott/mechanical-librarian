@@ -90,6 +90,14 @@ class InstalledEpubOpeningEvidenceTests(unittest.TestCase):
                         / "epub_package"
                         / "manifest.json"
                     ),
+                    "--expected-outcome",
+                    "success",
+                    "--expected-outcome",
+                    "no_applicable_evidence",
+                    "--expected-parser-mode",
+                    "strict",
+                    "--expected-parser-mode",
+                    "recovered",
                 ),
                 cwd=ROOT,
                 stdin=subprocess.DEVNULL,
@@ -112,6 +120,8 @@ class InstalledEpubOpeningEvidenceTests(unittest.TestCase):
             )
             self.assertEqual(aggregate["restart_reused"], aggregate["durable"])
             self.assertEqual(aggregate["source_invalidations"], 1)
+            self.assertIn("strict", aggregate["parser_modes"])
+            self.assertIn("recovered", aggregate["parser_modes"])
             self.assertNotIn(str(root), qualify.stdout)
             self.assertNotIn(".epub", qualify.stdout)
 

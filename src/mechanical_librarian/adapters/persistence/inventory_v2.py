@@ -412,6 +412,11 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                     return RepositoryResult(RepositoryOutcome.UNAVAILABLE)
 
                 self._connection.execute(
+                    "DELETE FROM current_inventory_snapshot_binding_sets WHERE adapter_id=? "
+                    "AND connection_id=? AND library_id=?",
+                    (row[0], row[1], row[2]),
+                )
+                self._connection.execute(
                     "DELETE FROM current_inventory_v2 WHERE adapter_id=? AND "
                     "connection_id=? AND library_id=?",
                     (row[0], row[1], row[2]),
@@ -433,6 +438,7 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                         "snapshot_id=excluded.snapshot_id",
                         values,
                     )
+                    self._set_current_binding_set(snapshot, persisted_id)
                     self._connection.execute(
                         "INSERT INTO inventory_scan_items(scan_id,adapter_id,connection_id,"
                         "library_id,external_item,snapshot_id) VALUES (?,?,?,?,?,?)",
@@ -629,6 +635,11 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                     prepared_at,
                 ) in validated:
                     self._connection.execute(
+                        "DELETE FROM current_inventory_snapshot_binding_sets WHERE adapter_id=? "
+                        "AND connection_id=? AND library_id=?",
+                        (scan_row[0], scan_row[1], scan_row[2]),
+                    )
+                    self._connection.execute(
                         "DELETE FROM current_inventory_v2 WHERE adapter_id=? AND "
                         "connection_id=? AND library_id=?",
                         (scan_row[0], scan_row[1], scan_row[2]),
@@ -648,6 +659,7 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                             "library_id,external_item,snapshot_id) VALUES (?,?,?,?,?)",
                             values,
                         )
+                        self._set_current_binding_set(snapshot, persisted_id)
                         self._connection.execute(
                             "INSERT INTO inventory_scan_items(scan_id,adapter_id,connection_id,"
                             "library_id,external_item,snapshot_id) VALUES (?,?,?,?,?,?)",
@@ -795,15 +807,17 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
     ) -> tuple[InventorySnapshotV2, ...]:
         rows = self._connection.execute(
             "SELECT c.external_item,s.snapshot_id,s.fingerprint_digest,"
-            "s.canonical_observation,s.observed_at "
+            "s.canonical_observation,s.observed_at,b.binding_set_digest "
             "FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
+            "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+            "LEFT JOIN current_inventory_snapshot_binding_sets b USING "
             "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
             "WHERE c.adapter_id=? AND c.connection_id=? AND c.library_id=? "
             "ORDER BY c.external_item",
             (adapter, connection, library),
         ).fetchall()
         values: list[InventorySnapshotV2] = []
-        for external_item, snapshot_id, digest, canonical, observed_at in rows:
+        for external_item, snapshot_id, digest, canonical, observed_at, binding_set in rows:
             observation = InventoryObservation.from_json(
                 str(canonical), _parse_timestamp(str(observed_at))
             )
@@ -817,7 +831,12 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                 InventorySnapshotV2.create(
                     observation,
                     file_bindings=self._bindings_for(
-                        adapter, connection, library, str(external_item), snapshot
+                        adapter,
+                        connection,
+                        library,
+                        str(external_item),
+                        snapshot,
+                        None if binding_set is None else str(binding_set),
                     ),
                 )
             )
@@ -830,13 +849,26 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         library: str,
         external_item: str,
         snapshot: InventorySnapshotV2,
+        binding_set_digest: str | None,
     ) -> tuple[InventoryFileBinding, ...]:
+        if binding_set_digest is None:
+            return ()
         rows = self._connection.execute(
-            "SELECT file_index,file_identity,media_kind,mount_configuration_digest,"
-            "mount_name,relative_path FROM inventory_snapshot_file_bindings "
-            "WHERE adapter_id=? AND connection_id=? AND library_id=? AND "
-            "external_item=? AND snapshot_id=? ORDER BY file_index,mount_configuration_digest",
-            (adapter, connection, library, external_item, snapshot.id.value),
+            "SELECT b.file_index,b.file_identity,b.media_kind,"
+            "b.mount_configuration_digest,b.mount_name,b.relative_path FROM "
+            "inventory_snapshot_binding_set_members m JOIN "
+            "inventory_snapshot_file_bindings b ON b.binding_digest=m.binding_digest "
+            "WHERE m.binding_set_digest=? AND b.adapter_id=? AND b.connection_id=? "
+            "AND b.library_id=? AND b.external_item=? AND b.snapshot_id=? "
+            "ORDER BY b.file_index",
+            (
+                binding_set_digest,
+                adapter,
+                connection,
+                library,
+                external_item,
+                snapshot.id.value,
+            ),
         ).fetchall()
         return tuple(
             InventoryFileBinding(
@@ -920,22 +952,10 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             )
         elif tuple(map(str, indexed)) != locator_values[5:]:
             raise ValueError("inventory snapshot locator collision")
+        binding_digests: list[tuple[int, str]] = []
         for binding in snapshot.file_bindings:
-            binding_value = {
-                "file_identity": binding.file_identity,
-                "file_index": binding.file_index,
-                "media_kind": binding.media_kind,
-                "mount": binding.reference.mount,
-                "mount_configuration_digest": binding.mount_configuration_digest,
-                "relative_path": binding.reference.relative_path,
-                "schema": "inventory-file-binding-v1",
-                "snapshot": persisted_id.value,
-                "snapshot_fingerprint": snapshot.fingerprint.digest,
-                "target": list(identity),
-            }
-            binding_digest = hashlib.sha256(
-                canonical_json(binding_value).encode("utf-8")
-            ).hexdigest()
+            binding_digest = self._binding_digest(snapshot, persisted_id, binding)
+            binding_digests.append((binding.file_index, binding_digest))
             existing = self._connection.execute(
                 "SELECT file_identity,media_kind,mount_name,relative_path,binding_digest,"
                 "target_reference,snapshot_reference "
@@ -982,7 +1002,114 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                     binding_digest,
                 ),
             )
+        self._persist_binding_set(snapshot, persisted_id, tuple(binding_digests))
         return persisted_id
+
+    @staticmethod
+    def _binding_digest(
+        snapshot: InventorySnapshotV2,
+        persisted_id: SnapshotId,
+        binding: InventoryFileBinding,
+    ) -> str:
+        target = snapshot.observation.target
+        value = {
+            "file_identity": binding.file_identity,
+            "file_index": binding.file_index,
+            "media_kind": binding.media_kind,
+            "mount": binding.reference.mount,
+            "mount_configuration_digest": binding.mount_configuration_digest,
+            "relative_path": binding.reference.relative_path,
+            "schema": "inventory-file-binding-v1",
+            "snapshot": persisted_id.value,
+            "snapshot_fingerprint": snapshot.fingerprint.digest,
+            "target": [
+                target.adapter.value,
+                target.connection.value,
+                target.library.value,
+                target.external_item.value,
+            ],
+        }
+        return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+    def _persist_binding_set(
+        self,
+        snapshot: InventorySnapshotV2,
+        persisted_id: SnapshotId,
+        members: tuple[tuple[int, str], ...],
+    ) -> str:
+        target = snapshot.observation.target
+        identity = (
+            target.adapter.value,
+            target.connection.value,
+            target.library.value,
+            target.external_item.value,
+        )
+        value = {
+            "bindings": [digest for _, digest in members],
+            "schema": "inventory-snapshot-binding-set-v1",
+            "snapshot": persisted_id.value,
+            "target": list(identity),
+        }
+        set_digest = hashlib.sha256(
+            canonical_json(value).encode("utf-8")
+        ).hexdigest()
+        existing = self._connection.execute(
+            "SELECT adapter_id,connection_id,library_id,external_item,snapshot_id,"
+            "binding_count FROM inventory_snapshot_binding_sets WHERE binding_set_digest=?",
+            (set_digest,),
+        ).fetchone()
+        expected = (*identity, persisted_id.value, len(members))
+        if existing is None:
+            self._connection.execute(
+                "INSERT INTO inventory_snapshot_binding_sets(binding_set_digest,adapter_id,"
+                "connection_id,library_id,external_item,snapshot_id,binding_count) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (set_digest, *expected),
+            )
+            for file_index, binding_digest in members:
+                self._connection.execute(
+                    "INSERT INTO inventory_snapshot_binding_set_members(binding_set_digest,"
+                    "binding_digest,file_index) VALUES (?,?,?)",
+                    (set_digest, binding_digest, file_index),
+                )
+        elif tuple(existing) != expected:
+            raise ValueError("inventory binding set identity collision")
+        else:
+            observed_members = self._connection.execute(
+                "SELECT file_index,binding_digest FROM inventory_snapshot_binding_set_members "
+                "WHERE binding_set_digest=? ORDER BY file_index",
+                (set_digest,),
+            ).fetchall()
+            if tuple((int(row[0]), str(row[1])) for row in observed_members) != members:
+                raise ValueError("inventory binding set membership is inconsistent")
+        return set_digest
+
+    def _set_current_binding_set(
+        self, snapshot: InventorySnapshotV2, persisted_id: SnapshotId
+    ) -> None:
+        members = tuple(
+            (
+                binding.file_index,
+                self._binding_digest(snapshot, persisted_id, binding),
+            )
+            for binding in snapshot.file_bindings
+        )
+        set_digest = self._persist_binding_set(snapshot, persisted_id, members)
+        target = snapshot.observation.target
+        self._connection.execute(
+            "INSERT INTO current_inventory_snapshot_binding_sets(adapter_id,connection_id,"
+            "library_id,external_item,snapshot_id,binding_set_digest) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(adapter_id,connection_id,library_id,external_item) DO UPDATE SET "
+            "snapshot_id=excluded.snapshot_id,binding_set_digest=excluded.binding_set_digest",
+            (
+                target.adapter.value,
+                target.connection.value,
+                target.library.value,
+                target.external_item.value,
+                persisted_id.value,
+                set_digest,
+            ),
+        )
 
     def _inspection_for(
         self,
@@ -1187,6 +1314,17 @@ def _current_digest(snapshots: tuple[InventorySnapshotV2, ...]) -> str:
         {
             "external_item": item.observation.target.external_item.value,
             "fingerprint": item.fingerprint.digest,
+            "file_bindings": [
+                {
+                    "file_identity": binding.file_identity,
+                    "file_index": binding.file_index,
+                    "media_kind": binding.media_kind,
+                    "mount": binding.reference.mount,
+                    "mount_configuration_digest": binding.mount_configuration_digest,
+                    "relative_path": binding.reference.relative_path,
+                }
+                for binding in item.file_bindings
+            ],
         }
         for item in sorted(
             snapshots, key=lambda item: item.observation.target.external_item.value

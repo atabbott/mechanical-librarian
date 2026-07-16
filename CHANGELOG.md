@@ -9,7 +9,8 @@ versioning after the first public release.
 
 - Added `epub-opening-evidence`, the durable F07b round trip from a path-free
   inventory selector to restart-reusable immutable opening evidence. Inventory
-  now atomically persists validated private logical EPUB bindings; schema 8
+  now atomically persists validated private logical EPUB binding-set revisions,
+  including explicit absence, while retaining immutable binding history; schema 8
   adds retry-bounded fenced work, attempts, immutable canonical evidence,
   monotonic current applicability, checkpoints, and append-only events. Source
   or governing changes create new evidence, reverse replay cannot move current

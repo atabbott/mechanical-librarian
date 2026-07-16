@@ -31,7 +31,8 @@ A successful result reports `mode=executed` or `mode=reused`, an immutable
 claim/citation/selected/rejected/warning counts, and the aggregate parser mode.
 It never prints the persisted report, excerpts, citations, source fingerprint,
 member names, or media locator. An identical invocation after restart reuses
-the same evidence identity. A changed source generation, extractor contract,
+the same evidence identity. A changed source generation, extractor, parser,
+recovery-policy, projection, selection, normalization, vocabulary, schema,
 limit, or material mount configuration creates new work and evidence. Replaying
 an older source generation reuses its immutable history with `current=false`
 and does not roll back the current pointer.
@@ -86,6 +87,7 @@ verifies selector emission, executes the whole cohort, restarts for identity
 reuse, changes one shadow source for isolated invalidation, proves reverse
 replay, injects one unavailable-source failure, then proves an unrelated book
 still reuses its unchanged current evidence. It emits only aggregate
-JSON and deletes the selector map and SQLite/WAL state. Private cohort paths,
+outcome and parser-mode counts plus durability/failure-isolation totals, and
+deletes the selector map and SQLite/WAL state. Private cohort paths,
 filenames, hashes, titles, reports, excerpts, and per-book outcomes must never
 enter repository artifacts, CI logs, issues, or pull requests.

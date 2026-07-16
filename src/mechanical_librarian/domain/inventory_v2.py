@@ -536,6 +536,17 @@ class InventoryPass:
         value = [
             {
                 "fingerprint": snapshot.fingerprint.digest,
+                "file_bindings": [
+                    {
+                        "file_identity": binding.file_identity,
+                        "file_index": binding.file_index,
+                        "media_kind": binding.media_kind,
+                        "mount": binding.reference.mount,
+                        "mount_configuration_digest": binding.mount_configuration_digest,
+                        "relative_path": binding.reference.relative_path,
+                    }
+                    for binding in snapshot.file_bindings
+                ],
                 "target": {
                     "adapter": snapshot.observation.target.adapter.value,
                     "connection": snapshot.observation.target.connection.value,

@@ -228,10 +228,21 @@ class RunEpubOpeningEvidence:
             )
         source = resolution.source
         try:
-            if fingerprint(source) != work.source_fingerprint:
+            source_fingerprint = fingerprint(source)
+            if source_fingerprint != work.source_fingerprint:
                 return self._repository.fail(
                     claim,
                     EpubEvidenceFailure.SOURCE_CHANGED,
+                    now(),
+                    retryable=False,
+                    failure_clock=now,
+                )
+            if epub_work_key(
+                source, source_fingerprint, governing_digest
+            ) != work.work_key:
+                return self._repository.fail(
+                    claim,
+                    EpubEvidenceFailure.CORRUPT_STATE,
                     now(),
                     retryable=False,
                     failure_clock=now,
@@ -245,7 +256,7 @@ class RunEpubOpeningEvidence:
                     retryable=False,
                     failure_clock=now,
                 )
-            if fingerprint(source) != work.source_fingerprint or not revalidate(
+            if fingerprint(source) != source_fingerprint or not revalidate(
                 source, work.source_fingerprint
             ):
                 return self._repository.fail(

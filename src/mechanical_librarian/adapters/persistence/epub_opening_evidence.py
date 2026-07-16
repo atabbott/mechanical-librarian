@@ -498,6 +498,10 @@ class SQLiteEpubOpeningEvidenceRepository:
                     governing_digest,
                 ):
                     return None
+                if epub_work_key(
+                    source, source_fingerprint, governing_digest
+                ) != claim.work_key:
+                    raise ValueError("EPUB work identity is inconsistent")
                 if self._resolve(source.locator, source.mount_configuration_digest).source != source:
                     return None
                 if not source_is_current():
@@ -784,21 +788,68 @@ class SQLiteEpubOpeningEvidenceRepository:
         self, work_key: str, locator: EpubEvidenceLocator
     ) -> EpubEvidenceResult | None:
         row = self._connection.execute(
-            "SELECT e.evidence_id,e.report_json,CASE WHEN c.evidence_id=e.evidence_id "
-            "THEN 1 ELSE 0 END FROM epub_opening_evidence e LEFT JOIN "
+            "SELECT e.evidence_id,e.evidence_digest,e.binding_digest,"
+            "e.source_fingerprint,e.governing_digest,e.outcome,e.report_json,"
+            "e.report_digest,e.claim_count,e.citation_count,e.selected_count,"
+            "e.rejected_count,e.warning_count,e.package_mode,e.parser_mode,"
+            "CASE WHEN c.evidence_id=e.evidence_id THEN 1 ELSE 0 END FROM "
+            "epub_evidence_jobs j JOIN epub_opening_evidence e ON "
+            "e.evidence_id=j.evidence_id LEFT JOIN "
             "current_epub_opening_evidence c ON c.target_reference=e.target_reference "
-            "AND c.file_index=e.file_index WHERE e.work_key=? AND e.target_reference=? "
-            "AND e.file_index=?",
+            "AND c.file_index=e.file_index WHERE j.work_key=? AND j.state='succeeded' "
+            "AND e.work_key=j.work_key AND e.target_reference=? AND e.file_index=?",
             (work_key, locator.target_reference, locator.file_index),
         ).fetchone()
         if row is None:
             return None
-        report = EpubOpeningReport.from_json(str(row[1]))
+        report = EpubOpeningReport.from_json(str(row[6]))
+        evidence_id, evidence_digest, report_digest, parser_mode = (
+            epub_evidence_identity(
+                work_key=work_key,
+                binding_digest=str(row[2]),
+                source_fingerprint=str(row[3]),
+                governing_digest=str(row[4]),
+                report=report,
+            )
+        )
+        selected_count = sum(
+            value.disposition.value == "selected" for value in report.resources
+        )
+        expected = (
+            evidence_id,
+            evidence_digest,
+            report.outcome.value,
+            report.to_json(),
+            report_digest,
+            len(report.claims),
+            len(report.claims),
+            selected_count,
+            len(report.resources) - selected_count,
+            len(report.warnings),
+            "validated",
+            parser_mode,
+        )
+        observed = (
+            str(row[0]),
+            str(row[1]),
+            str(row[5]),
+            str(row[6]),
+            str(row[7]),
+            int(row[8]),
+            int(row[9]),
+            int(row[10]),
+            int(row[11]),
+            int(row[12]),
+            str(row[13]),
+            str(row[14]),
+        )
+        if observed != expected:
+            raise ValueError("EPUB reusable evidence identity is inconsistent")
         return result_from_report(
             EpubEvidenceMode.REUSED,
-            str(row[0]),
+            evidence_id,
             report,
-            current_applicable=bool(row[2]),
+            current_applicable=bool(row[15]),
         )
 
     def _event(

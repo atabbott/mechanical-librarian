@@ -7,7 +7,9 @@ approved private cohort through `epub-opening-evidence`. A second process pass
 must reuse every durable identity. One shadow source is changed to prove
 isolated invalidation, restored to prove reverse replay cannot move current
 state backwards, and made unavailable to prove per-book failure isolation.
-Only aggregate counts leave the temporary directory.
+The qualifier parses the complete redacted CLI envelope and can require named
+aggregate outcome and strict/recovered parser-mode partitions. Only aggregate
+counts leave the temporary directory.
 
 ## Goals
 

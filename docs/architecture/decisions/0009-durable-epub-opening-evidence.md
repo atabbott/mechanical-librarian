@@ -19,7 +19,11 @@ history, or allowing a stale worker to publish.
    an application-private `InventoryFileBinding` to an immutable snapshot. The
    binding contains a canonical file index, opaque file identity, media kind,
    material mount-configuration digest, and logical mount-relative reference.
-   It is never part of CLI output, ordinary logs, or audit summaries.
+   Each completed reconciliation also publishes an immutable binding-set
+   revision, including explicit absence, and moves a separate current pointer.
+   Historical bindings remain immutable but cannot leak back into selectors or
+   later reconciliation. Bindings are never part of CLI output, ordinary logs,
+   or audit summaries.
 2. Inventory inspection emits only versioned opaque target and snapshot
    references, file index, and media kind. Existing snapshots without bindings
    emit no selector and are not reconstructed from caller input or the network.
@@ -29,9 +33,9 @@ history, or allowing a stale worker to publish.
 3. Durable work is accepted only after the selector resolves to exactly one
    current binding and a bounded no-follow source preflight establishes a
    private source generation. The compatibility identity binds the snapshot,
-   binding, source generation, F07a contracts, limits, and material
-   configuration. Strict or recovered parser mode is a result, not a prework
-   key.
+   binding, source generation, F07a extractor/parser/recovery/projection/
+   normalization/vocabulary/selection/schema contracts, limits, and material
+   configuration. Strict or recovered parser mode is a result, not a prework key.
 4. Work and attempts are persisted before child extraction. Claims are
    retry-bounded, lease-owned, fenced, cancellable, and recover expired workers.
    Operational resource, timeout, cancellation, and infrastructure failures

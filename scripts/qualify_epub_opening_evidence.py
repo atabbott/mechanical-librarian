@@ -24,6 +24,10 @@ _SUCCESS = re.compile(
     r"^mode=(executed|reused) evidence=(evidence_[0-9a-f]{32}) "
     r"current=(true|false) outcome=([a-z0-9_]+)$"
 )
+_DETAILS = re.compile(
+    r"^claims=([0-9]+) citations=([0-9]+) selected=([0-9]+) "
+    r"rejected=([0-9]+) warnings=([0-9]+) parser=(none|strict|recovered|mixed)$"
+)
 _FAILURE = re.compile(r"^failure=([a-z0-9_]+)$")
 _LIBRARY_ID = "00000000-0000-4000-8000-000000000009"
 
@@ -99,13 +103,18 @@ def _evidence(
     if completed.returncode == 0:
         matches = [_SUCCESS.fullmatch(line) for line in lines]
         match = next((value for value in matches if value is not None), None)
-        if match is None:
+        details = next(
+            (value for line in lines if (value := _DETAILS.fullmatch(line)) is not None),
+            None,
+        )
+        if match is None or details is None:
             raise QualificationError("installed evidence success envelope is malformed")
         return True, {
             "mode": match.group(1),
             "evidence": match.group(2),
             "current": match.group(3),
             "outcome": match.group(4),
+            "parser": details.group(6),
         }
     match = next(
         (value for line in lines if (value := _FAILURE.fullmatch(line)) is not None),
@@ -126,6 +135,8 @@ def main() -> int:
     parser.add_argument("--head-tree", default="unbound")
     parser.add_argument("--artifact-sha256", default="unbound")
     parser.add_argument("--environment", default="unbound")
+    parser.add_argument("--expected-outcome", action="append", default=[])
+    parser.add_argument("--expected-parser-mode", action="append", default=[])
     arguments = parser.parse_args()
     if not arguments.executable.is_file() or not arguments.python.is_file():
         return 2
@@ -216,6 +227,7 @@ def main() -> int:
         initial: dict[tuple[str, str, int], dict[str, str]] = {}
         failures = Counter()
         outcomes = Counter()
+        parser_modes = Counter()
         for selector in selector_map:
             key = (
                 str(selector["target"]),
@@ -230,10 +242,15 @@ def main() -> int:
                     raise QualificationError("first evidence execution was not current")
                 initial[key] = value
                 outcomes[value["outcome"]] += 1
+                parser_modes[value["parser"]] += 1
             else:
                 failures[value["failure"]] += 1
         if not initial:
             raise QualificationError("cohort produced no durable evidence")
+        if not set(arguments.expected_outcome) <= set(outcomes):
+            raise QualificationError("required installed evidence outcomes are absent")
+        if not set(arguments.expected_parser_mode) <= set(parser_modes):
+            raise QualificationError("required installed parser modes are absent")
 
         reused = 0
         for selector in selector_map:
@@ -348,6 +365,7 @@ def main() -> int:
                         "failure_isolation": failure_isolated,
                         "operational_failures": dict(sorted(failures.items())),
                         "outcomes": dict(sorted(outcomes.items())),
+                        "parser_modes": dict(sorted(parser_modes.items())),
                         "restart_reused": reused,
                         "selectors": len(observed),
                         "source_invalidations": 1,

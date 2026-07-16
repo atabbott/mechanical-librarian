@@ -477,6 +477,29 @@ _INVENTORY_SNAPSHOT_FILE_BINDINGS_TABLE_SQL = (
     "UNIQUE (target_reference,snapshot_reference,file_index,mount_configuration_digest), "
     "FOREIGN KEY (adapter_id,connection_id,library_id,external_item,snapshot_id) REFERENCES inventory_v2_snapshots(adapter_id,connection_id,library_id,external_item,snapshot_id))"
 )
+_INVENTORY_SNAPSHOT_BINDING_SETS_TABLE_SQL = (
+    "CREATE TABLE inventory_snapshot_binding_sets ("
+    "binding_set_digest TEXT PRIMARY KEY CHECK (length(binding_set_digest)=64 AND binding_set_digest NOT GLOB '*[^0-9a-f]*'), "
+    "adapter_id TEXT NOT NULL,connection_id TEXT NOT NULL,library_id TEXT NOT NULL,"
+    "external_item TEXT NOT NULL,snapshot_id TEXT NOT NULL,"
+    "binding_count INTEGER NOT NULL CHECK (binding_count BETWEEN 0 AND 10001),"
+    "FOREIGN KEY (adapter_id,connection_id,library_id,external_item,snapshot_id) "
+    "REFERENCES inventory_v2_snapshots(adapter_id,connection_id,library_id,external_item,snapshot_id))"
+)
+_INVENTORY_SNAPSHOT_BINDING_SET_MEMBERS_TABLE_SQL = (
+    "CREATE TABLE inventory_snapshot_binding_set_members ("
+    "binding_set_digest TEXT NOT NULL REFERENCES inventory_snapshot_binding_sets(binding_set_digest),"
+    "binding_digest TEXT NOT NULL REFERENCES inventory_snapshot_file_bindings(binding_digest),"
+    "file_index INTEGER NOT NULL CHECK (file_index BETWEEN 0 AND 10000),"
+    "PRIMARY KEY (binding_set_digest,file_index),UNIQUE (binding_set_digest,binding_digest))"
+)
+_CURRENT_INVENTORY_SNAPSHOT_BINDING_SETS_TABLE_SQL = (
+    "CREATE TABLE current_inventory_snapshot_binding_sets ("
+    "adapter_id TEXT NOT NULL,connection_id TEXT NOT NULL,library_id TEXT NOT NULL,"
+    "external_item TEXT NOT NULL,snapshot_id TEXT NOT NULL,"
+    "binding_set_digest TEXT NOT NULL REFERENCES inventory_snapshot_binding_sets(binding_set_digest),"
+    "PRIMARY KEY (adapter_id,connection_id,library_id,external_item))"
+)
 _INVENTORY_SNAPSHOT_LOCATOR_INDEX_TABLE_SQL = (
     "CREATE TABLE inventory_snapshot_locator_index ("
     "adapter_id TEXT NOT NULL,connection_id TEXT NOT NULL,library_id TEXT NOT NULL,"
@@ -582,6 +605,18 @@ _INVENTORY_SNAPSHOT_LOCATOR_NO_DELETE_SQL = (
 )
 _INVENTORY_FILE_BINDINGS_NO_DELETE_SQL = (
     "CREATE TRIGGER inventory_snapshot_file_bindings_no_delete BEFORE DELETE ON inventory_snapshot_file_bindings BEGIN SELECT RAISE(ABORT, 'inventory file bindings are append-only'); END"
+)
+_INVENTORY_BINDING_SETS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_binding_sets_no_update BEFORE UPDATE ON inventory_snapshot_binding_sets BEGIN SELECT RAISE(ABORT, 'inventory binding sets are append-only'); END"
+)
+_INVENTORY_BINDING_SETS_NO_DELETE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_binding_sets_no_delete BEFORE DELETE ON inventory_snapshot_binding_sets BEGIN SELECT RAISE(ABORT, 'inventory binding sets are append-only'); END"
+)
+_INVENTORY_BINDING_SET_MEMBERS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_binding_set_members_no_update BEFORE UPDATE ON inventory_snapshot_binding_set_members BEGIN SELECT RAISE(ABORT, 'inventory binding set members are append-only'); END"
+)
+_INVENTORY_BINDING_SET_MEMBERS_NO_DELETE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_binding_set_members_no_delete BEFORE DELETE ON inventory_snapshot_binding_set_members BEGIN SELECT RAISE(ABORT, 'inventory binding set members are append-only'); END"
 )
 _EPUB_OPENING_EVIDENCE_NO_UPDATE_SQL = (
     "CREATE TRIGGER epub_opening_evidence_no_update BEFORE UPDATE ON epub_opening_evidence BEGIN SELECT RAISE(ABORT, 'epub evidence is append-only'); END"
@@ -735,6 +770,9 @@ MIGRATIONS = (
         (
             _INVENTORY_SNAPSHOT_LOCATOR_INDEX_TABLE_SQL,
             _INVENTORY_SNAPSHOT_FILE_BINDINGS_TABLE_SQL,
+            _INVENTORY_SNAPSHOT_BINDING_SETS_TABLE_SQL,
+            _INVENTORY_SNAPSHOT_BINDING_SET_MEMBERS_TABLE_SQL,
+            _CURRENT_INVENTORY_SNAPSHOT_BINDING_SETS_TABLE_SQL,
             _EPUB_EVIDENCE_JOBS_TABLE_SQL,
             _EPUB_EVIDENCE_ATTEMPTS_TABLE_SQL,
             _EPUB_OPENING_EVIDENCE_TABLE_SQL,
@@ -745,6 +783,10 @@ MIGRATIONS = (
             _INVENTORY_SNAPSHOT_LOCATOR_NO_DELETE_SQL,
             _INVENTORY_FILE_BINDINGS_NO_UPDATE_SQL,
             _INVENTORY_FILE_BINDINGS_NO_DELETE_SQL,
+            _INVENTORY_BINDING_SETS_NO_UPDATE_SQL,
+            _INVENTORY_BINDING_SETS_NO_DELETE_SQL,
+            _INVENTORY_BINDING_SET_MEMBERS_NO_UPDATE_SQL,
+            _INVENTORY_BINDING_SET_MEMBERS_NO_DELETE_SQL,
             _EPUB_OPENING_EVIDENCE_NO_UPDATE_SQL,
             _EPUB_OPENING_EVIDENCE_NO_DELETE_SQL,
             _EPUB_EVIDENCE_ATTEMPTS_NO_DELETE_SQL,
@@ -758,6 +800,9 @@ MIGRATIONS = (
         frozenset(
             {
                 "inventory_snapshot_file_bindings",
+                "inventory_snapshot_binding_sets",
+                "inventory_snapshot_binding_set_members",
+                "current_inventory_snapshot_binding_sets",
                 "inventory_snapshot_locator_index",
                 "epub_evidence_jobs",
                 "epub_evidence_attempts",

@@ -70,6 +70,7 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
         names = (
             "EPUB_OPENING_EXTRACTOR_VERSION",
             "EPUB_OPENING_PARSER_VERSION",
+            "EPUB_OPENING_RECOVERY_VERSION",
             "EPUB_OPENING_PROJECTION_VERSION",
             "EPUB_OPENING_NORMALIZER_VERSION",
             "EPUB_OPENING_VOCABULARY_VERSION",
