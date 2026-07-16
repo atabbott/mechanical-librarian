@@ -1117,7 +1117,10 @@ class SQLiteEpubOpeningEvidenceRepository:
                         and job_attempt == int(job[11])
                         and str(attempts[-1][6]) == "lease_expired"
                     )
-                    or terminal_failure == str(attempts[-1][6])
+                    or (
+                        terminal_failure != "retry_exhausted"
+                        and terminal_failure == str(attempts[-1][6])
+                    )
                 )
             )
             if exhaustion_event_required:

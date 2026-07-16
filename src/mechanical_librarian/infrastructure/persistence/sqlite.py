@@ -632,7 +632,8 @@ _EPUB_EVIDENCE_ATTEMPTS_FINALIZE_ONLY_SQL = (
     "WHEN NOT (OLD.finished_at IS NULL AND OLD.outcome IS NULL AND OLD.failure IS NULL "
     "AND NEW.work_id=OLD.work_id AND NEW.attempt=OLD.attempt AND NEW.fence=OLD.fence "
     "AND NEW.worker_id=OLD.worker_id AND NEW.started_at=OLD.started_at "
-    "AND NEW.finished_at IS NOT NULL AND ((NEW.outcome IS NOT NULL AND NEW.failure IS NULL) "
+    "AND NEW.finished_at IS NOT NULL AND NEW.failure IS NOT 'retry_exhausted' "
+    "AND ((NEW.outcome IS NOT NULL AND NEW.failure IS NULL) "
     "OR (NEW.outcome IS NULL AND NEW.failure IS NOT NULL))) "
     "BEGIN SELECT RAISE(ABORT, 'epub evidence attempts are immutable after finalization'); END"
 )
