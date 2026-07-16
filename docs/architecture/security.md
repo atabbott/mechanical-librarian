@@ -442,6 +442,16 @@ of scope for unattended operation and must never be hidden configuration.
 
 ## Security testing requirements
 
+F07b treats the service path projection, private logical binding, EPUB archive,
+and persisted canonical report as hostile inputs. Callers can supply only
+strict opaque references and a bounded file index. Resolution requires one
+current binding under the material configuration digest; media access uses
+no-follow descriptor traversal, and publication revalidates the current
+binding, source generation, lease owner, attempt, fence, and cancellation in
+one transaction. The extractor retains ADR-0007/0008 process isolation. No
+credential, network, service-write, media-write, renderer, script, or browser
+authority is added.
+
 - Secret-redaction golden tests.
 - Prompt-injection and hostile-metadata tests.
 - SSRF and redirect tests.

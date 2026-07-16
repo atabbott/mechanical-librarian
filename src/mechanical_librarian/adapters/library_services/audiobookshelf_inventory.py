@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import posixpath
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -14,6 +15,7 @@ import httpx
 
 from mechanical_librarian.application.inventory_reconciliation import (
     InventoryConnectionVerification,
+    InventoryMountMapping,
     InventorySource,
 )
 from mechanical_librarian.application.ports import (
@@ -36,6 +38,7 @@ from mechanical_librarian.domain.identifiers import (
     is_canonical_uuid4,
 )
 from mechanical_librarian.domain.inventory import (
+    FileReference,
     ItemLifecycle,
     LibraryConnection,
     MediaType,
@@ -44,6 +47,7 @@ from mechanical_librarian.domain.inventory_v2 import (
     FieldObservation,
     InventoryObservation,
     InventoryPass,
+    InventoryFileBinding,
     InventorySnapshotV2,
     ObservationField,
     ObservationState,
@@ -76,9 +80,16 @@ class AudiobookshelfInventoryReader(InventorySource):
             InventoryConnectionVerification,
         ]
         | None = None,
+        mount_mappings: tuple[InventoryMountMapping, ...] = (),
     ) -> None:
+        if (
+            type(mount_mappings) is not tuple
+            or any(type(value) is not InventoryMountMapping for value in mount_mappings)
+        ):
+            raise ValueError("inventory mount mappings are malformed")
         self._client_factory = client_factory
         self._connection_verifier = connection_verifier
+        self._mount_mappings = mount_mappings
 
     def verify_connection(
         self,
@@ -260,6 +271,7 @@ class AudiobookshelfInventoryReader(InventorySource):
                         connection,
                         library,
                         context,
+                        self._mount_mappings,
                     )
                 except (ValueError, TypeError, RecursionError, OverflowError):
                     return failed(
@@ -460,6 +472,7 @@ def _normalize(
     connection: LibraryConnection,
     library: LibraryId,
     context: OperationContext,
+    mount_mappings: tuple[InventoryMountMapping, ...] = (),
 ) -> PortResult[tuple[InventorySnapshotV2, int | None]]:
     if not isinstance(detail, dict):
         return _failed(FailureKind.INVALID_RESPONSE, "inventory item detail invalid")
@@ -556,9 +569,88 @@ def _normalize(
     except ValueError:
         return _failed(
             FailureKind.INVALID_RESPONSE, "inventory item normalization invalid"
+    )
+    try:
+        binding = (
+            _epub_binding(ebook_file, mount_mappings)
+            if media_type is MediaType.EBOOK
+            else None
+        )
+    except ValueError:
+        return _failed(
+            FailureKind.INVALID_RESPONSE, "inventory ebook source reference invalid"
         )
     return PortResult.success(
-        (InventorySnapshotV2.create(observation), int(summary["updatedAt"]))
+        (
+            InventorySnapshotV2.create(
+                observation,
+                file_bindings=() if binding is None else (binding,),
+            ),
+            int(summary["updatedAt"]),
+        )
+    )
+
+
+def _epub_binding(
+    ebook_file: object,
+    mount_mappings: tuple[InventoryMountMapping, ...],
+) -> InventoryFileBinding | None:
+    """Project the frozen ABS path contract into one private logical reference."""
+
+    if not isinstance(ebook_file, dict) or ebook_file.get("ebookFormat") != "epub":
+        return None
+    inode = ebook_file.get("ino")
+    if (
+        type(inode) not in {str, int}
+        or not str(inode).strip()
+        or len(str(inode)) > 512
+    ):
+        raise ValueError("ebook file identity is malformed")
+    file_identity = _file_identity(ebook_file)
+    if not mount_mappings:
+        return None
+    metadata = ebook_file.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    provider_path = metadata.get("path")
+    provider_relative = metadata.get("relPath")
+    if (
+        type(provider_path) is not str
+        or not provider_path.startswith("/")
+        or "\x00" in provider_path
+        or posixpath.normpath(provider_path) != provider_path
+        or type(provider_relative) is not str
+        or not provider_relative
+        or provider_relative.startswith("/")
+        or "\x00" in provider_relative
+        or posixpath.normpath(provider_relative) != provider_relative
+        or any(part in {"", ".", ".."} for part in provider_relative.split("/"))
+    ):
+        return None
+    matches = tuple(
+        mapping
+        for mapping in mount_mappings
+        if provider_path.startswith(
+            "/" if mapping.service_path == "/" else mapping.service_path + "/"
+        )
+    )
+    if len(matches) != 1:
+        return None
+    mapping = matches[0]
+    prefix = "/" if mapping.service_path == "/" else mapping.service_path + "/"
+    derived = provider_path.removeprefix(prefix)
+    if derived != provider_relative:
+        return None
+    try:
+        reference = FileReference(mapping.name, provider_relative)
+    except ValueError:
+        return None
+    return InventoryFileBinding(
+        0,
+        file_identity,
+        "epub",
+        mapping.configuration_digest,
+        reference,
     )
 
 

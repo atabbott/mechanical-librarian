@@ -2,7 +2,7 @@
   "adapter_contract": "abs-inventory-v1",
   "capture": "digest-pinned disposable 2.35.1 mixed synthetic book library",
   "expanded_item_route": "GET /api/items/{id}?expanded=1",
-  "fixture_revision": "abs-2.35.1-inventory-fixture-v1",
+  "fixture_revision": "abs-2.35.1-inventory-fixture-v2",
   "incremental_scan": "unavailable",
   "inventory_route": "GET /api/libraries/{id}/items",
   "library_route": "GET /api/libraries",
@@ -20,7 +20,8 @@
   "redaction": "generated UUIDs and synthetic text; paths replaced before fixture commit",
   "decision_matrix": {
     "audio_exclusion": "audioFiles entries with exclude=true are omitted from classification and file evidence; missing/false are included; null and other types are malformed",
-    "file_projection": "ino/index/format/duration/codec/bitRate/mimeType/ebookFormat plus metadata filename/ext/path/relPath/size/mtimeMs/ctimeMs/birthtimeMs; private names and paths appear only through SHA-256 identity",
+    "file_projection": "ino/index/format/duration/codec/bitRate/mimeType/ebookFormat plus metadata filename/ext/path/relPath/size/mtimeMs/ctimeMs/birthtimeMs; private names and paths appear in inventory only through SHA-256 identity, while a valid EPUB path pair may additionally become an application-private logical mount binding for F07b",
+    "epub_binding": "ebookFormat must be epub; metadata.path is the full absolute POSIX service path; metadata.relPath is normalized and must exactly equal the suffix beneath one configured read-only ebook service_path; missing, malformed, mismatched, or ambiguous projections create no binding",
     "identifiers": "Book serializer isbn and asin are independent; valid bounded values survive null/empty/malformed siblings and invalid sibling values are omitted with a bounded warning",
     "omissions": "non-Book identifier namespaces and non-allowlisted file properties are not established by the frozen serializers and cannot change F05a decisions"
   },

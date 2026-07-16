@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -45,6 +46,11 @@ from mechanical_librarian.application.epub_opening import (
     internal_opening_failure_report,
     render_epub_opening_text,
 )
+from mechanical_librarian.domain.epub_opening_evidence import (
+    EpubEvidenceFailure,
+    EpubEvidenceMode,
+    EpubEvidenceResult,
+)
 from mechanical_librarian.application.title_proposals import (
     SCENARIOS,
     SyntheticTitleProposalReport,
@@ -74,6 +80,7 @@ InventoryPollInspectionRunner = Callable[[Path, str], InventoryPollResult]
 SyntheticTitleProposalRunner = Callable[[Path, str], SyntheticTitleProposalReport]
 HardcoverTitleProposalRunner = Callable[[Path, Path | None], SyntheticTitleProposalReport]
 SyntheticTitleReviewCaseRunner = Callable[[Path, str], SyntheticTitleReviewCaseReport]
+EpubOpeningEvidenceRunner = Callable[[Path, Path, str, str, int], EpubEvidenceResult]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -126,6 +133,7 @@ _EPUB_PACKAGE_EXIT = {
     LocalEvidenceOutcome.CHILD_FAILURE: 70,
     LocalEvidenceOutcome.INTERNAL_FAILURE: 70,
 }
+_EPUB_EVIDENCE_FAILURE = "EPUB opening evidence failed safely.\n"
 
 
 class _EpubArgumentError(ValueError):
@@ -162,6 +170,33 @@ def _epub_opening_parser() -> argparse.ArgumentParser:
     parser.add_argument("--file", required=True, metavar="RELATIVE")
     parser.add_argument("--format", choices=("json", "text"), default="json")
     return parser
+
+
+def _epub_opening_evidence_parser() -> argparse.ArgumentParser:
+    parser = _EpubArgumentParser(
+        prog="mechanical-librarian epub-opening-evidence"
+    )
+    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
+    parser.add_argument("--config", required=True, metavar="PATH", type=Path)
+    parser.add_argument("--target", metavar="OPAQUE", type=_opaque_target)
+    parser.add_argument(
+        "--snapshot", metavar="OPAQUE", type=_opaque_snapshot
+    )
+    parser.add_argument("--file-index", metavar="INDEX", type=int)
+    parser.add_argument("--resume", action="store_true")
+    return parser
+
+
+def _opaque_target(value: str) -> str:
+    if re.fullmatch(r"target_[0-9a-f]{32}", value) is None:
+        raise argparse.ArgumentTypeError("invalid opaque target")
+    return value
+
+
+def _opaque_snapshot(value: str) -> str:
+    if re.fullmatch(r"snapshot_[0-9a-f]{32}", value) is None:
+        raise argparse.ArgumentTypeError("invalid opaque snapshot")
+    return value
 
 
 def _title_proposal_parser() -> argparse.ArgumentParser:
@@ -308,6 +343,23 @@ def _parser() -> argparse.ArgumentParser:
     inventory_inspect.add_argument(
         "--database", required=True, metavar="PATH", type=_database_path
     )
+    epub_evidence = commands.add_parser(
+        "epub-opening-evidence",
+        help="execute or reuse durable EPUB opening evidence from an opaque selector",
+    )
+    epub_evidence.add_argument(
+        "--database", required=True, metavar="PATH", type=_database_path
+    )
+    epub_evidence.add_argument("--config", required=True, metavar="PATH", type=Path)
+    epub_evidence.add_argument(
+        "--target", required=True, metavar="OPAQUE", type=_opaque_target
+    )
+    epub_evidence.add_argument(
+        "--snapshot", required=True, metavar="OPAQUE", type=_opaque_snapshot
+    )
+    epub_evidence.add_argument(
+        "--file-index", required=True, metavar="INDEX", type=int
+    )
     poll = commands.add_parser(
         "audiobookshelf-poll",
         help="run or resume one durable bounded Audiobookshelf poll trigger",
@@ -398,6 +450,7 @@ def main(
     inventory_poll_inspection_runner: InventoryPollInspectionRunner | None = None,
     epub_package_report_runner: EpubPackageReportRunner | None = None,
     epub_opening_report_runner: EpubOpeningReportRunner | None = None,
+    epub_opening_evidence_runner: EpubOpeningEvidenceRunner | None = None,
     synthetic_title_proposal_runner: SyntheticTitleProposalRunner | None = None,
     hardcover_title_proposal_runner: HardcoverTitleProposalRunner | None = None,
     synthetic_title_review_case_runner: SyntheticTitleReviewCaseRunner | None = None,
@@ -409,6 +462,63 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    if raw_arguments[:1] == ["epub-opening-evidence"]:
+        try:
+            arguments = _epub_opening_evidence_parser().parse_args(raw_arguments[1:])
+            supplied = (
+                arguments.target is not None,
+                arguments.snapshot is not None,
+                arguments.file_index is not None,
+            )
+            if arguments.resume == any(supplied) or (not arguments.resume and not all(supplied)):
+                raise _EpubArgumentError("choose either resume or one complete selector")
+            if not arguments.resume and not 0 <= arguments.file_index <= 10_000:
+                raise _EpubArgumentError("file index is outside the supported range")
+        except (_EpubArgumentError, ValueError):
+            errors.write(_EPUB_EVIDENCE_FAILURE)
+            errors.write(f"failure={EpubEvidenceFailure.INVALID_INVOCATION.value}\n")
+            return 2
+        try:
+            result = (
+                EpubEvidenceResult(
+                    EpubEvidenceMode.FAILED,
+                    failure=EpubEvidenceFailure.INTERNAL_FAILURE,
+                )
+                if epub_opening_evidence_runner is None
+                else epub_opening_evidence_runner(
+                    arguments.config,
+                    arguments.database,
+                    "" if arguments.resume else arguments.target,
+                    "" if arguments.resume else arguments.snapshot,
+                    -1 if arguments.resume else arguments.file_index,
+                )
+            )
+        except (KeyboardInterrupt, Exception):
+            result = EpubEvidenceResult(
+                EpubEvidenceMode.FAILED,
+                failure=EpubEvidenceFailure.INTERNAL_FAILURE,
+            )
+        if type(result) is not EpubEvidenceResult or not result.succeeded:
+            failure = (
+                EpubEvidenceFailure.INTERNAL_FAILURE
+                if type(result) is not EpubEvidenceResult or result.failure is None
+                else result.failure
+            )
+            errors.write(_EPUB_EVIDENCE_FAILURE)
+            errors.write(f"failure={failure.value}\n")
+            return 1
+        output.write("EPUB opening evidence passed.\n")
+        output.write(
+            f"mode={result.mode.value} evidence={result.evidence_id} "
+            f"current={'true' if result.current_applicable else 'false'} "
+            f"outcome={result.outcome.value}\n"
+        )
+        output.write(
+            f"claims={result.claim_count} citations={result.citation_count} "
+            f"selected={result.selected_count} rejected={result.rejected_count} "
+            f"warnings={result.warning_count} parser={result.parser_mode}\n"
+        )
+        return 0
     if raw_arguments[:1] == ["epub-opening-report"]:
         requested_format = "json"
         index = 1
@@ -695,6 +805,12 @@ def main(
                 f"moved={inspection.moved_count} pages={inspection.page_count} "
                 f"bytes={inspection.response_bytes}\n"
             )
+            for selector in inspection.selectors:
+                destination.write(
+                    f"target={selector.target_reference} "
+                    f"snapshot={selector.snapshot_reference} "
+                    f"file-index={selector.file_index} media={selector.media_kind}\n"
+                )
         return 0 if result.succeeded else 1
     if arguments.command == "connection-check":
         if connection_probe_runner is None:

@@ -7,6 +7,32 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added `epub-opening-evidence`, the durable F07b round trip from a path-free
+  inventory selector to restart-reusable immutable opening evidence. Inventory
+  now atomically persists validated private logical EPUB binding-set revisions,
+  including explicit absence, while retaining immutable binding history; schema 8
+  adds retry-bounded fenced work, attempts, immutable canonical evidence,
+  monotonic current applicability, checkpoints, and append-only events. Source
+  or governing changes create new evidence, reverse replay cannot move current
+  state backwards, stale workers cannot publish, and operational failures
+  remain job health. The installed-wheel qualifier uses a disposable shadow
+  cohort and emits aggregate-only results. Compatible persisted work can resume
+  without selector redelivery; typed selector failures, capacity-bound claims,
+  durable cancellation/exhaustion, attributable events, and final in-transaction
+  source revalidation keep recovery and publication fail-closed. Recovery now
+  resumes the original persisted work identity, terminalizes changed sources,
+  selects one oldest eligible job across all compatible mounts, preserves typed
+  terminal failures on replay, makes finalized attempt provenance immutable,
+  and rejects regressing transition or finalization clocks before they can
+  commit inconsistent durable history. Schema 8 retains locator identities for
+  unavailable snapshots, and a present source above the configured archive-byte
+  limit now fails as `resource_limit` before work is enqueued rather than being
+  reported as unavailable. Durable publication now also requires an internal,
+  descriptor-bound execution-source digest for every publishable report, even
+  when a negative public report omits source provenance. Missing or malformed
+  optional Audiobookshelf EPUB path projection now suppresses only that private
+  selector while preserving the valid inventory snapshot and scan.
+
 - Fixed Hardcover provider-secret validation so leading or trailing space, tab,
   carriage return, or line feed is rejected before client construction, DNS,
   or transport activity while preserving existing target-secret compatibility.

@@ -580,6 +580,15 @@ and attribute the replacement. Adapter implementation versions and upstream
 service versions are distinct typed values and must remain bound to the target
 adapter family.
 
+For Audiobookshelf 2.35.1, F07b additionally consumes the already captured
+expanded-item `ebookFile.metadata.path` and `relPath` values. A binding exists
+only when `ebookFormat` is exactly `epub`, the full path is normalized and
+absolute, the relative path is normalized, and exactly one configured
+read-only ebook service root yields that same suffix. Missing, null, malformed,
+mismatched, wrong-media, and ambiguous projections create no binding. The
+frozen source/version/digest and fixture revision are recorded in
+[`audiobookshelf-f05a-compatibility.json`](audiobookshelf-f05a-compatibility.json).
+
 ## Inventory and capability contracts
 
 Inventory records preserve stable target identity separately from immutable

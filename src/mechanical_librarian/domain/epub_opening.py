@@ -31,6 +31,7 @@ EPUB_OPENING_NORMALIZER_VERSION = "epub-opening-normalizer-v1"
 EPUB_OPENING_PARSER_VERSION = (
     f"cpython-{platform.python_version()}-expat-{expat.EXPAT_VERSION}-htmlparser-v1"
 )
+EPUB_OPENING_RECOVERY_VERSION = "epub-opening-recovery-v1"
 EPUB_OPENING_PROJECTION_VERSION = "epub-opening-text-projection-v1"
 EPUB_OPENING_SELECTION_VERSION = "epub-opening-selection-v1"
 EPUB_OPENING_VOCABULARY_VERSION = "epub-ssv-1.1-2026-05-28"
@@ -757,6 +758,7 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 __all__ = [
     "EPUB_OPENING_CITATION_SCHEMA", "EPUB_OPENING_EXTRACTOR_VERSION", "EPUB_OPENING_LIMIT_PROFILE",
     "EPUB_OPENING_NORMALIZER_VERSION", "EPUB_OPENING_PARSER_VERSION",
+    "EPUB_OPENING_RECOVERY_VERSION",
     "EPUB_OPENING_PROJECTION_VERSION", "EPUB_OPENING_REPORT_SCHEMA",
     "EPUB_OPENING_SELECTION_VERSION", "EPUB_OPENING_VOCABULARY_VERSION",
     "EpubOpeningLimits", "EpubOpeningReport", "EpubOpeningUsage", "OpeningCitation",

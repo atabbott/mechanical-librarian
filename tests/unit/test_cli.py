@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timezone
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from mechanical_librarian.application.job_heartbeat import (
@@ -41,6 +42,11 @@ from mechanical_librarian.domain.inventory_v2 import (
     ScanState,
     ScanUsage,
 )
+from mechanical_librarian.domain.epub_opening_evidence import (
+    EpubEvidenceFailure,
+    EpubEvidenceMode,
+    EpubEvidenceResult,
+)
 from mechanical_librarian.domain.local_evidence import (
     EpubPackageLimits,
     LocalEvidenceCapability,
@@ -49,6 +55,7 @@ from mechanical_librarian.domain.local_evidence import (
 )
 from mechanical_librarian.interfaces.cli import main
 from mechanical_librarian.bootstrap.composition import (
+    _epub_material_configuration,
     _run_hardcover_title_proposal_report,
     _run_synthetic_title_proposal_report,
     _run_synthetic_title_review_case_report,
@@ -58,6 +65,179 @@ from mechanical_librarian.infrastructure.persistence.sqlite import connect, migr
 
 
 class CliTests(unittest.TestCase):
+    def test_epub_parser_concurrency_is_not_material_evidence_configuration(self) -> None:
+        mapping = SimpleNamespace(configuration_digest="a" * 64)
+        first = SimpleNamespace(
+            limits=SimpleNamespace(
+                parser_concurrency=1,
+                parser_timeout_seconds=30,
+                temporary_bytes=1_000_000,
+            )
+        )
+        second = SimpleNamespace(
+            limits=SimpleNamespace(
+                parser_concurrency=8,
+                parser_timeout_seconds=30,
+                temporary_bytes=1_000_000,
+            )
+        )
+        self.assertEqual(
+            _epub_material_configuration(first, (mapping,)),
+            _epub_material_configuration(second, (mapping,)),
+        )
+
+    def test_epub_opening_evidence_resume_requires_no_selector_redelivery(self) -> None:
+        runner = Mock(
+            return_value=EpubEvidenceResult(
+                EpubEvidenceMode.REUSED,
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+                evidence_id="evidence_" + "b" * 32,
+                current_applicable=True,
+            )
+        )
+        self.assertEqual(
+            main(
+                [
+                    "epub-opening-evidence",
+                    "--database",
+                    "state.sqlite3",
+                    "--config",
+                    "configuration.json",
+                    "--resume",
+                ],
+                state_check_runner=Mock(),
+                epub_opening_evidence_runner=runner,
+                stdout=io.StringIO(),
+                stderr=io.StringIO(),
+            ),
+            0,
+        )
+        runner.assert_called_once_with(
+            Path("configuration.json"), Path("state.sqlite3"), "", "", -1
+        )
+        errors = io.StringIO()
+        self.assertEqual(
+            main(
+                [
+                    "epub-opening-evidence",
+                    "--database",
+                    "state.sqlite3",
+                    "--config",
+                    "configuration.json",
+                    "--resume",
+                    "--target",
+                    "target_" + "1" * 32,
+                ],
+                state_check_runner=Mock(),
+                epub_opening_evidence_runner=runner,
+                stdout=io.StringIO(),
+                stderr=errors,
+            ),
+            2,
+        )
+        self.assertIn("invalid_invocation", errors.getvalue())
+
+    def test_epub_opening_evidence_cli_is_opaque_bounded_and_path_free(self) -> None:
+        result = EpubEvidenceResult(
+            EpubEvidenceMode.REUSED,
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+            evidence_id="evidence_" + "a" * 32,
+            current_applicable=True,
+            rejected_count=1,
+        )
+        output = io.StringIO()
+        errors = io.StringIO()
+        runner = Mock(return_value=result)
+        invalid_runner = Mock(side_effect=RuntimeError("/private/book.epub secret"))
+        exit_code = main(
+            [
+                "epub-opening-evidence",
+                "--database",
+                "/private/state.sqlite3",
+                "--config",
+                "/private/config.json",
+                "--target",
+                "target_" + "1" * 32,
+                "--snapshot",
+                "snapshot_" + "2" * 32,
+                "--file-index",
+                "0",
+            ],
+            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+            epub_opening_evidence_runner=runner,
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(errors.getvalue(), "")
+        self.assertIn("mode=reused evidence=evidence_", output.getvalue())
+        self.assertIn("claims=0 citations=0 selected=0 rejected=1", output.getvalue())
+        self.assertNotIn("/private", output.getvalue())
+
+        output = io.StringIO()
+        errors = io.StringIO()
+        exit_code = main(
+            [
+                "epub-opening-evidence",
+                "--database",
+                "/private/state.sqlite3",
+                "--config",
+                "/private/config.json",
+                "--target",
+                "not-opaque",
+                "--snapshot",
+                "snapshot_" + "2" * 32,
+                "--file-index",
+                "0",
+            ],
+            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+            epub_opening_evidence_runner=invalid_runner,
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(
+            errors.getvalue(),
+            "EPUB opening evidence failed safely.\n"
+            f"failure={EpubEvidenceFailure.INVALID_INVOCATION.value}\n",
+        )
+        invalid_runner.assert_not_called()
+
+    def test_epub_opening_evidence_cli_reports_pre_enqueue_resource_limit(self) -> None:
+        output = io.StringIO()
+        errors = io.StringIO()
+        exit_code = main(
+            [
+                "epub-opening-evidence",
+                "--database",
+                "state.sqlite3",
+                "--config",
+                "configuration.json",
+                "--target",
+                "target_" + "1" * 32,
+                "--snapshot",
+                "snapshot_" + "2" * 32,
+                "--file-index",
+                "0",
+            ],
+            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+            epub_opening_evidence_runner=Mock(
+                return_value=EpubEvidenceResult(
+                    EpubEvidenceMode.FAILED,
+                    failure=EpubEvidenceFailure.RESOURCE_LIMIT,
+                )
+            ),
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(
+            errors.getvalue(),
+            "EPUB opening evidence failed safely.\nfailure=resource_limit\n",
+        )
+
     def test_epub_invalid_invocation_is_a_typed_private_safe_envelope(self) -> None:
         output = io.StringIO()
         errors = io.StringIO()

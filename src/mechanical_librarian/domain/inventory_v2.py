@@ -20,7 +20,7 @@ from .identifiers import (
     TargetId,
     canonical_json,
 )
-from .inventory import ItemLifecycle, MediaType
+from .inventory import FileReference, ItemLifecycle, MediaType
 
 
 OBSERVATION_SCHEMA = SchemaVersion("inventory-observation-v1")
@@ -29,6 +29,82 @@ MAX_OBSERVATION_BYTES = 1_048_576
 MAX_FIELD_VALUES = 10_000
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _WARNING = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_OPAQUE_REFERENCE = re.compile(r"^(?:target|snapshot)_[0-9a-f]{32}$")
+
+
+@dataclass(frozen=True, repr=False)
+class InventoryFileBinding:
+    """Private immutable link from a snapshot file slot to a logical mount."""
+
+    file_index: int
+    file_identity: str
+    media_kind: str
+    mount_configuration_digest: str
+    reference: FileReference
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.file_index) is not int
+            or not 0 <= self.file_index <= 10_000
+            or _DIGEST.fullmatch(self.file_identity) is None
+            or self.media_kind != "epub"
+            or _DIGEST.fullmatch(self.mount_configuration_digest) is None
+            or type(self.reference) is not FileReference
+        ):
+            raise DomainValueError("inventory file binding is malformed")
+
+    def __repr__(self) -> str:
+        return (
+            "InventoryFileBinding("
+            f"file_index={self.file_index}, media_kind={self.media_kind!r}, "
+            "file_identity=<redacted>, mount_configuration_digest=<redacted>, "
+            "reference=<redacted>)"
+        )
+
+
+@dataclass(frozen=True)
+class InventorySelector:
+    """Path-free selector emitted by durable inventory inspection."""
+
+    target_reference: str
+    snapshot_reference: str
+    file_index: int
+    media_kind: str
+
+    def __post_init__(self) -> None:
+        if (
+            _OPAQUE_REFERENCE.fullmatch(self.target_reference) is None
+            or _OPAQUE_REFERENCE.fullmatch(self.snapshot_reference) is None
+            or type(self.file_index) is not int
+            or not 0 <= self.file_index <= 10_000
+            or self.media_kind != "epub"
+        ):
+            raise DomainValueError("inventory selector is malformed")
+
+
+def opaque_target_reference(target: TargetId) -> str:
+    if type(target) is not TargetId:
+        raise DomainValueError("inventory target is malformed")
+    value = {
+        "adapter": target.adapter.value,
+        "connection": target.connection.value,
+        "external_item": target.external_item.value,
+        "library": target.library.value,
+        "schema": "inventory-target-reference-v1",
+    }
+    return "target_" + hashlib.sha256(canonical_json(value).encode()).hexdigest()[:32]
+
+
+def opaque_snapshot_reference(snapshot: "InventorySnapshotV2") -> str:
+    if type(snapshot) is not InventorySnapshotV2:
+        raise DomainValueError("inventory snapshot is malformed")
+    value = {
+        "fingerprint": snapshot.fingerprint.digest,
+        "schema": "inventory-snapshot-reference-v1",
+        "snapshot": snapshot.id.value,
+        "target": opaque_target_reference(snapshot.observation.target),
+    }
+    return "snapshot_" + hashlib.sha256(canonical_json(value).encode()).hexdigest()[:32]
 
 
 class ObservationState(StrEnum):
@@ -294,6 +370,7 @@ class InventorySnapshotV2:
     id: SnapshotId
     observation: InventoryObservation
     fingerprint: Fingerprint
+    file_bindings: tuple[InventoryFileBinding, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -301,18 +378,30 @@ class InventorySnapshotV2:
             or type(self.observation) is not InventoryObservation
             or type(self.fingerprint) is not Fingerprint
             or self.fingerprint.schema != SNAPSHOT_SCHEMA
+            or type(self.file_bindings) is not tuple
+            or any(type(value) is not InventoryFileBinding for value in self.file_bindings)
+            or tuple(sorted(self.file_bindings, key=lambda value: value.file_index))
+            != self.file_bindings
+            or len({value.file_index for value in self.file_bindings})
+            != len(self.file_bindings)
         ):
             raise DomainValueError("inventory snapshot v2 is malformed")
         if self.fingerprint != _snapshot_fingerprint(self.observation):
             raise DomainValueError("inventory snapshot v2 fingerprint is inconsistent")
 
     @classmethod
-    def create(cls, observation: InventoryObservation) -> "InventorySnapshotV2":
+    def create(
+        cls,
+        observation: InventoryObservation,
+        *,
+        file_bindings: tuple[InventoryFileBinding, ...] = (),
+    ) -> "InventorySnapshotV2":
         fingerprint = _snapshot_fingerprint(observation)
         return cls(
             SnapshotId("snapshot-" + fingerprint.digest[:32]),
             observation,
             fingerprint,
+            tuple(sorted(file_bindings, key=lambda value: value.file_index)),
         )
 
     def removed(self, *, observed_at: datetime) -> "InventorySnapshotV2":
@@ -426,6 +515,117 @@ class ScanUsage:
 
 
 @dataclass(frozen=True)
+class InventoryBindingSetMember:
+    """Persisted fields needed to verify one private binding-set member."""
+
+    file_index: int
+    digest: str
+    target: tuple[str, str, str, str]
+    snapshot_id: str
+    target_reference: str
+    snapshot_reference: str
+    binding: InventoryFileBinding
+
+
+@dataclass(frozen=True)
+class ValidatedInventoryFileBinding:
+    """One binding verified together with its complete enclosing set."""
+
+    binding: InventoryFileBinding
+    digest: str
+
+
+def inventory_file_binding_digest(
+    snapshot: InventorySnapshotV2,
+    persisted_id: SnapshotId,
+    binding: InventoryFileBinding,
+) -> str:
+    """Return the canonical identity of one persisted snapshot binding."""
+
+    target = snapshot.observation.target
+    value = {
+        "file_identity": binding.file_identity,
+        "file_index": binding.file_index,
+        "media_kind": binding.media_kind,
+        "mount": binding.reference.mount,
+        "mount_configuration_digest": binding.mount_configuration_digest,
+        "relative_path": binding.reference.relative_path,
+        "schema": "inventory-file-binding-v1",
+        "snapshot": persisted_id.value,
+        "snapshot_fingerprint": snapshot.fingerprint.digest,
+        "target": [
+            target.adapter.value,
+            target.connection.value,
+            target.library.value,
+            target.external_item.value,
+        ],
+    }
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def validate_inventory_binding_set(
+    snapshot: InventorySnapshotV2,
+    binding_set_digest: str,
+    declared_target: tuple[str, str, str, str],
+    declared_snapshot_id: str,
+    declared_count: int,
+    members: tuple[InventoryBindingSetMember, ...],
+) -> tuple[ValidatedInventoryFileBinding, ...]:
+    """Validate complete ordered membership and all nested binding identities."""
+
+    target = snapshot.observation.target
+    expected_target = (
+        target.adapter.value,
+        target.connection.value,
+        target.library.value,
+        target.external_item.value,
+    )
+    if (
+        _DIGEST.fullmatch(binding_set_digest) is None
+        or declared_target != expected_target
+        or declared_snapshot_id != snapshot.id.value
+        or type(declared_count) is not int
+        or declared_count != len(members)
+    ):
+        raise DomainValueError("inventory binding set identity is inconsistent")
+    validated: list[ValidatedInventoryFileBinding] = []
+    previous_index = -1
+    for member in members:
+        if (
+            type(member) is not InventoryBindingSetMember
+            or member.file_index <= previous_index
+            or member.file_index != member.binding.file_index
+            or _DIGEST.fullmatch(member.digest) is None
+            or member.target != expected_target
+            or member.snapshot_id != snapshot.id.value
+            or member.target_reference != opaque_target_reference(target)
+            or member.snapshot_reference != opaque_snapshot_reference(snapshot)
+            or inventory_file_binding_digest(
+                snapshot, snapshot.id, member.binding
+            )
+            != member.digest
+        ):
+            raise DomainValueError(
+                "inventory binding set member identity is inconsistent"
+            )
+        previous_index = member.file_index
+        validated.append(
+            ValidatedInventoryFileBinding(member.binding, member.digest)
+        )
+    set_value = {
+        "bindings": [value.digest for value in validated],
+        "schema": "inventory-snapshot-binding-set-v1",
+        "snapshot": snapshot.id.value,
+        "target": list(expected_target),
+    }
+    if hashlib.sha256(
+        canonical_json(set_value).encode("utf-8")
+    ).hexdigest() != binding_set_digest:
+        raise DomainValueError("inventory binding set digest is inconsistent")
+    return tuple(validated)
+
+
+@dataclass(frozen=True)
 class InventoryPass:
     snapshots: tuple[InventorySnapshotV2, ...]
     usage: ScanUsage
@@ -447,6 +647,17 @@ class InventoryPass:
         value = [
             {
                 "fingerprint": snapshot.fingerprint.digest,
+                "file_bindings": [
+                    {
+                        "file_identity": binding.file_identity,
+                        "file_index": binding.file_index,
+                        "media_kind": binding.media_kind,
+                        "mount": binding.reference.mount,
+                        "mount_configuration_digest": binding.mount_configuration_digest,
+                        "relative_path": binding.reference.relative_path,
+                    }
+                    for binding in snapshot.file_bindings
+                ],
                 "target": {
                     "adapter": snapshot.observation.target.adapter.value,
                     "connection": snapshot.observation.target.connection.value,
@@ -490,6 +701,7 @@ class InventoryInspection:
     page_count: int
     response_bytes: int
     moved_count: int
+    selectors: tuple[InventorySelector, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -512,6 +724,19 @@ class InventoryInspection:
                 )
             )
             or self.item_count != self.active_count + self.removed_count
+            or type(self.selectors) is not tuple
+            or any(type(value) is not InventorySelector for value in self.selectors)
+            or tuple(
+                sorted(
+                    self.selectors,
+                    key=lambda value: (
+                        value.target_reference,
+                        value.snapshot_reference,
+                        value.file_index,
+                    ),
+                )
+            )
+            != self.selectors
         ):
             raise DomainValueError("inventory inspection is invalid")
 
@@ -519,8 +744,10 @@ class InventoryInspection:
 __all__ = [
     "FieldObservation",
     "InventoryInspection",
+    "InventoryFileBinding",
     "InventoryObservation",
     "InventoryPass",
+    "InventorySelector",
     "InventorySnapshotV2",
     "ObservationField",
     "ObservationState",
@@ -530,4 +757,6 @@ __all__ = [
     "ScanState",
     "ScanUsage",
     "SNAPSHOT_SCHEMA",
+    "opaque_snapshot_reference",
+    "opaque_target_reference",
 ]

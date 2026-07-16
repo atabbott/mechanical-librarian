@@ -459,6 +459,190 @@ _CURRENT_SYNTHETIC_TITLE_REVIEW_CASES_NO_DELETE_SQL = (
     "CREATE TRIGGER current_synthetic_title_review_cases_no_delete BEFORE DELETE ON current_synthetic_title_review_cases "
     "BEGIN SELECT RAISE(ABORT, 'synthetic title review current state cannot be deleted'); END"
 )
+_INVENTORY_SNAPSHOT_FILE_BINDINGS_TABLE_SQL = (
+    "CREATE TABLE inventory_snapshot_file_bindings ("
+    "adapter_id TEXT NOT NULL, connection_id TEXT NOT NULL, library_id TEXT NOT NULL, "
+    "external_item TEXT NOT NULL, snapshot_id TEXT NOT NULL, "
+    "target_reference TEXT NOT NULL CHECK (target_reference GLOB 'target_[0-9a-f]*' AND length(target_reference) = 39), "
+    "snapshot_reference TEXT NOT NULL CHECK (snapshot_reference GLOB 'snapshot_[0-9a-f]*' AND length(snapshot_reference) = 41), "
+    "file_index INTEGER NOT NULL CHECK (file_index BETWEEN 0 AND 10000), "
+    "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
+    "media_kind TEXT NOT NULL CHECK (media_kind = 'epub'), "
+    "mount_configuration_digest TEXT NOT NULL CHECK (length(mount_configuration_digest) = 64 AND mount_configuration_digest NOT GLOB '*[^0-9a-f]*'), "
+    "mount_name TEXT NOT NULL CHECK (length(mount_name) BETWEEN 1 AND 64 AND mount_name NOT GLOB '*/*'), "
+    "relative_path TEXT NOT NULL CHECK (length(CAST(relative_path AS BLOB)) BETWEEN 1 AND 4096 AND substr(relative_path,1,1) != '/' AND instr(relative_path,char(0)) = 0), "
+    "binding_digest TEXT NOT NULL CHECK (length(binding_digest) = 64 AND binding_digest NOT GLOB '*[^0-9a-f]*'), "
+    "PRIMARY KEY (adapter_id,connection_id,library_id,external_item,snapshot_id,file_index,mount_configuration_digest), "
+    "UNIQUE (binding_digest), "
+    "UNIQUE (target_reference,snapshot_reference,file_index,mount_configuration_digest), "
+    "FOREIGN KEY (adapter_id,connection_id,library_id,external_item,snapshot_id) REFERENCES inventory_v2_snapshots(adapter_id,connection_id,library_id,external_item,snapshot_id))"
+)
+_INVENTORY_SNAPSHOT_BINDING_SETS_TABLE_SQL = (
+    "CREATE TABLE inventory_snapshot_binding_sets ("
+    "binding_set_digest TEXT PRIMARY KEY CHECK (length(binding_set_digest)=64 AND binding_set_digest NOT GLOB '*[^0-9a-f]*'), "
+    "adapter_id TEXT NOT NULL,connection_id TEXT NOT NULL,library_id TEXT NOT NULL,"
+    "external_item TEXT NOT NULL,snapshot_id TEXT NOT NULL,"
+    "binding_count INTEGER NOT NULL CHECK (binding_count BETWEEN 0 AND 10001),"
+    "FOREIGN KEY (adapter_id,connection_id,library_id,external_item,snapshot_id) "
+    "REFERENCES inventory_v2_snapshots(adapter_id,connection_id,library_id,external_item,snapshot_id))"
+)
+_INVENTORY_SNAPSHOT_BINDING_SET_MEMBERS_TABLE_SQL = (
+    "CREATE TABLE inventory_snapshot_binding_set_members ("
+    "binding_set_digest TEXT NOT NULL REFERENCES inventory_snapshot_binding_sets(binding_set_digest),"
+    "binding_digest TEXT NOT NULL REFERENCES inventory_snapshot_file_bindings(binding_digest),"
+    "file_index INTEGER NOT NULL CHECK (file_index BETWEEN 0 AND 10000),"
+    "PRIMARY KEY (binding_set_digest,file_index),UNIQUE (binding_set_digest,binding_digest))"
+)
+_CURRENT_INVENTORY_SNAPSHOT_BINDING_SETS_TABLE_SQL = (
+    "CREATE TABLE current_inventory_snapshot_binding_sets ("
+    "adapter_id TEXT NOT NULL,connection_id TEXT NOT NULL,library_id TEXT NOT NULL,"
+    "external_item TEXT NOT NULL,snapshot_id TEXT NOT NULL,"
+    "binding_set_digest TEXT NOT NULL REFERENCES inventory_snapshot_binding_sets(binding_set_digest),"
+    "PRIMARY KEY (adapter_id,connection_id,library_id,external_item))"
+)
+_INVENTORY_SNAPSHOT_LOCATOR_INDEX_TABLE_SQL = (
+    "CREATE TABLE inventory_snapshot_locator_index ("
+    "adapter_id TEXT NOT NULL,connection_id TEXT NOT NULL,library_id TEXT NOT NULL,"
+    "external_item TEXT NOT NULL,snapshot_id TEXT NOT NULL,"
+    "target_reference TEXT NOT NULL CHECK (target_reference GLOB 'target_[0-9a-f]*' AND length(target_reference)=39),"
+    "snapshot_reference TEXT NOT NULL CHECK (snapshot_reference GLOB 'snapshot_[0-9a-f]*' AND length(snapshot_reference)=41),"
+    "media_type TEXT NOT NULL CHECK (media_type IN ('ebook','audiobook')),"
+    """lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active','removed','unavailable')),"""
+    "PRIMARY KEY (adapter_id,connection_id,library_id,external_item,snapshot_id),"
+    "UNIQUE (target_reference,snapshot_reference),"
+    "FOREIGN KEY (adapter_id,connection_id,library_id,external_item,snapshot_id) REFERENCES inventory_v2_snapshots(adapter_id,connection_id,library_id,external_item,snapshot_id))"
+)
+_EPUB_EVIDENCE_JOBS_TABLE_SQL = (
+    "CREATE TABLE epub_evidence_jobs ("
+    "work_id TEXT PRIMARY KEY CHECK (length(work_id) BETWEEN 1 AND 64), "
+    "work_key TEXT NOT NULL UNIQUE CHECK (length(work_key) = 64 AND work_key NOT GLOB '*[^0-9a-f]*'), "
+    "target_reference TEXT NOT NULL CHECK (target_reference GLOB 'target_[0-9a-f]*' AND length(target_reference) = 39), "
+    "snapshot_reference TEXT NOT NULL CHECK (snapshot_reference GLOB 'snapshot_[0-9a-f]*' AND length(snapshot_reference) = 41), "
+    "file_index INTEGER NOT NULL CHECK (file_index BETWEEN 0 AND 10000), "
+    "binding_digest TEXT NOT NULL REFERENCES inventory_snapshot_file_bindings(binding_digest), "
+    "source_fingerprint TEXT NOT NULL CHECK (length(source_fingerprint) = 64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), "
+    "governing_digest TEXT NOT NULL CHECK (length(governing_digest) = 64 AND governing_digest NOT GLOB '*[^0-9a-f]*'), "
+    "initiating_authority TEXT NOT NULL CHECK (length(initiating_authority) BETWEEN 1 AND 64), "
+    "lane_revision INTEGER NOT NULL CHECK (lane_revision BETWEEN 1 AND 1000000), "
+    "state TEXT NOT NULL CHECK (state IN ('pending','running','retry_wait','succeeded','failed_terminal','cancelled')), "
+    "attempt INTEGER NOT NULL DEFAULT 0 CHECK (attempt BETWEEN 0 AND 3), "
+    "max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts = 3), "
+    "lease_owner TEXT CHECK (lease_owner IS NULL OR length(lease_owner) BETWEEN 1 AND 64), "
+    f"lease_expires_at TEXT CHECK ({_timestamp_constraint('lease_expires_at', nullable=True)}), "
+    "fence INTEGER NOT NULL DEFAULT 0 CHECK (fence >= 0), "
+    "cancellation_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancellation_requested IN (0,1)), "
+    "terminal_outcome TEXT CHECK (terminal_outcome IS NULL OR terminal_outcome IN ('success','no_applicable_evidence','unsupported_format','unsupported_version','unsupported_compression','unsupported_multiple_renditions','encrypted','malformed','integrity_failure')), "
+    "terminal_failure TEXT CHECK (terminal_failure IS NULL OR terminal_failure IN ('invalid_invocation','invalid_configuration','source_reference_unavailable','ambiguous_reference','wrong_target','stale_snapshot','file_index_out_of_range','non_epub','mount_mismatch','binding_integrity_failure','corrupt_state','source_changed','busy','cancelled','timeout','resource_limit','integrity_failure','retry_exhausted','persistence_failure','internal_failure','lease_expired')), evidence_id TEXT, "
+    f"created_at TEXT NOT NULL CHECK ({_timestamp_constraint('created_at')}), "
+    f"updated_at TEXT NOT NULL CHECK ({_timestamp_constraint('updated_at')}), "
+    "CHECK ((state = 'running') = (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)), "
+    "CHECK ((state = 'succeeded') = (evidence_id IS NOT NULL)))"
+)
+_EPUB_EVIDENCE_ATTEMPTS_TABLE_SQL = (
+    "CREATE TABLE epub_evidence_attempts ("
+    "work_id TEXT NOT NULL REFERENCES epub_evidence_jobs(work_id), "
+    "attempt INTEGER NOT NULL CHECK (attempt BETWEEN 1 AND 3), "
+    "fence INTEGER NOT NULL CHECK (fence > 0), "
+    "worker_id TEXT NOT NULL CHECK (length(worker_id) BETWEEN 1 AND 64), "
+    f"started_at TEXT NOT NULL CHECK ({_timestamp_constraint('started_at')}), "
+    f"finished_at TEXT CHECK ({_timestamp_constraint('finished_at', nullable=True)}), "
+    "outcome TEXT CHECK (outcome IS NULL OR outcome IN ('success','no_applicable_evidence','unsupported_format','unsupported_version','unsupported_compression','unsupported_multiple_renditions','encrypted','malformed','integrity_failure')), "
+    "failure TEXT CHECK (failure IS NULL OR failure IN ('invalid_invocation','invalid_configuration','source_reference_unavailable','ambiguous_reference','wrong_target','stale_snapshot','file_index_out_of_range','non_epub','mount_mismatch','binding_integrity_failure','corrupt_state','source_changed','busy','cancelled','timeout','resource_limit','integrity_failure','persistence_failure','internal_failure','lease_expired')), PRIMARY KEY (work_id,attempt), UNIQUE (work_id,fence))"
+)
+_EPUB_OPENING_EVIDENCE_TABLE_SQL = (
+    "CREATE TABLE epub_opening_evidence ("
+    "evidence_id TEXT PRIMARY KEY CHECK (length(evidence_id) = 41 AND evidence_id GLOB 'evidence_[0-9a-f]*'), "
+    "evidence_digest TEXT NOT NULL UNIQUE CHECK (length(evidence_digest) = 64 AND evidence_digest NOT GLOB '*[^0-9a-f]*'), "
+    "work_key TEXT NOT NULL UNIQUE CHECK (length(work_key) = 64 AND work_key NOT GLOB '*[^0-9a-f]*'), "
+    "target_reference TEXT NOT NULL, snapshot_reference TEXT NOT NULL, file_index INTEGER NOT NULL CHECK (file_index BETWEEN 0 AND 10000), "
+    "binding_digest TEXT NOT NULL REFERENCES inventory_snapshot_file_bindings(binding_digest), "
+    "source_fingerprint TEXT NOT NULL CHECK (length(source_fingerprint) = 64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), "
+    "governing_digest TEXT NOT NULL CHECK (length(governing_digest) = 64 AND governing_digest NOT GLOB '*[^0-9a-f]*'), "
+    "outcome TEXT NOT NULL CHECK (outcome IN ('success','no_applicable_evidence','unsupported_format','unsupported_version','unsupported_compression','unsupported_multiple_renditions','encrypted','malformed','integrity_failure')), "
+    "report_json TEXT NOT NULL CHECK (length(CAST(report_json AS BLOB)) BETWEEN 2 AND 524288), "
+    "report_digest TEXT NOT NULL CHECK (length(report_digest) = 64 AND report_digest NOT GLOB '*[^0-9a-f]*'), "
+    "claim_count INTEGER NOT NULL CHECK (claim_count >= 0), citation_count INTEGER NOT NULL CHECK (citation_count >= 0), selected_count INTEGER NOT NULL CHECK (selected_count >= 0), rejected_count INTEGER NOT NULL CHECK (rejected_count >= 0), warning_count INTEGER NOT NULL CHECK (warning_count >= 0), "
+    "package_mode TEXT NOT NULL, parser_mode TEXT NOT NULL, "
+    f"created_at TEXT NOT NULL CHECK ({_timestamp_constraint('created_at')}))"
+)
+_CURRENT_EPUB_OPENING_EVIDENCE_TABLE_SQL = (
+    "CREATE TABLE current_epub_opening_evidence ("
+    "target_reference TEXT NOT NULL, file_index INTEGER NOT NULL CHECK (file_index BETWEEN 0 AND 10000), "
+    "evidence_id TEXT NOT NULL REFERENCES epub_opening_evidence(evidence_id), "
+    "sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 1000000), "
+    "lane_revision INTEGER NOT NULL CHECK (lane_revision BETWEEN 1 AND 1000000), "
+    f"updated_at TEXT NOT NULL CHECK ({_timestamp_constraint('updated_at')}), "
+    "PRIMARY KEY (target_reference,file_index), UNIQUE (evidence_id))"
+)
+_EPUB_EVIDENCE_CHECKPOINTS_TABLE_SQL = (
+    "CREATE TABLE epub_evidence_checkpoints ("
+    "work_id TEXT PRIMARY KEY REFERENCES epub_evidence_jobs(work_id), "
+    "attempt INTEGER NOT NULL, fence INTEGER NOT NULL, evidence_id TEXT NOT NULL REFERENCES epub_opening_evidence(evidence_id), "
+    f"accepted_at TEXT NOT NULL CHECK ({_timestamp_constraint('accepted_at')}), "
+    "FOREIGN KEY (work_id,attempt) REFERENCES epub_evidence_attempts(work_id,attempt))"
+)
+_EPUB_EVIDENCE_EVENTS_TABLE_SQL = (
+    "CREATE TABLE epub_evidence_events ("
+    "event_id TEXT PRIMARY KEY CHECK (length(event_id) BETWEEN 1 AND 64), "
+    "work_id TEXT NOT NULL REFERENCES epub_evidence_jobs(work_id), "
+    "kind TEXT NOT NULL CHECK (kind IN ('accepted','claimed','published','reused','failed','cancelled','retry_exhausted')), "
+    "actor TEXT NOT NULL CHECK (length(actor) BETWEEN 1 AND 64), "
+    "attempt INTEGER NOT NULL CHECK (attempt BETWEEN 0 AND 3), "
+    "fence INTEGER NOT NULL CHECK (fence >= 0), "
+    "from_state TEXT NOT NULL, to_state TEXT NOT NULL, "
+    "sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 1000000), "
+    f"occurred_at TEXT NOT NULL CHECK ({_timestamp_constraint('occurred_at')}), "
+    "UNIQUE (work_id,sequence))"
+)
+_INVENTORY_FILE_BINDINGS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_file_bindings_no_update BEFORE UPDATE ON inventory_snapshot_file_bindings BEGIN SELECT RAISE(ABORT, 'inventory file bindings are append-only'); END"
+)
+_INVENTORY_SNAPSHOT_LOCATOR_NO_UPDATE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_locator_index_no_update BEFORE UPDATE ON inventory_snapshot_locator_index BEGIN SELECT RAISE(ABORT, 'inventory snapshot locator index is append-only'); END"
+)
+_INVENTORY_SNAPSHOT_LOCATOR_NO_DELETE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_locator_index_no_delete BEFORE DELETE ON inventory_snapshot_locator_index BEGIN SELECT RAISE(ABORT, 'inventory snapshot locator index is append-only'); END"
+)
+_INVENTORY_FILE_BINDINGS_NO_DELETE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_file_bindings_no_delete BEFORE DELETE ON inventory_snapshot_file_bindings BEGIN SELECT RAISE(ABORT, 'inventory file bindings are append-only'); END"
+)
+_INVENTORY_BINDING_SETS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_binding_sets_no_update BEFORE UPDATE ON inventory_snapshot_binding_sets BEGIN SELECT RAISE(ABORT, 'inventory binding sets are append-only'); END"
+)
+_INVENTORY_BINDING_SETS_NO_DELETE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_binding_sets_no_delete BEFORE DELETE ON inventory_snapshot_binding_sets BEGIN SELECT RAISE(ABORT, 'inventory binding sets are append-only'); END"
+)
+_INVENTORY_BINDING_SET_MEMBERS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_binding_set_members_no_update BEFORE UPDATE ON inventory_snapshot_binding_set_members BEGIN SELECT RAISE(ABORT, 'inventory binding set members are append-only'); END"
+)
+_INVENTORY_BINDING_SET_MEMBERS_NO_DELETE_SQL = (
+    "CREATE TRIGGER inventory_snapshot_binding_set_members_no_delete BEFORE DELETE ON inventory_snapshot_binding_set_members BEGIN SELECT RAISE(ABORT, 'inventory binding set members are append-only'); END"
+)
+_EPUB_OPENING_EVIDENCE_NO_UPDATE_SQL = (
+    "CREATE TRIGGER epub_opening_evidence_no_update BEFORE UPDATE ON epub_opening_evidence BEGIN SELECT RAISE(ABORT, 'epub evidence is append-only'); END"
+)
+_EPUB_OPENING_EVIDENCE_NO_DELETE_SQL = (
+    "CREATE TRIGGER epub_opening_evidence_no_delete BEFORE DELETE ON epub_opening_evidence BEGIN SELECT RAISE(ABORT, 'epub evidence is append-only'); END"
+)
+_EPUB_EVIDENCE_ATTEMPTS_NO_DELETE_SQL = (
+    "CREATE TRIGGER epub_evidence_attempts_no_delete BEFORE DELETE ON epub_evidence_attempts BEGIN SELECT RAISE(ABORT, 'epub evidence attempts are durable'); END"
+)
+_EPUB_EVIDENCE_ATTEMPTS_FINALIZE_ONLY_SQL = (
+    "CREATE TRIGGER epub_evidence_attempts_finalize_only BEFORE UPDATE ON epub_evidence_attempts "
+    "WHEN NOT (OLD.finished_at IS NULL AND OLD.outcome IS NULL AND OLD.failure IS NULL "
+    "AND NEW.work_id=OLD.work_id AND NEW.attempt=OLD.attempt AND NEW.fence=OLD.fence "
+    "AND NEW.worker_id=OLD.worker_id AND NEW.started_at=OLD.started_at "
+    "AND NEW.finished_at IS NOT NULL AND NEW.failure IS NOT 'retry_exhausted' "
+    "AND ((NEW.outcome IS NOT NULL AND NEW.failure IS NULL) "
+    "OR (NEW.outcome IS NULL AND NEW.failure IS NOT NULL))) "
+    "BEGIN SELECT RAISE(ABORT, 'epub evidence attempts are immutable after finalization'); END"
+)
+_EPUB_EVIDENCE_EVENTS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER epub_evidence_events_no_update BEFORE UPDATE ON epub_evidence_events BEGIN SELECT RAISE(ABORT, 'epub evidence events are append-only'); END"
+)
+_EPUB_EVIDENCE_EVENTS_NO_DELETE_SQL = (
+    "CREATE TRIGGER epub_evidence_events_no_delete BEFORE DELETE ON epub_evidence_events BEGIN SELECT RAISE(ABORT, 'epub evidence events are append-only'); END"
+)
 MIGRATIONS = (
     Migration(
         1,
@@ -588,6 +772,55 @@ MIGRATIONS = (
                 "synthetic_title_review_cases",
                 "synthetic_title_review_case_transitions",
                 "current_synthetic_title_review_cases",
+            }
+        ),
+    ),
+    Migration(
+        8,
+        (
+            _INVENTORY_SNAPSHOT_LOCATOR_INDEX_TABLE_SQL,
+            _INVENTORY_SNAPSHOT_FILE_BINDINGS_TABLE_SQL,
+            _INVENTORY_SNAPSHOT_BINDING_SETS_TABLE_SQL,
+            _INVENTORY_SNAPSHOT_BINDING_SET_MEMBERS_TABLE_SQL,
+            _CURRENT_INVENTORY_SNAPSHOT_BINDING_SETS_TABLE_SQL,
+            _EPUB_EVIDENCE_JOBS_TABLE_SQL,
+            _EPUB_EVIDENCE_ATTEMPTS_TABLE_SQL,
+            _EPUB_OPENING_EVIDENCE_TABLE_SQL,
+            _CURRENT_EPUB_OPENING_EVIDENCE_TABLE_SQL,
+            _EPUB_EVIDENCE_CHECKPOINTS_TABLE_SQL,
+            _EPUB_EVIDENCE_EVENTS_TABLE_SQL,
+            _INVENTORY_SNAPSHOT_LOCATOR_NO_UPDATE_SQL,
+            _INVENTORY_SNAPSHOT_LOCATOR_NO_DELETE_SQL,
+            _INVENTORY_FILE_BINDINGS_NO_UPDATE_SQL,
+            _INVENTORY_FILE_BINDINGS_NO_DELETE_SQL,
+            _INVENTORY_BINDING_SETS_NO_UPDATE_SQL,
+            _INVENTORY_BINDING_SETS_NO_DELETE_SQL,
+            _INVENTORY_BINDING_SET_MEMBERS_NO_UPDATE_SQL,
+            _INVENTORY_BINDING_SET_MEMBERS_NO_DELETE_SQL,
+            _EPUB_OPENING_EVIDENCE_NO_UPDATE_SQL,
+            _EPUB_OPENING_EVIDENCE_NO_DELETE_SQL,
+            _EPUB_EVIDENCE_ATTEMPTS_FINALIZE_ONLY_SQL,
+            _EPUB_EVIDENCE_ATTEMPTS_NO_DELETE_SQL,
+            _EPUB_EVIDENCE_EVENTS_NO_UPDATE_SQL,
+            _EPUB_EVIDENCE_EVENTS_NO_DELETE_SQL,
+            "CREATE INDEX inventory_file_bindings_by_snapshot ON inventory_snapshot_file_bindings(adapter_id,connection_id,library_id,external_item,snapshot_id,file_index)",
+            "CREATE INDEX inventory_snapshot_locator_by_opaque_reference ON inventory_snapshot_locator_index(target_reference,snapshot_reference)",
+            "CREATE INDEX epub_evidence_jobs_by_claim ON epub_evidence_jobs(state,lease_expires_at,updated_at,work_id)",
+            "CREATE INDEX epub_opening_evidence_by_target ON epub_opening_evidence(target_reference,file_index,created_at,evidence_id)",
+        ),
+        frozenset(
+            {
+                "inventory_snapshot_file_bindings",
+                "inventory_snapshot_binding_sets",
+                "inventory_snapshot_binding_set_members",
+                "current_inventory_snapshot_binding_sets",
+                "inventory_snapshot_locator_index",
+                "epub_evidence_jobs",
+                "epub_evidence_attempts",
+                "epub_opening_evidence",
+                "current_epub_opening_evidence",
+                "epub_evidence_checkpoints",
+                "epub_evidence_events",
             }
         ),
     ),

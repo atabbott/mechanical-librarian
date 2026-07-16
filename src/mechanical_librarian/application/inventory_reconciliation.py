@@ -34,6 +34,39 @@ from mechanical_librarian.domain.inventory_v2 import (
 )
 
 
+@dataclass(frozen=True, repr=False)
+class InventoryMountMapping:
+    """Application-owned provider path mapping with no host/container path."""
+
+    name: str
+    library_type: str
+    service_path: str
+    configuration_digest: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.name) is not str
+            or not self.name
+            or "/" in self.name
+            or self.name.strip() != self.name
+            or self.library_type != "ebook"
+            or type(self.service_path) is not str
+            or not self.service_path.startswith("/")
+            or (
+                self.service_path != "/"
+                and self.service_path != self.service_path.rstrip("/")
+            )
+            or "\x00" in self.service_path
+            or type(self.configuration_digest) is not str
+            or len(self.configuration_digest) != 64
+            or any(value not in "0123456789abcdef" for value in self.configuration_digest)
+        ):
+            raise ValueError("inventory mount mapping is malformed")
+
+    def __repr__(self) -> str:
+        return "InventoryMountMapping(<redacted>)"
+
+
 class InventorySource(Protocol):
     """Read-only canonical inventory source with no mutation methods."""
 

@@ -135,6 +135,13 @@ previous authentication, authorization, configuration, or compatibility
 failure is intentionally eligible for a new trigger. No credential material or
 secret-reference digest is stored in poll state.
 
+F07b derives a private digest from each read-only ebook mount's logical name,
+library type, container path, service path, and read-only flag. The digest, not
+the paths, participates in inventory binding and evidence compatibility.
+Changing any material mount or EPUB limit requires a new reconciliation or new
+evidence work as indicated by the impact matrix. There is no hidden selector,
+path, retry, or evidence environment variable.
+
 ## Configuration groups
 
 ### Instance
