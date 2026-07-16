@@ -237,6 +237,41 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             )
         )
 
+    def test_lease_expiring_during_revalidation_cannot_publish(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        accepted = self.repository.accept(source, "6" * 64, "8" * 64, self.now)
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=1)
+        )
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        self.assertIsNone(
+            self.repository.publish(
+                claim,
+                source,
+                "6" * 64,
+                "8" * 64,
+                report,
+                self.now,
+                lambda: True,
+                lambda: self.now + timedelta(seconds=2),
+            )
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_opening_evidence"
+            ).fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,evidence_id FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("running", None),
+        )
+
     def test_older_governing_work_cannot_rewind_current_lane(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
         older = self.repository.accept(source, "a" * 64, "b" * 64, self.now)
@@ -251,6 +286,33 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         self.assertEqual(
             self.connection.execute("SELECT evidence_id,lane_revision FROM current_epub_opening_evidence").fetchone(),
             (newest.evidence_id, 2),
+        )
+
+    def test_older_work_is_not_current_after_newer_lane_is_accepted(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        older = self.repository.accept(source, "a" * 64, "d" * 64, self.now)
+        older_claim = self.repository.claim(
+            older[0], "older", self.now, timedelta(seconds=30)
+        )
+        newer = self.repository.accept(source, "a" * 64, "e" * 64, self.now)
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        delayed = self.repository.publish(
+            older_claim, source, "a" * 64, "d" * 64, report, self.now
+        )
+        self.assertFalse(delayed.current_applicable)
+        self.assertIsNone(
+            self.connection.execute(
+                "SELECT evidence_id FROM current_epub_opening_evidence"
+            ).fetchone()
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,lane_revision FROM epub_evidence_jobs WHERE work_id=?",
+                (newer[0],),
+            ).fetchone(),
+            ("pending", 2),
         )
 
     def test_final_lease_expiry_terminalizes_and_capacity_is_enforced(self) -> None:

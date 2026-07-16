@@ -460,6 +460,7 @@ class SQLiteEpubOpeningEvidenceRepository:
         report: EpubOpeningReport,
         published_at: datetime,
         source_is_current: Callable[[], bool] = lambda: True,
+        publication_clock: Callable[[], datetime] | None = None,
     ) -> EpubEvidenceResult | None:
         if (
             type(claim) is not EpubEvidenceClaim
@@ -469,6 +470,7 @@ class SQLiteEpubOpeningEvidenceRepository:
             or type(report) is not EpubOpeningReport
             or not _valid_time(published_at)
             or not callable(source_is_current)
+            or (publication_clock is not None and not callable(publication_clock))
         ):
             return None
         try:
@@ -490,6 +492,15 @@ class SQLiteEpubOpeningEvidenceRepository:
                         EpubEvidenceMode.FAILED,
                         failure=EpubEvidenceFailure.SOURCE_CHANGED,
                     )
+                published_at = (
+                    published_at
+                    if publication_clock is None
+                    else publication_clock()
+                )
+                if not _valid_time(published_at) or self._live_claim(
+                    claim, published_at
+                ) is None:
+                    return None
                 if (
                     report.source_fingerprint is not None
                     and report.source_fingerprint.digest != source_fingerprint
@@ -557,7 +568,19 @@ class SQLiteEpubOpeningEvidenceRepository:
                     "SELECT lane_revision FROM epub_evidence_jobs WHERE work_id=?",
                     (claim.work_id,),
                 ).fetchone()[0])
-                current_applicable = current is None or lane_revision >= int(current[2])
+                newest_lane_revision = int(
+                    self._connection.execute(
+                        "SELECT MAX(lane_revision) FROM epub_evidence_jobs "
+                        "WHERE target_reference=? AND file_index=?",
+                        (
+                            source.locator.target_reference,
+                            source.locator.file_index,
+                        ),
+                    ).fetchone()[0]
+                )
+                current_applicable = lane_revision == newest_lane_revision and (
+                    current is None or lane_revision >= int(current[2])
+                )
                 if current_applicable:
                     sequence = 1 if current is None else int(current[1]) + (
                         str(current[0]) != evidence_id
@@ -602,7 +625,8 @@ class SQLiteEpubOpeningEvidenceRepository:
                     "UPDATE epub_evidence_jobs SET state='succeeded',lease_owner=NULL,"
                     "lease_expires_at=NULL,terminal_outcome=?,terminal_failure=NULL,"
                     "evidence_id=?,updated_at=? WHERE work_id=? AND state='running' "
-                    "AND attempt=? AND fence=? AND lease_owner=? AND cancellation_requested=0",
+                    "AND attempt=? AND fence=? AND lease_owner=? AND cancellation_requested=0 "
+                    "AND lease_expires_at>?",
                     (
                         report.outcome.value,
                         evidence_id,
@@ -611,6 +635,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                         claim.attempt,
                         claim.fence,
                         claim.worker_id,
+                        _format_timestamp(published_at),
                     ),
                 )
                 if cursor.rowcount != 1:

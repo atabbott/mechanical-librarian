@@ -1159,13 +1159,7 @@ def _run_epub_opening_evidence(
             ),
         )
         governing = epub_governing_digest(
-            limits,
-            {
-                "mounts": sorted(mapping.configuration_digest for mapping in mappings),
-                "parser_concurrency": configuration.limits.parser_concurrency,
-                "parser_timeout_seconds": configuration.limits.parser_timeout_seconds,
-                "temporary_bytes": configuration.limits.temporary_bytes,
-            },
+            limits, _epub_material_configuration(configuration, mappings)
         )
 
         def operation(state: sqlite3.Connection) -> EpubEvidenceResult:
@@ -1252,6 +1246,16 @@ def _run_epub_opening_evidence(
         return failed(EpubEvidenceFailure.INVALID_CONFIGURATION)
     except Exception:
         return failed(EpubEvidenceFailure.INTERNAL_FAILURE)
+
+
+def _epub_material_configuration(configuration, mappings) -> dict[str, object]:
+    """Return extraction-semantic configuration, excluding worker capacity."""
+
+    return {
+        "mounts": sorted(mapping.configuration_digest for mapping in mappings),
+        "parser_timeout_seconds": configuration.limits.parser_timeout_seconds,
+        "temporary_bytes": configuration.limits.temporary_bytes,
+    }
 
 
 def _run_synthetic_title_proposal_report(

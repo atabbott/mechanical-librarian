@@ -7,6 +7,7 @@ import unittest
 from datetime import datetime, timezone
 from contextlib import redirect_stderr
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from mechanical_librarian.application.job_heartbeat import (
@@ -54,6 +55,7 @@ from mechanical_librarian.domain.local_evidence import (
 )
 from mechanical_librarian.interfaces.cli import main
 from mechanical_librarian.bootstrap.composition import (
+    _epub_material_configuration,
     _run_hardcover_title_proposal_report,
     _run_synthetic_title_proposal_report,
     _run_synthetic_title_review_case_report,
@@ -63,6 +65,27 @@ from mechanical_librarian.infrastructure.persistence.sqlite import connect, migr
 
 
 class CliTests(unittest.TestCase):
+    def test_epub_parser_concurrency_is_not_material_evidence_configuration(self) -> None:
+        mapping = SimpleNamespace(configuration_digest="a" * 64)
+        first = SimpleNamespace(
+            limits=SimpleNamespace(
+                parser_concurrency=1,
+                parser_timeout_seconds=30,
+                temporary_bytes=1_000_000,
+            )
+        )
+        second = SimpleNamespace(
+            limits=SimpleNamespace(
+                parser_concurrency=8,
+                parser_timeout_seconds=30,
+                temporary_bytes=1_000_000,
+            )
+        )
+        self.assertEqual(
+            _epub_material_configuration(first, (mapping,)),
+            _epub_material_configuration(second, (mapping,)),
+        )
+
     def test_epub_opening_evidence_resume_requires_no_selector_redelivery(self) -> None:
         runner = Mock(
             return_value=EpubEvidenceResult(

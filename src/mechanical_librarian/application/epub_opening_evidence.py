@@ -59,6 +59,7 @@ class EpubOpeningEvidenceRepository(Protocol):
         report: EpubOpeningReport,
         published_at: datetime,
         source_is_current: Callable[[], bool],
+        publication_clock: Callable[[], datetime] | None = None,
     ) -> EpubEvidenceResult | None: ...
 
     def fail(
@@ -148,6 +149,7 @@ class RunEpubOpeningEvidence:
                 report,
                 now(),
                 lambda: revalidate(source, source_fingerprint),
+                now,
             )
             if published is None:
                 return self._repository.fail(
