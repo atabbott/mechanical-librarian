@@ -5,6 +5,7 @@ import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.epub_opening_evidence import (
     SQLiteEpubOpeningEvidenceRepository,
@@ -12,6 +13,7 @@ from mechanical_librarian.adapters.persistence.epub_opening_evidence import (
 from mechanical_librarian.adapters.persistence.inventory_v2 import (
     SQLiteInventoryV2Repository,
 )
+from mechanical_librarian.application.epub_opening_evidence import RunEpubOpeningEvidence
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceFailure,
@@ -40,7 +42,13 @@ from mechanical_librarian.domain.inventory_v2 import (
     opaque_target_reference,
 )
 from mechanical_librarian.domain.local_evidence import LocalEvidenceOutcome
-from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate
+from mechanical_librarian.infrastructure.persistence import sqlite as sqlite_foundation
+from mechanical_librarian.infrastructure.persistence.sqlite import (
+    MIGRATIONS,
+    SchemaError,
+    connect,
+    migrate,
+)
 
 
 class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
@@ -268,15 +276,17 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
     def test_recovery_cancellation_and_transactional_source_revalidation(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
         accepted = self.repository.accept(source, "3" * 64, "4" * 64, self.now)
-        self.assertEqual(
-            self.repository.next_recoverable(self.binding_configuration, "4" * 64, self.now),
-            self.locator,
+        recoverable = self.repository.next_recoverable(
+            frozenset({self.binding_configuration}), "4" * 64, self.now
         )
+        self.assertEqual(recoverable.locator, self.locator)
+        self.assertEqual(recoverable.work_id, accepted[0])
         claim = self.repository.claim(accepted[0], "worker", self.now, timedelta(seconds=30))
         report = EpubOpeningReport(LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits())
-        self.assertIsNone(
-            self.repository.publish(claim, source, "3" * 64, "4" * 64, report, self.now, lambda: False)
+        rejected = self.repository.publish(
+            claim, source, "3" * 64, "4" * 64, report, self.now, lambda: False
         )
+        self.assertEqual(rejected.failure, EpubEvidenceFailure.SOURCE_CHANGED)
         self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM epub_opening_evidence").fetchone(), (0,))
         self.assertTrue(self.repository.cancel(accepted[0], "operator", self.now))
         self.assertIsNone(self.repository.publish(claim, source, "3" * 64, "4" * 64, report, self.now))
@@ -284,6 +294,163 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             self.connection.execute("SELECT state,terminal_failure FROM epub_evidence_jobs WHERE work_id=?", (accepted[0],)).fetchone(),
             ("cancelled", "cancelled"),
         )
+
+    def test_recovery_terminalizes_changed_original_work_and_failure_frees_capacity(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        accepted = self.repository.accept(source, "3" * 64, "4" * 64, self.now)
+        resumed = RunEpubOpeningEvidence(self.repository).resume(
+            frozenset({self.binding_configuration}),
+            "4" * 64,
+            "recovery-worker",
+            lambda: self.now,
+            lambda _source: "5" * 64,
+            lambda _source: self.fail("changed work executed"),
+            lambda _source, _expected: True,
+        )
+        self.assertEqual(resumed.failure, EpubEvidenceFailure.SOURCE_CHANGED)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,terminal_failure FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("failed_terminal", "source_changed"),
+        )
+        self.assertIsNone(
+            self.repository.next_recoverable(
+                frozenset({self.binding_configuration}), "4" * 64, self.now
+            )
+        )
+
+        runner = RunEpubOpeningEvidence(self.repository)
+        failed = runner.run(
+            self.locator,
+            self.binding_configuration,
+            "6" * 64,
+            "first-worker",
+            lambda: self.now,
+            lambda _source: "7" * 64,
+            lambda _source: EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            lambda _source, _expected: False,
+            capacity=1,
+        )
+        self.assertEqual(failed.failure, EpubEvidenceFailure.SOURCE_CHANGED)
+        sibling = self.repository.accept(source, "8" * 64, "9" * 64, self.now)
+        self.assertIsNotNone(
+            self.repository.claim(
+                sibling[0], "sibling", self.now, timedelta(seconds=30), 1
+            )
+        )
+
+    def test_recovery_selects_one_oldest_job_across_multiple_mounts(self) -> None:
+        second_configuration = "a" * 64
+        second_snapshot = InventorySnapshotV2.create(
+            self.snapshot.observation,
+            file_bindings=(
+                InventoryFileBinding(
+                    0,
+                    "a" * 64,
+                    "epub",
+                    second_configuration,
+                    FileReference("alternate", "book.epub"),
+                ),
+            ),
+        )
+        SQLiteInventoryV2Repository(self.connection)._persist_or_reuse(second_snapshot)
+        second_locator = self.locator
+        first_source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        second_source = self.repository.resolve(
+            second_locator, second_configuration
+        ).source
+        first = self.repository.accept(first_source, "b" * 64, "c" * 64, self.now)
+        second = self.repository.accept(second_source, "d" * 64, "c" * 64, self.now)
+        recoverable = self.repository.next_recoverable(
+            frozenset({self.binding_configuration, second_configuration}),
+            "c" * 64,
+            self.now,
+        )
+        self.assertEqual(recoverable.work_id, first[0])
+        self.assertTrue(self.repository.cancel(first[0], "operator", self.now))
+        self.assertEqual(
+            self.repository.next_recoverable(
+                frozenset({self.binding_configuration, second_configuration}),
+                "c" * 64,
+                self.now,
+            ).work_id,
+            second[0],
+        )
+
+    def test_lock_read_only_disk_full_and_backup_restore_are_fail_closed(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        database = Path(self.temporary.name) / "state.sqlite3"
+        contender = connect(database)
+        try:
+            contender.execute("PRAGMA busy_timeout=0")
+            contender_source = SQLiteEpubOpeningEvidenceRepository(contender).resolve(
+                self.locator, self.binding_configuration
+            ).source
+            self.connection.execute("BEGIN IMMEDIATE")
+            self.assertIsNone(
+                SQLiteEpubOpeningEvidenceRepository(contender).accept(
+                    contender_source, "a" * 64, "b" * 64, self.now
+                )
+            )
+            self.connection.rollback()
+        finally:
+            contender.close()
+        self.connection.execute("PRAGMA query_only=ON")
+        self.assertIsNone(
+            self.repository.accept(source, "b" * 64, "c" * 64, self.now)
+        )
+        self.connection.execute("PRAGMA query_only=OFF")
+        self.connection.execute(
+            "CREATE TRIGGER injected_epub_disk_full BEFORE INSERT ON epub_evidence_jobs "
+            "BEGIN SELECT RAISE(ABORT,'database or disk is full'); END"
+        )
+        self.assertIsNone(
+            self.repository.accept(source, "c" * 64, "d" * 64, self.now)
+        )
+        self.connection.execute("DROP TRIGGER injected_epub_disk_full")
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM epub_evidence_jobs").fetchone(),
+            (0,),
+        )
+
+        accepted = self.repository.accept(source, "d" * 64, "e" * 64, self.now)
+        claim = self.repository.claim(
+            accepted[0], "backup-worker", self.now, timedelta(seconds=30)
+        )
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        published = self.repository.publish(
+            claim, source, "d" * 64, "e" * 64, report, self.now
+        )
+        restored_path = Path(self.temporary.name) / "restored.sqlite3"
+        restored_raw = sqlite3.connect(restored_path)
+        self.connection.backup(restored_raw)
+        restored_raw.close()
+        restored = connect(restored_path)
+        try:
+            self.assertEqual(migrate(restored), 8)
+            with patch.object(sqlite_foundation, "MIGRATIONS", MIGRATIONS[:7]):
+                with self.assertRaises(SchemaError):
+                    migrate(restored)
+            reused = SQLiteEpubOpeningEvidenceRepository(restored).accept(
+                SQLiteEpubOpeningEvidenceRepository(restored).resolve(
+                    self.locator, self.binding_configuration
+                ).source,
+                "d" * 64,
+                "e" * 64,
+                self.now,
+            )[1]
+            self.assertEqual(reused.evidence_id, published.evidence_id)
+            self.assertEqual(reused.mode, EpubEvidenceMode.REUSED)
+        finally:
+            restored.close()
 
     def test_selector_failures_are_typed_before_enqueue(self) -> None:
         self.assertEqual(

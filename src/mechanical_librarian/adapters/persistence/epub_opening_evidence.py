@@ -15,6 +15,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceFailure,
     EpubEvidenceLocator,
     EpubEvidenceMode,
+    EpubRecoverableWork,
     EpubEvidenceResult,
     EpubSourceResolution,
     ResolvedEpubSource,
@@ -38,19 +39,41 @@ class SQLiteEpubOpeningEvidenceRepository:
         self._connection = connection
 
     def next_recoverable(
-        self, mount_configuration_digest: str, governing_digest: str, now: datetime
-    ) -> EpubEvidenceLocator | None:
-        if not _digest(mount_configuration_digest) or not _digest(governing_digest) or not _valid_time(now):
+        self,
+        mount_configuration_digests: frozenset[str],
+        governing_digest: str,
+        now: datetime,
+    ) -> EpubRecoverableWork | None:
+        if (
+            type(mount_configuration_digests) is not frozenset
+            or not mount_configuration_digests
+            or any(not _digest(value) for value in mount_configuration_digests)
+            or not _digest(governing_digest)
+            or not _valid_time(now)
+        ):
             return None
+        placeholders = ",".join("?" for _ in mount_configuration_digests)
         row = self._connection.execute(
-            "SELECT target_reference,snapshot_reference,file_index FROM epub_evidence_jobs "
-            "WHERE governing_digest=? AND state IN ('pending','retry_wait','running') "
-            "AND (state!='running' OR lease_expires_at<=?) "
-            "AND binding_digest IN (SELECT binding_digest FROM inventory_snapshot_file_bindings "
-            "WHERE mount_configuration_digest=?) ORDER BY lane_revision LIMIT 1",
-            (governing_digest, _format_timestamp(now), mount_configuration_digest),
+            "SELECT j.work_id,j.work_key,j.target_reference,j.snapshot_reference,j.file_index,"
+            "b.mount_configuration_digest,j.source_fingerprint FROM epub_evidence_jobs j "
+            "JOIN inventory_snapshot_file_bindings b ON b.binding_digest=j.binding_digest "
+            "WHERE j.governing_digest=? AND j.state IN ('pending','retry_wait','running') "
+            "AND (j.state!='running' OR j.lease_expires_at<=?) "
+            f"AND b.mount_configuration_digest IN ({placeholders}) "
+            "AND j.cancellation_requested=0 ORDER BY j.created_at,j.lane_revision,j.work_id LIMIT 1",
+            (governing_digest, _format_timestamp(now), *sorted(mount_configuration_digests)),
         ).fetchone()
-        return None if row is None else EpubEvidenceLocator(str(row[0]), str(row[1]), int(row[2]))
+        return (
+            None
+            if row is None
+            else EpubRecoverableWork(
+                str(row[0]),
+                str(row[1]),
+                EpubEvidenceLocator(str(row[2]), str(row[3]), int(row[4])),
+                str(row[5]),
+                str(row[6]),
+            )
+        )
 
     def cancel(self, work_id: str, authority: str, cancelled_at: datetime) -> bool:
         if type(work_id) is not str or type(authority) is not str or not authority or not _valid_time(cancelled_at):
@@ -196,6 +219,19 @@ class SQLiteEpubOpeningEvidenceRepository:
                 if any(str(row[1]) != "active" for row in target):
                     return EpubEvidenceFailure.STALE_SNAPSHOT
                 return EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
+            return EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
+        known_snapshot = self._connection.execute(
+            "SELECT 1 FROM inventory_snapshot_locator_index WHERE target_reference=? "
+            "AND snapshot_reference=? UNION SELECT 1 FROM inventory_snapshot_file_bindings "
+            "WHERE target_reference=? AND snapshot_reference=? LIMIT 1",
+            (
+                locator.target_reference,
+                locator.snapshot_reference,
+                locator.target_reference,
+                locator.snapshot_reference,
+            ),
+        ).fetchone()
+        if known_snapshot is None:
             return EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
         current = self._connection.execute(
             "SELECT 1 FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
@@ -444,7 +480,10 @@ class SQLiteEpubOpeningEvidenceRepository:
                 if self._resolve(source.locator, source.mount_configuration_digest).source != source:
                     return None
                 if not source_is_current():
-                    return None
+                    return EpubEvidenceResult(
+                        EpubEvidenceMode.FAILED,
+                        failure=EpubEvidenceFailure.SOURCE_CHANGED,
+                    )
                 if (
                     report.source_fingerprint is not None
                     and report.source_fingerprint.digest != source_fingerprint

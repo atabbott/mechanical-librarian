@@ -1170,47 +1170,38 @@ def _run_epub_opening_evidence(
 
         def operation(state: sqlite3.Connection) -> EpubEvidenceResult:
             repository = SQLiteEpubOpeningEvidenceRepository(state)
-            selected_locator = locator
-            if selected_locator is None:
-                recoverable = tuple(
-                    (mapping, candidate)
+            selected_mapping = None
+            if locator is not None:
+                resolutions = tuple(
+                    (mapping, repository.resolve(locator, mapping.configuration_digest))
                     for mapping in mappings
-                    if (candidate := repository.next_recoverable(
-                        mapping.configuration_digest, governing, datetime.now(timezone.utc)
-                    )) is not None
                 )
-                if len(recoverable) != 1:
-                    return failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
-                selected_locator = recoverable[0][1]
-            resolutions = tuple(
-                (mapping, repository.resolve(selected_locator, mapping.configuration_digest))
-                for mapping in mappings
-            )
-            resolved = tuple(
-                (mapping, value)
-                for mapping, resolution in resolutions
-                if (value := resolution.source) is not None
-            )
-            if len(resolved) != 1:
-                failures = tuple(
-                    resolution.failure for _, resolution in resolutions
+                resolved = tuple(
+                    (mapping, value)
+                    for mapping, resolution in resolutions
+                    if (value := resolution.source) is not None
                 )
-                return failed(next((value for value in failures if value is not None), EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE))
-            mapping, source = resolved[0]
-            mounts = tuple(
-                mount
-                for mount in configuration.media_mounts
-                if mount.name == source.mount_name
-                and _mount_configuration_digest(mount)
-                == mapping.configuration_digest
-            )
-            if len(mounts) != 1:
-                return failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
-            mount = mounts[0]
+                if len(resolved) > 1:
+                    return failed(EpubEvidenceFailure.AMBIGUOUS_REFERENCE)
+                if not resolved:
+                    failures = tuple(resolution.failure for _, resolution in resolutions)
+                    return failed(next((value for value in failures if value is not None), EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE))
+                selected_mapping = resolved[0][0]
+
+            def mount_for(value):
+                candidates = tuple(
+                    mount
+                    for mount in configuration.media_mounts
+                    if mount.name == value.mount_name
+                    and _mount_configuration_digest(mount)
+                    == value.mount_configuration_digest
+                )
+                if len(candidates) != 1:
+                    raise ValueError("resolved EPUB mount changed")
+                return candidates[0]
 
             def fingerprint(value) -> str:
-                if value != source:
-                    raise ValueError("resolved EPUB source changed")
+                mount = mount_for(value)
                 opened = open_local_media(mount.container_path, value.relative_path)
                 try:
                     return sha256_descriptor(
@@ -1221,9 +1212,8 @@ def _run_epub_opening_evidence(
                 finally:
                     os.close(opened.descriptor)
 
-            return RunEpubOpeningEvidence(repository).run(
-                selected_locator,
-                mapping.configuration_digest,
+            runner = RunEpubOpeningEvidence(repository)
+            common = (
                 governing,
                 "epub_evidence_worker",
                 lambda: datetime.now(timezone.utc),
@@ -1242,6 +1232,16 @@ def _run_epub_opening_evidence(
                     )
                 ),
                 configuration.limits.parser_concurrency,
+            )
+            if locator is None:
+                return runner.resume(
+                    frozenset(mapping.configuration_digest for mapping in mappings),
+                    *common,
+                ) or failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
+            return runner.run(
+                locator,
+                selected_mapping.configuration_digest,
+                *common,
             )
 
         preflight(database)

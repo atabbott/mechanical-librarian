@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -17,15 +18,19 @@ from mechanical_librarian.application.ports import (
     CancellationProbe,
     Deadline,
     OperationContext,
+    PortResult,
     ResourceBounds,
     TimeProbe,
+)
+from mechanical_librarian.application.inventory_reconciliation import (
+    InventoryConnectionVerification,
+    ReconcileInventory,
 )
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     AdapterVersion,
     ExternalItemId,
     LibraryId,
-    ScanId,
     SchemaVersion,
     ServiceVersion,
     TargetId,
@@ -42,6 +47,7 @@ from mechanical_librarian.domain.inventory_v2 import (
     FieldObservation,
     InventoryFileBinding,
     InventoryObservation,
+    InventoryPass,
     InventorySnapshotV2,
     ObservationField,
     ObservationState,
@@ -97,14 +103,14 @@ def main() -> int:
     digest = _mount_digest(mount)
     snapshots = []
     selector_map = []
-    for ordinal, path in enumerate(files, start=1):
+    for path in files:
         relative = path.relative_to(cohort).as_posix()
         source_digest = hashlib.sha256(path.read_bytes()).hexdigest()
         target = TargetId(
             AdapterId(configured.adapter),
             configured.connection_id,
             libraries[0],
-            ExternalItemId(f"qualification-item-{ordinal:08d}"),
+            ExternalItemId("qualification-" + uuid.uuid4().hex),
         )
         observation = InventoryObservation.create(
             target=target,
@@ -175,24 +181,26 @@ def main() -> int:
             TimeProbe(lambda: now),
         )
         repository = SQLiteInventoryV2Repository(connection)
-        begun = repository.begin(
-            ScanId("scan-f07b-qualification"),
-            library_connection,
-            libraries[0],
-            bounds,
-            now,
-            context,
+        inventory_pass = InventoryPass(
+            tuple(snapshots), ScanUsage(1, len(snapshots), 1)
         )
-        if not begun.accepted or begun.value is None:
-            return 3
-        published = repository.publish_complete(
-            begun.value,
-            tuple(snapshots),
-            ScanUsage(1, len(snapshots), 1),
-            now,
-            context,
-        )
-        if not published.accepted:
+
+        class QualificationInventorySource:
+            def verify_connection(self, *_args):
+                return InventoryConnectionVerification(
+                    ScanUsage(), compatibility="supported"
+                )
+
+            def verify_library(self, *_args):
+                return PortResult.success(ScanUsage())
+
+            def read_pass(self, *_args):
+                return PortResult.success(inventory_pass)
+
+        reconciled = ReconcileInventory(
+            QualificationInventorySource(), repository
+        ).run(library_connection, libraries, bounds, context)
+        if not reconciled.succeeded:
             return 3
         arguments.selector_map.write_text(
             json.dumps(selector_map, separators=(",", ":"), sort_keys=True),

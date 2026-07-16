@@ -79,7 +79,9 @@ new tables or open schema 8 with an older binary.
 ## Qualification
 
 `scripts/qualify_epub_opening_evidence.py` copies only regular EPUBs into a
-disposable shadow cohort, prepares state with the exact installed package,
+disposable shadow cohort, assigns path-independent random synthetic target
+identities, and prepares state through the normal reconciliation application
+service using the exact installed package,
 verifies selector emission, executes the whole cohort, restarts for identity
 reuse, changes one shadow source for isolated invalidation, proves reverse
 replay, injects one unavailable-source failure, then proves an unrelated book

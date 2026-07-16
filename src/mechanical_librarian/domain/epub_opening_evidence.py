@@ -130,6 +130,26 @@ class EpubSourceResolution:
 
 
 @dataclass(frozen=True)
+class EpubRecoverableWork:
+    work_id: str
+    work_key: str
+    locator: EpubEvidenceLocator
+    mount_configuration_digest: str
+    source_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.work_id) is not str
+            or not self.work_id.startswith("epub_work_")
+            or _DIGEST.fullmatch(self.work_key) is None
+            or type(self.locator) is not EpubEvidenceLocator
+            or _DIGEST.fullmatch(self.mount_configuration_digest) is None
+            or _DIGEST.fullmatch(self.source_fingerprint) is None
+        ):
+            raise DomainValueError("recoverable EPUB work is malformed")
+
+
+@dataclass(frozen=True)
 class EpubEvidenceClaim:
     work_id: str
     work_key: str
@@ -321,6 +341,7 @@ __all__ = [
     "EpubEvidenceLocator",
     "EpubEvidenceMode",
     "EpubEvidenceResult",
+    "EpubRecoverableWork",
     "PUBLISHABLE_EPUB_OUTCOMES",
     "ResolvedEpubSource",
     "EpubSourceResolution",

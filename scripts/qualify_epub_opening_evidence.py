@@ -13,6 +13,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 
 
 _SELECTOR = re.compile(
@@ -128,6 +129,14 @@ def main() -> int:
     arguments = parser.parse_args()
     if not arguments.executable.is_file() or not arguments.python.is_file():
         return 2
+    if (
+        (arguments.head_commit != "unbound" and re.fullmatch(r"[0-9a-f]{40}", arguments.head_commit) is None)
+        or (arguments.head_tree != "unbound" and re.fullmatch(r"[0-9a-f]{40}", arguments.head_tree) is None)
+        or (arguments.artifact_sha256 != "unbound" and re.fullmatch(r"[0-9a-f]{64}", arguments.artifact_sha256) is None)
+        or re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", arguments.environment) is None
+    ):
+        return 2
+    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         shadow = root / "cohort"
@@ -348,6 +357,7 @@ def main() -> int:
                     "environment": arguments.environment,
                     "head_commit": arguments.head_commit,
                     "head_tree": arguments.head_tree,
+                    "observed_at": observed_at,
                     "privacy": "aggregate-only-disposable-state-deleted",
                     "schema": "epub-opening-evidence-qualification-v1",
                 },

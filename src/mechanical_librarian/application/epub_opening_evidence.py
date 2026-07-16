@@ -14,6 +14,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceLocator,
     EpubEvidenceMode,
     EpubEvidenceResult,
+    EpubRecoverableWork,
     EpubSourceResolution,
     PUBLISHABLE_EPUB_OUTCOMES,
     ResolvedEpubSource,
@@ -24,8 +25,8 @@ from mechanical_librarian.domain.local_evidence import LocalEvidenceOutcome
 
 class EpubOpeningEvidenceRepository(Protocol):
     def next_recoverable(
-        self, mount_configuration_digest: str, governing_digest: str, now: datetime
-    ) -> EpubEvidenceLocator | None: ...
+        self, mount_configuration_digests: frozenset[str], governing_digest: str, now: datetime
+    ) -> EpubRecoverableWork | None: ...
 
     def resolve(
         self, locator: EpubEvidenceLocator, mount_configuration_digest: str
@@ -97,7 +98,12 @@ class RunEpubOpeningEvidence:
             if resolution.source is None:
                 return _failed(resolution.failure or EpubEvidenceFailure.CORRUPT_STATE)
             source = resolution.source
-            source_fingerprint = fingerprint(source)
+            try:
+                source_fingerprint = fingerprint(source)
+            except OSError:
+                return _failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
+            except ValueError:
+                return _failed(EpubEvidenceFailure.BINDING_INTEGRITY_FAILURE)
             work_key = epub_work_key(source, source_fingerprint, governing_digest)
             accepted = self._repository.accept(
                 source, source_fingerprint, governing_digest, now(), initiating_authority
@@ -143,11 +149,18 @@ class RunEpubOpeningEvidence:
                 now(),
                 lambda: revalidate(source, source_fingerprint),
             )
-            return (
-                published
-                if published is not None
-                else _failed(EpubEvidenceFailure.SOURCE_CHANGED)
-            )
+            if published is None:
+                return self._repository.fail(
+                    claim, EpubEvidenceFailure.PERSISTENCE_FAILURE, now(), retryable=True
+                )
+            if not published.succeeded:
+                return self._repository.fail(
+                    claim,
+                    published.failure or EpubEvidenceFailure.CORRUPT_STATE,
+                    now(),
+                    retryable=published.failure is EpubEvidenceFailure.SOURCE_CHANGED,
+                )
+            return published
         except (OSError, ValueError):
             if "claim" in locals() and claim is not None:
                 return self._repository.fail(
@@ -163,7 +176,7 @@ class RunEpubOpeningEvidence:
 
     def resume(
         self,
-        mount_configuration_digest: str,
+        mount_configuration_digests: frozenset[str],
         governing_digest: str,
         worker_id: str,
         now: Callable[[], datetime],
@@ -174,24 +187,75 @@ class RunEpubOpeningEvidence:
         capacity: int = 1,
         initiating_authority: str = "system_recovery",
     ) -> EpubEvidenceResult | None:
-        locator = self._repository.next_recoverable(
-            mount_configuration_digest, governing_digest, now()
+        work = self._repository.next_recoverable(
+            mount_configuration_digests, governing_digest, now()
         )
-        if locator is None:
+        if work is None:
             return None
-        return self.run(
-            locator,
-            mount_configuration_digest,
-            governing_digest,
-            worker_id,
-            now,
-            fingerprint,
-            execute,
-            revalidate,
-            lease_duration,
-            capacity,
-            initiating_authority,
+        claim = self._repository.claim(
+            work.work_id, worker_id, now(), lease_duration, capacity
         )
+        if claim is None or claim.work_key != work.work_key:
+            return _failed(EpubEvidenceFailure.BUSY)
+        resolution = self._repository.resolve(
+            work.locator, work.mount_configuration_digest
+        )
+        if resolution.source is None:
+            return self._repository.fail(
+                claim,
+                resolution.failure or EpubEvidenceFailure.CORRUPT_STATE,
+                now(),
+                retryable=False,
+            )
+        source = resolution.source
+        try:
+            if fingerprint(source) != work.source_fingerprint:
+                return self._repository.fail(
+                    claim, EpubEvidenceFailure.SOURCE_CHANGED, now(), retryable=False
+                )
+            report = execute(source)
+            if type(report) is not EpubOpeningReport:
+                return self._repository.fail(
+                    claim, EpubEvidenceFailure.INTERNAL_FAILURE, now(), retryable=False
+                )
+            if fingerprint(source) != work.source_fingerprint or not revalidate(
+                source, work.source_fingerprint
+            ):
+                return self._repository.fail(
+                    claim, EpubEvidenceFailure.SOURCE_CHANGED, now(), retryable=False
+                )
+            if report.outcome not in PUBLISHABLE_EPUB_OUTCOMES:
+                failure, retryable = _operational_failure(report.outcome)
+                return self._repository.fail(claim, failure, now(), retryable=retryable)
+            published = self._repository.publish(
+                claim,
+                source,
+                work.source_fingerprint,
+                governing_digest,
+                report,
+                now(),
+                lambda: revalidate(source, work.source_fingerprint),
+            )
+            if published is None:
+                return self._repository.fail(
+                    claim, EpubEvidenceFailure.PERSISTENCE_FAILURE, now(), retryable=True
+                )
+            if not published.succeeded:
+                return self._repository.fail(
+                    claim,
+                    published.failure or EpubEvidenceFailure.CORRUPT_STATE,
+                    now(),
+                    retryable=False,
+                )
+            return published
+        except (OSError, ValueError):
+            return self._repository.fail(
+                claim, EpubEvidenceFailure.SOURCE_CHANGED, now(), retryable=True
+            )
+        except Exception:
+            return self._repository.fail(
+                claim, EpubEvidenceFailure.INTERNAL_FAILURE, now(), retryable=True
+            )
 
 
 def _operational_failure(
