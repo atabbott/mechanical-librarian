@@ -1582,6 +1582,135 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             later_attempt_result.failure, EpubEvidenceFailure.CORRUPT_STATE
         )
 
+    def test_retry_rejects_inconsistent_failed_event_before_reclaim(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.repository.fail(
+            claim,
+            EpubEvidenceFailure.INTERNAL_FAILURE,
+            self.now,
+            retryable=True,
+        )
+        trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_evidence_events_no_update'"
+        ).fetchone()[0]
+        self.connection.execute("DROP TRIGGER epub_evidence_events_no_update")
+        self.connection.execute(
+            "UPDATE epub_evidence_events SET actor='replacement-worker' "
+            "WHERE work_id=? AND kind='failed'",
+            (accepted[0],),
+        )
+        self.connection.execute(str(trigger))
+        retried = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(retried.failure, EpubEvidenceFailure.CORRUPT_STATE)
+        self.assertIsNone(
+            self.repository.claim(
+                accepted[0],
+                "replacement-worker",
+                self.now + timedelta(seconds=1),
+                timedelta(seconds=30),
+            )
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("retry_wait", 1),
+        )
+
+    def test_publish_rejects_missing_claim_event_before_writing_evidence(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_evidence_events_no_delete'"
+        ).fetchone()[0]
+        self.connection.execute("DROP TRIGGER epub_evidence_events_no_delete")
+        self.connection.execute(
+            "DELETE FROM epub_evidence_events WHERE work_id=? AND kind='claimed'",
+            (accepted[0],),
+        )
+        self.connection.execute(str(trigger))
+        published = self.repository.publish(
+            claim,
+            source,
+            "4" * 64,
+            "5" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now,
+        )
+        self.assertEqual(published.failure, EpubEvidenceFailure.CORRUPT_STATE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,evidence_id FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("running", None),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_opening_evidence"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_publish_rejects_precompleted_attempt_before_writing_evidence(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.connection.execute(
+            "UPDATE epub_evidence_attempts SET finished_at=?,failure='internal_failure' "
+            "WHERE work_id=? AND attempt=?",
+            (
+                self.now.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                accepted[0],
+                claim.attempt,
+            ),
+        )
+        published = self.repository.publish(
+            claim,
+            source,
+            "4" * 64,
+            "5" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now,
+        )
+        self.assertEqual(published.failure, EpubEvidenceFailure.CORRUPT_STATE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_opening_evidence"
+            ).fetchone(),
+            (0,),
+        )
+
     def test_reuse_validates_complete_retry_history(self) -> None:
         source = self.repository.resolve(
             self.locator, self.binding_configuration

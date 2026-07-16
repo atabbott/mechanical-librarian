@@ -90,6 +90,7 @@ class SQLiteEpubOpeningEvidenceRepository:
             return False
         try:
             with _transaction(self._connection):
+                self._validate_work_prefix(work_id)
                 row = self._connection.execute(
                     "SELECT state,attempt,fence FROM epub_evidence_jobs WHERE work_id=?",
                     (work_id,),
@@ -429,6 +430,7 @@ class SQLiteEpubOpeningEvidenceRepository:
             return None
         try:
             with _transaction(self._connection):
+                self._validate_work_prefix(work_id)
                 row = self._connection.execute(
                     "SELECT work_key,state,attempt,fence,lease_expires_at,"
                     "cancellation_requested,max_attempts FROM epub_evidence_jobs "
@@ -579,6 +581,13 @@ class SQLiteEpubOpeningEvidenceRepository:
                     governing_digest,
                 ):
                     return None
+                current_attempt = self._validate_work_prefix(claim.work_id)
+                if current_attempt is None or (
+                    int(current_attempt[0]),
+                    int(current_attempt[1]),
+                    str(current_attempt[2]),
+                ) != (claim.attempt, claim.fence, claim.worker_id):
+                    raise ValueError("EPUB publication attempt is inconsistent")
                 if epub_work_key(
                     source, source_fingerprint, governing_digest
                 ) != claim.work_key:
@@ -710,7 +719,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                         _format_timestamp(published_at),
                     ),
                 )
-                self._connection.execute(
+                completed_attempt = self._connection.execute(
                     "UPDATE epub_evidence_attempts SET finished_at=?,outcome=? WHERE "
                     "work_id=? AND attempt=? AND fence=? AND finished_at IS NULL",
                     (
@@ -721,6 +730,8 @@ class SQLiteEpubOpeningEvidenceRepository:
                         claim.fence,
                     ),
                 )
+                if completed_attempt.rowcount != 1:
+                    raise ValueError("EPUB publication attempt was not completed")
                 result = result_from_report(
                     EpubEvidenceMode.EXECUTED,
                     evidence_id,
@@ -796,8 +807,15 @@ class SQLiteEpubOpeningEvidenceRepository:
                 row = self._live_claim(claim, failed_at)
                 if row is None:
                     raise _PublicationFenceLost
+                current_attempt = self._validate_work_prefix(claim.work_id)
+                if current_attempt is None or (
+                    int(current_attempt[0]),
+                    int(current_attempt[1]),
+                    str(current_attempt[2]),
+                ) != (claim.attempt, claim.fence, claim.worker_id):
+                    raise ValueError("EPUB failure attempt is inconsistent")
                 state = "retry_wait" if retryable and claim.attempt < 3 else "failed_terminal"
-                self._connection.execute(
+                completed_attempt = self._connection.execute(
                     "UPDATE epub_evidence_attempts SET finished_at=?,failure=? WHERE "
                     "work_id=? AND attempt=? AND fence=? AND finished_at IS NULL",
                     (
@@ -808,6 +826,8 @@ class SQLiteEpubOpeningEvidenceRepository:
                         claim.fence,
                     ),
                 )
+                if completed_attempt.rowcount != 1:
+                    raise ValueError("EPUB failed attempt was not completed")
                 self._event(
                     claim.work_id,
                     "failed",
@@ -864,6 +884,116 @@ class SQLiteEpubOpeningEvidenceRepository:
             and _parse_timestamp(str(row[4])) > now
             else None
         )
+
+    def _validate_work_prefix(self, work_id: str) -> tuple[object, ...] | None:
+        job = self._connection.execute(
+            "SELECT state,attempt,fence,initiating_authority,created_at,"
+            "terminal_outcome,terminal_failure FROM epub_evidence_jobs WHERE work_id=?",
+            (work_id,),
+        ).fetchone()
+        if job is None or str(job[0]) not in {"pending", "running", "retry_wait"}:
+            return None
+        state = str(job[0])
+        job_attempt = int(job[1])
+        job_fence = int(job[2])
+        attempts = self._connection.execute(
+            "SELECT attempt,fence,worker_id,started_at,finished_at,outcome,failure "
+            "FROM epub_evidence_attempts WHERE work_id=? ORDER BY attempt",
+            (work_id,),
+        ).fetchall()
+        events = self._connection.execute(
+            "SELECT event_id,kind,actor,attempt,fence,from_state,to_state,sequence,"
+            "occurred_at FROM epub_evidence_events WHERE work_id=? ORDER BY sequence",
+            (work_id,),
+        ).fetchall()
+        expected_events: list[tuple[object, ...]] = [
+            _epub_event_record(
+                work_id,
+                "accepted",
+                str(job[3]),
+                0,
+                0,
+                "missing",
+                "pending",
+                1,
+                str(job[4]),
+            )
+        ]
+        valid = (
+            len(attempts) == job_attempt
+            and job_fence == job_attempt
+            and job[5] is None
+            and (job[6] is None) == (state != "retry_wait")
+        )
+        previous_time = _parse_timestamp(str(job[4]))
+        for ordinal, attempt_row in enumerate(attempts, start=1):
+            attempt_number = int(attempt_row[0])
+            attempt_fence = int(attempt_row[1])
+            worker_id = str(attempt_row[2])
+            started_at = str(attempt_row[3])
+            started_time = _parse_timestamp(started_at)
+            valid = valid and (
+                attempt_number == ordinal
+                and attempt_fence == ordinal
+                and started_time >= previous_time
+            )
+            expected_events.append(
+                _epub_event_record(
+                    work_id,
+                    "claimed",
+                    worker_id,
+                    attempt_number,
+                    attempt_fence,
+                    "pending" if ordinal == 1 else "retry_wait",
+                    "running",
+                    len(expected_events) + 1,
+                    started_at,
+                )
+            )
+            current_running = ordinal == len(attempts) and state == "running"
+            if current_running:
+                valid = valid and (
+                    attempt_row[4] is None
+                    and attempt_row[5] is None
+                    and attempt_row[6] is None
+                )
+                previous_time = started_time
+                continue
+            finished_at = (
+                None if attempt_row[4] is None else str(attempt_row[4])
+            )
+            if finished_at is None:
+                valid = False
+                continue
+            finished_time = _parse_timestamp(finished_at)
+            valid = valid and (
+                finished_time >= started_time
+                and attempt_row[5] is None
+                and attempt_row[6] is not None
+            )
+            expected_events.append(
+                _epub_event_record(
+                    work_id,
+                    "failed",
+                    worker_id,
+                    attempt_number,
+                    attempt_fence,
+                    "running",
+                    "retry_wait",
+                    len(expected_events) + 1,
+                    finished_at,
+                )
+            )
+            previous_time = finished_time
+        if state == "pending":
+            valid = valid and not attempts
+        elif state == "running":
+            valid = valid and bool(attempts)
+        else:
+            valid = valid and bool(attempts) and str(job[6]) == str(attempts[-1][6])
+        if not valid or tuple(map(tuple, events)) != tuple(expected_events):
+            raise ValueError("EPUB work history prefix is inconsistent")
+        return attempts[-1] if attempts else None
 
     def _reusable(
         self,
@@ -942,6 +1072,7 @@ class SQLiteEpubOpeningEvidenceRepository:
         ).fetchall()
         state = str(job[7])
         if state != "succeeded":
+            self._validate_work_prefix(expected_work_id)
             if (
                 job[10] is not None
                 or job[11] is not None
