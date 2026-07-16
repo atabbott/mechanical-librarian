@@ -26,7 +26,7 @@ The matrix should distinguish:
 
 Mechanical Librarian has no published release or supported upgrade source. The
 0.4 internal checkpoint therefore establishes a new clean-state baseline under
-[ADR-0009](../architecture/decisions/0009-pre-stable-consolidation-baseline.md)
+[ADR-0010](../architecture/decisions/0010-pre-stable-consolidation-baseline.md)
 after the final-0.3 schema and symbol inventory is refreshed when #238 closes.
 No migration or baseline number is selected by the planning decision.
 

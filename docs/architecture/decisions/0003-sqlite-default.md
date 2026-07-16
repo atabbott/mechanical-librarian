@@ -4,7 +4,7 @@
 - Date: 2026-07-10
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: ADR-0009
+- Superseded by: ADR-0010
 
 ## Context
 

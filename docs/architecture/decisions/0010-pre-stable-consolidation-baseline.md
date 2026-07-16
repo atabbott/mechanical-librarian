@@ -1,4 +1,4 @@
-# ADR-0009: Reset the Pre-stable State Baseline for 0.4
+# ADR-0010: Reset the Pre-stable State Baseline for 0.4
 
 - Status: accepted
 - Date: 2026-07-16

@@ -261,7 +261,7 @@ Pre-0.4 internal development databases are not supported 0.4 upgrade sources.
 The 0.4 application rejects them before mutation and provides bounded redacted
 retain-and-rebuild guidance; it never deletes or resets them automatically. The
 governing compatibility decision is
-[ADR-0009](../architecture/decisions/0009-pre-stable-consolidation-baseline.md).
+[ADR-0010](../architecture/decisions/0010-pre-stable-consolidation-baseline.md).
 
 | Order | Issue | Focused outcome | Expected branch |
 | --- | --- | --- | --- |

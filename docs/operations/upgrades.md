@@ -13,7 +13,7 @@ Automatic update checks may report that a release exists. The application must n
 0.4.0 is an internal checkpoint, not a published release, and no pre-0.4
 development database is a supported 0.4 upgrade source. The governing decision
 is
-[ADR-0009](../architecture/decisions/0009-pre-stable-consolidation-baseline.md).
+[ADR-0010](../architecture/decisions/0010-pre-stable-consolidation-baseline.md).
 The exact final-0.3 schema inventory must be refreshed after #238 closes before
 implementation selects the clean-state baseline; this planning contract does
 not invent a migration number.
