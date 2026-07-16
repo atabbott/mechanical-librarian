@@ -48,6 +48,16 @@ After restore, verify integrity with `state-check`, replay the applicable F09a
 proposal scenario, and inspect it with `synthetic-title-review-case-report`
 before resuming report-only operation.
 
+Before the forward-only F07b schema-8 migration of important state, retain and
+verify a pre-schema-8 curator-data copy. Migration 8 is additive, but the new
+private binding and evidence tables make schema 8 unreadable by older binaries.
+Interruption rolls the complete migration transaction back to schema 7. A
+failed evidence publication leaves the prior current pointer and immutable
+history unchanged. Downgrade is restore-only: stop the newer process, restore
+the verified copy, run `state-check`, run a new read-only inventory
+reconciliation, confirm selectors with `inventory-inspect`, and execute one
+`epub-opening-evidence` canary against isolated fixtures.
+
 ### Host snapshots
 
 Filesystem or ZFS snapshots are defense in depth. Document dataset coverage,

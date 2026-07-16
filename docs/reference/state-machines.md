@@ -1,5 +1,22 @@
 # Lifecycle and State Machines
 
+## Durable EPUB opening evidence
+
+```text
+pending -> running -> succeeded
+        -> running -> retry_wait -> running
+        -> running -> failed_terminal
+        -> running -> cancelled
+```
+
+Every transition retains the attempt and fence. Only the current live owner may
+publish. Publication atomically creates or verifies immutable evidence, advances
+current applicability, checkpoints the work, appends an event, finishes the
+attempt, and marks the job succeeded. An expired worker can move to
+`retry_wait`; its old fence can never publish. An identical succeeded work key
+reuses its evidence. A historical key whose evidence is no longer current is
+reused with `current=false` and does not reverse the pointer.
+
 State machines are authoritative domain contracts. Implementations may add
 timestamps and metadata but cannot invent transitions outside these rules.
 

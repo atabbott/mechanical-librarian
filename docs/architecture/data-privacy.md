@@ -120,6 +120,14 @@ field values, excerpts, warnings, and evidence content.
 
 ## Retention
 
+Schema 8 stores logical mount names and relative media paths only in the private
+application database, together with bounded cited opening reports. Opaque
+selectors, job events, CLI output, logs, and qualification aggregates never
+contain a path, filename, service item ID, source hash, title, identifier,
+excerpt, citation, or raw report. Database backups and support access must
+therefore be protected as library metadata. Qualification uses a disposable
+shadow copy and deletes its selector map, database, WAL, and SHM state.
+
 Default retention should preserve enough history to explain and reverse changes while avoiding indefinite storage of bulky artifacts.
 
 Retention classes must be configurable for:

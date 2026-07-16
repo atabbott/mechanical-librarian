@@ -1,5 +1,12 @@
 # Bounded EPUB Package and Opening-Matter Evidence
 
+F07b makes the F07a opening report durable for current inventory EPUBs. It uses
+an opaque selector rather than a caller path, persists fenced work before
+extraction, reuses immutable evidence across restart, and supersedes current
+applicability when the private source generation or governing contract changes.
+This evidence remains report-only and does not yet create candidates, review
+cases, decisions, or writes.
+
 ## Status and purpose
 
 This document defines the F06/F07 EPUB evidence extraction capability.

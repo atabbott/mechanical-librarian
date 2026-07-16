@@ -39,7 +39,8 @@ trip exist, but no production image or supported release exists yet. See the
 [Audiobookshelf inventory](docs/operations/audiobookshelf-inventory.md), and
 [Audiobookshelf connection check](docs/operations/audiobookshelf-connection.md),
 [EPUB package report](docs/operations/epub-package-report.md), and
-[EPUB opening-matter report](docs/operations/epub-opening-report.md) for the current
+[EPUB opening-matter report](docs/operations/epub-opening-report.md), and
+[durable EPUB opening evidence](docs/operations/epub-opening-evidence.md) for the current
 executable operator surface.
 
 The currently numbered delivery milestones are internal pre-release checkpoints,

@@ -58,6 +58,7 @@ release standards as code.
 - [Audiobookshelf connection check](operations/audiobookshelf-connection.md)
 - [EPUB package evidence report](operations/epub-package-report.md)
 - [EPUB opening-matter evidence report](operations/epub-opening-report.md)
+- [Durable EPUB opening evidence](operations/epub-opening-evidence.md)
 - [EPUB fixture materialization](operations/epub-fixture-materialization.md)
 - [Synthetic title proposal report](operations/synthetic-title-proposal-report.md)
 - [Hardcover title proposal report](operations/hardcover-title-proposal-report.md)

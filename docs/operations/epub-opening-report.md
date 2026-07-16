@@ -5,6 +5,11 @@ mount and emits one transient, source-bound report. It does not persist
 evidence, retain decoded documents, contact a service, render content, execute
 active content, or write to the EPUB or library.
 
+For inventory-addressed, restart-reusable persistence, use
+[`epub-opening-evidence`](epub-opening-evidence.md). This transient command
+remains available for direct owner diagnostics and does not create durable
+work or evidence.
+
 ```console
 mechanical-librarian epub-opening-report \
   --config /run/config/mechanical-librarian.json \

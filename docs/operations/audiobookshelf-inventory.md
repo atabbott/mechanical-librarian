@@ -1,5 +1,12 @@
 # Audiobookshelf Inventory and Polling
 
+For current active EPUBs with a validated private service-path mapping,
+`inventory-inspect` additionally prints one path-free selector containing only
+an opaque target reference, opaque snapshot reference, canonical file index,
+and `media=epub`. It prints no external item ID, mount, path, filename, title,
+or source fingerprint. Legacy or unmapped snapshots have no selector and need
+a new reconciliation before durable opening evidence can run.
+
 F05a adds a report-only inventory command for one configured Audiobookshelf
 2.35.1 connection. It authenticates through the F04 compatibility check, then
 uses only `GET /api/libraries`, paged `GET /api/libraries/{id}/items`, and

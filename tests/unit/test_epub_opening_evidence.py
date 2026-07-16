@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+import unittest
+from datetime import datetime, timezone
+
+from mechanical_librarian.adapters.library_services.audiobookshelf_inventory import (
+    _epub_binding,
+)
+from mechanical_librarian.application.inventory_reconciliation import (
+    InventoryMountMapping,
+)
+from mechanical_librarian.application.epub_opening_evidence import (
+    RunEpubOpeningEvidence,
+)
+from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
+from mechanical_librarian.domain.epub_opening_evidence import (
+    EpubEvidenceFailure,
+    EpubEvidenceClaim,
+    EpubEvidenceLocator,
+    EpubEvidenceMode,
+    EpubEvidenceResult,
+    ResolvedEpubSource,
+    epub_evidence_identity,
+    epub_governing_digest,
+    epub_work_key,
+)
+from mechanical_librarian.domain.local_evidence import LocalEvidenceOutcome
+
+
+class EpubOpeningEvidenceDomainTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.locator = EpubEvidenceLocator(
+            "target_" + "1" * 32,
+            "snapshot_" + "2" * 32,
+            0,
+        )
+        self.source = ResolvedEpubSource(
+            self.locator,
+            "3" * 64,
+            "4" * 64,
+            "books",
+            "book.epub",
+        )
+
+    def test_work_identity_changes_for_every_private_source_generation(self) -> None:
+        governing = epub_governing_digest(EpubOpeningLimits(), {"profile": "test"})
+        baseline = epub_work_key(self.source, "5" * 64, governing)
+        self.assertNotEqual(
+            baseline,
+            epub_work_key(self.source, "6" * 64, governing),
+        )
+        changed_source = ResolvedEpubSource(
+            self.locator,
+            "7" * 64,
+            self.source.mount_configuration_digest,
+            "books",
+            "book.epub",
+        )
+        self.assertNotEqual(
+            baseline,
+            epub_work_key(changed_source, "5" * 64, governing),
+        )
+
+    def test_evidence_identity_binds_canonical_report_and_actual_outcome(self) -> None:
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+            EpubOpeningLimits(),
+        )
+        values = epub_evidence_identity(
+            work_key="1" * 64,
+            binding_digest="2" * 64,
+            source_fingerprint="3" * 64,
+            governing_digest="4" * 64,
+            report=report,
+        )
+        self.assertTrue(values[0].startswith("evidence_"))
+        self.assertEqual(values[3], "none")
+        self.assertEqual(len(values[1]), 64)
+
+    def test_operational_failure_cannot_masquerade_as_evidence(self) -> None:
+        with self.assertRaises(ValueError):
+            epub_evidence_identity(
+                work_key="1" * 64,
+                binding_digest="2" * 64,
+                source_fingerprint="3" * 64,
+                governing_digest="4" * 64,
+                report=EpubOpeningReport(
+                    LocalEvidenceOutcome.RESOURCE_LIMIT,
+                    EpubOpeningLimits(),
+                ),
+            )
+        result = EpubEvidenceResult(
+            EpubEvidenceMode.FAILED,
+            failure=EpubEvidenceFailure.RESOURCE_LIMIT,
+        )
+        self.assertFalse(result.succeeded)
+        self.assertIsNone(result.evidence_id)
+
+    def test_abs_path_contract_creates_only_one_private_logical_binding(self) -> None:
+        mapping = InventoryMountMapping(
+            "books", "ebook", "/library/books", "a" * 64
+        )
+        item = {
+            "ino": "synthetic-inode",
+            "ebookFormat": "epub",
+            "metadata": {
+                "path": "/library/books/series/book.epub",
+                "relPath": "series/book.epub",
+            },
+        }
+        binding = _epub_binding(item, (mapping,))
+        self.assertIsNotNone(binding)
+        self.assertEqual(binding.reference.mount, "books")
+        self.assertEqual(binding.reference.relative_path, "series/book.epub")
+        self.assertNotIn("/library/books", repr(binding))
+        self.assertIsNone(
+            _epub_binding(item, (mapping, mapping))
+        )
+        mismatch = dict(item)
+        mismatch["metadata"] = dict(item["metadata"], relPath="other.epub")
+        self.assertIsNone(_epub_binding(mismatch, (mapping,)))
+
+    def test_source_change_after_child_result_never_publishes_evidence(self) -> None:
+        source = self.source
+
+        class Repository:
+            published = False
+
+            def resolve(self, _locator, _configuration):
+                return source
+
+            def accept(self, value, fingerprint, governing, _accepted_at):
+                key = epub_work_key(value, fingerprint, governing)
+                return "epub_work_" + key[:32], None
+
+            def claim(self, work_id, _worker, _claimed_at, _duration):
+                key = epub_work_key(source, "5" * 64, "6" * 64)
+                return EpubEvidenceClaim(work_id, key, 1, 1, "worker")
+
+            def publish(self, *_args):
+                self.published = True
+                raise AssertionError("changed source was published")
+
+            def fail(self, _claim, failure, _failed_at, *, retryable):
+                self.failure = failure
+                self.retryable = retryable
+                return EpubEvidenceResult(EpubEvidenceMode.FAILED, failure=failure)
+
+        repository = Repository()
+        fingerprints = iter(("5" * 64, "7" * 64))
+        result = RunEpubOpeningEvidence(repository).run(
+            self.locator,
+            self.source.mount_configuration_digest,
+            "6" * 64,
+            "worker",
+            lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+            lambda _source: next(fingerprints),
+            lambda _source: EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+                EpubOpeningLimits(),
+            ),
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.SOURCE_CHANGED)
+        self.assertFalse(repository.published)
+        self.assertTrue(repository.retryable)
+
+
+if __name__ == "__main__":
+    unittest.main()

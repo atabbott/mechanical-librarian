@@ -79,6 +79,21 @@ cannot make absence authoritative.
 
 ### EvidenceRecord
 
+F07b adds a private `InventoryFileBinding` beside immutable
+`inventory-snapshot-v2` history. It binds one canonical file index and opaque
+file identity to a logical read-only mount reference and material configuration
+digest. The binding is application state, not public snapshot content; only an
+opaque target reference, opaque snapshot reference, file index, and media kind
+leave persistence as an `InventorySelector`.
+
+`EpubOpeningEvidence` stores the bounded canonical F07a report as immutable
+history. Its identity binds the accepted work compatibility, private source
+generation, binding, governing versions, actual parser result, typed outcome,
+and canonical report digest. A separate current pointer is monotonic; changed
+input supersedes applicability without changing older evidence, and reverse
+replay cannot move the pointer backwards. Operational failures are attempt
+facts and never evidence records.
+
 Immutable bounded evidence such as:
 
 - embedded ebook package metadata;

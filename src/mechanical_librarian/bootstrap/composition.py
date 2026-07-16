@@ -25,6 +25,9 @@ from mechanical_librarian.adapters.persistence.inventory_v2 import (
 from mechanical_librarian.adapters.persistence.inventory_polling import (
     SQLiteInventoryPollingRepository,
 )
+from mechanical_librarian.adapters.persistence.epub_opening_evidence import (
+    SQLiteEpubOpeningEvidenceRepository,
+)
 from mechanical_librarian.adapters.library_services.synthetic import (
     SyntheticLibraryReader,
     synthetic_capabilities,
@@ -69,9 +72,13 @@ from mechanical_librarian.application.job_heartbeat import (
 from mechanical_librarian.application.inventory_reconciliation import (
     InventoryConnectionVerification,
     InventoryLibraryResult,
+    InventoryMountMapping,
     InventoryOutcome,
     InventoryRunResult,
     ReconcileInventory,
+)
+from mechanical_librarian.application.epub_opening_evidence import (
+    RunEpubOpeningEvidence,
 )
 from mechanical_librarian.application.inventory_polling import (
     InventoryPollOutcome,
@@ -124,6 +131,13 @@ from mechanical_librarian.domain.identifiers import (
     canonical_json,
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
+from mechanical_librarian.domain.epub_opening_evidence import (
+    EpubEvidenceFailure,
+    EpubEvidenceLocator,
+    EpubEvidenceMode,
+    EpubEvidenceResult,
+    epub_governing_digest,
+)
 from mechanical_librarian.domain.local_evidence import (
     EpubPackageLimits,
     LocalEvidenceCapability,
@@ -480,6 +494,34 @@ def _inventory_connection(configuration_path: Path):
     return configuration, configured, connection, libraries, bounds
 
 
+def _mount_configuration_digest(mount) -> str:
+    return hashlib.sha256(
+        canonical_json(
+            {
+                "container_path": mount.container_path,
+                "library_type": mount.library_type,
+                "name": mount.name,
+                "read_only": mount.read_only,
+                "schema": "media-mount-configuration-v1",
+                "service_path": mount.service_path,
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _inventory_mount_mappings(configuration) -> tuple[InventoryMountMapping, ...]:
+    return tuple(
+        InventoryMountMapping(
+            mount.name,
+            mount.library_type,
+            mount.service_path.rstrip("/") or "/",
+            _mount_configuration_digest(mount),
+        )
+        for mount in getattr(configuration, "media_mounts", ())
+        if mount.library_type == "ebook" and mount.read_only
+    )
+
+
 def _inventory_context(bounds: ScanBounds, cancellation: str) -> OperationContext:
     now = datetime.now(timezone.utc)
     return OperationContext(
@@ -612,6 +654,7 @@ def _run_audiobookshelf_inventory(
         source = AudiobookshelfInventoryReader(
             client_factory=client_factory,
             connection_verifier=verify_connection,
+            mount_mappings=_inventory_mount_mappings(configuration),
         )
 
         def operation(state: sqlite3.Connection) -> InventoryRunResult:
@@ -752,6 +795,7 @@ def _run_audiobookshelf_poll(
             source = AudiobookshelfInventoryReader(
                 client_factory=client_factory,
                 connection_verifier=verify_connection,
+                mount_mappings=_inventory_mount_mappings(configuration),
             )
             polling = SQLiteInventoryPollingRepository(state)
             return RunInventoryPoll(
@@ -819,10 +863,18 @@ def _inspect_audiobookshelf_inventory(
     """Inspect durable scan state without resolving a credential or using the network."""
 
     try:
-        _, _, connection, libraries, bounds = _inventory_connection(configuration_path)
+        configuration, _, connection, libraries, bounds = _inventory_connection(
+            configuration_path
+        )
 
         def operation(state: sqlite3.Connection) -> InventoryRunResult:
-            repository = SQLiteInventoryV2Repository(state)
+            repository = SQLiteInventoryV2Repository(
+                state,
+                binding_configuration_digests=frozenset(
+                    mapping.configuration_digest
+                    for mapping in _inventory_mount_mappings(configuration)
+                ),
+            )
             results = []
             context = _inventory_context(bounds, "inventory-inspect")
             for library in libraries:
@@ -1064,6 +1116,114 @@ def _run_epub_opening_report(
                     pass
 
 
+def _run_epub_opening_evidence(
+    configuration_path: Path,
+    database: Path,
+    target_reference: str,
+    snapshot_reference: str,
+    file_index: int,
+) -> EpubEvidenceResult:
+    """Resolve one opaque selector and execute or reuse its durable evidence."""
+
+    failed = lambda value: EpubEvidenceResult(EpubEvidenceMode.FAILED, failure=value)
+    try:
+        configuration = load_configuration_file(configuration_path)
+        locator = EpubEvidenceLocator(
+            target_reference, snapshot_reference, file_index
+        )
+        mappings = _inventory_mount_mappings(configuration)
+        if not mappings or "epub" not in configuration.evidence.enabled_formats:
+            return failed(EpubEvidenceFailure.INVALID_CONFIGURATION)
+        package_limits = replace(
+            configuration.evidence.epub_package,
+            source_archive_bytes=min(
+                configuration.evidence.epub_package.source_archive_bytes,
+                configuration.evidence.maximum_document_bytes,
+            ),
+        )
+        limits = replace(
+            configuration.evidence.epub_opening,
+            package=package_limits,
+            text_characters_per_selection=min(
+                configuration.evidence.epub_opening.text_characters_per_selection,
+                configuration.evidence.maximum_text_characters,
+            ),
+        )
+        governing = epub_governing_digest(
+            limits,
+            {
+                "mounts": sorted(mapping.configuration_digest for mapping in mappings),
+                "parser_concurrency": configuration.limits.parser_concurrency,
+                "parser_timeout_seconds": configuration.limits.parser_timeout_seconds,
+                "temporary_bytes": configuration.limits.temporary_bytes,
+            },
+        )
+
+        def operation(state: sqlite3.Connection) -> EpubEvidenceResult:
+            repository = SQLiteEpubOpeningEvidenceRepository(state)
+            resolved = tuple(
+                (mapping, value)
+                for mapping in mappings
+                if (
+                    value := repository.resolve(locator, mapping.configuration_digest)
+                )
+                is not None
+            )
+            if len(resolved) != 1:
+                return failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
+            mapping, source = resolved[0]
+            mounts = tuple(
+                mount
+                for mount in configuration.media_mounts
+                if mount.name == source.mount_name
+                and _mount_configuration_digest(mount)
+                == mapping.configuration_digest
+            )
+            if len(mounts) != 1:
+                return failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
+            mount = mounts[0]
+
+            def fingerprint(value) -> str:
+                if value != source:
+                    raise ValueError("resolved EPUB source changed")
+                opened = open_local_media(mount.container_path, value.relative_path)
+                try:
+                    return sha256_descriptor(
+                        opened.descriptor,
+                        opened.length,
+                        maximum=package_limits.source_archive_bytes,
+                    )
+                finally:
+                    os.close(opened.descriptor)
+
+            return RunEpubOpeningEvidence(repository).run(
+                locator,
+                mapping.configuration_digest,
+                governing,
+                "epub_evidence_worker",
+                lambda: datetime.now(timezone.utc),
+                fingerprint,
+                lambda value: _run_epub_opening_report(
+                    configuration_path, value.mount_name, value.relative_path
+                ),
+                timedelta(
+                    seconds=min(
+                        3_700,
+                        limits.wall_seconds + limits.termination_grace_seconds + 10,
+                    )
+                ),
+            )
+
+        preflight(database)
+        if not path_entry_exists(database):
+            return failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
+        return _run_existing_operation(database, operation)
+    except (ConfigurationError, LocalMediaError, SchemaError, ValueError):
+        return failed(EpubEvidenceFailure.INVALID_CONFIGURATION)
+    except Exception:
+        return failed(EpubEvidenceFailure.INTERNAL_FAILURE)
+
+
 def _run_synthetic_title_proposal_report(
     database: Path, scenario_name: str
 ) -> SyntheticTitleProposalReport:
@@ -1278,6 +1438,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         inventory_poll_inspection_runner=_inspect_audiobookshelf_poll,
         epub_package_report_runner=_run_epub_package_report,
         epub_opening_report_runner=_run_epub_opening_report,
+        epub_opening_evidence_runner=_run_epub_opening_evidence,
         synthetic_title_proposal_runner=_run_synthetic_title_proposal_report,
         hardcover_title_proposal_runner=_run_hardcover_title_proposal_report,
         synthetic_title_review_case_runner=_run_synthetic_title_review_case_report,

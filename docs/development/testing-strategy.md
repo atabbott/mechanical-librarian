@@ -1,5 +1,14 @@
 # Testing Strategy
 
+F07b qualification builds and installs the exact wheel, prepares disposable
+schema-8 inventory state through the installed package, obtains selectors from
+the installed `inventory-inspect` command, and runs the whole F07a public or
+approved private cohort through `epub-opening-evidence`. A second process pass
+must reuse every durable identity. One shadow source is changed to prove
+isolated invalidation, restored to prove reverse replay cannot move current
+state backwards, and made unavailable to prove per-book failure isolation.
+Only aggregate counts leave the temporary directory.
+
 ## Goals
 
 - Prove domain behavior independently of external services.

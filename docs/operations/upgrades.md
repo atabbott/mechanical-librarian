@@ -122,6 +122,18 @@ applicable F09a proposal scenario, and
 [`synthetic-title-review-case-report`](synthetic-title-review-case-report.md)
 against non-production state.
 
+The F07b evidence migration is additive and forward-only from every genuine
+schema prefix through schema 7. Migration 8 adds immutable snapshot-file
+bindings, durable EPUB work and attempts, immutable opening evidence, current
+applicability, checkpoints, and append-only events. It transforms no prior row;
+legacy snapshots simply have no binding and emit no selector until a new
+reconciliation. Migration interruption rolls all schema-8 objects and its
+version row back together. Before upgrading important state, retain a verified
+pre-schema-8 copy. Downgrade requires restoring that copy; never delete the new
+tables or edit `schema_migrations`. After upgrade, run `state-check`,
+`inventory-inspect`, and one isolated `epub-opening-evidence` execution plus
+restart reuse.
+
 ## Verification
 
 After upgrade:

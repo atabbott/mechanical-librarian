@@ -50,8 +50,8 @@ class SqliteFoundationTests(unittest.TestCase):
                 (proposal.lineage, proposal.set_id),
             )
 
-            self.assertEqual(migrate(connection), 7)
-            self.assertEqual(migrate(connection), 7)
+            self.assertEqual(migrate(connection), 8)
+            self.assertEqual(migrate(connection), 8)
             self.assertEqual(
                 connection.execute(
                     "SELECT canonical_set FROM synthetic_title_proposal_sets WHERE set_id = ?",
@@ -71,9 +71,9 @@ class SqliteFoundationTests(unittest.TestCase):
             self.assertIn(("trigger", "synthetic_title_review_cases_no_update"), objects)
             self.assertIn(("trigger", "synthetic_title_review_case_transitions_no_delete"), objects)
 
-    def test_every_supported_schema_prefix_upgrades_to_schema_seven(self) -> None:
+    def test_every_supported_schema_prefix_upgrades_to_schema_eight(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            for version in range(1, 7):
+            for version in range(1, 8):
                 with self.subTest(version=version):
                     path = Path(directory) / f"schema-{version}.sqlite"
                     connection = connect(path)
@@ -84,7 +84,7 @@ class SqliteFoundationTests(unittest.TestCase):
                             "INSERT INTO instance_metadata(key, value) VALUES (?, ?)",
                             (f"schema-{version}-sentinel", "preserved"),
                         )
-                        self.assertEqual(migrate(connection), 7)
+                        self.assertEqual(migrate(connection), 8)
                         self.assertEqual(
                             connection.execute(
                                 "SELECT value FROM instance_metadata WHERE key = ?",
@@ -134,7 +134,67 @@ class SqliteFoundationTests(unittest.TestCase):
                             ).fetchall(),
                             [],
                         )
-                        self.assertEqual(migrate(connection), 7)
+                        self.assertEqual(migrate(connection), 8)
+                    finally:
+                        connection.close()
+
+    def test_interrupted_schema_eight_migration_rolls_back_and_retries_cleanly(self) -> None:
+        class FailingConnection:
+            def __init__(self, connection: sqlite3.Connection, statement: str) -> None:
+                self._connection = connection
+                self._statement = statement
+                self._failed = False
+
+            def execute(self, statement: str, parameters: tuple[object, ...] = ()):
+                if statement == self._statement and not self._failed:
+                    self._failed = True
+                    raise sqlite3.OperationalError("injected schema-eight interruption")
+                return self._connection.execute(statement, parameters)
+
+            def __getattr__(self, name: str):
+                return getattr(self._connection, name)
+
+        migration = MIGRATIONS[7]
+        indexes = (0, len(migration.statements) // 2, len(migration.statements) - 1)
+        with tempfile.TemporaryDirectory() as directory:
+            for index in indexes:
+                with self.subTest(index=index):
+                    connection = connect(Path(directory) / f"schema-eight-{index}.sqlite")
+                    try:
+                        with patch.object(sqlite, "MIGRATIONS", MIGRATIONS[:7]):
+                            self.assertEqual(migrate(connection), 7)
+                        connection.execute(
+                            "INSERT INTO instance_metadata(key,value) VALUES "
+                            "('schema-eight-sentinel','preserved')"
+                        )
+                        with self.assertRaisesRegex(SchemaError, "rolled back"):
+                            migrate(  # type: ignore[arg-type]
+                                FailingConnection(
+                                    connection, migration.statements[index]
+                                )
+                            )
+                        self.assertEqual(
+                            connection.execute(
+                                "SELECT version FROM schema_migrations ORDER BY version"
+                            ).fetchall(),
+                            [(version,) for version in range(1, 8)],
+                        )
+                        self.assertEqual(
+                            connection.execute(
+                                "SELECT name FROM sqlite_master WHERE name IN "
+                                "('inventory_snapshot_file_bindings','epub_evidence_jobs',"
+                                "'epub_opening_evidence')"
+                            ).fetchall(),
+                            [],
+                        )
+                        self.assertEqual(migrate(connection), 8)
+                        self.assertEqual(
+                            connection.execute(
+                                "SELECT value FROM instance_metadata WHERE key="
+                                "'schema-eight-sentinel'"
+                            ).fetchone(),
+                            ("preserved",),
+                        )
                     finally:
                         connection.close()
 

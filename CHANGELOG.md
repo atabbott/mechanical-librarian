@@ -7,6 +7,16 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added `epub-opening-evidence`, the durable F07b round trip from a path-free
+  inventory selector to restart-reusable immutable opening evidence. Inventory
+  now atomically persists validated private logical EPUB bindings; schema 8
+  adds retry-bounded fenced work, attempts, immutable canonical evidence,
+  monotonic current applicability, checkpoints, and append-only events. Source
+  or governing changes create new evidence, reverse replay cannot move current
+  state backwards, stale workers cannot publish, and operational failures
+  remain job health. The installed-wheel qualifier uses a disposable shadow
+  cohort and emits aggregate-only results.
+
 - Fixed Hardcover provider-secret validation so leading or trailing space, tab,
   carriage return, or line feed is rejected before client construction, DNS,
   or transport activity while preserving existing target-secret compatibility.

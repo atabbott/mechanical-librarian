@@ -20,7 +20,7 @@ from .identifiers import (
     TargetId,
     canonical_json,
 )
-from .inventory import ItemLifecycle, MediaType
+from .inventory import FileReference, ItemLifecycle, MediaType
 
 
 OBSERVATION_SCHEMA = SchemaVersion("inventory-observation-v1")
@@ -29,6 +29,82 @@ MAX_OBSERVATION_BYTES = 1_048_576
 MAX_FIELD_VALUES = 10_000
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _WARNING = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_OPAQUE_REFERENCE = re.compile(r"^(?:target|snapshot)_[0-9a-f]{32}$")
+
+
+@dataclass(frozen=True, repr=False)
+class InventoryFileBinding:
+    """Private immutable link from a snapshot file slot to a logical mount."""
+
+    file_index: int
+    file_identity: str
+    media_kind: str
+    mount_configuration_digest: str
+    reference: FileReference
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.file_index) is not int
+            or not 0 <= self.file_index <= 10_000
+            or _DIGEST.fullmatch(self.file_identity) is None
+            or self.media_kind != "epub"
+            or _DIGEST.fullmatch(self.mount_configuration_digest) is None
+            or type(self.reference) is not FileReference
+        ):
+            raise DomainValueError("inventory file binding is malformed")
+
+    def __repr__(self) -> str:
+        return (
+            "InventoryFileBinding("
+            f"file_index={self.file_index}, media_kind={self.media_kind!r}, "
+            "file_identity=<redacted>, mount_configuration_digest=<redacted>, "
+            "reference=<redacted>)"
+        )
+
+
+@dataclass(frozen=True)
+class InventorySelector:
+    """Path-free selector emitted by durable inventory inspection."""
+
+    target_reference: str
+    snapshot_reference: str
+    file_index: int
+    media_kind: str
+
+    def __post_init__(self) -> None:
+        if (
+            _OPAQUE_REFERENCE.fullmatch(self.target_reference) is None
+            or _OPAQUE_REFERENCE.fullmatch(self.snapshot_reference) is None
+            or type(self.file_index) is not int
+            or not 0 <= self.file_index <= 10_000
+            or self.media_kind != "epub"
+        ):
+            raise DomainValueError("inventory selector is malformed")
+
+
+def opaque_target_reference(target: TargetId) -> str:
+    if type(target) is not TargetId:
+        raise DomainValueError("inventory target is malformed")
+    value = {
+        "adapter": target.adapter.value,
+        "connection": target.connection.value,
+        "external_item": target.external_item.value,
+        "library": target.library.value,
+        "schema": "inventory-target-reference-v1",
+    }
+    return "target_" + hashlib.sha256(canonical_json(value).encode()).hexdigest()[:32]
+
+
+def opaque_snapshot_reference(snapshot: "InventorySnapshotV2") -> str:
+    if type(snapshot) is not InventorySnapshotV2:
+        raise DomainValueError("inventory snapshot is malformed")
+    value = {
+        "fingerprint": snapshot.fingerprint.digest,
+        "schema": "inventory-snapshot-reference-v1",
+        "snapshot": snapshot.id.value,
+        "target": opaque_target_reference(snapshot.observation.target),
+    }
+    return "snapshot_" + hashlib.sha256(canonical_json(value).encode()).hexdigest()[:32]
 
 
 class ObservationState(StrEnum):
@@ -294,6 +370,7 @@ class InventorySnapshotV2:
     id: SnapshotId
     observation: InventoryObservation
     fingerprint: Fingerprint
+    file_bindings: tuple[InventoryFileBinding, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -301,18 +378,30 @@ class InventorySnapshotV2:
             or type(self.observation) is not InventoryObservation
             or type(self.fingerprint) is not Fingerprint
             or self.fingerprint.schema != SNAPSHOT_SCHEMA
+            or type(self.file_bindings) is not tuple
+            or any(type(value) is not InventoryFileBinding for value in self.file_bindings)
+            or tuple(sorted(self.file_bindings, key=lambda value: value.file_index))
+            != self.file_bindings
+            or len({value.file_index for value in self.file_bindings})
+            != len(self.file_bindings)
         ):
             raise DomainValueError("inventory snapshot v2 is malformed")
         if self.fingerprint != _snapshot_fingerprint(self.observation):
             raise DomainValueError("inventory snapshot v2 fingerprint is inconsistent")
 
     @classmethod
-    def create(cls, observation: InventoryObservation) -> "InventorySnapshotV2":
+    def create(
+        cls,
+        observation: InventoryObservation,
+        *,
+        file_bindings: tuple[InventoryFileBinding, ...] = (),
+    ) -> "InventorySnapshotV2":
         fingerprint = _snapshot_fingerprint(observation)
         return cls(
             SnapshotId("snapshot-" + fingerprint.digest[:32]),
             observation,
             fingerprint,
+            tuple(sorted(file_bindings, key=lambda value: value.file_index)),
         )
 
     def removed(self, *, observed_at: datetime) -> "InventorySnapshotV2":
@@ -490,6 +579,7 @@ class InventoryInspection:
     page_count: int
     response_bytes: int
     moved_count: int
+    selectors: tuple[InventorySelector, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -512,6 +602,19 @@ class InventoryInspection:
                 )
             )
             or self.item_count != self.active_count + self.removed_count
+            or type(self.selectors) is not tuple
+            or any(type(value) is not InventorySelector for value in self.selectors)
+            or tuple(
+                sorted(
+                    self.selectors,
+                    key=lambda value: (
+                        value.target_reference,
+                        value.snapshot_reference,
+                        value.file_index,
+                    ),
+                )
+            )
+            != self.selectors
         ):
             raise DomainValueError("inventory inspection is invalid")
 
@@ -519,8 +622,10 @@ class InventoryInspection:
 __all__ = [
     "FieldObservation",
     "InventoryInspection",
+    "InventoryFileBinding",
     "InventoryObservation",
     "InventoryPass",
+    "InventorySelector",
     "InventorySnapshotV2",
     "ObservationField",
     "ObservationState",
@@ -530,4 +635,6 @@ __all__ = [
     "ScanState",
     "ScanUsage",
     "SNAPSHOT_SCHEMA",
+    "opaque_snapshot_reference",
+    "opaque_target_reference",
 ]

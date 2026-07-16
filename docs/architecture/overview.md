@@ -1,5 +1,13 @@
 # Architecture Overview
 
+F07b connects the read-only inventory and local-evidence seams without giving
+either adapter extra authority. The Audiobookshelf adapter projects a validated
+service path into an application-owned private logical binding during complete
+inventory publication. A separate SQLite evidence adapter resolves the public
+opaque selector, while the composition root alone maps the private logical
+reference to a container path and invokes the unchanged descriptor-bound F07a
+child. API/CLI output receives only the bounded path-free result.
+
 ## Context
 
 Mechanical Librarian runs beside one or more media-library services.
