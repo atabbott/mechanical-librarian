@@ -499,7 +499,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                             from_state="retry_wait",
                             to_state="failed_terminal",
                         )
-                        return None
+                        return EpubEvidenceFailure.RETRY_EXHAUSTED
                 if state not in {"pending", "retry_wait"} or attempt >= int(row[6]):
                     return None
                 active = int(self._connection.execute(

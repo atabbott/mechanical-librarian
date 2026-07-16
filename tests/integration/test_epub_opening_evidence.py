@@ -818,8 +818,14 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
                 accepted[0], f"worker-{attempt}", self.now + timedelta(seconds=attempt), timedelta(seconds=1)
             )
             self.assertEqual(claim.attempt, attempt)
-        self.assertIsNone(
-            self.repository.claim(accepted[0], "exhausted", self.now + timedelta(seconds=4), timedelta(seconds=1))
+        self.assertEqual(
+            self.repository.claim(
+                accepted[0],
+                "exhausted",
+                self.now + timedelta(seconds=4),
+                timedelta(seconds=1),
+            ),
+            EpubEvidenceFailure.RETRY_EXHAUSTED,
         )
         self.assertEqual(
             self.connection.execute("SELECT state,terminal_failure FROM epub_evidence_jobs WHERE work_id=?", (accepted[0],)).fetchone(),
@@ -829,6 +835,57 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         second = self.repository.accept(source, "2" * 64, "2" * 64, self.now)
         self.assertIsNotNone(self.repository.claim(first[0], "capacity-1", self.now, timedelta(seconds=30), 1))
         self.assertIsNone(self.repository.claim(second[0], "capacity-2", self.now, timedelta(seconds=30), 1))
+
+    def test_resume_reports_final_lease_exhaustion(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "d" * 64, "e" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker-1", self.now, timedelta(seconds=1)
+        )
+        self.assertEqual(claim.attempt, 1)
+        for attempt in (2, 3):
+            claim = self.repository.claim(
+                accepted[0],
+                f"worker-{attempt}",
+                self.now + timedelta(seconds=attempt * 2 - 2),
+                timedelta(seconds=1),
+            )
+            self.assertEqual(claim.attempt, attempt)
+
+        resumed = RunEpubOpeningEvidence(self.repository).resume(
+            frozenset({self.binding_configuration}),
+            "e" * 64,
+            "recovery-worker",
+            lambda: self.now + timedelta(seconds=6),
+            lambda _source: "d" * 64,
+            lambda _source: self.fail("exhausted work executed"),
+            lambda _source, _expected: True,
+        )
+
+        self.assertEqual(resumed.failure, EpubEvidenceFailure.RETRY_EXHAUSTED)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,terminal_failure,attempt FROM epub_evidence_jobs "
+                "WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("failed_terminal", "retry_exhausted", 3),
+        )
+        self.assertEqual(
+            tuple(
+                self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "epub_opening_evidence",
+                    "current_epub_opening_evidence",
+                    "epub_evidence_checkpoints",
+                )
+            ),
+            (0, 0, 0),
+        )
 
     def test_recovery_cancellation_and_transactional_source_revalidation(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
