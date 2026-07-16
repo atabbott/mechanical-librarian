@@ -68,9 +68,10 @@ controls.
 
 ## Dry run and merge
 
-Run from the clean checkout at the expected head. Name every required GitHub
-check explicitly. For an ordinary tracked increment, `public-gate` and
-`linked-issue` are required:
+Run from the clean checkout at the expected head. The controller owns the
+canonical check policy: `public-gate` and `linked-issue` are both required
+before merge, and `public-gate` is required on the resulting `main` commit.
+Callers cannot omit or substitute those sets:
 
 ```text
 python3 scripts/merge_exact_head.py \
@@ -79,9 +80,6 @@ python3 scripts/merge_exact_head.py \
   --base-ref main \
   --base-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   --head-sha bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
-  --required-check public-gate \
-  --required-check linked-issue \
-  --post-merge-check public-gate \
   --review-repo /TRUSTED/REVIEW/CHECKOUT \
   --review-evidence /IGNORED/LOCAL/review-evidence.json \
   --review-envelope slice_acceptance=/IGNORED/LOCAL/acceptance-envelope.json \
@@ -105,7 +103,8 @@ machine-readable pass result. The controller:
    satisfy or block the explicitly named set;
 5. rejects unresolved threads and incomplete thread pagination;
 6. rechecks server enforcement, the full pull-request object, every required
-   check, and reviews/threads immediately before mutation;
+   check, and reviews/threads, then rechecks local cleanliness, exact `HEAD`,
+   and repository identity immediately before mutation;
 7. sends GitHub the expected head through its merge `sha` guard without an
    admin, bypass, or force option; and
 8. fetches `main`, proves the returned squash commit has exactly the qualified

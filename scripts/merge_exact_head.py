@@ -22,6 +22,8 @@ _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/ -]{0,127}")
 _SLICE_REVIEW_TASKS = frozenset({"slice_acceptance", "code_quality"})
 _TIER_TWO_REVIEW_TASKS = frozenset({"safety", "publication_challenge"})
+_PRE_MERGE_CHECKS = frozenset({"public-gate", "linked-issue"})
+_POST_MAIN_CHECKS = frozenset({"public-gate"})
 _TRUSTED_CONTROL_PATHS = {
     "review_validator": Path(".codex/scripts/review_packet.py"),
     "run_record_validator": Path(".codex/scripts/run_record.py"),
@@ -105,8 +107,6 @@ class MergeRequest:
     base_ref: str
     base_sha: str
     head_sha: str
-    required_checks: frozenset[str]
-    post_merge_checks: frozenset[str]
     review_repo: Path
     review_evidence: Path
     review_envelopes: tuple[tuple[str, Path], ...]
@@ -134,12 +134,6 @@ def _validate_request(request: MergeRequest) -> None:
         raise MergeGateError("pull request and main base are required")
     if _SHA.fullmatch(request.base_sha) is None or _SHA.fullmatch(request.head_sha) is None:
         raise MergeGateError("base and head must be lowercase full commit SHAs")
-    for group, label in (
-        (request.required_checks, "pre-merge check"),
-        (request.post_merge_checks, "post-merge check"),
-    ):
-        if not group or any(_NAME.fullmatch(name) is None for name in group):
-            raise MergeGateError(f"at least one valid required {label} is mandatory")
     if request.post_merge_attempts < 1 or not 0 <= request.post_merge_interval <= 300:
         raise MergeGateError("post-merge wait bounds are invalid")
     try:
@@ -425,7 +419,7 @@ def _check_server_enforcement(request: MergeRequest, protection: dict[str, Any])
                 "server enforcement returned malformed required checks"
             )
         contexts.add(check["context"])
-    if not request.required_checks <= contexts:
+    if not _PRE_MERGE_CHECKS <= contexts:
         raise ServerEnforcementBlocked(
             "server enforcement lacks a required check"
         )
@@ -564,7 +558,7 @@ def _check_reviews(pull: dict[str, Any]) -> None:
 def _live_preflight(request: MergeRequest, runner: CommandRunner) -> None:
     _check_server_enforcement(request, _branch_protection(request, runner))
     _check_pull_request(request, _pull_request(request, runner))
-    _check_named_passes(_pull_checks(request, runner), request.required_checks)
+    _check_named_passes(_pull_checks(request, runner), _PRE_MERGE_CHECKS)
     _check_reviews(_review_state(request, runner))
 
 
@@ -652,7 +646,7 @@ def _wait_post_merge_checks(
     for attempt in range(request.post_merge_attempts):
         try:
             checks = _commit_checks(request.repository, merge_sha, runner)
-            _check_named_passes(checks, request.post_merge_checks)
+            _check_named_passes(checks, _POST_MAIN_CHECKS)
             return
         except MergeGateError as error:
             if "unambiguous pass" not in str(error) or attempt + 1 == request.post_merge_attempts:
@@ -701,6 +695,7 @@ def execute(
             "repository": request.repository,
         }
     _live_preflight(request, runner)
+    _check_local_checkout(request, runner)
     merge_sha = _merge(request, runner)
     _post_verify(request, merge_sha, runner, sleeper)
     return {
@@ -732,8 +727,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-ref", required=True)
     parser.add_argument("--base-sha", required=True)
     parser.add_argument("--head-sha", required=True)
-    parser.add_argument("--required-check", action="append", required=True)
-    parser.add_argument("--post-merge-check", action="append", required=True)
     parser.add_argument("--review-repo", required=True, type=Path)
     parser.add_argument("--review-evidence", required=True, type=Path)
     parser.add_argument("--review-envelope", action="append", required=True, type=_named_path)
@@ -750,8 +743,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     request = MergeRequest(
         repository=args.repository, pull_request=args.pull_request,
         base_ref=args.base_ref, base_sha=args.base_sha, head_sha=args.head_sha,
-        required_checks=frozenset(args.required_check),
-        post_merge_checks=frozenset(args.post_merge_check),
         review_repo=args.review_repo,
         review_evidence=args.review_evidence,
         review_envelopes=tuple(args.review_envelope),

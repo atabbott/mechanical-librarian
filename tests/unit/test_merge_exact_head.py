@@ -60,6 +60,13 @@ class FakeRunner:
         self.malformed_review = False
         self.check_returncode = 0
         self.include_optional_pending_check = False
+        self.status_queries = 0
+        self.head_queries = 0
+        self.repository_queries = 0
+        self.second_status = ""
+        self.second_local_head = HEAD
+        self.second_repository = REPOSITORY
+        self.second_linked_issue_check = "pass"
 
     def run(self, argv: object, *, check: bool = True) -> CommandResult:
         command = tuple(argv)  # type: ignore[arg-type]
@@ -67,11 +74,20 @@ class FakeRunner:
         if command[0].endswith("python") or "python" in Path(command[0]).name:
             return CommandResult(0, "PASS\n")
         if command == ("git", "status", "--porcelain"):
-            return CommandResult(0, "")
+            self.status_queries += 1
+            return CommandResult(0, self.second_status if self.status_queries > 1 else "")
         if command == ("git", "rev-parse", "HEAD"):
-            return CommandResult(0, f"{HEAD}\n")
+            self.head_queries += 1
+            head = self.second_local_head if self.head_queries > 1 else HEAD
+            return CommandResult(0, f"{head}\n")
         if command[:3] == ("gh", "repo", "view"):
-            return CommandResult(0, f"{REPOSITORY}\n")
+            self.repository_queries += 1
+            repository = (
+                self.second_repository
+                if self.repository_queries > 1
+                else REPOSITORY
+            )
+            return CommandResult(0, f"{repository}\n")
         if len(command) > 2 and command[0:2] == ("gh", "api") and command[2].endswith("branches/main/protection"):
             if not self.protected:
                 raise MergeGateError("command failed: gh")
@@ -81,7 +97,12 @@ class FakeRunner:
             bucket = self.second_check if self.check_queries > 1 else "pass"
             checks = [{"name": "public-gate", "bucket": bucket}]
             if not self.omit_required_check:
-                checks.append({"name": "linked-issue", "bucket": bucket})
+                linked_bucket = (
+                    self.second_linked_issue_check
+                    if self.check_queries > 1
+                    else "pass"
+                )
+                checks.append({"name": "linked-issue", "bucket": linked_bucket})
             if self.include_optional_pending_check:
                 checks.append({"name": "optional-analysis", "bucket": "pending"})
             return CommandResult(self.check_returncode, json.dumps(checks))
@@ -115,6 +136,9 @@ class FakeRunner:
                 status, conclusion = "completed", "success"
             return CommandResult(0, json.dumps([{"check_runs": [{
                 "name": "public-gate", "status": status, "conclusion": conclusion,
+            }, {
+                "name": "optional-analysis", "status": "completed",
+                "conclusion": "success",
             }]}]))
         if command[:2] == ("gh", "api"):
             self.pull_queries += 1
@@ -248,8 +272,6 @@ class ExactHeadMergeTests(unittest.TestCase):
         return MergeRequest(
             repository=REPOSITORY, pull_request=17, base_ref="main",
             base_sha=BASE, head_sha=HEAD,
-            required_checks=frozenset({"public-gate", "linked-issue"}),
-            post_merge_checks=frozenset({"public-gate"}),
             review_repo=self.review_repo,
             review_evidence=self.evidence,
             review_envelopes=(("slice_acceptance", self.acceptance), ("code_quality", self.quality)),
@@ -412,6 +434,13 @@ class ExactHeadMergeTests(unittest.TestCase):
             execute(self.request(), runner, FakeSleeper())
         self.assertEqual(runner.merge_puts, 0)
 
+    def test_failed_linked_issue_cannot_be_omitted_from_final_preflight(self) -> None:
+        runner = FakeRunner()
+        runner.second_linked_issue_check = "fail"
+        with self.assertRaisesRegex(MergeGateError, "linked-issue"):
+            execute(self.request(), runner, FakeSleeper())
+        self.assertEqual(runner.merge_puts, 0)
+
     def test_review_race_and_review_required_fail_before_mutation(self) -> None:
         for decision in ("CHANGES_REQUESTED", "REVIEW_REQUIRED", None):
             with self.subTest(decision=decision):
@@ -420,6 +449,23 @@ class ExactHeadMergeTests(unittest.TestCase):
                 with self.assertRaisesRegex(MergeGateError, "not APPROVED"):
                     execute(self.request(), runner, FakeSleeper())
                 self.assertFalse(runner.merged)
+
+    def test_final_remote_preflight_is_followed_by_full_local_recheck(self) -> None:
+        mutations = (
+            ("second_status", " M scripts/merge_exact_head.py", "not clean"),
+            ("second_local_head", "f" * 40, "head does not match"),
+            ("second_repository", "other/repository", "repository does not match"),
+        )
+        for attribute, value, message in mutations:
+            with self.subTest(attribute=attribute):
+                runner = FakeRunner()
+                setattr(runner, attribute, value)
+                with self.assertRaisesRegex(MergeGateError, message):
+                    execute(self.request(), runner, FakeSleeper())
+                self.assertEqual(runner.merge_puts, 0)
+                self.assertEqual(runner.pull_queries, 2)
+                self.assertEqual(runner.check_queries, 2)
+                self.assertEqual(runner.review_queries, 2)
 
     def test_missing_server_enforcement_blocks_before_mutation(self) -> None:
         runner = FakeRunner()
@@ -530,6 +576,19 @@ class ExactHeadMergeTests(unittest.TestCase):
             execute(self.request(attempts=1), runner, FakeSleeper())
         self.assertEqual(caught.exception.phase, "post_merge_checks")
         self.assertTrue(runner.merged)
+
+    def test_optional_success_cannot_substitute_for_public_gate(self) -> None:
+        for state in ("pending", "failure"):
+            with self.subTest(state=state):
+                runner = FakeRunner()
+                if state == "pending":
+                    runner.post_pending = 1
+                else:
+                    runner.post_failure = True
+                with self.assertRaises(PostMutationError) as caught:
+                    execute(self.request(attempts=1), runner, FakeSleeper())
+                self.assertEqual(caught.exception.phase, "post_merge_checks")
+                self.assertTrue(runner.merged)
 
     def test_artifact_size_limit_is_enforced(self) -> None:
         oversized = Path(self.temporary.name) / "oversized"
@@ -657,7 +716,6 @@ class ExactHeadMergeTests(unittest.TestCase):
         arguments = [
             "--repository", REPOSITORY, "--pull-request", "17", "--base-ref", "main",
             "--base-sha", BASE, "--head-sha", HEAD,
-            "--required-check", "public-gate", "--post-merge-check", "public-gate",
             "--review-repo", self.temporary.name,
             "--review-evidence", "/evidence", "--review-envelope", "slice_acceptance=/envelope",
             "--run-record", "/record",
@@ -675,7 +733,6 @@ class ExactHeadMergeTests(unittest.TestCase):
         arguments = [
             "--repository", REPOSITORY, "--pull-request", "17", "--base-ref", "main",
             "--base-sha", BASE, "--head-sha", HEAD,
-            "--required-check", "public-gate", "--post-merge-check", "public-gate",
             "--review-repo", self.temporary.name,
             "--review-evidence", "/evidence",
             "--review-envelope", "slice_acceptance=/envelope",
@@ -698,8 +755,6 @@ class ExactHeadMergeTests(unittest.TestCase):
         arguments = [
             "--repository", REPOSITORY, "--pull-request", "17",
             "--base-ref", "main", "--base-sha", BASE, "--head-sha", HEAD,
-            "--required-check", "public-gate",
-            "--post-merge-check", "public-gate",
             "--review-repo", self.temporary.name,
             "--review-evidence", "/evidence",
             "--review-envelope", "slice_acceptance=/envelope",
