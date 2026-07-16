@@ -23,12 +23,17 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     epub_work_key,
     result_from_report,
 )
-from mechanical_librarian.domain.identifiers import SnapshotId, canonical_json
+from mechanical_librarian.domain.identifiers import SnapshotId
+from mechanical_librarian.domain.inventory import FileReference
 from mechanical_librarian.domain.inventory_v2 import (
+    InventoryBindingSetMember,
+    InventoryFileBinding,
     InventoryObservation,
     InventorySnapshotV2,
+    ValidatedInventoryFileBinding,
     opaque_snapshot_reference,
     opaque_target_reference,
+    validate_inventory_binding_set,
 )
 
 
@@ -127,21 +132,13 @@ class SQLiteEpubOpeningEvidenceRepository:
     ) -> EpubSourceResolution:
         rows = self._connection.execute(
             "SELECT s.snapshot_id,s.fingerprint_digest,s.canonical_observation,"
-            "s.observed_at,b.binding_digest,b.mount_name,b.relative_path,"
-            "b.file_identity,b.media_kind,b.mount_configuration_digest,"
-            "s.adapter_id,s.connection_id,s.library_id,s.external_item "
+            "s.observed_at "
             "FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
             "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-            "JOIN current_inventory_snapshot_binding_sets bs USING "
+            "JOIN inventory_snapshot_locator_index i USING "
             "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-            "JOIN inventory_snapshot_binding_set_members m "
-            "ON m.binding_set_digest=bs.binding_set_digest "
-            "JOIN inventory_snapshot_file_bindings b "
-            "ON b.binding_digest=m.binding_digest AND b.file_index=m.file_index "
-            "WHERE b.target_reference=? AND b.snapshot_reference=? "
-            "AND b.file_index=? AND b.media_kind='epub' "
-            "AND b.mount_configuration_digest=?",
-            (locator.target_reference, locator.snapshot_reference, locator.file_index, mount_configuration_digest),
+            "WHERE i.target_reference=? AND i.snapshot_reference=?",
+            (locator.target_reference, locator.snapshot_reference),
         ).fetchall()
         if len(rows) > 1:
             return EpubSourceResolution(failure=EpubEvidenceFailure.AMBIGUOUS_REFERENCE)
@@ -149,54 +146,60 @@ class SQLiteEpubOpeningEvidenceRepository:
             return EpubSourceResolution(
                 failure=self._resolution_failure(locator, mount_configuration_digest)
             )
-        matches: list[ResolvedEpubSource] = []
-        for row in rows:
-            observation = InventoryObservation.from_json(
-                str(row[2]), _parse_timestamp(str(row[3]))
-            )
-            snapshot = InventorySnapshotV2.create(observation)
-            if (
-                snapshot.id != SnapshotId(str(row[0]))
-                or snapshot.fingerprint.digest != str(row[1])
-                or observation.media_type.value != "ebook"
-                or observation.lifecycle.value != "active"
-                or opaque_target_reference(observation.target)
-                != locator.target_reference
-                or opaque_snapshot_reference(snapshot)
-                != locator.snapshot_reference
-            ):
-                continue
-            binding_value = {
-                "file_identity": str(row[7]),
-                "file_index": locator.file_index,
-                "media_kind": str(row[8]),
-                "mount": str(row[5]),
-                "mount_configuration_digest": str(row[9]),
-                "relative_path": str(row[6]),
-                "schema": "inventory-file-binding-v1",
-                "snapshot": str(row[0]),
-                "snapshot_fingerprint": str(row[1]),
-                "target": [str(value) for value in row[10:14]],
-            }
-            if hashlib.sha256(
-                canonical_json(binding_value).encode("utf-8")
-            ).hexdigest() != str(row[4]):
-                raise ValueError("inventory file binding identity is inconsistent")
-            matches.append(
-                ResolvedEpubSource(
-                    locator,
-                    str(row[4]),
-                    mount_configuration_digest,
-                    str(row[5]),
-                    str(row[6]),
+        row = rows[0]
+        observation = InventoryObservation.from_json(
+            str(row[2]), _parse_timestamp(str(row[3]))
+        )
+        snapshot = InventorySnapshotV2.create(observation)
+        if (
+            snapshot.id != SnapshotId(str(row[0]))
+            or snapshot.fingerprint.digest != str(row[1])
+            or opaque_target_reference(observation.target)
+            != locator.target_reference
+            or opaque_snapshot_reference(snapshot) != locator.snapshot_reference
+        ):
+            raise ValueError("current inventory snapshot identity is inconsistent")
+        if (
+            observation.media_type.value != "ebook"
+            or observation.lifecycle.value != "active"
+        ):
+            return EpubSourceResolution(
+                failure=self._resolution_failure(
+                    locator, mount_configuration_digest
                 )
             )
+        current_bindings = _validated_current_inventory_bindings(
+            self._connection, snapshot
+        )
+        matches = [
+            ResolvedEpubSource(
+                locator,
+                value.digest,
+                mount_configuration_digest,
+                value.binding.reference.mount,
+                value.binding.reference.relative_path,
+            )
+            for value in current_bindings
+            if value.binding.file_index == locator.file_index
+            and value.binding.media_kind == "epub"
+            and value.binding.mount_configuration_digest
+            == mount_configuration_digest
+        ]
         if len(matches) != 1:
-            return EpubSourceResolution(failure=EpubEvidenceFailure.BINDING_INTEGRITY_FAILURE)
+            return EpubSourceResolution(
+                failure=self._resolution_failure(
+                    locator,
+                    mount_configuration_digest,
+                    current_bindings,
+                )
+            )
         return EpubSourceResolution(source=matches[0])
 
     def _resolution_failure(
-        self, locator: EpubEvidenceLocator, mount_configuration_digest: str
+        self,
+        locator: EpubEvidenceLocator,
+        mount_configuration_digest: str,
+        current_bindings: tuple[ValidatedInventoryFileBinding, ...] | None = None,
     ) -> EpubEvidenceFailure:
         snapshot_index_rows = self._connection.execute(
             "SELECT target_reference,media_type,lifecycle "
@@ -268,24 +271,14 @@ class SQLiteEpubOpeningEvidenceRepository:
             return EpubEvidenceFailure.NON_EPUB
         if all(str(row[0]) != mount_configuration_digest for row in index_row):
             return EpubEvidenceFailure.MOUNT_MISMATCH
-        current_index_rows = self._connection.execute(
-            "SELECT b.mount_configuration_digest,b.media_kind "
-            "FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
-            "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-            "JOIN current_inventory_snapshot_binding_sets bs USING "
-            "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-            "JOIN inventory_snapshot_binding_set_members m "
-            "ON m.binding_set_digest=bs.binding_set_digest "
-            "JOIN inventory_snapshot_file_bindings b "
-            "ON b.binding_digest=m.binding_digest AND b.file_index=m.file_index "
-            "WHERE b.target_reference=? AND b.snapshot_reference=? "
-            "AND b.file_index=? LIMIT 2",
+        current_index_rows = [
             (
-                locator.target_reference,
-                locator.snapshot_reference,
-                locator.file_index,
-            ),
-        ).fetchall()
+                value.binding.mount_configuration_digest,
+                value.binding.media_kind,
+            )
+            for value in current_bindings or ()
+            if value.binding.file_index == locator.file_index
+        ]
         if not current_index_rows:
             return EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
         if any(str(row[1]) != "epub" for row in current_index_rows):
@@ -925,6 +918,77 @@ class SQLiteEpubOpeningEvidenceRepository:
                 _format_timestamp(occurred_at),
             ),
         )
+
+
+def _validated_current_inventory_bindings(
+    connection: sqlite3.Connection,
+    snapshot: InventorySnapshotV2,
+) -> tuple[ValidatedInventoryFileBinding, ...]:
+    target = snapshot.observation.target
+    identity = (
+        target.adapter.value,
+        target.connection.value,
+        target.library.value,
+        target.external_item.value,
+    )
+    pointer = connection.execute(
+        "SELECT snapshot_id,binding_set_digest FROM "
+        "current_inventory_snapshot_binding_sets WHERE adapter_id=? "
+        "AND connection_id=? AND library_id=? AND external_item=?",
+        identity,
+    ).fetchone()
+    if pointer is None:
+        return ()
+    if str(pointer[0]) != snapshot.id.value:
+        raise ValueError("current inventory binding set snapshot is inconsistent")
+    set_digest = str(pointer[1])
+    header = connection.execute(
+        "SELECT adapter_id,connection_id,library_id,external_item,snapshot_id,"
+        "binding_count FROM inventory_snapshot_binding_sets "
+        "WHERE binding_set_digest=?",
+        (set_digest,),
+    ).fetchone()
+    if header is None:
+        raise ValueError("current inventory binding set identity is inconsistent")
+    rows = connection.execute(
+        "SELECT m.file_index,m.binding_digest,b.adapter_id,b.connection_id,"
+        "b.library_id,b.external_item,b.snapshot_id,b.target_reference,"
+        "b.snapshot_reference,b.file_index,b.file_identity,b.media_kind,"
+        "b.mount_configuration_digest,b.mount_name,b.relative_path "
+        "FROM inventory_snapshot_binding_set_members m LEFT JOIN "
+        "inventory_snapshot_file_bindings b ON b.binding_digest=m.binding_digest "
+        "WHERE m.binding_set_digest=? ORDER BY m.file_index",
+        (set_digest,),
+    ).fetchall()
+    members: list[InventoryBindingSetMember] = []
+    for row in rows:
+        if any(value is None for value in row[2:]):
+            raise ValueError("current inventory binding set member is unavailable")
+        members.append(
+            InventoryBindingSetMember(
+                int(row[0]),
+                str(row[1]),
+                (str(row[2]), str(row[3]), str(row[4]), str(row[5])),
+                str(row[6]),
+                str(row[7]),
+                str(row[8]),
+                InventoryFileBinding(
+                    int(row[9]),
+                    str(row[10]),
+                    str(row[11]),
+                    str(row[12]),
+                    FileReference(str(row[13]), str(row[14])),
+                ),
+            )
+        )
+    return validate_inventory_binding_set(
+        snapshot,
+        set_digest,
+        (str(header[0]), str(header[1]), str(header[2]), str(header[3])),
+        str(header[4]),
+        int(header[5]),
+        tuple(members),
+    )
 
 
 def _digest(value: object) -> bool:

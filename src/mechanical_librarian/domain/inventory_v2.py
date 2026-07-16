@@ -515,6 +515,117 @@ class ScanUsage:
 
 
 @dataclass(frozen=True)
+class InventoryBindingSetMember:
+    """Persisted fields needed to verify one private binding-set member."""
+
+    file_index: int
+    digest: str
+    target: tuple[str, str, str, str]
+    snapshot_id: str
+    target_reference: str
+    snapshot_reference: str
+    binding: InventoryFileBinding
+
+
+@dataclass(frozen=True)
+class ValidatedInventoryFileBinding:
+    """One binding verified together with its complete enclosing set."""
+
+    binding: InventoryFileBinding
+    digest: str
+
+
+def inventory_file_binding_digest(
+    snapshot: InventorySnapshotV2,
+    persisted_id: SnapshotId,
+    binding: InventoryFileBinding,
+) -> str:
+    """Return the canonical identity of one persisted snapshot binding."""
+
+    target = snapshot.observation.target
+    value = {
+        "file_identity": binding.file_identity,
+        "file_index": binding.file_index,
+        "media_kind": binding.media_kind,
+        "mount": binding.reference.mount,
+        "mount_configuration_digest": binding.mount_configuration_digest,
+        "relative_path": binding.reference.relative_path,
+        "schema": "inventory-file-binding-v1",
+        "snapshot": persisted_id.value,
+        "snapshot_fingerprint": snapshot.fingerprint.digest,
+        "target": [
+            target.adapter.value,
+            target.connection.value,
+            target.library.value,
+            target.external_item.value,
+        ],
+    }
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def validate_inventory_binding_set(
+    snapshot: InventorySnapshotV2,
+    binding_set_digest: str,
+    declared_target: tuple[str, str, str, str],
+    declared_snapshot_id: str,
+    declared_count: int,
+    members: tuple[InventoryBindingSetMember, ...],
+) -> tuple[ValidatedInventoryFileBinding, ...]:
+    """Validate complete ordered membership and all nested binding identities."""
+
+    target = snapshot.observation.target
+    expected_target = (
+        target.adapter.value,
+        target.connection.value,
+        target.library.value,
+        target.external_item.value,
+    )
+    if (
+        _DIGEST.fullmatch(binding_set_digest) is None
+        or declared_target != expected_target
+        or declared_snapshot_id != snapshot.id.value
+        or type(declared_count) is not int
+        or declared_count != len(members)
+    ):
+        raise DomainValueError("inventory binding set identity is inconsistent")
+    validated: list[ValidatedInventoryFileBinding] = []
+    previous_index = -1
+    for member in members:
+        if (
+            type(member) is not InventoryBindingSetMember
+            or member.file_index <= previous_index
+            or member.file_index != member.binding.file_index
+            or _DIGEST.fullmatch(member.digest) is None
+            or member.target != expected_target
+            or member.snapshot_id != snapshot.id.value
+            or member.target_reference != opaque_target_reference(target)
+            or member.snapshot_reference != opaque_snapshot_reference(snapshot)
+            or inventory_file_binding_digest(
+                snapshot, snapshot.id, member.binding
+            )
+            != member.digest
+        ):
+            raise DomainValueError(
+                "inventory binding set member identity is inconsistent"
+            )
+        previous_index = member.file_index
+        validated.append(
+            ValidatedInventoryFileBinding(member.binding, member.digest)
+        )
+    set_value = {
+        "bindings": [value.digest for value in validated],
+        "schema": "inventory-snapshot-binding-set-v1",
+        "snapshot": snapshot.id.value,
+        "target": list(expected_target),
+    }
+    if hashlib.sha256(
+        canonical_json(set_value).encode("utf-8")
+    ).hexdigest() != binding_set_digest:
+        raise DomainValueError("inventory binding set digest is inconsistent")
+    return tuple(validated)
+
+
+@dataclass(frozen=True)
 class InventoryPass:
     snapshots: tuple[InventorySnapshotV2, ...]
     usage: ScanUsage

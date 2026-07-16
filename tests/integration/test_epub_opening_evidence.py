@@ -52,13 +52,15 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
     SchemaError,
     connect,
     migrate,
+    preflight,
 )
 
 
 class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.connection = connect(Path(self.temporary.name) / "state.sqlite3")
+        self.database = Path(self.temporary.name) / "state.sqlite3"
+        self.connection = connect(self.database)
         self.assertEqual(migrate(self.connection), 8)
         target = TargetId(
             AdapterId("audiobookshelf"),
@@ -631,6 +633,100 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             (0,),
         )
 
+    def test_restored_trigger_binding_set_substitution_fails_closed(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "a" * 64, "b" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        replacement = InventorySnapshotV2.create(
+            self.snapshot.observation,
+            file_bindings=(
+                InventoryFileBinding(
+                    0,
+                    "1" * 64,
+                    "epub",
+                    "a" * 64,
+                    FileReference("replacement", "book.epub"),
+                ),
+            ),
+        )
+        inventory = SQLiteInventoryV2Repository(self.connection)
+        inventory._persist_or_reuse(replacement)
+        current_set = self.connection.execute(
+            "SELECT binding_set_digest FROM current_inventory_snapshot_binding_sets"
+        ).fetchone()[0]
+        replacement_binding = self.connection.execute(
+            "SELECT binding_digest FROM inventory_snapshot_file_bindings "
+            "WHERE mount_configuration_digest=?",
+            ("a" * 64,),
+        ).fetchone()[0]
+        self.connection.execute(
+            "DROP TRIGGER inventory_snapshot_binding_set_members_no_update"
+        )
+        self.connection.execute(
+            "UPDATE inventory_snapshot_binding_set_members SET binding_digest=? "
+            "WHERE binding_set_digest=? AND file_index=0",
+            (replacement_binding, current_set),
+        )
+        trigger = next(
+            statement
+            for statement in MIGRATIONS[7].statements
+            if statement.startswith(
+                "CREATE TRIGGER inventory_snapshot_binding_set_members_no_update"
+            )
+        )
+        self.connection.execute(trigger)
+        self.connection.close()
+        preflight(self.database)
+        self.connection = connect(self.database)
+        self.repository = SQLiteEpubOpeningEvidenceRepository(self.connection)
+
+        self.assertEqual(
+            self.repository.resolve(
+                self.locator, self.binding_configuration
+            ).failure,
+            EpubEvidenceFailure.CORRUPT_STATE,
+        )
+        with self.assertRaisesRegex(ValueError, "binding set digest"):
+            SQLiteInventoryV2Repository(self.connection)._current_values(
+                "audiobookshelf", "connection", "library"
+            )
+        accepted_corrupt = self.repository.accept(
+            source, "c" * 64, "d" * 64, self.now
+        )
+        self.assertEqual(
+            accepted_corrupt[1].failure, EpubEvidenceFailure.CORRUPT_STATE
+        )
+        result = self.repository.publish(
+            claim,
+            source,
+            "a" * 64,
+            "b" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now,
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.CORRUPT_STATE)
+        self.assertEqual(
+            tuple(
+                self.connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()[0]
+                for table in (
+                    "epub_opening_evidence",
+                    "current_epub_opening_evidence",
+                    "epub_evidence_checkpoints",
+                )
+            ),
+            (0, 0, 0),
+        )
+
     def test_newer_acceptance_retires_old_current_even_if_new_work_fails(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
         older = self.repository.accept(source, "e" * 64, "f" * 64, self.now)
@@ -1089,9 +1185,8 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         current_unbound_snapshot = InventorySnapshotV2.create(
             current_unbound_observation
         )
-        SQLiteInventoryV2Repository(self.connection)._persist_or_reuse(
-            current_unbound_snapshot
-        )
+        current_unbound_inventory = SQLiteInventoryV2Repository(self.connection)
+        current_unbound_inventory._persist_or_reuse(current_unbound_snapshot)
         self.connection.execute(
             "UPDATE current_inventory_v2 SET snapshot_id=? WHERE adapter_id=? "
             "AND connection_id=? AND library_id=? AND external_item=?",
@@ -1102,6 +1197,9 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
                 current_unbound_target.library.value,
                 current_unbound_target.external_item.value,
             ),
+        )
+        current_unbound_inventory._set_current_binding_set(
+            current_unbound_snapshot, current_unbound_snapshot.id
         )
         current_unbound_locator = EpubEvidenceLocator(
             self.locator.target_reference,
@@ -1135,7 +1233,8 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             observed_at=self.now,
         )
         audio_snapshot = InventorySnapshotV2.create(audio_observation)
-        SQLiteInventoryV2Repository(self.connection)._persist_or_reuse(audio_snapshot)
+        audio_inventory = SQLiteInventoryV2Repository(self.connection)
+        audio_inventory._persist_or_reuse(audio_snapshot)
         self.connection.execute(
             "INSERT INTO current_inventory_v2(adapter_id,connection_id,library_id,external_item,snapshot_id) VALUES (?,?,?,?,?)",
             (
@@ -1146,6 +1245,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
                 audio_snapshot.id.value,
             ),
         )
+        audio_inventory._set_current_binding_set(audio_snapshot, audio_snapshot.id)
         audio_locator = EpubEvidenceLocator(
             opaque_target_reference(audio_target), opaque_snapshot_reference(audio_snapshot), 0
         )

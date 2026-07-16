@@ -31,6 +31,7 @@ from mechanical_librarian.domain.inventory import LibraryConnection
 from mechanical_librarian.domain.inventory import FileReference
 from mechanical_librarian.domain.inventory_polling import PollClaim
 from mechanical_librarian.domain.inventory_v2 import (
+    InventoryBindingSetMember,
     InventoryFileBinding,
     InventoryInspection,
     InventoryObservation,
@@ -40,9 +41,88 @@ from mechanical_librarian.domain.inventory_v2 import (
     ScanStart,
     ScanState,
     ScanUsage,
+    ValidatedInventoryFileBinding,
+    inventory_file_binding_digest,
     opaque_snapshot_reference,
     opaque_target_reference,
+    validate_inventory_binding_set,
 )
+
+
+def validated_current_inventory_bindings(
+    connection: sqlite3.Connection,
+    snapshot: InventorySnapshotV2,
+) -> tuple[ValidatedInventoryFileBinding, ...]:
+    """Load one exact current binding set and reject semantic corruption."""
+
+    if type(snapshot) is not InventorySnapshotV2:
+        raise ValueError("inventory snapshot is invalid")
+    target = snapshot.observation.target
+    identity = (
+        target.adapter.value,
+        target.connection.value,
+        target.library.value,
+        target.external_item.value,
+    )
+    pointer = connection.execute(
+        "SELECT snapshot_id,binding_set_digest FROM "
+        "current_inventory_snapshot_binding_sets WHERE adapter_id=? "
+        "AND connection_id=? AND library_id=? AND external_item=?",
+        identity,
+    ).fetchone()
+    if pointer is None:
+        return ()
+    if str(pointer[0]) != snapshot.id.value:
+        raise ValueError("current inventory binding set snapshot is inconsistent")
+    set_digest = str(pointer[1])
+    header = connection.execute(
+        "SELECT adapter_id,connection_id,library_id,external_item,snapshot_id,"
+        "binding_count FROM inventory_snapshot_binding_sets "
+        "WHERE binding_set_digest=?",
+        (set_digest,),
+    ).fetchone()
+    if header is None:
+        raise ValueError("current inventory binding set identity is inconsistent")
+    rows = connection.execute(
+        "SELECT m.file_index,m.binding_digest,b.adapter_id,b.connection_id,"
+        "b.library_id,b.external_item,b.snapshot_id,b.target_reference,"
+        "b.snapshot_reference,b.file_index,b.file_identity,b.media_kind,"
+        "b.mount_configuration_digest,b.mount_name,b.relative_path,b.binding_digest "
+        "FROM inventory_snapshot_binding_set_members m LEFT JOIN "
+        "inventory_snapshot_file_bindings b ON b.binding_digest=m.binding_digest "
+        "WHERE m.binding_set_digest=? ORDER BY m.file_index",
+        (set_digest,),
+    ).fetchall()
+    members: list[InventoryBindingSetMember] = []
+    for row in rows:
+        if any(value is None for value in row[2:]):
+            raise ValueError("current inventory binding set member is unavailable")
+        binding = InventoryFileBinding(
+            int(row[9]),
+            str(row[10]),
+            str(row[11]),
+            str(row[12]),
+            FileReference(str(row[13]), str(row[14])),
+        )
+        members.append(
+            InventoryBindingSetMember(
+                int(row[0]),
+                str(row[1]),
+                tuple(str(value) for value in row[2:6]),
+                str(row[6]),
+                str(row[7]),
+                str(row[8]),
+                binding,
+            )
+        )
+    return validate_inventory_binding_set(
+        snapshot,
+        set_digest,
+        tuple(str(value) for value in header[:4]),
+        str(header[4]),
+        int(header[5]),
+        tuple(members),
+    )
 
 
 class SQLiteInventoryV2Repository(InventoryScanRepository):
@@ -807,17 +887,15 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
     ) -> tuple[InventorySnapshotV2, ...]:
         rows = self._connection.execute(
             "SELECT c.external_item,s.snapshot_id,s.fingerprint_digest,"
-            "s.canonical_observation,s.observed_at,b.binding_set_digest "
+            "s.canonical_observation,s.observed_at "
             "FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
-            "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-            "LEFT JOIN current_inventory_snapshot_binding_sets b USING "
             "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
             "WHERE c.adapter_id=? AND c.connection_id=? AND c.library_id=? "
             "ORDER BY c.external_item",
             (adapter, connection, library),
         ).fetchall()
         values: list[InventorySnapshotV2] = []
-        for external_item, snapshot_id, digest, canonical, observed_at, binding_set in rows:
+        for external_item, snapshot_id, digest, canonical, observed_at in rows:
             observation = InventoryObservation.from_json(
                 str(canonical), _parse_timestamp(str(observed_at))
             )
@@ -830,58 +908,18 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
             values.append(
                 InventorySnapshotV2.create(
                     observation,
-                    file_bindings=self._bindings_for(
-                        adapter,
-                        connection,
-                        library,
-                        str(external_item),
-                        snapshot,
-                        None if binding_set is None else str(binding_set),
+                    file_bindings=tuple(
+                        value.binding
+                        for value in validated_current_inventory_bindings(
+                            self._connection, snapshot
+                        )
+                        if not self._binding_configuration_digests
+                        or value.binding.mount_configuration_digest
+                        in self._binding_configuration_digests
                     ),
                 )
             )
         return tuple(values)
-
-    def _bindings_for(
-        self,
-        adapter: str,
-        connection: str,
-        library: str,
-        external_item: str,
-        snapshot: InventorySnapshotV2,
-        binding_set_digest: str | None,
-    ) -> tuple[InventoryFileBinding, ...]:
-        if binding_set_digest is None:
-            return ()
-        rows = self._connection.execute(
-            "SELECT b.file_index,b.file_identity,b.media_kind,"
-            "b.mount_configuration_digest,b.mount_name,b.relative_path FROM "
-            "inventory_snapshot_binding_set_members m JOIN "
-            "inventory_snapshot_file_bindings b ON b.binding_digest=m.binding_digest "
-            "WHERE m.binding_set_digest=? AND b.adapter_id=? AND b.connection_id=? "
-            "AND b.library_id=? AND b.external_item=? AND b.snapshot_id=? "
-            "ORDER BY b.file_index",
-            (
-                binding_set_digest,
-                adapter,
-                connection,
-                library,
-                external_item,
-                snapshot.id.value,
-            ),
-        ).fetchall()
-        return tuple(
-            InventoryFileBinding(
-                int(row[0]),
-                str(row[1]),
-                str(row[2]),
-                str(row[3]),
-                FileReference(str(row[4]), str(row[5])),
-            )
-            for row in rows
-            if not self._binding_configuration_digests
-            or str(row[3]) in self._binding_configuration_digests
-        )
 
     def _current_stats(
         self, adapter: str, connection: str, library: str
@@ -1011,25 +1049,7 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
         persisted_id: SnapshotId,
         binding: InventoryFileBinding,
     ) -> str:
-        target = snapshot.observation.target
-        value = {
-            "file_identity": binding.file_identity,
-            "file_index": binding.file_index,
-            "media_kind": binding.media_kind,
-            "mount": binding.reference.mount,
-            "mount_configuration_digest": binding.mount_configuration_digest,
-            "relative_path": binding.reference.relative_path,
-            "schema": "inventory-file-binding-v1",
-            "snapshot": persisted_id.value,
-            "snapshot_fingerprint": snapshot.fingerprint.digest,
-            "target": [
-                target.adapter.value,
-                target.connection.value,
-                target.library.value,
-                target.external_item.value,
-            ],
-        }
-        return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+        return inventory_file_binding_digest(snapshot, persisted_id, binding)
 
     def _persist_binding_set(
         self,

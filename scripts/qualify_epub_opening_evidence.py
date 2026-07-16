@@ -12,6 +12,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 
@@ -386,8 +387,18 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def _entrypoint() -> int:
+    """Return one path-free failure envelope for every ordinary exception."""
+
     try:
-        raise SystemExit(main())
-    except QualificationError as error:
-        raise SystemExit(str(error)) from None
+        return main()
+    except QualificationError:
+        print("EPUB evidence qualification failed", file=sys.stderr)
+        return 1
+    except Exception:
+        print("EPUB evidence qualification failed safely", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_entrypoint())
