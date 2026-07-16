@@ -547,7 +547,7 @@ _EPUB_EVIDENCE_ATTEMPTS_TABLE_SQL = (
     f"started_at TEXT NOT NULL CHECK ({_timestamp_constraint('started_at')}), "
     f"finished_at TEXT CHECK ({_timestamp_constraint('finished_at', nullable=True)}), "
     "outcome TEXT CHECK (outcome IS NULL OR outcome IN ('success','no_applicable_evidence','unsupported_format','unsupported_version','unsupported_compression','unsupported_multiple_renditions','encrypted','malformed','integrity_failure')), "
-    "failure TEXT CHECK (failure IS NULL OR failure IN ('invalid_invocation','invalid_configuration','source_reference_unavailable','ambiguous_reference','wrong_target','stale_snapshot','file_index_out_of_range','non_epub','mount_mismatch','binding_integrity_failure','corrupt_state','source_changed','busy','cancelled','timeout','resource_limit','integrity_failure','retry_exhausted','persistence_failure','internal_failure','lease_expired')), PRIMARY KEY (work_id,attempt), UNIQUE (work_id,fence))"
+    "failure TEXT CHECK (failure IS NULL OR failure IN ('invalid_invocation','invalid_configuration','source_reference_unavailable','ambiguous_reference','wrong_target','stale_snapshot','file_index_out_of_range','non_epub','mount_mismatch','binding_integrity_failure','corrupt_state','source_changed','busy','cancelled','timeout','resource_limit','integrity_failure','persistence_failure','internal_failure','lease_expired')), PRIMARY KEY (work_id,attempt), UNIQUE (work_id,fence))"
 )
 _EPUB_OPENING_EVIDENCE_TABLE_SQL = (
     "CREATE TABLE epub_opening_evidence ("

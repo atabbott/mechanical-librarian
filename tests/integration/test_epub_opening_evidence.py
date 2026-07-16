@@ -1333,6 +1333,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         self.connection.execute(
             "DROP TRIGGER epub_evidence_attempts_finalize_only"
         )
+        self.connection.execute("PRAGMA ignore_check_constraints=ON")
         self.connection.execute(
             "UPDATE epub_evidence_attempts SET finished_at=?,"
             "failure='retry_exhausted' WHERE work_id=? AND attempt=?",
@@ -1342,6 +1343,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
                 claim.attempt,
             ),
         )
+        self.connection.execute("PRAGMA ignore_check_constraints=OFF")
         self.connection.execute(
             "UPDATE epub_evidence_jobs SET state='failed_terminal',"
             "lease_owner=NULL,lease_expires_at=NULL,"
@@ -1375,6 +1377,96 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
 
         replayed = self.repository.accept(
             source, "9" * 64, "0" * 64, self.now + timedelta(seconds=2)
+        )[1]
+        self.assertEqual(replayed.failure, EpubEvidenceFailure.CORRUPT_STATE)
+
+    def test_retry_wait_replay_rejects_reserved_attempt_exhaustion(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "1" * 64, "0" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        finished_at = self.now + timedelta(seconds=1)
+        self.repository.fail(
+            claim,
+            EpubEvidenceFailure.INTERNAL_FAILURE,
+            finished_at,
+            retryable=True,
+        )
+        attempt_trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_evidence_attempts_finalize_only'"
+        ).fetchone()[0]
+        self.connection.execute(
+            "DROP TRIGGER epub_evidence_attempts_finalize_only"
+        )
+        self.connection.execute("PRAGMA ignore_check_constraints=ON")
+        self.connection.execute(
+            "UPDATE epub_evidence_attempts SET failure='retry_exhausted' "
+            "WHERE work_id=? AND attempt=?",
+            (accepted[0], claim.attempt),
+        )
+        self.connection.execute("PRAGMA ignore_check_constraints=OFF")
+        self.connection.execute(
+            "UPDATE epub_evidence_jobs SET terminal_failure='retry_exhausted' "
+            "WHERE work_id=?",
+            (accepted[0],),
+        )
+        self.connection.execute(str(attempt_trigger))
+
+        replayed = self.repository.accept(
+            source, "1" * 64, "0" * 64, self.now + timedelta(seconds=2)
+        )[1]
+        self.assertEqual(replayed.failure, EpubEvidenceFailure.CORRUPT_STATE)
+
+    def test_succeeded_replay_rejects_reserved_prior_attempt_exhaustion(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "2" * 64, "0" * 64, self.now
+        )
+        self.repository.claim(
+            accepted[0], "first-worker", self.now, timedelta(seconds=1)
+        )
+        second_claim = self.repository.claim(
+            accepted[0],
+            "second-worker",
+            self.now + timedelta(seconds=2),
+            timedelta(seconds=30),
+        )
+        self.repository.publish(
+            second_claim,
+            source,
+            "2" * 64,
+            "0" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now + timedelta(seconds=3),
+        )
+        attempt_trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_evidence_attempts_finalize_only'"
+        ).fetchone()[0]
+        self.connection.execute(
+            "DROP TRIGGER epub_evidence_attempts_finalize_only"
+        )
+        self.connection.execute("PRAGMA ignore_check_constraints=ON")
+        self.connection.execute(
+            "UPDATE epub_evidence_attempts SET failure='retry_exhausted' "
+            "WHERE work_id=? AND attempt=1",
+            (accepted[0],),
+        )
+        self.connection.execute("PRAGMA ignore_check_constraints=OFF")
+        self.connection.execute(str(attempt_trigger))
+
+        replayed = self.repository.accept(
+            source, "2" * 64, "0" * 64, self.now + timedelta(seconds=4)
         )[1]
         self.assertEqual(replayed.failure, EpubEvidenceFailure.CORRUPT_STATE)
 

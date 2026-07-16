@@ -1025,6 +1025,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                 finished_time >= started_time
                 and attempt_row[5] is None
                 and attempt_row[6] is not None
+                and str(attempt_row[6]) != "retry_exhausted"
             )
             next_event = (
                 events[len(expected_events)]
@@ -1318,7 +1319,9 @@ class SQLiteEpubOpeningEvidenceRepository:
             )
             if ordinal < len(attempts):
                 attempt_history_valid = attempt_history_valid and (
-                    attempt_row[5] is None and attempt_row[6] is not None
+                    attempt_row[5] is None
+                    and attempt_row[6] is not None
+                    and str(attempt_row[6]) != "retry_exhausted"
                 )
                 expected_events.append(
                     _epub_event_record(
