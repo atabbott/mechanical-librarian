@@ -190,6 +190,23 @@ class SQLiteEpubOpeningEvidenceRepository:
     def _resolution_failure(
         self, locator: EpubEvidenceLocator, mount_configuration_digest: str
     ) -> EpubEvidenceFailure:
+        snapshot_index_rows = self._connection.execute(
+            "SELECT target_reference,media_type,lifecycle "
+            "FROM inventory_snapshot_locator_index WHERE snapshot_reference=? LIMIT 2",
+            (locator.snapshot_reference,),
+        ).fetchall()
+        if snapshot_index_rows and any(
+            str(row[0]) != locator.target_reference for row in snapshot_index_rows
+        ):
+            return EpubEvidenceFailure.WRONG_TARGET
+        matching_snapshot_rows = tuple(
+            row for row in snapshot_index_rows if str(row[0]) == locator.target_reference
+        )
+        if matching_snapshot_rows:
+            if any(str(row[1]) != "ebook" for row in matching_snapshot_rows):
+                return EpubEvidenceFailure.NON_EPUB
+            if any(str(row[2]) != "active" for row in matching_snapshot_rows):
+                return EpubEvidenceFailure.STALE_SNAPSHOT
         snapshot_rows = self._connection.execute(
             "SELECT target_reference FROM inventory_snapshot_file_bindings "
             "WHERE snapshot_reference=? LIMIT 2", (locator.snapshot_reference,)
@@ -201,24 +218,6 @@ class SQLiteEpubOpeningEvidenceRepository:
             (locator.target_reference,),
         ).fetchone()
         if target_exists is None:
-            snapshot = self._connection.execute(
-                "SELECT target_reference,media_type FROM inventory_snapshot_locator_index "
-                "WHERE snapshot_reference=? LIMIT 2",
-                (locator.snapshot_reference,),
-            ).fetchall()
-            if snapshot and any(str(row[0]) != locator.target_reference for row in snapshot):
-                return EpubEvidenceFailure.WRONG_TARGET
-            target = self._connection.execute(
-                "SELECT media_type,lifecycle FROM inventory_snapshot_locator_index "
-                "WHERE target_reference=? AND snapshot_reference=? LIMIT 2",
-                (locator.target_reference, locator.snapshot_reference),
-            ).fetchall()
-            if target:
-                if any(str(row[0]) != "ebook" for row in target):
-                    return EpubEvidenceFailure.NON_EPUB
-                if any(str(row[1]) != "active" for row in target):
-                    return EpubEvidenceFailure.STALE_SNAPSHOT
-                return EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
             return EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
         known_snapshot = self._connection.execute(
             "SELECT 1 FROM inventory_snapshot_locator_index WHERE target_reference=? "

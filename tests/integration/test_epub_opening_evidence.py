@@ -42,6 +42,7 @@ from mechanical_librarian.domain.inventory_v2 import (
     opaque_target_reference,
 )
 from mechanical_librarian.domain.local_evidence import LocalEvidenceOutcome
+from mechanical_librarian.infrastructure.local_media import LocalMediaError
 from mechanical_librarian.infrastructure.persistence import sqlite as sqlite_foundation
 from mechanical_librarian.infrastructure.persistence.sqlite import (
     MIGRATIONS,
@@ -463,6 +464,58 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         )
         wrong = EpubEvidenceLocator("target_" + "f" * 32, self.locator.snapshot_reference, 0)
         self.assertEqual(self.repository.resolve(wrong, self.binding_configuration).failure, EpubEvidenceFailure.WRONG_TARGET)
+        unbound_target = TargetId(
+            AdapterId("audiobookshelf"),
+            ConnectionId("connection"),
+            LibraryId("library"),
+            ExternalItemId("unbound-item"),
+        )
+        unbound_observation = InventoryObservation.create(
+            target=unbound_target,
+            media_type=MediaType.EBOOK,
+            lifecycle=ItemLifecycle.ACTIVE,
+            fields=(
+                FieldObservation(
+                    ObservationField.TITLE, ObservationState.PRESENT, ("Unbound",)
+                ),
+            ),
+            file_identities=("8" * 64,),
+            cover_identity=None,
+            adapter_version=AdapterVersion("abs-inventory-v1"),
+            normalizer_version=SchemaVersion("abs-book-normalizer-v1"),
+            service_version=ServiceVersion("2.35.1"),
+            warnings=(),
+            observed_at=self.now,
+        )
+        unbound_snapshot = InventorySnapshotV2.create(unbound_observation)
+        SQLiteInventoryV2Repository(self.connection)._persist_or_reuse(unbound_snapshot)
+        wrong_unbound = EpubEvidenceLocator(
+            self.locator.target_reference, opaque_snapshot_reference(unbound_snapshot), 0
+        )
+        self.assertEqual(
+            self.repository.resolve(wrong_unbound, self.binding_configuration).failure,
+            EpubEvidenceFailure.WRONG_TARGET,
+        )
+        unavailable = RunEpubOpeningEvidence(self.repository).run(
+            self.locator,
+            self.binding_configuration,
+            "3" * 64,
+            "worker",
+            lambda: self.now,
+            lambda _source: (_ for _ in ()).throw(
+                LocalMediaError("synthetic unavailable local source")
+            ),
+            lambda _source: EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+        )
+        self.assertEqual(
+            unavailable.failure, EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
+        )
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM epub_evidence_jobs").fetchone(),
+            (0,),
+        )
         audio_target = TargetId(
             AdapterId("audiobookshelf"), ConnectionId("connection"), LibraryId("library"), ExternalItemId("audio-item")
         )

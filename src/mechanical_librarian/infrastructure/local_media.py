@@ -8,8 +8,8 @@ import stat
 from dataclasses import dataclass
 
 
-class LocalMediaError(ValueError):
-    """A controlled invalid-reference or unavailable-source boundary failure."""
+class LocalMediaError(OSError):
+    """A controlled unavailable local-source boundary failure."""
 
 
 @dataclass(frozen=True)
