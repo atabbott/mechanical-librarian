@@ -342,6 +342,15 @@ class SQLiteEpubOpeningEvidenceRepository:
                         timestamp,
                     ),
                 )
+                self._connection.execute(
+                    "DELETE FROM current_epub_opening_evidence WHERE target_reference=? "
+                    "AND file_index=? AND lane_revision<?",
+                    (
+                        source.locator.target_reference,
+                        source.locator.file_index,
+                        lane_revision,
+                    ),
+                )
                 self._event(work_id, "accepted", accepted_at, actor=initiating_authority, from_state="missing", to_state="pending")
                 return work_id, None
         except ValueError:
@@ -586,8 +595,10 @@ class SQLiteEpubOpeningEvidenceRepository:
                     current is None or lane_revision >= int(current[2])
                 )
                 if current_applicable:
-                    sequence = 1 if current is None else int(current[1]) + (
-                        str(current[0]) != evidence_id
+                    sequence = (
+                        lane_revision
+                        if current is None
+                        else int(current[1]) + (str(current[0]) != evidence_id)
                     )
                     self._connection.execute(
                         "INSERT INTO current_epub_opening_evidence(target_reference,file_index,"
@@ -625,6 +636,22 @@ class SQLiteEpubOpeningEvidenceRepository:
                         claim.fence,
                     ),
                 )
+                result = result_from_report(
+                    EpubEvidenceMode.EXECUTED,
+                    evidence_id,
+                    report,
+                    current_applicable=current_applicable,
+                )
+                self._event(
+                    claim.work_id,
+                    "published",
+                    published_at,
+                    actor=claim.worker_id,
+                    attempt=claim.attempt,
+                    fence=claim.fence,
+                    from_state="running",
+                    to_state="succeeded",
+                )
                 finalized_at = (
                     published_at
                     if publication_clock is None
@@ -651,8 +678,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                 )
                 if cursor.rowcount != 1:
                     raise _PublicationFenceLost
-                self._event(claim.work_id, "published", finalized_at, actor=claim.worker_id, attempt=claim.attempt, fence=claim.fence, from_state="running", to_state="succeeded")
-                return result_from_report(EpubEvidenceMode.EXECUTED, evidence_id, report, current_applicable=current_applicable)
+            return result
         except _PublicationFenceLost:
             return None
         except ValueError:
@@ -669,6 +695,7 @@ class SQLiteEpubOpeningEvidenceRepository:
         failed_at: datetime,
         *,
         retryable: bool,
+        failure_clock: Callable[[], datetime] | None = None,
     ) -> EpubEvidenceResult:
         result = EpubEvidenceResult(EpubEvidenceMode.FAILED, failure=failure)
         if (
@@ -676,13 +703,14 @@ class SQLiteEpubOpeningEvidenceRepository:
             or type(failure) is not EpubEvidenceFailure
             or type(retryable) is not bool
             or not _valid_time(failed_at)
+            or (failure_clock is not None and not callable(failure_clock))
         ):
             return result
         try:
             with _transaction(self._connection):
                 row = self._live_claim(claim, failed_at)
                 if row is None:
-                    return result
+                    raise _PublicationFenceLost
                 state = "retry_wait" if retryable and claim.attempt < 3 else "failed_terminal"
                 self._connection.execute(
                     "UPDATE epub_evidence_attempts SET finished_at=?,failure=? WHERE "
@@ -695,22 +723,40 @@ class SQLiteEpubOpeningEvidenceRepository:
                         claim.fence,
                     ),
                 )
-                self._connection.execute(
+                self._event(
+                    claim.work_id,
+                    "failed",
+                    failed_at,
+                    actor=claim.worker_id,
+                    attempt=claim.attempt,
+                    fence=claim.fence,
+                    from_state="running",
+                    to_state=state,
+                )
+                finalized_at = (
+                    failed_at if failure_clock is None else failure_clock()
+                )
+                if not _valid_time(finalized_at):
+                    raise _PublicationFenceLost
+                cursor = self._connection.execute(
                     "UPDATE epub_evidence_jobs SET state=?,lease_owner=NULL,"
                     "lease_expires_at=NULL,terminal_failure=?,updated_at=? WHERE work_id=? "
-                    "AND state='running' AND attempt=? AND fence=? AND lease_owner=?",
+                    "AND state='running' AND attempt=? AND fence=? AND lease_owner=? "
+                    "AND cancellation_requested=0 AND lease_expires_at>?",
                     (
                         state,
                         failure.value,
-                        _format_timestamp(failed_at),
+                        _format_timestamp(finalized_at),
                         claim.work_id,
                         claim.attempt,
                         claim.fence,
                         claim.worker_id,
+                        _format_timestamp(finalized_at),
                     ),
                 )
-                self._event(claim.work_id, "failed", failed_at, actor=claim.worker_id, attempt=claim.attempt, fence=claim.fence, from_state="running", to_state=state)
-        except (sqlite3.Error, ValueError):
+                if cursor.rowcount != 1:
+                    raise _PublicationFenceLost
+        except (_PublicationFenceLost, sqlite3.Error, ValueError):
             return EpubEvidenceResult(
                 EpubEvidenceMode.FAILED,
                 failure=EpubEvidenceFailure.PERSISTENCE_FAILURE,

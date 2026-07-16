@@ -317,6 +317,95 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             ("running", None),
         )
 
+    def test_run_lease_expiring_during_finalization_cannot_publish(self) -> None:
+        clock_values = iter(
+            (
+                self.now,
+                self.now,
+                self.now,
+                self.now,
+                self.now + timedelta(seconds=2),
+                self.now + timedelta(seconds=2),
+            )
+        )
+        result = RunEpubOpeningEvidence(self.repository).run(
+            self.locator,
+            self.binding_configuration,
+            "a" * 64,
+            "worker",
+            lambda: next(clock_values),
+            lambda _source: "b" * 64,
+            lambda _source: EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            lease_duration=timedelta(seconds=1),
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.PERSISTENCE_FAILURE)
+        self.assertEqual(
+            tuple(
+                self.connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()[0]
+                for table in (
+                    "epub_opening_evidence",
+                    "current_epub_opening_evidence",
+                    "epub_evidence_checkpoints",
+                )
+            ),
+            (0, 0, 0),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,evidence_id FROM epub_evidence_jobs"
+            ).fetchone(),
+            ("running", None),
+        )
+
+    def test_failure_lease_expiry_rolls_back_and_allows_reclaim(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        accepted = self.repository.accept(source, "c" * 64, "d" * 64, self.now)
+        stale = self.repository.claim(
+            accepted[0], "stale-worker", self.now, timedelta(seconds=1)
+        )
+        failed = self.repository.fail(
+            stale,
+            EpubEvidenceFailure.SOURCE_CHANGED,
+            self.now,
+            retryable=False,
+            failure_clock=lambda: self.now + timedelta(seconds=2),
+        )
+        self.assertEqual(failed.failure, EpubEvidenceFailure.PERSISTENCE_FAILURE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,terminal_failure FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("running", None),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT finished_at,failure FROM epub_evidence_attempts WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            (None, None),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT kind FROM epub_evidence_events WHERE work_id=? ORDER BY sequence",
+                (accepted[0],),
+            ).fetchall(),
+            [("accepted",), ("claimed",)],
+        )
+        replacement = self.repository.claim(
+            accepted[0],
+            "replacement-worker",
+            self.now + timedelta(seconds=2),
+            timedelta(seconds=30),
+        )
+        self.assertIsNotNone(replacement)
+        self.assertEqual(replacement.attempt, 2)
+        self.assertEqual(replacement.fence, 2)
+
     def test_older_governing_work_cannot_rewind_current_lane(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
         older = self.repository.accept(source, "a" * 64, "b" * 64, self.now)
@@ -358,6 +447,88 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
                 (newer[0],),
             ).fetchone(),
             ("pending", 2),
+        )
+
+    def test_newer_acceptance_retires_old_current_even_if_new_work_fails(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        older = self.repository.accept(source, "e" * 64, "f" * 64, self.now)
+        older_claim = self.repository.claim(
+            older[0], "older", self.now, timedelta(seconds=30)
+        )
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        published = self.repository.publish(
+            older_claim, source, "e" * 64, "f" * 64, report, self.now
+        )
+        self.assertTrue(published.current_applicable)
+
+        newer = self.repository.accept(
+            source, "e" * 64, "0" * 64, self.now + timedelta(seconds=1)
+        )
+        self.assertIsNone(
+            self.connection.execute(
+                "SELECT evidence_id FROM current_epub_opening_evidence"
+            ).fetchone()
+        )
+        newer_claim = self.repository.claim(
+            newer[0],
+            "newer",
+            self.now + timedelta(seconds=1),
+            timedelta(seconds=30),
+        )
+        failed = self.repository.fail(
+            newer_claim,
+            EpubEvidenceFailure.INTERNAL_FAILURE,
+            self.now + timedelta(seconds=1),
+            retryable=False,
+        )
+        self.assertEqual(failed.failure, EpubEvidenceFailure.INTERNAL_FAILURE)
+        reused = self.repository.accept(
+            source, "e" * 64, "f" * 64, self.now + timedelta(seconds=2)
+        )[1]
+        self.assertEqual(reused.evidence_id, published.evidence_id)
+        self.assertFalse(reused.current_applicable)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_opening_evidence"
+            ).fetchone(),
+            (1,),
+        )
+
+    def test_acceptance_failure_rolls_back_current_retirement(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        older = self.repository.accept(source, "1" * 64, "2" * 64, self.now)
+        older_claim = self.repository.claim(
+            older[0], "older", self.now, timedelta(seconds=30)
+        )
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        published = self.repository.publish(
+            older_claim, source, "1" * 64, "2" * 64, report, self.now
+        )
+        self.connection.execute(
+            "CREATE TRIGGER injected_epub_acceptance_failure BEFORE INSERT ON "
+            "epub_evidence_events WHEN NEW.kind='accepted' "
+            "BEGIN SELECT RAISE(ABORT,'injected'); END"
+        )
+        self.assertIsNone(
+            self.repository.accept(
+                source, "1" * 64, "3" * 64, self.now + timedelta(seconds=1)
+            )
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT evidence_id,lane_revision FROM current_epub_opening_evidence"
+            ).fetchone(),
+            (published.evidence_id, 1),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_evidence_jobs"
+            ).fetchone(),
+            (1,),
         )
 
     def test_final_lease_expiry_terminalizes_and_capacity_is_enforced(self) -> None:

@@ -166,9 +166,18 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
                 self.published = True
                 raise AssertionError("changed source was published")
 
-            def fail(self, _claim, failure, _failed_at, *, retryable):
+            def fail(
+                self,
+                _claim,
+                failure,
+                _failed_at,
+                *,
+                retryable,
+                failure_clock=None,
+            ):
                 self.failure = failure
                 self.retryable = retryable
+                self.failure_clock = failure_clock
                 return EpubEvidenceResult(EpubEvidenceMode.FAILED, failure=failure)
 
         repository = Repository()
@@ -208,8 +217,17 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
             def publish(self, *_args):
                 raise AssertionError("operational failure published")
 
-            def fail(self, _claim, failure, _at, *, retryable):
+            def fail(
+                self,
+                _claim,
+                failure,
+                _at,
+                *,
+                retryable,
+                failure_clock=None,
+            ):
                 self.observed = (failure, retryable)
+                self.failure_clock = failure_clock
                 return EpubEvidenceResult(EpubEvidenceMode.FAILED, failure=failure)
 
         cases = {
