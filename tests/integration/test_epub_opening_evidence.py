@@ -406,6 +406,52 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             )
         )
 
+    def test_recovery_lease_expiring_during_revalidation_cannot_publish(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        accepted = self.repository.accept(source, "3" * 64, "4" * 64, self.now)
+        clock_values = iter(
+            (
+                self.now,
+                self.now,
+                self.now,
+                self.now + timedelta(seconds=2),
+                self.now + timedelta(seconds=2),
+            )
+        )
+        result = RunEpubOpeningEvidence(self.repository).resume(
+            frozenset({self.binding_configuration}),
+            "4" * 64,
+            "recovery-worker",
+            lambda: next(clock_values),
+            lambda _source: "3" * 64,
+            lambda _source: EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            lambda _source, _expected: True,
+            lease_duration=timedelta(seconds=1),
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.PERSISTENCE_FAILURE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,evidence_id FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("running", None),
+        )
+        self.assertEqual(
+            tuple(
+                self.connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()[0]
+                for table in (
+                    "epub_opening_evidence",
+                    "current_epub_opening_evidence",
+                    "epub_evidence_checkpoints",
+                )
+            ),
+            (0, 0, 0),
+        )
+
     def test_recovery_selects_one_oldest_job_across_multiple_mounts(self) -> None:
         second_configuration = "a" * 64
         second_snapshot = InventorySnapshotV2.create(

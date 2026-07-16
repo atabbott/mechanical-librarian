@@ -237,6 +237,7 @@ class RunEpubOpeningEvidence:
                 report,
                 now(),
                 lambda: revalidate(source, work.source_fingerprint),
+                now,
             )
             if published is None:
                 return self._repository.fail(
