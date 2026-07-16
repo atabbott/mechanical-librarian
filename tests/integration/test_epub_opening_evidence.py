@@ -831,10 +831,134 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             self.connection.execute("SELECT state,terminal_failure FROM epub_evidence_jobs WHERE work_id=?", (accepted[0],)).fetchone(),
             ("failed_terminal", "retry_exhausted"),
         )
+        replayed = self.repository.accept(
+            source, "d" * 64, "e" * 64, self.now + timedelta(seconds=5)
+        )[1]
+        self.assertEqual(
+            replayed.failure, EpubEvidenceFailure.RETRY_EXHAUSTED
+        )
         first = self.repository.accept(source, "1" * 64, "2" * 64, self.now)
         second = self.repository.accept(source, "2" * 64, "2" * 64, self.now)
         self.assertIsNotNone(self.repository.claim(first[0], "capacity-1", self.now, timedelta(seconds=30), 1))
         self.assertIsNone(self.repository.claim(second[0], "capacity-2", self.now, timedelta(seconds=30), 1))
+
+    def test_terminal_replay_preserves_failure_and_cancellation(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        failed = self.repository.accept(
+            source, "a" * 64, "b" * 64, self.now
+        )
+        claim = self.repository.claim(
+            failed[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.repository.fail(
+            claim,
+            EpubEvidenceFailure.RESOURCE_LIMIT,
+            self.now,
+            retryable=False,
+        )
+        replayed_failure = self.repository.accept(
+            source, "a" * 64, "b" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(
+            replayed_failure.failure, EpubEvidenceFailure.RESOURCE_LIMIT
+        )
+
+        cancelled = self.repository.accept(
+            source, "c" * 64, "d" * 64, self.now
+        )
+        self.assertTrue(
+            self.repository.cancel(cancelled[0], "operator", self.now)
+        )
+        replayed_cancellation = self.repository.accept(
+            source, "c" * 64, "d" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(
+            replayed_cancellation.failure, EpubEvidenceFailure.CANCELLED
+        )
+
+        worker_cancelled = self.repository.accept(
+            source, "e" * 64, "f" * 64, self.now
+        )
+        worker_claim = self.repository.claim(
+            worker_cancelled[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.repository.fail(
+            worker_claim,
+            EpubEvidenceFailure.CANCELLED,
+            self.now,
+            retryable=False,
+        )
+        replayed_worker_cancellation = self.repository.accept(
+            source, "e" * 64, "f" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(
+            replayed_worker_cancellation.failure,
+            EpubEvidenceFailure.CANCELLED,
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,cancellation_requested FROM epub_evidence_jobs "
+                "WHERE work_id=?",
+                (worker_cancelled[0],),
+            ).fetchone(),
+            ("cancelled", 1),
+        )
+
+    def test_cancellation_records_every_allowed_origin(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        expected = {}
+
+        pending = self.repository.accept(
+            source, "1" * 64, "a" * 64, self.now
+        )
+        self.assertTrue(self.repository.cancel(pending[0], "operator", self.now))
+        expected[pending[0]] = ("pending", 0)
+
+        running = self.repository.accept(
+            source, "2" * 64, "a" * 64, self.now
+        )
+        self.repository.claim(
+            running[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.assertTrue(self.repository.cancel(running[0], "operator", self.now))
+        expected[running[0]] = ("running", 1)
+
+        waiting = self.repository.accept(
+            source, "3" * 64, "a" * 64, self.now
+        )
+        waiting_claim = self.repository.claim(
+            waiting[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.repository.fail(
+            waiting_claim,
+            EpubEvidenceFailure.INTERNAL_FAILURE,
+            self.now,
+            retryable=True,
+        )
+        self.assertTrue(self.repository.cancel(waiting[0], "operator", self.now))
+        expected[waiting[0]] = ("retry_wait", 1)
+
+        for work_id, (origin, attempt) in expected.items():
+            self.assertEqual(
+                self.connection.execute(
+                    "SELECT state,terminal_failure,attempt FROM epub_evidence_jobs "
+                    "WHERE work_id=?",
+                    (work_id,),
+                ).fetchone(),
+                ("cancelled", "cancelled", attempt),
+            )
+            self.assertEqual(
+                self.connection.execute(
+                    "SELECT from_state,to_state FROM epub_evidence_events "
+                    "WHERE work_id=? AND kind='cancelled'",
+                    (work_id,),
+                ).fetchone(),
+                (origin, "cancelled"),
+            )
 
     def test_resume_reports_final_lease_exhaustion(self) -> None:
         source = self.repository.resolve(
@@ -1541,6 +1665,13 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             "WHERE work_id=? AND attempt=?",
             (accepted[0], claim.attempt),
         ).fetchone()
+        attempt_trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_evidence_attempts_finalize_only'"
+        ).fetchone()[0]
+        self.connection.execute(
+            "DROP TRIGGER epub_evidence_attempts_finalize_only"
+        )
         self.connection.execute(
             "UPDATE epub_evidence_attempts SET finished_at=NULL,outcome=NULL,"
             "failure='internal_failure' WHERE work_id=? AND attempt=?",
@@ -1558,6 +1689,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             "WHERE work_id=? AND attempt=?",
             (*terminal_attempt, accepted[0], claim.attempt),
         )
+        self.connection.execute(str(attempt_trigger))
         trigger = self.connection.execute(
             "SELECT sql FROM sqlite_master WHERE type='trigger' "
             "AND name='epub_evidence_events_no_update'"
@@ -1637,6 +1769,73 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         )[1]
         self.assertEqual(
             later_attempt_result.failure, EpubEvidenceFailure.CORRUPT_STATE
+        )
+
+    def test_terminal_history_is_immutable_and_validated_on_replay(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        failed = self.repository.accept(
+            source, "7" * 64, "8" * 64, self.now
+        )
+        claim = self.repository.claim(
+            failed[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.repository.fail(
+            claim,
+            EpubEvidenceFailure.RESOURCE_LIMIT,
+            self.now,
+            retryable=False,
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                "UPDATE epub_evidence_attempts SET worker_id='replacement' "
+                "WHERE work_id=? AND attempt=?",
+                (failed[0], claim.attempt),
+            )
+
+        attempt_trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_evidence_attempts_finalize_only'"
+        ).fetchone()[0]
+        self.connection.execute(
+            "DROP TRIGGER epub_evidence_attempts_finalize_only"
+        )
+        self.connection.execute(
+            "UPDATE epub_evidence_attempts SET worker_id='replacement' "
+            "WHERE work_id=? AND attempt=?",
+            (failed[0], claim.attempt),
+        )
+        self.connection.execute(str(attempt_trigger))
+        corrupted_failure = self.repository.accept(
+            source, "7" * 64, "8" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(
+            corrupted_failure.failure, EpubEvidenceFailure.CORRUPT_STATE
+        )
+
+        cancelled = self.repository.accept(
+            source, "9" * 64, "a" * 64, self.now
+        )
+        self.assertTrue(
+            self.repository.cancel(cancelled[0], "operator", self.now)
+        )
+        event_trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_evidence_events_no_update'"
+        ).fetchone()[0]
+        self.connection.execute("DROP TRIGGER epub_evidence_events_no_update")
+        self.connection.execute(
+            "UPDATE epub_evidence_events SET actor='replacement' "
+            "WHERE work_id=? AND kind='cancelled'",
+            (cancelled[0],),
+        )
+        self.connection.execute(str(event_trigger))
+        corrupted_cancellation = self.repository.accept(
+            source, "9" * 64, "a" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(
+            corrupted_cancellation.failure, EpubEvidenceFailure.CORRUPT_STATE
         )
 
     def test_retry_rejects_inconsistent_failed_event_before_reclaim(self) -> None:

@@ -59,7 +59,12 @@ selector, use the same database and configuration with `--resume` instead of
 `--target`, `--snapshot`, and `--file-index`. Recovery is bounded to the exact
 current mount and governing configuration. Claim admission enforces configured
 parser concurrency, final lease exhaustion becomes `retry_exhausted`, and
-cancellation is a fenced durable transition.
+cancellation is a fenced durable transition. Replaying terminal work returns
+its validated stored cause, including `resource_limit`, `cancelled`, or genuine
+`retry_exhausted`, rather than collapsing distinct operator outcomes. Attempt
+rows permit exactly one unfinished-to-finished update; finalized attribution
+and results are immutable, and terminal replay fails `corrupt_state` when
+attempt and event history disagree.
 
 Selector failures remain distinct and path-free: missing, ambiguous,
 wrong-target, stale-snapshot, out-of-range, non-EPUB, mount-mismatch,

@@ -627,6 +627,15 @@ _EPUB_OPENING_EVIDENCE_NO_DELETE_SQL = (
 _EPUB_EVIDENCE_ATTEMPTS_NO_DELETE_SQL = (
     "CREATE TRIGGER epub_evidence_attempts_no_delete BEFORE DELETE ON epub_evidence_attempts BEGIN SELECT RAISE(ABORT, 'epub evidence attempts are durable'); END"
 )
+_EPUB_EVIDENCE_ATTEMPTS_FINALIZE_ONLY_SQL = (
+    "CREATE TRIGGER epub_evidence_attempts_finalize_only BEFORE UPDATE ON epub_evidence_attempts "
+    "WHEN NOT (OLD.finished_at IS NULL AND OLD.outcome IS NULL AND OLD.failure IS NULL "
+    "AND NEW.work_id=OLD.work_id AND NEW.attempt=OLD.attempt AND NEW.fence=OLD.fence "
+    "AND NEW.worker_id=OLD.worker_id AND NEW.started_at=OLD.started_at "
+    "AND NEW.finished_at IS NOT NULL AND ((NEW.outcome IS NOT NULL AND NEW.failure IS NULL) "
+    "OR (NEW.outcome IS NULL AND NEW.failure IS NOT NULL))) "
+    "BEGIN SELECT RAISE(ABORT, 'epub evidence attempts are immutable after finalization'); END"
+)
 _EPUB_EVIDENCE_EVENTS_NO_UPDATE_SQL = (
     "CREATE TRIGGER epub_evidence_events_no_update BEFORE UPDATE ON epub_evidence_events BEGIN SELECT RAISE(ABORT, 'epub evidence events are append-only'); END"
 )
@@ -789,6 +798,7 @@ MIGRATIONS = (
             _INVENTORY_BINDING_SET_MEMBERS_NO_DELETE_SQL,
             _EPUB_OPENING_EVIDENCE_NO_UPDATE_SQL,
             _EPUB_OPENING_EVIDENCE_NO_DELETE_SQL,
+            _EPUB_EVIDENCE_ATTEMPTS_FINALIZE_ONLY_SQL,
             _EPUB_EVIDENCE_ATTEMPTS_NO_DELETE_SQL,
             _EPUB_EVIDENCE_EVENTS_NO_UPDATE_SQL,
             _EPUB_EVIDENCE_EVENTS_NO_DELETE_SQL,

@@ -4,9 +4,12 @@
 
 ```text
 pending -> running -> succeeded
-        -> running -> retry_wait -> running
-        -> running -> failed_terminal
-        -> running -> cancelled
+pending -> running -> retry_wait -> running
+pending -> running -> failed_terminal
+pending -> running -> cancelled
+pending -> cancelled
+retry_wait -> failed_terminal
+retry_wait -> cancelled
 ```
 
 Every transition retains the attempt and fence. Only the current live owner may
@@ -16,6 +19,11 @@ attempt, and marks the job succeeded. An expired worker can move to
 `retry_wait`; its old fence can never publish. An identical succeeded work key
 reuses its evidence. A historical key whose evidence is no longer current is
 reused with `current=false` and does not reverse the pointer.
+
+Cancellation may close pending work before its first claim, running work while
+finishing its live attempt, or retry-waiting work between claims. Every terminal
+replay preserves the stored typed failure; `retry_exhausted` is used only when
+that is the validated durable cause.
 
 State machines are authoritative domain contracts. Implementations may add
 timestamps and metadata but cannot invent transitions outside these rules.

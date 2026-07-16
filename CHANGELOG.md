@@ -21,7 +21,8 @@ versioning after the first public release.
   durable cancellation/exhaustion, attributable events, and final in-transaction
   source revalidation keep recovery and publication fail-closed. Recovery now
   resumes the original persisted work identity, terminalizes changed sources,
-  and selects one oldest eligible job across all compatible mounts.
+  selects one oldest eligible job across all compatible mounts, preserves typed
+  terminal failures on replay, and makes finalized attempt provenance immutable.
 
 - Fixed Hardcover provider-secret validation so leading or trailing space, tab,
   carriage return, or line feed is rejected before client construction, DNS,
