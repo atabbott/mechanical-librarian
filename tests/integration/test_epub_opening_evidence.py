@@ -272,6 +272,51 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             ("running", None),
         )
 
+    def test_lease_expiring_during_finalization_rolls_back_publication(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        accepted = self.repository.accept(source, "6" * 64, "9" * 64, self.now)
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=1)
+        )
+        finalization_clock = iter(
+            (self.now, self.now + timedelta(seconds=2))
+        )
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        self.assertIsNone(
+            self.repository.publish(
+                claim,
+                source,
+                "6" * 64,
+                "9" * 64,
+                report,
+                self.now,
+                lambda: True,
+                lambda: next(finalization_clock),
+            )
+        )
+        self.assertEqual(
+            tuple(
+                self.connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()[0]
+                for table in (
+                    "epub_opening_evidence",
+                    "current_epub_opening_evidence",
+                    "epub_evidence_checkpoints",
+                )
+            ),
+            (0, 0, 0),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,evidence_id FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("running", None),
+        )
+
     def test_older_governing_work_cannot_rewind_current_lane(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
         older = self.repository.accept(source, "a" * 64, "b" * 64, self.now)
@@ -406,11 +451,12 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             )
         )
 
-    def test_recovery_lease_expiring_during_revalidation_cannot_publish(self) -> None:
+    def test_recovery_lease_expiring_during_finalization_cannot_publish(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
         accepted = self.repository.accept(source, "3" * 64, "4" * 64, self.now)
         clock_values = iter(
             (
+                self.now,
                 self.now,
                 self.now,
                 self.now,

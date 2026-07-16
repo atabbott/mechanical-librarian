@@ -32,6 +32,10 @@ from mechanical_librarian.domain.inventory_v2 import (
 )
 
 
+class _PublicationFenceLost(Exception):
+    """Roll back publication when ownership is no longer live."""
+
+
 class SQLiteEpubOpeningEvidenceRepository:
     """Resolve private bindings and publish immutable evidence atomically."""
 
@@ -621,6 +625,13 @@ class SQLiteEpubOpeningEvidenceRepository:
                         claim.fence,
                     ),
                 )
+                finalized_at = (
+                    published_at
+                    if publication_clock is None
+                    else publication_clock()
+                )
+                if not _valid_time(finalized_at):
+                    raise _PublicationFenceLost
                 cursor = self._connection.execute(
                     "UPDATE epub_evidence_jobs SET state='succeeded',lease_owner=NULL,"
                     "lease_expires_at=NULL,terminal_outcome=?,terminal_failure=NULL,"
@@ -630,18 +641,20 @@ class SQLiteEpubOpeningEvidenceRepository:
                     (
                         report.outcome.value,
                         evidence_id,
-                        _format_timestamp(published_at),
+                        _format_timestamp(finalized_at),
                         claim.work_id,
                         claim.attempt,
                         claim.fence,
                         claim.worker_id,
-                        _format_timestamp(published_at),
+                        _format_timestamp(finalized_at),
                     ),
                 )
                 if cursor.rowcount != 1:
-                    raise ValueError("EPUB publication fence changed")
-                self._event(claim.work_id, "published", published_at, actor=claim.worker_id, attempt=claim.attempt, fence=claim.fence, from_state="running", to_state="succeeded")
+                    raise _PublicationFenceLost
+                self._event(claim.work_id, "published", finalized_at, actor=claim.worker_id, attempt=claim.attempt, fence=claim.fence, from_state="running", to_state="succeeded")
                 return result_from_report(EpubEvidenceMode.EXECUTED, evidence_id, report, current_applicable=current_applicable)
+        except _PublicationFenceLost:
+            return None
         except ValueError:
             return EpubEvidenceResult(
                 EpubEvidenceMode.FAILED, failure=EpubEvidenceFailure.CORRUPT_STATE
