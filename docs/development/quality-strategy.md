@@ -44,6 +44,13 @@ local review coverage: slice acceptance and code quality in every tier, with
 safety and publication challenge added for Tier 2. Callers supply the exact
 envelopes but cannot select, omit, or extend that task set.
 
+The review root is an explicit maintainer-controlled local trust boundary.
+Validator paths are fixed beneath that root, and validator controls plus input
+artifacts are hash-checked before and after use. Pull-request content cannot
+select validator code. A malicious authenticated local operator is outside
+this controller's threat model because that actor can already invoke the merge
+credential directly.
+
 Autonomous mode additionally requires server-side strict checks and reviews
 with no administrator or named bypass allowance. After a merge it proves the
 squash commit's exact qualified parent and waits boundedly for required checks

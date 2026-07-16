@@ -25,9 +25,17 @@ ignored local control directory. Do not commit private paths, reviewer output,
 credentials, or private qualification details. Every manifest, envelope, run
 record, receipt, and cache record is individually limited to 1 MiB.
 
-The controller reads and hashes the actual bytes. It invokes the caller-named
-trusted review-packet validator against the shared COMMIT evidence and every
-required envelope, then invokes the run-record validator in qualified mode with
+The controller reads and hashes the actual bytes. `--review-repo` names the
+maintainer-controlled local review root and is the only trust-root selection.
+The controller resolves fixed non-symlink regular controls beneath it:
+`.codex/scripts/review_packet.py`, `.codex/scripts/run_record.py`,
+`.codex/scripts/qualification_cache.py`, and `.codex/team.toml`. Callers
+cannot substitute validator programs. The controller hashes those controls and
+every input artifact before use and rejects any detectable concurrent
+replacement by hashing them again after validation.
+
+The fixed review-packet validator checks the shared COMMIT evidence and every
+required envelope. The fixed run-record validator runs in qualified mode with
 the exact receipt/cache pairs. The run record must be schema 2, use the
 `deliver-functional-slice` workflow, bind the qualified base and head, and name
 the exact pull-request URL. Syntactically plausible digest strings or summaries
@@ -41,11 +49,18 @@ It requires exactly one trusted-validator-verified envelope whose internal task
 matches each derived name, and rejects missing, duplicate, extra, or relabelled
 envelopes.
 
-`--review-repo` names the trusted review checkout whose exact files are bound by
-the evidence manifest. It may be separate from the candidate checkout. Only the
-review-packet validator receives that root; candidate cleanliness, candidate
-HEAD, the qualified run record, receipts, and caches are still validated from
-the checkout in which the controller runs.
+`--review-repo` may be separate from the candidate checkout. The
+review-packet validator receives that root because its COMMIT manifest binds
+the reviewed Git objects and governing local controls. Candidate cleanliness,
+candidate HEAD, the qualified run record, receipts, and caches are still
+validated from the checkout in which the controller runs.
+
+This is a local maintainer trust boundary, not a sandbox against the
+authenticated operator. Malicious control of that operator or the trusted
+local review root is out of scope: the same actor can already merge directly
+with the available GitHub credential. Untrusted pull-request content cannot
+select a validator or make tracked repository files become trusted local
+controls.
 
 ## Dry run and merge
 
@@ -64,11 +79,9 @@ python3 scripts/merge_exact_head.py \
   --required-check linked-issue \
   --post-merge-check public-gate \
   --review-repo /TRUSTED/REVIEW/CHECKOUT \
-  --review-validator .codex/scripts/review_packet.py \
   --review-evidence /IGNORED/LOCAL/review-evidence.json \
   --review-envelope slice_acceptance=/IGNORED/LOCAL/acceptance-envelope.json \
   --review-envelope code_quality=/IGNORED/LOCAL/quality-envelope.json \
-  --run-record-validator .codex/scripts/run_record.py \
   --run-record /IGNORED/LOCAL/run-record.json \
   --qualification-evidence private-cohort=/IGNORED/LOCAL/receipt.json=/IGNORED/LOCAL/cache.json \
   --dry-run
@@ -101,10 +114,16 @@ tracking reconciliation, and keep the slice `In progress` until its transaction
 reaches `MERGED` or a genuine `BLOCKED` state. Main-push CI is never cancelled
 by a later push, so every merge commit receives its own public qualification.
 If the merge request times out or returns invalid or malformed confirmation,
-the controller queries the live pull request once. A confirmed merged state and
-valid merge SHA resume normal post-merge verification. Otherwise it returns
+the controller queries the live pull request once. Recovery requires the exact
+repository, pull-request number, qualified base ref and SHA, qualified head
+SHA, confirmed merged state, and valid merge SHA. Any mismatch returns
 `mutation_occurred:"unknown"` at `merge_response` without retrying the merge or
 performing cleanup; a maintainer must reconcile that bounded state first.
+
+Unavailable or insufficient strict server enforcement is the sole
+pre-mutation `BLOCKED` result and carries phase `server_enforcement` with
+`mutation_occurred:false`. Other stale, malformed, or failed gates remain
+ordinary merge-gate failures rather than being mislabeled as external blocks.
 
 ## Branch and tracking cleanup
 

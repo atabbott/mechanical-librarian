@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 import io
 import json
@@ -15,6 +15,7 @@ from scripts.merge_exact_head import (
     MergeRequest,
     MutationRecoveryError,
     PostMutationError,
+    ServerEnforcementBlocked,
     SubprocessRunner,
     _artifact,
     _validate_local_evidence,
@@ -55,6 +56,8 @@ class FakeRunner:
         self.post_failure = False
         self.merge_response = "confirmed"
         self.merge_puts = 0
+        self.omit_required_check = False
+        self.malformed_review = False
 
     def run(self, argv: object, *, check: bool = True) -> CommandResult:
         command = tuple(argv)  # type: ignore[arg-type]
@@ -74,16 +77,19 @@ class FakeRunner:
         if command[:3] == ("gh", "pr", "checks"):
             self.check_queries += 1
             bucket = self.second_check if self.check_queries > 1 else "pass"
-            return CommandResult(0, json.dumps([
-                {"name": "public-gate", "bucket": bucket},
-                {"name": "linked-issue", "bucket": bucket},
-            ]))
+            checks = [{"name": "public-gate", "bucket": bucket}]
+            if not self.omit_required_check:
+                checks.append({"name": "linked-issue", "bucket": bucket})
+            return CommandResult(0, json.dumps(checks))
         if command[:3] == ("gh", "api", "graphql"):
             self.review_queries += 1
             decision = self.second_review if self.review_queries > 1 else "APPROVED"
+            page_info: object = (
+                "malformed" if self.malformed_review else {"hasNextPage": False}
+            )
             return CommandResult(0, json.dumps({"data": {"repository": {"pullRequest": {
                 "reviewDecision": decision,
-                "reviewThreads": {"totalCount": 1, "pageInfo": {"hasNextPage": False}, "nodes": [{"isResolved": True}]},
+                "reviewThreads": {"totalCount": 1, "pageInfo": page_info, "nodes": [{"isResolved": True}]},
             }}}}))
         if command[:4] == ("gh", "api", "-X", "PUT"):
             self.merge_puts += 1
@@ -151,10 +157,13 @@ class ExactHeadMergeTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         root = Path(self.temporary.name)
-        self.review_validator = root / "review_packet.py"
-        self.run_validator = root / "run_record.py"
         self.review_repo = root / "review-repository"
-        self.review_repo.mkdir()
+        controls = self.review_repo / ".codex" / "scripts"
+        controls.mkdir(parents=True)
+        self.review_validator = controls / "review_packet.py"
+        self.run_validator = controls / "run_record.py"
+        self.qualification_validator = controls / "qualification_cache.py"
+        self.workflow_manifest = self.review_repo / ".codex" / "team.toml"
         self.evidence = root / "evidence.json"
         self.acceptance = root / "acceptance.json"
         self.quality = root / "quality.json"
@@ -162,8 +171,13 @@ class ExactHeadMergeTests(unittest.TestCase):
         self.challenge = root / "publication-challenge.json"
         self.extra = root / "extra.json"
         self.record = root / "run.json"
-        for path in (self.review_validator, self.run_validator):
+        for path in (
+            self.review_validator,
+            self.run_validator,
+            self.qualification_validator,
+        ):
             path.write_text("# validator\n", encoding="utf-8")
+        self.workflow_manifest.write_text("[workflows]\n", encoding="utf-8")
         self.evidence.write_text("{}\n", encoding="utf-8")
         for task, path in (
             ("slice_acceptance", self.acceptance),
@@ -233,9 +247,9 @@ class ExactHeadMergeTests(unittest.TestCase):
             required_checks=frozenset({"public-gate", "linked-issue"}),
             post_merge_checks=frozenset({"public-gate"}),
             review_repo=self.review_repo,
-            review_validator=self.review_validator, review_evidence=self.evidence,
+            review_evidence=self.evidence,
             review_envelopes=(("slice_acceptance", self.acceptance), ("code_quality", self.quality)),
-            run_record_validator=self.run_validator, run_record=self.record,
+            run_record=self.record,
             qualification_evidence=(), post_merge_attempts=attempts,
             post_merge_interval=0.25, dry_run=dry_run,
         )
@@ -315,6 +329,44 @@ class ExactHeadMergeTests(unittest.TestCase):
                 self.assertEqual(result["merge_commit"], MERGE)
                 self.assertEqual(runner.merge_puts, 1)
 
+    def test_ambiguous_merge_recovery_rejects_different_head_or_base(self) -> None:
+        mutations = (
+            ("head", {"sha": "f" * 40}),
+            (
+                "base",
+                {
+                    "ref": "other",
+                    "sha": BASE,
+                    "repo": {"full_name": REPOSITORY},
+                },
+            ),
+            (
+                "base",
+                {
+                    "ref": "main",
+                    "sha": "d" * 40,
+                    "repo": {"full_name": REPOSITORY},
+                },
+            ),
+        )
+        for field, replacement in mutations:
+            with self.subTest(field=field, replacement=replacement):
+                runner = FakeRunner()
+                runner.merge_response = "transport_failure"
+                original_pull = runner._pull
+
+                def mismatched_pull() -> dict[str, object]:
+                    value = original_pull()
+                    if runner.merge_puts:
+                        value[field] = replacement
+                    return value
+
+                runner._pull = mismatched_pull  # type: ignore[method-assign]
+                with self.assertRaises(MutationRecoveryError) as caught:
+                    execute(self.request(), runner, FakeSleeper())
+                self.assertEqual(caught.exception.mutation_occurred, "unknown")
+                self.assertEqual(runner.merge_puts, 1)
+
     def test_unresolved_ambiguous_merge_response_requires_manual_recovery(self) -> None:
         runner = FakeRunner()
         runner.merge_response = "transport_failure"
@@ -349,6 +401,13 @@ class ExactHeadMergeTests(unittest.TestCase):
             execute(self.request(), runner, FakeSleeper())
         self.assertFalse(runner.merged)
 
+    def test_missing_required_check_fails_without_merge_put(self) -> None:
+        runner = FakeRunner()
+        runner.omit_required_check = True
+        with self.assertRaisesRegex(MergeGateError, "unambiguous pass"):
+            execute(self.request(), runner, FakeSleeper())
+        self.assertEqual(runner.merge_puts, 0)
+
     def test_review_race_and_review_required_fail_before_mutation(self) -> None:
         for decision in ("CHANGES_REQUESTED", "REVIEW_REQUIRED", None):
             with self.subTest(decision=decision):
@@ -361,9 +420,33 @@ class ExactHeadMergeTests(unittest.TestCase):
     def test_missing_server_enforcement_blocks_before_mutation(self) -> None:
         runner = FakeRunner()
         runner.protected = False
-        with self.assertRaisesRegex(MergeGateError, "command failed"):
+        with self.assertRaisesRegex(
+            ServerEnforcementBlocked, "enforcement is unavailable"
+        ):
             execute(self.request(), runner, FakeSleeper())
         self.assertFalse(runner.merged)
+
+    def test_malformed_server_and_review_shapes_are_controlled(self) -> None:
+        runner = FakeRunner()
+        runner._protection = lambda: {  # type: ignore[method-assign]
+            **FakeRunner()._protection(),
+            "required_status_checks": {
+                "strict": True,
+                "contexts": {"public-gate": True},
+                "checks": [],
+            },
+        }
+        with self.assertRaisesRegex(
+            ServerEnforcementBlocked, "malformed required checks"
+        ):
+            execute(self.request(), runner, FakeSleeper())
+        self.assertEqual(runner.merge_puts, 0)
+
+        runner = FakeRunner()
+        runner.malformed_review = True
+        with self.assertRaisesRegex(MergeGateError, "query is incomplete"):
+            execute(self.request(), runner, FakeSleeper())
+        self.assertEqual(runner.merge_puts, 0)
 
     def test_wrong_squash_parent_is_structured_post_mutation_failure(self) -> None:
         runner = FakeRunner()
@@ -402,10 +485,21 @@ class ExactHeadMergeTests(unittest.TestCase):
         with self.assertRaisesRegex(MergeGateError, "does not bind review"):
             execute(self.request(dry_run=True), FakeRunner(), FakeSleeper())
 
+    def test_non_utf8_record_and_envelope_fail_as_merge_gate_errors(self) -> None:
+        valid_record = self.record.read_bytes()
+        self.record.write_bytes(b"\xff")
+        with self.assertRaisesRegex(MergeGateError, "not valid UTF-8"):
+            execute(self.request(dry_run=True), FakeRunner(), FakeSleeper())
+
+        self.record.write_bytes(valid_record)
+        self.quality.write_bytes(b"\xff")
+        self._replace_review_digest("code_quality", self.quality)
+        with self.assertRaisesRegex(MergeGateError, "not valid UTF-8"):
+            execute(self.request(dry_run=True), FakeRunner(), FakeSleeper())
+
     def test_review_validator_uses_explicit_external_repository_root(self) -> None:
         calls = Path(self.temporary.name) / "validator-calls.jsonl"
-        validator = Path(self.temporary.name) / "recording_validator.py"
-        validator.write_text(
+        self.review_validator.write_text(
             "from pathlib import Path\n"
             "import json\n"
             "import sys\n"
@@ -414,18 +508,24 @@ class ExactHeadMergeTests(unittest.TestCase):
             "repo = args[args.index('--repo') + 1]\n"
             "if args[0].startswith('verify-') and str(Path(repo).resolve()) != expected:\n"
             "    raise SystemExit(9)\n"
+            "if args[0] == 'verify-envelope':\n"
+            "    value = json.loads(Path(args[args.index('--envelope') + 1]).read_text())\n"
+            "    if not isinstance(value.get('task'), str):\n"
+            "        raise SystemExit(8)\n"
+            f"with Path({str(calls)!r}).open('a', encoding='utf-8') as stream:\n"
+            "    stream.write(json.dumps(args) + '\\n')\n",
+            encoding="utf-8",
+        )
+        self.run_validator.write_text(
+            "from pathlib import Path\n"
+            "import json\n"
+            "import sys\n"
+            "args = sys.argv[1:]\n"
             f"with Path({str(calls)!r}).open('a', encoding='utf-8') as stream:\n"
             "    stream.write(json.dumps(args) + '\\n')\n",
             encoding="utf-8",
         )
         request = self.request(dry_run=True)
-        request = MergeRequest(
-            **{
-                **request.__dict__,
-                "review_validator": validator,
-                "run_record_validator": validator,
-            }
-        )
         _validate_local_evidence(request, SubprocessRunner())
         invocations = [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines()]
         review_invocations = [args for args in invocations if args[0].startswith("verify-")]
@@ -435,8 +535,7 @@ class ExactHeadMergeTests(unittest.TestCase):
         self.assertEqual(run_invocations[0][run_invocations[0].index("--repo") + 1], ".")
 
     def test_forged_envelope_is_rejected_by_trusted_validator_integration(self) -> None:
-        validator = Path(self.temporary.name) / "trusted_validator.py"
-        validator.write_text(
+        self.review_validator.write_text(
             "import json\n"
             "from pathlib import Path\n"
             "import sys\n"
@@ -452,13 +551,40 @@ class ExactHeadMergeTests(unittest.TestCase):
             encoding="utf-8",
         )
         self._replace_review_digest("code_quality", self.quality)
-        request = replace(
-            self.request(dry_run=True),
-            review_validator=validator,
-            run_record_validator=validator,
-        )
         with self.assertRaisesRegex(MergeGateError, "command failed"):
-            _validate_local_evidence(request, SubprocessRunner())
+            _validate_local_evidence(self.request(dry_run=True), SubprocessRunner())
+
+    def test_trusted_controls_reject_absent_symlink_and_concurrent_change(self) -> None:
+        self.review_validator.unlink()
+        with self.assertRaisesRegex(MergeGateError, "control is unavailable"):
+            _validate_local_evidence(self.request(dry_run=True), FakeRunner())
+
+        self.review_validator.symlink_to(self.run_validator)
+        with self.assertRaisesRegex(MergeGateError, "control is unsafe"):
+            _validate_local_evidence(self.request(dry_run=True), FakeRunner())
+
+        self.review_validator.unlink()
+        self.review_validator.write_text(
+            "from pathlib import Path\n"
+            "path = Path(__file__)\n"
+            "path.write_text(path.read_text() + '# changed\\n')\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(MergeGateError, "changed during validation"):
+            _validate_local_evidence(self.request(dry_run=True), SubprocessRunner())
+
+    def test_input_artifact_change_during_validation_is_rejected(self) -> None:
+        self.review_validator.write_text(
+            "from pathlib import Path\n"
+            "import sys\n"
+            "args = sys.argv[1:]\n"
+            "if args[0] == 'verify-evidence':\n"
+            "    path = Path(args[args.index('--evidence') + 1])\n"
+            "    path.write_text(path.read_text() + ' ')\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(MergeGateError, "changed during validation"):
+            _validate_local_evidence(self.request(dry_run=True), SubprocessRunner())
 
     def test_public_gate_concurrency_preserves_each_main_commit(self) -> None:
         workflow = (Path(__file__).parents[2] / ".github/workflows/public-gate.yml").read_text(encoding="utf-8")
@@ -472,9 +598,8 @@ class ExactHeadMergeTests(unittest.TestCase):
             "--base-sha", BASE, "--head-sha", HEAD,
             "--required-check", "public-gate", "--post-merge-check", "public-gate",
             "--review-repo", self.temporary.name,
-            "--review-validator", "/review.py",
             "--review-evidence", "/evidence", "--review-envelope", "slice_acceptance=/envelope",
-            "--run-record-validator", "/run.py", "--run-record", "/record",
+            "--run-record", "/record",
         ]
         output = io.StringIO()
         with patch("scripts.merge_exact_head.execute", side_effect=PostMutationError("post_merge_checks", MERGE, "failed")), redirect_stdout(output):
@@ -491,9 +616,9 @@ class ExactHeadMergeTests(unittest.TestCase):
             "--base-sha", BASE, "--head-sha", HEAD,
             "--required-check", "public-gate", "--post-merge-check", "public-gate",
             "--review-repo", self.temporary.name,
-            "--review-validator", "/review.py", "--review-evidence", "/evidence",
+            "--review-evidence", "/evidence",
             "--review-envelope", "slice_acceptance=/envelope",
-            "--run-record-validator", "/run.py", "--run-record", "/record",
+            "--run-record", "/record",
         ]
         error = MutationRecoveryError(
             "merge_response", "unknown", "ambiguous", known_state={"pull_request_state": "open"}
@@ -507,6 +632,46 @@ class ExactHeadMergeTests(unittest.TestCase):
         self.assertEqual(value["outcome"], "mutation_state_unknown")
         self.assertEqual(value["phase"], "merge_response")
         self.assertEqual(value["known_state"], {"pull_request_state": "open"})
+
+    def test_cli_serializes_only_server_enforcement_as_blocked(self) -> None:
+        arguments = [
+            "--repository", REPOSITORY, "--pull-request", "17",
+            "--base-ref", "main", "--base-sha", BASE, "--head-sha", HEAD,
+            "--required-check", "public-gate",
+            "--post-merge-check", "public-gate",
+            "--review-repo", self.temporary.name,
+            "--review-evidence", "/evidence",
+            "--review-envelope", "slice_acceptance=/envelope",
+            "--run-record", "/record",
+        ]
+        output = io.StringIO()
+        with (
+            patch(
+                "scripts.merge_exact_head.execute",
+                side_effect=ServerEnforcementBlocked("strict checks unavailable"),
+            ),
+            redirect_stdout(output),
+        ):
+            code = main(arguments)
+        self.assertEqual(code, 2)
+        value = json.loads(output.getvalue())
+        self.assertEqual(value["outcome"], "BLOCKED")
+        self.assertEqual(value["phase"], "server_enforcement")
+        self.assertFalse(value["mutation_occurred"])
+
+        output, errors = io.StringIO(), io.StringIO()
+        with (
+            patch(
+                "scripts.merge_exact_head.execute",
+                side_effect=MergeGateError("head mismatch"),
+            ),
+            redirect_stdout(output),
+            redirect_stderr(errors),
+        ):
+            code = main(arguments)
+        self.assertEqual(code, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("merge gate failed: head mismatch", errors.getvalue())
 
 
 if __name__ == "__main__":

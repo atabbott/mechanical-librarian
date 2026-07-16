@@ -9,6 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -21,6 +22,12 @@ _REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/ -]{0,127}")
 _SLICE_REVIEW_TASKS = frozenset({"slice_acceptance", "code_quality"})
 _TIER_TWO_REVIEW_TASKS = frozenset({"safety", "publication_challenge"})
+_TRUSTED_CONTROL_PATHS = {
+    "review_validator": Path(".codex/scripts/review_packet.py"),
+    "run_record_validator": Path(".codex/scripts/run_record.py"),
+    "qualification_validator": Path(".codex/scripts/qualification_cache.py"),
+    "workflow_manifest": Path(".codex/team.toml"),
+}
 
 
 class MergeGateError(RuntimeError):
@@ -51,6 +58,10 @@ class PostMutationError(MutationRecoveryError):
 
     def __init__(self, phase: str, merge_sha: str, message: str) -> None:
         super().__init__(phase, True, message, merge_sha=merge_sha)
+
+
+class ServerEnforcementBlocked(MergeGateError):
+    """Strict server enforcement is unavailable before mutation."""
 
 
 @dataclass(frozen=True)
@@ -97,10 +108,8 @@ class MergeRequest:
     required_checks: frozenset[str]
     post_merge_checks: frozenset[str]
     review_repo: Path
-    review_validator: Path
     review_evidence: Path
     review_envelopes: tuple[tuple[str, Path], ...]
-    run_record_validator: Path
     run_record: Path
     qualification_evidence: tuple[tuple[str, Path, Path], ...]
     post_merge_attempts: int
@@ -153,13 +162,55 @@ def _validate_request(request: MergeRequest) -> None:
 
 def _artifact(path: Path, label: str) -> tuple[bytes, str]:
     try:
-        size = path.stat().st_size
+        metadata = path.lstat()
+        path.resolve(strict=True)
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+        ):
+            raise MergeGateError(f"{label} must be a non-symlink regular file")
+        size = metadata.st_size
         if size > MAX_ARTIFACT_BYTES:
             raise MergeGateError(f"{label} exceeds the size limit")
         raw = path.read_bytes()
     except (OSError, UnicodeError):
         raise MergeGateError(f"{label} could not be read") from None
     return raw, hashlib.sha256(raw).hexdigest()
+
+
+def _trusted_controls(review_repo: Path) -> dict[str, Path]:
+    controls: dict[str, Path] = {}
+    for name, relative in _TRUSTED_CONTROL_PATHS.items():
+        candidate = review_repo / relative
+        try:
+            metadata = candidate.lstat()
+            resolved = candidate.resolve(strict=True)
+        except OSError:
+            raise MergeGateError(f"trusted control is unavailable: {relative}") from None
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or resolved != candidate.absolute()
+            or review_repo not in resolved.parents
+        ):
+            raise MergeGateError(f"trusted control is unsafe: {relative}")
+        controls[name] = resolved
+    return controls
+
+
+def _seal(
+    seals: list[tuple[Path, str, str]], path: Path, label: str
+) -> tuple[bytes, str]:
+    raw, digest = _artifact(path, label)
+    seals.append((path, label, digest))
+    return raw, digest
+
+
+def _verify_seals(seals: list[tuple[Path, str, str]]) -> None:
+    for path, label, expected in seals:
+        _, actual = _artifact(path, label)
+        if actual != expected:
+            raise MergeGateError(f"{label} changed during validation")
 
 
 def _mandatory_review_tasks(record: dict[str, Any]) -> frozenset[str]:
@@ -179,89 +230,144 @@ def _validate_local_evidence(
 ) -> dict[str, str]:
     review_repo = request.review_repo.resolve(strict=True)
     digests: dict[str, str] = {}
-    record_raw, record_digest = _artifact(request.run_record, "qualified run record")
-    record = _json(record_raw.decode("utf-8"), "qualified run record")
-    target = record.get("target")
-    delivery = record.get("delivery")
-    expected_url = f"https://github.com/{request.repository}/pull/{request.pull_request}"
-    if (
-        record.get("schema_version") != 2
-        or type(target) is not dict
-        or target.get("base_commit") != request.base_sha
-        or target.get("final_commit") != request.head_sha
-        or type(delivery) is not dict
-        or delivery.get("kind") != "PULL_REQUEST"
-        or delivery.get("url") != expected_url
-    ):
-        raise MergeGateError("qualified run record does not bind this merge")
-    qualification_digests: dict[str, str] = {}
-    command = [
-        sys.executable, str(request.run_record_validator), "validate",
-        str(request.run_record), "--qualified", "--repo", ".",
-    ]
-    for name, receipt, cache_record in request.qualification_evidence:
-        _, receipt_digest = _artifact(receipt, f"{name} qualification receipt")
-        _, cache_digest = _artifact(cache_record, f"{name} qualification cache")
-        qualification_digests[f"qualification-receipt:{name}"] = receipt_digest
-        qualification_digests[f"qualification-cache:{name}"] = cache_digest
-        command.extend(
-            ("--qualification-evidence", name, str(receipt), str(cache_record))
+    seals: list[tuple[Path, str, str]] = []
+    controls = _trusted_controls(review_repo)
+    for name, path in controls.items():
+        _, digest = _seal(seals, path, f"trusted control {name}")
+        digests[f"control:{name}"] = digest
+    try:
+        record_raw, record_digest = _seal(
+            seals, request.run_record, "qualified run record"
         )
-    runner.run(tuple(command))
-
-    mandatory_tasks = _mandatory_review_tasks(record)
-    envelope_names = {name for name, _ in request.review_envelopes}
-    if envelope_names != mandatory_tasks:
-        raise MergeGateError(
-            "review envelope names must exactly match mandatory workflow reviews"
+        try:
+            record = _json(
+                record_raw.decode("utf-8"), "qualified run record"
+            )
+        except UnicodeError:
+            raise MergeGateError(
+                "qualified run record is not valid UTF-8"
+            ) from None
+        target = record.get("target")
+        delivery = record.get("delivery")
+        expected_url = (
+            f"https://github.com/{request.repository}/pull/{request.pull_request}"
         )
-
-    envelope_digests: dict[str, str] = {}
-    _, evidence_digest = _artifact(request.review_evidence, "review evidence")
-    digests["review_evidence"] = evidence_digest
-    runner.run((
-        sys.executable, str(request.review_validator), "verify-evidence",
-        "--repo", str(review_repo), "--evidence", str(request.review_evidence),
-        "--digest", evidence_digest,
-    ))
-    for name, path in request.review_envelopes:
-        raw, digest = _artifact(path, f"{name} review envelope")
-        runner.run((
-            sys.executable, str(request.review_validator), "verify-envelope",
-            "--repo", str(review_repo), "--evidence", str(request.review_evidence),
-            "--envelope", str(path), "--digest", digest,
-        ))
-        envelope = _json(raw.decode("utf-8"), f"{name} review envelope")
-        if envelope.get("task") != name:
-            raise MergeGateError(f"review envelope task does not match: {name}")
-        digests[f"review:{name}"] = digest
-        envelope_digests[name] = digest
-    epochs = record.get("review_epochs")
-    if type(epochs) is not list:
-        raise MergeGateError("qualified run record lacks review epochs")
-    reviews = [
-        review
-        for epoch in epochs
-        if type(epoch) is dict and type(epoch.get("reviews")) is list
-        for review in epoch["reviews"]
-        if type(review) is dict
-    ]
-    for name in mandatory_tasks:
-        matches = [
-            review
-            for review in reviews
-            if review.get("task") == name
-            and review.get("result") == "PASS"
-            and review.get("evidence_digest") == evidence_digest
-            and review.get("envelope_digest") == envelope_digests[name]
-            and type(review.get("identity")) is dict
-            and review["identity"].get("commit") == request.head_sha
+        if (
+            record.get("schema_version") != 2
+            or type(target) is not dict
+            or target.get("base_commit") != request.base_sha
+            or target.get("final_commit") != request.head_sha
+            or type(delivery) is not dict
+            or delivery.get("kind") != "PULL_REQUEST"
+            or delivery.get("url") != expected_url
+        ):
+            raise MergeGateError("qualified run record does not bind this merge")
+        qualification_digests: dict[str, str] = {}
+        command = [
+            sys.executable,
+            str(controls["run_record_validator"]),
+            "validate",
+            str(request.run_record),
+            "--qualified",
+            "--repo",
+            ".",
         ]
-        if len(matches) != 1:
-            raise MergeGateError(f"qualified run record does not bind review: {name}")
-    digests["run_record"] = record_digest
-    digests.update(qualification_digests)
-    return digests
+        for name, receipt, cache_record in request.qualification_evidence:
+            _, receipt_digest = _seal(
+                seals, receipt, f"{name} qualification receipt"
+            )
+            _, cache_digest = _seal(
+                seals, cache_record, f"{name} qualification cache"
+            )
+            qualification_digests[
+                f"qualification-receipt:{name}"
+            ] = receipt_digest
+            qualification_digests[f"qualification-cache:{name}"] = cache_digest
+            command.extend(
+                ("--qualification-evidence", name, str(receipt), str(cache_record))
+            )
+        runner.run(tuple(command))
+
+        mandatory_tasks = _mandatory_review_tasks(record)
+        envelope_names = {name for name, _ in request.review_envelopes}
+        if envelope_names != mandatory_tasks:
+            raise MergeGateError(
+                "review envelope names must exactly match mandatory workflow reviews"
+            )
+
+        envelope_digests: dict[str, str] = {}
+        _, evidence_digest = _seal(
+            seals, request.review_evidence, "review evidence"
+        )
+        digests["review_evidence"] = evidence_digest
+        runner.run((
+            sys.executable,
+            str(controls["review_validator"]),
+            "verify-evidence",
+            "--repo",
+            str(review_repo),
+            "--evidence",
+            str(request.review_evidence),
+            "--digest",
+            evidence_digest,
+        ))
+        for name, path in request.review_envelopes:
+            raw, digest = _seal(seals, path, f"{name} review envelope")
+            runner.run((
+                sys.executable,
+                str(controls["review_validator"]),
+                "verify-envelope",
+                "--repo",
+                str(review_repo),
+                "--evidence",
+                str(request.review_evidence),
+                "--envelope",
+                str(path),
+                "--digest",
+                digest,
+            ))
+            try:
+                envelope = _json(
+                    raw.decode("utf-8"), f"{name} review envelope"
+                )
+            except UnicodeError:
+                raise MergeGateError(
+                    f"{name} review envelope is not valid UTF-8"
+                ) from None
+            if envelope.get("task") != name:
+                raise MergeGateError(f"review envelope task does not match: {name}")
+            digests[f"review:{name}"] = digest
+            envelope_digests[name] = digest
+        epochs = record.get("review_epochs")
+        if type(epochs) is not list:
+            raise MergeGateError("qualified run record lacks review epochs")
+        reviews = [
+            review
+            for epoch in epochs
+            if type(epoch) is dict and type(epoch.get("reviews")) is list
+            for review in epoch["reviews"]
+            if type(review) is dict
+        ]
+        for name in mandatory_tasks:
+            matches = [
+                review
+                for review in reviews
+                if review.get("task") == name
+                and review.get("result") == "PASS"
+                and review.get("evidence_digest") == evidence_digest
+                and review.get("envelope_digest") == envelope_digests[name]
+                and type(review.get("identity")) is dict
+                and review["identity"].get("commit") == request.head_sha
+            ]
+            if len(matches) != 1:
+                raise MergeGateError(
+                    f"qualified run record does not bind review: {name}"
+                )
+        digests["run_record"] = record_digest
+        digests.update(qualification_digests)
+        return digests
+    finally:
+        _verify_seals(seals)
 
 
 def _check_local_checkout(request: MergeRequest, runner: CommandRunner) -> None:
@@ -277,8 +383,18 @@ def _check_local_checkout(request: MergeRequest, runner: CommandRunner) -> None:
 
 
 def _branch_protection(request: MergeRequest, runner: CommandRunner) -> dict[str, Any]:
-    raw = runner.run(("gh", "api", f"repos/{request.repository}/branches/main/protection")).stdout
-    return _json(raw, "branch protection")
+    try:
+        raw = runner.run((
+            "gh", "api", f"repos/{request.repository}/branches/main/protection"
+        )).stdout
+    except MergeGateError:
+        raise ServerEnforcementBlocked(
+            "strict server enforcement is unavailable"
+        ) from None
+    try:
+        return _json(raw, "branch protection")
+    except MergeGateError as error:
+        raise ServerEnforcementBlocked(str(error)) from None
 
 
 def _check_server_enforcement(request: MergeRequest, protection: dict[str, Any]) -> None:
@@ -289,31 +405,65 @@ def _check_server_enforcement(request: MergeRequest, protection: dict[str, Any])
     force_pushes = protection.get("allow_force_pushes")
     deletions = protection.get("allow_deletions")
     if type(statuses) is not dict or statuses.get("strict") is not True:
-        raise MergeGateError("server enforcement lacks strict required checks")
-    contexts = set(statuses.get("contexts", []))
-    for check in statuses.get("checks", []):
-        if type(check) is dict and type(check.get("context")) is str:
-            contexts.add(check["context"])
+        raise ServerEnforcementBlocked(
+            "server enforcement lacks strict required checks"
+        )
+    raw_contexts = statuses.get("contexts")
+    raw_checks = statuses.get("checks")
+    if (
+        type(raw_contexts) is not list
+        or any(type(context) is not str for context in raw_contexts)
+        or type(raw_checks) is not list
+    ):
+        raise ServerEnforcementBlocked(
+            "server enforcement returned malformed required checks"
+        )
+    contexts = set(raw_contexts)
+    for check in raw_checks:
+        if type(check) is not dict or type(check.get("context")) is not str:
+            raise ServerEnforcementBlocked(
+                "server enforcement returned malformed required checks"
+            )
+        contexts.add(check["context"])
     if not request.required_checks <= contexts:
-        raise MergeGateError("server enforcement lacks a required check")
+        raise ServerEnforcementBlocked(
+            "server enforcement lacks a required check"
+        )
     bypass = reviews.get("bypass_pull_request_allowances") if type(reviews) is dict else None
+    bypass_lists_valid = (
+        type(bypass) is dict
+        and all(
+            type(bypass.get(kind)) is list
+            for kind in ("users", "teams", "apps")
+        )
+    )
     if (
         type(reviews) is not dict
         or type(reviews.get("required_approving_review_count")) is not int
         or reviews["required_approving_review_count"] < 1
         or reviews.get("dismiss_stale_reviews") is not True
-        or type(bypass) is not dict
+        or not bypass_lists_valid
         or any(bypass.get(kind) for kind in ("users", "teams", "apps"))
     ):
-        raise MergeGateError("server enforcement lacks strict review protection")
+        raise ServerEnforcementBlocked(
+            "server enforcement lacks strict review protection"
+        )
     if type(admins) is not dict or admins.get("enabled") is not True:
-        raise MergeGateError("server enforcement permits administrative bypass")
+        raise ServerEnforcementBlocked(
+            "server enforcement permits administrative bypass"
+        )
     if type(conversations) is not dict or conversations.get("enabled") is not True:
-        raise MergeGateError("server enforcement does not require resolved conversations")
+        raise ServerEnforcementBlocked(
+            "server enforcement does not require resolved conversations"
+        )
     if type(force_pushes) is not dict or force_pushes.get("enabled") is not False:
-        raise MergeGateError("server enforcement permits force pushes")
+        raise ServerEnforcementBlocked(
+            "server enforcement permits force pushes"
+        )
     if type(deletions) is not dict or deletions.get("enabled") is not False:
-        raise MergeGateError("server enforcement permits branch deletion")
+        raise ServerEnforcementBlocked(
+            "server enforcement permits branch deletion"
+        )
 
 
 def _pull_request(request: MergeRequest, runner: CommandRunner) -> dict[str, Any]:
@@ -327,7 +477,12 @@ def _check_pull_request(request: MergeRequest, pull: dict[str, Any]) -> None:
     base, head = pull.get("base"), pull.get("head")
     if pull.get("number") != request.pull_request or pull.get("state") != "open" or pull.get("draft") is not False or pull.get("merged") is not False:
         raise MergeGateError("pull request is not the expected open ready request")
-    if type(base) is not dict or type(base.get("repo")) is not dict or base["repo"].get("full_name", "").casefold() != request.repository.casefold():
+    if (
+        type(base) is not dict
+        or type(base.get("repo")) is not dict
+        or type(base["repo"].get("full_name")) is not str
+        or base["repo"]["full_name"].casefold() != request.repository.casefold()
+    ):
         raise MergeGateError("pull request repository does not match")
     if base.get("ref") != "main" or base.get("sha") != request.base_sha:
         raise MergeGateError("pull request base does not match")
@@ -368,19 +523,33 @@ def _review_state(request: MergeRequest, runner: CommandRunner) -> dict[str, Any
         "gh", "api", "graphql", "-f", f"owner={owner}", "-f", f"name={name}",
         "-F", f"number={request.pull_request}", "-f", f"query={query}",
     )).stdout, "review query")
-    try:
-        return document["data"]["repository"]["pullRequest"]
-    except (KeyError, TypeError):
-        raise MergeGateError("review query returned the wrong JSON shape") from None
+    data = document.get("data")
+    repository = data.get("repository") if type(data) is dict else None
+    pull = repository.get("pullRequest") if type(repository) is dict else None
+    if type(pull) is not dict:
+        raise MergeGateError("review query returned the wrong JSON shape")
+    return pull
 
 
 def _check_reviews(pull: dict[str, Any]) -> None:
     if pull.get("reviewDecision") != "APPROVED":
         raise MergeGateError("pull request review decision is not APPROVED")
     threads = pull.get("reviewThreads")
-    if type(threads) is not dict or type(threads.get("nodes")) is not list or threads.get("pageInfo", {}).get("hasNextPage") is not False or threads.get("totalCount") != len(threads["nodes"]):
+    page_info = threads.get("pageInfo") if type(threads) is dict else None
+    nodes = threads.get("nodes") if type(threads) is dict else None
+    if (
+        type(threads) is not dict
+        or type(nodes) is not list
+        or type(page_info) is not dict
+        or page_info.get("hasNextPage") is not False
+        or type(threads.get("totalCount")) is not int
+        or threads["totalCount"] != len(nodes)
+    ):
         raise MergeGateError("review thread query is incomplete")
-    if any(type(node) is not dict or node.get("isResolved") is not True for node in threads["nodes"]):
+    if any(
+        type(node) is not dict or node.get("isResolved") is not True
+        for node in nodes
+    ):
         raise MergeGateError("pull request has an unresolved review thread")
 
 
@@ -401,7 +570,27 @@ def _reconcile_ambiguous_merge(
             if type(pull.get(source)) in {str, bool}:
                 known[target] = pull[source]
         sha = pull.get("merge_commit_sha")
-        if pull.get("state") == "closed" and pull.get("merged") is True and type(sha) is str and _SHA.fullmatch(sha):
+        base = pull.get("base")
+        head = pull.get("head")
+        base_repo = base.get("repo") if type(base) is dict else None
+        identity_matches = (
+            pull.get("number") == request.pull_request
+            and type(base) is dict
+            and type(base_repo) is dict
+            and type(base_repo.get("full_name")) is str
+            and base_repo["full_name"].casefold() == request.repository.casefold()
+            and base.get("ref") == request.base_ref
+            and base.get("sha") == request.base_sha
+            and type(head) is dict
+            and head.get("sha") == request.head_sha
+        )
+        if (
+            identity_matches
+            and pull.get("state") == "closed"
+            and pull.get("merged") is True
+            and type(sha) is str
+            and _SHA.fullmatch(sha)
+        ):
             return sha
     except MergeGateError:
         pass
@@ -538,10 +727,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--required-check", action="append", required=True)
     parser.add_argument("--post-merge-check", action="append", required=True)
     parser.add_argument("--review-repo", required=True, type=Path)
-    parser.add_argument("--review-validator", required=True, type=Path)
     parser.add_argument("--review-evidence", required=True, type=Path)
     parser.add_argument("--review-envelope", action="append", required=True, type=_named_path)
-    parser.add_argument("--run-record-validator", required=True, type=Path)
     parser.add_argument("--run-record", required=True, type=Path)
     parser.add_argument("--qualification-evidence", action="append", default=[], type=_qualification)
     parser.add_argument("--post-merge-attempts", type=int, default=20)
@@ -558,15 +745,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         required_checks=frozenset(args.required_check),
         post_merge_checks=frozenset(args.post_merge_check),
         review_repo=args.review_repo,
-        review_validator=args.review_validator, review_evidence=args.review_evidence,
+        review_evidence=args.review_evidence,
         review_envelopes=tuple(args.review_envelope),
-        run_record_validator=args.run_record_validator, run_record=args.run_record,
+        run_record=args.run_record,
         qualification_evidence=tuple(args.qualification_evidence),
         post_merge_attempts=args.post_merge_attempts,
         post_merge_interval=args.post_merge_interval, dry_run=args.dry_run,
     )
     try:
         result = execute(request, SubprocessRunner(), TimeSleeper())
+    except ServerEnforcementBlocked as error:
+        result = {
+            "error": str(error),
+            "mutation_occurred": False,
+            "outcome": "BLOCKED",
+            "phase": "server_enforcement",
+            "pull_request": request.pull_request,
+            "repository": request.repository,
+        }
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        return 2
     except MutationRecoveryError as error:
         result = {
             "error": str(error), "mutation_occurred": error.mutation_occurred,
