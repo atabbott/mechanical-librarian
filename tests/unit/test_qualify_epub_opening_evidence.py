@@ -44,7 +44,34 @@ class QualifyEpubOpeningEvidenceTests(unittest.TestCase):
                 "failure=source_changed\n"
             ),
         )
-        for completed in (success, failure):
+        unknown_outcome = subprocess.CompletedProcess(
+            (),
+            0,
+            stdout=(
+                "EPUB opening evidence passed.\n"
+                "mode=executed evidence=evidence_"
+                + "c" * 32
+                + " current=true outcome=private_title_123\n"
+                "claims=0 citations=0 selected=0 rejected=0 warnings=0 "
+                "parser=strict\n"
+            ),
+            stderr="",
+        )
+        unknown_failure = subprocess.CompletedProcess(
+            (),
+            1,
+            stdout="",
+            stderr=(
+                "EPUB opening evidence failed safely.\n"
+                "failure=private_title_123\n"
+            ),
+        )
+        for completed in (
+            success,
+            failure,
+            unknown_outcome,
+            unknown_failure,
+        ):
             with (
                 self.subTest(returncode=completed.returncode),
                 patch(

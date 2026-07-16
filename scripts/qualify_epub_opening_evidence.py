@@ -16,6 +16,11 @@ import sys
 import tempfile
 from datetime import datetime, timezone
 
+from mechanical_librarian.domain.epub_opening_evidence import (
+    EpubEvidenceFailure,
+    PUBLISHABLE_EPUB_OUTCOMES,
+)
+
 
 _SELECTOR = re.compile(
     r"^target=(target_[0-9a-f]{32}) snapshot=(snapshot_[0-9a-f]{32}) "
@@ -30,6 +35,8 @@ _DETAILS = re.compile(
     r"rejected=([0-9]+) warnings=([0-9]+) parser=(none|strict|recovered|mixed)$"
 )
 _FAILURE = re.compile(r"^failure=([a-z0-9_]+)$")
+_OUTCOMES = frozenset(value.value for value in PUBLISHABLE_EPUB_OUTCOMES)
+_FAILURES = frozenset(value.value for value in EpubEvidenceFailure)
 _LIBRARY_ID = "00000000-0000-4000-8000-000000000009"
 
 
@@ -112,6 +119,8 @@ def _evidence(
         details = _DETAILS.fullmatch(lines[2])
         if match is None or details is None:
             raise QualificationError("installed evidence success envelope is malformed")
+        if match.group(4) not in _OUTCOMES:
+            raise QualificationError("installed evidence outcome is unsupported")
         return True, {
             "mode": match.group(1),
             "evidence": match.group(2),
@@ -129,6 +138,8 @@ def _evidence(
     match = _FAILURE.fullmatch(lines[1])
     if match is None:
         raise QualificationError("installed evidence failure envelope is malformed")
+    if match.group(1) not in _FAILURES:
+        raise QualificationError("installed evidence failure is unsupported")
     return False, {"failure": match.group(1)}
 
 

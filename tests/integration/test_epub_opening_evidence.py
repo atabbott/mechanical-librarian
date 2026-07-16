@@ -1360,6 +1360,105 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         )[1]
         self.assertEqual(reused.failure, EpubEvidenceFailure.CORRUPT_STATE)
 
+    def test_reuse_rejects_succeeded_job_reset_before_extraction(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.repository.publish(
+            claim,
+            source,
+            "4" * 64,
+            "5" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now,
+        )
+        self.connection.execute(
+            "UPDATE epub_evidence_jobs SET state='pending',evidence_id=NULL,"
+            "terminal_outcome=NULL WHERE work_id=?",
+            (accepted[0],),
+        )
+        result = RunEpubOpeningEvidence(self.repository).run(
+            self.locator,
+            self.binding_configuration,
+            "5" * 64,
+            "replacement-worker",
+            lambda: self.now + timedelta(seconds=1),
+            lambda _source: "4" * 64,
+            lambda _source: self.fail("corrupt succeeded work executed again"),
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.CORRUPT_STATE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,evidence_id,terminal_outcome FROM epub_evidence_jobs "
+                "WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("pending", None, None),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT (SELECT COUNT(*) FROM epub_opening_evidence),"
+                "(SELECT COUNT(*) FROM epub_evidence_checkpoints)"
+            ).fetchone(),
+            (1, 1),
+        )
+
+    def test_reuse_rejects_missing_or_disagreeing_evidence_link(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        published = self.repository.publish(
+            claim,
+            source,
+            "4" * 64,
+            "5" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now,
+        )
+        self.connection.execute(
+            "UPDATE epub_evidence_jobs SET evidence_id=? WHERE work_id=?",
+            ("evidence_" + "f" * 32, accepted[0]),
+        )
+        missing = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(missing.failure, EpubEvidenceFailure.CORRUPT_STATE)
+
+        self.connection.execute(
+            "UPDATE epub_evidence_jobs SET evidence_id=? WHERE work_id=?",
+            (published.evidence_id, accepted[0]),
+        )
+        trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_opening_evidence_no_update'"
+        ).fetchone()[0]
+        self.connection.execute("DROP TRIGGER epub_opening_evidence_no_update")
+        self.connection.execute(
+            "UPDATE epub_opening_evidence SET work_key=? WHERE evidence_id=?",
+            ("f" * 64, published.evidence_id),
+        )
+        self.connection.execute(str(trigger))
+        disagreeing = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now + timedelta(seconds=2)
+        )[1]
+        self.assertEqual(disagreeing.failure, EpubEvidenceFailure.CORRUPT_STATE)
+
     def test_missing_current_binding_set_pointer_is_corrupt(self) -> None:
         source = self.repository.resolve(
             self.locator, self.binding_configuration

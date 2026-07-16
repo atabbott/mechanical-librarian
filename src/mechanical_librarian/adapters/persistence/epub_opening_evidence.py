@@ -317,7 +317,12 @@ class SQLiteEpubOpeningEvidenceRepository:
                     ).source != source
                 ):
                     return None
-                evidence = self._reusable(work_key, source.locator)
+                evidence = self._reusable(
+                    work_key,
+                    source,
+                    source_fingerprint,
+                    governing_digest,
+                )
                 if evidence is not None:
                     self._event(work_id, "reused", accepted_at, actor=initiating_authority, allow_missing_job=True)
                     return work_id, evidence
@@ -809,39 +814,98 @@ class SQLiteEpubOpeningEvidenceRepository:
         )
 
     def _reusable(
-        self, work_key: str, locator: EpubEvidenceLocator
+        self,
+        work_key: str,
+        source: ResolvedEpubSource,
+        source_fingerprint: str,
+        governing_digest: str,
     ) -> EpubEvidenceResult | None:
-        row = self._connection.execute(
-            "SELECT e.evidence_id,e.evidence_digest,e.binding_digest,"
-            "e.source_fingerprint,e.governing_digest,e.outcome,e.report_json,"
-            "e.report_digest,e.claim_count,e.citation_count,e.selected_count,"
-            "e.rejected_count,e.warning_count,e.package_mode,e.parser_mode,"
-            "CASE WHEN c.evidence_id=e.evidence_id THEN 1 ELSE 0 END,"
-            "j.work_id,j.target_reference,j.snapshot_reference,j.file_index,"
-            "j.binding_digest,j.source_fingerprint,j.governing_digest,j.evidence_id,"
-            "j.terminal_outcome,j.terminal_failure FROM "
-            "epub_evidence_jobs j JOIN epub_opening_evidence e ON "
-            "e.evidence_id=j.evidence_id LEFT JOIN "
-            "current_epub_opening_evidence c ON c.target_reference=e.target_reference "
-            "AND c.file_index=e.file_index WHERE j.work_key=? AND j.state='succeeded' "
-            "AND e.work_key=j.work_key AND e.target_reference=? "
-            "AND e.snapshot_reference=? AND e.file_index=?",
-            (
-                work_key,
-                locator.target_reference,
-                locator.snapshot_reference,
-                locator.file_index,
-            ),
+        locator = source.locator
+        job = self._connection.execute(
+            "SELECT work_id,target_reference,snapshot_reference,file_index,"
+            "binding_digest,source_fingerprint,governing_digest,state,attempt,fence,"
+            "evidence_id,terminal_outcome,terminal_failure FROM epub_evidence_jobs "
+            "WHERE work_key=?",
+            (work_key,),
         ).fetchone()
-        if row is None:
+        expected_work_id = "epub_work_" + work_key[:32]
+        if job is None:
+            orphan = self._connection.execute(
+                "SELECT (SELECT COUNT(*) FROM epub_opening_evidence WHERE work_key=?),"
+                "(SELECT COUNT(*) FROM epub_evidence_checkpoints WHERE work_id=?)",
+                (work_key, expected_work_id),
+            ).fetchone()
+            if tuple(map(int, orphan)) != (0, 0):
+                raise ValueError("EPUB reusable work state is orphaned")
             return None
-        report = EpubOpeningReport.from_json(str(row[6]))
+        job_core = (
+            str(job[0]),
+            str(job[1]),
+            str(job[2]),
+            int(job[3]),
+            str(job[4]),
+            str(job[5]),
+            str(job[6]),
+        )
+        if job_core != (
+            expected_work_id,
+            locator.target_reference,
+            locator.snapshot_reference,
+            locator.file_index,
+            source.binding_digest,
+            source_fingerprint,
+            governing_digest,
+        ):
+            raise ValueError("EPUB reusable job identity is inconsistent")
+        evidence = self._connection.execute(
+            "SELECT e.evidence_id,e.evidence_digest,e.work_key,e.target_reference,"
+            "e.snapshot_reference,e.file_index,e.binding_digest,e.source_fingerprint,"
+            "e.governing_digest,e.outcome,e.report_json,e.report_digest,e.claim_count,"
+            "e.citation_count,e.selected_count,e.rejected_count,e.warning_count,"
+            "e.package_mode,e.parser_mode,CASE WHEN c.evidence_id=e.evidence_id "
+            "THEN 1 ELSE 0 END FROM epub_opening_evidence e LEFT JOIN "
+            "current_epub_opening_evidence c ON c.target_reference=e.target_reference "
+            "AND c.file_index=e.file_index WHERE e.evidence_id=?",
+            (job[10],),
+        ).fetchone() if job[10] is not None else None
+        work_evidence = self._connection.execute(
+            "SELECT evidence_id FROM epub_opening_evidence WHERE work_key=?",
+            (work_key,),
+        ).fetchone()
+        checkpoints = self._connection.execute(
+            "SELECT attempt,fence,evidence_id FROM epub_evidence_checkpoints "
+            "WHERE work_id=? ORDER BY attempt,fence",
+            (expected_work_id,),
+        ).fetchall()
+        state = str(job[7])
+        if state != "succeeded":
+            if (
+                job[10] is not None
+                or job[11] is not None
+                or evidence is not None
+                or work_evidence is not None
+                or checkpoints
+            ):
+                raise ValueError("EPUB non-succeeded work has immutable results")
+            return None
+        if (
+            job[10] is None
+            or job[11] is None
+            or job[12] is not None
+            or evidence is None
+            or work_evidence is None
+            or str(work_evidence[0]) != str(job[10])
+            or checkpoints
+            != [(int(job[8]), int(job[9]), str(job[10]))]
+        ):
+            raise ValueError("EPUB succeeded work state is inconsistent")
+        report = EpubOpeningReport.from_json(str(evidence[10]))
         evidence_id, evidence_digest, report_digest, parser_mode = (
             epub_evidence_identity(
                 work_key=work_key,
-                binding_digest=str(row[2]),
-                source_fingerprint=str(row[3]),
-                governing_digest=str(row[4]),
+                binding_digest=source.binding_digest,
+                source_fingerprint=source_fingerprint,
+                governing_digest=governing_digest,
                 report=report,
             )
         )
@@ -851,6 +915,13 @@ class SQLiteEpubOpeningEvidenceRepository:
         expected = (
             evidence_id,
             evidence_digest,
+            work_key,
+            locator.target_reference,
+            locator.snapshot_reference,
+            locator.file_index,
+            source.binding_digest,
+            source_fingerprint,
+            governing_digest,
             report.outcome.value,
             report.to_json(),
             report_digest,
@@ -862,53 +933,16 @@ class SQLiteEpubOpeningEvidenceRepository:
             "validated",
             parser_mode,
         )
-        observed = (
-            str(row[0]),
-            str(row[1]),
-            str(row[5]),
-            str(row[6]),
-            str(row[7]),
-            int(row[8]),
-            int(row[9]),
-            int(row[10]),
-            int(row[11]),
-            int(row[12]),
-            str(row[13]),
-            str(row[14]),
-        )
+        observed = tuple(evidence[:19])
         if observed != expected:
             raise ValueError("EPUB reusable evidence identity is inconsistent")
-        job_observed = (
-            str(row[16]),
-            str(row[17]),
-            str(row[18]),
-            int(row[19]),
-            str(row[20]),
-            str(row[21]),
-            str(row[22]),
-            str(row[23]),
-            str(row[24]),
-            row[25],
-        )
-        job_expected = (
-            "epub_work_" + work_key[:32],
-            locator.target_reference,
-            locator.snapshot_reference,
-            locator.file_index,
-            str(row[2]),
-            str(row[3]),
-            str(row[4]),
-            str(row[0]),
-            str(row[5]),
-            None,
-        )
-        if job_observed != job_expected:
-            raise ValueError("EPUB reusable job identity is inconsistent")
+        if str(job[11]) != report.outcome.value:
+            raise ValueError("EPUB succeeded work outcome is inconsistent")
         return result_from_report(
             EpubEvidenceMode.REUSED,
             evidence_id,
             report,
-            current_applicable=bool(row[15]),
+            current_applicable=bool(evidence[19]),
         )
 
     def _event(
