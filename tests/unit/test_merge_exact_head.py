@@ -58,6 +58,8 @@ class FakeRunner:
         self.merge_puts = 0
         self.omit_required_check = False
         self.malformed_review = False
+        self.check_returncode = 0
+        self.include_optional_pending_check = False
 
     def run(self, argv: object, *, check: bool = True) -> CommandResult:
         command = tuple(argv)  # type: ignore[arg-type]
@@ -80,7 +82,9 @@ class FakeRunner:
             checks = [{"name": "public-gate", "bucket": bucket}]
             if not self.omit_required_check:
                 checks.append({"name": "linked-issue", "bucket": bucket})
-            return CommandResult(0, json.dumps(checks))
+            if self.include_optional_pending_check:
+                checks.append({"name": "optional-analysis", "bucket": "pending"})
+            return CommandResult(self.check_returncode, json.dumps(checks))
         if command[:3] == ("gh", "api", "graphql"):
             self.review_queries += 1
             decision = self.second_review if self.review_queries > 1 else "APPROVED"
@@ -426,6 +430,61 @@ class ExactHeadMergeTests(unittest.TestCase):
             execute(self.request(), runner, FakeSleeper())
         self.assertFalse(runner.merged)
 
+    def test_absent_empty_bypass_allowances_are_accepted(self) -> None:
+        runner = FakeRunner()
+        original_protection = runner._protection
+
+        def protection_without_bypass() -> dict[str, object]:
+            value = original_protection()
+            reviews = dict(value["required_pull_request_reviews"])  # type: ignore[arg-type]
+            reviews.pop("bypass_pull_request_allowances")
+            value["required_pull_request_reviews"] = reviews
+            return value
+
+        runner._protection = protection_without_bypass  # type: ignore[method-assign]
+        result = execute(self.request(dry_run=True), runner, FakeSleeper())
+        self.assertEqual(result["outcome"], "dry_run_passed")
+
+    def test_present_malformed_or_nonempty_bypass_allowances_block(self) -> None:
+        bypass_values: tuple[object, ...] = (
+            None,
+            {},
+            {"users": [], "teams": [], "apps": "not-a-list"},
+            {"users": [{"login": "bypass"}], "teams": [], "apps": []},
+        )
+        for bypass in bypass_values:
+            with self.subTest(bypass=bypass):
+                runner = FakeRunner()
+                original_protection = runner._protection
+
+                def protection_with_bypass() -> dict[str, object]:
+                    value = original_protection()
+                    reviews = dict(value["required_pull_request_reviews"])  # type: ignore[arg-type]
+                    reviews["bypass_pull_request_allowances"] = bypass
+                    value["required_pull_request_reviews"] = reviews
+                    return value
+
+                runner._protection = protection_with_bypass  # type: ignore[method-assign]
+                with self.assertRaisesRegex(
+                    ServerEnforcementBlocked, "strict review protection"
+                ):
+                    execute(self.request(dry_run=True), runner, FakeSleeper())
+                self.assertEqual(runner.merge_puts, 0)
+
+    def test_optional_pending_check_does_not_block_named_passes(self) -> None:
+        runner = FakeRunner()
+        runner.check_returncode = 8
+        runner.include_optional_pending_check = True
+        result = execute(self.request(dry_run=True), runner, FakeSleeper())
+        self.assertEqual(result["outcome"], "dry_run_passed")
+
+    def test_check_query_hard_error_fails_before_mutation(self) -> None:
+        runner = FakeRunner()
+        runner.check_returncode = 1
+        with self.assertRaisesRegex(MergeGateError, "command failed: gh"):
+            execute(self.request(), runner, FakeSleeper())
+        self.assertEqual(runner.merge_puts, 0)
+
     def test_malformed_server_and_review_shapes_are_controlled(self) -> None:
         runner = FakeRunner()
         runner._protection = lambda: {  # type: ignore[method-assign]
@@ -591,6 +650,8 @@ class ExactHeadMergeTests(unittest.TestCase):
         self.assertIn("github.event_name == 'push' && github.sha", workflow)
         self.assertIn("github.event.pull_request.number", workflow)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
+        self.assertIn('version: "0.11.28"', workflow)
+        self.assertLess(workflow.index("uv lock --check"), workflow.index("uv sync --frozen"))
 
     def test_cli_serializes_post_mutation_failure(self) -> None:
         arguments = [

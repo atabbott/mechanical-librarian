@@ -33,6 +33,10 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           enable-cache: true
+          version: "0.11.28"
+
+      - name: Verify the lockfile is current
+        run: uv lock --check
 
       - name: Synchronize the pinned environment
         run: uv sync --frozen --no-editable --all-groups

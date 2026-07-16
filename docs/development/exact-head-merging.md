@@ -18,6 +18,10 @@ upgraded and protection is configured. This enabling focused change retains its
 separate, explicit maintainer merge authority; it does not activate autonomous
 slice merging by merging itself.
 
+GitHub may omit `bypass_pull_request_allowances` when no bypass actor is
+configured; the controller treats that omission as the empty state. If the
+member is present, it must contain empty `users`, `teams`, and `apps` lists.
+
 ## Local evidence inputs
 
 Keep review and qualification artifacts outside the tracked checkout or in an
@@ -97,7 +101,8 @@ machine-readable pass result. The controller:
 3. checks that the pull request is open, non-draft, unmerged, based on the exact
    named base ref and commit, and reported mergeable;
 4. requires each named pull-request check to be an unambiguous pass and the
-   review decision to be exactly `APPROVED`;
+   review decision to be exactly `APPROVED`; pending optional checks do not
+   satisfy or block the explicitly named set;
 5. rejects unresolved threads and incomplete thread pagination;
 6. rechecks server enforcement, the full pull-request object, every required
    check, and reviews/threads immediately before mutation;

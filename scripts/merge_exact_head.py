@@ -429,9 +429,15 @@ def _check_server_enforcement(request: MergeRequest, protection: dict[str, Any])
         raise ServerEnforcementBlocked(
             "server enforcement lacks a required check"
         )
-    bypass = reviews.get("bypass_pull_request_allowances") if type(reviews) is dict else None
+    bypass_present = (
+        type(reviews) is dict and "bypass_pull_request_allowances" in reviews
+    )
+    bypass = (
+        reviews["bypass_pull_request_allowances"] if bypass_present else {}
+    )
     bypass_lists_valid = (
-        type(bypass) is dict
+        not bypass_present
+        or type(bypass) is dict
         and all(
             type(bypass.get(kind)) is list
             for kind in ("users", "teams", "apps")
@@ -493,11 +499,13 @@ def _check_pull_request(request: MergeRequest, pull: dict[str, Any]) -> None:
 
 
 def _pull_checks(request: MergeRequest, runner: CommandRunner) -> list[dict[str, Any]]:
-    raw = runner.run((
+    result = runner.run((
         "gh", "pr", "checks", str(request.pull_request), "--repo", request.repository,
         "--json", "name,bucket",
-    )).stdout
-    return _json(raw, "check query", list)
+    ), check=False)
+    if result.returncode not in {0, 8}:
+        raise MergeGateError("command failed: gh")
+    return _json(result.stdout, "check query", list)
 
 
 def _check_named_passes(checks: list[dict[str, Any]], required: frozenset[str]) -> None:

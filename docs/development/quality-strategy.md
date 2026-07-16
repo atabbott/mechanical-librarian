@@ -25,9 +25,10 @@ Every pull request must pass:
 Release candidates additionally require end-to-end workflow, upgrade,
 backup/restore, and container isolation tests.
 
-The public repository gate runs on every pull request and push to `main` from
-the committed lockfile in a non-editable installed shape. GitHub Actions and
-direct dependencies are pinned. Local private-corpus or credential-bearing
+The public repository gate runs on every pull request and push to `main`. It
+uses a pinned `uv` binary, rejects a stale committed lockfile, and then installs
+that lockfile in a non-editable shape. GitHub Actions and direct dependencies
+are pinned. Local private-corpus or credential-bearing
 qualification remains outside public CI and publishes only the redacted,
 aggregate exact-commit evidence allowed by its governing contract.
 
