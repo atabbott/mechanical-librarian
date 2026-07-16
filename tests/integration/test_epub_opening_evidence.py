@@ -1331,6 +1331,63 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         )[1]
         self.assertEqual(reused.failure, EpubEvidenceFailure.CORRUPT_STATE)
 
+    def test_reuse_recomputes_succeeded_job_identity_after_tamper(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.repository.publish(
+            claim,
+            source,
+            "4" * 64,
+            "5" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now,
+        )
+        self.connection.execute(
+            "UPDATE epub_evidence_jobs SET governing_digest=? WHERE work_id=?",
+            ("6" * 64, accepted[0]),
+        )
+        reused = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(reused.failure, EpubEvidenceFailure.CORRUPT_STATE)
+
+    def test_missing_current_binding_set_pointer_is_corrupt(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        self.connection.execute(
+            "DELETE FROM current_inventory_snapshot_binding_sets"
+        )
+        self.assertEqual(
+            self.repository.resolve(
+                self.locator, self.binding_configuration
+            ).failure,
+            EpubEvidenceFailure.CORRUPT_STATE,
+        )
+        with self.assertRaisesRegex(ValueError, "pointer is unavailable"):
+            SQLiteInventoryV2Repository(self.connection)._current_values(
+                "audiobookshelf", "connection", "library"
+            )
+        accepted = self.repository.accept(
+            source, "7" * 64, "8" * 64, self.now
+        )
+        self.assertEqual(accepted[1].failure, EpubEvidenceFailure.CORRUPT_STATE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_evidence_jobs"
+            ).fetchone(),
+            (0,),
+        )
+
     def test_resume_recomputes_persisted_work_identity_after_tamper(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
         accepted = self.repository.accept(source, "6" * 64, "7" * 64, self.now)

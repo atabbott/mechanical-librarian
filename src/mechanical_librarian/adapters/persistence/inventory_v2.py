@@ -71,6 +71,14 @@ def validated_current_inventory_bindings(
         identity,
     ).fetchone()
     if pointer is None:
+        locator = connection.execute(
+            "SELECT 1 FROM inventory_snapshot_locator_index WHERE adapter_id=? "
+            "AND connection_id=? AND library_id=? AND external_item=? "
+            "AND snapshot_id=?",
+            (*identity, snapshot.id.value),
+        ).fetchone()
+        if locator is not None:
+            raise ValueError("current inventory binding set pointer is unavailable")
         return ()
     if str(pointer[0]) != snapshot.id.value:
         raise ValueError("current inventory binding set snapshot is inconsistent")

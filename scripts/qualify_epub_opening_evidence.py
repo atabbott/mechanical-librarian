@@ -100,14 +100,16 @@ def _evidence(
             str(selector["file_index"]),
         )
     )
-    lines = (completed.stdout if completed.returncode == 0 else completed.stderr).splitlines()
     if completed.returncode == 0:
-        matches = [_SUCCESS.fullmatch(line) for line in lines]
-        match = next((value for value in matches if value is not None), None)
-        details = next(
-            (value for line in lines if (value := _DETAILS.fullmatch(line)) is not None),
-            None,
-        )
+        lines = completed.stdout.splitlines()
+        if (
+            completed.stderr
+            or len(lines) != 3
+            or lines[0] != "EPUB opening evidence passed."
+        ):
+            raise QualificationError("installed evidence success envelope is malformed")
+        match = _SUCCESS.fullmatch(lines[1])
+        details = _DETAILS.fullmatch(lines[2])
         if match is None or details is None:
             raise QualificationError("installed evidence success envelope is malformed")
         return True, {
@@ -117,10 +119,14 @@ def _evidence(
             "outcome": match.group(4),
             "parser": details.group(6),
         }
-    match = next(
-        (value for line in lines if (value := _FAILURE.fullmatch(line)) is not None),
-        None,
-    )
+    lines = completed.stderr.splitlines()
+    if (
+        completed.stdout
+        or len(lines) != 2
+        or lines[0] != "EPUB opening evidence failed safely."
+    ):
+        raise QualificationError("installed evidence failure envelope is malformed")
+    match = _FAILURE.fullmatch(lines[1])
     if match is None:
         raise QualificationError("installed evidence failure envelope is malformed")
     return False, {"failure": match.group(1)}

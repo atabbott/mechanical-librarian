@@ -816,13 +816,22 @@ class SQLiteEpubOpeningEvidenceRepository:
             "e.source_fingerprint,e.governing_digest,e.outcome,e.report_json,"
             "e.report_digest,e.claim_count,e.citation_count,e.selected_count,"
             "e.rejected_count,e.warning_count,e.package_mode,e.parser_mode,"
-            "CASE WHEN c.evidence_id=e.evidence_id THEN 1 ELSE 0 END FROM "
+            "CASE WHEN c.evidence_id=e.evidence_id THEN 1 ELSE 0 END,"
+            "j.work_id,j.target_reference,j.snapshot_reference,j.file_index,"
+            "j.binding_digest,j.source_fingerprint,j.governing_digest,j.evidence_id,"
+            "j.terminal_outcome,j.terminal_failure FROM "
             "epub_evidence_jobs j JOIN epub_opening_evidence e ON "
             "e.evidence_id=j.evidence_id LEFT JOIN "
             "current_epub_opening_evidence c ON c.target_reference=e.target_reference "
             "AND c.file_index=e.file_index WHERE j.work_key=? AND j.state='succeeded' "
-            "AND e.work_key=j.work_key AND e.target_reference=? AND e.file_index=?",
-            (work_key, locator.target_reference, locator.file_index),
+            "AND e.work_key=j.work_key AND e.target_reference=? "
+            "AND e.snapshot_reference=? AND e.file_index=?",
+            (
+                work_key,
+                locator.target_reference,
+                locator.snapshot_reference,
+                locator.file_index,
+            ),
         ).fetchone()
         if row is None:
             return None
@@ -869,6 +878,32 @@ class SQLiteEpubOpeningEvidenceRepository:
         )
         if observed != expected:
             raise ValueError("EPUB reusable evidence identity is inconsistent")
+        job_observed = (
+            str(row[16]),
+            str(row[17]),
+            str(row[18]),
+            int(row[19]),
+            str(row[20]),
+            str(row[21]),
+            str(row[22]),
+            str(row[23]),
+            str(row[24]),
+            row[25],
+        )
+        job_expected = (
+            "epub_work_" + work_key[:32],
+            locator.target_reference,
+            locator.snapshot_reference,
+            locator.file_index,
+            str(row[2]),
+            str(row[3]),
+            str(row[4]),
+            str(row[0]),
+            str(row[5]),
+            None,
+        )
+        if job_observed != job_expected:
+            raise ValueError("EPUB reusable job identity is inconsistent")
         return result_from_report(
             EpubEvidenceMode.REUSED,
             evidence_id,
@@ -938,6 +973,14 @@ def _validated_current_inventory_bindings(
         identity,
     ).fetchone()
     if pointer is None:
+        locator = connection.execute(
+            "SELECT 1 FROM inventory_snapshot_locator_index WHERE adapter_id=? "
+            "AND connection_id=? AND library_id=? AND external_item=? "
+            "AND snapshot_id=?",
+            (*identity, snapshot.id.value),
+        ).fetchone()
+        if locator is not None:
+            raise ValueError("current inventory binding set pointer is unavailable")
         return ()
     if str(pointer[0]) != snapshot.id.value:
         raise ValueError("current inventory binding set snapshot is inconsistent")

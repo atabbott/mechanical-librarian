@@ -1,14 +1,65 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import unittest
 from contextlib import redirect_stderr
+from pathlib import Path
 from unittest.mock import patch
 
-from scripts.qualify_epub_opening_evidence import _entrypoint
+from scripts.qualify_epub_opening_evidence import (
+    QualificationError,
+    _entrypoint,
+    _evidence,
+)
 
 
 class QualifyEpubOpeningEvidenceTests(unittest.TestCase):
+    def test_evidence_requires_the_complete_redacted_cli_envelope(self) -> None:
+        private_path = "/private/cohort/identifying-title.epub"
+        selector = {
+            "target": "target_" + "a" * 32,
+            "snapshot": "snapshot_" + "b" * 32,
+            "file_index": 0,
+        }
+        success = subprocess.CompletedProcess(
+            (),
+            0,
+            stdout=(
+                "EPUB opening evidence passed.\n"
+                "mode=executed evidence=evidence_"
+                + "c" * 32
+                + " current=true outcome=success\n"
+                "claims=0 citations=0 selected=0 rejected=0 warnings=0 "
+                "parser=strict\n"
+            ),
+            stderr=private_path,
+        )
+        failure = subprocess.CompletedProcess(
+            (),
+            1,
+            stdout=private_path,
+            stderr=(
+                "EPUB opening evidence failed safely.\n"
+                "failure=source_changed\n"
+            ),
+        )
+        for completed in (success, failure):
+            with (
+                self.subTest(returncode=completed.returncode),
+                patch(
+                    "scripts.qualify_epub_opening_evidence._run",
+                    return_value=completed,
+                ),
+                self.assertRaises(QualificationError),
+            ):
+                _evidence(
+                    Path("installed-cli"),
+                    Path("configuration.json"),
+                    Path("state.sqlite3"),
+                    selector,
+                )
+
     def test_entrypoint_redacts_unexpected_private_path_errors(self) -> None:
         private_path = "/private/cohort/identifying-title.epub"
         stderr = io.StringIO()
