@@ -213,6 +213,13 @@ class SQLiteEpubOpeningEvidenceRepository:
         ).fetchall()
         if snapshot_rows and any(str(row[0]) != locator.target_reference for row in snapshot_rows):
             return EpubEvidenceFailure.WRONG_TARGET
+        exact_binding = self._connection.execute(
+            "SELECT 1 FROM inventory_snapshot_file_bindings "
+            "WHERE target_reference=? AND snapshot_reference=? LIMIT 1",
+            (locator.target_reference, locator.snapshot_reference),
+        ).fetchone()
+        if matching_snapshot_rows and exact_binding is None:
+            return EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
         target_exists = self._connection.execute(
             "SELECT 1 FROM inventory_snapshot_file_bindings WHERE target_reference=? LIMIT 1",
             (locator.target_reference,),

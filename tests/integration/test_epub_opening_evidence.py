@@ -512,6 +512,59 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         self.assertEqual(
             unavailable.failure, EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
         )
+        current_unbound_target = TargetId(
+            AdapterId("audiobookshelf"),
+            ConnectionId("connection"),
+            LibraryId("library"),
+            ExternalItemId("item"),
+        )
+        current_unbound_observation = InventoryObservation.create(
+            target=current_unbound_target,
+            media_type=MediaType.EBOOK,
+            lifecycle=ItemLifecycle.ACTIVE,
+            fields=(
+                FieldObservation(
+                    ObservationField.TITLE,
+                    ObservationState.PRESENT,
+                    ("Current unbound",),
+                ),
+            ),
+            file_identities=("7" * 64,),
+            cover_identity=None,
+            adapter_version=AdapterVersion("abs-inventory-v1"),
+            normalizer_version=SchemaVersion("abs-book-normalizer-v1"),
+            service_version=ServiceVersion("2.35.1"),
+            warnings=(),
+            observed_at=self.now,
+        )
+        current_unbound_snapshot = InventorySnapshotV2.create(
+            current_unbound_observation
+        )
+        SQLiteInventoryV2Repository(self.connection)._persist_or_reuse(
+            current_unbound_snapshot
+        )
+        self.connection.execute(
+            "UPDATE current_inventory_v2 SET snapshot_id=? WHERE adapter_id=? "
+            "AND connection_id=? AND library_id=? AND external_item=?",
+            (
+                current_unbound_snapshot.id.value,
+                current_unbound_target.adapter.value,
+                current_unbound_target.connection.value,
+                current_unbound_target.library.value,
+                current_unbound_target.external_item.value,
+            ),
+        )
+        current_unbound_locator = EpubEvidenceLocator(
+            self.locator.target_reference,
+            opaque_snapshot_reference(current_unbound_snapshot),
+            0,
+        )
+        self.assertEqual(
+            self.repository.resolve(
+                current_unbound_locator, self.binding_configuration
+            ).failure,
+            EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE,
+        )
         self.assertEqual(
             self.connection.execute("SELECT COUNT(*) FROM epub_evidence_jobs").fetchone(),
             (0,),
