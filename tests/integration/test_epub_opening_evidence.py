@@ -1517,6 +1517,119 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         )[1]
         self.assertEqual(event_result.failure, EpubEvidenceFailure.CORRUPT_STATE)
 
+    def test_reuse_rejects_claim_event_or_later_attempt_disagreement(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.repository.publish(
+            claim,
+            source,
+            "4" * 64,
+            "5" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now,
+        )
+        trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_evidence_events_no_update'"
+        ).fetchone()[0]
+        self.connection.execute("DROP TRIGGER epub_evidence_events_no_update")
+        self.connection.execute(
+            "UPDATE epub_evidence_events SET actor='replacement-worker' "
+            "WHERE work_id=? AND kind='claimed'",
+            (accepted[0],),
+        )
+        self.connection.execute(str(trigger))
+        claim_event_result = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(
+            claim_event_result.failure, EpubEvidenceFailure.CORRUPT_STATE
+        )
+
+        self.connection.execute("DROP TRIGGER epub_evidence_events_no_update")
+        self.connection.execute(
+            "UPDATE epub_evidence_events SET actor='worker' "
+            "WHERE work_id=? AND kind='claimed'",
+            (accepted[0],),
+        )
+        self.connection.execute(str(trigger))
+        self.connection.execute(
+            "INSERT INTO epub_evidence_attempts(work_id,attempt,fence,worker_id,"
+            "started_at) VALUES (?,?,?,?,?)",
+            (
+                accepted[0],
+                claim.attempt + 1,
+                claim.fence + 1,
+                "later-worker",
+                (self.now + timedelta(seconds=1)).strftime(
+                    "%Y-%m-%dT%H:%M:%S.%fZ"
+                ),
+            ),
+        )
+        later_attempt_result = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now + timedelta(seconds=2)
+        )[1]
+        self.assertEqual(
+            later_attempt_result.failure, EpubEvidenceFailure.CORRUPT_STATE
+        )
+
+    def test_reuse_validates_complete_retry_history(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        first_claim = self.repository.claim(
+            accepted[0], "first-worker", self.now, timedelta(seconds=1)
+        )
+        second_claim = self.repository.claim(
+            accepted[0],
+            "second-worker",
+            self.now + timedelta(seconds=2),
+            timedelta(seconds=30),
+        )
+        self.assertEqual(second_claim.attempt, first_claim.attempt + 1)
+        published = self.repository.publish(
+            second_claim,
+            source,
+            "4" * 64,
+            "5" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now + timedelta(seconds=2),
+        )
+        reused = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now + timedelta(seconds=3)
+        )[1]
+        self.assertEqual(reused.mode, EpubEvidenceMode.REUSED)
+        self.assertEqual(reused.evidence_id, published.evidence_id)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT kind,actor,attempt,fence,from_state,to_state "
+                "FROM epub_evidence_events WHERE work_id=? ORDER BY sequence",
+                (accepted[0],),
+            ).fetchall(),
+            [
+                ("accepted", "local_operator", 0, 0, "missing", "pending"),
+                ("claimed", "first-worker", 1, 1, "pending", "running"),
+                ("failed", "first-worker", 1, 1, "running", "retry_wait"),
+                ("claimed", "second-worker", 2, 2, "retry_wait", "running"),
+                ("published", "second-worker", 2, 2, "running", "succeeded"),
+                ("reused", "local_operator", 0, 0, "succeeded", "succeeded"),
+            ],
+        )
+
     def test_evidence_work_key_is_unique(self) -> None:
         source = self.repository.resolve(
             self.locator, self.binding_configuration

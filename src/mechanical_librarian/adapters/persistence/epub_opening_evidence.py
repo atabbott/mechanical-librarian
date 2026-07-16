@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from contextlib import contextmanager
 from collections.abc import Callable
@@ -324,7 +325,23 @@ class SQLiteEpubOpeningEvidenceRepository:
                     governing_digest,
                 )
                 if evidence is not None:
-                    self._event(work_id, "reused", accepted_at, actor=initiating_authority, allow_missing_job=True)
+                    last_event = self._connection.execute(
+                        "SELECT occurred_at FROM epub_evidence_events WHERE work_id=? "
+                        "ORDER BY sequence DESC LIMIT 1",
+                        (work_id,),
+                    ).fetchone()
+                    if (
+                        last_event is None
+                        or _parse_timestamp(str(last_event[0])) > accepted_at
+                    ):
+                        raise ValueError("EPUB reuse time is inconsistent")
+                    self._event(
+                        work_id,
+                        "reused",
+                        accepted_at,
+                        actor=initiating_authority,
+                        allow_missing_job=True,
+                    )
                     return work_id, evidence
                 existing = self._connection.execute(
                     "SELECT work_id,source_fingerprint,governing_digest,binding_digest,state "
@@ -426,17 +443,43 @@ class SQLiteEpubOpeningEvidenceRepository:
                 if state == "running":
                     if _parse_timestamp(str(row[4])) > claimed_at:
                         return None
-                    self._connection.execute(
+                    expired = self._connection.execute(
                         "UPDATE epub_evidence_attempts SET finished_at=?,failure='lease_expired' "
-                        "WHERE work_id=? AND attempt=? AND finished_at IS NULL",
-                        (_format_timestamp(claimed_at), work_id, attempt),
+                        "WHERE work_id=? AND attempt=? AND fence=? AND finished_at IS NULL",
+                        (
+                            _format_timestamp(claimed_at),
+                            work_id,
+                            attempt,
+                            fence,
+                        ),
                     )
+                    if expired.rowcount != 1:
+                        raise ValueError("EPUB expired attempt is inconsistent")
                     state = "retry_wait"
-                    self._connection.execute(
+                    expired_job = self._connection.execute(
                         "UPDATE epub_evidence_jobs SET state='retry_wait',lease_owner=NULL,"
                         "lease_expires_at=NULL,terminal_failure='lease_expired',updated_at=? "
                         "WHERE work_id=? AND state='running' AND fence=?",
                         (_format_timestamp(claimed_at), work_id, fence),
+                    )
+                    if expired_job.rowcount != 1:
+                        raise ValueError("EPUB expired job is inconsistent")
+                    expired_worker = self._connection.execute(
+                        "SELECT worker_id FROM epub_evidence_attempts WHERE work_id=? "
+                        "AND attempt=? AND fence=?",
+                        (work_id, attempt, fence),
+                    ).fetchone()
+                    if expired_worker is None:
+                        raise ValueError("EPUB expired attempt worker is unavailable")
+                    self._event(
+                        work_id,
+                        "failed",
+                        claimed_at,
+                        actor=str(expired_worker[0]),
+                        attempt=attempt,
+                        fence=fence,
+                        from_state="running",
+                        to_state="retry_wait",
                     )
                     if attempt >= int(row[6]):
                         self._connection.execute(
@@ -444,7 +487,16 @@ class SQLiteEpubOpeningEvidenceRepository:
                             "terminal_failure='retry_exhausted',updated_at=? WHERE work_id=?",
                             (_format_timestamp(claimed_at), work_id),
                         )
-                        self._event(work_id, "retry_exhausted", claimed_at, actor=worker_id, attempt=attempt, fence=fence, from_state="running", to_state="failed_terminal")
+                        self._event(
+                            work_id,
+                            "retry_exhausted",
+                            claimed_at,
+                            actor=worker_id,
+                            attempt=attempt,
+                            fence=fence,
+                            from_state="retry_wait",
+                            to_state="failed_terminal",
+                        )
                         return None
                 if state not in {"pending", "retry_wait"} or attempt >= int(row[6]):
                     return None
@@ -824,7 +876,8 @@ class SQLiteEpubOpeningEvidenceRepository:
         job = self._connection.execute(
             "SELECT work_id,target_reference,snapshot_reference,file_index,"
             "binding_digest,source_fingerprint,governing_digest,state,attempt,fence,"
-            "evidence_id,terminal_outcome,terminal_failure FROM epub_evidence_jobs "
+            "evidence_id,terminal_outcome,terminal_failure,initiating_authority,created_at "
+            "FROM epub_evidence_jobs "
             "WHERE work_key=?",
             (work_key,),
         ).fetchone()
@@ -877,15 +930,14 @@ class SQLiteEpubOpeningEvidenceRepository:
             "WHERE work_id=? ORDER BY attempt,fence",
             (expected_work_id,),
         ).fetchall()
-        attempt = self._connection.execute(
-            "SELECT worker_id,finished_at,outcome,failure FROM epub_evidence_attempts "
-            "WHERE work_id=? AND attempt=? AND fence=?",
-            (expected_work_id, int(job[8]), int(job[9])),
-        ).fetchone()
-        published_events = self._connection.execute(
-            "SELECT actor,attempt,fence,occurred_at,from_state,to_state FROM "
-            "epub_evidence_events WHERE work_id=? AND kind='published' "
-            "ORDER BY sequence",
+        attempts = self._connection.execute(
+            "SELECT attempt,fence,worker_id,started_at,finished_at,outcome,failure "
+            "FROM epub_evidence_attempts WHERE work_id=? ORDER BY attempt",
+            (expected_work_id,),
+        ).fetchall()
+        events = self._connection.execute(
+            "SELECT event_id,kind,actor,attempt,fence,from_state,to_state,sequence,"
+            "occurred_at FROM epub_evidence_events WHERE work_id=? ORDER BY sequence",
             (expected_work_id,),
         ).fetchall()
         state = str(job[7])
@@ -896,11 +948,125 @@ class SQLiteEpubOpeningEvidenceRepository:
                 or evidence is not None
                 or work_evidence
                 or checkpoints
-                or published_events
+                or any(str(event[1]) == "published" for event in events)
             ):
                 raise ValueError("EPUB non-succeeded work has immutable results")
             return None
-        finished_at = None if attempt is None or attempt[1] is None else str(attempt[1])
+        expected_events: list[tuple[object, ...]] = [
+            _epub_event_record(
+                expected_work_id,
+                "accepted",
+                str(job[13]),
+                0,
+                0,
+                "missing",
+                "pending",
+                1,
+                str(job[14]),
+            )
+        ]
+        previous_time = _parse_timestamp(str(job[14]))
+        attempt_history_valid = len(attempts) == int(job[8])
+        for ordinal, attempt_row in enumerate(attempts, start=1):
+            attempt_number = int(attempt_row[0])
+            attempt_fence = int(attempt_row[1])
+            worker_id = str(attempt_row[2])
+            started_at = str(attempt_row[3])
+            finished_at = (
+                None if attempt_row[4] is None else str(attempt_row[4])
+            )
+            attempt_history_valid = attempt_history_valid and (
+                attempt_number == ordinal
+                and attempt_fence == ordinal
+                and _parse_timestamp(started_at) >= previous_time
+            )
+            expected_events.append(
+                _epub_event_record(
+                    expected_work_id,
+                    "claimed",
+                    worker_id,
+                    attempt_number,
+                    attempt_fence,
+                    "pending" if ordinal == 1 else "retry_wait",
+                    "running",
+                    len(expected_events) + 1,
+                    started_at,
+                )
+            )
+            if finished_at is None:
+                attempt_history_valid = False
+                continue
+            finished_time = _parse_timestamp(finished_at)
+            attempt_history_valid = (
+                attempt_history_valid
+                and finished_time >= _parse_timestamp(started_at)
+            )
+            if ordinal < len(attempts):
+                attempt_history_valid = attempt_history_valid and (
+                    attempt_row[5] is None and attempt_row[6] is not None
+                )
+                expected_events.append(
+                    _epub_event_record(
+                        expected_work_id,
+                        "failed",
+                        worker_id,
+                        attempt_number,
+                        attempt_fence,
+                        "running",
+                        "retry_wait",
+                        len(expected_events) + 1,
+                        finished_at,
+                    )
+                )
+            else:
+                attempt_history_valid = attempt_history_valid and (
+                    attempt_number == int(job[8])
+                    and attempt_fence == int(job[9])
+                    and attempt_row[5] is not None
+                    and attempt_row[6] is None
+                )
+                expected_events.append(
+                    _epub_event_record(
+                        expected_work_id,
+                        "published",
+                        worker_id,
+                        attempt_number,
+                        attempt_fence,
+                        "running",
+                        "succeeded",
+                        len(expected_events) + 1,
+                        finished_at,
+                    )
+                )
+            previous_time = finished_time
+        core_event_count = len(expected_events)
+        reusable_events_valid = True
+        for sequence, event in enumerate(
+            events[core_event_count:], start=core_event_count + 1
+        ):
+            event_time = _parse_timestamp(str(event[8]))
+            reusable_events_valid = reusable_events_valid and (
+                tuple(event)
+                == _epub_event_record(
+                    expected_work_id,
+                    "reused",
+                    str(event[2]),
+                    0,
+                    0,
+                    "succeeded",
+                    "succeeded",
+                    sequence,
+                    str(event[8]),
+                )
+                and event_time >= previous_time
+            )
+            previous_time = event_time
+        terminal_attempt = attempts[-1] if attempts else None
+        finished_at = (
+            None
+            if terminal_attempt is None or terminal_attempt[4] is None
+            else str(terminal_attempt[4])
+        )
         if (
             job[10] is None
             or job[11] is None
@@ -908,23 +1074,15 @@ class SQLiteEpubOpeningEvidenceRepository:
             or evidence is None
             or len(work_evidence) != 1
             or str(work_evidence[0][0]) != str(job[10])
-            or attempt is None
+            or not attempt_history_valid
             or finished_at is None
-            or str(attempt[2]) != str(job[11])
-            or attempt[3] is not None
+            or terminal_attempt is None
+            or str(terminal_attempt[5]) != str(job[11])
             or checkpoints
             != [(int(job[8]), int(job[9]), str(job[10]), finished_at)]
-            or published_events
-            != [
-                (
-                    str(attempt[0]),
-                    int(job[8]),
-                    int(job[9]),
-                    finished_at,
-                    "running",
-                    "succeeded",
-                )
-            ]
+            or tuple(map(tuple, events[:core_event_count]))
+            != tuple(expected_events)
+            or not reusable_events_valid
         ):
             raise ValueError("EPUB succeeded work state is inconsistent")
         report = EpubOpeningReport.from_json(str(evidence[10]))
@@ -998,22 +1156,21 @@ class SQLiteEpubOpeningEvidenceRepository:
                 (work_id,),
             ).fetchone()[0]
         )
-        digest = hashlib.sha256(f"{work_id}:{sequence}:{kind}".encode()).hexdigest()
+        record = _epub_event_record(
+            work_id,
+            kind,
+            actor,
+            attempt,
+            fence,
+            from_state,
+            to_state,
+            sequence,
+            _format_timestamp(occurred_at),
+        )
         self._connection.execute(
             "INSERT INTO epub_evidence_events(event_id,work_id,kind,actor,attempt,fence,"
             "from_state,to_state,sequence,occurred_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (
-                "epub_event_" + digest[:32],
-                work_id,
-                kind,
-                actor,
-                attempt,
-                fence,
-                from_state,
-                to_state,
-                sequence,
-                _format_timestamp(occurred_at),
-            ),
+            (record[0], work_id, *record[1:]),
         )
 
 
@@ -1100,6 +1257,35 @@ def _digest(value: object) -> bool:
     return type(value) is str and len(value) == 64 and all(
         character in "0123456789abcdef" for character in value
     )
+
+
+def _epub_event_record(
+    work_id: str,
+    kind: str,
+    actor: str,
+    attempt: int,
+    fence: int,
+    from_state: str,
+    to_state: str,
+    sequence: int,
+    occurred_at: str,
+) -> tuple[object, ...]:
+    values = (
+        kind,
+        actor,
+        attempt,
+        fence,
+        from_state,
+        to_state,
+        sequence,
+        occurred_at,
+    )
+    digest = hashlib.sha256(
+        json.dumps(
+            (work_id, *values), ensure_ascii=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    return ("epub_event_" + digest[:32], *values)
 
 
 def _valid_time(value: object) -> bool:
