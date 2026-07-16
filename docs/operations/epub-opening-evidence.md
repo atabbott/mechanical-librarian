@@ -53,6 +53,20 @@ or stale workers cannot insert evidence, advance current applicability, finish
 the job, or write the checkpoint/event. Restart may reclaim expired work; a
 live duplicate reports `busy` rather than running another child.
 
+To restart the oldest compatible persisted request without redelivering its
+selector, use the same database and configuration with `--resume` instead of
+`--target`, `--snapshot`, and `--file-index`. Recovery is bounded to the exact
+current mount and governing configuration. Claim admission enforces configured
+parser concurrency, final lease exhaustion becomes `retry_exhausted`, and
+cancellation is a fenced durable transition.
+
+Selector failures remain distinct and path-free: missing, ambiguous,
+wrong-target, stale-snapshot, out-of-range, non-EPUB, mount-mismatch,
+binding-integrity, and corrupt-state outcomes create no work. Publication
+records initiating authority and immutable owner/attempt/fence attribution.
+Older incompatible work may finish into immutable history but cannot replace a
+newer current lane.
+
 The source is opened through the configured container path with no-follow
 component traversal and is hashed before acceptance and again by the F07a
 stable-source execution. No target credential or network call is needed after
@@ -68,7 +82,8 @@ new tables or open schema 8 with an older binary.
 disposable shadow cohort, prepares state with the exact installed package,
 verifies selector emission, executes the whole cohort, restarts for identity
 reuse, changes one shadow source for isolated invalidation, proves reverse
-replay, and injects one unavailable-source failure. It emits only aggregate
+replay, injects one unavailable-source failure, then proves an unrelated book
+still reuses its unchanged current evidence. It emits only aggregate
 JSON and deletes the selector map and SQLite/WAL state. Private cohort paths,
 filenames, hashes, titles, reports, excerpts, and per-book outcomes must never
 enter repository artifacts, CI logs, issues, or pull requests.

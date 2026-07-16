@@ -55,6 +55,14 @@ class EpubEvidenceFailure(StrEnum):
     INVALID_INVOCATION = "invalid_invocation"
     INVALID_CONFIGURATION = "invalid_configuration"
     SOURCE_REFERENCE_UNAVAILABLE = "source_reference_unavailable"
+    AMBIGUOUS_REFERENCE = "ambiguous_reference"
+    WRONG_TARGET = "wrong_target"
+    STALE_SNAPSHOT = "stale_snapshot"
+    FILE_INDEX_OUT_OF_RANGE = "file_index_out_of_range"
+    NON_EPUB = "non_epub"
+    MOUNT_MISMATCH = "mount_mismatch"
+    BINDING_INTEGRITY_FAILURE = "binding_integrity_failure"
+    CORRUPT_STATE = "corrupt_state"
     SOURCE_CHANGED = "source_changed"
     BUSY = "busy"
     CANCELLED = "cancelled"
@@ -109,6 +117,16 @@ class ResolvedEpubSource:
 
     def __repr__(self) -> str:
         return "ResolvedEpubSource(<redacted>)"
+
+
+@dataclass(frozen=True)
+class EpubSourceResolution:
+    source: ResolvedEpubSource | None = None
+    failure: EpubEvidenceFailure | None = None
+
+    def __post_init__(self) -> None:
+        if (self.source is None) == (self.failure is None):
+            raise DomainValueError("EPUB source resolution is malformed")
 
 
 @dataclass(frozen=True)
@@ -305,6 +323,7 @@ __all__ = [
     "EpubEvidenceResult",
     "PUBLISHABLE_EPUB_OUTCOMES",
     "ResolvedEpubSource",
+    "EpubSourceResolution",
     "epub_evidence_identity",
     "epub_governing_digest",
     "epub_work_key",

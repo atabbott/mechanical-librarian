@@ -63,6 +63,57 @@ from mechanical_librarian.infrastructure.persistence.sqlite import connect, migr
 
 
 class CliTests(unittest.TestCase):
+    def test_epub_opening_evidence_resume_requires_no_selector_redelivery(self) -> None:
+        runner = Mock(
+            return_value=EpubEvidenceResult(
+                EpubEvidenceMode.REUSED,
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+                evidence_id="evidence_" + "b" * 32,
+                current_applicable=True,
+            )
+        )
+        self.assertEqual(
+            main(
+                [
+                    "epub-opening-evidence",
+                    "--database",
+                    "state.sqlite3",
+                    "--config",
+                    "configuration.json",
+                    "--resume",
+                ],
+                state_check_runner=Mock(),
+                epub_opening_evidence_runner=runner,
+                stdout=io.StringIO(),
+                stderr=io.StringIO(),
+            ),
+            0,
+        )
+        runner.assert_called_once_with(
+            Path("configuration.json"), Path("state.sqlite3"), "", "", -1
+        )
+        errors = io.StringIO()
+        self.assertEqual(
+            main(
+                [
+                    "epub-opening-evidence",
+                    "--database",
+                    "state.sqlite3",
+                    "--config",
+                    "configuration.json",
+                    "--resume",
+                    "--target",
+                    "target_" + "1" * 32,
+                ],
+                state_check_runner=Mock(),
+                epub_opening_evidence_runner=runner,
+                stdout=io.StringIO(),
+                stderr=errors,
+            ),
+            2,
+        )
+        self.assertIn("invalid_invocation", errors.getvalue())
+
     def test_epub_opening_evidence_cli_is_opaque_bounded_and_path_free(self) -> None:
         result = EpubEvidenceResult(
             EpubEvidenceMode.REUSED,

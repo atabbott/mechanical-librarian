@@ -897,6 +897,29 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                 ),
             )
             persisted_id = snapshot.id
+        locator_values = (
+            *identity,
+            persisted_id.value,
+            opaque_target_reference(snapshot.observation.target),
+            opaque_snapshot_reference(snapshot),
+            snapshot.observation.media_type.value,
+            snapshot.observation.lifecycle.value,
+        )
+        indexed = self._connection.execute(
+            "SELECT target_reference,snapshot_reference,media_type,lifecycle FROM "
+            "inventory_snapshot_locator_index WHERE adapter_id=? AND connection_id=? "
+            "AND library_id=? AND external_item=? AND snapshot_id=?",
+            (*identity, persisted_id.value),
+        ).fetchone()
+        if indexed is None:
+            self._connection.execute(
+                "INSERT INTO inventory_snapshot_locator_index(adapter_id,connection_id,"
+                "library_id,external_item,snapshot_id,target_reference,snapshot_reference,"
+                "media_type,lifecycle) VALUES (?,?,?,?,?,?,?,?,?)",
+                locator_values,
+            )
+        elif tuple(map(str, indexed)) != locator_values[5:]:
+            raise ValueError("inventory snapshot locator collision")
         for binding in snapshot.file_bindings:
             binding_value = {
                 "file_identity": binding.file_identity,
@@ -914,7 +937,8 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                 canonical_json(binding_value).encode("utf-8")
             ).hexdigest()
             existing = self._connection.execute(
-                "SELECT file_identity,media_kind,mount_name,relative_path,binding_digest "
+                "SELECT file_identity,media_kind,mount_name,relative_path,binding_digest,"
+                "target_reference,snapshot_reference "
                 "FROM inventory_snapshot_file_bindings WHERE adapter_id=? AND "
                 "connection_id=? AND library_id=? AND external_item=? AND snapshot_id=? "
                 "AND file_index=? AND mount_configuration_digest=?",
@@ -931,6 +955,8 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                 binding.reference.mount,
                 binding.reference.relative_path,
                 binding_digest,
+                opaque_target_reference(snapshot.observation.target),
+                opaque_snapshot_reference(snapshot),
             )
             if existing is not None:
                 if tuple(existing) != expected:
@@ -938,12 +964,15 @@ class SQLiteInventoryV2Repository(InventoryScanRepository):
                 continue
             self._connection.execute(
                 "INSERT INTO inventory_snapshot_file_bindings(adapter_id,connection_id,"
-                "library_id,external_item,snapshot_id,file_index,file_identity,media_kind,"
+                "library_id,external_item,snapshot_id,target_reference,snapshot_reference,"
+                "file_index,file_identity,media_kind,"
                 "mount_configuration_digest,mount_name,relative_path,binding_digest) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     *identity,
                     persisted_id.value,
+                    opaque_target_reference(snapshot.observation.target),
+                    opaque_snapshot_reference(snapshot),
                     binding.file_index,
                     binding.file_identity,
                     binding.media_kind,

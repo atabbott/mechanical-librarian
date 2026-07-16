@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from contextlib import contextmanager
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Iterator
 
@@ -15,6 +16,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceLocator,
     EpubEvidenceMode,
     EpubEvidenceResult,
+    EpubSourceResolution,
     ResolvedEpubSource,
     epub_evidence_identity,
     epub_work_key,
@@ -35,22 +37,67 @@ class SQLiteEpubOpeningEvidenceRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
 
+    def next_recoverable(
+        self, mount_configuration_digest: str, governing_digest: str, now: datetime
+    ) -> EpubEvidenceLocator | None:
+        if not _digest(mount_configuration_digest) or not _digest(governing_digest) or not _valid_time(now):
+            return None
+        row = self._connection.execute(
+            "SELECT target_reference,snapshot_reference,file_index FROM epub_evidence_jobs "
+            "WHERE governing_digest=? AND state IN ('pending','retry_wait','running') "
+            "AND (state!='running' OR lease_expires_at<=?) "
+            "AND binding_digest IN (SELECT binding_digest FROM inventory_snapshot_file_bindings "
+            "WHERE mount_configuration_digest=?) ORDER BY lane_revision LIMIT 1",
+            (governing_digest, _format_timestamp(now), mount_configuration_digest),
+        ).fetchone()
+        return None if row is None else EpubEvidenceLocator(str(row[0]), str(row[1]), int(row[2]))
+
+    def cancel(self, work_id: str, authority: str, cancelled_at: datetime) -> bool:
+        if type(work_id) is not str or type(authority) is not str or not authority or not _valid_time(cancelled_at):
+            return False
+        try:
+            with _transaction(self._connection):
+                row = self._connection.execute(
+                    "SELECT state,attempt,fence FROM epub_evidence_jobs WHERE work_id=?",
+                    (work_id,),
+                ).fetchone()
+                if row is None or str(row[0]) not in {"pending", "retry_wait", "running"}:
+                    return False
+                if str(row[0]) == "running":
+                    self._connection.execute(
+                        "UPDATE epub_evidence_attempts SET finished_at=?,failure='cancelled' "
+                        "WHERE work_id=? AND attempt=? AND finished_at IS NULL",
+                        (_format_timestamp(cancelled_at), work_id, int(row[1])),
+                    )
+                self._connection.execute(
+                    "UPDATE epub_evidence_jobs SET state='cancelled',cancellation_requested=1,"
+                    "lease_owner=NULL,lease_expires_at=NULL,terminal_failure='cancelled',updated_at=? "
+                    "WHERE work_id=?",
+                    (_format_timestamp(cancelled_at), work_id),
+                )
+                self._event(work_id, "cancelled", cancelled_at, actor=authority, attempt=int(row[1]), fence=int(row[2]), from_state=str(row[0]), to_state="cancelled")
+                return True
+        except (sqlite3.Error, ValueError):
+            return False
+
     def resolve(
         self, locator: EpubEvidenceLocator, mount_configuration_digest: str
-    ) -> ResolvedEpubSource | None:
+    ) -> EpubSourceResolution:
         if (
             type(locator) is not EpubEvidenceLocator
             or not _digest(mount_configuration_digest)
         ):
-            return None
+            return EpubSourceResolution(failure=EpubEvidenceFailure.INVALID_INVOCATION)
         try:
             return self._resolve(locator, mount_configuration_digest)
-        except (sqlite3.Error, ValueError):
-            return None
+        except sqlite3.Error:
+            return EpubSourceResolution(failure=EpubEvidenceFailure.PERSISTENCE_FAILURE)
+        except ValueError:
+            return EpubSourceResolution(failure=EpubEvidenceFailure.CORRUPT_STATE)
 
     def _resolve(
         self, locator: EpubEvidenceLocator, mount_configuration_digest: str
-    ) -> ResolvedEpubSource | None:
+    ) -> EpubSourceResolution:
         rows = self._connection.execute(
             "SELECT s.snapshot_id,s.fingerprint_digest,s.canonical_observation,"
             "s.observed_at,b.binding_digest,b.mount_name,b.relative_path,"
@@ -60,10 +107,17 @@ class SQLiteEpubOpeningEvidenceRepository:
             "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
             "JOIN inventory_snapshot_file_bindings b USING "
             "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
-            "WHERE b.file_index=? AND b.media_kind='epub' "
+            "WHERE b.target_reference=? AND b.snapshot_reference=? "
+            "AND b.file_index=? AND b.media_kind='epub' "
             "AND b.mount_configuration_digest=?",
-            (locator.file_index, mount_configuration_digest),
+            (locator.target_reference, locator.snapshot_reference, locator.file_index, mount_configuration_digest),
         ).fetchall()
+        if len(rows) > 1:
+            return EpubSourceResolution(failure=EpubEvidenceFailure.AMBIGUOUS_REFERENCE)
+        if not rows:
+            return EpubSourceResolution(
+                failure=self._resolution_failure(locator, mount_configuration_digest)
+            )
         matches: list[ResolvedEpubSource] = []
         for row in rows:
             observation = InventoryObservation.from_json(
@@ -106,7 +160,65 @@ class SQLiteEpubOpeningEvidenceRepository:
                     str(row[6]),
                 )
             )
-        return matches[0] if len(matches) == 1 else None
+        if len(matches) != 1:
+            return EpubSourceResolution(failure=EpubEvidenceFailure.BINDING_INTEGRITY_FAILURE)
+        return EpubSourceResolution(source=matches[0])
+
+    def _resolution_failure(
+        self, locator: EpubEvidenceLocator, mount_configuration_digest: str
+    ) -> EpubEvidenceFailure:
+        snapshot_rows = self._connection.execute(
+            "SELECT target_reference FROM inventory_snapshot_file_bindings "
+            "WHERE snapshot_reference=? LIMIT 2", (locator.snapshot_reference,)
+        ).fetchall()
+        if snapshot_rows and any(str(row[0]) != locator.target_reference for row in snapshot_rows):
+            return EpubEvidenceFailure.WRONG_TARGET
+        target_exists = self._connection.execute(
+            "SELECT 1 FROM inventory_snapshot_file_bindings WHERE target_reference=? LIMIT 1",
+            (locator.target_reference,),
+        ).fetchone()
+        if target_exists is None:
+            snapshot = self._connection.execute(
+                "SELECT target_reference,media_type FROM inventory_snapshot_locator_index "
+                "WHERE snapshot_reference=? LIMIT 2",
+                (locator.snapshot_reference,),
+            ).fetchall()
+            if snapshot and any(str(row[0]) != locator.target_reference for row in snapshot):
+                return EpubEvidenceFailure.WRONG_TARGET
+            target = self._connection.execute(
+                "SELECT media_type,lifecycle FROM inventory_snapshot_locator_index "
+                "WHERE target_reference=? AND snapshot_reference=? LIMIT 2",
+                (locator.target_reference, locator.snapshot_reference),
+            ).fetchall()
+            if target:
+                if any(str(row[0]) != "ebook" for row in target):
+                    return EpubEvidenceFailure.NON_EPUB
+                if any(str(row[1]) != "active" for row in target):
+                    return EpubEvidenceFailure.STALE_SNAPSHOT
+                return EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
+            return EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE
+        current = self._connection.execute(
+            "SELECT 1 FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
+            "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+            "JOIN inventory_snapshot_file_bindings b USING "
+            "(adapter_id,connection_id,library_id,external_item,snapshot_id) "
+            "WHERE b.target_reference=? AND b.snapshot_reference=? LIMIT 1",
+            (locator.target_reference, locator.snapshot_reference),
+        ).fetchone()
+        if current is None:
+            return EpubEvidenceFailure.STALE_SNAPSHOT
+        index_row = self._connection.execute(
+            "SELECT mount_configuration_digest,media_kind FROM inventory_snapshot_file_bindings "
+            "WHERE target_reference=? AND snapshot_reference=? AND file_index=? LIMIT 2",
+            (locator.target_reference, locator.snapshot_reference, locator.file_index),
+        ).fetchall()
+        if not index_row:
+            return EpubEvidenceFailure.FILE_INDEX_OUT_OF_RANGE
+        if any(str(row[1]) != "epub" for row in index_row):
+            return EpubEvidenceFailure.NON_EPUB
+        if all(str(row[0]) != mount_configuration_digest for row in index_row):
+            return EpubEvidenceFailure.MOUNT_MISMATCH
+        return EpubEvidenceFailure.BINDING_INTEGRITY_FAILURE
 
     def accept(
         self,
@@ -114,12 +226,15 @@ class SQLiteEpubOpeningEvidenceRepository:
         source_fingerprint: str,
         governing_digest: str,
         accepted_at: datetime,
+        initiating_authority: str = "local_operator",
     ) -> tuple[str, EpubEvidenceResult | None] | None:
         if (
             type(source) is not ResolvedEpubSource
             or not _digest(source_fingerprint)
             or not _digest(governing_digest)
             or not _valid_time(accepted_at)
+            or type(initiating_authority) is not str
+            or not 1 <= len(initiating_authority) <= 64
         ):
             return None
         work_key = epub_work_key(source, source_fingerprint, governing_digest)
@@ -129,13 +244,12 @@ class SQLiteEpubOpeningEvidenceRepository:
                 if (
                     self._resolve(
                         source.locator, source.mount_configuration_digest
-                    )
-                    != source
+                    ).source != source
                 ):
                     return None
                 evidence = self._reusable(work_key, source.locator)
                 if evidence is not None:
-                    self._event(work_id, "reused", accepted_at, allow_missing_job=True)
+                    self._event(work_id, "reused", accepted_at, actor=initiating_authority, allow_missing_job=True)
                     return work_id, evidence
                 existing = self._connection.execute(
                     "SELECT work_id,source_fingerprint,governing_digest,binding_digest,state "
@@ -156,11 +270,16 @@ class SQLiteEpubOpeningEvidenceRepository:
                         )
                     return str(existing[0]), None
                 timestamp = _format_timestamp(accepted_at)
+                lane_revision = int(self._connection.execute(
+                    "SELECT COALESCE(MAX(lane_revision),0)+1 FROM epub_evidence_jobs "
+                    "WHERE target_reference=? AND file_index=?",
+                    (source.locator.target_reference, source.locator.file_index),
+                ).fetchone()[0])
                 self._connection.execute(
                     "INSERT INTO epub_evidence_jobs(work_id,work_key,target_reference,"
                     "snapshot_reference,file_index,binding_digest,source_fingerprint,"
-                    "governing_digest,state,created_at,updated_at) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "governing_digest,initiating_authority,lane_revision,state,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         work_id,
                         work_key,
@@ -170,14 +289,20 @@ class SQLiteEpubOpeningEvidenceRepository:
                         source.binding_digest,
                         source_fingerprint,
                         governing_digest,
+                        initiating_authority,
+                        lane_revision,
                         "pending",
                         timestamp,
                         timestamp,
                     ),
                 )
-                self._event(work_id, "accepted", accepted_at)
+                self._event(work_id, "accepted", accepted_at, actor=initiating_authority, from_state="missing", to_state="pending")
                 return work_id, None
-        except (sqlite3.Error, ValueError):
+        except ValueError:
+            return work_id, EpubEvidenceResult(
+                EpubEvidenceMode.FAILED, failure=EpubEvidenceFailure.CORRUPT_STATE
+            )
+        except sqlite3.Error:
             return None
 
     def claim(
@@ -186,6 +311,7 @@ class SQLiteEpubOpeningEvidenceRepository:
         worker_id: str,
         claimed_at: datetime,
         lease_duration: timedelta,
+        capacity: int = 1,
     ) -> EpubEvidenceClaim | None:
         if (
             type(work_id) is not str
@@ -196,6 +322,8 @@ class SQLiteEpubOpeningEvidenceRepository:
             or not _valid_time(claimed_at)
             or type(lease_duration) is not timedelta
             or not 1 <= lease_duration.total_seconds() <= 3_700
+            or type(capacity) is not int
+            or not 1 <= capacity <= 64
         ):
             return None
         try:
@@ -226,7 +354,21 @@ class SQLiteEpubOpeningEvidenceRepository:
                         "WHERE work_id=? AND state='running' AND fence=?",
                         (_format_timestamp(claimed_at), work_id, fence),
                     )
+                    if attempt >= int(row[6]):
+                        self._connection.execute(
+                            "UPDATE epub_evidence_jobs SET state='failed_terminal',"
+                            "terminal_failure='retry_exhausted',updated_at=? WHERE work_id=?",
+                            (_format_timestamp(claimed_at), work_id),
+                        )
+                        self._event(work_id, "retry_exhausted", claimed_at, actor=worker_id, attempt=attempt, fence=fence, from_state="running", to_state="failed_terminal")
+                        return None
                 if state not in {"pending", "retry_wait"} or attempt >= int(row[6]):
+                    return None
+                active = int(self._connection.execute(
+                    "SELECT COUNT(*) FROM epub_evidence_jobs WHERE state='running' "
+                    "AND lease_expires_at>?", (_format_timestamp(claimed_at),)
+                ).fetchone()[0])
+                if active >= capacity:
                     return None
                 next_attempt = attempt + 1
                 next_fence = fence + 1
@@ -260,7 +402,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                         _format_timestamp(claimed_at),
                     ),
                 )
-                self._event(work_id, "claimed", claimed_at)
+                self._event(work_id, "claimed", claimed_at, actor=worker_id, attempt=next_attempt, fence=next_fence, from_state=state, to_state="running")
                 return EpubEvidenceClaim(
                     work_id, str(row[0]), next_attempt, next_fence, worker_id
                 )
@@ -275,6 +417,7 @@ class SQLiteEpubOpeningEvidenceRepository:
         governing_digest: str,
         report: EpubOpeningReport,
         published_at: datetime,
+        source_is_current: Callable[[], bool] = lambda: True,
     ) -> EpubEvidenceResult | None:
         if (
             type(claim) is not EpubEvidenceClaim
@@ -283,6 +426,7 @@ class SQLiteEpubOpeningEvidenceRepository:
             or not _digest(governing_digest)
             or type(report) is not EpubOpeningReport
             or not _valid_time(published_at)
+            or not callable(source_is_current)
         ):
             return None
         try:
@@ -297,7 +441,9 @@ class SQLiteEpubOpeningEvidenceRepository:
                     governing_digest,
                 ):
                     return None
-                if self._resolve(source.locator, source.mount_configuration_digest) != source:
+                if self._resolve(source.locator, source.mount_configuration_digest).source != source:
+                    return None
+                if not source_is_current():
                     return None
                 if (
                     report.source_fingerprint is not None
@@ -358,26 +504,33 @@ class SQLiteEpubOpeningEvidenceRepository:
                 elif tuple(existing) != values:
                     raise ValueError("EPUB evidence identity collision")
                 current = self._connection.execute(
-                    "SELECT evidence_id,sequence FROM current_epub_opening_evidence "
+                    "SELECT evidence_id,sequence,lane_revision FROM current_epub_opening_evidence "
                     "WHERE target_reference=? AND file_index=?",
                     (source.locator.target_reference, source.locator.file_index),
                 ).fetchone()
-                sequence = 1 if current is None else int(current[1]) + (
-                    str(current[0]) != evidence_id
-                )
-                self._connection.execute(
-                    "INSERT INTO current_epub_opening_evidence(target_reference,file_index,"
-                    "evidence_id,sequence,updated_at) VALUES (?,?,?,?,?) ON CONFLICT("
-                    "target_reference,file_index) DO UPDATE SET evidence_id=excluded.evidence_id,"
-                    "sequence=excluded.sequence,updated_at=excluded.updated_at",
-                    (
-                        source.locator.target_reference,
-                        source.locator.file_index,
-                        evidence_id,
-                        sequence,
-                        _format_timestamp(published_at),
-                    ),
-                )
+                lane_revision = int(self._connection.execute(
+                    "SELECT lane_revision FROM epub_evidence_jobs WHERE work_id=?",
+                    (claim.work_id,),
+                ).fetchone()[0])
+                current_applicable = current is None or lane_revision >= int(current[2])
+                if current_applicable:
+                    sequence = 1 if current is None else int(current[1]) + (
+                        str(current[0]) != evidence_id
+                    )
+                    self._connection.execute(
+                        "INSERT INTO current_epub_opening_evidence(target_reference,file_index,"
+                        "evidence_id,sequence,lane_revision,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT("
+                        "target_reference,file_index) DO UPDATE SET evidence_id=excluded.evidence_id,"
+                        "sequence=excluded.sequence,lane_revision=excluded.lane_revision,updated_at=excluded.updated_at",
+                        (
+                            source.locator.target_reference,
+                            source.locator.file_index,
+                            evidence_id,
+                            sequence,
+                            lane_revision,
+                            _format_timestamp(published_at),
+                        ),
+                    )
                 self._connection.execute(
                     "INSERT INTO epub_evidence_checkpoints(work_id,attempt,fence,evidence_id,"
                     "accepted_at) VALUES (?,?,?,?,?)",
@@ -417,9 +570,13 @@ class SQLiteEpubOpeningEvidenceRepository:
                 )
                 if cursor.rowcount != 1:
                     raise ValueError("EPUB publication fence changed")
-                self._event(claim.work_id, "published", published_at)
-                return result_from_report(EpubEvidenceMode.EXECUTED, evidence_id, report)
-        except (sqlite3.Error, ValueError):
+                self._event(claim.work_id, "published", published_at, actor=claim.worker_id, attempt=claim.attempt, fence=claim.fence, from_state="running", to_state="succeeded")
+                return result_from_report(EpubEvidenceMode.EXECUTED, evidence_id, report, current_applicable=current_applicable)
+        except ValueError:
+            return EpubEvidenceResult(
+                EpubEvidenceMode.FAILED, failure=EpubEvidenceFailure.CORRUPT_STATE
+            )
+        except sqlite3.Error:
             return None
 
     def fail(
@@ -469,7 +626,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                         claim.worker_id,
                     ),
                 )
-                self._event(claim.work_id, "failed", failed_at)
+                self._event(claim.work_id, "failed", failed_at, actor=claim.worker_id, attempt=claim.attempt, fence=claim.fence, from_state="running", to_state=state)
         except (sqlite3.Error, ValueError):
             return EpubEvidenceResult(
                 EpubEvidenceMode.FAILED,
@@ -521,6 +678,11 @@ class SQLiteEpubOpeningEvidenceRepository:
         kind: str,
         occurred_at: datetime,
         *,
+        actor: str,
+        attempt: int = 0,
+        fence: int = 0,
+        from_state: str = "succeeded",
+        to_state: str = "succeeded",
         allow_missing_job: bool = False,
     ) -> None:
         if allow_missing_job:
@@ -537,12 +699,17 @@ class SQLiteEpubOpeningEvidenceRepository:
         )
         digest = hashlib.sha256(f"{work_id}:{sequence}:{kind}".encode()).hexdigest()
         self._connection.execute(
-            "INSERT INTO epub_evidence_events(event_id,work_id,kind,sequence,occurred_at) "
-            "VALUES (?,?,?,?,?)",
+            "INSERT INTO epub_evidence_events(event_id,work_id,kind,actor,attempt,fence,"
+            "from_state,to_state,sequence,occurred_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 "epub_event_" + digest[:32],
                 work_id,
                 kind,
+                actor,
+                attempt,
+                fence,
+                from_state,
+                to_state,
                 sequence,
                 _format_timestamp(occurred_at),
             ),

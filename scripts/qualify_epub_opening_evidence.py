@@ -121,6 +121,10 @@ def main() -> int:
     parser.add_argument("--python", required=True, type=Path)
     parser.add_argument("--cohort", required=True, type=Path)
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--head-commit", default="unbound")
+    parser.add_argument("--head-tree", default="unbound")
+    parser.add_argument("--artifact-sha256", default="unbound")
+    parser.add_argument("--environment", default="unbound")
     arguments = parser.parse_args()
     if not arguments.executable.is_file() or not arguments.python.is_file():
         return 2
@@ -299,6 +303,26 @@ def main() -> int:
                 )
                 if succeeded:
                     raise QualificationError("unavailable source did not fail closed")
+                continuation = next(
+                    value
+                    for value in selector_map
+                    if value is not isolated and value is not changed_selector
+                )
+                continued, continued_value = _evidence(
+                    arguments.executable, config, database, continuation
+                )
+                continued_key = (
+                    str(continuation["target"]),
+                    str(continuation["snapshot"]),
+                    int(continuation["file_index"]),
+                )
+                if (
+                    not continued
+                    or continued_value["mode"] != "reused"
+                    or continued_value["evidence"] != initial[continued_key]["evidence"]
+                    or continued_value["current"] != "true"
+                ):
+                    raise QualificationError("unrelated evidence did not continue")
                 failure_isolated = 1
             finally:
                 os.chmod(isolated_path, mode)
@@ -320,6 +344,10 @@ def main() -> int:
                         "source_invalidations": 1,
                     },
                     "artifact": "installed-wheel-cli",
+                    "artifact_sha256": arguments.artifact_sha256,
+                    "environment": arguments.environment,
+                    "head_commit": arguments.head_commit,
+                    "head_tree": arguments.head_tree,
                     "privacy": "aggregate-only-disposable-state-deleted",
                     "schema": "epub-opening-evidence-qualification-v1",
                 },

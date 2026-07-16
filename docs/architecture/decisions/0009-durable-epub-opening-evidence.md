@@ -23,6 +23,9 @@ history, or allowing a stale worker to publish.
 2. Inventory inspection emits only versioned opaque target and snapshot
    references, file index, and media kind. Existing snapshots without bindings
    emit no selector and are not reconstructed from caller input or the network.
+   A private immutable locator index covers every freshly reconciled snapshot
+   so wrong-target, stale, and non-EPUB requests can fail distinctly without
+   scanning or exposing the inventory.
 3. Durable work is accepted only after the selector resolves to exactly one
    current binding and a bounded no-follow source preflight establishes a
    private source generation. The compatibility identity binds the snapshot,
@@ -39,7 +42,12 @@ history, or allowing a stale worker to publish.
    pointer; writes a checkpoint and append-only event; and completes the job.
    An identity/payload mismatch is corruption. Reverse replay reuses history
    without moving current applicability backwards.
-6. Migration 8 is additive and forward-only. Downgrade is restore-only.
+6. Current applicability advances only for the newest accepted lane revision.
+   The durable request records initiating authority; immutable events record
+   actor, attempt, fence, and state transition. Claim admission enforces the
+   configured parser capacity, final lease exhaustion terminalizes, and an
+   eligible request can resume without selector redelivery.
+7. Migration 8 is additive and forward-only. Downgrade is restore-only.
 
 ## Consequences
 

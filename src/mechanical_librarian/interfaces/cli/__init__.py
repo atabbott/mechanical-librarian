@@ -178,11 +178,12 @@ def _epub_opening_evidence_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
     parser.add_argument("--config", required=True, metavar="PATH", type=Path)
-    parser.add_argument("--target", required=True, metavar="OPAQUE", type=_opaque_target)
+    parser.add_argument("--target", metavar="OPAQUE", type=_opaque_target)
     parser.add_argument(
-        "--snapshot", required=True, metavar="OPAQUE", type=_opaque_snapshot
+        "--snapshot", metavar="OPAQUE", type=_opaque_snapshot
     )
-    parser.add_argument("--file-index", required=True, metavar="INDEX", type=int)
+    parser.add_argument("--file-index", metavar="INDEX", type=int)
+    parser.add_argument("--resume", action="store_true")
     return parser
 
 
@@ -464,7 +465,14 @@ def main(
     if raw_arguments[:1] == ["epub-opening-evidence"]:
         try:
             arguments = _epub_opening_evidence_parser().parse_args(raw_arguments[1:])
-            if not 0 <= arguments.file_index <= 10_000:
+            supplied = (
+                arguments.target is not None,
+                arguments.snapshot is not None,
+                arguments.file_index is not None,
+            )
+            if arguments.resume == any(supplied) or (not arguments.resume and not all(supplied)):
+                raise _EpubArgumentError("choose either resume or one complete selector")
+            if not arguments.resume and not 0 <= arguments.file_index <= 10_000:
                 raise _EpubArgumentError("file index is outside the supported range")
         except (_EpubArgumentError, ValueError):
             errors.write(_EPUB_EVIDENCE_FAILURE)
@@ -480,9 +488,9 @@ def main(
                 else epub_opening_evidence_runner(
                     arguments.config,
                     arguments.database,
-                    arguments.target,
-                    arguments.snapshot,
-                    arguments.file_index,
+                    "" if arguments.resume else arguments.target,
+                    "" if arguments.resume else arguments.snapshot,
+                    -1 if arguments.resume else arguments.file_index,
                 )
             )
         except (KeyboardInterrupt, Exception):

@@ -14,6 +14,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceLocator,
     EpubEvidenceMode,
     EpubEvidenceResult,
+    EpubSourceResolution,
     PUBLISHABLE_EPUB_OUTCOMES,
     ResolvedEpubSource,
     epub_work_key,
@@ -22,9 +23,13 @@ from mechanical_librarian.domain.local_evidence import LocalEvidenceOutcome
 
 
 class EpubOpeningEvidenceRepository(Protocol):
+    def next_recoverable(
+        self, mount_configuration_digest: str, governing_digest: str, now: datetime
+    ) -> EpubEvidenceLocator | None: ...
+
     def resolve(
         self, locator: EpubEvidenceLocator, mount_configuration_digest: str
-    ) -> ResolvedEpubSource | None: ...
+    ) -> EpubSourceResolution: ...
 
     def accept(
         self,
@@ -32,6 +37,7 @@ class EpubOpeningEvidenceRepository(Protocol):
         source_fingerprint: str,
         governing_digest: str,
         accepted_at: datetime,
+        initiating_authority: str,
     ) -> tuple[str, EpubEvidenceResult | None] | None: ...
 
     def claim(
@@ -40,6 +46,7 @@ class EpubOpeningEvidenceRepository(Protocol):
         worker_id: str,
         claimed_at: datetime,
         lease_duration: timedelta,
+        capacity: int,
     ) -> EpubEvidenceClaim | None: ...
 
     def publish(
@@ -50,6 +57,7 @@ class EpubOpeningEvidenceRepository(Protocol):
         governing_digest: str,
         report: EpubOpeningReport,
         published_at: datetime,
+        source_is_current: Callable[[], bool],
     ) -> EpubEvidenceResult | None: ...
 
     def fail(
@@ -60,6 +68,10 @@ class EpubOpeningEvidenceRepository(Protocol):
         *,
         retryable: bool,
     ) -> EpubEvidenceResult: ...
+
+    def cancel(
+        self, work_id: str, authority: str, cancelled_at: datetime
+    ) -> bool: ...
 
 
 class RunEpubOpeningEvidence:
@@ -75,16 +87,20 @@ class RunEpubOpeningEvidence:
         now: Callable[[], datetime],
         fingerprint: Callable[[ResolvedEpubSource], str],
         execute: Callable[[ResolvedEpubSource], EpubOpeningReport],
+        revalidate: Callable[[ResolvedEpubSource, str], bool] = lambda _source, _digest: True,
         lease_duration: timedelta = timedelta(seconds=120),
+        capacity: int = 1,
+        initiating_authority: str = "local_operator",
     ) -> EpubEvidenceResult:
         try:
-            source = self._repository.resolve(locator, mount_configuration_digest)
-            if source is None:
-                return _failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
+            resolution = self._repository.resolve(locator, mount_configuration_digest)
+            if resolution.source is None:
+                return _failed(resolution.failure or EpubEvidenceFailure.CORRUPT_STATE)
+            source = resolution.source
             source_fingerprint = fingerprint(source)
             work_key = epub_work_key(source, source_fingerprint, governing_digest)
             accepted = self._repository.accept(
-                source, source_fingerprint, governing_digest, now()
+                source, source_fingerprint, governing_digest, now(), initiating_authority
             )
             if accepted is None:
                 return _failed(EpubEvidenceFailure.PERSISTENCE_FAILURE)
@@ -92,7 +108,7 @@ class RunEpubOpeningEvidence:
             if reused is not None:
                 return reused
             claim = self._repository.claim(
-                work_id, worker_id, now(), lease_duration
+                work_id, worker_id, now(), lease_duration, capacity
             )
             if claim is None or claim.work_key != work_key:
                 return _failed(EpubEvidenceFailure.BUSY)
@@ -104,7 +120,9 @@ class RunEpubOpeningEvidence:
                     now(),
                     retryable=False,
                 )
-            if fingerprint(source) != source_fingerprint:
+            if fingerprint(source) != source_fingerprint or not revalidate(
+                source, source_fingerprint
+            ):
                 return self._repository.fail(
                     claim,
                     EpubEvidenceFailure.SOURCE_CHANGED,
@@ -123,6 +141,7 @@ class RunEpubOpeningEvidence:
                 governing_digest,
                 report,
                 now(),
+                lambda: revalidate(source, source_fingerprint),
             )
             return (
                 published
@@ -130,9 +149,49 @@ class RunEpubOpeningEvidence:
                 else _failed(EpubEvidenceFailure.SOURCE_CHANGED)
             )
         except (OSError, ValueError):
+            if "claim" in locals() and claim is not None:
+                return self._repository.fail(
+                    claim, EpubEvidenceFailure.SOURCE_CHANGED, now(), retryable=True
+                )
             return _failed(EpubEvidenceFailure.INTEGRITY_FAILURE)
         except Exception:
+            if "claim" in locals() and claim is not None:
+                return self._repository.fail(
+                    claim, EpubEvidenceFailure.INTERNAL_FAILURE, now(), retryable=True
+                )
             return _failed(EpubEvidenceFailure.INTERNAL_FAILURE)
+
+    def resume(
+        self,
+        mount_configuration_digest: str,
+        governing_digest: str,
+        worker_id: str,
+        now: Callable[[], datetime],
+        fingerprint: Callable[[ResolvedEpubSource], str],
+        execute: Callable[[ResolvedEpubSource], EpubOpeningReport],
+        revalidate: Callable[[ResolvedEpubSource, str], bool],
+        lease_duration: timedelta = timedelta(seconds=120),
+        capacity: int = 1,
+        initiating_authority: str = "system_recovery",
+    ) -> EpubEvidenceResult | None:
+        locator = self._repository.next_recoverable(
+            mount_configuration_digest, governing_digest, now()
+        )
+        if locator is None:
+            return None
+        return self.run(
+            locator,
+            mount_configuration_digest,
+            governing_digest,
+            worker_id,
+            now,
+            fingerprint,
+            execute,
+            revalidate,
+            lease_duration,
+            capacity,
+            initiating_authority,
+        )
 
 
 def _operational_failure(

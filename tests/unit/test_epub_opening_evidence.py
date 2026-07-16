@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_inventory import (
     _epub_binding,
@@ -19,6 +20,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceLocator,
     EpubEvidenceMode,
     EpubEvidenceResult,
+    EpubSourceResolution,
     ResolvedEpubSource,
     epub_evidence_identity,
     epub_governing_digest,
@@ -59,6 +61,29 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
         self.assertNotEqual(
             baseline,
             epub_work_key(changed_source, "5" * 64, governing),
+        )
+
+    def test_every_named_governing_contract_family_invalidates_identity(self) -> None:
+        import mechanical_librarian.domain.epub_opening_evidence as evidence
+
+        baseline = epub_governing_digest(EpubOpeningLimits(), {"profile": "one"})
+        names = (
+            "EPUB_OPENING_EXTRACTOR_VERSION",
+            "EPUB_OPENING_PARSER_VERSION",
+            "EPUB_OPENING_PROJECTION_VERSION",
+            "EPUB_OPENING_NORMALIZER_VERSION",
+            "EPUB_OPENING_VOCABULARY_VERSION",
+            "EPUB_OPENING_SELECTION_VERSION",
+            "EPUB_OPENING_LIMIT_PROFILE",
+        )
+        for name in names:
+            with self.subTest(name=name), patch.object(evidence, name, "changed-contract"):
+                self.assertNotEqual(
+                    epub_governing_digest(EpubOpeningLimits(), {"profile": "one"}),
+                    baseline,
+                )
+        self.assertNotEqual(
+            epub_governing_digest(EpubOpeningLimits(), {"profile": "two"}), baseline
         )
 
     def test_evidence_identity_binds_canonical_report_and_actual_outcome(self) -> None:
@@ -127,13 +152,13 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
             published = False
 
             def resolve(self, _locator, _configuration):
-                return source
+                return EpubSourceResolution(source=source)
 
-            def accept(self, value, fingerprint, governing, _accepted_at):
+            def accept(self, value, fingerprint, governing, _accepted_at, _authority):
                 key = epub_work_key(value, fingerprint, governing)
                 return "epub_work_" + key[:32], None
 
-            def claim(self, work_id, _worker, _claimed_at, _duration):
+            def claim(self, work_id, _worker, _claimed_at, _duration, _capacity):
                 key = epub_work_key(source, "5" * 64, "6" * 64)
                 return EpubEvidenceClaim(work_id, key, 1, 1, "worker")
 
@@ -163,6 +188,50 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
         self.assertEqual(result.failure, EpubEvidenceFailure.SOURCE_CHANGED)
         self.assertFalse(repository.published)
         self.assertTrue(repository.retryable)
+
+    def test_closed_operational_failures_are_durable_attempts_not_evidence(self) -> None:
+        source = self.source
+
+        class Repository:
+            def resolve(self, *_args):
+                return EpubSourceResolution(source=source)
+
+            def accept(self, value, fingerprint, governing, _at, _authority):
+                key = epub_work_key(value, fingerprint, governing)
+                return "epub_work_" + key[:32], None
+
+            def claim(self, work_id, *_args):
+                return EpubEvidenceClaim(
+                    work_id, epub_work_key(source, "5" * 64, "6" * 64), 1, 1, "worker"
+                )
+
+            def publish(self, *_args):
+                raise AssertionError("operational failure published")
+
+            def fail(self, _claim, failure, _at, *, retryable):
+                self.observed = (failure, retryable)
+                return EpubEvidenceResult(EpubEvidenceMode.FAILED, failure=failure)
+
+        cases = {
+            LocalEvidenceOutcome.TIMEOUT: EpubEvidenceFailure.TIMEOUT,
+            LocalEvidenceOutcome.CANCELLATION: EpubEvidenceFailure.CANCELLED,
+            LocalEvidenceOutcome.RESOURCE_LIMIT: EpubEvidenceFailure.RESOURCE_LIMIT,
+            LocalEvidenceOutcome.CHILD_FAILURE: EpubEvidenceFailure.INTERNAL_FAILURE,
+        }
+        for outcome, expected in cases.items():
+            with self.subTest(outcome=outcome):
+                repository = Repository()
+                result = RunEpubOpeningEvidence(repository).run(
+                    self.locator,
+                    source.mount_configuration_digest,
+                    "6" * 64,
+                    "worker",
+                    lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    lambda _source: "5" * 64,
+                    lambda _source: EpubOpeningReport(outcome, EpubOpeningLimits()),
+                )
+                self.assertEqual(result.failure, expected)
+                self.assertEqual(repository.observed[0], expected)
 
 
 if __name__ == "__main__":

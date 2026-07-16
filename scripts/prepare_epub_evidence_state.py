@@ -97,14 +97,14 @@ def main() -> int:
     digest = _mount_digest(mount)
     snapshots = []
     selector_map = []
-    for path in files:
+    for ordinal, path in enumerate(files, start=1):
         relative = path.relative_to(cohort).as_posix()
         source_digest = hashlib.sha256(path.read_bytes()).hexdigest()
         target = TargetId(
             AdapterId(configured.adapter),
             configured.connection_id,
             libraries[0],
-            ExternalItemId("qualification-" + hashlib.sha256(relative.encode()).hexdigest()[:32]),
+            ExternalItemId(f"qualification-item-{ordinal:08d}"),
         )
         observation = InventoryObservation.create(
             target=target,

@@ -15,7 +15,10 @@ versioning after the first public release.
   or governing changes create new evidence, reverse replay cannot move current
   state backwards, stale workers cannot publish, and operational failures
   remain job health. The installed-wheel qualifier uses a disposable shadow
-  cohort and emits aggregate-only results.
+  cohort and emits aggregate-only results. Compatible persisted work can resume
+  without selector redelivery; typed selector failures, capacity-bound claims,
+  durable cancellation/exhaustion, attributable events, and final in-transaction
+  source revalidation keep recovery and publication fail-closed.
 
 - Fixed Hardcover provider-secret validation so leading or trailing space, tab,
   carriage return, or line feed is rejected before client construction, DNS,

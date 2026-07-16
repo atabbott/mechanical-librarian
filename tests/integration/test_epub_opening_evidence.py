@@ -14,6 +14,7 @@ from mechanical_librarian.adapters.persistence.inventory_v2 import (
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.epub_opening_evidence import (
+    EpubEvidenceFailure,
     EpubEvidenceLocator,
     EpubEvidenceMode,
 )
@@ -132,7 +133,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             )._selectors("audiobookshelf", "connection", "library"),
             (),
         )
-        source = self.repository.resolve(self.locator, self.binding_configuration)
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
         self.assertIsNotNone(source)
         accepted = self.repository.accept(source, "3" * 64, "4" * 64, self.now)
         claim = self.repository.claim(
@@ -191,7 +192,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         )
 
     def test_expired_fence_cannot_publish(self) -> None:
-        source = self.repository.resolve(self.locator, self.binding_configuration)
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
         accepted = self.repository.accept(source, "6" * 64, "7" * 64, self.now)
         stale = self.repository.claim(
             accepted[0], "worker-one", self.now, timedelta(seconds=1)
@@ -227,8 +228,113 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             )
         )
 
+    def test_older_governing_work_cannot_rewind_current_lane(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        older = self.repository.accept(source, "a" * 64, "b" * 64, self.now)
+        older_claim = self.repository.claim(older[0], "older", self.now, timedelta(seconds=30))
+        newer = self.repository.accept(source, "a" * 64, "c" * 64, self.now)
+        newer_claim = self.repository.claim(newer[0], "newer", self.now, timedelta(seconds=30), 2)
+        report = EpubOpeningReport(LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits())
+        newest = self.repository.publish(newer_claim, source, "a" * 64, "c" * 64, report, self.now)
+        delayed = self.repository.publish(older_claim, source, "a" * 64, "b" * 64, report, self.now)
+        self.assertTrue(newest.current_applicable)
+        self.assertFalse(delayed.current_applicable)
+        self.assertEqual(
+            self.connection.execute("SELECT evidence_id,lane_revision FROM current_epub_opening_evidence").fetchone(),
+            (newest.evidence_id, 2),
+        )
+
+    def test_final_lease_expiry_terminalizes_and_capacity_is_enforced(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        accepted = self.repository.accept(source, "d" * 64, "e" * 64, self.now)
+        claim = self.repository.claim(accepted[0], "worker-1", self.now, timedelta(seconds=1))
+        for attempt in (2, 3):
+            claim = self.repository.claim(
+                accepted[0], f"worker-{attempt}", self.now + timedelta(seconds=attempt), timedelta(seconds=1)
+            )
+            self.assertEqual(claim.attempt, attempt)
+        self.assertIsNone(
+            self.repository.claim(accepted[0], "exhausted", self.now + timedelta(seconds=4), timedelta(seconds=1))
+        )
+        self.assertEqual(
+            self.connection.execute("SELECT state,terminal_failure FROM epub_evidence_jobs WHERE work_id=?", (accepted[0],)).fetchone(),
+            ("failed_terminal", "retry_exhausted"),
+        )
+        first = self.repository.accept(source, "1" * 64, "2" * 64, self.now)
+        second = self.repository.accept(source, "2" * 64, "2" * 64, self.now)
+        self.assertIsNotNone(self.repository.claim(first[0], "capacity-1", self.now, timedelta(seconds=30), 1))
+        self.assertIsNone(self.repository.claim(second[0], "capacity-2", self.now, timedelta(seconds=30), 1))
+
+    def test_recovery_cancellation_and_transactional_source_revalidation(self) -> None:
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
+        accepted = self.repository.accept(source, "3" * 64, "4" * 64, self.now)
+        self.assertEqual(
+            self.repository.next_recoverable(self.binding_configuration, "4" * 64, self.now),
+            self.locator,
+        )
+        claim = self.repository.claim(accepted[0], "worker", self.now, timedelta(seconds=30))
+        report = EpubOpeningReport(LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits())
+        self.assertIsNone(
+            self.repository.publish(claim, source, "3" * 64, "4" * 64, report, self.now, lambda: False)
+        )
+        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM epub_opening_evidence").fetchone(), (0,))
+        self.assertTrue(self.repository.cancel(accepted[0], "operator", self.now))
+        self.assertIsNone(self.repository.publish(claim, source, "3" * 64, "4" * 64, report, self.now))
+        self.assertEqual(
+            self.connection.execute("SELECT state,terminal_failure FROM epub_evidence_jobs WHERE work_id=?", (accepted[0],)).fetchone(),
+            ("cancelled", "cancelled"),
+        )
+
+    def test_selector_failures_are_typed_before_enqueue(self) -> None:
+        self.assertEqual(
+            self.repository.resolve(EpubEvidenceLocator(self.locator.target_reference, self.locator.snapshot_reference, 1), self.binding_configuration).failure,
+            EpubEvidenceFailure.FILE_INDEX_OUT_OF_RANGE,
+        )
+        self.assertEqual(
+            self.repository.resolve(self.locator, "f" * 64).failure,
+            EpubEvidenceFailure.MOUNT_MISMATCH,
+        )
+        wrong = EpubEvidenceLocator("target_" + "f" * 32, self.locator.snapshot_reference, 0)
+        self.assertEqual(self.repository.resolve(wrong, self.binding_configuration).failure, EpubEvidenceFailure.WRONG_TARGET)
+        audio_target = TargetId(
+            AdapterId("audiobookshelf"), ConnectionId("connection"), LibraryId("library"), ExternalItemId("audio-item")
+        )
+        audio_observation = InventoryObservation.create(
+            target=audio_target,
+            media_type=MediaType.AUDIOBOOK,
+            lifecycle=ItemLifecycle.ACTIVE,
+            fields=(FieldObservation(ObservationField.TITLE, ObservationState.PRESENT, ("Audio",)),),
+            file_identities=("9" * 64,),
+            cover_identity=None,
+            adapter_version=AdapterVersion("abs-inventory-v1"),
+            normalizer_version=SchemaVersion("abs-book-normalizer-v1"),
+            service_version=ServiceVersion("2.35.1"),
+            warnings=(),
+            observed_at=self.now,
+        )
+        audio_snapshot = InventorySnapshotV2.create(audio_observation)
+        SQLiteInventoryV2Repository(self.connection)._persist_or_reuse(audio_snapshot)
+        self.connection.execute(
+            "INSERT INTO current_inventory_v2(adapter_id,connection_id,library_id,external_item,snapshot_id) VALUES (?,?,?,?,?)",
+            (
+                audio_target.adapter.value,
+                audio_target.connection.value,
+                audio_target.library.value,
+                audio_target.external_item.value,
+                audio_snapshot.id.value,
+            ),
+        )
+        audio_locator = EpubEvidenceLocator(
+            opaque_target_reference(audio_target), opaque_snapshot_reference(audio_snapshot), 0
+        )
+        self.assertEqual(
+            self.repository.resolve(audio_locator, self.binding_configuration).failure,
+            EpubEvidenceFailure.NON_EPUB,
+        )
+        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM epub_evidence_jobs").fetchone(), (0,))
+
     def test_publication_boundary_rolls_back_and_immutable_rows_reject_tamper(self) -> None:
-        source = self.repository.resolve(self.locator, self.binding_configuration)
+        source = self.repository.resolve(self.locator, self.binding_configuration).source
         accepted = self.repository.accept(source, "8" * 64, "9" * 64, self.now)
         claim = self.repository.claim(
             accepted[0], "worker", self.now, timedelta(seconds=30)
@@ -297,7 +403,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             0,
         )
         self.assertIsNone(
-            self.repository.resolve(missing, self.binding_configuration)
+            self.repository.resolve(missing, self.binding_configuration).source
         )
 
 

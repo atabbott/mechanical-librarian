@@ -1021,14 +1021,21 @@ def _opening_failure(
 
 
 def _run_epub_opening_report(
-    configuration_path: Path, mount_name: str, relative_reference: str
+    configuration_path: Path,
+    mount_name: str,
+    relative_reference: str,
+    *,
+    frozen_configuration=None,
 ) -> EpubOpeningReport:
     """Extract one source-stable opening report without persistence or paths."""
 
-    try:
-        configuration = load_configuration_file(configuration_path)
-    except ConfigurationError:
-        return _opening_failure(LocalEvidenceOutcome.INVALID_CONFIGURATION)
+    if frozen_configuration is None:
+        try:
+            configuration = load_configuration_file(configuration_path)
+        except ConfigurationError:
+            return _opening_failure(LocalEvidenceOutcome.INVALID_CONFIGURATION)
+    else:
+        configuration = frozen_configuration
     package_limits = replace(
         configuration.evidence.epub_package,
         source_archive_bytes=min(
@@ -1128,8 +1135,10 @@ def _run_epub_opening_evidence(
     failed = lambda value: EpubEvidenceResult(EpubEvidenceMode.FAILED, failure=value)
     try:
         configuration = load_configuration_file(configuration_path)
-        locator = EpubEvidenceLocator(
-            target_reference, snapshot_reference, file_index
+        locator = (
+            None
+            if file_index == -1 and not target_reference and not snapshot_reference
+            else EpubEvidenceLocator(target_reference, snapshot_reference, file_index)
         )
         mappings = _inventory_mount_mappings(configuration)
         if not mappings or "epub" not in configuration.evidence.enabled_formats:
@@ -1161,16 +1170,32 @@ def _run_epub_opening_evidence(
 
         def operation(state: sqlite3.Connection) -> EpubEvidenceResult:
             repository = SQLiteEpubOpeningEvidenceRepository(state)
+            selected_locator = locator
+            if selected_locator is None:
+                recoverable = tuple(
+                    (mapping, candidate)
+                    for mapping in mappings
+                    if (candidate := repository.next_recoverable(
+                        mapping.configuration_digest, governing, datetime.now(timezone.utc)
+                    )) is not None
+                )
+                if len(recoverable) != 1:
+                    return failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
+                selected_locator = recoverable[0][1]
+            resolutions = tuple(
+                (mapping, repository.resolve(selected_locator, mapping.configuration_digest))
+                for mapping in mappings
+            )
             resolved = tuple(
                 (mapping, value)
-                for mapping in mappings
-                if (
-                    value := repository.resolve(locator, mapping.configuration_digest)
-                )
-                is not None
+                for mapping, resolution in resolutions
+                if (value := resolution.source) is not None
             )
             if len(resolved) != 1:
-                return failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
+                failures = tuple(
+                    resolution.failure for _, resolution in resolutions
+                )
+                return failed(next((value for value in failures if value is not None), EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE))
             mapping, source = resolved[0]
             mounts = tuple(
                 mount
@@ -1197,21 +1222,26 @@ def _run_epub_opening_evidence(
                     os.close(opened.descriptor)
 
             return RunEpubOpeningEvidence(repository).run(
-                locator,
+                selected_locator,
                 mapping.configuration_digest,
                 governing,
                 "epub_evidence_worker",
                 lambda: datetime.now(timezone.utc),
                 fingerprint,
                 lambda value: _run_epub_opening_report(
-                    configuration_path, value.mount_name, value.relative_path
+                    configuration_path,
+                    value.mount_name,
+                    value.relative_path,
+                    frozen_configuration=configuration,
                 ),
+                lambda value, expected: fingerprint(value) == expected,
                 timedelta(
                     seconds=min(
                         3_700,
                         limits.wall_seconds + limits.termination_grace_seconds + 10,
                     )
                 ),
+                configuration.limits.parser_concurrency,
             )
 
         preflight(database)
