@@ -888,7 +888,8 @@ class SQLiteEpubOpeningEvidenceRepository:
     def _validate_work_prefix(self, work_id: str) -> tuple[object, ...] | None:
         job = self._connection.execute(
             "SELECT state,attempt,fence,initiating_authority,created_at,"
-            "terminal_outcome,terminal_failure FROM epub_evidence_jobs WHERE work_id=?",
+            "terminal_outcome,terminal_failure,lease_owner,lease_expires_at,"
+            "cancellation_requested FROM epub_evidence_jobs WHERE work_id=?",
             (work_id,),
         ).fetchone()
         if job is None or str(job[0]) not in {"pending", "running", "retry_wait"}:
@@ -924,6 +925,7 @@ class SQLiteEpubOpeningEvidenceRepository:
             and job_fence == job_attempt
             and job[5] is None
             and (job[6] is None) == (state != "retry_wait")
+            and not bool(job[9])
         )
         previous_time = _parse_timestamp(str(job[4]))
         for ordinal, attempt_row in enumerate(attempts, start=1):
@@ -986,11 +988,23 @@ class SQLiteEpubOpeningEvidenceRepository:
             )
             previous_time = finished_time
         if state == "pending":
-            valid = valid and not attempts
+            valid = valid and not attempts and job[7] is None and job[8] is None
         elif state == "running":
-            valid = valid and bool(attempts)
+            valid = valid and (
+                bool(attempts)
+                and job[7] is not None
+                and job[8] is not None
+                and str(job[7]) == str(attempts[-1][2])
+                and _parse_timestamp(str(job[8]))
+                > _parse_timestamp(str(attempts[-1][3]))
+            )
         else:
-            valid = valid and bool(attempts) and str(job[6]) == str(attempts[-1][6])
+            valid = valid and (
+                bool(attempts)
+                and str(job[6]) == str(attempts[-1][6])
+                and job[7] is None
+                and job[8] is None
+            )
         if not valid or tuple(map(tuple, events)) != tuple(expected_events):
             raise ValueError("EPUB work history prefix is inconsistent")
         return attempts[-1] if attempts else None

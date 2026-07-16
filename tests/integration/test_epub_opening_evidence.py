@@ -1629,6 +1629,46 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             ("retry_wait", 1),
         )
 
+    def test_run_rejects_inconsistent_lease_owner_before_extraction(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        self.repository.claim(
+            accepted[0], "first-worker", self.now, timedelta(seconds=30)
+        )
+        self.connection.execute(
+            "UPDATE epub_evidence_jobs SET lease_owner='replacement-worker' "
+            "WHERE work_id=?",
+            (accepted[0],),
+        )
+        result = RunEpubOpeningEvidence(self.repository).run(
+            self.locator,
+            self.binding_configuration,
+            "5" * 64,
+            "next-worker",
+            lambda: self.now + timedelta(seconds=31),
+            lambda _source: "4" * 64,
+            lambda _source: self.fail("inconsistent lease work executed"),
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.CORRUPT_STATE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt,lease_owner FROM epub_evidence_jobs "
+                "WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("running", 1, "replacement-worker"),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM epub_opening_evidence"
+            ).fetchone(),
+            (0,),
+        )
+
     def test_publish_rejects_missing_claim_event_before_writing_evidence(self) -> None:
         source = self.repository.resolve(
             self.locator, self.binding_configuration
