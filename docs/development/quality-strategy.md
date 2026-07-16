@@ -25,6 +25,31 @@ Every pull request must pass:
 Release candidates additionally require end-to-end workflow, upgrade,
 backup/restore, and container isolation tests.
 
+The public repository gate runs on every pull request and push to `main` from
+the committed lockfile in a non-editable installed shape. GitHub Actions and
+direct dependencies are pinned. Local private-corpus or credential-bearing
+qualification remains outside public CI and publishes only the redacted,
+aggregate exact-commit evidence allowed by its governing contract.
+
+For an autonomously merged slice increment, passing tests are necessary but not
+sufficient. Immediately before mutation, the delivery controller must bind the
+named repository and pull request, expected base ref and commit, exact reviewed
+head, required successful public checks, resolved review state, and required
+local review and qualification evidence. A changed base or head invalidates the
+evidence it can affect. The controller fails closed and must not use bypass,
+administrative, force, or branch-protection override authority.
+
+The validated `deliver-functional-slice` run record determines mandatory
+local review coverage: slice acceptance and code quality in every tier, with
+safety and publication challenge added for Tier 2. Callers supply the exact
+envelopes but cannot select, omit, or extend that task set.
+
+Autonomous mode additionally requires server-side strict checks and reviews
+with no administrator or named bypass allowance. After a merge it proves the
+squash commit's exact qualified parent and waits boundedly for required checks
+on that main commit. A post-mutation failure is recoverable structured state,
+not a success or an automatic rollback.
+
 ## Code standards
 
 - Prefer small modules with one reason to change.

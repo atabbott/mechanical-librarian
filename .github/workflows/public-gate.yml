@@ -1,0 +1,49 @@
+name: Public repository gate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-gate-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.event.pull_request.number }}
+  # A superseding pull-request head may cancel obsolete work. Every commit that
+  # lands on main must finish its own post-merge qualification.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  public-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+
+      - name: Synchronize the pinned environment
+        run: uv sync --frozen --no-editable --all-groups
+
+      - name: Run the public test suite
+        run: uv run --frozen --no-editable python -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Build the distribution
+        run: uv build
+
+      - name: Exercise the installed operator diagnostic
+        run: |
+          database="$(mktemp -d)/state.sqlite"
+          uv run --frozen --no-editable mechanical-librarian state-check --database "$database"
