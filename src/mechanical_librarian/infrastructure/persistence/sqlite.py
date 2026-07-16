@@ -1185,6 +1185,8 @@ def _validate_existing_schema(
 _STATE_SUFFIXES = ("", "-journal", "-wal", "-shm")
 _RECOVERY_COPY_SUFFIXES = ("", "-journal", "-wal")
 _STAGED_PREFIX = ".mechanical-librarian-state-"
+_PUBLICATION_SETTLE_TIMEOUT_SECONDS = 5.0
+_PUBLICATION_SETTLE_POLL_SECONDS = 0.001
 
 
 def path_entry_exists(path: Path) -> bool:
@@ -1258,6 +1260,25 @@ def _fsync_directory(path: Path) -> None:
             os.close(descriptor)
 
 
+def _wait_for_competing_publication(target: Path) -> None:
+    """Wait boundedly for a complete linked target to lose its staging name."""
+
+    deadline = time.monotonic() + _PUBLICATION_SETTLE_TIMEOUT_SECONDS
+    while True:
+        try:
+            status = target.lstat()
+        except OSError:
+            raise SchemaError("competing state publication is unavailable") from None
+        if not stat.S_ISREG(status.st_mode):
+            raise SchemaError("competing state publication is not a regular file")
+        if status.st_nlink == 1:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise SchemaError("competing state publication did not settle")
+        time.sleep(min(_PUBLICATION_SETTLE_POLL_SECONDS, remaining))
+
+
 def publish_staged_state(staged: Path, target: Path) -> bool:
     """Atomically publish a complete staged database without replacing a winner."""
 
@@ -1284,17 +1305,12 @@ def publish_staged_state(staged: Path, target: Path) -> bool:
         os.link(staged, target, follow_symlinks=False)
     except FileExistsError:
         # A competing initializer may have linked its complete inode but not yet
-        # removed its private staging name. Wait briefly for that final ctime
+        # removed its private staging name. Wait boundedly for that final ctime
         # change so the loser's subsequent stable-copy preflight cannot race it.
         # A crashed publisher is still safe: the linked target is complete, and
-        # this bounded wait never treats staging-name liveness as authority.
-        for _ in range(100):
-            try:
-                if target.lstat().st_nlink == 1:
-                    break
-            except OSError:
-                break
-            time.sleep(0.001)
+        # timeout is a typed safe failure rather than authority to use a target
+        # whose stable-copy signature can still change.
+        _wait_for_competing_publication(target)
         return False
     except OSError:
         raise SchemaError("prepared state could not be published") from None

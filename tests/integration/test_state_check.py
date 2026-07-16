@@ -517,6 +517,84 @@ class ComposedStateCheckTests(unittest.TestCase):
                 {path.name},
             )
 
+    def test_loser_waits_for_the_winners_publication_transition(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            link_barrier = threading.Barrier(2)
+            release_publisher = threading.Event()
+            publisher_unlinked = threading.Event()
+            publisher_thread: list[int] = []
+            loser_polls = 0
+            released_during_wait = False
+            real_link = sqlite.os.link
+            real_snapshot = sqlite._state_snapshot
+            real_fsync_directory = sqlite._fsync_directory
+
+            def controlled_link(
+                source: Path,
+                destination: Path,
+                **kwargs: object,
+            ) -> None:
+                link_barrier.wait(timeout=5)
+                real_link(source, destination, **kwargs)
+                publisher_thread.append(threading.get_ident())
+                if not release_publisher.wait(timeout=5):
+                    raise RuntimeError("competing initializer did not settle")
+
+            def controlled_sleep(_: float) -> None:
+                nonlocal loser_polls, released_during_wait
+                if publisher_thread and threading.get_ident() != publisher_thread[0]:
+                    loser_polls += 1
+                    if loser_polls == 101:
+                        released_during_wait = True
+                        release_publisher.set()
+                        if not publisher_unlinked.wait(timeout=5):
+                            raise RuntimeError("publisher did not remove staging")
+
+            def controlled_snapshot(target: Path):
+                snapshot = real_snapshot(target)
+                if (
+                    target == path
+                    and publisher_thread
+                    and threading.get_ident() != publisher_thread[0]
+                    and not released_during_wait
+                    and not release_publisher.is_set()
+                ):
+                    release_publisher.set()
+                    if not publisher_unlinked.wait(timeout=5):
+                        raise RuntimeError("publisher did not remove staging")
+                return snapshot
+
+            def observed_fsync_directory(target: Path) -> None:
+                real_fsync_directory(target)
+                if path.exists() and path.stat().st_nlink == 1:
+                    publisher_unlinked.set()
+
+            with (
+                patch.object(sqlite.os, "link", side_effect=controlled_link),
+                patch.object(sqlite.time, "sleep", side_effect=controlled_sleep),
+                patch.object(
+                    sqlite,
+                    "_state_snapshot",
+                    side_effect=controlled_snapshot,
+                ),
+                patch.object(
+                    sqlite,
+                    "_fsync_directory",
+                    side_effect=observed_fsync_directory,
+                ),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                results = tuple(executor.map(_run_state_check, (path, path)))
+
+            self.assertTrue(all(result.succeeded for result in results))
+            self.assertEqual(loser_polls, 101)
+            self.assertEqual(path.stat().st_nlink, 1)
+            self.assertEqual(
+                {candidate.name for candidate in Path(directory).iterdir()},
+                {path.name},
+            )
+
     def test_existing_upgrade_failure_rolls_back_and_can_retry(self) -> None:
         next_version = len(sqlite.MIGRATIONS) + 1
         failed_upgrade = Migration(

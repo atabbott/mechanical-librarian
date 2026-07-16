@@ -25,6 +25,22 @@ Every pull request must pass:
 Release candidates additionally require end-to-end workflow, upgrade,
 backup/restore, and container isolation tests.
 
+The public repository gate runs the complete reproducible public checks for
+every pull request and every push event to `main`, bound to that event's tip
+SHA. Pull-request runs may be cancelled when superseded; `main` push runs may
+not. A multi-commit push produces one run at its tip rather than one run per
+included commit. See
+[public CI and the exact-head merge boundary](exact-head-merging.md) for the
+tracked gate contract.
+
+Passing public CI is necessary but is not merge authorization. Authoritative
+merge and validation controls remain maintainer-owned and ignored under
+`.codex/**`, independently pinned from candidate content. Autonomous delivery
+remains non-activating and must return `BLOCKED` before mutation while the
+current private plan cannot enforce the required server policy. The linked
+boundary document defines the complete trust, recovery, containment, and
+activation prerequisites.
+
 ## Code standards
 
 - Prefer small modules with one reason to change.

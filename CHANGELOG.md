@@ -179,6 +179,9 @@ versioning after the first public release.
 - First-run durable state is now verified in a private same-filesystem staging
   file and published atomically without replacing a concurrent creator, so a
   failed initialization leaves the requested database path retryable.
+  Concurrent initializers now wait boundedly for the winner's staging-link
+  transition before stable-copy validation, avoiding a false setup failure on
+  slow durable publication while retaining typed timeout and no-replace safety.
 - Decision authorizations now retain and validate immutable review-case and
   human-decision or qualified automatic-policy evidence, rejecting stale,
   mismatched, disposition-only, or ID-only authority.

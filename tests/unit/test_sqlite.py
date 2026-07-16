@@ -272,6 +272,113 @@ class SqliteFoundationTests(unittest.TestCase):
             ):
                 sqlite._copy_regular_state(source, destination, expected)
 
+    def test_competing_publication_timeout_is_a_typed_safe_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "staged.sqlite"
+            winner_staged = root / "winner.sqlite"
+            target = root / "state.sqlite"
+            staged.write_bytes(b"complete staged state")
+            staged.chmod(0o600)
+            winner_staged.write_bytes(b"complete winner state")
+            os.link(winner_staged, target)
+
+            with (
+                patch.object(sqlite, "_state_snapshot", return_value={}),
+                patch.object(sqlite.time, "monotonic", side_effect=(0.0, 6.0)),
+                self.assertRaisesRegex(SchemaError, "did not settle"),
+            ):
+                sqlite.publish_staged_state(staged, target)
+
+            self.assertEqual(target.read_bytes(), b"complete winner state")
+            self.assertEqual(target.stat().st_nlink, 2)
+            self.assertEqual(staged.read_bytes(), b"complete staged state")
+
+    def test_competing_publication_disappearance_is_a_typed_safe_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "state.sqlite"
+            target.write_bytes(b"competing state")
+            real_link = sqlite.os.link
+            conflict_observed = False
+            staged_path: Path | None = None
+
+            def remove_after_conflict(
+                source: Path,
+                destination: Path,
+                **kwargs: object,
+            ) -> None:
+                nonlocal conflict_observed
+                try:
+                    real_link(source, destination, **kwargs)
+                except FileExistsError:
+                    conflict_observed = True
+                    target.unlink()
+                    raise
+
+            with sqlite.staged_state(target) as staged:
+                staged_path = staged
+                staged.write_bytes(b"complete staged state")
+                with (
+                    patch.object(sqlite, "_state_snapshot", return_value={}),
+                    patch.object(sqlite.os, "link", side_effect=remove_after_conflict),
+                    self.assertRaisesRegex(SchemaError, "is unavailable"),
+                ):
+                    sqlite.publish_staged_state(staged, target)
+
+                self.assertTrue(conflict_observed)
+                self.assertFalse(target.exists())
+                self.assertEqual(staged.read_bytes(), b"complete staged state")
+
+            self.assertIsNotNone(staged_path)
+            self.assertFalse(staged_path.exists())
+            self.assertFalse(target.exists())
+
+    def test_competing_non_regular_publication_is_a_typed_safe_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "state.sqlite"
+            target.write_bytes(b"competing state")
+            real_link = sqlite.os.link
+            conflict_observed = False
+            staged_path: Path | None = None
+
+            def replace_with_directory_after_conflict(
+                source: Path,
+                destination: Path,
+                **kwargs: object,
+            ) -> None:
+                nonlocal conflict_observed
+                try:
+                    real_link(source, destination, **kwargs)
+                except FileExistsError:
+                    conflict_observed = True
+                    target.unlink()
+                    target.mkdir()
+                    raise
+
+            with sqlite.staged_state(target) as staged:
+                staged_path = staged
+                staged.write_bytes(b"complete staged state")
+                with (
+                    patch.object(sqlite, "_state_snapshot", return_value={}),
+                    patch.object(
+                        sqlite.os,
+                        "link",
+                        side_effect=replace_with_directory_after_conflict,
+                    ),
+                    self.assertRaisesRegex(SchemaError, "not a regular file"),
+                ):
+                    sqlite.publish_staged_state(staged, target)
+
+                self.assertTrue(conflict_observed)
+                self.assertTrue(target.is_dir())
+                self.assertEqual(staged.read_bytes(), b"complete staged state")
+
+            self.assertIsNotNone(staged_path)
+            self.assertFalse(staged_path.exists())
+            self.assertTrue(target.is_dir())
+
     def test_in_memory_database_is_not_a_durable_connection(self) -> None:
         with self.assertRaisesRegex(SchemaError, "filesystem database"):
             connect(Path(":memory:"))
