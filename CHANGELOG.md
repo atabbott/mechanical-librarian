@@ -22,7 +22,9 @@ versioning after the first public release.
   source revalidation keep recovery and publication fail-closed. Recovery now
   resumes the original persisted work identity, terminalizes changed sources,
   selects one oldest eligible job across all compatible mounts, preserves typed
-  terminal failures on replay, and makes finalized attempt provenance immutable.
+  terminal failures on replay, makes finalized attempt provenance immutable,
+  and rejects regressing transition or finalization clocks before they can
+  commit inconsistent durable history.
 
 - Fixed Hardcover provider-secret validation so leading or trailing space, tab,
   carriage return, or line feed is rejected before client construction, DNS,

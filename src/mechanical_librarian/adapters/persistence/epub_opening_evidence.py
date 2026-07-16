@@ -97,6 +97,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                 ).fetchone()
                 if row is None or str(row[0]) not in {"pending", "retry_wait", "running"}:
                     return False
+                self._validate_transition_time(work_id, cancelled_at)
                 if str(row[0]) == "running":
                     self._connection.execute(
                         "UPDATE epub_evidence_attempts SET finished_at=?,failure='cancelled' "
@@ -326,16 +327,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                     governing_digest,
                 )
                 if evidence is not None:
-                    last_event = self._connection.execute(
-                        "SELECT occurred_at FROM epub_evidence_events WHERE work_id=? "
-                        "ORDER BY sequence DESC LIMIT 1",
-                        (work_id,),
-                    ).fetchone()
-                    if (
-                        last_event is None
-                        or _parse_timestamp(str(last_event[0])) > accepted_at
-                    ):
-                        raise ValueError("EPUB reuse time is inconsistent")
+                    self._validate_transition_time(work_id, accepted_at)
                     self._event(
                         work_id,
                         "reused",
@@ -453,6 +445,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                 ).fetchone()
                 if row is None or bool(row[5]):
                     return None
+                self._validate_transition_time(work_id, claimed_at)
                 state = str(row[1])
                 attempt = int(row[2])
                 fence = int(row[3])
@@ -604,6 +597,8 @@ class SQLiteEpubOpeningEvidenceRepository:
                     str(current_attempt[2]),
                 ) != (claim.attempt, claim.fence, claim.worker_id):
                     raise ValueError("EPUB publication attempt is inconsistent")
+                self._validate_transition_time(claim.work_id, published_at)
+                transition_floor = published_at
                 if epub_work_key(
                     source, source_fingerprint, governing_digest
                 ) != claim.work_key:
@@ -620,10 +615,13 @@ class SQLiteEpubOpeningEvidenceRepository:
                     if publication_clock is None
                     else publication_clock()
                 )
-                if not _valid_time(published_at) or self._live_claim(
-                    claim, published_at
-                ) is None:
+                if (
+                    not _valid_time(published_at)
+                    or published_at < transition_floor
+                    or self._live_claim(claim, published_at) is None
+                ):
                     return None
+                self._validate_transition_time(claim.work_id, published_at)
                 if (
                     report.source_fingerprint is not None
                     and report.source_fingerprint.digest != source_fingerprint
@@ -769,7 +767,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                     if publication_clock is None
                     else publication_clock()
                 )
-                if not _valid_time(finalized_at):
+                if not _valid_time(finalized_at) or finalized_at < published_at:
                     raise _PublicationFenceLost
                 cursor = self._connection.execute(
                     "UPDATE epub_evidence_jobs SET state='succeeded',lease_owner=NULL,"
@@ -835,6 +833,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                     str(current_attempt[2]),
                 ) != (claim.attempt, claim.fence, claim.worker_id):
                     raise ValueError("EPUB failure attempt is inconsistent")
+                self._validate_transition_time(claim.work_id, failed_at)
                 state = (
                     "cancelled"
                     if failure is EpubEvidenceFailure.CANCELLED
@@ -870,7 +869,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                 finalized_at = (
                     failed_at if failure_clock is None else failure_clock()
                 )
-                if not _valid_time(finalized_at):
+                if not _valid_time(finalized_at) or finalized_at < failed_at:
                     raise _PublicationFenceLost
                 cursor = self._connection.execute(
                     "UPDATE epub_evidence_jobs SET state=?,lease_owner=NULL,"
@@ -916,11 +915,27 @@ class SQLiteEpubOpeningEvidenceRepository:
             else None
         )
 
+    def _validate_transition_time(self, work_id: str, occurred_at: datetime) -> None:
+        chronology = self._connection.execute(
+            "SELECT updated_at,(SELECT occurred_at FROM epub_evidence_events "
+            "WHERE work_id=? ORDER BY sequence DESC LIMIT 1) "
+            "FROM epub_evidence_jobs WHERE work_id=?",
+            (work_id, work_id),
+        ).fetchone()
+        if (
+            chronology is None
+            or chronology[1] is None
+            or _parse_timestamp(str(chronology[0])) > occurred_at
+            or _parse_timestamp(str(chronology[1])) > occurred_at
+        ):
+            raise ValueError("EPUB transition time is inconsistent")
+
     def _validate_work_prefix(self, work_id: str) -> tuple[object, ...] | None:
         job = self._connection.execute(
             "SELECT state,attempt,fence,initiating_authority,created_at,"
             "terminal_outcome,terminal_failure,lease_owner,lease_expires_at,"
-            "cancellation_requested,updated_at FROM epub_evidence_jobs WHERE work_id=?",
+            "cancellation_requested,updated_at,max_attempts FROM epub_evidence_jobs "
+            "WHERE work_id=?",
             (work_id,),
         ).fetchone()
         if job is None or str(job[0]) not in {
@@ -1099,6 +1114,7 @@ class SQLiteEpubOpeningEvidenceRepository:
                 and (
                     (
                         exhaustion_event_required
+                        and job_attempt == int(job[11])
                         and str(attempts[-1][6]) == "lease_expired"
                     )
                     or terminal_failure == str(attempts[-1][6])

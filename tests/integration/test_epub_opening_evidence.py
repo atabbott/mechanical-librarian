@@ -444,6 +444,244 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         self.assertEqual(replacement.attempt, 2)
         self.assertEqual(replacement.fence, 2)
 
+    def test_publication_clock_regression_rolls_back(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "1" * 64, "2" * 64, self.now
+        )
+        claimed_at = self.now + timedelta(seconds=10)
+        claim = self.repository.claim(
+            accepted[0], "worker", claimed_at, timedelta(seconds=30)
+        )
+        report = EpubOpeningReport(
+            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+        )
+        backwards = self.repository.publish(
+            claim,
+            source,
+            "1" * 64,
+            "2" * 64,
+            report,
+            self.now + timedelta(seconds=5),
+        )
+        self.assertEqual(
+            backwards.failure, EpubEvidenceFailure.CORRUPT_STATE
+        )
+
+        clock = iter(
+            (
+                self.now + timedelta(seconds=12),
+                self.now + timedelta(seconds=11),
+            )
+        )
+        self.assertIsNone(
+            self.repository.publish(
+                claim,
+                source,
+                "1" * 64,
+                "2" * 64,
+                report,
+                self.now + timedelta(seconds=11),
+                publication_clock=lambda: next(clock),
+            )
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,evidence_id FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("running", None),
+        )
+        self.assertEqual(
+            tuple(
+                self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in (
+                    "epub_opening_evidence",
+                    "current_epub_opening_evidence",
+                    "epub_evidence_checkpoints",
+                )
+            ),
+            (0, 0, 0),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT finished_at,outcome FROM epub_evidence_attempts "
+                "WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            (None, None),
+        )
+
+    def test_failure_clock_regression_rolls_back(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "3" * 64, "4" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0],
+            "worker",
+            self.now + timedelta(seconds=10),
+            timedelta(seconds=30),
+        )
+        backwards = self.repository.fail(
+            claim,
+            EpubEvidenceFailure.RESOURCE_LIMIT,
+            self.now + timedelta(seconds=5),
+            retryable=False,
+        )
+        self.assertEqual(
+            backwards.failure, EpubEvidenceFailure.PERSISTENCE_FAILURE
+        )
+        regressed_final = self.repository.fail(
+            claim,
+            EpubEvidenceFailure.RESOURCE_LIMIT,
+            self.now + timedelta(seconds=11),
+            retryable=False,
+            failure_clock=lambda: self.now + timedelta(seconds=10),
+        )
+        self.assertEqual(
+            regressed_final.failure, EpubEvidenceFailure.PERSISTENCE_FAILURE
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,terminal_failure FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("running", None),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT finished_at,failure FROM epub_evidence_attempts "
+                "WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            (None, None),
+        )
+
+    def test_reuse_clock_cannot_precede_publication_finalization(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "2" * 64, "3" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        clock = iter(
+            (
+                self.now + timedelta(seconds=2),
+                self.now + timedelta(seconds=3),
+            )
+        )
+        published = self.repository.publish(
+            claim,
+            source,
+            "2" * 64,
+            "3" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now + timedelta(seconds=1),
+            publication_clock=lambda: next(clock),
+        )
+        self.assertTrue(published.succeeded)
+
+        premature = self.repository.accept(
+            source,
+            "2" * 64,
+            "3" * 64,
+            self.now + timedelta(seconds=2, microseconds=500_000),
+        )[1]
+        self.assertEqual(premature.failure, EpubEvidenceFailure.CORRUPT_STATE)
+        reused = self.repository.accept(
+            source, "2" * 64, "3" * 64, self.now + timedelta(seconds=4)
+        )[1]
+        self.assertEqual(reused.evidence_id, published.evidence_id)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT kind FROM epub_evidence_events WHERE work_id=? ORDER BY sequence",
+                (accepted[0],),
+            ).fetchall(),
+            [("accepted",), ("claimed",), ("published",), ("reused",)],
+        )
+
+    def test_cancellation_clock_regression_rolls_back(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted_at = self.now + timedelta(seconds=10)
+        accepted = self.repository.accept(
+            source, "5" * 64, "6" * 64, accepted_at
+        )
+        self.assertFalse(
+            self.repository.cancel(
+                accepted[0],
+                "operator",
+                self.now + timedelta(seconds=5),
+            )
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,updated_at FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("pending", accepted_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ")),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT kind FROM epub_evidence_events WHERE work_id=?",
+                (accepted[0],),
+            ).fetchall(),
+            [("accepted",)],
+        )
+
+    def test_retry_claim_clock_regression_rolls_back(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "7" * 64, "8" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0],
+            "worker",
+            self.now + timedelta(seconds=10),
+            timedelta(seconds=30),
+        )
+        self.repository.fail(
+            claim,
+            EpubEvidenceFailure.INTERNAL_FAILURE,
+            self.now + timedelta(seconds=12),
+            retryable=True,
+        )
+        reclaimed = self.repository.claim(
+            accepted[0],
+            "replacement",
+            self.now + timedelta(seconds=11),
+            timedelta(seconds=30),
+        )
+        self.assertEqual(reclaimed, EpubEvidenceFailure.CORRUPT_STATE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt,terminal_failure FROM epub_evidence_jobs "
+                "WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("retry_wait", 1, "internal_failure"),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT kind FROM epub_evidence_events WHERE work_id=? ORDER BY sequence",
+                (accepted[0],),
+            ).fetchall(),
+            [("accepted",), ("claimed",), ("failed",)],
+        )
+
     def test_older_governing_work_cannot_rewind_current_lane(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source
         older = self.repository.accept(source, "a" * 64, "b" * 64, self.now)
@@ -1010,6 +1248,61 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             ),
             (0, 0, 0),
         )
+
+    def test_terminal_replay_rejects_premature_retry_exhaustion(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "6" * 64, "7" * 64, self.now
+        )
+        self.repository.claim(
+            accepted[0], "first-worker", self.now, timedelta(seconds=1)
+        )
+        blocker = self.repository.accept(
+            source, "8" * 64, "7" * 64, self.now
+        )
+        self.repository.claim(
+            blocker[0], "blocking-worker", self.now, timedelta(seconds=30), 2
+        )
+        exhausted_at = self.now + timedelta(seconds=2)
+        self.assertIsNone(
+            self.repository.claim(
+                accepted[0],
+                "premature-worker",
+                exhausted_at,
+                timedelta(seconds=30),
+                1,
+            )
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt,max_attempts,terminal_failure "
+                "FROM epub_evidence_jobs WHERE work_id=?",
+                (accepted[0],),
+            ).fetchone(),
+            ("retry_wait", 1, 3, "lease_expired"),
+        )
+
+        self.connection.execute(
+            "UPDATE epub_evidence_jobs SET state='failed_terminal',"
+            "terminal_failure='retry_exhausted' WHERE work_id=?",
+            (accepted[0],),
+        )
+        self.repository._event(
+            accepted[0],
+            "retry_exhausted",
+            exhausted_at,
+            actor="premature-worker",
+            attempt=1,
+            fence=1,
+            from_state="retry_wait",
+            to_state="failed_terminal",
+        )
+        replayed = self.repository.accept(
+            source, "6" * 64, "7" * 64, self.now + timedelta(seconds=3)
+        )[1]
+        self.assertEqual(replayed.failure, EpubEvidenceFailure.CORRUPT_STATE)
 
     def test_recovery_cancellation_and_transactional_source_revalidation(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source

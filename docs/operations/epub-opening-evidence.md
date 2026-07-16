@@ -64,7 +64,9 @@ its validated stored cause, including `resource_limit`, `cancelled`, or genuine
 `retry_exhausted`, rather than collapsing distinct operator outcomes. Attempt
 rows permit exactly one unfinished-to-finished update; finalized attribution
 and results are immutable, and terminal replay fails `corrupt_state` when
-attempt and event history disagree.
+attempt and event history disagree. Claim, publication, failure, cancellation,
+and reuse clocks cannot precede the latest durable event or job update; a
+regressing transition or finalization clock rolls the whole transaction back.
 
 Selector failures remain distinct and path-free: missing, ambiguous,
 wrong-target, stale-snapshot, out-of-range, non-EPUB, mount-mismatch,
