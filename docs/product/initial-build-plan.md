@@ -231,11 +231,17 @@ The following 0.4 internal checkpoint is a focused pre-stable consolidation,
 not a product slice. It preserves that complete report while reducing the
 application to one current inventory model, durable-work substrate, EPUB
 isolation and qualification control plane, and least-authority executable
-boundary. It also retires obsolete demonstrations and future-only runtime
-surfaces, corrects stale DUX ownership, and rejects pre-0.4 state before
-mutation with explicit retain-and-rebuild guidance. Its exact issue order,
-dependencies, native parents, compatibility decision, and exit criteria are
-maintained in
+boundary. It also retires the F02/F03 demonstrations and the F09a/F09b/F10a
+preview runtime and persistence lanes, transfers the exact production-case
+lifecycle to F10b, removes future-only contract/fixture and rendered-HTML gate
+control planes, and corrects stale DUX ownership. A retained custom mechanism
+must have a current runtime or mandatory-assurance consumer and named invariant;
+a maintained replacement must delete its old owner without widening authority.
+The unconsumed #49 export/import helpers return to WP1 parent #2 until a real
+setup or administration surface claims them. Historical preview staging ends
+after final 0.3, and unsupported state is rejected before mutation with explicit
+retain-and-rebuild guidance. The exact issue order, dependencies, native
+parents, compatibility decision, and exit criteria are maintained in
 [Delivery checkpoint 0.4.0](delivery-slices.md#delivery-checkpoint-040-pre-stable-consolidation).
 
 ## WP5: candidate and policy engine

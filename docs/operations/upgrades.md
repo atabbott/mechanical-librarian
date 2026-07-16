@@ -25,14 +25,21 @@ and bounded retain-and-rebuild steps without printing the database path,
 metadata values, credentials, or media content. It never deletes, renames,
 resets, repairs, copies, or upgrades that state automatically.
 
-The following steps define the operator-facing outcome owned by #254; they are
-not an available transition procedure in current pre-0.4 builds. #254's
-approved clean-state, reject-before-mutation, retain/rebuild, backup/restore,
-and operations-documentation criteria govern how implementation and
-qualification make this outline executable. Until #254 replaces the outline
-with exact, qualified guidance for a stopped, sidecar-consistent retention
-copy, verification without source migration, and restore/readback, do not
-attempt a 0.4 transition from this planning text alone.
+The following steps define the operator-facing outcome jointly owned by #254
+and preview-retirement ticket #260; they are not an available transition
+procedure in current pre-0.4 builds. #254 establishes an intermediate
+inventory-consolidated clean state. #260 then publishes the final post-preview
+clean-state identity. Final-0.3 state and the #254 intermediate state are both
+unsupported sources for that final identity and must be rejected before any
+schema or row mutation while the database and any SQLite sidecars remain
+byte-consistent and available for retention.
+
+The approved clean-state, reject-before-mutation, retain/rebuild,
+backup/restore, and operations-documentation criteria in both tickets govern
+how implementation and qualification make this outline executable. Until #254
+and #260 replace the outline with exact, qualified guidance for a stopped,
+sidecar-consistent retention copy, verification without source migration, and
+restore/readback, do not attempt a 0.4 transition from this planning text alone.
 
 Once that qualified procedure exists, the operator must:
 
@@ -42,13 +49,15 @@ Once that qualified procedure exists, the operator must:
    an access-controlled location; do not edit `schema_migrations` or delete
    legacy tables.
 3. Following the [backup and recovery contract](backups-and-recovery.md), use
-   the exact retention procedure delivered by #254 to verify the stopped copy
-   and its restore/readback without mutating or migrating the source. Record the
-   source build and schema identity without exposing private paths.
+   the exact retention procedure delivered by #254 and #260 to verify the
+   stopped copy and its restore/readback without mutating or migrating the
+   source. Record the source build and schema identity without exposing private
+   paths.
 4. Configure a separate empty 0.4 state location. Do not point 0.4 at the
    retained database expecting a migration.
-5. Start 0.4 and allow it to create its versioned clean-state baseline
-   atomically. An interruption must leave no partial usable baseline.
+5. Start the final 0.4 artifact and allow it to create the post-#260 versioned
+   clean-state baseline atomically. An interruption must leave no partial usable
+   baseline. Never import the #254 intermediate state into this identity.
 6. Re-run the supported report-only inventory and evidence commands against the
    configured read-only sources to rebuild observations; do not import old
    internal rows as current evidence.
@@ -179,6 +188,12 @@ or edit `schema_migrations`. After upgrade or restore, run `state-check`, the
 applicable F09a proposal scenario, and
 [`synthetic-title-review-case-report`](synthetic-title-review-case-report.md)
 against non-production state.
+
+The F09a/F10a migration procedures above remain reproducible historical
+instructions for the older builds that own them. Final 0.4 does not import,
+reinterpret, rename, or destructively drop their preview objects. It rejects
+that state before mutation, retains a verified source copy and sidecars, and
+rebuilds current report-only state into the post-#260 clean-state identity.
 
 ## Verification
 

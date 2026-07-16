@@ -23,7 +23,7 @@ context and consequences rather than reproducing code.
 | [0006](0006-port-adapters-and-composition-root.md) | accepted | Separate port adapters from runtime infrastructure and use one composition root |
 | [0007](0007-transient-epub-package-child.md) | accepted | Isolate EPUB package extraction in a transient descriptor-bound child |
 | [0008](0008-transient-epub-opening-parser.md) | accepted | Extend transient EPUB evidence with bounded opening parsing |
-| [0010](0010-pre-stable-consolidation-baseline.md) | accepted | Reset the pre-stable state baseline for the 0.4 consolidation checkpoint |
+| [0010](0010-pre-stable-consolidation-baseline.md) | accepted | Reset and simplify the pre-stable 0.4 baseline |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

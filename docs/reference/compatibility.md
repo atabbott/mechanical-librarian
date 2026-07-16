@@ -28,7 +28,10 @@ Mechanical Librarian has no published release or supported upgrade source. The
 0.4 internal checkpoint therefore establishes a new clean-state baseline under
 [ADR-0010](../architecture/decisions/0010-pre-stable-consolidation-baseline.md)
 after the final-0.3 schema and symbol inventory is refreshed when #238 closes.
-No migration or baseline number is selected by the planning decision.
+No migration or baseline number is selected by the planning decision. #254
+creates an intermediate inventory-consolidated identity; #260 creates the final
+post-preview identity. Final-0.3 state and the #254 intermediate state are
+unsupported inputs to the final identity.
 
 Pre-0.4 internal development databases are unsupported 0.4 inputs. A 0.4
 binary must reject pre-0.4, newer, partial, checksum-mismatched, tampered, or
@@ -38,13 +41,30 @@ a verified copy and rebuild report-only state explicitly from configured
 sources. It never deletes, resets, automatically repairs, or reinterprets the
 unsupported state.
 
-The F02 `job-heartbeat` and F03 `synthetic-inventory` commands and their
-dedicated runtime contracts have no 0.4 compatibility aliases. Applicable
-safety invariants remain qualification inputs for the current durable-work and
-inventory models. Future-only runtime contracts may be removed only after the
-final-0.3 consumer inventory preserves every current F07b, F09f, and F09g
-consumer and records an open issue or authoritative document for each deferred
-requirement.
+The F02 `job-heartbeat`, F03 `synthetic-inventory`, F09a
+`synthetic-title-proposal-report`, F09b fixed-case preview, and F10a
+`synthetic-title-review-case-report` commands and their dedicated runtime,
+persistence, schema, and compatibility identities have no 0.4 aliases. The
+final artifact rejects their state before mutation and never imports,
+reinterprets, or destructively drops it. Only provider parsing, comparison and
+policy, lineage, deterministic failure partitions, and safety behavior actually
+consumed by F09f or F09g remains.
+
+Future-only runtime contracts may be removed only after the final-0.3 consumer
+inventory preserves every current F07b, F09f, and F09g consumer and records an
+open issue or authoritative document for each deferred requirement. A retained
+bespoke runtime or persistence mechanism requires a current runtime consumer
+plus genuinely shared equivalent use or a named invariant. Retained fixture or
+qualification machinery requires a current mandatory assurance consumer and
+may be consolidated or removed only after its replacement independently
+reproduces the same evidence. A maintained facility is preferred only when it
+deletes the prior owner, passes the closed compatibility and security boundary,
+and does not wrap the old bespoke layer.
+
+#258 removes the unconsumed #49 secret-free export and dry-run import-diff
+runtime helpers while open WP1 parent #2 retains their future setup or
+administration requirement. Current canonical redacted serialization, strict
+loading, schema generation, and unsafe-input rejection remain supported.
 
 This reset is limited to unpublished pre-stable checkpoints. Compatibility
 from the first published release onward follows the documented release,
@@ -167,6 +187,10 @@ aggregate boundary and is rejected only above it. Ordered selection paths are
 bound to the source-derived lineage with the versioned selection digest.
 
 ## 0.2 title technical-preview contract
+
+This section records historical behavior of the older 0.2 development builds.
+F09a, F09b, and F10a are not supported 0.4 commands, schema sources, or
+compatibility surfaces; their production lifecycle requirements move to F10b.
 
 F09a binds one in-memory Audiobookshelf-shaped synthetic title snapshot,
 exactly one current successful unambiguous applicable F06 `TITLE` observation

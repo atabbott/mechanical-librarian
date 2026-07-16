@@ -1,4 +1,4 @@
-# ADR-0010: Reset the Pre-stable State Baseline for 0.4
+# ADR-0010: Reset and Simplify the Pre-stable 0.4 Baseline
 
 - Status: accepted
 - Date: 2026-07-16
@@ -17,8 +17,10 @@ end-to-end seams.
 After the 0.3 live title-report checkpoint, carrying every internal checkpoint
 as a permanent upgrade and runtime compatibility surface would preserve two
 inventory models, a standalone synthetic job control plane, demonstration
-commands, and contracts with no delivered consumer. That would make later
-changes harder to reason about without protecting a supported user deployment.
+commands, title-preview and synthetic-review persistence lanes, duplicate
+qualification controllers, and contracts with no delivered consumer. That
+would make later changes harder to reason about without protecting a supported
+user deployment.
 
 The consolidation still crosses persistence, hostile-input parsing,
 configuration, credentials, network access, and restart behavior. Removing
@@ -68,7 +70,29 @@ The 0.4 work also applies these pre-stable boundaries:
   documents; and
 - move future DUX facts to their open owners while retaining source, licence,
   attribution, sanitization, privacy, and current generated-fixture evidence.
-  DUX remains separate from the independently authored #21 chaos corpus.
+  DUX remains separate from the independently authored #21 chaos corpus;
+- retain a bespoke product runtime or persistence mechanism only when a current
+  final-0.3 runtime consumer exists and the mechanism either serves more than
+  one genuinely equivalent current use or enforces a named product or safety
+  invariant unavailable from a simpler existing facility. Fixture and
+  qualification machinery instead requires a current mandatory assurance gate
+  tied to retained behavior or a named invariant, and may be consolidated or
+  removed only after its replacement independently reproduces the same
+  evidence. Tests and documentation do not count as product-runtime consumers;
+- prefer a maintained dependency or platform facility only when it replaces
+  the old owner and passes compatibility, resource, isolation, licence,
+  container, and hostile-input boundaries. It must not wrap the bespoke owner
+  into another layer. A retained custom component records the failed
+  alternative and invariant that requires it;
+- retire the F09a synthetic preview, F09b fixed-case preview, and F10a synthetic
+  review-case runtime and persistence lanes without aliases. Preserve only
+  provider, policy, comparison, lineage, and safety behavior consumed by F09f
+  or F09g, and transfer the exact production case lifecycle to #240 and #241
+  with release qualification in #153; and
+- remove the unconsumed #49 configuration export and dry-run import-diff
+  runtime helpers in #258 while open WP1 parent #2 retains their accepted future
+  setup/administration requirement. Current canonical redacted serialization,
+  strict loading, schema generation, and unsafe-input rejection remain.
 
 The exact issue order and checkpoint exit criteria are authoritative in
 [Delivery slices](../../product/delivery-slices.md#delivery-checkpoint-040-pre-stable-consolidation).
@@ -91,6 +115,10 @@ The exact issue order and checkpoint exit criteria are authoritative in
 - Contributors with pre-0.4 development state must create new state and rebuild
   report-only observations from configured sources.
 - Historical demonstrations stop being supported operator commands.
+- Historical title-preview and synthetic-review state cannot be imported or
+  reinterpreted as production state.
+- Every retained custom mechanism must expose its current consumer, owner,
+  invariant, failure evidence, and build-versus-adopt disposition.
 - The final 0.3 inventory is a mandatory precondition before implementation can
   select exact symbols, schema objects, or compatibility identities to remove.
 
@@ -143,6 +171,16 @@ still has no supported upgrade source.
   proposal publication.
 - F07b cannot construct provider credential or network authority; F09f cannot
   construct target or media authority.
+- Retired F02, F03, F09a, F09b, and F10a commands, public contracts, schema
+  objects, fixtures, and qualification paths are exactly absent from the final
+  installed artifact and clean state.
+- Every retained bespoke runtime or assurance mechanism names its consumer,
+  owner, invariant, focused failure proof, and build-versus-adopt disposition.
+- A maintained component is adopted only when the prior owner is absent and no
+  credential, network, parser, target/media, process, persistence, or mutation
+  authority widens.
+- Ready-PR traceability uses one raw-body and GitHub-native gate with no
+  rendered-HTML parser or tracking-exemption control plane.
 - SQLite locking, repository boundaries, forward migrations from every
   supported source, rollback documentation, and unsafe-location rejection
   remain covered by the ADR-0003 validation obligations restated here.

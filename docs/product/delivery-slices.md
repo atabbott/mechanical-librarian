@@ -252,10 +252,13 @@ external Hardcover catalogue lineage.
 ## Delivery checkpoint 0.4.0: pre-stable consolidation
 
 After final 0.3 delivery, the same supported live title-report demonstration and
-failure and restart behavior run through one current inventory model, one
-durable-work model, one EPUB isolation and qualification control plane, and only
-contracts owned by delivered behavior. This is an ordered set of focused
-refactors and one defect correction, not a functional slice or release train.
+failure and restart behavior run through one current inventory model, the
+smallest durable-work kernel proved by current lanes, one EPUB isolation and
+qualification control plane, and only contracts owned by delivered behavior.
+The checkpoint also retires the F09a/F09b/F10a preview runtime, removes the
+bespoke rendered-HTML linked-work parsers, and deletes future-only fixture and
+configuration surfaces. This is an ordered graph of focused refactors and one
+defect correction, not a functional slice or release train.
 
 Pre-0.4 internal development databases are not supported 0.4 upgrade sources.
 The 0.4 application rejects them before mutation and provides bounded redacted
@@ -263,36 +266,48 @@ retain-and-rebuild guidance; it never deletes or resets them automatically. The
 governing compatibility decision is
 [ADR-0010](../architecture/decisions/0010-pre-stable-consolidation-baseline.md).
 
-| Order | Issue | Focused outcome | Expected branch |
+| Planning ID | Issue | Focused outcome | Expected branch |
 | --- | --- | --- | --- |
 | R040-0 | #253 | Make the approved pre-stable compatibility policy, checkpoint graph, and non-release boundary authoritative before implementation starts. | `planning/253-0-4-consolidation` |
 | R040-1 | #254 | Retire snapshot-v1 and the F03 synthetic inventory lane so clean state has one current inventory model. | `chore/254-consolidate-inventory-state` |
-| R040-2 | #197 | Consolidate every final-0.3 persisted background lane behind one application-owned execution model and transaction coordinator. | `chore/197-consolidate-durable-work` |
-| R040-3 | #255 | Correct stale DUX future ownership and retain only current executable fixture evidence plus permanent provenance and privacy records. | `fix/255-correct-dux-corpus` |
-| R040-4 | #256 | Remove or defer future-only runtime contracts after preserving every final-0.3 consumer and open requirement owner. | `chore/256-prune-future-contracts` |
-| R040-5 | #257 | Consolidate F06/F07 child-process, source-stability, fixture, and qualification infrastructure without merging their semantic policies. | `chore/257-consolidate-epub-isolation` |
-| R040-6 | #258 | Give configuration shape and each retained executable boundary one least-authority owner after the preceding consolidations. | `chore/258-consolidate-executable-boundaries` |
+| R040-2 | #197 | Derive the smallest shared durable-work kernel from equivalent current-lane behavior and remove both obsolete engines rather than wrapping them. | `chore/197-consolidate-durable-work` |
+| R040-3 | #255 | Correct stale DUX ownership, replace the future corpus/validator plane with direct current typed fixtures, and retain narrow provenance/privacy evidence. | `fix/255-correct-dux-corpus` |
+| R040-4 | #256 | After preview retirement, keep only public contracts with current installed-runtime consumers and open owners for every deferred requirement. | `chore/256-prune-future-contracts` |
+| R040-5 | #257 | Use component-level build-versus-adopt evidence to establish one F06/F07 isolation, fixture, and qualification owner without merging semantic policies. | `chore/257-consolidate-epub-isolation` |
+| R040-6 | #258 | Establish one configuration-shape and parse/dispatch/composition boundary and remove the unconsumed #49 export/import helpers. | `chore/258-consolidate-executable-boundaries` |
+| R040-7 | #260 | Retire the F09a/F09b/F10a preview runtime and persistence lanes while transferring the exact production case lifecycle to F10b. | `chore/260-retire-title-previews` |
+| R040-8 | #261 | Replace the bespoke rendered-HTML linked-work control planes and unused tracking exemption with one minimal GitHub-native gate. | `chore/261-simplify-linked-work-gate` |
 
 The authoritative dependency graph is:
 
 ```text
-#254 is blocked by #238 and #253
-#197 is blocked by #254
-#255 is blocked by #238 and #253
-#256 is blocked by #253 and #255
-#257 is blocked by #238 and #253
-#258 is blocked by #197, #256, and #257
-all seven 0.4 issues closed -> 0.4.0 checkpoint exit
+#238 + #253 -> #254, #255, #257, #261
+#254 -> #260
+#260 + #255 -> #256
+#256 -> #197
+#197 + #257 -> #258
+all nine issues closed -> 0.4.0 checkpoint exit
+
+#238 + #258 -> #240
+#238 + #258 -> #241
+#240 -> #153
+#261 -> #38
 ```
 
-Native work-package parents remain authoritative: #1 parents #253 and #255; #3
-parents #254 and #197; #2 parents #256 and #258; and #5 parents #257. The
-GitHub milestone groups checkpoint membership. No duplicate Epic or functional-
-slice tracker is created.
+This graph replaces #197's direct #254 dependency with #256, replaces #256's
+#253 dependency with #260 while retaining #255, and removes #258's redundant
+#256 dependency. F10b tracker #240 and constituent #241 retain #238 but replace
+historical F10a #146 with #258. Existing #153 dependencies remain unchanged,
+including #240, and #38 gains only #261.
+
+Native work-package parents remain authoritative: #1 parents #253, #255, and
+#261; #3 parents #254 and #197; #2 parents #256 and #258; #5 parents #257; and
+#6 parents #260. The GitHub milestone groups checkpoint membership. No duplicate
+Epic or functional-slice tracker is created.
 
 ### 0.4.0 checkpoint exit
 
-- all seven focused issues above are closed by their own pull requests;
+- all nine focused issues above are closed by their own pull requests;
 - the post-0.3 clean-checkout live title-report success and exact zero-result
   outcomes, restart, replay, stale-input, disabled-provider, and bounded-failure
   behavior remain equivalent;
@@ -303,14 +318,31 @@ slice tracker is created.
   incapable of target or media access, and unrelated lanes cannot construct one
   another's credentials, clients, parsers, repositories, or authorities;
 - clean state contains only current report-only models and one durable-work
-  substrate, while pre-0.4, newer, partial, or tampered state is rejected without
-  mutation, deletion, private disclosure, or unbounded repair;
+  substrate, while pre-0.4, the #254 intermediate identity, newer, partial, or
+  tampered state is rejected without mutation, deletion, private disclosure, or
+  unbounded repair;
 - every invalidated architecture, locked full-test, Linux hostile-input,
   exact-installed-artifact, disposable Audiobookshelf, and existing redacted
   private or provider qualification gate passes against the exact final
   artifact;
 - documentation, ADRs, changelog, compatibility and upgrade policy, issue
-  closure, native dependencies, and Project fields agree with the result; and
+  closure, native dependencies, and Project fields agree with the result;
+- no installed command, public contract, persistence object, fixture registry,
+  or qualification path exists solely for a retired demonstration, preview, or
+  future feature;
+- no generic workflow DSL, universal repository/result framework, plugin plane,
+  duplicate raw-configuration parser, rendered-HTML tracking parser, or
+  parallel EPUB process/source controller replaces the removed machinery;
+- every retained bespoke mechanism has a current product-runtime or mandatory-
+  assurance consumer, one owner, a named invariant, focused failure evidence,
+  and a recorded build-versus-adopt disposition where a credible maintained
+  alternative exists;
+- each ticket reports before/after counts for its owned structural surfaces—
+  commands, public exports, schema objects, validators, controllers, fixtures,
+  or qualification entry points—without making line count a pass/fail target;
+- any adopted dependency deletes the superseded implementation and widens no
+  credential, network, parser, target/media, mutation, process, or persistence
+  authority; and
 - no line-count target replaces behavioral acceptance, and no new capability,
   production authority, tag, release, publication, or unrelated cleanup lands.
 
@@ -323,7 +355,7 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 | --- | --- | --- | --- | --- |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
 | F09c Work identity fallback | #205 | Bounded Open Library work/edition discovery and optional LibraryThing ISBN-family clustering preserve ambiguity, lineage, independent-provider limits, and disabled/failure behavior. | #210, #211; unresolved prerequisite #68 | `slice/f09c-work-identity-fallback` |
-| F10b Production title review case | #240 | Exactly one current qualifying `production_report_only` title proposal becomes one durable undecided production review case while preserving exact freshness, evidence, version, replay, and supersession proof. | #241; F10a #146 and F09g #238 | `slice/f10b-production-title-case` |
+| F10b Production title review case | #240 | Exactly one current qualifying `production_report_only` title proposal becomes one durable undecided production review case while preserving exact freshness, evidence, version, replay, supersession, and retirement proof. | #241; F09g #238 and post-consolidation boundary #258; completed F10a #146 is historical evidence only | `slice/f10b-production-title-case` |
 | F11 AI shadow recommendation | #147 | An isolated reviewer receives a complete bounded vendor-neutral packet carrying the exact normalized current snapshot and explicit field-load state only after required authoritative inputs join successfully, without target-service or provider credentials or vendor payloads, then returns one direct closed-schema `AIDecision` for every proposal; its required `problems` list contains adverse or unresolved problem codes, with `problems: []` for a clean approval. Malformed output, unknown fields, missing required fields, duplicate or partial decisions, trailing content, or semantic repair becomes a typed failure without authorizing apply. A zero-proposal selection terminates without invocation, and optional provider failure remains operational. | #74-#80 | `slice/f11-ai-shadow-review` |
 | F12a Authenticated API foundation | #189 | The supported HTTP service exposes deterministic versioned OpenAPI, minimal anonymous liveness, and one bounded authenticated owner diagnostic; invalid sessions, origins, CSRF, proxy and rate-limit contexts fail closed. | #96, #97 | `slice/f12a-authenticated-api` |
 | F12b Human decision round trip | #148 | An authenticated owner accepts, keeps, or rejects one field, restarts and retrieves the immutable decision/history, then observes a safe stale-version conflict. | #19 | `slice/f12b-human-decision` |

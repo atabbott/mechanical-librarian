@@ -119,9 +119,14 @@ decision, mutation, destructive, or release-publication authority.
 - Preserve the complete 0.3 live title-report outcome while establishing one
   current inventory model, durable-work model, EPUB isolation and qualification
   control plane, and least-authority executable composition boundary.
-- Retire obsolete F02/F03 demonstrations and future-only runtime surfaces,
-  correct stale DUX ownership, and retain every current safety, provenance,
-  restart, and exact-result contract.
+- Retire obsolete F02/F03 demonstrations, F09a/F09b/F10a preview runtime and
+  persistence lanes, future-only contracts and fixture control planes, and the
+  rendered-HTML linked-work parsers; correct stale DUX ownership and transfer
+  the production case lifecycle to F10b.
+- Retain a custom mechanism only for a current runtime or mandatory-assurance
+  consumer and named invariant. Prefer a maintained facility only when it
+  deletes the old owner and preserves the closed compatibility, isolation, and
+  authority boundary. Defer the unconsumed #49 export/import helpers to WP1 #2.
 - Reject pre-0.4 internal state before mutation and require explicit
   retain-and-rebuild operation; publish no tag, supported version, or release.
 
