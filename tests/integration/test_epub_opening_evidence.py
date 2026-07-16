@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+
+from mechanical_librarian.bootstrap import composition
 
 from mechanical_librarian.adapters.persistence.epub_opening_evidence import (
     SQLiteEpubOpeningEvidenceRepository,
@@ -1893,7 +1896,185 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
             self.repository.resolve(audio_locator, self.binding_configuration).failure,
             EpubEvidenceFailure.NON_EPUB,
         )
-        self.assertEqual(self.connection.execute("SELECT COUNT(*) FROM epub_evidence_jobs").fetchone(), (0,))
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM epub_evidence_jobs").fetchone(),
+            (0,),
+        )
+
+    def test_unavailable_snapshot_locator_resolves_as_stale_without_enqueue(self) -> None:
+        observation = InventoryObservation.create(
+            target=self.snapshot.observation.target,
+            media_type=MediaType.EBOOK,
+            lifecycle=ItemLifecycle.UNAVAILABLE,
+            fields=self.snapshot.observation.fields,
+            file_identities=self.snapshot.observation.file_identities,
+            cover_identity=None,
+            adapter_version=self.snapshot.observation.adapter_version,
+            normalizer_version=self.snapshot.observation.normalizer_version,
+            service_version=self.snapshot.observation.service_version,
+            warnings=(),
+            observed_at=self.now,
+        )
+        unavailable = InventorySnapshotV2.create(
+            observation,
+            file_bindings=self.snapshot.file_bindings,
+        )
+        inventory = SQLiteInventoryV2Repository(self.connection)
+        persisted_id = inventory._persist_or_reuse(unavailable)
+        target = observation.target
+        self.connection.execute(
+            "DELETE FROM current_inventory_snapshot_binding_sets WHERE adapter_id=? "
+            "AND connection_id=? AND library_id=? AND external_item=?",
+            (
+                target.adapter.value,
+                target.connection.value,
+                target.library.value,
+                target.external_item.value,
+            ),
+        )
+        self.connection.execute(
+            "UPDATE current_inventory_v2 SET snapshot_id=? WHERE adapter_id=? "
+            "AND connection_id=? AND library_id=? AND external_item=?",
+            (
+                persisted_id.value,
+                target.adapter.value,
+                target.connection.value,
+                target.library.value,
+                target.external_item.value,
+            ),
+        )
+        inventory._set_current_binding_set(unavailable, persisted_id)
+        locator = EpubEvidenceLocator(
+            opaque_target_reference(target),
+            opaque_snapshot_reference(unavailable),
+            0,
+        )
+        self.assertEqual(
+            self.repository.resolve(locator, self.binding_configuration).failure,
+            EpubEvidenceFailure.STALE_SNAPSHOT,
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT lifecycle FROM inventory_snapshot_locator_index "
+                "WHERE snapshot_reference=?",
+                (locator.snapshot_reference,),
+            ).fetchone(),
+            ("unavailable",),
+        )
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM epub_evidence_jobs").fetchone(),
+            (0,),
+        )
+
+    def test_composition_maps_present_oversized_source_before_enqueue(self) -> None:
+        root = Path(self.temporary.name)
+        mount = root / "media"
+        mount.mkdir()
+        (mount / "oversized.epub").write_bytes(b"x" * 1_048_577)
+        config = root / "configuration.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "schema_version": "config-v1",
+                    "instance_name": "epub-evidence-limit-test",
+                    "connections": [
+                        {
+                            "adapter": "audiobookshelf",
+                            "id": "connection",
+                            "endpoint": "https://library.example",
+                            "secret_reference": "unused-secret",
+                            "enabled_libraries": [
+                                "01234567-89ab-4def-8123-456789abcdef"
+                            ],
+                        }
+                    ],
+                    "media_mounts": [
+                        {
+                            "name": "books",
+                            "library_type": "ebook",
+                            "container_path": str(mount),
+                            "service_path": "/library/books",
+                            "read_only": True,
+                        }
+                    ],
+                    "evidence": {
+                        "maximum_document_bytes": 1_048_576,
+                        "epub_package": {"source_archive_bytes": 1_048_576},
+                    },
+                    "providers": [],
+                    "reviewers": [],
+                    "notifications": [],
+                    "backups_enabled": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = composition.load_configuration_file(config)
+        binding_configuration = composition._inventory_mount_mappings(loaded)[
+            0
+        ].configuration_digest
+        observation = InventoryObservation.create(
+            target=self.snapshot.observation.target,
+            media_type=MediaType.EBOOK,
+            lifecycle=ItemLifecycle.ACTIVE,
+            fields=self.snapshot.observation.fields,
+            file_identities=("f" * 64,),
+            cover_identity=None,
+            adapter_version=self.snapshot.observation.adapter_version,
+            normalizer_version=self.snapshot.observation.normalizer_version,
+            service_version=self.snapshot.observation.service_version,
+            warnings=(),
+            observed_at=self.now,
+        )
+        oversized = InventorySnapshotV2.create(
+            observation,
+            file_bindings=(
+                InventoryFileBinding(
+                    0,
+                    "f" * 64,
+                    "epub",
+                    binding_configuration,
+                    FileReference("books", "oversized.epub"),
+                ),
+            ),
+        )
+        inventory = SQLiteInventoryV2Repository(self.connection)
+        persisted_id = inventory._persist_or_reuse(oversized)
+        target = observation.target
+        identity = (
+            target.adapter.value,
+            target.connection.value,
+            target.library.value,
+            target.external_item.value,
+        )
+        self.connection.execute(
+            "DELETE FROM current_inventory_snapshot_binding_sets WHERE adapter_id=? "
+            "AND connection_id=? AND library_id=? AND external_item=?",
+            identity,
+        )
+        self.connection.execute(
+            "UPDATE current_inventory_v2 SET snapshot_id=? WHERE adapter_id=? "
+            "AND connection_id=? AND library_id=? AND external_item=?",
+            (persisted_id.value, *identity),
+        )
+        inventory._set_current_binding_set(oversized, persisted_id)
+        locator = EpubEvidenceLocator(
+            opaque_target_reference(target),
+            opaque_snapshot_reference(oversized),
+            0,
+        )
+        result = composition._run_epub_opening_evidence(
+            config,
+            self.database,
+            locator.target_reference,
+            locator.snapshot_reference,
+            locator.file_index,
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.RESOURCE_LIMIT)
+        self.assertEqual(
+            self.connection.execute("SELECT COUNT(*) FROM epub_evidence_jobs").fetchone(),
+            (0,),
+        )
 
     def test_publication_boundary_rolls_back_and_immutable_rows_reject_tamper(self) -> None:
         source = self.repository.resolve(self.locator, self.binding_configuration).source

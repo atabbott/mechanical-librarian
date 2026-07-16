@@ -10,7 +10,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -42,6 +41,22 @@ _LIBRARY_ID = "00000000-0000-4000-8000-000000000009"
 
 class QualificationError(ValueError):
     pass
+
+
+class _TemporarilyRemoved:
+    """Remove one disposable source from its indexed path and restore it."""
+
+    def __init__(self, source: Path) -> None:
+        self._source = source
+        self._removed = source.with_name(f".{source.name}.qualification-unavailable")
+
+    def __enter__(self) -> None:
+        if self._removed.exists():
+            raise QualificationError("temporary unavailable source already exists")
+        self._source.replace(self._removed)
+
+    def __exit__(self, *_error: object) -> None:
+        self._removed.replace(self._source)
 
 
 def _configuration(cohort: Path) -> dict[str, object]:
@@ -339,9 +354,7 @@ def main() -> int:
         failure_isolated = 0
         if isolated is not None:
             isolated_path = shadow / str(isolated["relative_path"])
-            mode = stat.S_IMODE(isolated_path.stat().st_mode)
-            try:
-                os.chmod(isolated_path, 0)
+            with _TemporarilyRemoved(isolated_path):
                 succeeded, _ = _evidence(
                     arguments.executable, config, database, isolated
                 )
@@ -368,8 +381,6 @@ def main() -> int:
                 ):
                     raise QualificationError("unrelated evidence did not continue")
                 failure_isolated = 1
-            finally:
-                os.chmod(isolated_path, mode)
 
         selector_map_path.unlink(missing_ok=True)
         database.unlink(missing_ok=True)

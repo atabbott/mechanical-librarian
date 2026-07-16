@@ -77,6 +77,16 @@ class EpubOpeningEvidenceRepository(Protocol):
     ) -> bool: ...
 
 
+class EpubSourceFingerprintError(Exception):
+    """Typed application signal for a source that cannot be fingerprinted."""
+
+    def __init__(self, failure: EpubEvidenceFailure) -> None:
+        if type(failure) is not EpubEvidenceFailure:
+            raise TypeError("EPUB source fingerprint failure is malformed")
+        self.failure = failure
+        super().__init__(failure.value)
+
+
 class RunEpubOpeningEvidence:
     def __init__(self, repository: EpubOpeningEvidenceRepository) -> None:
         self._repository = repository
@@ -102,6 +112,8 @@ class RunEpubOpeningEvidence:
             source = resolution.source
             try:
                 source_fingerprint = fingerprint(source)
+            except EpubSourceFingerprintError as error:
+                return _failed(error.failure)
             except OSError:
                 return _failed(EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE)
             except ValueError:
@@ -306,6 +318,14 @@ class RunEpubOpeningEvidence:
                     failure_clock=now,
                 )
             return published
+        except EpubSourceFingerprintError as error:
+            return self._repository.fail(
+                claim,
+                error.failure,
+                now(),
+                retryable=False,
+                failure_clock=now,
+            )
         except (OSError, ValueError):
             return self._repository.fail(
                 claim,
@@ -380,5 +400,6 @@ EpubOpeningEvidenceRunner = Callable[
 __all__ = [
     "EpubOpeningEvidenceRepository",
     "EpubOpeningEvidenceRunner",
+    "EpubSourceFingerprintError",
     "RunEpubOpeningEvidence",
 ]

@@ -44,7 +44,9 @@ Publishable outcomes are `success`, `no_applicable_evidence`,
 no usable opening claim; it is not evidence that metadata is absent.
 Cancellation, timeout, resource exhaustion, unstable/unavailable source,
 child failure, and other operational failures remain job/attempt health and do
-not create evidence.
+not create evidence. A present source larger than the effective
+`source_archive_bytes` limit returns `resource_limit` before work is enqueued;
+an inaccessible or unreadable source returns `source_reference_unavailable`.
 
 ## Recovery and safety
 

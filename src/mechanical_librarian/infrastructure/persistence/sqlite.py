@@ -507,7 +507,7 @@ _INVENTORY_SNAPSHOT_LOCATOR_INDEX_TABLE_SQL = (
     "target_reference TEXT NOT NULL CHECK (target_reference GLOB 'target_[0-9a-f]*' AND length(target_reference)=39),"
     "snapshot_reference TEXT NOT NULL CHECK (snapshot_reference GLOB 'snapshot_[0-9a-f]*' AND length(snapshot_reference)=41),"
     "media_type TEXT NOT NULL CHECK (media_type IN ('ebook','audiobook')),"
-    "lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active','removed')),"
+    """lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active','removed','unavailable')),"""
     "PRIMARY KEY (adapter_id,connection_id,library_id,external_item,snapshot_id),"
     "UNIQUE (target_reference,snapshot_reference),"
     "FOREIGN KEY (adapter_id,connection_id,library_id,external_item,snapshot_id) REFERENCES inventory_v2_snapshots(adapter_id,connection_id,library_id,external_item,snapshot_id))"

@@ -78,6 +78,7 @@ from mechanical_librarian.application.inventory_reconciliation import (
     ReconcileInventory,
 )
 from mechanical_librarian.application.epub_opening_evidence import (
+    EpubSourceFingerprintError,
     RunEpubOpeningEvidence,
 )
 from mechanical_librarian.application.inventory_polling import (
@@ -1198,6 +1199,10 @@ def _run_epub_opening_evidence(
                 mount = mount_for(value)
                 opened = open_local_media(mount.container_path, value.relative_path)
                 try:
+                    if opened.length > package_limits.source_archive_bytes:
+                        raise EpubSourceFingerprintError(
+                            EpubEvidenceFailure.RESOURCE_LIMIT
+                        )
                     return sha256_descriptor(
                         opened.descriptor,
                         opened.length,

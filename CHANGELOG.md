@@ -24,7 +24,10 @@ versioning after the first public release.
   selects one oldest eligible job across all compatible mounts, preserves typed
   terminal failures on replay, makes finalized attempt provenance immutable,
   and rejects regressing transition or finalization clocks before they can
-  commit inconsistent durable history.
+  commit inconsistent durable history. Schema 8 retains locator identities for
+  unavailable snapshots, and a present source above the configured archive-byte
+  limit now fails as `resource_limit` before work is enqueued rather than being
+  reported as unavailable.
 
 - Fixed Hardcover provider-secret validation so leading or trailing space, tab,
   carriage return, or line feed is rejected before client construction, DNS,

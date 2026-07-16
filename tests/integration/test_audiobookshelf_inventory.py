@@ -822,6 +822,27 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
             (0,),
         )
 
+    def test_unavailable_snapshot_and_locator_publish_atomically(self) -> None:
+        unavailable = self._snapshot(
+            "Unavailable", lifecycle=ItemLifecycle.UNAVAILABLE
+        )
+        inspection = self._publish("scan-unavailable", unavailable)
+        self.assertEqual(inspection.state, ScanState.COMPLETE)
+        self.assertEqual(
+            self.database.execute(
+                "SELECT c.snapshot_id,i.lifecycle FROM current_inventory_v2 c "
+                "JOIN inventory_snapshot_locator_index i USING "
+                "(adapter_id,connection_id,library_id,external_item,snapshot_id)"
+            ).fetchone(),
+            (unavailable.id.value, "unavailable"),
+        )
+        self.assertEqual(
+            self.database.execute(
+                "SELECT state FROM inventory_scans WHERE scan_id='scan-unavailable'"
+            ).fetchone(),
+            (ScanState.COMPLETE.value,),
+        )
+
     def test_late_cancellation_rolls_back_every_publication_write(self) -> None:
         start = self.repository.begin(
             ScanId("scan-late-cancel"),
@@ -2043,7 +2064,12 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _snapshot(title: str, *, library: LibraryId = LIBRARY) -> InventorySnapshotV2:
+    def _snapshot(
+        title: str,
+        *,
+        library: LibraryId = LIBRARY,
+        lifecycle: ItemLifecycle = ItemLifecycle.ACTIVE,
+    ) -> InventorySnapshotV2:
         target = TargetId(
             AdapterId("audiobookshelf"),
             ConnectionId("primary"),
@@ -2053,7 +2079,7 @@ class SQLiteInventoryV2RepositoryTests(unittest.TestCase):
         observation = InventoryObservation.create(
             target=target,
             media_type=MediaType.AUDIOBOOK,
-            lifecycle=ItemLifecycle.ACTIVE,
+            lifecycle=lifecycle,
             fields=(
                 FieldObservation(
                     ObservationField.TITLE, ObservationState.PRESENT, (title,)

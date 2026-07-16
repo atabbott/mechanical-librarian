@@ -204,6 +204,40 @@ class CliTests(unittest.TestCase):
         )
         invalid_runner.assert_not_called()
 
+    def test_epub_opening_evidence_cli_reports_pre_enqueue_resource_limit(self) -> None:
+        output = io.StringIO()
+        errors = io.StringIO()
+        exit_code = main(
+            [
+                "epub-opening-evidence",
+                "--database",
+                "state.sqlite3",
+                "--config",
+                "configuration.json",
+                "--target",
+                "target_" + "1" * 32,
+                "--snapshot",
+                "snapshot_" + "2" * 32,
+                "--file-index",
+                "0",
+            ],
+            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
+            epub_opening_evidence_runner=Mock(
+                return_value=EpubEvidenceResult(
+                    EpubEvidenceMode.FAILED,
+                    failure=EpubEvidenceFailure.RESOURCE_LIMIT,
+                )
+            ),
+            stdout=output,
+            stderr=errors,
+        )
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(
+            errors.getvalue(),
+            "EPUB opening evidence failed safely.\nfailure=resource_limit\n",
+        )
+
     def test_epub_invalid_invocation_is_a_typed_private_safe_envelope(self) -> None:
         output = io.StringIO()
         errors = io.StringIO()

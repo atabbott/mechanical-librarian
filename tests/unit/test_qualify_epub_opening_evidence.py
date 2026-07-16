@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import subprocess
+import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
@@ -9,12 +10,34 @@ from unittest.mock import patch
 
 from scripts.qualify_epub_opening_evidence import (
     QualificationError,
+    _TemporarilyRemoved,
     _entrypoint,
     _evidence,
 )
 
 
 class QualifyEpubOpeningEvidenceTests(unittest.TestCase):
+    def test_failure_isolation_removes_and_restores_source_without_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "book.epub"
+            source.write_bytes(b"synthetic")
+            with _TemporarilyRemoved(source):
+                self.assertFalse(source.exists())
+                self.assertEqual(
+                    (Path(directory) / ".book.epub.qualification-unavailable").read_bytes(),
+                    b"synthetic",
+                )
+            self.assertEqual(source.read_bytes(), b"synthetic")
+
+    def test_failure_isolation_restores_source_when_qualification_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "book.epub"
+            source.write_bytes(b"synthetic")
+            with self.assertRaisesRegex(RuntimeError, "injected"):
+                with _TemporarilyRemoved(source):
+                    raise RuntimeError("injected")
+            self.assertEqual(source.read_bytes(), b"synthetic")
+
     def test_evidence_requires_the_complete_redacted_cli_envelope(self) -> None:
         private_path = "/private/cohort/identifying-title.epub"
         selector = {

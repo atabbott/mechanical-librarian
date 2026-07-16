@@ -11,6 +11,7 @@ from mechanical_librarian.application.inventory_reconciliation import (
     InventoryMountMapping,
 )
 from mechanical_librarian.application.epub_opening_evidence import (
+    EpubSourceFingerprintError,
     RunEpubOpeningEvidence,
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
@@ -198,6 +199,37 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
         self.assertEqual(result.failure, EpubEvidenceFailure.SOURCE_CHANGED)
         self.assertFalse(repository.published)
         self.assertTrue(repository.retryable)
+
+    def test_pre_enqueue_source_limit_is_typed_and_never_accepts_work(self) -> None:
+        source = self.source
+
+        class Repository:
+            accepted = False
+
+            def resolve(self, *_args):
+                return EpubSourceResolution(source=source)
+
+            def accept(self, *_args):
+                self.accepted = True
+                raise AssertionError("resource-limited source was enqueued")
+
+        repository = Repository()
+        result = RunEpubOpeningEvidence(repository).run(
+            self.locator,
+            source.mount_configuration_digest,
+            "6" * 64,
+            "worker",
+            lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+            lambda _source: (_ for _ in ()).throw(
+                EpubSourceFingerprintError(EpubEvidenceFailure.RESOURCE_LIMIT)
+            ),
+            lambda _source: EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+                EpubOpeningLimits(),
+            ),
+        )
+        self.assertEqual(result.failure, EpubEvidenceFailure.RESOURCE_LIMIT)
+        self.assertFalse(repository.accepted)
 
     def test_closed_operational_failures_are_durable_attempts_not_evidence(self) -> None:
         source = self.source
