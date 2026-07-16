@@ -597,16 +597,23 @@ def _epub_binding(
 ) -> InventoryFileBinding | None:
     """Project the frozen ABS path contract into one private logical reference."""
 
-    if not mount_mappings:
-        return None
     if not isinstance(ebook_file, dict) or ebook_file.get("ebookFormat") != "epub":
+        return None
+    inode = ebook_file.get("ino")
+    if (
+        type(inode) not in {str, int}
+        or not str(inode).strip()
+        or len(str(inode)) > 512
+    ):
+        raise ValueError("ebook file identity is malformed")
+    file_identity = _file_identity(ebook_file)
+    if not mount_mappings:
         return None
     metadata = ebook_file.get("metadata")
     if not isinstance(metadata, dict):
         return None
     provider_path = metadata.get("path")
     provider_relative = metadata.get("relPath")
-    inode = ebook_file.get("ino")
     if (
         type(provider_path) is not str
         or not provider_path.startswith("/")
@@ -620,12 +627,6 @@ def _epub_binding(
         or any(part in {"", ".", ".."} for part in provider_relative.split("/"))
     ):
         return None
-    if (
-        type(inode) not in {str, int}
-        or not str(inode).strip()
-        or len(str(inode)) > 512
-    ):
-        raise ValueError("ebook file identity is malformed")
     matches = tuple(
         mapping
         for mapping in mount_mappings
@@ -646,7 +647,7 @@ def _epub_binding(
         return None
     return InventoryFileBinding(
         0,
-        _file_identity(ebook_file),
+        file_identity,
         "epub",
         mapping.configuration_digest,
         reference,

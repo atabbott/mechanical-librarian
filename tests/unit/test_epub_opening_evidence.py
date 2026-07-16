@@ -148,7 +148,7 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
         mismatch["metadata"] = dict(item["metadata"], relPath="other.epub")
         self.assertIsNone(_epub_binding(mismatch, (mapping,)))
 
-    def test_optional_epub_projection_partition_matrix_returns_no_binding(self) -> None:
+    def test_authoritative_identity_precedes_optional_epub_projection(self) -> None:
         mapping = InventoryMountMapping(
             "books", "ebook", "/library/books", "a" * 64
         )
@@ -160,28 +160,68 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
                 "relPath": "series/book.epub",
             },
         }
-        partitions = {
-            "missing": dict(valid, metadata={}),
-            "malformed": dict(
-                valid,
-                metadata={
-                    "path": "/library/books/series/book.epub",
-                    "relPath": ["series/book.epub"],
-                },
+        partitions = (
+            ("unconfigured", valid, ()),
+            (
+                "missing_metadata",
+                {key: value for key, value in valid.items() if key != "metadata"},
+                (mapping,),
             ),
-            "mismatch": dict(
-                valid,
-                metadata={
-                    "path": "/library/books/series/book.epub",
-                    "relPath": "other.epub",
-                },
+            ("malformed_metadata", dict(valid, metadata=[]), (mapping,)),
+            (
+                "missing_path",
+                dict(valid, metadata={"relPath": "series/book.epub"}),
+                (mapping,),
             ),
-            "ambiguous": valid,
-        }
-        for label, value in partitions.items():
-            with self.subTest(partition=label):
-                mappings = (mapping, mapping) if label == "ambiguous" else (mapping,)
+            (
+                "malformed_path",
+                dict(
+                    valid,
+                    metadata={"path": [], "relPath": "series/book.epub"},
+                ),
+                (mapping,),
+            ),
+            (
+                "missing_relative",
+                dict(
+                    valid,
+                    metadata={"path": "/library/books/series/book.epub"},
+                ),
+                (mapping,),
+            ),
+            (
+                "malformed_relative",
+                dict(
+                    valid,
+                    metadata={
+                        "path": "/library/books/series/book.epub",
+                        "relPath": ["series/book.epub"],
+                    },
+                ),
+                (mapping,),
+            ),
+            (
+                "mismatch",
+                dict(
+                    valid,
+                    metadata={
+                        "path": "/library/books/series/book.epub",
+                        "relPath": "other.epub",
+                    },
+                ),
+                (mapping,),
+            ),
+            ("ambiguous", valid, (mapping, mapping)),
+        )
+        for label, value, mappings in partitions:
+            with self.subTest(identity="valid", partition=label):
                 self.assertIsNone(_epub_binding(value, mappings))
+            malformed = dict(value, ino=[])
+            with self.subTest(identity="malformed", partition=label):
+                with self.assertRaisesRegex(
+                    ValueError, "ebook file identity is malformed"
+                ):
+                    _epub_binding(malformed, mappings)
 
     def test_source_change_after_child_result_never_publishes_evidence(self) -> None:
         source = self.source

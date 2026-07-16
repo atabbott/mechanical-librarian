@@ -157,7 +157,7 @@ def json_response(value: object) -> httpx.Response:
 
 
 class AudiobookshelfInventoryReaderTests(unittest.TestCase):
-    def test_optional_epub_projection_partitions_preserve_valid_snapshot(self) -> None:
+    def test_epub_identity_and_optional_projection_cross_product(self) -> None:
         mapping = InventoryMountMapping(
             "books", "ebook", "/library/books", "a" * 64
         )
@@ -186,57 +186,64 @@ class AudiobookshelfInventoryReaderTests(unittest.TestCase):
                 "isInvalid",
             )
         }
-        partitions = {
-            "missing": {},
-            "malformed": {
-                "path": "/library/books/book.epub",
-                "relPath": ["book.epub"],
-            },
-            "mismatch": {
-                "path": "/library/books/book.epub",
-                "relPath": "other.epub",
-            },
-        }
-        for label, metadata in partitions.items():
-            with self.subTest(partition=label):
-                detail = copy.deepcopy(base)
-                detail["media"]["ebookFile"]["metadata"] = metadata
-                normalized = _normalize(
-                    detail,
-                    summary,
-                    connection(),
-                    LIBRARY,
-                    operation_context(),
-                    (mapping,),
-                )
-                self.assertIsNone(normalized.failure)
-                self.assertEqual(normalized.value[0].file_bindings, ())
-                self.assertEqual(
-                    normalized.value[0].observation.lifecycle,
-                    ItemLifecycle.ACTIVE,
-                )
-        ambiguous = _normalize(
-            base,
-            summary,
-            connection(),
-            LIBRARY,
-            operation_context(),
-            (mapping, mapping),
+        partitions = (
+            ("unconfigured", None, ()),
+            ("missing_metadata", None, (mapping,)),
+            ("malformed_metadata", [], (mapping,)),
+            ("missing_path", {"relPath": "book.epub"}, (mapping,)),
+            ("malformed_path", {"path": [], "relPath": "book.epub"}, (mapping,)),
+            ("missing_relative", {"path": "/library/books/book.epub"}, (mapping,)),
+            (
+                "malformed_relative",
+                {
+                    "path": "/library/books/book.epub",
+                    "relPath": ["book.epub"],
+                },
+                (mapping,),
+            ),
+            (
+                "mismatch",
+                {
+                    "path": "/library/books/book.epub",
+                    "relPath": "other.epub",
+                },
+                (mapping,),
+            ),
+            (
+                "ambiguous",
+                base["media"]["ebookFile"]["metadata"],
+                (mapping, mapping),
+            ),
         )
-        self.assertIsNone(ambiguous.failure)
-        self.assertEqual(ambiguous.value[0].file_bindings, ())
-
-        malformed_authoritative = copy.deepcopy(base)
-        malformed_authoritative["media"]["ebookFile"]["ino"] = []
-        rejected = _normalize(
-            malformed_authoritative,
-            summary,
-            connection(),
-            LIBRARY,
-            operation_context(),
-            (mapping,),
-        )
-        self.assertEqual(rejected.failure.kind, FailureKind.INVALID_RESPONSE)
+        for label, metadata, mappings in partitions:
+            for identity, expected_failure in (
+                ("ebook-inode", None),
+                ([], FailureKind.INVALID_RESPONSE),
+            ):
+                with self.subTest(identity=identity, partition=label):
+                    detail = copy.deepcopy(base)
+                    detail["media"]["ebookFile"]["ino"] = identity
+                    if label == "missing_metadata":
+                        del detail["media"]["ebookFile"]["metadata"]
+                    elif label != "unconfigured":
+                        detail["media"]["ebookFile"]["metadata"] = metadata
+                    normalized = _normalize(
+                        detail,
+                        summary,
+                        connection(),
+                        LIBRARY,
+                        operation_context(),
+                        mappings,
+                    )
+                    if expected_failure is not None:
+                        self.assertEqual(normalized.failure.kind, expected_failure)
+                        continue
+                    self.assertIsNone(normalized.failure)
+                    self.assertEqual(normalized.value[0].file_bindings, ())
+                    self.assertEqual(
+                        normalized.value[0].observation.lifecycle,
+                        ItemLifecycle.ACTIVE,
+                    )
 
     def test_f05b_machine_profile_keeps_unavailable_capabilities_explicit(self) -> None:
         profile = json.loads(
