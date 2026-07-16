@@ -272,6 +272,28 @@ class SqliteFoundationTests(unittest.TestCase):
             ):
                 sqlite._copy_regular_state(source, destination, expected)
 
+    def test_competing_publication_timeout_is_a_typed_safe_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "staged.sqlite"
+            winner_staged = root / "winner.sqlite"
+            target = root / "state.sqlite"
+            staged.write_bytes(b"complete staged state")
+            staged.chmod(0o600)
+            winner_staged.write_bytes(b"complete winner state")
+            os.link(winner_staged, target)
+
+            with (
+                patch.object(sqlite, "_state_snapshot", return_value={}),
+                patch.object(sqlite.time, "monotonic", side_effect=(0.0, 6.0)),
+                self.assertRaisesRegex(SchemaError, "did not settle"),
+            ):
+                sqlite.publish_staged_state(staged, target)
+
+            self.assertEqual(target.read_bytes(), b"complete winner state")
+            self.assertEqual(target.stat().st_nlink, 2)
+            self.assertEqual(staged.read_bytes(), b"complete staged state")
+
     def test_in_memory_database_is_not_a_durable_connection(self) -> None:
         with self.assertRaisesRegex(SchemaError, "filesystem database"):
             connect(Path(":memory:"))

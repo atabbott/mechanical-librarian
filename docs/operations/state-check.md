@@ -37,3 +37,9 @@ failure for valid existing state is rolled back atomically and can also be
 retried. Preserve rejected existing state and follow the
 [backup and recovery guidance](backups-and-recovery.md) before taking corrective
 action.
+
+Concurrent first-time invocations reuse the one complete published database.
+A losing initializer waits boundedly for the winner to finish its durable
+no-replace publication before validating a stable copy. If that publication
+does not settle, the loser fails safely without replacing or removing the
+published target.
