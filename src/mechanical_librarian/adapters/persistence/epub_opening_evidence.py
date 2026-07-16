@@ -871,10 +871,21 @@ class SQLiteEpubOpeningEvidenceRepository:
         work_evidence = self._connection.execute(
             "SELECT evidence_id FROM epub_opening_evidence WHERE work_key=?",
             (work_key,),
-        ).fetchone()
+        ).fetchall()
         checkpoints = self._connection.execute(
-            "SELECT attempt,fence,evidence_id FROM epub_evidence_checkpoints "
+            "SELECT attempt,fence,evidence_id,accepted_at FROM epub_evidence_checkpoints "
             "WHERE work_id=? ORDER BY attempt,fence",
+            (expected_work_id,),
+        ).fetchall()
+        attempt = self._connection.execute(
+            "SELECT worker_id,finished_at,outcome,failure FROM epub_evidence_attempts "
+            "WHERE work_id=? AND attempt=? AND fence=?",
+            (expected_work_id, int(job[8]), int(job[9])),
+        ).fetchone()
+        published_events = self._connection.execute(
+            "SELECT actor,attempt,fence,occurred_at,from_state,to_state FROM "
+            "epub_evidence_events WHERE work_id=? AND kind='published' "
+            "ORDER BY sequence",
             (expected_work_id,),
         ).fetchall()
         state = str(job[7])
@@ -883,20 +894,37 @@ class SQLiteEpubOpeningEvidenceRepository:
                 job[10] is not None
                 or job[11] is not None
                 or evidence is not None
-                or work_evidence is not None
+                or work_evidence
                 or checkpoints
+                or published_events
             ):
                 raise ValueError("EPUB non-succeeded work has immutable results")
             return None
+        finished_at = None if attempt is None or attempt[1] is None else str(attempt[1])
         if (
             job[10] is None
             or job[11] is None
             or job[12] is not None
             or evidence is None
-            or work_evidence is None
-            or str(work_evidence[0]) != str(job[10])
+            or len(work_evidence) != 1
+            or str(work_evidence[0][0]) != str(job[10])
+            or attempt is None
+            or finished_at is None
+            or str(attempt[2]) != str(job[11])
+            or attempt[3] is not None
             or checkpoints
-            != [(int(job[8]), int(job[9]), str(job[10]))]
+            != [(int(job[8]), int(job[9]), str(job[10]), finished_at)]
+            or published_events
+            != [
+                (
+                    str(attempt[0]),
+                    int(job[8]),
+                    int(job[9]),
+                    finished_at,
+                    "running",
+                    "succeeded",
+                )
+            ]
         ):
             raise ValueError("EPUB succeeded work state is inconsistent")
         report = EpubOpeningReport.from_json(str(evidence[10]))

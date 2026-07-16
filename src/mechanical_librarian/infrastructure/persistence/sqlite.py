@@ -553,7 +553,7 @@ _EPUB_OPENING_EVIDENCE_TABLE_SQL = (
     "CREATE TABLE epub_opening_evidence ("
     "evidence_id TEXT PRIMARY KEY CHECK (length(evidence_id) = 41 AND evidence_id GLOB 'evidence_[0-9a-f]*'), "
     "evidence_digest TEXT NOT NULL UNIQUE CHECK (length(evidence_digest) = 64 AND evidence_digest NOT GLOB '*[^0-9a-f]*'), "
-    "work_key TEXT NOT NULL CHECK (length(work_key) = 64 AND work_key NOT GLOB '*[^0-9a-f]*'), "
+    "work_key TEXT NOT NULL UNIQUE CHECK (length(work_key) = 64 AND work_key NOT GLOB '*[^0-9a-f]*'), "
     "target_reference TEXT NOT NULL, snapshot_reference TEXT NOT NULL, file_index INTEGER NOT NULL CHECK (file_index BETWEEN 0 AND 10000), "
     "binding_digest TEXT NOT NULL REFERENCES inventory_snapshot_file_bindings(binding_digest), "
     "source_fingerprint TEXT NOT NULL CHECK (length(source_fingerprint) = 64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), "

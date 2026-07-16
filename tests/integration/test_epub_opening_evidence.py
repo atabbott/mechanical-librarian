@@ -1459,6 +1459,102 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         )[1]
         self.assertEqual(disagreeing.failure, EpubEvidenceFailure.CORRUPT_STATE)
 
+    def test_reuse_rejects_terminal_attempt_or_event_disagreement(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        self.repository.publish(
+            claim,
+            source,
+            "4" * 64,
+            "5" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now,
+        )
+        terminal_attempt = self.connection.execute(
+            "SELECT finished_at,outcome,failure FROM epub_evidence_attempts "
+            "WHERE work_id=? AND attempt=?",
+            (accepted[0], claim.attempt),
+        ).fetchone()
+        self.connection.execute(
+            "UPDATE epub_evidence_attempts SET finished_at=NULL,outcome=NULL,"
+            "failure='internal_failure' WHERE work_id=? AND attempt=?",
+            (accepted[0], claim.attempt),
+        )
+        attempt_result = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now + timedelta(seconds=1)
+        )[1]
+        self.assertEqual(
+            attempt_result.failure, EpubEvidenceFailure.CORRUPT_STATE
+        )
+
+        self.connection.execute(
+            "UPDATE epub_evidence_attempts SET finished_at=?,outcome=?,failure=? "
+            "WHERE work_id=? AND attempt=?",
+            (*terminal_attempt, accepted[0], claim.attempt),
+        )
+        trigger = self.connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND name='epub_evidence_events_no_update'"
+        ).fetchone()[0]
+        self.connection.execute("DROP TRIGGER epub_evidence_events_no_update")
+        self.connection.execute(
+            "UPDATE epub_evidence_events SET actor='other-worker' "
+            "WHERE work_id=? AND kind='published'",
+            (accepted[0],),
+        )
+        self.connection.execute(str(trigger))
+        event_result = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now + timedelta(seconds=2)
+        )[1]
+        self.assertEqual(event_result.failure, EpubEvidenceFailure.CORRUPT_STATE)
+
+    def test_evidence_work_key_is_unique(self) -> None:
+        source = self.repository.resolve(
+            self.locator, self.binding_configuration
+        ).source
+        accepted = self.repository.accept(
+            source, "4" * 64, "5" * 64, self.now
+        )
+        claim = self.repository.claim(
+            accepted[0], "worker", self.now, timedelta(seconds=30)
+        )
+        published = self.repository.publish(
+            claim,
+            source,
+            "4" * 64,
+            "5" * 64,
+            EpubOpeningReport(
+                LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            ),
+            self.now,
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                "INSERT INTO epub_opening_evidence(evidence_id,evidence_digest,work_key,"
+                "target_reference,snapshot_reference,file_index,binding_digest,"
+                "source_fingerprint,governing_digest,outcome,report_json,report_digest,"
+                "claim_count,citation_count,selected_count,rejected_count,warning_count,"
+                "package_mode,parser_mode,created_at) SELECT ?,?,work_key,target_reference,"
+                "snapshot_reference,file_index,binding_digest,source_fingerprint,"
+                "governing_digest,outcome,report_json,report_digest,claim_count,"
+                "citation_count,selected_count,rejected_count,warning_count,package_mode,"
+                "parser_mode,created_at FROM epub_opening_evidence WHERE evidence_id=?",
+                (
+                    "evidence_" + "f" * 32,
+                    "f" * 64,
+                    published.evidence_id,
+                ),
+            )
+
     def test_missing_current_binding_set_pointer_is_corrupt(self) -> None:
         source = self.repository.resolve(
             self.locator, self.binding_configuration
