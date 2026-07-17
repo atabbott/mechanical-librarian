@@ -13,11 +13,16 @@ versioning after the first public release.
   closes the slice tracker. Every ready non-activation increment must fully
   satisfy and natively close at least one constituent; otherwise it stays draft
   while the ticket or increment plan is refined or re-sliced. CI failures and
-  C1, C2, or human review findings are remediated on the same pull request and
-  the changed head is re-reviewed and requalified. Trusted merge controls
-  remain maintainer-owned and ignored; the current private-plan enforcement
-  gap returns structured `BLOCKED` before mutation, so this policy does not yet
-  make automatic merging operational.
+  C1, C2, or optional human-requested review findings are remediated on the same
+  pull request and the changed head is re-reviewed and requalified. The
+  autonomous server contract now requires pull-request-only merging with
+  exactly zero approving reviews and no code-owner or last-push approval gate;
+  its bypass object must contain exactly empty user, team, and app lists, and no
+  active repository or organization ruleset may apply to `main`. Mandatory
+  exact-head local and connector review evidence remains independent of GitHub
+  approval. Trusted merge controls remain maintainer-owned and ignored; the
+  current private-plan enforcement gap returns structured `BLOCKED` before
+  mutation, so this policy does not yet make automatic merging operational.
 
 - Added `epub-opening-evidence`, the durable F07b round trip from a path-free
   inventory selector to restart-reusable immutable opening evidence. Inventory

@@ -98,8 +98,9 @@ may:
 
 - plan ordered vertical increments;
 - create purpose-based branches and draft or ready pull requests;
-- push commits, obtain required review, remediate findings and CI failures, and
-  repeat invalidated exact-head evidence;
+- push commits, obtain required autonomous review evidence, remediate connector,
+  optional human-requested review, and CI findings, and repeat invalidated
+  exact-head evidence;
 - merge each exact reviewed and qualified head into `main` when every mutation
   prerequisite is available;
 - delete merged delivery branches; and
@@ -112,9 +113,13 @@ access, or unrelated changes.
 
 Trusted merge control, validators, and evidence are maintainer-owned and remain
 ignored under `.codex/**`, independently qualified from candidate content. The
-current private account plan cannot provide the required strict server
-enforcement. The standing transaction authority is active. Until the linked
-external prerequisite is satisfied, its automatic mutation step returns
+server contract requires pull-request-only merging with exactly zero approving
+reviews, a structurally closed empty pull-request bypass object, and no active
+repository or organization ruleset applying to `main`; autonomous local and
+connector review evidence remains mandatory and exact-head. The current private
+account plan cannot provide the required strict server enforcement. The standing
+transaction authority is active. Until the linked external prerequisite is
+satisfied, its automatic mutation step returns
 structured `BLOCKED` before mutation. Activating the authority does not claim
 automatic mutation works in the current repository.
 
@@ -152,10 +157,10 @@ merged transaction is not a terminal result.
    constituent; the activation increment may use the tracker and alone closes
    it. Otherwise keep the pull request draft and re-slice the increment or
    refine its ticket plan before ready review.
-8. Remediate CI failures and all C1, C2, or human findings on the same branch
-   and pull request. Each changed head invalidates affected evidence and repeats
-   review and qualification. Finding count is not a reason to create a new pull
-   request.
+8. Remediate CI failures and all C1, C2, or optional human-requested findings on
+   the same branch and pull request. Each changed head invalidates affected
+   evidence and repeats review and qualification. Finding count is not a reason
+   to create a new pull request.
 9. Create another pull request only for a distinct vertical outcome or a
    security or privacy boundary that requires separation.
 10. Immediately before mutation, use the ignored trusted control to repeat all
