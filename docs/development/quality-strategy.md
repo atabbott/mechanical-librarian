@@ -49,6 +49,12 @@ distinct vertical outcome or a separation required by security or privacy, not
 for finding count or routine remediation. The activation increment receives
 the complete end-to-end acceptance review and closes the slice tracker.
 
+More generally, when a required gate fails on any active pull request, keep the
+smallest bounded root-cause fix on that pull request even if the exposed defect
+is distinct from its principal outcome. Split it out only when it is genuinely
+a different deliverable that requires separation, or when security or privacy
+requires an independent boundary.
+
 ## Code standards
 
 - Prefer small modules with one reason to change.

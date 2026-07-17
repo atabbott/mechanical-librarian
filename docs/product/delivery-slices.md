@@ -48,7 +48,7 @@ Current focused work includes:
 - durability and architecture corrections #127, #130, and #131 before F01;
 - port, scope, and configuration corrections #129, #132, and #134 before F03;
 - evidence-bound correction #133 before F06;
-- lifecycle and authorization correction #128 before F10a; and
+- lifecycle and authorization correction #128 before F10a;
 - frontend architecture decision #192 before F16a.
 
 ## Delivery checkpoint 0.1.0: trustworthy report-only product spine

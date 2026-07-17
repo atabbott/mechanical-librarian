@@ -32,11 +32,13 @@ Do not use a slice when the primary outcome is:
 Those changes use a focused purpose branch such as `fix/<issue>-<slug>`,
 `docs/<issue>-<slug>`, `chore/<issue>-<slug>`, or
 `feature/<issue>-<slug>`, and one ticket-level pull request. They still meet all
-risk-proportionate quality and documentation gates. A blocking CI defect
-exposed by an active increment may be corrected and requalified on that same
-pull request when the correction stays within its bounded outcome and preserves
-the governing safety contract. Use a separate focused pull request only for a
-genuinely distinct outcome or a separation required by security or privacy.
+risk-proportionate quality and documentation gates. When a required gate fails
+on an active pull request, the smallest bounded root-cause correction may be
+made and requalified on that same pull request even when the exposed defect is
+distinct from its principal outcome, provided the correction preserves the
+governing safety contract. Use a separate pull request only when the correction
+is a genuinely different deliverable that requires separation, or when a
+security or privacy boundary requires it.
 
 A slice may introduce a runtime or development framework, library, or tool
 needed to deliver or qualify its observable outcome. This includes scoped test,
