@@ -10,11 +10,14 @@ versioning after the first public release.
 - Adopted bounded `Deliver slice` transactions for new functionality. A slice
   may now merge through sequential, independently safe vertical increments;
   constituent tickets close when complete and only the activation increment
-  closes the slice tracker. CI failures and C1, C2, or human review findings
-  are remediated on the same pull request and the changed head is re-reviewed
-  and requalified. Trusted merge controls remain maintainer-owned and ignored;
-  the current private-plan enforcement gap returns structured `BLOCKED` before
-  mutation, so this policy does not yet make automatic merging operational.
+  closes the slice tracker. Every ready non-activation increment must fully
+  satisfy and natively close at least one constituent; otherwise it stays draft
+  while the ticket or increment plan is refined or re-sliced. CI failures and
+  C1, C2, or human review findings are remediated on the same pull request and
+  the changed head is re-reviewed and requalified. Trusted merge controls
+  remain maintainer-owned and ignored; the current private-plan enforcement
+  gap returns structured `BLOCKED` before mutation, so this policy does not yet
+  make automatic merging operational.
 
 - Added `epub-opening-evidence`, the durable F07b round trip from a path-free
   inventory selector to restart-reusable immutable opening evidence. Inventory

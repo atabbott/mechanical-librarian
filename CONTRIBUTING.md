@@ -74,8 +74,11 @@ rename one of those changes.
 
 A new-functionality slice increment pull request must:
 
-- close only fully completed constituent tickets, plus the slice tracker when
-  it is the activation increment;
+- when ready, fully satisfy and natively close at least one ticket: a
+  non-activation increment closes at least one constituent, while the
+  activation increment may use the slice tracker and alone closes it;
+- remain draft while its ticket boundary cannot support that closing reference,
+  then re-slice the increment or refine the ticket plan before ready review;
 - demonstrate its independently safe vertical step through a supported surface;
 - explain the problem and intended behavior;
 - identify user-visible, data, security, and operational impact;

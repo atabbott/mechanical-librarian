@@ -27,6 +27,13 @@ Constituent tickets closed in full by this increment:
 
 - Closes #
 
+<!--
+A ready non-activation increment must fully satisfy and natively close at least
+one constituent ticket. The activation increment may use the slice tracker as
+its required closing reference. Otherwise keep this PR draft and re-slice the
+increment or refine its ticket plan before ready review.
+-->
+
 Parent issue or work package:
 
 Governing specification or ADR:
@@ -77,6 +84,7 @@ List the exact commands and outcomes:
 
 - [ ] The selected delivery mode is accurate; fixes and standalone work have not been relabelled as slices.
 - [ ] If this is a slice increment, it is independently safe and demonstrable; if it closes the tracker, it completes the documented outcome and exit criteria.
+- [ ] A ready slice increment has a supported native closing reference: at least one fully satisfied constituent for a non-activation increment, or the tracker for activation; otherwise this PR remains draft pending re-slicing or ticket refinement.
 - [ ] Every auto-closed ticket is satisfied in full; no partial acceptance is hidden in follow-up work.
 - [ ] The relevant demonstration or reproduction works from a clean checkout.
 - [ ] The change is narrowly scoped and contains no unrelated refactoring.
