@@ -23,7 +23,7 @@ Slice tracker, when applicable: #
 
 Increment and activation status, when applicable:
 
-Additional constituent tickets closed in full by a slice:
+Constituent tickets closed in full by this increment:
 
 - Closes #
 

@@ -152,6 +152,10 @@ versioning after the first public release.
 
 ### Fixed
 
+- Concurrent first-run state initialization now waits for the winning
+  no-replace hard-link publication to settle even when the loser observes the
+  target before attempting its own link, preventing the winner's staging unlink
+  from invalidating the loser's stable-copy verification.
 - Evidence persistence now rejects exact normalized `credential` and
   `credentials` labels before construction or strict deserialization while
   preserving non-credential near misses.

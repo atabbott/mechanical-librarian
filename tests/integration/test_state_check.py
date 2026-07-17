@@ -503,7 +503,13 @@ class ComposedStateCheckTests(unittest.TestCase):
             ):
                 results = tuple(executor.map(_run_state_check, (path, path)))
 
-            self.assertTrue(all(result.succeeded for result in results))
+            self.assertEqual(
+                tuple(
+                    (worker, result.outcome.value)
+                    for worker, result in enumerate(results)
+                ),
+                ((0, "ready"), (1, "ready")),
+            )
             connection = sqlite3.connect(path)
             try:
                 self.assertEqual(
@@ -512,6 +518,110 @@ class ComposedStateCheckTests(unittest.TestCase):
                 )
             finally:
                 connection.close()
+            self.assertEqual(
+                {candidate.name for candidate in Path(directory).iterdir()},
+                {path.name},
+            )
+
+    def test_loser_that_observes_link_waits_before_stable_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.sqlite"
+            role_lock = threading.Lock()
+            next_role = 0
+            publisher_thread: list[int] = []
+            target_linked = threading.Event()
+            release_publisher = threading.Event()
+            publisher_unlinked = threading.Event()
+            publisher_paused = threading.Event()
+            release_phase: list[str] = []
+            real_publish = sqlite.publish_staged_state
+            real_link = sqlite.os.link
+            real_fsync_directory = sqlite._fsync_directory
+            real_copyfileobj = sqlite.shutil.copyfileobj
+            real_sleep = sqlite.time.sleep
+
+            def coordinated_publish(staged: Path, target: Path) -> bool:
+                nonlocal next_role
+                with role_lock:
+                    role = next_role
+                    next_role += 1
+                if role == 0:
+                    return real_publish(staged, target)
+                if not target_linked.wait(timeout=5):
+                    raise RuntimeError("publisher did not link target")
+                return real_publish(staged, target)
+
+            def observed_link(
+                source: Path,
+                destination: Path,
+                **kwargs: object,
+            ) -> None:
+                real_link(source, destination, **kwargs)
+                publisher_thread.append(threading.get_ident())
+                target_linked.set()
+
+            def controlled_fsync_directory(directory: Path) -> None:
+                real_fsync_directory(directory)
+                if not publisher_thread or threading.get_ident() != publisher_thread[0]:
+                    return
+                if not publisher_paused.is_set():
+                    publisher_paused.set()
+                    if not release_publisher.wait(timeout=5):
+                        raise RuntimeError("loser did not observe linked target")
+                elif path.exists() and path.stat().st_nlink == 1:
+                    publisher_unlinked.set()
+
+            def release_from_settle(_: float) -> None:
+                if publisher_thread and threading.get_ident() != publisher_thread[0]:
+                    if not release_publisher.is_set():
+                        release_phase.append("settle")
+                        release_publisher.set()
+                    if not publisher_unlinked.wait(timeout=5):
+                        raise RuntimeError("publisher did not remove staging")
+                    return
+                real_sleep(0)
+
+            def release_from_copy(source: object, destination: object) -> None:
+                real_copyfileobj(source, destination)
+                if publisher_thread and threading.get_ident() != publisher_thread[0]:
+                    if not release_publisher.is_set():
+                        release_phase.append("copy")
+                        release_publisher.set()
+                    if not publisher_unlinked.wait(timeout=5):
+                        raise RuntimeError("publisher did not remove staging")
+
+            with (
+                patch(
+                    "mechanical_librarian.bootstrap.composition.publish_staged_state",
+                    side_effect=coordinated_publish,
+                ),
+                patch.object(sqlite.os, "link", side_effect=observed_link),
+                patch.object(
+                    sqlite,
+                    "_fsync_directory",
+                    side_effect=controlled_fsync_directory,
+                ),
+                patch.object(sqlite.time, "sleep", side_effect=release_from_settle),
+                patch.object(
+                    sqlite.shutil,
+                    "copyfileobj",
+                    side_effect=release_from_copy,
+                ),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                results = tuple(executor.map(_run_state_check, (path, path)))
+
+            self.assertEqual(
+                (
+                    tuple(
+                        (worker, result.outcome.value)
+                        for worker, result in enumerate(results)
+                    ),
+                    tuple(release_phase),
+                ),
+                (((0, "ready"), (1, "ready")), ("settle",)),
+            )
+            self.assertEqual(path.stat().st_nlink, 1)
             self.assertEqual(
                 {candidate.name for candidate in Path(directory).iterdir()},
                 {path.name},

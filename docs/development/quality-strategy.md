@@ -35,11 +35,11 @@ tracked gate contract.
 
 Passing public CI is necessary but is not merge authorization. Authoritative
 merge and validation controls remain maintainer-owned and ignored under
-`.codex/**`, independently pinned from candidate content. Autonomous delivery
-remains non-activating and must return `BLOCKED` before mutation while the
-current private plan cannot enforce the required server policy. The linked
-boundary document defines the complete trust, recovery, containment, and
-activation prerequisites.
+`.codex/**`, independently pinned from candidate content. Standing `Deliver
+slice` transaction authority is active, but automatic mutation must return
+`BLOCKED` before mutation while the current private plan cannot enforce the
+required server policy. The linked boundary document defines the complete
+trust, recovery, containment, and mutation prerequisites.
 
 Within an authorized `Deliver slice` transaction, each vertical increment is
 reviewed and qualified at its exact head. CI failures and C1, C2, or human

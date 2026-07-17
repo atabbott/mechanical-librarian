@@ -32,9 +32,11 @@ Do not use a slice when the primary outcome is:
 Those changes use a focused purpose branch such as `fix/<issue>-<slug>`,
 `docs/<issue>-<slug>`, `chore/<issue>-<slug>`, or
 `feature/<issue>-<slug>`, and one ticket-level pull request. They still meet all
-risk-proportionate quality and documentation gates. A fix that blocks a slice is
-merged separately before the slice continues; it is not absorbed into the slice
-merely to make the slice green.
+risk-proportionate quality and documentation gates. A blocking CI defect
+exposed by an active increment may be corrected and requalified on that same
+pull request when the correction stays within its bounded outcome and preserves
+the governing safety contract. Use a separate focused pull request only for a
+genuinely distinct outcome or a separation required by security or privacy.
 
 A slice may introduce a runtime or development framework, library, or tool
 needed to deliver or qualify its observable outcome. This includes scoped test,
@@ -105,10 +107,10 @@ access, or unrelated changes.
 Trusted merge control, validators, and evidence are maintainer-owned and remain
 ignored under `.codex/**`, independently qualified from candidate content. The
 current private account plan cannot provide the required strict server
-enforcement. Until the linked external prerequisite is satisfied, autonomous
-delivery returns structured `BLOCKED` before mutation. This policy grants the
-standing transaction authority but does not claim automatic mutation works in
-the current repository.
+enforcement. The standing transaction authority is active. Until the linked
+external prerequisite is satisfied, its automatic mutation step returns
+structured `BLOCKED` before mutation. Activating the authority does not claim
+automatic mutation works in the current repository.
 
 The transaction has two terminal results:
 
@@ -124,7 +126,9 @@ merged transaction is not a terminal result.
 
 ## Branch workflow
 
-1. Select the highest-priority unblocked slice tracker in `Ready`.
+1. When `Deliver slice <ID>` names a tracker, select that tracker and require it
+   to be unblocked and `Ready`. Only an instruction without an ID selects the
+   highest-priority unblocked slice tracker in `Ready`.
 2. Confirm that every ticket the slice intends to close is sufficiently
    specified and mapped to that slice in the Project.
 3. Record a one-increment plan or ordered vertical increments and move the
