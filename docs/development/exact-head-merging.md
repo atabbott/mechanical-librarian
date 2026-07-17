@@ -68,18 +68,22 @@ Candidate code is evidence to inspect, never merge authority. In particular:
 - the merge credential is available only to the maintainer-owned control
   environment.
 
-## Non-activation and prerequisites
+## Activation and external prerequisite
 
 Autonomous merging requires strict server-enforced up-to-date checks,
 approving reviews that are dismissed on new commits, resolved conversations,
 administrative enforcement, no bypass actors, and disabled force pushes and
 branch deletion. The repository's current private account plan does not make
 the required enforcement available. The authoritative local controller must
-therefore return `BLOCKED` before mutation.
+therefore return structured `BLOCKED` before mutation. Issue #267 owns this
+external plan and server-enforcement prerequisite; no delivery transaction may
+change visibility, protection, or plan settings as an implied workaround.
 
-This public-CI foundation is deliberately non-activating. It grants no standing
-`Deliver slice` merge authority and does not make a successful public gate a
-merge authorization. Before #263 can activate autonomous delivery, one
-separate local-only prerequisite must implement and qualify both the
-authoritative controller and terminal containment under `.codex/**`. Activation
-also requires the server enforcement above to be available and configured.
+The maintainer-owned controller, validators, evidence contracts, and terminal
+containment under ignored `.codex/**` are qualified independently of candidate
+content. The `Deliver slice <ID>` instruction now grants standing authority for
+one bounded slice transaction, including exact-head merge and cleanup when all
+prerequisites pass. Passing public CI alone is still not merge authorization,
+and current strict-enforcement absence means the transaction stops before
+mutation. Activation of the transaction policy does not claim automatic merge
+mutation works in the repository today.

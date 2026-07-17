@@ -7,12 +7,15 @@ through completed horizontal work packages. WP0-WP9 remain capability ownership
 buckets and issue parents. A functional slice crosses whichever packages are
 needed to produce one executable, reviewable result.
 
-The sequence below is the default implementation order. Each row becomes a
-slice tracker, one `slice/...` branch, and one ready pull request. The tracker
-contains the final ticket list and may narrow the outcome further before work
-starts. If a row would exceed an `L` review, divide it into suffixed slices such
-as `F05a` and `F05b`, each with an independent supported demonstration. Never
-divide it into unreviewable horizontal-layer PRs.
+The sequence below is the default implementation order. Each row becomes one
+slice tracker and one bounded delivery transaction. The transaction may use one
+`slice/...` branch and pull request or sequential independently safe vertical
+increment branches and pull requests. The tracker contains the final ticket
+list and may narrow the outcome before work starts. Divide the outcome into
+suffixed slices such as `F05a` and `F05b` only when they are genuinely distinct
+supported outcomes. Split a transaction into additional pull requests only for
+distinct vertical increments or a required security or privacy separation,
+never into horizontal layers or merely because review found more work.
 
 The authoritative branch, issue, and review mechanics are defined in
 [functional slice delivery](../development/slice-delivery.md).

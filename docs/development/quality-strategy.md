@@ -41,6 +41,14 @@ current private plan cannot enforce the required server policy. The linked
 boundary document defines the complete trust, recovery, containment, and
 activation prerequisites.
 
+Within an authorized `Deliver slice` transaction, each vertical increment is
+reviewed and qualified at its exact head. CI failures and C1, C2, or human
+review findings are remediated on the same branch and pull request; every new
+head repeats the affected review and qualification. A new pull request is for a
+distinct vertical outcome or a separation required by security or privacy, not
+for finding count or routine remediation. The activation increment receives
+the complete end-to-end acceptance review and closes the slice tracker.
+
 ## Code standards
 
 - Prefer small modules with one reason to change.
@@ -155,3 +163,9 @@ A change is done only when:
 - upgrade and rollback impact is understood;
 - user-facing changes have release notes;
 - no required work is hidden in an untracked local artifact.
+
+A slice transaction is done only after its activation outcome and every merge
+are verified on fetched remote `main`, intended issue and Project state is
+reconciled, and merged branches are removed. A ready pull request or partially
+merged transaction is not done; resume partial delivery from current `main` or
+record a genuine external `BLOCKED` state.

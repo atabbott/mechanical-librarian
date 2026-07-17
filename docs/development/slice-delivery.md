@@ -48,8 +48,9 @@ tooling change remains focused work.
 
 ## Unit of delivery
 
-Every planned new-functionality slice branch has exactly one slice tracker
-issue. The tracker states:
+Every planned new-functionality slice has exactly one slice tracker issue. The
+tracker is the outcome and lifecycle unit; a pull request is a bounded merge
+unit. The tracker states:
 
 - the observable operator or contributor outcome;
 - the executable demonstration path;
@@ -66,36 +67,106 @@ before it reaches `Ready`; do not close part of a ticket in one slice and carry
 hidden remainder into another. Non-slice tickets use `Not applicable` in the
 Project `Delivery slice` field.
 
+A small slice may still use one branch and pull request. A larger slice uses
+sequential increments. Each increment is a complete, independently safe
+vertical change that crosses only the layers needed for one observable step.
+It may close constituent tickets only when their acceptance criteria are fully
+satisfied. The final activation increment composes and demonstrates the whole
+supported outcome and alone closes the slice tracker.
+
+An increment must not expose an incomplete authority path, incompatible
+persisted state, unsupported public contract, or behavior that depends on a
+later pull request for safety. Pre-activation capability remains unreachable,
+explicitly disabled, or report-only under a documented contract. A horizontal
+type, repository, migration, or adapter primitive is not an increment merely
+because it can merge alone.
+
+## Autonomous delivery transaction
+
+The instruction `Deliver slice <ID>` authorizes one bounded autonomous delivery
+transaction for the selected Ready tracker. `Deliver and merge slice <ID>` is
+an explicit synonym. Within the frozen outcome and exclusions, the transaction
+may:
+
+- plan ordered vertical increments;
+- create purpose-based branches and draft or ready pull requests;
+- push commits, obtain required review, remediate findings and CI failures, and
+  repeat invalidated exact-head evidence;
+- merge each exact reviewed and qualified head into `main` when every mutation
+  prerequisite is available;
+- delete merged delivery branches; and
+- reconcile constituent tickets, the slice tracker, and Project fields.
+
+Standing authority never permits check or review bypasses, administrative or
+forced merges, force-pushing `main`, weakening a contract to pass a gate,
+closing partially satisfied work, release publication, production-service
+access, or unrelated changes.
+
+Trusted merge control, validators, and evidence are maintainer-owned and remain
+ignored under `.codex/**`, independently qualified from candidate content. The
+current private account plan cannot provide the required strict server
+enforcement. Until the linked external prerequisite is satisfied, autonomous
+delivery returns structured `BLOCKED` before mutation. This policy grants the
+standing transaction authority but does not claim automatic mutation works in
+the current repository.
+
+The transaction has two terminal results:
+
+- `MERGED`: every increment and the activation outcome are verified on `main`,
+  all intended closing references took effect, Project state is reconciled,
+  and merged branches are removed; or
+- `BLOCKED`: a concrete external prerequisite or maintainer decision prevents
+  safe progress after in-scope recovery has been exhausted. The blocker and
+  exact state already merged to `main` are recorded on the slice tracker.
+
+An open pull request, review handoff, locally passing branch, or partially
+merged transaction is not a terminal result.
+
 ## Branch workflow
 
 1. Select the highest-priority unblocked slice tracker in `Ready`.
 2. Confirm that every ticket the slice intends to close is sufficiently
    specified and mapped to that slice in the Project.
-3. Create one branch from current `main` named `slice/<slice-id>-<short-slug>`,
-   for example `slice/f03-synthetic-inventory`.
-4. Move the slice tracker to `In progress`. Constituent tickets may move to
-   `In progress` as their work begins, but the branch remains the shared unit of
-   delivery.
-5. Implement the end-to-end path in focused commits. Intermediate commits may
-   complete individual contracts, but they are not separate delivery branches
-   or pull requests.
-6. Rebase or merge current `main` before final verification. Resolve conflicts
-   without weakening the slice contract or hiding unrelated changes.
-7. Run the complete repository gates plus the slice's demonstration and
-   failure/recovery checks from a clean checkout.
-8. Open the pull request only when the slice outcome and exit criteria are
-   complete. Mark the slice tracker and completed constituent tickets
-   `In review`.
-9. The pull request uses an auto-closing reference for the slice tracker and
-   each constituent ticket whose full acceptance criteria it satisfies.
-10. Merge only after review confirms the observable outcome, safety boundaries,
-    tests, documentation, migrations, and recovery behavior. Delete the slice
-    branch after merge.
+3. Record a one-increment plan or ordered vertical increments and move the
+   tracker to `In progress`.
+4. Create the first branch from current `main` as
+   `slice/<slice-id>-<increment>-<short-slug>`. A one-increment slice may omit
+   the increment segment.
+5. Implement and demonstrate the bounded vertical increment in focused commits.
+   A draft may expose progress or obtain remote CI, but must not claim
+   completion or carry premature closing references.
+6. Bring the branch onto current `main`, then freeze the head. Run the required
+   review and exact-head public and local qualification.
+7. Mark the pull request ready and use auto-closing references only for
+   constituent tickets fully completed by that increment. Only the activation
+   pull request closes the slice tracker.
+8. Remediate CI failures and all C1, C2, or human findings on the same branch
+   and pull request. Each changed head invalidates affected evidence and repeats
+   review and qualification. Finding count is not a reason to create a new pull
+   request.
+9. Create another pull request only for a distinct vertical outcome or a
+   security or privacy boundary that requires separation.
+10. Immediately before mutation, use the ignored trusted control to repeat all
+    race-sensitive gates and require the expected exact head. If strict server
+    enforcement is unavailable, return structured pre-mutation `BLOCKED`.
+11. After a permitted merge, verify the merge result on fetched remote `main`,
+    delete the merged branch, and reconcile closed tickets and Project status.
+12. Refresh from `main` and repeat from step 4 for the next increment. Do not
+    maintain an obsolete unmerged stack.
+13. In the activation increment, run the complete slice demonstration and
+    aggregate qualification, close the tracker and remaining fully satisfied
+    tickets, then verify the `MERGED` terminal state.
 
-Draft pull requests are not the normal progress-reporting mechanism. Use the
-Project, issue comments, and focused commits to expose progress. A draft may be
-opened when remote CI or an external review is necessary to finish the slice,
-but it must not be presented as ready for review and must not close tickets.
+### Partial-transaction recovery
+
+Every verified increment already on `main` is durable progress; do not roll it
+back merely because a later increment is delayed or fails. Keep the tracker
+`In progress`, or move it to `Blocked` only for a concrete external dependency
+or maintainer decision. Record the last verified merge and commit, remaining
+increments, invalidated evidence, and exact restart point. Resume with a new
+branch from current `main`. If the outcome itself must change, return the
+tracker to triage and revise it visibly; never report a partial transaction as
+`MERGED` or `Done`.
 
 ## Review boundary
 
@@ -116,22 +187,24 @@ the following without reconstructing behavior from isolated commits:
 - Which automated and manual evidence proves the exit criteria?
 
 A pull request that only adds a horizontal type, repository, adapter method, or
-workflow primitive is not a completed functional slice unless that primitive is
-itself the documented executable outcome. Keep such work on the active slice
-branch until the end-to-end behavior is reviewable.
+workflow primitive is not a safe increment unless that primitive is itself a
+documented executable outcome. Keep it with the vertical behavior that proves
+its safety and usefulness.
 
 ## Scope control
 
-- One `slice/` branch and one ready pull request deliver one new-functionality
-  slice.
-- A branch may close multiple tickets only when all contribute to the same
-  demonstrated outcome.
+- One slice tracker defines one outcome; one or more sequential `slice/`
+  branches and ready pull requests may deliver it.
+- An increment may close multiple tickets only when it satisfies each in full
+  through the same bounded demonstrated step.
 - Unrelated refactoring, opportunistic cleanup, and future-slice scaffolding are
   excluded.
-- A slice expected to exceed an `L` review should be divided into smaller
-  independently demonstrable slices before implementation starts.
+- Split a slice only when the resulting trackers describe genuinely distinct
+  outcomes; split pull requests only at safe vertical or required security or
+  privacy boundaries.
 - Stacked slice branches require an explicit dependency and must remain
-  independently reviewable; they are exceptional, not the default.
+  independently safe and reviewable; sequential merge-and-refresh is the
+  default.
 - Fixes, corrections, security work, governance, tooling, dependency-only
   changes, maintenance, and standalone tickets remain focused PRs outside the
   slice.
@@ -175,7 +248,10 @@ A new-functionality slice is done only when:
 - operator and contributor documentation describes the delivered behavior;
 - changelog and generated contracts are current;
 - the branch contains no unrelated or deferred work disguised as TODOs; and
-- the ready pull request is reviewable as one coherent outcome.
+- the activation pull request and accumulated increments are reviewable as one
+  coherent outcome; and
+- the complete outcome, merge results, tracking state, and cleanup are verified
+  in the `MERGED` terminal state.
 
 Merging a slice does not imply that every contributing work package is
 complete. It proves only the bounded cross-package outcome named by the slice.

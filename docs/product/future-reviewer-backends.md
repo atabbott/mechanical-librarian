@@ -241,7 +241,7 @@ synthetic cohort replay, and a disposable end-to-end hosted shadow run.
 
 ### Delivery boundary
 
-One future slice branch and one ready pull request deliver configuration,
+One future slice transaction delivers configuration,
 credential handling, the adapter, owner setup and status, immutable provenance,
 failure handling, qualification fixtures, documentation, generated contracts,
 changelog, and the risk-proportionate security review. It excludes generic
@@ -315,7 +315,7 @@ privacy and credential checks, hostile-output suite, replayable cohort report,
 and end-to-end shadow run named by the tracker.
 
 **Dependencies and closure:** Depends on the tracker dependencies and closes
-only in the tracker pull request.
+only in the activation increment that completes the tracker outcome.
 
 ## Deliverable B: Externally operated compatible reviewer
 
@@ -459,7 +459,7 @@ disposable end-to-end external-server shadow run.
 
 ### Delivery boundary
 
-One future slice branch and one ready pull request deliver configuration, the
+One future slice transaction delivers configuration, the
 compatibility profile, the bounded network client, capability and identity
 preflight, adapter and diagnostics, immutable provenance, qualification
 fixtures, documentation, generated contracts, changelog, threat-model updates,
@@ -528,7 +528,7 @@ network-boundary and credential checks, hostile-output suite, replayable cohort
 report, and disposable external-server shadow run named by the tracker.
 
 **Dependencies and closure:** Depends on the tracker dependencies and closes
-only in the tracker pull request.
+only in the activation increment that completes the tracker outcome.
 
 ## Planning disposition
 
