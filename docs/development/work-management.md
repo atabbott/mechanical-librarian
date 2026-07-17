@@ -266,11 +266,15 @@ acceptance criteria. The tracker moves to `In review` for the activation
 increment after the complete supported demonstration and exit criteria pass.
 
 Ready slice increment pull requests use GitHub auto-closing references for
-every constituent ticket completed by that increment. The activation pull
-request also closes the slice tracker. The linked-work workflow rejects
-placeholder, nonexistent, closed, or missing references. A horizontal ticket
-commit alone does not justify a separate ready pull request; each increment
-must be independently safe and vertically demonstrable.
+every constituent ticket completed by that increment. Each ready
+non-activation increment must fully satisfy and natively close at least one
+constituent. The activation pull request may satisfy that required closing
+reference with the slice tracker and is the only increment that closes it. If
+an increment cannot meet that boundary, keep it draft and re-slice the
+increment or refine the ticket plan before ready review. The linked-work
+workflow rejects placeholder, nonexistent, closed, or missing references. A
+horizontal ticket commit alone does not justify a separate ready pull request;
+each increment must be independently safe and vertically demonstrable.
 
 The gate uses GitHub-recognized closing-link metadata rather than parsing pull
 request Markdown. Examples, quotations, fenced code, manual links, nonexistent

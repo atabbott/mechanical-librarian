@@ -104,6 +104,11 @@ decision with rationale and review.
   acceptance criteria they satisfy. The activation increment proves the whole
   supported outcome and alone closes the slice tracker. Incomplete behavior
   remains unreachable, disabled, or report-only until activation.
+- Every ready increment pull request must fully satisfy and natively close at
+  least one ticket: a non-activation increment closes at least one constituent,
+  while the activation increment may satisfy this requirement by closing the
+  tracker. If it cannot, keep the pull request draft and re-slice the increment
+  or refine the ticket plan before ready review.
 - Finish only when the complete slice is verified on `main` and tracking and
   branch cleanup are reconciled, or a genuine external prerequisite or
   maintainer decision blocks safe progress. A partially merged transaction is

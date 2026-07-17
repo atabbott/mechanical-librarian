@@ -74,9 +74,13 @@ Project `Delivery slice` field.
 A small slice may still use one branch and pull request. A larger slice uses
 sequential increments. Each increment is a complete, independently safe
 vertical change that crosses only the layers needed for one observable step.
-It may close constituent tickets only when their acceptance criteria are fully
-satisfied. The final activation increment composes and demonstrates the whole
-supported outcome and alone closes the slice tracker.
+Before it becomes ready, each increment must fully satisfy and natively close
+at least one ticket. A non-activation increment closes at least one constituent
+whose acceptance criteria it fully satisfies. The final activation increment
+may satisfy the requirement by closing the slice tracker; it composes and
+demonstrates the whole supported outcome and alone closes that tracker. If no
+such closing reference is yet valid, keep the pull request draft and re-slice
+the increment or refine the ticket plan before ready review.
 
 An increment must not expose an incomplete authority path, incompatible
 persisted state, unsupported public contract, or behavior that depends on a
@@ -143,9 +147,11 @@ merged transaction is not a terminal result.
    completion or carry premature closing references.
 6. Bring the branch onto current `main`, then freeze the head. Run the required
    review and exact-head public and local qualification.
-7. Mark the pull request ready and use auto-closing references only for
-   constituent tickets fully completed by that increment. Only the activation
-   pull request closes the slice tracker.
+7. Mark the pull request ready only when it fully completes a supported native
+   closing reference. A non-activation increment closes at least one completed
+   constituent; the activation increment may use the tracker and alone closes
+   it. Otherwise keep the pull request draft and re-slice the increment or
+   refine its ticket plan before ready review.
 8. Remediate CI failures and all C1, C2, or human findings on the same branch
    and pull request. Each changed head invalidates affected evidence and repeats
    review and qualification. Finding count is not a reason to create a new pull
@@ -201,6 +207,9 @@ its safety and usefulness.
 
 - One slice tracker defines one outcome; one or more sequential `slice/`
   branches and ready pull requests may deliver it.
+- Every ready increment closes at least one fully satisfied ticket. The tracker
+  may satisfy this requirement only for the activation increment; every other
+  increment closes at least one constituent.
 - An increment may close multiple tickets only when it satisfies each in full
   through the same bounded demonstrated step.
 - Unrelated refactoring, opportunistic cleanup, and future-slice scaffolding are
