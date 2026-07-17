@@ -253,7 +253,7 @@ A new-functionality slice is done only when:
 - persisted changes include migrations and recovery evidence;
 - operator and contributor documentation describes the delivered behavior;
 - changelog and generated contracts are current;
-- the branch contains no unrelated or deferred work disguised as TODOs; and
+- the branch contains no unrelated or deferred work disguised as TODOs;
 - the activation pull request and accumulated increments are reviewable as one
   coherent outcome; and
 - the complete outcome, merge results, tracking state, and cleanup are verified
