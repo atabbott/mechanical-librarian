@@ -45,11 +45,12 @@ contract.
 
 The local-only controller is the final mutation boundary. Before it can merge,
 it must independently bind the repository, pull request, base ref and commit,
-exact reviewed head, live required checks, review state, linked issue, and
-approved local review and qualification evidence. Immediately before mutation
-it must repeat all race-sensitive gates and use GitHub's expected-head merge
-guard. It must not offer an administrator, bypass, force, or
-protection-weakening path.
+exact reviewed head, live required checks, resolved review conversations,
+linked issue, and qualified autonomous local and connector review evidence.
+GitHub approving reviews are deliberately not part of this gate. Immediately
+before mutation it must repeat all race-sensitive gates and use GitHub's
+expected-head merge guard. It must not offer an administrator, bypass, force,
+or protection-weakening path.
 
 After mutation, the local terminal control must prove that the returned merge
 commit has the qualified base as its sole parent, is contained by remote
@@ -70,12 +71,20 @@ Candidate code is evidence to inspect, never merge authority. In particular:
 
 ## Activation and external prerequisite
 
-Autonomous merging requires strict server-enforced up-to-date checks,
-approving reviews that are dismissed on new commits, resolved conversations,
-administrative enforcement, no bypass actors, and disabled force pushes and
-branch deletion. The repository's current private account plan does not make
-the required enforcement available. The authoritative local controller must
-therefore return structured `BLOCKED` before mutation. Issue #267 owns this
+Autonomous merging requires server-enforced pull-request-only merging with
+exactly zero approving reviews and no code-owner or last-push approval gate,
+strict up-to-date checks, resolved conversations, administrative enforcement,
+an explicit structurally closed empty user/team/app pull-request bypass object,
+and disabled force pushes and branch deletion. Classic branch protection is the
+only supported server-enforcement source: GitHub's effective branch-rules query
+must prove that no active repository- or organization-level ruleset applies to
+`main`. Any applicable rule or unavailable, malformed, or incomplete ruleset
+evidence blocks before mutation rather than trying to evaluate layered rulesets.
+Requiring zero approvals prevents a human gate from silently reappearing;
+exact-head autonomous review evidence remains mandatory in the trusted local
+control plane. The repository's current private account plan does not make the
+remaining required enforcement available. The authoritative local controller
+must therefore return structured `BLOCKED` before mutation. Issue #267 owns this
 external plan and server-enforcement prerequisite; no delivery transaction may
 change visibility, protection, or plan settings as an implied workaround.
 

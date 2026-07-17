@@ -42,12 +42,13 @@ required server policy. The linked boundary document defines the complete
 trust, recovery, containment, and mutation prerequisites.
 
 Within an authorized `Deliver slice` transaction, each vertical increment is
-reviewed and qualified at its exact head. CI failures and C1, C2, or human
-review findings are remediated on the same branch and pull request; every new
-head repeats the affected review and qualification. A new pull request is for a
-distinct vertical outcome or a separation required by security or privacy, not
-for finding count or routine remediation. The activation increment receives
-the complete end-to-end acceptance review and closes the slice tracker.
+reviewed and qualified at its exact head. CI failures and C1, C2, or optional
+human-requested review findings are remediated on the same branch and pull
+request; every new head repeats the affected review and qualification. A new
+pull request is for a distinct vertical outcome or a separation required by
+security or privacy, not for finding count or routine remediation. The
+activation increment receives the complete end-to-end acceptance review and
+closes the slice tracker.
 
 More generally, when a required gate fails on any active pull request, keep the
 smallest bounded root-cause fix on that pull request even if the exposed defect
