@@ -85,15 +85,33 @@ decision with rationale and review.
   lockfile requirements. Durable architecture or trust-boundary changes still
   require their governing ADR or security review.
 - Before starting new slice functionality, identify a `Ready` slice tracker
-  with an observable executable outcome and complete exit criteria. Create one
-  branch from current `main` named `slice/<slice-id>-<short-slug>` and keep the
-  contracts, adapters, persistence, interfaces, tests, migrations, and
-  documentation required for that outcome together.
-- Raise the slice pull request when the end-to-end outcome is demonstrable and
-  all slice exit criteria pass. It closes the slice tracker and only those
-  constituent tickets whose full acceptance criteria are satisfied.
-- Use focused commits within a slice branch. Do not turn those commits into
-  horizontal PRs or hide partial ticket acceptance in follow-up work.
+  with an observable executable outcome and complete exit criteria. Delivery
+  may use one pull request or sequential, independently safe vertical
+  increments. Each increment starts from current `main`, is reviewed and
+  qualified at its exact head, and normally merges before the next begins.
+- `Deliver slice <ID>` is standing authority to complete that bounded
+  transaction: create branches and pull requests, remediate CI and review
+  findings on the same branch and pull request, merge an exact qualified head,
+  delete merged branches, and reconcile issue and Project state. `Deliver and
+  merge slice <ID>` is an explicit synonym. The authority does not permit
+  bypasses, force pushes, administrative merges, weakened safety, releases, or
+  production-service use.
+- A new pull request is reserved for a distinct vertical outcome or a required
+  security or privacy separation. A new head on the active pull request
+  invalidates affected review and qualification evidence and must be reviewed
+  and qualified again.
+- Non-activation increments close only constituent tickets whose complete
+  acceptance criteria they satisfy. The activation increment proves the whole
+  supported outcome and alone closes the slice tracker. Incomplete behavior
+  remains unreachable, disabled, or report-only until activation.
+- Finish only when the complete slice is verified on `main` and tracking and
+  branch cleanup are reconciled, or a genuine external prerequisite or
+  maintainer decision blocks safe progress. A partially merged transaction is
+  recoverable `In progress` work, not a rollback trigger or a completed slice.
+- The trusted controller, validators, and evidence remain maintainer-owned and
+  ignored under `.codex/**`. Without strict server enforcement on the current
+  private plan, autonomous delivery returns structured `BLOCKED` before
+  mutation. The standing transaction authority does not override that gate.
 - After the initial product has stable executable seams, maintainers may deliver
   small bounded additions as ordinary `feature/` PRs. Cross-cutting, high-risk,
   or independently demonstrable capabilities continue to use slices.

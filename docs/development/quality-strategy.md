@@ -35,11 +35,25 @@ tracked gate contract.
 
 Passing public CI is necessary but is not merge authorization. Authoritative
 merge and validation controls remain maintainer-owned and ignored under
-`.codex/**`, independently pinned from candidate content. Autonomous delivery
-remains non-activating and must return `BLOCKED` before mutation while the
-current private plan cannot enforce the required server policy. The linked
-boundary document defines the complete trust, recovery, containment, and
-activation prerequisites.
+`.codex/**`, independently pinned from candidate content. Standing `Deliver
+slice` transaction authority is active, but automatic mutation must return
+`BLOCKED` before mutation while the current private plan cannot enforce the
+required server policy. The linked boundary document defines the complete
+trust, recovery, containment, and mutation prerequisites.
+
+Within an authorized `Deliver slice` transaction, each vertical increment is
+reviewed and qualified at its exact head. CI failures and C1, C2, or human
+review findings are remediated on the same branch and pull request; every new
+head repeats the affected review and qualification. A new pull request is for a
+distinct vertical outcome or a separation required by security or privacy, not
+for finding count or routine remediation. The activation increment receives
+the complete end-to-end acceptance review and closes the slice tracker.
+
+More generally, when a required gate fails on any active pull request, keep the
+smallest bounded root-cause fix on that pull request even if the exposed defect
+is distinct from its principal outcome. Split it out only when it is genuinely
+a different deliverable that requires separation, or when security or privacy
+requires an independent boundary.
 
 ## Code standards
 
@@ -155,3 +169,9 @@ A change is done only when:
 - upgrade and rollback impact is understood;
 - user-facing changes have release notes;
 - no required work is hidden in an untracked local artifact.
+
+A slice transaction is done only after its activation outcome and every merge
+are verified on fetched remote `main`, intended issue and Project state is
+reconciled, and merged branches are removed. A ready pull request or partially
+merged transaction is not done; resume partial delivery from current `main` or
+record a genuine external `BLOCKED` state.

@@ -7,12 +7,19 @@ through completed horizontal work packages. WP0-WP9 remain capability ownership
 buckets and issue parents. A functional slice crosses whichever packages are
 needed to produce one executable, reviewable result.
 
-The sequence below is the default implementation order. Each row becomes a
-slice tracker, one `slice/...` branch, and one ready pull request. The tracker
-contains the final ticket list and may narrow the outcome further before work
-starts. If a row would exceed an `L` review, divide it into suffixed slices such
-as `F05a` and `F05b`, each with an independent supported demonstration. Never
-divide it into unreviewable horizontal-layer PRs.
+The sequence below is the default implementation order. Each row becomes one
+slice tracker and one bounded delivery transaction. The transaction may use one
+`slice/...` branch and pull request or sequential independently safe vertical
+increment branches and pull requests. The tracker contains the final ticket
+list and may narrow the outcome before work starts. Divide the outcome into
+suffixed slices such as `F05a` and `F05b` only when they are genuinely distinct
+supported outcomes. Split a transaction into additional pull requests only for
+distinct vertical increments or a required security or privacy separation,
+never into horizontal layers or merely because review found more work.
+
+Each table's increment-branch column gives the conventional branch stem for a
+one-increment slice. A multi-increment transaction appends a short increment
+slug to that stem; it does not reuse one branch for the whole transaction.
 
 The authoritative branch, issue, and review mechanics are defined in
 [functional slice delivery](../development/slice-delivery.md).
@@ -40,15 +47,15 @@ Current focused work includes:
   #135, and #154;
 - durability and architecture corrections #127, #130, and #131 before F01;
 - port, scope, and configuration corrections #129, #132, and #134 before F03;
-- evidence-bound correction #133 before F06; and
-- lifecycle and authorization correction #128 before F10a; and
+- evidence-bound correction #133 before F06;
+- lifecycle and authorization correction #128 before F10a;
 - frontend architecture decision #192 before F16a.
 
 ## Delivery checkpoint 0.1.0: trustworthy report-only product spine
 
 Production metadata and cover writes remain disabled throughout these slices.
 
-| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
+| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Increment branch stem/example |
 | --- | --- | --- | --- | --- |
 | F01 Durable state check | #136 | A CLI diagnostic creates or opens application state, applies migrations atomically, records and reads a safe audit event, and reports failure without exposing a database path. | #51-#53 | `slice/f01-durable-state-check` |
 | F02 Recoverable job heartbeat | #137 | A bounded synthetic dependency graph pins an immutable workflow-definition version and graph digest, schedules the complete eligible set with stable deduplication, survives worker, scheduler, and process restart under leases and fencing, persists nonterminal `waiting` separately from `retry_wait`, and advances fan-in only after independently validating expected outcomes. An incompatible graph creates linked superseding or replanned work whose transitively affected downstream checkpoints are ineligible for reuse or current applicability without mutating or erasing original history. | #54-#58, #126 | `slice/f02-recoverable-job-heartbeat` |
@@ -79,7 +86,7 @@ This checkpoint proves one deliberately narrow, report-only path from local and
 provider title evidence to one persistent undecided review case. It grants no
 human or AI decision, approval, production write, or destructive authority.
 
-| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
+| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Increment branch stem/example |
 | --- | --- | --- | --- | --- |
 | F09a Provider-neutral title proposal | #145 | `synthetic-title-proposal-report` runs one of a closed set of generated, licence-safe scenarios through the real F06 EPUB child, an in-memory Audiobookshelf-shaped synthetic snapshot, and a deterministic fake behind the provider-neutral port. It persists one immutable `synthetic_preview` proposal set for every valid scenario, including typed zero-proposal results, and demonstrates replay plus same-lineage supersession. The mode is identity-bearing and structurally derives `production_applicable=false`; no live target, configured media, credential, network, review, approval, apply, or write surface is accepted or constructed. | #222 | `slice/f09a-title-proposal` |
 | F09b Bounded Hardcover title evidence | #204 | `hardcover-title-proposal-report` runs only the fixed generated `agree-empty` case. Omitting its optional secret-file reference constructs no adapter/client and performs no secret access, DNS, or egress; the enabled seam uses one fixed read-only query and endpoint with finite bounds. A structural fake and the exact installed artifact qualify the closed live title-response seam. It changes no `config-v1` field, retains no raw provider traffic or upstream ID, and preserves local evidence on provider failure. | #223 | `slice/f09b-hardcover-title` |
@@ -177,7 +184,7 @@ trustworthy live title proposal or an exact typed zero-proposal result. It does
 not publish a release or add review admission, a human or AI decision, apply,
 target or media writes, destructive authority, or a tag.
 
-| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
+| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Increment branch stem/example |
 | --- | --- | --- | --- | --- |
 | F07a EPUB opening-matter evidence report | #143 | One safely readable EPUB produces a bounded transient opening-matter claim report with exact provenance or a typed no-applicable/rejected outcome. | #30, #31, #188; #25 and #26 are non-closing inputs | `slice/f07a-epub-opening-evidence` |
 | F07b Durable EPUB evidence round trip | #228 | Completed F07a evidence executes durably for one isolated target and snapshot, survives restart, reuses compatible results, supersedes stale applicability, and remains inspectable without persistence of decoded content. | #32; #25 is a non-closing input | `slice/f07b-durable-epub-evidence` |
@@ -251,7 +258,7 @@ external Hardcover catalogue lineage.
 Write-capable slices use fake or disposable services until their explicit
 canary slice. Destructive operations remain outside ordinary review and apply.
 
-| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Expected branch |
+| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Increment branch stem/example |
 | --- | --- | --- | --- | --- |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
 | F09c Work identity fallback | #205 | Bounded Open Library work/edition discovery and optional LibraryThing ISBN-family clustering preserve ambiguity, lineage, independent-provider limits, and disabled/failure behavior. | #210, #211; unresolved prerequisite #68 | `slice/f09c-work-identity-fallback` |
@@ -313,8 +320,9 @@ slice placement, or the 1.0.0 exit.
 
 ## Planning rules
 
-- The highest-priority unblocked slice determines execution order across work
-  packages.
+- A named `Deliver slice <ID>` instruction selects that unblocked Ready tracker.
+  Without a named ID, the highest-priority unblocked slice determines execution
+  order across work packages.
 - The Project `Delivery slice` field records each new-functionality ticket's
   primary slice. Focused work uses `Not applicable`.
 - Slice trackers carry the exact closure list; the issue ranges above are

@@ -61,19 +61,22 @@ changes.
 ## Pull requests
 
 During the initial application build, new product functionality is delivered as
-one functional slice per branch and ready pull request. Select a `Ready` slice
-tracker, branch from current `main` as `slice/<slice-id>-<short-slug>`, and keep
-the cross-layer work together until the documented outcome is executable.
+one functional slice outcome per tracker. Select a `Ready` tracker and use one
+pull request or sequential, independently safe vertical increments. Start each
+increment from current `main`, normally merge it before starting the next, and
+reserve closure of the slice tracker for the activation increment that proves
+the complete documented outcome.
 
 Fixes, security corrections, documentation, tooling, dependency updates,
 maintenance, and standalone tickets use focused purpose branches and
 ticket-level pull requests instead. Do not create a slice tracker merely to
 rename one of those changes.
 
-A new-functionality slice pull request must:
+A new-functionality slice increment pull request must:
 
-- close the slice tracker and only fully completed constituent tickets;
-- demonstrate the observable outcome through a supported surface;
+- close only fully completed constituent tickets, plus the slice tracker when
+  it is the activation increment;
+- demonstrate its independently safe vertical step through a supported surface;
 - explain the problem and intended behavior;
 - identify user-visible, data, security, and operational impact;
 - include tests for success, failure, retry, and idempotency where relevant;
@@ -83,9 +86,13 @@ A new-functionality slice pull request must:
 - pass formatting, linting, typing, unit, contract, integration, security,
   documentation, and container-build checks.
 
-Reviewers should be able to understand the change without reconstructing its
-intent from implementation details or from a chain of partial pull requests.
-The complete workflow and permitted exceptions are defined in
+Reviewers should be able to understand each increment and its place in the
+frozen slice outcome without reconstructing intent from horizontal fragments.
+CI failures and review findings remain on that increment's branch and pull
+request; after remediation, the new exact head repeats affected review and
+qualification. A new pull request represents a distinct vertical outcome or a
+required security or privacy separation. The complete workflow and permitted
+exceptions are defined in
 [functional slice delivery](docs/development/slice-delivery.md).
 
 ## Defects and bugs

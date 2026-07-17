@@ -16,12 +16,14 @@ only for eligible trivial cleanup described in the work-management policy.
 
 ## Delivery mode
 
-- [ ] New-functionality slice
+- [ ] New-functionality slice increment
 - [ ] Focused ticket: defect, bug, security, documentation, tooling, dependency, maintenance, or standalone work
 
 Slice tracker, when applicable: #
 
-Additional constituent tickets closed in full by a slice:
+Increment and activation status, when applicable:
+
+Constituent tickets closed in full by this increment:
 
 - Closes #
 
@@ -33,8 +35,9 @@ Branch: `slice/`, `fix/`, `feature/`, `docs/`, `chore/`, or another purpose-base
 
 ## Functional outcome
 
-For a slice, describe what a user or operator can now do through a supported
-CLI, API, browser, or container surface. For focused ticket work, describe the
+For a slice increment, describe its independently safe vertical step and how it
+advances the frozen slice outcome. Identify the activation demonstration when
+this increment closes the tracker. For focused ticket work, describe the
 corrected or bounded outcome.
 
 Demonstration steps:
@@ -73,7 +76,7 @@ List the exact commands and outcomes:
 ## Review checklist
 
 - [ ] The selected delivery mode is accurate; fixes and standalone work have not been relabelled as slices.
-- [ ] If this is a slice, it completes the documented functionality and exit criteria through a supported demonstration.
+- [ ] If this is a slice increment, it is independently safe and demonstrable; if it closes the tracker, it completes the documented outcome and exit criteria.
 - [ ] Every auto-closed ticket is satisfied in full; no partial acceptance is hidden in follow-up work.
 - [ ] The relevant demonstration or reproduction works from a clean checkout.
 - [ ] The change is narrowly scoped and contains no unrelated refactoring.

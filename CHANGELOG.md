@@ -7,6 +7,15 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Adopted bounded `Deliver slice` transactions for new functionality. A slice
+  may now merge through sequential, independently safe vertical increments;
+  constituent tickets close when complete and only the activation increment
+  closes the slice tracker. CI failures and C1, C2, or human review findings
+  are remediated on the same pull request and the changed head is re-reviewed
+  and requalified. Trusted merge controls remain maintainer-owned and ignored;
+  the current private-plan enforcement gap returns structured `BLOCKED` before
+  mutation, so this policy does not yet make automatic merging operational.
+
 - Added `epub-opening-evidence`, the durable F07b round trip from a path-free
   inventory selector to restart-reusable immutable opening evidence. Inventory
   now atomically persists validated private logical EPUB binding-set revisions,
@@ -143,6 +152,10 @@ versioning after the first public release.
 
 ### Fixed
 
+- Concurrent first-run state initialization now waits for the winning
+  no-replace hard-link publication to settle even when the loser observes the
+  target before attempting its own link, preventing the winner's staging unlink
+  from invalidating the loser's stable-copy verification.
 - Evidence persistence now rejects exact normalized `credential` and
   `credentials` labels before construction or strict deserialization while
   preserving non-credential near misses.

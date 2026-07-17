@@ -1298,6 +1298,11 @@ def publish_staged_state(staged: Path, target: Path) -> bool:
     _fsync_file(staged)
     target_before = _state_snapshot(target)
     if "" in target_before:
+        # The target may have appeared after this initializer's original
+        # absence check but before its no-replace link attempt. Settle the
+        # winner's staging unlink before the caller validates a stable copy,
+        # just as the FileExistsError race path does below.
+        _wait_for_competing_publication(target)
         return False
     if target_before:
         raise SchemaError("recovery state exists without a database")

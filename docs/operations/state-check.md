@@ -40,6 +40,7 @@ action.
 
 Concurrent first-time invocations reuse the one complete published database.
 A losing initializer waits boundedly for the winner to finish its durable
-no-replace publication before validating a stable copy. If that publication
-does not settle, the loser fails safely without replacing or removing the
-published target.
+no-replace publication before validating a stable copy, whether it observes the
+winner before attempting its own link or loses the link race directly. If that
+publication does not settle, the loser fails safely without replacing or
+removing the published target.
