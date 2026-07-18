@@ -112,16 +112,61 @@ closing partially satisfied work, release publication, production-service
 access, or unrelated changes.
 
 Trusted merge control, validators, and evidence are maintainer-owned and remain
-ignored under `.codex/**`, independently qualified from candidate content. The
-server contract requires pull-request-only merging with exactly zero approving
-reviews, a structurally closed empty pull-request bypass object, and no active
-repository or organization ruleset applying to `main`; autonomous local and
-connector review evidence remains mandatory and exact-head. The current private
-account plan cannot provide the required strict server enforcement. The standing
-transaction authority is active. Until the linked external prerequisite is
-satisfied, its automatic mutation step returns
-structured `BLOCKED` before mutation. Activating the authority does not claim
-automatic mutation works in the current repository.
+ignored under `.codex/**`, independently qualified from candidate content.
+Private Free-plan delivery uses the receipt-bound
+`CLIENT_ENFORCED_FREE_PLAN` mode. Protection and ruleset responses are retained
+as observations but do not authorize or block delivery. Autonomous local and
+connector review evidence remains mandatory and exact-head. Every successful
+receipt records `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`, acknowledging that a
+credentialed actor can change or race `main` and that the conditional merge
+locks only the pull-request head, not the base SHA.
+The live PR head must also name the exact bounded repository and delivery
+branch. Each mutating invocation internally persists a canonical dry-run
+receipt, repeats the full live preflight immediately before the conditional
+merge, and binds the final receipt to the same request, evidence, controller,
+controls, fresh dry-run digest, and trusted mutation-attempt time. Freshness is
+measured from dry-run to that mutation-adjacent instant, not terminal
+completion, so bounded post-merge CI and reconciliation may take longer than
+five minutes. A monotonic 300-second deadline starts before the internal receipt
+wall timestamp is assigned or persisted, so timestamping, persistence, and fsync
+time count. After the second preflight the mutation-attempt timestamp is captured;
+the deadline guard is then the only subsequent local operation before merge,
+and expiry performs no mutation. After merge, the complete native closing
+set must exactly equal the bounded expected set before issue reconciliation;
+drift enters typed recovery and cannot be reported as `MERGED`.
+Activation accepts at most 99 constituents plus its tracker; non-activation
+accepts at most 100 constituents, preserving completeness of the native closing
+query.
+Ambiguous merge responses persist bounded post-attempt connector and server
+evidence. Exact observed or unavailable statuses produce recovery-only
+`mutation_state_unknown` evidence, never `MERGED`. Carried observations must
+not predate the mutation attempt, and connector `FAIL` must prove actual drift.
+Timing-invalid connector evidence, including invalid elapsed type, range, or
+finiteness, is unavailable with no digest; protocol
+variance is accepted only as proof of ambiguous post-attempt connector failure.
+Arbitrarily large integers are bounded against the supported timestamp domain
+before conversion or subtraction in both normal and recovery validation, while
+the exact maximum remains valid. Raw signed JSON integer tokens longer than
+4,300 digits are rejected by the bounded parser and become typed unavailable
+recovery evidence with no digest.
+Authoritative GitHub responses, trusted evidence, and top-level run-record input
+share that bounded parser. Decode, integer-conversion, Unicode, and recursion
+failures become context-specific record errors without weakening evidence size,
+canonical-byte, or digest validation.
+A JSON-string-and-escape-aware lexical scan caps structural depth at 100 before
+decoding. REST and GraphQL subprocess output is captured as bytes so invalid
+UTF-8 becomes the correct typed record error and raw stderr is not disclosed.
+Every byte input is strictly decoded as UTF-8 once, with the resulting string
+used for both depth scanning and JSON decoding; UTF-16/32 auto-detection is
+forbidden.
+Branch cleanup byte-captures and canonical-strict-decodes both response streams.
+Malformed or alternate encodings, NULs, and BOMs are typed errors; only a
+strictly decoded HTTP 404 proves absence.
+The diagnostic must full-match the canonical single-line GitHub form with empty
+stdout and at most one terminal newline. Its message must satisfy
+`splitlines() == [message]` and contain no semantic line separators or other
+noncanonical whitespace, control, or format characters. Mixed, prefixed,
+multiline, repeated, or trailing diagnostics cannot qualify.
 
 The transaction has two terminal results:
 
@@ -164,8 +209,10 @@ merged transaction is not a terminal result.
 9. Create another pull request only for a distinct vertical outcome or a
    security or privacy boundary that requires separation.
 10. Immediately before mutation, use the ignored trusted control to repeat all
-    race-sensitive gates and require the expected exact head. If strict server
-    enforcement is unavailable, return structured pre-mutation `BLOCKED`.
+    race-sensitive PR, check, review, connector, base, head, and mergeability
+    gates, record server settings observationally, and require the expected
+    exact head. Follow that preflight immediately with the conditional squash
+    merge; do not insert local work into the race window.
 11. After a permitted merge, verify the merge result on fetched remote `main`,
     delete the merged branch, and reconcile closed tickets and Project status.
 12. Refresh from `main` and repeat from step 4 for the next increment. Do not

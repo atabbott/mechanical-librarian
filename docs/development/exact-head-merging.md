@@ -69,30 +69,84 @@ Candidate code is evidence to inspect, never merge authority. In particular:
 - the merge credential is available only to the maintainer-owned control
   environment.
 
-## Activation and external prerequisite
+## Free-plan activation and residual risk
 
-Autonomous merging requires server-enforced pull-request-only merging with
-exactly zero approving reviews and no code-owner or last-push approval gate,
-strict up-to-date checks, resolved conversations, administrative enforcement,
-an explicit structurally closed empty user/team/app pull-request bypass object,
-and disabled force pushes and branch deletion. Classic branch protection is the
-only supported server-enforcement source: GitHub's effective branch-rules query
-must prove that no active repository- or organization-level ruleset applies to
-`main`. Any applicable rule or unavailable, malformed, or incomplete ruleset
-evidence blocks before mutation rather than trying to evaluate layered rulesets.
-Requiring zero approvals prevents a human gate from silently reappearing;
-exact-head autonomous review evidence remains mandatory in the trusted local
-control plane. The repository's current private account plan does not make the
-remaining required enforcement available. The authoritative local controller
-must therefore return structured `BLOCKED` before mutation. Issue #267 owns this
-external plan and server-enforcement prerequisite; no delivery transaction may
-change visibility, protection, or plan settings as an implied workaround.
+Autonomous merging uses the receipt-bound `CLIENT_ENFORCED_FREE_PLAN` mode.
+GitHub protection and ruleset responses are recorded as canonical, body-free
+observations, but they neither authorize nor block delivery when unavailable,
+malformed, failing, or changed. Every successful controller and train receipt
+records the fixed residual risk `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`.
+
+The accepted limitation is precise: another credentialed actor can directly
+change or race `main`, and GitHub's conditional merge locks the pull-request
+head but not the base SHA. The controller mitigates rather than eliminates that
+risk. It requires a controller-only pull request, canonical repository and PR,
+the exact bounded head repository and delivery branch, exact reviewed head and
+tree, passing current-head checks, resolved review
+threads, terminal connector evidence, live base/head/mergeability, and an
+internally persisted canonical dry-run receipt followed by a repeated live
+preflight and immediate conditional `sha=<expected-head>` squash merge. The
+terminal receipt binds that dry-run by digest and exact request, evidence,
+controller, controls, and a trusted mutation-attempt timestamp captured beside
+the merge call. The 300-second freshness window ends at mutation, not terminal
+completion, so longer post-merge CI and reconciliation remain valid;
+outcome-specific schemas reject extra receipt fields.
+The controller also starts a trusted monotonic 300-second deadline before the
+internal dry-run wall timestamp is assigned or the receipt is persisted, so
+timestamping, persistence, and fsync time count. Immediately after the repeated
+live preflight it captures the mutation-attempt timestamp; then
+that deadline guard is the only controller-local operation before the merge
+call; expiry produces a typed no-mutation failure.
+It then verifies the returned merge has the qualified base as its sole parent
+and is contained by
+authoritative `main`, waits for main CI, requires the complete native closing
+set to exactly match the bounded expected set, reconciles tracking, and deletes
+the delivery branch with an exact lease. A base race therefore becomes a typed
+post-merge recovery failure, never implicit success.
+The complete closing-set proof is capped by its GraphQL query: activation may
+bind 99 constituents plus the tracker, while non-activation may bind 100.
+If the merge response is ambiguous, the controller performs bounded
+post-attempt connector and server observation. The unknown-state receipt binds
+exact observed digests or typed unavailable fallbacks and cannot qualify as
+`MERGED`; carried recovery observations remain distinct and chronological.
+Each carried observation must be at or after the trusted mutation-attempt time,
+and connector `FAIL` must prove actual drift rather than a changed timestamp or
+failure label alone.
+Timing-invalid connector evidence, including boolean, nonnumeric, negative, or
+non-finite elapsed time, becomes `UNAVAILABLE` with no digest.
+Integer magnitude is bounded by the maximum supported timestamp delta before
+conversion in normal and recovery validation, so arbitrarily large JSON
+integers follow the same fallback and the exact maximum remains valid. Raw
+positive or negative JSON integer tokens longer than 4,300 digits are rejected
+at the bounded parser and become typed `UNAVAILABLE` evidence with a null
+digest rather than escaping as conversion errors.
+The run-record validator routes authoritative GitHub responses, trusted
+evidence, and top-level record input through one bounded parser. JSON decode,
+integer-conversion, Unicode, and recursion failures become context-specific
+record errors; trusted size, canonical-byte, and digest checks remain intact.
+The pre-decode lexical scan is JSON-string-and-escape-aware and caps structural
+depth at 100 independent of Python decoder behavior. Authoritative REST and
+GraphQL stdout and stderr are captured as bytes, ensuring invalid UTF-8 reaches
+the parser boundary while raw stderr remains undisclosed.
+Byte inputs are strictly decoded as UTF-8 once, and that same immutable string
+feeds both the depth scan and JSON decoder. UTF-16 and UTF-32 auto-detection is
+therefore unavailable and cannot desynchronize escape or delimiter handling.
+The terminal branch-cleanup query byte-captures and canonical-strict-decodes
+stdout and stderr through the same UTF-8 boundary. Malformed or alternate
+encodings, NULs, and BOMs cannot become a presence/absence result; only a
+strictly decoded nonzero HTTP 404 diagnostic proves absence. It must full-match
+the canonical single-line GitHub form with empty stdout, a nonempty trimmed
+message, and zero or one terminal newline. The message's `splitlines()` result
+must contain exactly that message; VT, FF, FS, GS, RS, NEL, Unicode
+line/paragraph separators, and other noncanonical whitespace, control, or
+format characters are invalid. Mixed, prefixed, multiline, repeated, or
+trailing diagnostics cannot prove cleanup.
+Protocol variances may prove ambiguous post-attempt connector `FAIL`, but remain
+invalid in passing, merged, and normal qualifying connector evidence.
 
 The maintainer-owned controller, validators, evidence contracts, and terminal
 containment under ignored `.codex/**` are qualified independently of candidate
-content. The `Deliver slice <ID>` instruction now grants standing authority for
-one bounded slice transaction, including exact-head merge and cleanup when all
-prerequisites pass. Passing public CI alone is still not merge authorization,
-and current strict-enforcement absence means the transaction stops before
-mutation. Activation of the transaction policy does not claim automatic merge
-mutation works in the repository today.
+content. `Deliver slice <ID>` grants standing authority for the complete
+bounded transaction, including exact-head merge and cleanup. Passing public CI
+alone is not merge authorization, and no admin, bypass, force, direct-`main`,
+release, credential, or production-write path is introduced.

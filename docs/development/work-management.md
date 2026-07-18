@@ -251,8 +251,11 @@ requests and reconcile their issues and Project items. It does not authorize
 bypasses, force pushes, administrative merges, production access, release
 publication, unrelated tracking changes, or closure of incomplete work. The
 trusted controller, validators, and evidence remain maintainer-owned and
-ignored under `.codex/**`; current strict-enforcement absence returns
-structured `BLOCKED` before mutation.
+ignored under `.codex/**`. Private Free-plan delivery uses the explicitly
+accepted `CLIENT_ENFORCED_FREE_PLAN` mode and records
+`EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED` on every success. Server settings are
+observational; exact PR/head/check/review/connector, conditional merge, and
+post-merge verification remain mandatory.
 
 ## Pull requests
 
