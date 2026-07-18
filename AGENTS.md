@@ -114,9 +114,46 @@ decision with rationale and review.
   maintainer decision blocks safe progress. A partially merged transaction is
   recoverable `In progress` work, not a rollback trigger or a completed slice.
 - The trusted controller, validators, and evidence remain maintainer-owned and
-  ignored under `.codex/**`. Without strict server enforcement on the current
-  private plan, autonomous delivery returns structured `BLOCKED` before
-  mutation. The standing transaction authority does not override that gate.
+  ignored under `.codex/**`. On the private Free plan, autonomous delivery uses
+  the receipt-bound `CLIENT_ENFORCED_FREE_PLAN` mode. Server protection and
+  ruleset settings are observational rather than merge authority. Every
+  successful receipt records `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`: another
+  credentialed actor can change or race `main`, and GitHub's conditional merge
+  locks the pull-request head but not the base SHA. Exact local, connector,
+  check, review, exact repository/branch provenance, internally persisted
+  dry-run, conditional-merge, exact closing-reference, and post-merge gates
+  remain mandatory.
+  Dry-run freshness ends at the trusted mutation-attempt instant, not terminal
+  completion. Activation permits at most 99 constituents plus its tracker;
+  non-activation permits at most 100 constituents.
+  A trusted monotonic deadline starts before the dry-receipt wall timestamp and
+  persistence, including both, and its guard follows the captured mutation
+  timestamp as the only local operation between final
+  preflight and merge. Ambiguous responses persist typed post-attempt evidence
+  no earlier than the mutation attempt, require actual drift for connector
+  failure, treat timing-invalid connector evidence—including invalid elapsed
+  type, range, finiteness, or integer magnitude beyond the supported timestamp
+  domain—as unavailable without a digest, reject raw signed JSON integer tokens
+  longer than 4,300 digits at the bounded parser, and apply the same numeric
+  checks before conversion in normal and recovery validation while accepting
+  the exact maximum timestamp delta. Route authoritative GitHub responses,
+  trusted evidence, and top-level run-record input through one bounded JSON
+  parser that translates decode, integer-conversion, Unicode, and recursion
+  failures into context-specific record errors while preserving size,
+  canonical-byte, and digest checks. Enforce a deterministic maximum structural
+  depth of 100 with a JSON-string-and-escape-aware lexical scan, and capture
+  authoritative REST and GraphQL stdout and stderr as bytes so invalid UTF-8
+  reaches that boundary without exposing raw stderr. Strictly decode every byte
+  input as UTF-8 once and use that same string for depth scanning and JSON
+  decoding, forbidding UTF-16/32 auto-detection. Byte-capture and canonical-
+  strict-decode both branch-cleanup response streams; only decoded HTTP 404
+  in the canonical single-line GitHub diagnostic with empty stdout proves
+  absence. Require the message's `splitlines()` result to contain only that
+  message and reject semantic line separators and noncanonical whitespace,
+  control, or format characters; mixed, prefixed, multiline, repeated, or
+  trailing diagnostics do not, while malformed encodings are record errors;
+  restrict protocol
+  variance to ambiguous connector failure, and remain recovery-only.
 - After the initial product has stable executable seams, maintainers may deliver
   small bounded additions as ordinary `feature/` PRs. Cross-cutting, high-risk,
   or independently demonstrable capabilities continue to use slices.

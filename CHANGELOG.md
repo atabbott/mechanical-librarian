@@ -15,14 +15,58 @@ versioning after the first public release.
   while the ticket or increment plan is refined or re-sliced. CI failures and
   C1, C2, or optional human-requested review findings are remediated on the same
   pull request and the changed head is re-reviewed and requalified. The
-  autonomous server contract now requires pull-request-only merging with
-  exactly zero approving reviews and no code-owner or last-push approval gate;
-  its bypass object must contain exactly empty user, team, and app lists, and no
-  active repository or organization ruleset may apply to `main`. Mandatory
-  exact-head local and connector review evidence remains independent of GitHub
-  approval. Trusted merge controls remain maintainer-owned and ignored; the
-  current private-plan enforcement gap returns structured `BLOCKED` before
-  mutation, so this policy does not yet make automatic merging operational.
+  autonomous controller now operates on the private Free plan in the explicitly
+  accepted, receipt-bound `CLIENT_ENFORCED_FREE_PLAN` mode. Mandatory exact-head
+  local and connector review, passing current-head checks, resolved threads,
+  live PR identity including exact repository and delivery branch, an
+  internally persisted and terminal-receipt-bound dry-run phase, conditional
+  head-locked squash merge, exact post-merge closing-reference reconciliation,
+  and authoritative post-merge verification remain enforced without GitHub or
+  human approval. Outcome-specific receipt schemas reject injected fields.
+  Dry-run freshness is bound to a trusted mutation-adjacent timestamp, allowing
+  longer post-merge CI and reconciliation without accepting stale pre-mutation
+  proof. Activation is capped at 99 constituents plus its tracker and
+  non-activation at 100, matching the complete native closing query. A live
+  regression now exercises every pinned trusted control without fixture digest
+  substitution.
+  A mutation-adjacent monotonic deadline begins before the dry-receipt wall
+  timestamp and persistence, so both and a slow second preflight cannot consume
+  expired proof. The mutation-attempt timestamp is captured before the guard;
+  that guard is the only subsequent local operation before the merge call.
+  Ambiguous merge responses persist bounded post-attempt connector
+  and server evidence with exact unavailable fallbacks; recovery validation
+  enforces phase-aware presence, distinctness, chronology after the mutation
+  attempt, and actual drift behind connector failure. Timing-invalid connector
+  evidence—including invalid elapsed type, range, or finiteness—is unavailable
+  without a digest; protocol variance can prove only an ambiguous post-attempt
+  connector failure.
+  Huge JSON integers are bounded against the supported timestamp domain before
+  conversion in normal and recovery validation, while the exact maximum
+  remains accepted. Raw signed integer tokens longer than 4,300 digits now
+  become typed unavailable recovery evidence instead of escaping JSON integer
+  conversion. The run-record validator now applies the same fail-closed parser
+  to authoritative GitHub responses, trusted evidence, and top-level input, so
+  decode, integer-conversion, Unicode, and recursion failures remain typed
+  record errors without weakening canonical or digest validation.
+  JSON structural depth is now capped deterministically at 100 by a
+  string-and-escape-aware scan before decoding, and authoritative REST and
+  GraphQL output is captured as bytes so invalid UTF-8 follows the same typed
+  boundary without exposing raw stderr.
+  Byte and bytearray JSON inputs are now strictly decoded as UTF-8 exactly once;
+  the same string drives depth scanning and JSON decoding, preventing automatic
+  UTF-16 or UTF-32 acceptance from desynchronizing structural checks.
+  Branch-cleanup observation now byte-captures and canonical-strict-decodes both
+  output streams; malformed UTF-8, alternate encodings, NULs, and BOMs are typed
+  errors, and only a decoded HTTP 404 can prove branch absence.
+  That 404 must now full-match the canonical single-line GitHub diagnostic with
+  empty stdout and at most one final newline; mixed statuses, prefixes,
+  multiline output, repeats, trailing content, and substring matches fail. Its
+  message must also remain one semantic line and contain no noncanonical
+  whitespace, control, or format characters.
+  Protection and ruleset settings are observational only.
+  Every success records `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`, covering the
+  accepted risk that another credentialed actor can change or race `main` and
+  that GitHub's conditional merge does not lock the base SHA.
 
 - Added `epub-opening-evidence`, the durable F07b round trip from a path-free
   inventory selector to restart-reusable immutable opening evidence. Inventory
