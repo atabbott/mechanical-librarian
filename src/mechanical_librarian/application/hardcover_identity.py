@@ -32,7 +32,7 @@ class HardcoverIdentityReport:
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class InertPreviewReport:
     outcome: HardcoverIdentityOutcome
     private_file_opened: bool = False
@@ -40,7 +40,27 @@ class InertPreviewReport:
     secret_opened: bool = False
     network_started: bool = False
 
+    def validate(self) -> None:
+        if (
+            type(self.outcome) is not HardcoverIdentityOutcome
+            or self.outcome
+            not in {
+                HardcoverIdentityOutcome.DISABLED,
+                HardcoverIdentityOutcome.INVALID_INPUT,
+            }
+            or type(self.private_file_opened) is not bool
+            or self.private_file_opened is not False
+            or type(self.database_opened) is not bool
+            or self.database_opened is not False
+            or type(self.secret_opened) is not bool
+            or self.secret_opened is not False
+            or type(self.network_started) is not bool
+            or self.network_started is not False
+        ):
+            raise TypeError("Hardcover inert preview report is malformed")
+
     def to_json(self) -> str:
+        self.validate()
         return json.dumps(
             {
                 "schema": "hardcover-synthetic-output-v5",

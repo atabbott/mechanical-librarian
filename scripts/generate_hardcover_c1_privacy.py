@@ -1,6 +1,13 @@
 """Regenerate the public C1-only Hardcover privacy evidence."""
 
+import sys
 from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+for import_root in (ROOT / "src", ROOT):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
 
 from tests.support.hardcover_c1_privacy import (
     OUTPUT_SCHEMA_PATH,
@@ -13,9 +20,6 @@ from tests.support.hardcover_c1_privacy import (
     output_schema_document,
     privacy_contract_document,
 )
-
-
-ROOT = Path(__file__).parents[1]
 
 
 def main() -> None:

@@ -6,6 +6,8 @@ import io
 import hashlib
 import json
 import logging
+import os
+import subprocess
 import tempfile
 import traceback
 import unittest
@@ -24,6 +26,7 @@ from mechanical_librarian.bootstrap.composition import (
 )
 from mechanical_librarian.interfaces.cli import main
 from tests.support.hardcover_c1_privacy import (
+    ALTERNATE_ISBN,
     CAPTURE_CHANNELS,
     FORBIDDEN_RESULT_KEY_FRAGMENTS,
     PRIVACY_SCAN_PATH,
@@ -32,6 +35,7 @@ from tests.support.hardcover_c1_privacy import (
     assert_channels_private,
     build_scan,
     canonical_bytes,
+    c1_input_variants,
     forbidden_source_corpus,
     validate_output_document,
 )
@@ -245,10 +249,10 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c1-inert-report-input-schema.json": "0e275c72d40e2f7e2460d18ce572fea598d79aeff113252a135bc05e8285aa61",
             "c1-inert-report-example-output.json": "910bc6803bbee3c1a43dba545cd497e036ea1ac3f8c663057cb705a4a60e5479",
             "c1-inert-report-variant-matrix.json": "e18f2eb3dcd75c09cb57443da8e2bea666604813c94a922260de7e92b30b9bf4",
-            "c1-inert-report-output-schema-v1.json": "e52f4ef641ec523254299dea9bb911609d5ca807f5f740c3122fafba3836de4b",
-            "c1-inert-report-privacy-contract-v1.json": "cdc385d6e68717d5fc36fcb2b9860e4665ab1b0374bf63923d2ac8aeb54e4014",
-            "c1-inert-report-privacy-scan-v1.json": "e64f4bfea6ac94227f9c96e539d483d0f5cefa109b6576462d5204d627fa9e46",
-            "c1-inert-report-registry-v1.json": "a078ae6541c5f5ac90f2070fd4723a1c0ef2cabae36fbcb412a17d3ecb508f44",
+            "c1-inert-report-output-schema-v1.json": "602c2037fa7277ee428f7a681f1f34d2a834203e9c12e61713fd85840c30b584",
+            "c1-inert-report-privacy-contract-v1.json": "9ba41fefa5eb4c91c60228febe67ff366ac4e5b58d3422f8d4a6fd99d776b69e",
+            "c1-inert-report-privacy-scan-v1.json": "837fb3d9d92f55a44dc8a6ce084ca7bcdfad3eca286bf3ce2c6ad7d96e648f44",
+            "c1-inert-report-registry-v1.json": "2119055ef8352db570eeb69a4624d46ac8ff56f6f8fa571cd1f80ca22d9ff343",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)
@@ -289,6 +293,29 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             for marker in future_markers:
                 self.assertNotIn(marker, payload)
 
+    def test_c1_generator_runs_directly_from_repository_root(self) -> None:
+        paths = tuple(
+            sorted((ROOT / "tests/fixtures/hardcover_identity").glob("*.json"))
+        )
+        before = {path: path.read_bytes() for path in paths}
+        environment = dict(os.environ)
+        environment.pop("PYTHONPATH", None)
+        completed = subprocess.run(
+            ["python3", "scripts/generate_hardcover_c1_privacy.py"],
+            cwd=ROOT,
+            env=environment,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, "")
+        self.assertEqual(
+            {path: path.read_bytes() for path in paths},
+            before,
+        )
+
     def test_c1_output_schema_rejects_forbidden_and_additional_properties(
         self,
     ) -> None:
@@ -310,12 +337,43 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             with self.subTest(additional_property=location):
                 with self.assertRaises(PrivacyEvidenceError):
                     validate_output_document(mutated)
+        for key in tuple(output):
+            mutated = copy.deepcopy(output)
+            del mutated[key]
+            with self.subTest(missing_top_level_key=key):
+                with self.assertRaises(PrivacyEvidenceError):
+                    validate_output_document(mutated)
         for key in tuple(output["result"]):
             mutated = copy.deepcopy(output)
             del mutated["result"][key]
             with self.subTest(missing_result_key=key):
                 with self.assertRaises(PrivacyEvidenceError):
                     validate_output_document(mutated)
+        for key, value in (
+            ("schema", "hardcover-synthetic-output-v6"),
+            ("scenario", "another-scenario"),
+        ):
+            mutated = copy.deepcopy(output)
+            mutated[key] = value
+            with self.subTest(mutated_identity=key):
+                with self.assertRaises(PrivacyEvidenceError):
+                    validate_output_document(mutated)
+        mutated = copy.deepcopy(output)
+        mutated["result"]["outcome"] = "provider_not_activated"
+        with self.assertRaises(PrivacyEvidenceError):
+            validate_output_document(mutated)
+        for key in (
+            "private_file_opened",
+            "database_opened",
+            "secret_opened",
+            "network_started",
+        ):
+            for value in (True, 0, 1, None, "false"):
+                mutated = copy.deepcopy(output)
+                mutated["result"][key] = value
+                with self.subTest(counter=key, malformed_value=value):
+                    with self.assertRaises(PrivacyEvidenceError):
+                        validate_output_document(mutated)
 
     def test_retained_c1_variant_matrix_executes_through_real_cli_seam(self) -> None:
         matrix = json.loads(
@@ -369,14 +427,11 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                 ):
                     self.assertFalse(result[counter])
 
-    def test_title_only_cli_pair_is_channel_complete_private_and_metamorphic(
+    def test_c1_input_variants_are_channel_complete_private_and_metamorphic(
         self,
     ) -> None:
-        titles = (
-            "QzvLomarixNebu73",
-            "WkxPadrunoSefi91",
-        )
-        corpus = forbidden_source_corpus(ROOT, additional_titles=titles)
+        variants = c1_input_variants(ROOT)
+        corpus = forbidden_source_corpus(ROOT, variants=variants)
         channels: dict[str, list[str]] = {name: [] for name in CAPTURE_CHANNELS}
         real_hashes = {
             "md5": hashlib.md5,
@@ -504,14 +559,14 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             for target in persistence_targets:
                 stack.enter_context(patch(target, side_effect=persistence_spy))
 
-            for title in titles:
+            for variant in variants:
                 output = io.StringIO()
                 errors = io.StringIO()
                 exit_code = main(
                     argv,
                     state_check_runner=Mock(),
                     hardcover_inert_preview_runner=observed_runner,
-                    stdin=io.StringIO(json.dumps(self.synthetic_input(title=title))),
+                    stdin=io.StringIO(variant.input_payload.decode("utf-8")),
                     stdout=output,
                     stderr=errors,
                 )
@@ -520,7 +575,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                 channels["stderr"].append(errors.getvalue())
                 outputs.append(output.getvalue())
 
-            invalid = self.synthetic_input(title=titles[0])
+            invalid = copy.deepcopy(variants[0].source)
             invalid["unexpected"] = True
             invalid_output = io.StringIO()
             invalid_errors = io.StringIO()
@@ -538,7 +593,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             channels["stdout"].append(invalid_output.getvalue())
             channels["stderr"].append(invalid_errors.getvalue())
 
-        self.assertEqual(outputs[0], outputs[1])
+        self.assertEqual(outputs, [outputs[0]] * len(variants))
         self.assertEqual(channels["hash_inputs"], [])
         self.assertEqual(channels["fingerprint_inputs"], [])
         self.assertEqual(channels["structured_logs"], [])
@@ -553,16 +608,30 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         self.assertTrue(channels["metric_exemplars"])
         self.assertTrue(channels["exports"])
         self.assertTrue(channels["reports"])
-        self.assertIn(titles[0][:8], corpus["title"])
+        self.assertEqual(
+            tuple(variant.name for variant in variants),
+            ("canonical", "title-only-alternate", "isbn-alternate"),
+        )
+        self.assertEqual(variants[2].raw_isbn, ALTERNATE_ISBN)
+        self.assertEqual(variants[2].canonical_isbn, "9780306406157")
+        for variant in variants:
+            self.assertIn(
+                variant.query_payload.decode("utf-8"),
+                corpus["serialized_private_query"],
+            )
+            self.assertIn(
+                variant.input_payload.decode("utf-8"),
+                corpus["serialized_input"],
+            )
         self.assertIn(
             hashlib.md5(
-                titles[0].encode("utf-8"), usedforsecurity=False
+                variants[0].title.encode("utf-8"), usedforsecurity=False
             ).hexdigest(),
             corpus["title"],
         )
         self.assertIn(
             hashlib.sha1(
-                titles[0].encode("utf-8"), usedforsecurity=False
+                variants[0].title.encode("utf-8"), usedforsecurity=False
             ).hexdigest(),
             corpus["title"],
         )
@@ -576,6 +645,27 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         with self.assertRaises(PrivacyEvidenceError):
             assert_channels_private(channels, incomplete_corpus)
 
+        hand_authored_mutations = (
+            ("title", "WKXDIFFERENTCONFIDENTIALNAME91"),
+            ("canonical_isbn", "9780306406157"),
+            (
+                "resource_identity",
+                "dGVzdHMvZml4dHVyZXMvaGFyZGNvdmVyX2lkZW50aXR5L2MxLWluZXJ0"
+                "LXJlcG9ydC1yZWdpc3RyeS12MS5qc29u",
+            ),
+            (
+                "serialized_input",
+                "33f0bddb9114b8a2a8c13269f09e6c1107f723836cd4ac3e6087e1131a46266d",
+            ),
+        )
+        for source_class, projection in hand_authored_mutations:
+            self.assertIn(projection, corpus[source_class])
+            poisoned = {name: list(values) for name, values in channels.items()}
+            poisoned["stdout"].append(projection)
+            with self.subTest(hand_authored_source_class=source_class):
+                with self.assertRaises(PrivacyEvidenceError):
+                    assert_channels_private(poisoned, corpus)
+
         for channel in CAPTURE_CHANNELS:
             for source_class, projections in corpus.items():
                 for projection in projections:
@@ -583,12 +673,17 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                         name: list(values) for name, values in channels.items()
                     }
                     poisoned[channel].append(projection)
+                    probe_corpus = {
+                        name: frozenset({f"absent-probe:{name}"})
+                        for name in corpus
+                    }
+                    probe_corpus[source_class] = frozenset({projection})
                     with self.subTest(
                         negative_scanner_channel=channel,
                         source_class=source_class,
                     ):
                         with self.assertRaises(PrivacyEvidenceError):
-                            assert_channels_private(poisoned, corpus)
+                            assert_channels_private(poisoned, probe_corpus)
 
         projected_cause = next(iter(corpus["serialized_private_query"]))
         cause = ValueError(projected_cause)
@@ -683,6 +778,56 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         self.assertEqual(exit_code, 2)
         self.assertEqual(output.getvalue(), "")
         self.assertEqual(errors.getvalue(), "Hardcover identity report failed safely.\n")
+
+    def test_malformed_exact_type_synthetic_reports_fail_without_serialization(
+        self,
+    ) -> None:
+        argv = [
+            "hardcover-identity-report",
+            "--mode",
+            "synthetic-preview",
+            "--scenario",
+            "inert-report-v3",
+            "--input",
+            "-",
+            "--format",
+            "json",
+        ]
+        malformed = [
+            InertPreviewReport("disabled"),  # type: ignore[arg-type]
+            InertPreviewReport(HardcoverIdentityOutcome.PROVIDER_NOT_ACTIVATED),
+        ]
+        for counter in (
+            "private_file_opened",
+            "database_opened",
+            "secret_opened",
+            "network_started",
+        ):
+            for value in (True, 0, 1, None, "false"):
+                malformed.append(
+                    InertPreviewReport(
+                        HardcoverIdentityOutcome.DISABLED,
+                        **{counter: value},  # type: ignore[arg-type]
+                    )
+                )
+        for report in malformed:
+            output = io.StringIO()
+            errors = io.StringIO()
+            exit_code = main(
+                argv,
+                state_check_runner=Mock(),
+                hardcover_inert_preview_runner=Mock(return_value=report),
+                stdin=io.StringIO(json.dumps(self.synthetic_input())),
+                stdout=output,
+                stderr=errors,
+            )
+            with self.subTest(report=report):
+                self.assertEqual(exit_code, 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(
+                    errors.getvalue(),
+                    "Hardcover identity report failed safely.\n",
+                )
 
 
 if __name__ == "__main__":

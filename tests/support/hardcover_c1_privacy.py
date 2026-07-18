@@ -5,12 +5,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import re
 import unicodedata
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, quote_plus
 
+from mechanical_librarian.domain.hardcover_identity import validate_private_query
 from mechanical_librarian.domain.title_proposals import normalized_title_key
 
 
@@ -95,12 +96,71 @@ _FUTURE_MARKERS = (
     "all five",
 )
 
+TITLE_ONLY_ALTERNATE = "WkxDifferentConfidentialName91"
+ALTERNATE_ISBN = "0306406152"
+
+
+@dataclass(frozen=True)
+class C1InputVariant:
+    """One exact synthetic input and its separately serialized private query."""
+
+    name: str
+    source: dict[str, object]
+    input_payload: bytes
+    query_payload: bytes
+    raw_isbn: str
+    canonical_isbn: str
+    title: str
+
 
 def canonical_bytes(value: object) -> bytes:
     return (
         json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
         + "\n"
     ).encode("utf-8")
+
+
+def c1_input_variants(repo_root: Path) -> tuple[C1InputVariant, ...]:
+    canonical_path = FIXTURE_DIRECTORY / "c1-inert-report-input.json"
+    canonical_payload = (repo_root / canonical_path).read_bytes()
+    canonical_source = _decode_json(canonical_payload)
+    title_alternate = _decode_json(canonical_bytes(canonical_source))
+    title_alternate_query = title_alternate["private_query"]
+    if not isinstance(title_alternate_query, dict):
+        raise PrivacyEvidenceError("C1 canonical private query is malformed")
+    title_alternate_query["title"] = TITLE_ONLY_ALTERNATE
+    isbn_alternate = _decode_json(canonical_bytes(canonical_source))
+    isbn_alternate_query = isbn_alternate["private_query"]
+    if not isinstance(isbn_alternate_query, dict):
+        raise PrivacyEvidenceError("C1 canonical private query is malformed")
+    isbn_alternate_query["isbn"] = ALTERNATE_ISBN
+    sources = (
+        ("canonical", canonical_source, canonical_payload),
+        ("title-only-alternate", title_alternate, canonical_bytes(title_alternate)),
+        ("isbn-alternate", isbn_alternate, canonical_bytes(isbn_alternate)),
+    )
+    variants: list[C1InputVariant] = []
+    for name, source, input_payload in sources:
+        private_query = source.get("private_query")
+        if not isinstance(private_query, Mapping):
+            raise PrivacyEvidenceError("C1 input private query is malformed")
+        raw_isbn = private_query.get("isbn")
+        title = private_query.get("title")
+        if type(raw_isbn) is not str or type(title) is not str:
+            raise PrivacyEvidenceError("C1 input private query is malformed")
+        validated = validate_private_query(private_query)
+        variants.append(
+            C1InputVariant(
+                name=name,
+                source=source,
+                input_payload=input_payload,
+                query_payload=canonical_bytes(private_query).rstrip(b"\n"),
+                raw_isbn=raw_isbn,
+                canonical_isbn=validated.canonical_isbn,
+                title=title,
+            )
+        )
+    return tuple(variants)
 
 
 def output_schema_document() -> dict[str, object]:
@@ -112,11 +172,11 @@ def output_schema_document() -> dict[str, object]:
             "result": {
                 "additionalProperties": False,
                 "properties": {
-                    "database_opened": {"type": "boolean"},
-                    "network_started": {"type": "boolean"},
+                    "database_opened": {"const": False},
+                    "network_started": {"const": False},
                     "outcome": {"enum": ["disabled", "invalid_input"]},
-                    "private_file_opened": {"type": "boolean"},
-                    "secret_opened": {"type": "boolean"},
+                    "private_file_opened": {"const": False},
+                    "secret_opened": {"const": False},
                 },
                 "required": list(ALLOWED_RESULT_KEYS),
                 "type": "object",
@@ -147,6 +207,25 @@ def privacy_contract_document() -> dict[str, object]:
                 "Install the inert F09f configuration and disabled identity report"
             ),
             "runtime_schema": "hardcover-synthetic-output-v5",
+        },
+        "source_projection_contract": {
+            "executed_input_variants": [
+                "canonical",
+                "title-only-alternate",
+                "isbn-alternate",
+            ],
+            "exact_raw_input_and_query_serializations_included": True,
+            "length_projections_are_contextual": True,
+            "resource_seed_kinds": [
+                "path",
+                "name",
+                "digest",
+                "sha256-prefixed-digest",
+                "resource-prefixed-path",
+                "fixture-prefixed-path",
+                "registry-prefixed-path",
+            ],
+            "resource_seeds_use_text_projections": True,
         },
         "title_only_metamorphic_contract": {
             "exported_fields_unchanged": True,
@@ -213,6 +292,7 @@ def build_registry(repo_root: Path) -> dict[str, object]:
 
 def build_scan(repo_root: Path, *, verify_registry: bool = True) -> dict[str, object]:
     _verify_source_documents(repo_root)
+    variants = c1_input_variants(repo_root)
     artifacts = {
         path.as_posix(): artifact_descriptor(repo_root, path)
         for path in RESOURCE_PATHS
@@ -226,6 +306,7 @@ def build_scan(repo_root: Path, *, verify_registry: bool = True) -> dict[str, ob
         "generated_path": PRIVACY_SCAN_PATH.as_posix(),
         "forbidden_result_key_fragments": list(FORBIDDEN_RESULT_KEY_FRAGMENTS),
         "forbidden_source_classes": list(FORBIDDEN_SOURCE_CLASSES),
+        "executed_input_variants": [variant.name for variant in variants],
         "registry_path": REGISTRY_PATH.as_posix(),
         "result_allowlist": list(ALLOWED_RESULT_KEYS),
         "scenario": "inert-report-v3",
@@ -261,45 +342,60 @@ def validate_output_document(source: object) -> None:
     if result.get("outcome") not in {"disabled", "invalid_input"}:
         raise PrivacyEvidenceError("C1 outcome is invalid")
     for key in set(ALLOWED_RESULT_KEYS) - {"outcome"}:
-        if type(result.get(key)) is not bool:
-            raise PrivacyEvidenceError("C1 access counter is not a strict boolean")
+        if type(result.get(key)) is not bool or result.get(key) is not False:
+            raise PrivacyEvidenceError("C1 access counter is not strict false")
 
 
 def forbidden_source_corpus(
-    repo_root: Path, *, additional_titles: tuple[str, ...] = ()
+    repo_root: Path, *, variants: tuple[C1InputVariant, ...] | None = None
 ) -> dict[str, frozenset[str]]:
-    source_payload = (
-        repo_root / FIXTURE_DIRECTORY / "c1-inert-report-input.json"
-    ).read_bytes()
-    source = _decode_json(source_payload)
-    private_query = source["private_query"]
-    title = private_query["title"]
-    isbn = private_query["isbn"]
-    if type(title) is not str or type(isbn) is not str:
-        raise PrivacyEvidenceError("C1 canonical input is malformed")
-    query_payload = canonical_bytes(private_query).rstrip(b"\n")
-    resource_values: set[str] = set()
+    executed = c1_input_variants(repo_root) if variants is None else variants
+    if tuple(variant.name for variant in executed) != (
+        "canonical",
+        "title-only-alternate",
+        "isbn-alternate",
+    ):
+        raise PrivacyEvidenceError("C1 executed input variants are incomplete")
+    resource_seeds: set[str] = set()
     for path in (*RESOURCE_PATHS, PRIVACY_SCAN_PATH, REGISTRY_PATH):
         payload = (repo_root / path).read_bytes()
         digest = hashlib.sha256(payload).hexdigest()
-        resource_values.update(
+        resource_seeds.update(
             {
                 path.as_posix(),
                 path.name,
                 digest,
                 digest[:8],
                 f"sha256:{digest}",
+                f"resource:{path.as_posix()}",
             }
         )
+        if path == REGISTRY_PATH:
+            resource_seeds.add(f"registry:{path.as_posix()}")
+        if path.is_relative_to(FIXTURE_DIRECTORY):
+            resource_seeds.add(f"fixture:{path.as_posix()}")
     corpus = {
         "title": frozenset(
             projection
-            for candidate in (title, *additional_titles)
-            for projection in _text_projections(candidate)
+            for variant in executed
+            for projection in _text_projections(variant.title)
         ),
-        "canonical_isbn": _text_projections(isbn),
-        "serialized_private_query": _blob_projections(query_payload),
-        "serialized_input": _blob_projections(source_payload),
+        "canonical_isbn": frozenset(
+            projection
+            for variant in executed
+            for value in (variant.raw_isbn, variant.canonical_isbn)
+            for projection in _text_projections(value)
+        ),
+        "serialized_private_query": frozenset(
+            projection
+            for variant in executed
+            for projection in _blob_projections(variant.query_payload)
+        ),
+        "serialized_input": frozenset(
+            projection
+            for variant in executed
+            for projection in _blob_projections(variant.input_payload)
+        ),
         "provider_identity": frozenset(
             value
             for identity in (
@@ -308,7 +404,11 @@ def forbidden_source_corpus(
             )
             for value in _text_projections(identity)
         ),
-        "resource_identity": frozenset(resource_values),
+        "resource_identity": frozenset(
+            projection
+            for seed in resource_seeds
+            for projection in _text_projections(seed)
+        ),
     }
     if tuple(corpus) != FORBIDDEN_SOURCE_CLASSES:
         raise PrivacyEvidenceError("C1 forbidden source classes are incomplete")
@@ -454,6 +554,7 @@ def _text_projections(value: str) -> frozenset[str]:
     textual = {
         value,
         value.casefold(),
+        value.upper(),
         normalized_title_key(value),
         unicodedata.normalize("NFC", value),
         unicodedata.normalize("NFKC", value),
@@ -466,21 +567,12 @@ def _text_projections(value: str) -> frozenset[str]:
         base64.urlsafe_b64encode(encoded).decode("ascii"),
         quote(value),
         quote_plus(value),
-        str(len(value)),
-        str(len(encoded)),
-        f"scalar-count={len(value)}",
-        f"utf8-bytes={len(encoded)}",
+        f"length:{len(value)}",
+        f"utf8-length:{len(encoded)}",
+        json.dumps({"length": len(value)}, separators=(",", ":")),
+        json.dumps({"utf8_length": len(encoded)}, separators=(",", ":")),
     }
-    tokens = set(re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", value))
-    tokens.update(token.casefold() for token in tuple(tokens))
-    fragments = {
-        item[index : index + 8]
-        for item in textual | tokens
-        for index in range(0, len(item), 8)
-        if len(item[index : index + 8]) >= 4
-    }
-    fragments.update(item[:8] for item in textual | tokens if len(item) >= 8)
-    return frozenset(textual | tokens | fragments | _digest_projections(encoded))
+    return frozenset(textual | _digest_projections(encoded))
 
 
 def _blob_projections(payload: bytes) -> frozenset[str]:
@@ -532,17 +624,21 @@ def _reject_future_markers(payload: bytes) -> None:
 
 
 __all__ = [
+    "ALTERNATE_ISBN",
     "ALLOWED_RESULT_KEYS",
     "CAPTURE_CHANNELS",
+    "C1InputVariant",
     "FORBIDDEN_RESULT_KEY_FRAGMENTS",
     "PRIVACY_CONTRACT_PATH",
     "PRIVACY_SCAN_PATH",
     "REGISTRY_PATH",
     "PrivacyEvidenceError",
+    "TITLE_ONLY_ALTERNATE",
     "assert_channels_private",
     "build_registry",
     "build_scan",
     "canonical_bytes",
+    "c1_input_variants",
     "forbidden_source_corpus",
     "output_schema_document",
     "privacy_contract_document",

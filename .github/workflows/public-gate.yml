@@ -39,7 +39,9 @@ jobs:
         run: uv lock --check
 
       - name: Synchronize the pinned environment
-        run: uv sync --frozen --no-editable --all-groups
+        run: >-
+          uv sync --frozen --no-editable --all-groups
+          --reinstall-package mechanical-librarian
 
       - name: Run the public test suite
         run: uv run --frozen --no-editable python -m unittest discover -s tests -p 'test_*.py'

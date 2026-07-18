@@ -556,8 +556,15 @@ def main(
             except (KeyboardInterrupt, Exception):
                 report = InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
             if type(report) is not InertPreviewReport:
-                report = InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
-            output.write(report.to_json() + "\n")
+                errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                return 2
+            try:
+                report.validate()
+                rendered = report.to_json()
+            except (KeyboardInterrupt, Exception):
+                errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                return 2
+            output.write(rendered + "\n")
             return 0 if report.outcome is HardcoverIdentityOutcome.DISABLED else 2
         exact = (
             hardcover_arguments.mode is None
