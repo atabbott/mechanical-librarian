@@ -35,11 +35,10 @@ that same loader before comparing them. Its output contains only fixed schema
 paths and the impacts below; it retains no old or new values and performs no
 persistence, probing, secret resolution, or mutation.
 
-In current `config-v1`, only `connections.secret_reference` is a structured
-credential reference. The `providers` and `reviewers` paths participate in
-aggregate impact detection but do not yet define structured credential-reference
-or role-scoped resolution contracts. The detailed provider/reviewer secret
-contracts below are planned extensions, not current behavior.
+Current `config-v1` has structured references at
+`connections.secret_reference` and the optional `hardcover_provider` block.
+The legacy `providers` list remains readable and inert; `reviewers` participates
+in aggregate impact detection but does not define a role-scoped credential.
 
 ### Current group coverage
 
@@ -55,7 +54,8 @@ hidden fields or environment behavior.
 | Media mounts | `name`, `library_type`, `container_path`, `service_path`, `read_only` |
 | Inventory traversal and polling | `page_size`, `max_pages`, `max_items`, `max_response_bytes`, `timeout_seconds`, `stability_delay_seconds`, `poll_generation`, `max_attempts`, `max_elapsed_seconds`, `initial_backoff_seconds`, `max_backoff_seconds`, `connect_timeout_seconds`, `read_timeout_seconds`, `max_in_flight_requests` |
 | Evidence extraction | `enabled_formats`, `maximum_document_bytes`, `maximum_text_characters`, and the versioned `epub_package` and `epub_opening` resource profiles; shared parser limits remain under `limits` |
-| Providers | ordered, unique provider identifiers; an empty list disables providers |
+| Hardcover provider | optional exact `enabled`, `secret_reference`, and `authority_revision` block; absence means disabled revision 1 |
+| Legacy providers | ordered, unique inert provider identifiers |
 | Reviewers | ordered, unique reviewer identifiers; an empty list disables reviewers |
 | Policy | `policy_version` |
 | Backups and retention | `backups_enabled`, `evidence_days`, `job_log_days`, `maximum_artifact_bytes` |
@@ -65,6 +65,28 @@ Public base URL, timezone/locale overrides, connection event policy, per-mount
 evidence selection, structured provider/reviewer authentication, detailed
 policy rules, notification schedules, and offsite backup targets are planned
 extensions. They are deliberately rejected as unknown fields today.
+
+### Disabled Hardcover provider
+
+The additive `hardcover-config-v1` extension is optional and does not change
+the `config-v1` schema version. Absence maps exactly to the following block:
+
+```yaml
+hardcover_provider:
+  enabled: false
+  secret_reference: null
+  authority_revision: 1
+```
+
+A present block requires exactly those three fields. `enabled` is a strict
+boolean and `authority_revision` is a strict integer from 1 through
+2,147,483,647. Disabled configuration requires a null reference. Enabled
+configuration requires a 1–256-scalar absolute reference of at most 1,024
+UTF-8 bytes; it rejects NUL, URI syntax, boundary Unicode whitespace, control
+or format characters, and dot path components. Export reports only `enabled`,
+`authority_revision`, and `secret_configured`. It never reports the reference.
+Every block change requires restart plus candidate and review re-evaluation.
+See [`hardcover-config-v1.json`](hardcover-config-v1.json).
 
 ### `config-v1` impact matrix
 
@@ -91,6 +113,7 @@ re-evaluation, notification reconfiguration, and backup-readiness revalidation.
 | `evidence.maximum_text_characters` | restart and evidence re-evaluation |
 | Any `evidence.epub_package` numeric field | restart and EPUB package evidence re-extraction |
 | Any `evidence.epub_opening` numeric field | restart and EPUB opening evidence re-extraction |
+| Any `hardcover_provider` field | restart, candidate and review re-evaluation |
 | `providers` | restart, candidate and review re-evaluation |
 | `reviewers` | restart and review re-evaluation |
 | `policy.policy_version` | restart and review re-evaluation |

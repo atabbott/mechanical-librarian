@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import tempfile
 import unittest
@@ -43,6 +44,7 @@ class ConfigurationBoundaryTests(unittest.TestCase):
             "limits",
             "inventory",
             "evidence",
+            "hardcover_provider",
             "providers",
             "reviewers",
             "policy",
@@ -119,6 +121,36 @@ class ConfigurationBoundaryTests(unittest.TestCase):
         self.assertEqual(opening["wall_seconds"]["maximum"], 3_600)
         self.assertEqual(opening["child_cpu_seconds"]["const"], 30)
         self.assertEqual(opening["termination_grace_seconds"]["const"], 2)
+
+    def test_hardcover_contract_artifacts_are_exact(self) -> None:
+        expected = {
+            "hardcover-config-v1.json": (
+                "5d21d05239ba3d83e03d06a9e0ac1949adee5e0333b9311fc3c7fef67194db89"
+            ),
+            "hardcover-private-query-v1.schema.json": (
+                "05637dcf584f527468f96c59244bf371b0b8ab09379accf54b78af124cd2f765"
+            ),
+            "hardcover-private-query-v1.json": (
+                "7a04acca26307529d5e9caeaa5b66f438214046d5418614f89b2e78595cfcd6c"
+            ),
+        }
+        for name, digest in expected.items():
+            with self.subTest(name=name):
+                artifact = ROOT / "docs" / "reference" / name
+                self.assertEqual(
+                    hashlib.sha256(artifact.read_bytes()).hexdigest(), digest
+                )
+        block = (
+            "hardcover_provider:\n"
+            "  enabled: false\n"
+            "  secret_reference: null\n"
+            "  authority_revision: 1\n"
+        ).encode()
+        self.assertEqual(len(block), 86)
+        self.assertEqual(
+            hashlib.sha256(block).hexdigest(),
+            "767abb8942b7cf6af367f58a3d6e44799954336149986a9f1c0212b1fd62439e",
+        )
 
     def test_checked_in_synthetic_file_maps_to_immutable_secret_free_values(
         self,

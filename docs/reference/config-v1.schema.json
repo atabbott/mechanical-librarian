@@ -440,6 +440,39 @@
       "title": "EvidenceInput",
       "type": "object"
     },
+    "HardcoverProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "authority_revision": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Authority Revision",
+          "type": "integer"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "secret_reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Secret Reference"
+        }
+      },
+      "required": [
+        "enabled",
+        "secret_reference",
+        "authority_revision"
+      ],
+      "title": "HardcoverProviderInput",
+      "type": "object"
+    },
     "InventoryInput": {
       "additionalProperties": false,
       "properties": {
@@ -736,6 +769,14 @@
         },
         "maximum_document_bytes": 67108864,
         "maximum_text_characters": 524288
+      }
+    },
+    "hardcover_provider": {
+      "$ref": "#/$defs/HardcoverProviderInput",
+      "default": {
+        "authority_revision": 1,
+        "enabled": false,
+        "secret_reference": null
       }
     },
     "instance_name": {

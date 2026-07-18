@@ -291,6 +291,19 @@ egress. Enabled-only secret resolution, redaction, cancellation, restart,
 identical replay, reuse, invalidation, supersession, and atomic outcome
 publication are covered.
 
+Increment 1 qualifies the installed `hardcover-identity-report` before any
+provider adapter exists. Production disabled and not-activated trap cases prove
+zero query-file, database, credential, client, DNS, proxy, socket, and network
+access. Owner-only private-query tests cover canonical-parent descriptor opens,
+no-follow final components, stable before/after identity, exact size-plus-one
+reads, strict UTF-8, duplicate and unknown keys, ISBN checksums/equivalence, and
+title scalar/control boundaries. The cumulative C1 registry contains only
+`inert-report-v3`. Golden, alternate-valid, mutation, boundary, title-only, and
+invalid-extra cases use the real config/query/CLI seams. Privacy spies reject
+title- or query-bearing hashing, persistence, logging, export, report, audit,
+trace, metric, or stable-correlation output; runtime emits only the schema-v5
+allowlist.
+
 F09f parser and outcome tests cover disabled, unavailable credential,
 authentication failure, rate limiting, timeout, outage, malformed or oversized
 response, empty result, no match, multiple or ambiguous match, incompatible

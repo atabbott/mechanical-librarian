@@ -77,6 +77,59 @@ class ConfigurationTests(unittest.TestCase):
             self.assertNotIn(private_value, exported)
             self.assertNotIn(private_value, diagnostics)
 
+    def test_hardcover_provider_is_additive_strict_redacted_and_restart_bound(self) -> None:
+        absent = load_configuration(self.source)
+        self.assertFalse(absent.hardcover_provider.enabled)
+        self.assertIsNone(absent.hardcover_provider.secret_reference)
+        self.assertEqual(absent.hardcover_provider.authority_revision, 1)
+        self.assertEqual(
+            absent.export()["hardcover_provider"],
+            {"enabled": False, "authority_revision": 1, "secret_configured": False},
+        )
+
+        enabled = self.proposed()
+        enabled["hardcover_provider"] = {
+            "enabled": True,
+            "secret_reference": "/run/secrets/hardcover",
+            "authority_revision": 2,
+        }
+        loaded = load_configuration(enabled)
+        self.assertNotIn("/run/secrets", repr(loaded))
+        self.assertEqual(
+            loaded.export()["hardcover_provider"],
+            {"enabled": True, "authority_revision": 2, "secret_configured": True},
+        )
+        self.assertEqual(
+            plan_import(self.source, enabled).impacts,
+            (R, C, V),
+        )
+
+    def test_hardcover_provider_rejects_partial_coerced_and_unsafe_blocks(self) -> None:
+        valid = {
+            "enabled": True,
+            "secret_reference": "/run/secrets/hardcover",
+            "authority_revision": 1,
+        }
+        cases = (
+            {"enabled": False, "secret_reference": None},
+            {**valid, "unknown": True},
+            {**valid, "enabled": 1},
+            {**valid, "authority_revision": True},
+            {**valid, "authority_revision": 0},
+            {**valid, "secret_reference": None},
+            {**valid, "secret_reference": "relative/secret"},
+            {**valid, "secret_reference": "/run/../secret"},
+            {**valid, "secret_reference": "/run/secret://token"},
+            {**valid, "secret_reference": "/run/secret\u200b"},
+            {"enabled": False, "secret_reference": "/private", "authority_revision": 1},
+        )
+        for block in cases:
+            with self.subTest(block=block):
+                source = self.proposed()
+                source["hardcover_provider"] = block
+                with self.assertRaises(ConfigurationError):
+                    load_configuration(source)
+
     def test_f05b_inventory_controls_are_exported_and_change_impacts_are_complete(
         self,
     ) -> None:

@@ -24,6 +24,7 @@ from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     ConfigurationError,
     ConfigurationImportPlan,
+    HardcoverProviderConfiguration,
     plan_projected_import,
     project_configuration,
 )
@@ -274,6 +275,14 @@ class RetentionInput(BaseModel):
     ] = 1_073_741_824
 
 
+class HardcoverProviderInput(BaseModel):
+    model_config = _MODEL_CONFIG
+
+    enabled: StrictBool
+    secret_reference: str | None
+    authority_revision: Annotated[StrictInt, Field(ge=1, le=2_147_483_647)]
+
+
 class ConfigurationInput(BaseModel):
     """The single strict transport schema used by every supported config source."""
 
@@ -286,6 +295,11 @@ class ConfigurationInput(BaseModel):
     limits: ResourceLimitsInput = ResourceLimitsInput()
     inventory: InventoryInput = InventoryInput()
     evidence: EvidenceInput = EvidenceInput()
+    hardcover_provider: HardcoverProviderInput = HardcoverProviderInput(
+        enabled=False,
+        secret_reference=None,
+        authority_revision=1,
+    )
     providers: Annotated[
         list[IdentifierText],
         Field(max_length=64, json_schema_extra={"uniqueItems": True}),
@@ -320,6 +334,22 @@ def load_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
     """Compatibility name for the single supported strict mapping boundary."""
 
     return validate_configuration(source)
+
+
+def validate_hardcover_provider(
+    source: Mapping[str, Any],
+) -> HardcoverProviderConfiguration:
+    """Validate the exact provider block through the production transport seam."""
+
+    try:
+        validated = HardcoverProviderInput.model_validate(source)
+        return HardcoverProviderConfiguration(**validated.model_dump(mode="python"))
+    except ConfigurationError:
+        raise
+    except (TypeError, ValueError, ValidationError):
+        raise ConfigurationError(
+            "Hardcover provider configuration is invalid"
+        ) from None
 
 
 def plan_import(
@@ -413,5 +443,6 @@ __all__ = [
     "load_configuration",
     "load_configuration_file",
     "plan_import",
+    "validate_hardcover_provider",
     "validate_configuration",
 ]

@@ -61,8 +61,11 @@ request or response, provider upstream identifier, or fabricated ordinary
 evidence-reference record. The supported report uses the same bounded local
 projection and never sends it to a provider or reviewer.
 
-The 0.3 F09f integration discloses only the minimum allowlisted local title and
-one canonical edition-applicable ISBN needed for its bounded Hardcover lookup.
+F09f preactivation discloses nothing: disabled and not-activated outcomes return
+before private-query access. After activation, only canonical ISBN is later
+disclosed and local title comparison remains transient.
+The activated integration otherwise sends only the minimum allowlisted data
+needed for its bounded Hardcover lookup.
 It does not send a target-service identifier, library or connection identity,
 filename, media or database path, excerpt, cover, rich metadata, raw provider
 payload, or unrelated library field. The account credential remains a secret

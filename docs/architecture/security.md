@@ -165,6 +165,24 @@ F09g owns the live join. Nothing in the preview invokes AI,
 records a human decision, handles covers or rich
 fields, fuses multiple providers, or authorizes a production write.
 
+### F09f preactivation identity boundary
+
+The first F09f increment adds only strict configuration, private-query parsing,
+and an inert report. A missing or disabled `hardcover_provider` block returns
+`disabled`; valid enabled configuration returns `provider_not_activated`.
+Both outcomes occur before query-file, database, credential, provider/client,
+DNS, proxy, socket, or network access. The optional block is the sole future
+enablement source; the legacy `providers` list remains inert and no ambient or
+inline token is accepted.
+
+The private-query reader uses a canonical parent directory descriptor and a
+no-follow final-component open, verifies effective-user ownership, regular
+type, owner-only mode, link count one, bounded size, and stable identity around
+one exact read. Its title is transient and never hashed, persisted, logged,
+exported, reported, audited, traced, or emitted as a metric. The contributor
+preview uses the same validation seams but has no production composition and
+emits only its closed typed schema-v5 zero-access result.
+
 F10a consumes only an already-persisted current F09a lineage selected by the
 closed scenario vocabulary. `synthetic-title-review-binding-v1` binds closed
 synthetic target constants to the validated manifest-derived item, snapshot,
