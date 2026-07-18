@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -209,6 +210,7 @@ def privacy_contract_document() -> dict[str, object]:
             "runtime_schema": "hardcover-synthetic-output-v5",
         },
         "source_projection_contract": {
+            "bounded_meaningful_token_and_chunk_projections": True,
             "executed_input_variants": [
                 "canonical",
                 "title-only-alternate",
@@ -384,7 +386,7 @@ def forbidden_source_corpus(
             projection
             for variant in executed
             for value in (variant.raw_isbn, variant.canonical_isbn)
-            for projection in _text_projections(value)
+            for projection in _text_projections(value, allow_numeric_prefix=True)
         ),
         "serialized_private_query": frozenset(
             projection
@@ -407,7 +409,7 @@ def forbidden_source_corpus(
         "resource_identity": frozenset(
             projection
             for seed in resource_seeds
-            for projection in _text_projections(seed)
+            for projection in _text_projections(seed, minimum_chunk_length=12)
         ),
     }
     if tuple(corpus) != FORBIDDEN_SOURCE_CLASSES:
@@ -549,7 +551,12 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def _text_projections(value: str) -> frozenset[str]:
+def _text_projections(
+    value: str,
+    *,
+    allow_numeric_prefix: bool = False,
+    minimum_chunk_length: int = 8,
+) -> frozenset[str]:
     encoded = value.encode("utf-8")
     textual = {
         value,
@@ -572,7 +579,39 @@ def _text_projections(value: str) -> frozenset[str]:
         json.dumps({"length": len(value)}, separators=(",", ":")),
         json.dumps({"utf8_length": len(encoded)}, separators=(",", ":")),
     }
-    return frozenset(textual | _digest_projections(encoded))
+    tokens = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", value)
+    chunks = {
+        token
+        for token in tokens
+        if len(token) >= minimum_chunk_length and not token.isdigit()
+    }
+    for left, right in zip(tokens, tokens[1:], strict=False):
+        combined = left + right
+        if (
+            minimum_chunk_length <= len(combined) <= 32
+            and not combined.isdigit()
+            and (
+                len(left) >= minimum_chunk_length
+                or len(right) >= minimum_chunk_length
+                or (len(left) >= 4 and len(right) >= 4)
+            )
+        ):
+            chunks.add(combined)
+    chunks.update(
+        chunk[:minimum_chunk_length]
+        for chunk in tuple(chunks)
+        if len(chunk) > minimum_chunk_length
+    )
+    if allow_numeric_prefix and value.isdigit() and len(value) >= 10:
+        chunks.add(value[:8])
+    expanded_chunks = {
+        projection
+        for chunk in chunks
+        for projection in (chunk, chunk.casefold(), chunk.upper())
+    }
+    return frozenset(
+        textual | expanded_chunks | _digest_projections(encoded)
+    )
 
 
 def _blob_projections(payload: bytes) -> frozenset[str]:

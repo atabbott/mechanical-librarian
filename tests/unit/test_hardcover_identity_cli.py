@@ -250,9 +250,9 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c1-inert-report-example-output.json": "910bc6803bbee3c1a43dba545cd497e036ea1ac3f8c663057cb705a4a60e5479",
             "c1-inert-report-variant-matrix.json": "e18f2eb3dcd75c09cb57443da8e2bea666604813c94a922260de7e92b30b9bf4",
             "c1-inert-report-output-schema-v1.json": "602c2037fa7277ee428f7a681f1f34d2a834203e9c12e61713fd85840c30b584",
-            "c1-inert-report-privacy-contract-v1.json": "9ba41fefa5eb4c91c60228febe67ff366ac4e5b58d3422f8d4a6fd99d776b69e",
-            "c1-inert-report-privacy-scan-v1.json": "837fb3d9d92f55a44dc8a6ce084ca7bcdfad3eca286bf3ce2c6ad7d96e648f44",
-            "c1-inert-report-registry-v1.json": "2119055ef8352db570eeb69a4624d46ac8ff56f6f8fa571cd1f80ca22d9ff343",
+            "c1-inert-report-privacy-contract-v1.json": "75a6be84afab11ae5a154415960108f15f9db3e34ffd8a2a22cc23edc2c68da3",
+            "c1-inert-report-privacy-scan-v1.json": "df030bb495712da448dccc896765dc2fad4ce893666da2bdd22c87e054fcf726",
+            "c1-inert-report-registry-v1.json": "eb3ec8a5454a3e4a21f9bbfe9b8b2308687de00f6a95df7533055a6083009619",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)
@@ -663,6 +663,26 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             poisoned = {name: list(values) for name, values in channels.items()}
             poisoned["stdout"].append(projection)
             with self.subTest(hand_authored_source_class=source_class):
+                with self.assertRaises(PrivacyEvidenceError):
+                    assert_channels_private(poisoned, corpus)
+
+        discriminating_chunk_probes = (
+            ("stdout", "title", "WkxDiffe"),
+            ("structured_logs", "title", "WkxDifferent"),
+            ("traces", "title", "Confidential"),
+            ("reports", "title", "ConfidentialName"),
+            ("exceptions", "canonical_isbn", "97803064"),
+            ("audit_logs", "resource_identity", "hardcoveridentity"),
+        )
+        for channel, source_class, projection in discriminating_chunk_probes:
+            self.assertIn(projection, corpus[source_class])
+            poisoned = {name: list(values) for name, values in channels.items()}
+            poisoned[channel].append(projection)
+            with self.subTest(
+                discriminating_channel=channel,
+                discriminating_source_class=source_class,
+                discriminating_projection=projection,
+            ):
                 with self.assertRaises(PrivacyEvidenceError):
                     assert_channels_private(poisoned, corpus)
 

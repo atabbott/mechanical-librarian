@@ -42,7 +42,7 @@ The initial scaffold uses Python 3.13 or 3.14 and
 committed lockfile:
 
 ```text
-uv sync --frozen --no-editable
+uv sync --frozen --no-editable --all-groups --reinstall-package mechanical-librarian
 uv run --frozen --no-editable python -m unittest discover -s tests -p 'test_*.py'
 uv build
 uv run --frozen --no-editable mechanical-librarian state-check --database ./state.sqlite
@@ -51,8 +51,10 @@ uv run --frozen --no-editable mechanical-librarian state-check --database ./stat
 The final command exercises the current supported operator diagnostic and
 creates local SQLite state; remove that generated state before committing.
 Issue #36 owns the future platform-neutral bootstrap and one-command
-verification wrapper. Re-run the non-editable sync after changing package
-source so tests exercise the same installed shape as a built wheel.
+verification wrapper. Re-run the cache-safe non-editable sync after changing
+package source. The explicit project-package reinstall prevents the stable
+pre-release version from reusing a wheel built from an earlier checkout, so
+tests exercise the same installed shape as the current built wheel.
 
 Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph
