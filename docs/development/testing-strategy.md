@@ -297,12 +297,16 @@ zero query-file, database, credential, client, DNS, proxy, socket, and network
 access. Owner-only private-query tests cover canonical-parent descriptor opens,
 no-follow final components, stable before/after identity, exact size-plus-one
 reads, strict UTF-8, duplicate and unknown keys, ISBN checksums/equivalence, and
-title scalar/control boundaries. The cumulative C1 registry contains only
-`inert-report-v3`. Golden, alternate-valid, mutation, boundary, title-only, and
-invalid-extra cases use the real config/query/CLI seams. Privacy spies reject
-title- or query-bearing hashing, persistence, logging, export, report, audit,
-trace, metric, or stable-correlation output; runtime emits only the schema-v5
-allowlist.
+title scalar/control boundaries. The C1-only registry and executable public
+scanner enumerate the exact present-tree configuration, query, schema, matrix,
+example, privacy-contract, and registry artifacts for `inert-report-v3` only.
+Tests reproduce the committed aggregate byte-for-byte and verify its digest.
+Golden, alternate-valid, mutation, boundary, title-only, and invalid-extra
+cases use the real config/query/CLI seams. Privacy spies poison every captured
+channel with every declared source class, while output mutations prove that
+forbidden key fragments and additional properties are rejected. Runtime emits
+only the schema-v5 allowlist and no title- or query-bearing hash, fingerprint,
+persistence, log, export, report, audit, trace, metric, or stable correlation.
 
 F09f parser and outcome tests cover disabled, unavailable credential,
 authentication failure, rate limiting, timeout, outage, malformed or oversized

@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-import base64
 import copy
 from contextlib import ExitStack, contextmanager
 import io
 import hashlib
 import json
 import logging
-import re
 import tempfile
 import traceback
 import unittest
-import unicodedata
-from urllib.parse import quote, quote_plus
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -26,81 +22,23 @@ from mechanical_librarian.bootstrap.composition import (
     _run_hardcover_identity_report,
     _run_hardcover_inert_preview,
 )
-from mechanical_librarian.domain.title_proposals import normalized_title_key
 from mechanical_librarian.interfaces.cli import main
+from tests.support.hardcover_c1_privacy import (
+    CAPTURE_CHANNELS,
+    FORBIDDEN_RESULT_KEY_FRAGMENTS,
+    PRIVACY_SCAN_PATH,
+    REGISTRY_PATH,
+    PrivacyEvidenceError,
+    assert_channels_private,
+    build_scan,
+    canonical_bytes,
+    forbidden_source_corpus,
+    validate_output_document,
+)
 
 
 ROOT = Path(__file__).parents[2]
 EXAMPLE_CONFIG = ROOT / "docs" / "examples" / "synthetic-config.json"
-
-
-def _forbidden_title_projections(title: str) -> frozenset[str]:
-    encoded = title.encode("utf-8")
-    normalized = normalized_title_key(title)
-    textual = {
-        title,
-        title.casefold(),
-        normalized,
-        unicodedata.normalize("NFC", title),
-        unicodedata.normalize("NFKC", title),
-        json.dumps(title, ensure_ascii=True),
-        repr(title),
-        encoded.hex(),
-        base64.b16encode(encoded).decode("ascii"),
-        base64.b32encode(encoded).decode("ascii"),
-        base64.b64encode(encoded).decode("ascii"),
-        base64.urlsafe_b64encode(encoded).decode("ascii"),
-        quote(title),
-        quote_plus(title),
-        str(len(title)),
-        str(len(encoded)),
-        f"title-length={len(title)}",
-    }
-    tokens = set(re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", title))
-    tokens.update(token.casefold() for token in tuple(tokens))
-    fragments = {
-        value[index : index + 8]
-        for value in textual | tokens
-        for index in range(0, len(value), 8)
-        if len(value[index : index + 8]) >= 4
-    }
-    fragments.update(value[:8] for value in textual | tokens if len(value) >= 8)
-    digesters = (
-        hashlib.md5(encoded, usedforsecurity=False),
-        hashlib.sha1(encoded, usedforsecurity=False),
-        hashlib.sha224(encoded),
-        hashlib.sha256(encoded),
-        hashlib.sha384(encoded),
-        hashlib.sha512(encoded),
-        hashlib.sha3_256(encoded),
-        hashlib.sha3_512(encoded),
-        hashlib.blake2s(encoded),
-        hashlib.blake2b(encoded),
-    )
-    digests: set[str] = set()
-    for digester in digesters:
-        raw_digest = digester.digest()
-        hexadecimal = digester.hexdigest()
-        digests.update(
-            {
-                hexadecimal,
-                hexadecimal[:8],
-                base64.b64encode(raw_digest).decode("ascii"),
-                base64.urlsafe_b64encode(raw_digest).decode("ascii"),
-            }
-        )
-    values = textual | tokens | fragments | digests
-    return frozenset(value for value in values if value)
-
-
-def _assert_private_channels(
-    channels: dict[str, list[str]], projections: frozenset[str]
-) -> None:
-    for channel, values in channels.items():
-        rendered = "\n".join(values)
-        for projection in projections:
-            if projection in rendered:
-                raise AssertionError(f"forbidden title projection reached {channel}")
 
 
 def _exception_chain_metadata(error: BaseException) -> list[str]:
@@ -300,59 +238,84 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         )
         self.assertEqual(outputs[0], oracle.read_text(encoding="utf-8"))
 
-    def test_c1_registry_is_exact_cumulative_public_evidence(self) -> None:
+    def test_c1_public_scanner_reproduces_exact_present_tree_evidence(self) -> None:
         fixture_root = ROOT / "tests/fixtures/hardcover_identity"
         expected = {
             "c1-inert-report-input.json": "f9896b56f48d99dd10be69556a95b24b4968beb07b3989517a399d981af66223",
             "c1-inert-report-input-schema.json": "0e275c72d40e2f7e2460d18ce572fea598d79aeff113252a135bc05e8285aa61",
             "c1-inert-report-example-output.json": "910bc6803bbee3c1a43dba545cd497e036ea1ac3f8c663057cb705a4a60e5479",
             "c1-inert-report-variant-matrix.json": "e18f2eb3dcd75c09cb57443da8e2bea666604813c94a922260de7e92b30b9bf4",
-            "preview-output-schema-v5.json": "fd0f7d4e0248faa97ceddd6cbe442c23dfae4f48c8a02b47ee3df36bc7eedec7",
-            "preview-output-privacy-contract-v2.json": "02a897d7f3c997cc1c99b5f3ad808f3e636f704305cefa13ea44c8c5fb0c18e3",
-            "preview-output-privacy-scan-v2.json": "81aa8c3db583bdd326ccda572dcb510060bb1868e93b449737d71adef7bee7bc",
-            "preview-registry-c1-v5.json": "9767fd07740724055d4e96c3461473b9f262fa68bf89076a5b7b68cc859f5598",
+            "c1-inert-report-output-schema-v1.json": "e52f4ef641ec523254299dea9bb911609d5ca807f5f740c3122fafba3836de4b",
+            "c1-inert-report-privacy-contract-v1.json": "cdc385d6e68717d5fc36fcb2b9860e4665ab1b0374bf63923d2ac8aeb54e4014",
+            "c1-inert-report-privacy-scan-v1.json": "e64f4bfea6ac94227f9c96e539d483d0f5cefa109b6576462d5204d627fa9e46",
+            "c1-inert-report-registry-v1.json": "a078ae6541c5f5ac90f2070fd4723a1c0ef2cabae36fbcb412a17d3ecb508f44",
         }
+        self.assertEqual(
+            {path.name for path in fixture_root.glob("*.json")}, set(expected)
+        )
         for name, digest in expected.items():
             with self.subTest(name=name):
                 self.assertEqual(
                     hashlib.sha256((fixture_root / name).read_bytes()).hexdigest(),
                     digest,
                 )
-        registry = json.loads(
-            (fixture_root / "preview-registry-c1-v5.json").read_text()
-        )
+        generated = canonical_bytes(build_scan(ROOT))
+        committed = (ROOT / PRIVACY_SCAN_PATH).read_bytes()
+        self.assertEqual(generated, committed)
         self.assertEqual(
-            [item["scenario"] for item in registry["scenarios"]],
-            ["inert-report-v3"],
+            hashlib.sha256(generated).hexdigest(),
+            expected[PRIVACY_SCAN_PATH.name],
         )
-        self.assertIsNone(registry["predecessor_registry_sha256"])
-        privacy = json.loads(
-            (fixture_root / "preview-output-privacy-contract-v2.json").read_text()
-        )
-        scan = json.loads(
-            (fixture_root / "preview-output-privacy-scan-v2.json").read_text()
-        )
+        registry = json.loads((ROOT / REGISTRY_PATH).read_text(encoding="utf-8"))
         self.assertEqual(
-            privacy["runtime_channels"],
-            scan["implementation_qualification"]["capture_channels"],
+            registry["resources"]["privacy_scan"]["sha256"],
+            hashlib.sha256(generated).hexdigest(),
         )
-        self.assertEqual(
-            scan["implementation_qualification"]["status"],
-            "required at each installed head and activation",
+        self.assertFalse(registry["scope"]["future_scenarios_included"])
+        future_markers = (
+            "identity-decision-v3",
+            "fixed-adapter-v3",
+            "durable-work-v3",
+            "safe-executor-v3",
+            "schema8",
         )
-        self.assertEqual(
-            set(scan["implementation_qualification"]["spies"]),
-            {
-                "exceptions",
-                "hashing",
-                "metrics",
-                "persistence_export_reporting",
-                "tracing",
-            },
+        for name in (
+            "c1-inert-report-output-schema-v1.json",
+            "c1-inert-report-privacy-contract-v1.json",
+            "c1-inert-report-privacy-scan-v1.json",
+            "c1-inert-report-registry-v1.json",
+        ):
+            payload = (fixture_root / name).read_text(encoding="utf-8").casefold()
+            for marker in future_markers:
+                self.assertNotIn(marker, payload)
+
+    def test_c1_output_schema_rejects_forbidden_and_additional_properties(
+        self,
+    ) -> None:
+        fixture_root = ROOT / "tests/fixtures/hardcover_identity"
+        output = json.loads(
+            (fixture_root / "c1-inert-report-example-output.json").read_text()
         )
-        self.assertGreaterEqual(
-            len(scan["implementation_qualification"]["negative_failing_tests"]), 6
-        )
+        validate_output_document(output)
+        for fragment in FORBIDDEN_RESULT_KEY_FRAGMENTS:
+            mutated = copy.deepcopy(output)
+            mutated["result"][f"{fragment}_sentinel"] = False
+            with self.subTest(forbidden_result_fragment=fragment):
+                with self.assertRaises(PrivacyEvidenceError):
+                    validate_output_document(mutated)
+        for location in ("top", "result"):
+            mutated = copy.deepcopy(output)
+            target = mutated if location == "top" else mutated["result"]
+            target["unexpected"] = False
+            with self.subTest(additional_property=location):
+                with self.assertRaises(PrivacyEvidenceError):
+                    validate_output_document(mutated)
+        for key in tuple(output["result"]):
+            mutated = copy.deepcopy(output)
+            del mutated["result"][key]
+            with self.subTest(missing_result_key=key):
+                with self.assertRaises(PrivacyEvidenceError):
+                    validate_output_document(mutated)
 
     def test_retained_c1_variant_matrix_executes_through_real_cli_seam(self) -> None:
         matrix = json.loads(
@@ -413,26 +376,8 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "QzvLomarixNebu73",
             "WkxPadrunoSefi91",
         )
-        projections = frozenset(
-            value for title in titles for value in _forbidden_title_projections(title)
-        )
-        channels: dict[str, list[str]] = {
-            name: []
-            for name in (
-                "stdout",
-                "stderr",
-                "exceptions",
-                "audit_logs",
-                "structured_logs",
-                "traces",
-                "spans",
-                "metrics",
-                "non_audit_persistence",
-                "exports",
-                "reports",
-                "hash_inputs",
-            )
-        }
+        corpus = forbidden_source_corpus(ROOT, additional_titles=titles)
+        channels: dict[str, list[str]] = {name: [] for name in CAPTURE_CHANNELS}
         real_hashes = {
             "md5": hashlib.md5,
             "sha1": hashlib.sha1,
@@ -471,7 +416,18 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             channels["non_audit_persistence"].append(repr((args, kwargs)))
             raise _AuthorityTrap("non-audit persistence reached")
 
+        def fingerprint_spy(*args: object, **kwargs: object) -> None:
+            channels["fingerprint_inputs"].append(repr((args, kwargs)))
+            raise _AuthorityTrap("fingerprint reached")
+
         def privacy_observer(channel: str, values: tuple[object, ...]) -> None:
+            if channel == "metrics":
+                name, labels, value, exemplar = values
+                channels["metric_names"].append(repr(name))
+                channels["metric_labels"].append(repr(labels))
+                channels["metric_values"].append(repr(value))
+                channels["metric_exemplars"].append(repr(exemplar))
+                return
             channels[channel].append(repr(values))
 
         original_to_json = InertPreviewReport.to_json
@@ -539,6 +495,12 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                     )
                 )
             stack.enter_context(patch("hashlib.new", side_effect=hash_new_spy))
+            stack.enter_context(
+                patch(
+                    "mechanical_librarian.bootstrap.composition.Fingerprint",
+                    side_effect=fingerprint_spy,
+                )
+            )
             for target in persistence_targets:
                 stack.enter_context(patch(target, side_effect=persistence_spy))
 
@@ -578,47 +540,65 @@ class HardcoverIdentityCliTests(unittest.TestCase):
 
         self.assertEqual(outputs[0], outputs[1])
         self.assertEqual(channels["hash_inputs"], [])
+        self.assertEqual(channels["fingerprint_inputs"], [])
         self.assertEqual(channels["structured_logs"], [])
         self.assertEqual(channels["audit_logs"], [])
         self.assertEqual(channels["non_audit_persistence"], [])
         self.assertTrue(channels["exceptions"])
         self.assertTrue(channels["traces"])
         self.assertTrue(channels["spans"])
-        self.assertTrue(channels["metrics"])
+        self.assertTrue(channels["metric_names"])
+        self.assertTrue(channels["metric_labels"])
+        self.assertTrue(channels["metric_values"])
+        self.assertTrue(channels["metric_exemplars"])
         self.assertTrue(channels["exports"])
         self.assertTrue(channels["reports"])
-        self.assertIn(titles[0][:8], projections)
+        self.assertIn(titles[0][:8], corpus["title"])
         self.assertIn(
             hashlib.md5(
                 titles[0].encode("utf-8"), usedforsecurity=False
             ).hexdigest(),
-            projections,
+            corpus["title"],
         )
         self.assertIn(
             hashlib.sha1(
                 titles[0].encode("utf-8"), usedforsecurity=False
             ).hexdigest(),
-            projections,
+            corpus["title"],
         )
-        _assert_private_channels(channels, projections)
+        assert_channels_private(channels, corpus)
+        incomplete_channels = dict(channels)
+        del incomplete_channels[CAPTURE_CHANNELS[-1]]
+        with self.assertRaises(PrivacyEvidenceError):
+            assert_channels_private(incomplete_channels, corpus)
+        incomplete_corpus = dict(corpus)
+        del incomplete_corpus["resource_identity"]
+        with self.assertRaises(PrivacyEvidenceError):
+            assert_channels_private(channels, incomplete_corpus)
 
-        for channel in channels:
-            for projection in projections:
-                poisoned = {name: list(values) for name, values in channels.items()}
-                poisoned[channel].append(projection)
-                with self.subTest(negative_scanner_channel=channel):
-                    with self.assertRaises(AssertionError):
-                        _assert_private_channels(poisoned, projections)
+        for channel in CAPTURE_CHANNELS:
+            for source_class, projections in corpus.items():
+                for projection in projections:
+                    poisoned = {
+                        name: list(values) for name, values in channels.items()
+                    }
+                    poisoned[channel].append(projection)
+                    with self.subTest(
+                        negative_scanner_channel=channel,
+                        source_class=source_class,
+                    ):
+                        with self.assertRaises(PrivacyEvidenceError):
+                            assert_channels_private(poisoned, corpus)
 
-        projected_cause = next(iter(projections))
+        projected_cause = next(iter(corpus["serialized_private_query"]))
         cause = ValueError(projected_cause)
         handled = RuntimeError("handled synthetic preview failure")
         handled.__cause__ = cause
         handled.add_note(projected_cause)
         poisoned = {name: list(values) for name, values in channels.items()}
         poisoned["exceptions"].extend(_exception_chain_metadata(handled))
-        with self.assertRaises(AssertionError):
-            _assert_private_channels(poisoned, projections)
+        with self.assertRaises(PrivacyEvidenceError):
+            assert_channels_private(poisoned, corpus)
 
     def test_synthetic_invalid_input_is_typed_and_zero_access(self) -> None:
         source = self.synthetic_input()

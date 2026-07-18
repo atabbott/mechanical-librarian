@@ -57,6 +57,10 @@ schema-v5 JSON with only `outcome`, `private_file_opened`, `database_opened`,
 query, path, resource identity, stable correlation value, proposal, or write
 authority. Runtime never loads the expected-output fixture before emission.
 
-The cumulative C1 registry and its golden, alternate, mutation, boundary,
-title-only, invalid-extra, privacy, and zero-authority evidence live under
-`tests/fixtures/hardcover_identity/`. It contains only `inert-report-v3`.
+The C1-only `c1-inert-report-registry-v1.json` and its golden, alternate,
+mutation, boundary, title-only, invalid-extra, privacy, and zero-authority
+evidence live under `tests/fixtures/hardcover_identity/`. The public
+`scripts/generate_hardcover_c1_privacy.py` scanner regenerates and verifies the
+exact present-tree aggregate in `c1-inert-report-privacy-scan-v1.json`. Neither
+artifact makes claims about future scenarios; both contain only
+`inert-report-v3`.
