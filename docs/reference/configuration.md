@@ -278,8 +278,10 @@ retains no decoded or diagnostic markup artifact.
 
 ### Providers
 
-The structured provider group is planned beyond the current aggregate
-`providers` impact path:
+The installed F09f preactivation boundary adds only the exact optional
+`hardcover_provider` block documented above. The legacy aggregate `providers`
+impact path remains inert. Later activation may add separately versioned
+provider operation fields such as:
 
 - enabled providers and order;
 - credentials by secret reference;
@@ -300,33 +302,32 @@ absolute secret-file reference, and output format. The fixed endpoint, query,
 operation, headers, transport bounds, and generated title are not configurable.
 Omitting the reference records `provider_disabled` without secret access, DNS,
 or egress. There is no hidden environment-variable, encrypted-store, provider
-registry, or generic egress configuration. Current `config-v1` continues to
-reject detailed Hardcover and provider-secret fields as unknown.
+registry, or generic egress configuration. Current `config-v1` accepts only the
+exact installed preactivation `hardcover_provider` block and rejects every
+other detailed Hardcover or provider-secret field as unknown.
 
 The live-compatible command and transport/parser contract is
-[documented separately](hardcover-f09b-contract.md). F09f's future production
-provider must define its own versioned structured configuration, persisted
-work, freshness/reuse, and restart behavior rather than turning this proof-of-
-concept CLI into an implicit schema extension.
+[documented separately](hardcover-f09b-contract.md). F09f activation must add
+its own versioned operation, persisted-work, freshness/reuse, and restart
+contracts rather than turning this proof-of-concept CLI into an implicit schema
+extension.
 
-### Planned F09f configuration boundary
+### Installed F09f preactivation boundary
 
-F09f will extend the documented versioned configuration contract rather than
-reuse F09b's command-only secret reference or add hidden environment behavior.
-Before F09f can move from Triaged to Ready, its exact configuration fields,
-defaults, validation, compatibility identity, and migration impact must be
-frozen together with its external query/authentication and response contract.
-This plan does not add a current `config-v1` field or define that future schema.
+F09f increment 1 extends the documented `config-v1` contract with the exact
+optional `hardcover_provider` preactivation block. It does not reuse F09b's
+command-only secret reference and adds no hidden environment behavior. Its
+defaults, strict validation, redacted export, and restart/candidate/review
+impacts are installed now; provider authentication, external response handling,
+and durable identity work remain future activation behavior.
 
-The frozen F09f configuration must be disabled by default and identify
-credentials only by a validated secret reference. Configuration loading may
-validate the reference shape, but secret resolution occurs only for enabled
-provider work after the application-built bounded query input has passed
-validation.
-Disabled composition constructs no provider adapter or client, resolves no
-secret, and performs no DNS or egress. Tokens, secret values, and secret paths
-are never configuration exports, persisted provider observations, logs,
-diagnostics, audit fields, or report values.
+The installed configuration is disabled by default and identifies credentials
+only by a validated secret reference. Configuration loading validates only the
+reference shape. Increment 1 never resolves it: both disabled and enabled
+configuration return before private query, persistence, credential, provider,
+DNS, client, proxy, transport, or network authority. Tokens, secret values, and
+secret paths are never configuration exports, persisted provider observations,
+logs, diagnostics, audit fields, or report values.
 
 The configured operation must allowlist only the application-built bounded
 ISBN-and-title lookup, supported provider capability, expected host, and finite

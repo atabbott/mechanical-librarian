@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import base64
+import copy
+from contextlib import ExitStack, contextmanager
 import io
 import hashlib
 import json
+import logging
 import tempfile
 import unittest
+from urllib.parse import quote, quote_plus
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -16,11 +21,85 @@ from mechanical_librarian.bootstrap.composition import (
     _run_hardcover_identity_report,
     _run_hardcover_inert_preview,
 )
+from mechanical_librarian.domain.title_proposals import normalized_title_key
 from mechanical_librarian.interfaces.cli import main
 
 
 ROOT = Path(__file__).parents[2]
 EXAMPLE_CONFIG = ROOT / "docs" / "examples" / "synthetic-config.json"
+
+
+def _forbidden_title_projections(title: str) -> frozenset[str]:
+    encoded = title.encode("utf-8")
+    normalized = normalized_title_key(title)
+    values = {
+        title,
+        title.casefold(),
+        normalized,
+        encoded.hex(),
+        base64.b64encode(encoded).decode("ascii"),
+        base64.urlsafe_b64encode(encoded).decode("ascii"),
+        quote(title),
+        quote_plus(title),
+        str(len(title)),
+        str(len(encoded)),
+        f"title-length={len(title)}",
+        hashlib.sha256(encoded).hexdigest(),
+        hashlib.sha512(encoded).hexdigest(),
+        hashlib.blake2b(encoded).hexdigest(),
+    }
+    return frozenset(value for value in values if value)
+
+
+def _assert_private_channels(
+    channels: dict[str, list[str]], projections: frozenset[str]
+) -> None:
+    for channel, values in channels.items():
+        rendered = "\n".join(values)
+        for projection in projections:
+            if projection in rendered:
+                raise AssertionError(f"forbidden title projection reached {channel}")
+
+
+@contextmanager
+def _zero_authority() -> object:
+    targets = (
+        "mechanical_librarian.infrastructure.security.private_query.read_private_query",
+        "mechanical_librarian.infrastructure.security.private_file.read_private_secret",
+        "mechanical_librarian.infrastructure.security.provider_secrets."
+        "read_private_secret",
+        "mechanical_librarian.infrastructure.persistence.sqlite.connect",
+        "mechanical_librarian.infrastructure.persistence.sqlite.connect_existing",
+        "mechanical_librarian.adapters.providers.hardcover_title."
+        "HardcoverTitleProvider",
+        "mechanical_librarian.adapters.providers.hardcover_title._system_resolver",
+        "mechanical_librarian.adapters.providers.hardcover_title.httpx.AsyncClient",
+        "mechanical_librarian.adapters.providers.hardcover_title.httpx.Client",
+        "mechanical_librarian.adapters.providers.hardcover_title.httpx.Proxy",
+        "mechanical_librarian.adapters.providers.hardcover_title.httpx.HTTPTransport",
+        "mechanical_librarian.adapters.providers.hardcover_title.httpx."
+        "AsyncHTTPTransport",
+        "socket.getaddrinfo",
+        "socket.create_connection",
+        "socket.socket",
+    )
+    with ExitStack() as stack:
+        for target in targets:
+            stack.enter_context(
+                patch(
+                    target,
+                    side_effect=AssertionError(f"authority reached: {target}"),
+                )
+            )
+        yield
+
+
+def _merge_patch(target: dict[str, object], update: dict[str, object]) -> None:
+    for key, value in update.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge_patch(target[key], value)  # type: ignore[arg-type]
+        else:
+            target[key] = value
 
 
 class HardcoverIdentityCliTests(unittest.TestCase):
@@ -37,7 +116,9 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "json",
         ]
 
-    def synthetic_input(self, *, title: str = "Synthetic Ebook Alpha") -> dict[str, object]:
+    def synthetic_input(
+        self, *, title: str = "Synthetic Ebook Alpha"
+    ) -> dict[str, object]:
         return {
             "schema": "hardcover-synthetic-input-v3",
             "scenario": "inert-report-v3",
@@ -49,7 +130,9 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "private_query": {"isbn": "9780000000019", "title": title},
         }
 
-    def test_production_disabled_and_enabled_short_circuit_before_private_authority(self) -> None:
+    def test_production_disabled_and_enabled_short_circuit_before_private_authority(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             disabled = root / "disabled.json"
@@ -67,16 +150,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                 (disabled, "disabled"),
                 (enabled, "provider_not_activated"),
             ):
-                with self.subTest(outcome=outcome), patch(
-                    "mechanical_librarian.infrastructure.security.private_query.read_private_query",
-                    side_effect=AssertionError("private query opened"),
-                ), patch(
-                    "mechanical_librarian.infrastructure.security.provider_secrets.read_private_secret",
-                    side_effect=AssertionError("secret opened"),
-                ), patch(
-                    "mechanical_librarian.infrastructure.persistence.sqlite.connect",
-                    side_effect=AssertionError("database opened"),
-                ):
+                with self.subTest(outcome=outcome), _zero_authority():
                     output = io.StringIO()
                     errors = io.StringIO()
                     exit_code = main(
@@ -91,7 +165,9 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                     self.assertEqual(json.loads(output.getvalue())["outcome"], outcome)
                     self.assertNotIn("must-not-open", output.getvalue())
 
-    def test_synthetic_preview_matches_c1_oracle_without_echo_or_stable_identifier(self) -> None:
+    def test_synthetic_preview_matches_c1_oracle_without_echo_or_stable_identifier(
+        self,
+    ) -> None:
         argv = [
             "hardcover-identity-report",
             "--mode",
@@ -143,35 +219,209 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         }
         for name, digest in expected.items():
             with self.subTest(name=name):
-                self.assertEqual(hashlib.sha256((fixture_root / name).read_bytes()).hexdigest(), digest)
-        registry = json.loads((fixture_root / "preview-registry-c1-v5.json").read_text())
-        self.assertEqual([item["scenario"] for item in registry["scenarios"]], ["inert-report-v3"])
+                self.assertEqual(
+                    hashlib.sha256((fixture_root / name).read_bytes()).hexdigest(),
+                    digest,
+                )
+        registry = json.loads(
+            (fixture_root / "preview-registry-c1-v5.json").read_text()
+        )
+        self.assertEqual(
+            [item["scenario"] for item in registry["scenarios"]],
+            ["inert-report-v3"],
+        )
         self.assertIsNone(registry["predecessor_registry_sha256"])
+        privacy = json.loads(
+            (fixture_root / "preview-output-privacy-contract-v2.json").read_text()
+        )
+        scan = json.loads(
+            (fixture_root / "preview-output-privacy-scan-v2.json").read_text()
+        )
+        self.assertEqual(
+            privacy["runtime_channels"],
+            scan["implementation_qualification"]["capture_channels"],
+        )
+        self.assertEqual(
+            scan["implementation_qualification"]["status"],
+            "required at each installed head and activation",
+        )
+        self.assertEqual(
+            set(scan["implementation_qualification"]["spies"]),
+            {
+                "exceptions",
+                "hashing",
+                "metrics",
+                "persistence_export_reporting",
+                "tracing",
+            },
+        )
+        self.assertGreaterEqual(
+            len(scan["implementation_qualification"]["negative_failing_tests"]), 6
+        )
 
-    def test_title_only_preview_crosses_no_hash_log_or_persistence_spy(self) -> None:
-        source = self.synthetic_input(title="Private Title Spy Sentinel")
-        with patch("hashlib.sha256", side_effect=AssertionError("title hashed")), patch(
-            "logging.Logger._log", side_effect=AssertionError("title logged")
+    def test_retained_c1_variant_matrix_executes_through_real_cli_seam(self) -> None:
+        matrix = json.loads(
+            (
+                ROOT
+                / "tests/fixtures/hardcover_identity/c1-inert-report-variant-matrix.json"
+            ).read_text(encoding="utf-8")
+        )
+        argv = [
+            "hardcover-identity-report",
+            "--mode",
+            "synthetic-preview",
+            "--scenario",
+            "inert-report-v3",
+            "--input",
+            "-",
+            "--format",
+            "json",
+        ]
+        self.assertEqual(matrix["scenario"], "inert-report-v3")
+        for case in matrix["cases"]:
+            with self.subTest(case=case["id"]), _zero_authority():
+                source = copy.deepcopy(self.synthetic_input())
+                update = copy.deepcopy(case["input_patch"])
+                private_update = update.get("private_query")
+                if isinstance(private_update, dict) and isinstance(
+                    private_update.get("title_generator"), dict
+                ):
+                    generator = private_update.pop("title_generator")
+                    private_update["title"] = generator["scalar"] * generator["size"]
+                _merge_patch(source, update)
+                output = io.StringIO()
+                errors = io.StringIO()
+                exit_code = main(
+                    argv,
+                    state_check_runner=Mock(),
+                    hardcover_inert_preview_runner=_run_hardcover_inert_preview,
+                    stdin=io.StringIO(json.dumps(source)),
+                    stdout=output,
+                    stderr=errors,
+                )
+                result = json.loads(output.getvalue())["result"]
+                self.assertEqual(errors.getvalue(), "")
+                self.assertEqual(result["outcome"], case["expected"]["outcome"])
+                self.assertEqual(exit_code, 0 if result["outcome"] == "disabled" else 2)
+                for counter in (
+                    "private_file_opened",
+                    "database_opened",
+                    "secret_opened",
+                    "network_started",
+                ):
+                    self.assertFalse(result[counter])
+
+    def test_title_only_cli_pair_is_channel_complete_private_and_metamorphic(
+        self,
+    ) -> None:
+        titles = (
+            "QzvPrivateTitleSentinel73",
+            "WkxDifferentConfidentialName91",
+        )
+        projections = frozenset(
+            value for title in titles for value in _forbidden_title_projections(title)
+        )
+        channels: dict[str, list[str]] = {
+            name: []
+            for name in (
+                "stdout",
+                "stderr",
+                "exceptions",
+                "audit",
+                "structured_logs",
+                "traces",
+                "spans",
+                "metrics",
+                "persistence",
+                "exports",
+                "reports",
+                "hash_inputs",
+            )
+        }
+        real_hashes = {
+            "sha256": hashlib.sha256,
+            "sha512": hashlib.sha512,
+            "blake2b": hashlib.blake2b,
+        }
+
+        def hash_spy(name: str):
+            def invoke(value: bytes = b"", *args: object, **kwargs: object):
+                channels["hash_inputs"].append(repr(value))
+                return real_hashes[name](value, *args, **kwargs)
+
+            return invoke
+
+        def log_spy(*args: object, **kwargs: object) -> None:
+            channels["structured_logs"].append(repr((args, kwargs)))
+
+        def audit_spy(*args: object, **kwargs: object) -> None:
+            channels["audit"].append(repr((args, kwargs)))
+
+        argv = [
+            "hardcover-identity-report",
+            "--mode",
+            "synthetic-preview",
+            "--scenario",
+            "inert-report-v3",
+            "--input",
+            "-",
+            "--format",
+            "json",
+        ]
+        outputs: list[str] = []
+        with _zero_authority(), patch.object(
+            logging.Logger, "_log", side_effect=log_spy
         ), patch(
-            "mechanical_librarian.infrastructure.persistence.sqlite.connect",
-            side_effect=AssertionError("title persisted"),
-        ):
-            report = _run_hardcover_inert_preview(source)
-        self.assertEqual(report.outcome, HardcoverIdentityOutcome.DISABLED)
-        self.assertNotIn("Sentinel", report.to_json())
+            "mechanical_librarian.adapters.persistence.audit."
+            "SQLiteAuditRepository.append",
+            side_effect=audit_spy,
+        ), patch("hashlib.sha256", side_effect=hash_spy("sha256")), patch(
+            "hashlib.sha512", side_effect=hash_spy("sha512")
+        ), patch("hashlib.blake2b", side_effect=hash_spy("blake2b")):
+            for title in titles:
+                output = io.StringIO()
+                errors = io.StringIO()
+                try:
+                    exit_code = main(
+                        argv,
+                        state_check_runner=Mock(),
+                        hardcover_inert_preview_runner=_run_hardcover_inert_preview,
+                        stdin=io.StringIO(
+                            json.dumps(self.synthetic_input(title=title))
+                        ),
+                        stdout=output,
+                        stderr=errors,
+                    )
+                except BaseException as error:
+                    channels["exceptions"].append(repr(error))
+                    raise
+                self.assertEqual(exit_code, 0)
+                channels["stdout"].append(output.getvalue())
+                channels["stderr"].append(errors.getvalue())
+                channels["exports"].append(output.getvalue())
+                channels["reports"].append(output.getvalue())
+                outputs.append(output.getvalue())
+
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertEqual(channels["hash_inputs"], [])
+        self.assertEqual(channels["structured_logs"], [])
+        self.assertEqual(channels["audit"], [])
+        _assert_private_channels(channels, projections)
+
+        for channel in channels:
+            for projection in projections:
+                poisoned = {name: list(values) for name, values in channels.items()}
+                poisoned[channel].append(projection)
+                with self.subTest(negative_scanner_channel=channel):
+                    with self.assertRaises(AssertionError):
+                        _assert_private_channels(poisoned, projections)
 
     def test_synthetic_invalid_input_is_typed_and_zero_access(self) -> None:
         source = self.synthetic_input()
         source["unexpected"] = True
         output = io.StringIO()
         errors = io.StringIO()
-        with patch(
-            "mechanical_librarian.infrastructure.security.private_query.read_private_query",
-            side_effect=AssertionError("private file opened"),
-        ), patch(
-            "mechanical_librarian.infrastructure.persistence.sqlite.connect",
-            side_effect=AssertionError("database opened"),
-        ):
+        with _zero_authority():
             exit_code = main(
                 [
                     "hardcover-identity-report",
@@ -202,6 +452,36 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                 "network_started": False,
             },
         )
+
+    def test_valid_and_invalid_synthetic_cli_are_zero_authority(self) -> None:
+        argv = [
+            "hardcover-identity-report",
+            "--mode",
+            "synthetic-preview",
+            "--scenario",
+            "inert-report-v3",
+            "--input",
+            "-",
+            "--format",
+            "json",
+        ]
+        for source, expected_exit in (
+            (self.synthetic_input(), 0),
+            ({**self.synthetic_input(), "unexpected": True}, 2),
+        ):
+            with self.subTest(expected_exit=expected_exit), _zero_authority():
+                output = io.StringIO()
+                errors = io.StringIO()
+                exit_code = main(
+                    argv,
+                    state_check_runner=Mock(),
+                    hardcover_inert_preview_runner=_run_hardcover_inert_preview,
+                    stdin=io.StringIO(json.dumps(source)),
+                    stdout=output,
+                    stderr=errors,
+                )
+            self.assertEqual(exit_code, expected_exit)
+            self.assertEqual(errors.getvalue(), "")
 
     def test_unknown_production_result_fails_closed(self) -> None:
         output = io.StringIO()

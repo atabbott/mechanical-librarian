@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 import unicodedata
-from pathlib import PurePath
 from typing import Any, Callable
 
 from mechanical_librarian.domain.identifiers import (
@@ -361,7 +360,7 @@ class HardcoverProviderConfiguration:
             or value.strip() != value
             or "\x00" in value
             or "://" in value
-            or any(part in {".", ".."} for part in PurePath(value).parts)
+            or any(part in {".", ".."} for part in value.split("/"))
             or any(
                 unicodedata.category(character) in {"Cc", "Cf", "Cs"}
                 for character in value

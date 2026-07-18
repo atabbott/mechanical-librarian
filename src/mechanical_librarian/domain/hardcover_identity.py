@@ -12,12 +12,31 @@ class PrivateQueryError(ValueError):
     """Value-free failure for a malformed private query."""
 
 
-@dataclass(frozen=True, repr=False, eq=False)
+_PRIVATE_QUERY_CONSTRUCTION = object()
+
+
+@dataclass(frozen=True, repr=False, eq=False, init=False)
 class PrivateIdentityQuery:
     """A validated query whose local title must remain transient."""
 
     canonical_isbn: str
     title: str
+
+    def __init__(
+        self,
+        canonical_isbn: str,
+        title: str,
+        *,
+        _construction: object | None = None,
+    ) -> None:
+        if _construction is not _PRIVATE_QUERY_CONSTRUCTION:
+            raise PrivateQueryError("private query is invalid")
+        object.__setattr__(self, "canonical_isbn", canonical_isbn)
+        object.__setattr__(self, "title", title)
+
+    @classmethod
+    def _from_validated(cls, canonical_isbn: str, title: str) -> PrivateIdentityQuery:
+        return cls(canonical_isbn, title, _construction=_PRIVATE_QUERY_CONSTRUCTION)
 
     def __repr__(self) -> str:
         return "PrivateIdentityQuery(<redacted>)"
@@ -49,7 +68,7 @@ def validate_private_query(source: Mapping[str, object]) -> PrivateIdentityQuery
         or not normalized_title_key(title)
     ):
         raise PrivateQueryError("private query is invalid")
-    return PrivateIdentityQuery(canonical_isbn, title)
+    return PrivateIdentityQuery._from_validated(canonical_isbn, title)
 
 
 def _canonical_isbn(value: str) -> str:
@@ -57,7 +76,7 @@ def _canonical_isbn(value: str) -> str:
         value.encode("ascii", "strict")
     except UnicodeError:
         raise PrivateQueryError("private query is invalid") from None
-    if len(value) == 13 and value.isdigit():
+    if len(value) == 13 and value.isdigit() and value.startswith(("978", "979")):
         checksum = sum(
             (1 if index % 2 == 0 else 3) * int(digit)
             for index, digit in enumerate(value)
