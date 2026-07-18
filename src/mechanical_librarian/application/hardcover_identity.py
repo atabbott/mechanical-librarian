@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -75,16 +76,40 @@ def preactivation_report(
 def inert_preview(
     configuration: HardcoverProviderConfiguration,
     query: PrivateIdentityQuery,
+    *,
+    privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
 ) -> InertPreviewReport:
     """Exercise real validation seams while retaining no private projection."""
 
+    if privacy_observer is not None and not callable(privacy_observer):
+        raise TypeError("Hardcover privacy observer is malformed")
     if (
         type(configuration) is not HardcoverProviderConfiguration
         or configuration.enabled
         or type(query) is not PrivateIdentityQuery
     ):
-        return InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
-    return InertPreviewReport(HardcoverIdentityOutcome.DISABLED)
+        report = InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
+    else:
+        report = InertPreviewReport(HardcoverIdentityOutcome.DISABLED)
+    if privacy_observer is not None:
+        privacy_observer(
+            "traces",
+            ("hardcover.synthetic.inert_preview", "inert-report-v3"),
+        )
+        privacy_observer(
+            "spans",
+            ("validate-and-report", report.outcome.value),
+        )
+        privacy_observer(
+            "metrics",
+            (
+                "hardcover_identity_preview_total",
+                (("outcome", report.outcome.value),),
+                1,
+                None,
+            ),
+        )
+    return report
 
 
 def render_report_text(report: HardcoverIdentityReport) -> str:

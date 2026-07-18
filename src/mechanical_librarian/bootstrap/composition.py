@@ -1498,6 +1498,8 @@ def _run_hardcover_identity_report(configuration_path: Path) -> HardcoverIdentit
 
 def _run_hardcover_inert_preview(
     source: Mapping[str, object],
+    *,
+    privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
 ) -> InertPreviewReport:
     if (
         set(source) != {"schema", "scenario", "config", "private_query"}
@@ -1509,7 +1511,7 @@ def _run_hardcover_inert_preview(
         raise ValueError("synthetic input is invalid")
     configuration = validate_hardcover_provider(source["config"])
     query = validate_private_query(source["private_query"])
-    return inert_preview(configuration, query)
+    return inert_preview(configuration, query, privacy_observer=privacy_observer)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

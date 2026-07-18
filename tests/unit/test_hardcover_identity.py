@@ -147,6 +147,7 @@ class PrivateIdentityQueryTests(unittest.TestCase):
 
             real_fstat = os.fstat
             for field, delta in (
+                (stat.ST_DEV, 1),
                 (stat.ST_INO, 1),
                 (stat.ST_MODE, stat.S_IWGRP),
                 (stat.ST_UID, 1),

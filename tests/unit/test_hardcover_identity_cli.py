@@ -7,8 +7,11 @@ import io
 import hashlib
 import json
 import logging
+import re
 import tempfile
+import traceback
 import unittest
+import unicodedata
 from urllib.parse import quote, quote_plus
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -16,7 +19,9 @@ from unittest.mock import Mock, patch
 from mechanical_librarian.application.hardcover_identity import (
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
+    InertPreviewReport,
 )
+from mechanical_librarian.bootstrap import composition as composition_module
 from mechanical_librarian.bootstrap.composition import (
     _run_hardcover_identity_report,
     _run_hardcover_inert_preview,
@@ -32,11 +37,17 @@ EXAMPLE_CONFIG = ROOT / "docs" / "examples" / "synthetic-config.json"
 def _forbidden_title_projections(title: str) -> frozenset[str]:
     encoded = title.encode("utf-8")
     normalized = normalized_title_key(title)
-    values = {
+    textual = {
         title,
         title.casefold(),
         normalized,
+        unicodedata.normalize("NFC", title),
+        unicodedata.normalize("NFKC", title),
+        json.dumps(title, ensure_ascii=True),
+        repr(title),
         encoded.hex(),
+        base64.b16encode(encoded).decode("ascii"),
+        base64.b32encode(encoded).decode("ascii"),
         base64.b64encode(encoded).decode("ascii"),
         base64.urlsafe_b64encode(encoded).decode("ascii"),
         quote(title),
@@ -44,10 +55,41 @@ def _forbidden_title_projections(title: str) -> frozenset[str]:
         str(len(title)),
         str(len(encoded)),
         f"title-length={len(title)}",
-        hashlib.sha256(encoded).hexdigest(),
-        hashlib.sha512(encoded).hexdigest(),
-        hashlib.blake2b(encoded).hexdigest(),
     }
+    tokens = set(re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", title))
+    tokens.update(token.casefold() for token in tuple(tokens))
+    fragments = {
+        value[index : index + 8]
+        for value in textual | tokens
+        for index in range(0, len(value), 8)
+        if len(value[index : index + 8]) >= 4
+    }
+    fragments.update(value[:8] for value in textual | tokens if len(value) >= 8)
+    digesters = (
+        hashlib.md5(encoded, usedforsecurity=False),
+        hashlib.sha1(encoded, usedforsecurity=False),
+        hashlib.sha224(encoded),
+        hashlib.sha256(encoded),
+        hashlib.sha384(encoded),
+        hashlib.sha512(encoded),
+        hashlib.sha3_256(encoded),
+        hashlib.sha3_512(encoded),
+        hashlib.blake2s(encoded),
+        hashlib.blake2b(encoded),
+    )
+    digests: set[str] = set()
+    for digester in digesters:
+        raw_digest = digester.digest()
+        hexadecimal = digester.hexdigest()
+        digests.update(
+            {
+                hexadecimal,
+                hexadecimal[:8],
+                base64.b64encode(raw_digest).decode("ascii"),
+                base64.urlsafe_b64encode(raw_digest).decode("ascii"),
+            }
+        )
+    values = textual | tokens | fragments | digests
     return frozenset(value for value in values if value)
 
 
@@ -61,24 +103,59 @@ def _assert_private_channels(
                 raise AssertionError(f"forbidden title projection reached {channel}")
 
 
+def _exception_chain_metadata(error: BaseException) -> list[str]:
+    captured: list[str] = []
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        captured.extend(
+            (
+                type(current).__qualname__,
+                str(current),
+                repr(current.args),
+                repr(getattr(current, "__notes__", None)),
+                repr(current.__suppress_context__),
+                repr(traceback.extract_tb(current.__traceback__)),
+            )
+        )
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+    return captured
+
+
+class _AuthorityTrap(AssertionError):
+    pass
+
+
 @contextmanager
 def _zero_authority() -> object:
     targets = (
+        "mechanical_librarian.bootstrap.composition.HardcoverTitleProvider",
+        "mechanical_librarian.bootstrap.composition.PrivateFileProviderCredentials",
+        "mechanical_librarian.bootstrap.composition.httpx.AsyncClient",
+        "mechanical_librarian.bootstrap.composition.httpx.Client",
+        "mechanical_librarian.bootstrap.composition.httpx.Proxy",
+        "mechanical_librarian.bootstrap.composition.httpx.HTTPTransport",
+        "mechanical_librarian.bootstrap.composition.httpx.AsyncHTTPTransport",
+        "mechanical_librarian.bootstrap.composition.connect",
+        "mechanical_librarian.bootstrap.composition.connect_existing",
         "mechanical_librarian.infrastructure.security.private_query.read_private_query",
         "mechanical_librarian.infrastructure.security.private_file.read_private_secret",
         "mechanical_librarian.infrastructure.security.provider_secrets."
         "read_private_secret",
+        "mechanical_librarian.infrastructure.security.provider_secrets."
+        "PrivateFileProviderCredentials",
         "mechanical_librarian.infrastructure.persistence.sqlite.connect",
         "mechanical_librarian.infrastructure.persistence.sqlite.connect_existing",
         "mechanical_librarian.adapters.providers.hardcover_title."
         "HardcoverTitleProvider",
         "mechanical_librarian.adapters.providers.hardcover_title._system_resolver",
-        "mechanical_librarian.adapters.providers.hardcover_title.httpx.AsyncClient",
-        "mechanical_librarian.adapters.providers.hardcover_title.httpx.Client",
-        "mechanical_librarian.adapters.providers.hardcover_title.httpx.Proxy",
-        "mechanical_librarian.adapters.providers.hardcover_title.httpx.HTTPTransport",
-        "mechanical_librarian.adapters.providers.hardcover_title.httpx."
-        "AsyncHTTPTransport",
         "socket.getaddrinfo",
         "socket.create_connection",
         "socket.socket",
@@ -88,7 +165,7 @@ def _zero_authority() -> object:
             stack.enter_context(
                 patch(
                     target,
-                    side_effect=AssertionError(f"authority reached: {target}"),
+                    side_effect=_AuthorityTrap(f"authority reached: {target}"),
                 )
             )
         yield
@@ -164,6 +241,24 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                     self.assertEqual(errors.getvalue(), "")
                     self.assertEqual(json.loads(output.getvalue())["outcome"], outcome)
                     self.assertNotIn("must-not-open", output.getvalue())
+
+    def test_composition_lookup_authority_traps_are_executable(self) -> None:
+        invocations = (
+            ("provider", lambda: composition_module.HardcoverTitleProvider(None)),
+            (
+                "credentials",
+                lambda: composition_module.PrivateFileProviderCredentials(),
+            ),
+            ("client", lambda: composition_module.httpx.AsyncClient()),
+            ("proxy", lambda: composition_module.httpx.Proxy("http://invalid")),
+            ("transport", lambda: composition_module.httpx.AsyncHTTPTransport()),
+            ("database", lambda: composition_module.connect(Path("/must-not-open"))),
+        )
+        with _zero_authority():
+            for name, invoke in invocations:
+                with self.subTest(composition_lookup=name):
+                    with self.assertRaises(_AuthorityTrap):
+                        invoke()
 
     def test_synthetic_preview_matches_c1_oracle_without_echo_or_stable_identifier(
         self,
@@ -315,8 +410,8 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         self,
     ) -> None:
         titles = (
-            "QzvPrivateTitleSentinel73",
-            "WkxDifferentConfidentialName91",
+            "QzvLomarixNebu73",
+            "WkxPadrunoSefi91",
         )
         projections = frozenset(
             value for title in titles for value in _forbidden_title_projections(title)
@@ -327,22 +422,30 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                 "stdout",
                 "stderr",
                 "exceptions",
-                "audit",
+                "audit_logs",
                 "structured_logs",
                 "traces",
                 "spans",
                 "metrics",
-                "persistence",
+                "non_audit_persistence",
                 "exports",
                 "reports",
                 "hash_inputs",
             )
         }
         real_hashes = {
+            "md5": hashlib.md5,
+            "sha1": hashlib.sha1,
+            "sha224": hashlib.sha224,
             "sha256": hashlib.sha256,
+            "sha384": hashlib.sha384,
             "sha512": hashlib.sha512,
+            "sha3_256": hashlib.sha3_256,
+            "sha3_512": hashlib.sha3_512,
+            "blake2s": hashlib.blake2s,
             "blake2b": hashlib.blake2b,
         }
+        real_hash_new = hashlib.new
 
         def hash_spy(name: str):
             def invoke(value: bytes = b"", *args: object, **kwargs: object):
@@ -351,11 +454,43 @@ class HardcoverIdentityCliTests(unittest.TestCase):
 
             return invoke
 
+        def hash_new_spy(
+            name: str, value: bytes = b"", **kwargs: object
+        ) -> object:
+            channels["hash_inputs"].append(repr((name, value)))
+            return real_hash_new(name, value, **kwargs)
+
         def log_spy(*args: object, **kwargs: object) -> None:
             channels["structured_logs"].append(repr((args, kwargs)))
 
         def audit_spy(*args: object, **kwargs: object) -> None:
-            channels["audit"].append(repr((args, kwargs)))
+            channels["audit_logs"].append(repr((args, kwargs)))
+            raise _AuthorityTrap("audit persistence reached")
+
+        def persistence_spy(*args: object, **kwargs: object) -> None:
+            channels["non_audit_persistence"].append(repr((args, kwargs)))
+            raise _AuthorityTrap("non-audit persistence reached")
+
+        def privacy_observer(channel: str, values: tuple[object, ...]) -> None:
+            channels[channel].append(repr(values))
+
+        original_to_json = InertPreviewReport.to_json
+
+        def report_spy(report: InertPreviewReport) -> str:
+            rendered = original_to_json(report)
+            channels["exports"].append(rendered)
+            channels["reports"].append(rendered)
+            return rendered
+
+        def observed_runner(source: dict[str, object]) -> InertPreviewReport:
+            try:
+                return _run_hardcover_inert_preview(
+                    source,
+                    privacy_observer=privacy_observer,
+                )
+            except BaseException as error:
+                channels["exceptions"].extend(_exception_chain_metadata(error))
+                raise
 
         argv = [
             "hardcover-identity-report",
@@ -369,43 +504,102 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "json",
         ]
         outputs: list[str] = []
-        with _zero_authority(), patch.object(
-            logging.Logger, "_log", side_effect=log_spy
-        ), patch(
-            "mechanical_librarian.adapters.persistence.audit."
-            "SQLiteAuditRepository.append",
-            side_effect=audit_spy,
-        ), patch("hashlib.sha256", side_effect=hash_spy("sha256")), patch(
-            "hashlib.sha512", side_effect=hash_spy("sha512")
-        ), patch("hashlib.blake2b", side_effect=hash_spy("blake2b")):
+        persistence_targets = (
+            "mechanical_librarian.bootstrap.composition.SQLiteInventoryRepository",
+            "mechanical_librarian.bootstrap.composition.SQLiteInventoryV2Repository",
+            "mechanical_librarian.bootstrap.composition."
+            "SQLiteInventoryPollingRepository",
+            "mechanical_librarian.bootstrap.composition."
+            "SQLiteEpubOpeningEvidenceRepository",
+            "mechanical_librarian.bootstrap.composition.SQLiteTitleProposalRepository",
+            "mechanical_librarian.bootstrap.composition."
+            "SQLiteTitleReviewCaseRepository",
+            "mechanical_librarian.bootstrap.composition.SQLiteJobHeartbeatRepository",
+        )
+        with ExitStack() as stack:
+            stack.enter_context(_zero_authority())
+            stack.enter_context(
+                patch.object(logging.Logger, "_log", side_effect=log_spy)
+            )
+            stack.enter_context(
+                patch(
+                    "mechanical_librarian.adapters.persistence.audit."
+                    "SQLiteAuditRepository.append",
+                    side_effect=audit_spy,
+                )
+            )
+            stack.enter_context(
+                patch.object(InertPreviewReport, "to_json", new=report_spy)
+            )
+            for name in real_hashes:
+                stack.enter_context(
+                    patch(
+                        f"hashlib.{name}",
+                        side_effect=hash_spy(name),
+                    )
+                )
+            stack.enter_context(patch("hashlib.new", side_effect=hash_new_spy))
+            for target in persistence_targets:
+                stack.enter_context(patch(target, side_effect=persistence_spy))
+
             for title in titles:
                 output = io.StringIO()
                 errors = io.StringIO()
-                try:
-                    exit_code = main(
-                        argv,
-                        state_check_runner=Mock(),
-                        hardcover_inert_preview_runner=_run_hardcover_inert_preview,
-                        stdin=io.StringIO(
-                            json.dumps(self.synthetic_input(title=title))
-                        ),
-                        stdout=output,
-                        stderr=errors,
-                    )
-                except BaseException as error:
-                    channels["exceptions"].append(repr(error))
-                    raise
+                exit_code = main(
+                    argv,
+                    state_check_runner=Mock(),
+                    hardcover_inert_preview_runner=observed_runner,
+                    stdin=io.StringIO(json.dumps(self.synthetic_input(title=title))),
+                    stdout=output,
+                    stderr=errors,
+                )
                 self.assertEqual(exit_code, 0)
                 channels["stdout"].append(output.getvalue())
                 channels["stderr"].append(errors.getvalue())
-                channels["exports"].append(output.getvalue())
-                channels["reports"].append(output.getvalue())
                 outputs.append(output.getvalue())
+
+            invalid = self.synthetic_input(title=titles[0])
+            invalid["unexpected"] = True
+            invalid_output = io.StringIO()
+            invalid_errors = io.StringIO()
+            self.assertEqual(
+                main(
+                    argv,
+                    state_check_runner=Mock(),
+                    hardcover_inert_preview_runner=observed_runner,
+                    stdin=io.StringIO(json.dumps(invalid)),
+                    stdout=invalid_output,
+                    stderr=invalid_errors,
+                ),
+                2,
+            )
+            channels["stdout"].append(invalid_output.getvalue())
+            channels["stderr"].append(invalid_errors.getvalue())
 
         self.assertEqual(outputs[0], outputs[1])
         self.assertEqual(channels["hash_inputs"], [])
         self.assertEqual(channels["structured_logs"], [])
-        self.assertEqual(channels["audit"], [])
+        self.assertEqual(channels["audit_logs"], [])
+        self.assertEqual(channels["non_audit_persistence"], [])
+        self.assertTrue(channels["exceptions"])
+        self.assertTrue(channels["traces"])
+        self.assertTrue(channels["spans"])
+        self.assertTrue(channels["metrics"])
+        self.assertTrue(channels["exports"])
+        self.assertTrue(channels["reports"])
+        self.assertIn(titles[0][:8], projections)
+        self.assertIn(
+            hashlib.md5(
+                titles[0].encode("utf-8"), usedforsecurity=False
+            ).hexdigest(),
+            projections,
+        )
+        self.assertIn(
+            hashlib.sha1(
+                titles[0].encode("utf-8"), usedforsecurity=False
+            ).hexdigest(),
+            projections,
+        )
         _assert_private_channels(channels, projections)
 
         for channel in channels:
@@ -415,6 +609,16 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                 with self.subTest(negative_scanner_channel=channel):
                     with self.assertRaises(AssertionError):
                         _assert_private_channels(poisoned, projections)
+
+        projected_cause = next(iter(projections))
+        cause = ValueError(projected_cause)
+        handled = RuntimeError("handled synthetic preview failure")
+        handled.__cause__ = cause
+        handled.add_note(projected_cause)
+        poisoned = {name: list(values) for name, values in channels.items()}
+        poisoned["exceptions"].extend(_exception_chain_metadata(handled))
+        with self.assertRaises(AssertionError):
+            _assert_private_channels(poisoned, projections)
 
     def test_synthetic_invalid_input_is_typed_and_zero_access(self) -> None:
         source = self.synthetic_input()
