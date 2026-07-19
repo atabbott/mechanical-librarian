@@ -214,13 +214,16 @@ requires either positively confirmed reader close or a positively confirmed
 transport-owned release fallback; otherwise only value-free `unavailable` may
 escape, including when the candidate was success or a status-derived result.
 Reader-local disablement and attempted finalization never imply release, and
-truthy/non-boolean close or fallback returns are rejected. Caught provider,
-preview, observer, parser, and injected-capability exceptions are reduced to
-typed sentinels before any public exception is raised; private exception/input
-objects are cleared from traceback locals, cause and context remain absent, and
-only allowlisted args with no notes are exposed. Transport failure metadata is
-accepted only from an exact failure type with an exact revalidated enum value;
-subclass accessors and post-construction mutation fail to unavailable.
+truthy/non-boolean close or fallback returns are rejected. Contributor input,
+Hardcover/network bytes and metadata, credentials, DNS/address/peer/TLS data,
+real external dependency failures, and resource correctness are the hostile
+boundary. Application-owned typed collaborators, documented dependency
+objects, and structural fakes honouring their interfaces are trusted. Ordinary
+product boundaries translate `Exception` failures to value-free typed results;
+interpreter control flow is not caught. External-input translation breaks
+cause/context chains where raw input, exception text, credentials, or private
+titles could otherwise escape. Same-process descriptor, subclass, mutation,
+forged-exception, and traceback-local sabotage are not supported threat actors.
 HTTP 200 enforces exact header cardinality and grammar, 65,536 streamed bytes,
 strict UTF-8 once without BOM, string-aware depth 8, 128 value nodes, 96
 members, four cumulative list elements, per-string and cumulative Unicode/byte

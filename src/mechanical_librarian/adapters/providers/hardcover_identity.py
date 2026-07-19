@@ -12,7 +12,7 @@ import ipaddress
 import json
 import re
 import unicodedata
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -249,10 +249,7 @@ class HardcoverIdentityProvider:
         channel: IdentityByteChannel,
         token: bytes,
     ) -> None:
-        try:
-            exchange = getattr(channel, "exchange", None)
-        except BaseException:
-            exchange = None
+        exchange = getattr(channel, "exchange", None)
         if not callable(resolver) or not callable(exchange):
             resolver = None
             channel = None
@@ -281,9 +278,7 @@ class HardcoverIdentityProvider:
             return IdentityAttemptResult.failed(preflight)
         try:
             resolved = self._resolver(HARDCOVER_IDENTITY_HOST, 443)
-        except KeyboardInterrupt:
-            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
-        except BaseException:
+        except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         addresses = _validated_addresses(resolved)
         if not addresses:
@@ -299,36 +294,21 @@ class HardcoverIdentityProvider:
             return IdentityAttemptResult.failed(preflight)
         try:
             authorized = authorize_identity_request(request, query, self._token)
-        except KeyboardInterrupt:
-            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
-        except BaseException:
+        except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         if authorized is None:
             return IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.INCOMPATIBLE
             )
-        exchange, exchange_failure = _injected_callable(
-            self._channel, "exchange", IdentityAttemptFailureKind.UNAVAILABLE
-        )
-        if exchange_failure is not None or exchange is None:
-            return IdentityAttemptResult.failed(
-                exchange_failure or IdentityAttemptFailureKind.UNAVAILABLE
-            )
         try:
-            response = exchange(authorized, context)
+            response = self._channel.exchange(authorized, context)
         except IdentityChannelFailure as error:
-            kind = _channel_failure_kind(error)
-            del error
-            return IdentityAttemptResult.failed(kind)
-        except KeyboardInterrupt:
-            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
-        except BaseException:
+            return IdentityAttemptResult.failed(error.kind)
+        except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
-        body_reader = _acquire_response_body(response)
+        body_reader = response.body_reader
         candidate: bytes | IdentityAttemptFailureKind
-        if type(response) is not RawIdentityResponseHead:
-            candidate = IdentityAttemptFailureKind.MALFORMED
-        elif not _peer_equal(response.connected_peer_address, addresses[0]):
+        if not _peer_equal(response.connected_peer_address, addresses[0]):
             candidate = IdentityAttemptFailureKind.UNAVAILABLE
         else:
             preflight = _safe_preflight(context)
@@ -451,14 +431,9 @@ class StructuralIdentityByteChannel:
         if response is not self._response:
             return False
         reader = self._response.body_reader
-        abort, failure = _injected_callable(
-            reader, "abort", IdentityAttemptFailureKind.UNAVAILABLE
-        )
-        if failure is not None or abort is None:
-            return False
         try:
-            confirmed = abort()
-        except BaseException:
+            confirmed = reader.abort()
+        except Exception:
             return False
         self._released = confirmed is True
         return self._released
@@ -628,7 +603,7 @@ def _structural_preview_attempt(
 ) -> FixedAdapterAttemptEvidence | None:
     try:
         return preview._run(source)
-    except BaseException:
+    except Exception:
         return None
 
 
@@ -667,7 +642,7 @@ def _canonical_query_or_none(body: bytes) -> IsbnIdentityQuery | None:
             parse_float=_reject_number,
             parse_constant=_reject_number,
         )
-    except BaseException:
+    except Exception:
         return None
     if (
         type(value) is not dict
@@ -684,11 +659,11 @@ def _canonical_query_or_none(body: bytes) -> IsbnIdentityQuery | None:
         return None
     try:
         query = IsbnIdentityQuery(isbns[0], isbns[1] if len(isbns) == 2 else None)
-    except BaseException:
+    except Exception:
         return None
     try:
         canonical = _canonical_body(query)
-    except BaseException:
+    except Exception:
         return None
     if canonical != body:
         return None
@@ -854,9 +829,7 @@ def _safe_preflight(context: OperationContext) -> IdentityAttemptFailureKind | N
             item_count=MAX_JSON_LIST_ELEMENTS,
             serialized_bytes=MAX_RESPONSE_BYTES,
         )
-    except KeyboardInterrupt:
-        return IdentityAttemptFailureKind.CANCELLED
-    except BaseException:
+    except Exception:
         return IdentityAttemptFailureKind.UNAVAILABLE
     if result.failure is None:
         return None
@@ -864,98 +837,25 @@ def _safe_preflight(context: OperationContext) -> IdentityAttemptFailureKind | N
 
 
 def _close_body(reader: object) -> None:
-    _invoke_body_close(_body_close_callable(reader))
+    try:
+        reader.close()
+    except Exception:
+        pass
 
 
 def _close_owned_iterator(iterator: object) -> bool:
     """Conclude an owned iterator, treating absence as no external resource."""
 
-    try:
-        close = getattr(iterator, "close", None)
-    except BaseException:
-        return False
+    close = getattr(iterator, "close", None)
     if close is None:
         return True
     if not callable(close):
         return False
     try:
         close()
-    except BaseException:
+    except Exception:
         return False
     return True
-
-
-def _body_close_callable(reader: object) -> Callable[[], object] | None:
-    try:
-        close = getattr(reader, "close", None)
-        return close if callable(close) else None
-    except BaseException:
-        return None
-
-
-def _invoke_body_close(close: Callable[[], object] | None) -> None:
-    if close is None:
-        return
-    try:
-        close()
-    except BaseException:
-        pass
-
-
-def _body_read_callable(
-    reader: object,
-) -> tuple[
-    Callable[[int], object] | None,
-    IdentityAttemptFailureKind | None,
-]:
-    try:
-        read_chunk = getattr(reader, "read_chunk", None)
-        if not callable(read_chunk):
-            return None, IdentityAttemptFailureKind.MALFORMED
-        return read_chunk, None
-    except KeyboardInterrupt:
-        return None, IdentityAttemptFailureKind.CANCELLED
-    except BaseException:
-        return None, IdentityAttemptFailureKind.UNAVAILABLE
-
-
-def _injected_callable(
-    owner: object,
-    name: str,
-    missing: IdentityAttemptFailureKind,
-) -> tuple[Callable[..., object] | None, IdentityAttemptFailureKind | None]:
-    try:
-        capability = getattr(owner, name, None)
-    except KeyboardInterrupt:
-        return None, IdentityAttemptFailureKind.CANCELLED
-    except BaseException:
-        return None, IdentityAttemptFailureKind.UNAVAILABLE
-    if not callable(capability):
-        return None, missing
-    return capability, None
-
-
-def _channel_failure_kind(error: IdentityChannelFailure) -> IdentityAttemptFailureKind:
-    if type(error) is not IdentityChannelFailure:
-        return IdentityAttemptFailureKind.UNAVAILABLE
-    try:
-        kind = object.__getattribute__(error, "kind")
-    except BaseException:
-        return IdentityAttemptFailureKind.UNAVAILABLE
-    if type(kind) is not IdentityAttemptFailureKind or kind not in {
-        IdentityAttemptFailureKind.CANCELLED,
-        IdentityAttemptFailureKind.TIMEOUT,
-        IdentityAttemptFailureKind.UNAVAILABLE,
-    }:
-        return IdentityAttemptFailureKind.UNAVAILABLE
-    return kind
-
-
-def _acquire_response_body(response: object) -> object:
-    try:
-        return getattr(response, "body_reader", None)
-    except BaseException:
-        return None
 
 
 def _parse_status(line: object) -> int | None:
@@ -984,22 +884,14 @@ def _status_failure(status: int) -> IdentityAttemptFailureKind | None:
 def _release_response(channel: object, response: object, reader: object) -> bool:
     """Confirm response ownership release through close or transport fallback."""
 
-    close = _body_close_callable(reader)
-    if close is not None:
-        try:
-            confirmation = close()
-        except BaseException:
-            confirmation = False
-        if confirmation is True:
-            return True
-    release, failure = _injected_callable(
-        channel, "release", IdentityAttemptFailureKind.UNAVAILABLE
-    )
-    if failure is not None or release is None:
-        return False
     try:
-        return release(response) is True
-    except BaseException:
+        if reader.close() is True:
+            return True
+    except Exception:
+        pass
+    try:
+        return channel.release(response) is True
+    except Exception:
         return False
 
 
@@ -1009,22 +901,12 @@ def _bounded_body(
     *,
     _close_after: bool = True,
 ) -> bytes | IdentityAttemptFailureKind:
-    read_chunk, read_failure = _body_read_callable(reader)
-    close = _body_close_callable(reader) if _close_after else None
-
     def finish(
         value: bytes | IdentityAttemptFailureKind,
     ) -> bytes | IdentityAttemptFailureKind:
         if _close_after:
-            _invoke_body_close(close)
+            _close_body(reader)
         return value
-
-    if (
-        read_failure is not None
-        or read_chunk is None
-        or (_close_after and close is None)
-    ):
-        return finish(read_failure or IdentityAttemptFailureKind.MALFORMED)
     parsed_headers = _parse_headers(lines)
     if isinstance(parsed_headers, IdentityAttemptFailureKind):
         return finish(parsed_headers)
@@ -1062,7 +944,7 @@ def _bounded_body(
         while True:
             remaining = MAX_RESPONSE_BYTES - len(payload)
             requested = remaining + 1
-            chunk = read_chunk(requested)
+            chunk = reader.read_chunk(requested)
             if chunk is None:
                 break
             if type(chunk) is not bytes or not chunk:
@@ -1070,12 +952,10 @@ def _bounded_body(
             if len(chunk) > requested or len(chunk) > remaining:
                 return finish(IdentityAttemptFailureKind.OVERSIZED)
             payload.extend(chunk)
-    except KeyboardInterrupt:
-        return finish(IdentityAttemptFailureKind.CANCELLED)
-    except BaseException:
+    except Exception:
         return finish(IdentityAttemptFailureKind.UNAVAILABLE)
     if _close_after:
-        _invoke_body_close(close)
+        _close_body(reader)
     if declared_length is not None and declared_length != len(payload):
         return IdentityAttemptFailureKind.MALFORMED
     if not payload:

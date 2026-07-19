@@ -66,8 +66,8 @@ status line is rejected above 128 bytes before parsing. A non-200 body is
 released without JSON parsing or retention.
 
 Every post-exchange exit uses one conclusive release operation. The body reader
-first confirms normal close; a failed, absent, non-callable, or raising close
-invokes the byte-channel-owned release fallback. If neither confirms release,
+first confirms normal close; a false result or ordinary `Exception` invokes the
+byte-channel-owned release fallback. If neither confirms release,
 the attempt returns only value-free `unavailable`, replacing success and every
 status- or body-derived candidate. Read disablement and a finalization attempt
 are distinct from confirmed producer release; repeated close/abort calls must
@@ -75,13 +75,14 @@ perform and confirm a real producer operation rather than infer success from
 local wrapper state. Only exact boolean `true` confirms either close or the
 independently owned fallback.
 
-Caught exceptions are reduced to closed typed outcomes before the exception
-scope ends. Any later public exception is raised only after private input,
-decoded values, callables, and caught objects have been cleared; its args and
-notes are allowlisted and both cause and context are absent. Channel failure
-metadata is trusted only on an exact `IdentityChannelFailure` instance after
-revalidating an exact allowed failure enum; subclasses or mutated metadata are
-value-free unavailable.
+Caught external-input and dependency `Exception` failures are reduced to closed
+typed outcomes before a public exception is raised, with value-free output and
+cause/context protection for raw input, external exception text, credentials,
+and private titles. Typed channel failure metadata is trusted according to its
+application-owned interface. `KeyboardInterrupt`, `SystemExit`, and
+`GeneratorExit` preserve interpreter control-flow semantics. Same-process
+descriptor, subclass, post-construction mutation, forged-exception, and
+traceback-local sabotage are outside the supported threat model.
 
 A 200 response must have exactly one unpadded `Content-Type` matching
 `application/json` with an optional unquoted UTF-8 charset, at most one absent

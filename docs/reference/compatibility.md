@@ -214,6 +214,14 @@ credential, egress, production configuration, target join, persistence,
 lifecycle, retry, proposal, or write compatibility. Enabled production remains
 `provider_not_activated`.
 
+This compatibility claim treats contributor and network bytes/metadata,
+credentials, DNS/address/peer/TLS data, real external service `Exception`
+failures, and resource correctness as hostile. Application-owned typed
+collaborators, documented dependency objects, and interface-honouring
+structural fakes are trusted; arbitrary same-process descriptor, subclass,
+post-construction mutation, forged-exception, traceback-local, `SystemExit`, or
+`GeneratorExit` sabotage is not a supported compatibility boundary.
+
 The exact cumulative compatibility registry is
 `preview-registry-c3-v6.json` / SHA-256
 `95d971c2d6e689044320512f415caa38b6c944cab2ec91132669523f16ab2fed`.

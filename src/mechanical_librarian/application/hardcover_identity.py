@@ -99,7 +99,7 @@ class IsbnIdentityQuery:
 def _isbn_identity_or_none(value: object):
     try:
         return isbn_identity(value)
-    except BaseException:
+    except Exception:
         return None
 
 
@@ -321,12 +321,12 @@ class RunHardcoverFixedAdapterPreview:
             preview = None
             source = None
             raise TypeError("Hardcover structural preview input is malformed")
-        invoke, failure = _attempt_method(preview, "run")
-        if failure is not None or invoke is None:
+        invoke = getattr(preview, "run", None)
+        if not callable(invoke):
             preview = None
             source = {}
             invoke = None
-            _raise_attempt_boundary("Hardcover structural preview", failure)
+            raise TypeError("Hardcover structural preview is malformed")
         evidence, failure = _attempt_call(invoke, source)
         if failure is not None:
             preview = None
@@ -340,23 +340,12 @@ class RunHardcoverFixedAdapterPreview:
             invoke = None
             evidence = None
             raise IdentityReportError("Hardcover structural preview is malformed")
-        report, failure = _attempt_call(
-            fixed_adapter_preview_report,
+        report = fixed_adapter_preview_report(
             evidence.result,
             evidence.query,
             peer_equal=evidence.peer_equal,
             address_policy=evidence.address_policy,
         )
-        if failure is not None or type(report) is not FixedAdapterPreviewReport:
-            preview = None
-            source = {}
-            invoke = None
-            evidence = None
-            report = None
-            _raise_attempt_boundary(
-                "Hardcover structural preview",
-                failure or IdentityAttemptFailureKind.MALFORMED,
-            )
         return report
 
 
@@ -510,14 +499,14 @@ class RunHardcoverIdentityReport:
             privacy_observer = None
             raise TypeError("Hardcover privacy observer is malformed")
 
-        lookup, failure = _attempt_method(provider, "lookup")
-        if failure is not None or lookup is None:
+        lookup = getattr(provider, "lookup", None)
+        if not callable(lookup):
             provider = None
             query = None
             context = None
             privacy_observer = None
             lookup = None
-            _raise_attempt_boundary("book identity provider", failure)
+            raise TypeError("book identity provider is malformed")
         typed_query, failure = _attempt_call(IsbnIdentityQuery.from_private, query)
         if failure is not None or type(typed_query) is not IsbnIdentityQuery:
             provider = None
@@ -645,21 +634,6 @@ def _raise_no_decision(kind: IdentityAttemptFailureKind) -> None:
     )
 
 
-def _attempt_method(
-    owner: object,
-    name: str,
-) -> tuple[Callable[..., object] | None, IdentityAttemptFailureKind | None]:
-    try:
-        method = getattr(owner, name, None)
-    except KeyboardInterrupt:
-        return None, IdentityAttemptFailureKind.CANCELLED
-    except BaseException:
-        return None, IdentityAttemptFailureKind.UNAVAILABLE
-    if not callable(method):
-        return None, IdentityAttemptFailureKind.MALFORMED
-    return method, None
-
-
 def _attempt_call(
     invoke: Callable[..., object],
     *args: object,
@@ -667,9 +641,7 @@ def _attempt_call(
 ) -> tuple[object | None, IdentityAttemptFailureKind | None]:
     try:
         return invoke(*args, **kwargs), None
-    except KeyboardInterrupt:
-        return None, IdentityAttemptFailureKind.CANCELLED
-    except BaseException:
+    except Exception:
         return None, IdentityAttemptFailureKind.UNAVAILABLE
 
 
@@ -680,9 +652,7 @@ def _notify_observer(
 ) -> IdentityAttemptFailureKind | None:
     try:
         observer(channel, values)
-    except KeyboardInterrupt:
-        return IdentityAttemptFailureKind.CANCELLED
-    except BaseException:
+    except Exception:
         return IdentityAttemptFailureKind.UNAVAILABLE
     return None
 
