@@ -1056,6 +1056,44 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             [(1, 1, 1, "failed"), (2, 2, 2, "failed")],
         )
 
+    def test_candidate_three_claim_rejects_missing_accepted_event(self) -> None:
+        accepted = self.candidate_three_retry_wait()
+        self.connection.execute("DROP TRIGGER hardcover_identity_events_no_delete")
+        self.connection.execute(
+            "DELETE FROM hardcover_identity_events "
+            "WHERE work_key=? AND generation=1 AND kind='accepted'",
+            (WORK_KEY,),
+        )
+        self.assert_candidate_three_history_rejected(accepted.reference)
+
+    def test_candidate_three_claim_rejects_corrupt_accepted_event(self) -> None:
+        accepted = self.candidate_three_retry_wait()
+        self.connection.execute("DROP TRIGGER hardcover_identity_events_no_update")
+        self.connection.execute(
+            "UPDATE hardcover_identity_events SET occurred_at=? "
+            "WHERE work_key=? AND generation=1 AND kind='accepted'",
+            ("2026-01-01T00:00:00.500000Z", WORK_KEY),
+        )
+        self.assert_candidate_three_history_rejected(accepted.reference)
+
+    def test_candidate_three_claim_rejects_extra_failed_event(self) -> None:
+        accepted = self.candidate_three_retry_wait()
+        self.connection.execute(
+            "INSERT INTO hardcover_identity_events(work_key,generation,sequence,kind,from_state,to_state,fence,occurred_at) "
+            "VALUES(?,1,8,'failed','claimed','failed',1,?)",
+            (WORK_KEY, "2026-01-01T00:00:06.000000Z"),
+        )
+        self.assert_candidate_three_history_rejected(accepted.reference)
+
+    def test_candidate_three_claim_rejects_extra_published_event(self) -> None:
+        accepted = self.candidate_three_retry_wait()
+        self.connection.execute(
+            "INSERT INTO hardcover_identity_events(work_key,generation,sequence,kind,from_state,to_state,fence,occurred_at) "
+            "VALUES(?,1,8,'published','claimed','succeeded',1,?)",
+            (WORK_KEY, "2026-01-01T00:00:06.000000Z"),
+        )
+        self.assert_candidate_three_history_rejected(accepted.reference)
+
     def test_candidate_three_claim_rejects_corrupt_first_attempt_fence(self) -> None:
         accepted = self.candidate_three_retry_wait()
         self.connection.execute(

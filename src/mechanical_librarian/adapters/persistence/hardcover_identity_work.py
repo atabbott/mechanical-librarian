@@ -549,6 +549,51 @@ class SQLiteHardcoverIdentityWorkRepository:
                 raw_candidate_created
             )
 
+        created_rows = self._connection.execute(
+            "SELECT created_at FROM hardcover_identity_generations "
+            "WHERE work_key=? AND generation=?",
+            (reference.work_key, reference.generation),
+        ).fetchall()
+        if (
+            len(created_rows) != 1
+            or type(created_rows[0][0]) is not str
+            or type(generation_row[6]) is not str
+            or type(generation_row[7]) is not str
+        ):
+            raise IdentityWorkPersistenceError("identity work retry history is corrupt")
+        generation_created = _parse_time(created_rows[0][0])
+        aggregate_started = _parse_time(generation_row[6])
+        aggregate_deadline = _parse_time(generation_row[7])
+        if (
+            generation_created > aggregate_started
+            or aggregate_deadline != aggregate_started + AGGREGATE_WINDOW
+            or candidate_created[1] != aggregate_started
+        ):
+            raise IdentityWorkPersistenceError("identity work retry history is corrupt")
+
+        events = self._connection.execute(
+            "SELECT sequence,kind,from_state,to_state,fence,occurred_at "
+            "FROM hardcover_identity_events WHERE work_key=? AND generation=? "
+            "ORDER BY sequence",
+            (reference.work_key, reference.generation),
+        ).fetchall()
+        expected_events: list[tuple[int, str, str | None, str, int, str]] = []
+        if generation_created < aggregate_started:
+            expected_events.append(
+                (1, "expired", None, "pending", 0, _time(generation_created))
+            )
+            expected_events.append(
+                (2, "accepted", "pending", "pending", 0, _time(aggregate_started))
+            )
+        else:
+            if generation_created != aggregate_started:
+                raise IdentityWorkPersistenceError(
+                    "identity work retry history is corrupt"
+                )
+            expected_events.append(
+                (1, "accepted", None, "pending", 0, _time(aggregate_started))
+            )
+
         claims = self._connection.execute(
             "SELECT fence,candidate,owner,claimed_at,lease_expires_at FROM hardcover_identity_claims "
             "WHERE work_key=? AND generation=? ORDER BY fence",
@@ -669,7 +714,6 @@ class SQLiteHardcoverIdentityWorkRepository:
                 outcome,
             )
 
-        expected_events: list[tuple[str, str, str, int, str]] = []
         for claim_fence, (
             claim_candidate,
             claimed,
@@ -677,6 +721,7 @@ class SQLiteHardcoverIdentityWorkRepository:
         ) in parsed_claims.items():
             expected_events.append(
                 (
+                    len(expected_events) + 1,
                     "claimed",
                     "pending" if claim_fence == 1 else "retry_wait",
                     "claimed",
@@ -705,6 +750,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                 )
                 expected_events.append(
                     (
+                        len(expected_events) + 1,
                         "started",
                         "claimed",
                         "claimed",
@@ -734,6 +780,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                 )
             expected_events.append(
                 (
+                    len(expected_events) + 1,
                     "recovered" if reason == "interrupted" else "retry_scheduled",
                     "claimed",
                     "retry_wait",
@@ -742,13 +789,6 @@ class SQLiteHardcoverIdentityWorkRepository:
                 )
             )
 
-        events = self._connection.execute(
-            "SELECT kind,from_state,to_state,fence,occurred_at FROM hardcover_identity_events "
-            "WHERE work_key=? AND generation=? "
-            "AND kind IN ('claimed','started','recovered','retry_scheduled') "
-            "ORDER BY sequence",
-            (reference.work_key, reference.generation),
-        ).fetchall()
         if events != expected_events:
             raise IdentityWorkPersistenceError("identity work retry history is corrupt")
         return candidate
