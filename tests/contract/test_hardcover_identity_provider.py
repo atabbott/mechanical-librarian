@@ -8,10 +8,12 @@ from unittest.mock import patch
 
 from mechanical_librarian.adapters.providers import hardcover_identity as adapter
 from mechanical_librarian.adapters.providers.hardcover_identity import (
+    AuthorizedIdentityRequest,
     HARDCOVER_IDENTITY_OPERATION,
     HARDCOVER_IDENTITY_QUERY,
     HARDCOVER_IDENTITY_URL,
     HardcoverIdentityProvider,
+    IdentityChannelFailure,
     RawIdentityResponseHead,
     StructuralIdentityBodyReader,
     StructuralIdentityByteChannel,
@@ -128,6 +130,7 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             expected_method="POST",
             expected_url=HARDCOVER_IDENTITY_URL,
             expected_body=self.body(),
+            expected_token=b"synthetic-noncredential",
             selected_address=selected,
             connected_peer_address=peer,
             hostname="api.hardcover.app",
@@ -420,6 +423,84 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         result = self.provider(self.channel()).lookup(self.query(), cancelled)
         self.assertEqual(result.failure.kind, IdentityAttemptFailureKind.CANCELLED)
         self.assertNotIn("private-interrupt-detail", repr(result))
+
+    def test_every_returned_malformed_head_releases_body_ownership(self) -> None:
+        class ResponseSubclass(RawIdentityResponseHead):
+            pass
+
+        class MalformedHead:
+            def __init__(self, body_reader: object) -> None:
+                self.body_reader = body_reader
+
+        class ReturningChannel:
+            def __init__(self, response: object) -> None:
+                self.response = response
+
+            def exchange(self, request: object, context: object) -> object:
+                return self.response
+
+        for kind in ("subclass", "malformed", "close_failure"):
+            with self.subTest(kind=kind):
+                if kind == "close_failure":
+                    class FailedCloseReader:
+                        close_calls = 0
+
+                        def close(self) -> None:
+                            self.close_calls += 1
+                            raise RuntimeError("private-close-detail")
+
+                    reader: object = FailedCloseReader()
+                else:
+                    reader = StructuralIdentityBodyReader(iter((b"must-not-read",)))
+                if kind == "subclass":
+                    response: object = ResponseSubclass(
+                        b"HTTP/1.1 200 OK\r\n", (), reader, "1.1.1.1"
+                    )
+                else:
+                    response = MalformedHead(reader)
+                result = HardcoverIdentityProvider(
+                    lambda host, port: ("1.1.1.1",),
+                    ReturningChannel(response),
+                    b"synthetic-noncredential",
+                ).lookup(self.query(), self.context())
+                self.assertEqual(
+                    result.failure.kind, IdentityAttemptFailureKind.MALFORMED
+                )
+                if kind == "close_failure":
+                    self.assertEqual(reader.close_calls, 1)
+                    self.assertNotIn("private-close-detail", repr(result))
+                else:
+                    self.assertTrue(reader.closed)
+                    self.assertEqual(reader.read_count, 0)
+
+    def test_structural_channel_requires_the_exact_ordered_header_tuple(self) -> None:
+        query = self.query()
+        request = adapter._build_request(query, "1.1.1.1")
+        authorized = authorize_identity_request(
+            request, query, b"synthetic-noncredential"
+        )
+        self.assertIsNotNone(authorized)
+        headers = authorized.headers
+        mutations = {
+            "missing": headers[:-1],
+            "altered": ((b"Accept", b"text/plain"), *headers[1:]),
+            "duplicated": (*headers[:3], headers[2], *headers[3:]),
+            "reordered": (headers[1], headers[0], *headers[2:]),
+            "extra": (*headers, (b"Authorization-Extra", b"Bearer extra")),
+            "token": (
+                *headers[:2],
+                (b"Authorization", b"Bearer synthetic-noncredentiaL"),
+                *headers[3:],
+            ),
+        }
+        for name, changed in mutations.items():
+            with self.subTest(mutation=name):
+                channel = self.channel()
+                with self.assertRaises(IdentityChannelFailure):
+                    channel.exchange(
+                        AuthorizedIdentityRequest(request, changed), self.context()
+                    )
+                self.assertFalse(channel.called)
 
     def test_sensitive_request_response_and_result_representations_are_redacted(
         self,

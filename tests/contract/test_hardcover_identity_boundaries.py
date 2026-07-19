@@ -195,6 +195,37 @@ class HardcoverIdentityBoundaryTests(unittest.TestCase):
         self.assertTrue(reader.closed)
         self.assertTrue(finalized)
 
+    def test_raw_header_field_values_reject_every_control_injection(self) -> None:
+        valid = adapter._parse_headers(
+            (
+                b"Content-Type: application/json\r\n",
+                b"X-Synthetic:\tA B\tC\r\n",
+                b"X-Extended: \x80\xff\r\n",
+            )
+        )
+        self.assertIs(type(valid), dict)
+        hostile = (
+            (b"X-Test: A\r\nInjected: B\r\n",),
+            (b"X-Test: A\rB\r\n",),
+            (b"X-Test: A\nB\r\n",),
+            (b"X-Test: A\x00B\r\n",),
+            (b"X-Test: A\x01B\r\n",),
+            (b"X-Test: A\x0bB\r\n",),
+            (b"X-Test: A\x1fB\r\n",),
+            (b"X-Test: A\x7fB\r\n",),
+            (b"X-Test: A\r\n Content-Type: text/plain\r\n",),
+            (
+                b"Content-Type: application/json\r\n",
+                b"Content-Type: text/plain\r\n",
+            ),
+        )
+        for lines in hostile:
+            with self.subTest(lines=lines):
+                self.assertIs(
+                    adapter._parse_headers(lines),
+                    IdentityAttemptFailureKind.MALFORMED,
+                )
+
     def test_depth_limit_minus_exact_plus_and_string_aware_scan(self) -> None:
         def nested(depth: int) -> str:
             return '{"x":' * depth + "0" + "}" * depth

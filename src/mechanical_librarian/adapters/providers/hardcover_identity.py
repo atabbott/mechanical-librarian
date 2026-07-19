@@ -275,24 +275,26 @@ class HardcoverIdentityProvider:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
         except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
+        body_reader = _acquire_response_body(response)
         if type(response) is not RawIdentityResponseHead:
+            _close_body(body_reader)
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.MALFORMED)
         if not _peer_equal(response.connected_peer_address, addresses[0]):
-            _close_body(response.body_reader)
+            _close_body(body_reader)
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         preflight = _safe_preflight(context)
         if preflight is not None:
-            _close_body(response.body_reader)
+            _close_body(body_reader)
             return IdentityAttemptResult.failed(preflight)
         status = _parse_status(response.status_line)
         if status is None:
-            _close_body(response.body_reader)
+            _close_body(body_reader)
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.MALFORMED)
         mapped = _status_failure(status)
         if mapped is not None:
-            _close_body(response.body_reader)
+            _close_body(body_reader)
             return IdentityAttemptResult.failed(mapped)
-        payload = _bounded_body(response.header_lines, response.body_reader)
+        payload = _bounded_body(response.header_lines, body_reader)
         if isinstance(payload, IdentityAttemptFailureKind):
             return IdentityAttemptResult.failed(payload)
         observations = _parse_observations(payload)
@@ -310,6 +312,7 @@ class StructuralIdentityByteChannel:
         expected_method: str,
         expected_url: str,
         expected_body: bytes,
+        expected_token: bytes,
         selected_address: str,
         connected_peer_address: str,
         hostname: str,
@@ -322,7 +325,17 @@ class StructuralIdentityByteChannel:
         byte_channel: str,
         response: RawIdentityResponseHead,
     ) -> None:
+        if not _valid_token(expected_token):
+            raise ValueError("structural identity channel construction is invalid")
         self._expected = (expected_method, expected_url, expected_body)
+        self._expected_headers = (
+            (b"Accept", b"application/json"),
+            (b"Accept-Encoding", b"identity"),
+            (b"Authorization", b"Bearer " + expected_token),
+            (b"Connection", b"close"),
+            (b"Content-Type", b"application/json"),
+            (b"Host", HARDCOVER_IDENTITY_HOST.encode("ascii")),
+        )
         self._transport = (
             selected_address,
             connected_peer_address,
@@ -368,7 +381,7 @@ class StructuralIdentityByteChannel:
             frozen is not None
             and self._expected
             == (frozen.method, HARDCOVER_IDENTITY_URL, frozen.body)
-            and _authorized_header_valid(request.headers)
+            and request.headers == self._expected_headers
         )
         if not transport_valid or not request_valid:
             raise IdentityChannelFailure(IdentityAttemptFailureKind.UNAVAILABLE)
@@ -484,6 +497,7 @@ class StructuralHardcoverIdentityPreview:
             expected_method=request["method"],
             expected_url=request["url"],
             expected_body=request_body,
+            expected_token=b"structural-preview-noncredential",
             selected_address=selected,
             connected_peer_address=peer,
             hostname=transport["hostname"],
@@ -711,13 +725,6 @@ def _valid_token(token: object) -> bool:
     )
 
 
-def _authorized_header_valid(headers: object) -> bool:
-    if type(headers) is not tuple:
-        return False
-    authorization = [value for name, value in headers if name == b"Authorization"]
-    return len(authorization) == 1 and authorization[0].startswith(b"Bearer ")
-
-
 def _context_failure(kind: FailureKind) -> IdentityAttemptFailureKind:
     if kind is FailureKind.CANCELLED:
         return IdentityAttemptFailureKind.CANCELLED
@@ -752,6 +759,13 @@ def _close_body(reader: object) -> None:
             pass
 
 
+def _acquire_response_body(response: object) -> object:
+    try:
+        return getattr(response, "body_reader", None)
+    except BaseException:
+        return None
+
+
 def _parse_status(line: object) -> int | None:
     if type(line) is not bytes:
         return None
@@ -778,27 +792,15 @@ def _status_failure(status: int) -> IdentityAttemptFailureKind | None:
 def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailureKind:
     read_chunk = getattr(reader, "read_chunk", None)
     close = getattr(reader, "close", None)
-    if (
-        type(lines) is not tuple
-        or len(lines) > 16
-        or any(type(line) is not bytes or len(line) > 256 for line in lines)
-        or not callable(read_chunk)
-        or not callable(close)
-    ):
+    if not callable(read_chunk) or not callable(close):
         _close_body(reader)
         return IdentityAttemptFailureKind.MALFORMED
-    headers: dict[bytes, list[bytes]] = {}
-    for line in lines:
-        if not line.endswith(b"\r\n") or line.count(b":") < 1:
-            _close_body(reader)
-            return IdentityAttemptFailureKind.MALFORMED
-        name, value = line[:-2].split(b":", 1)
-        if _HEADER_NAME.fullmatch(name) is None:
-            _close_body(reader)
-            return IdentityAttemptFailureKind.MALFORMED
-        if value.startswith(b" "):
-            value = value[1:]
-        headers.setdefault(name.lower(), []).append(value)
+    parsed_headers = _parse_headers(lines)
+    if isinstance(parsed_headers, IdentityAttemptFailureKind):
+        _close_body(reader)
+        return parsed_headers
+    headers = parsed_headers
+
     content_type = headers.get(b"content-type", [])
     if (
         len(content_type) != 1
@@ -855,6 +857,40 @@ def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailu
     if not payload:
         return IdentityAttemptFailureKind.EMPTY
     return bytes(payload)
+
+
+def _parse_headers(
+    lines: object,
+) -> dict[bytes, list[bytes]] | IdentityAttemptFailureKind:
+    if (
+        type(lines) is not tuple
+        or len(lines) > 16
+        or any(type(line) is not bytes or len(line) > 256 for line in lines)
+    ):
+        return IdentityAttemptFailureKind.MALFORMED
+    headers: dict[bytes, list[bytes]] = {}
+    for line in lines:
+        if not line.endswith(b"\r\n"):
+            return IdentityAttemptFailureKind.MALFORMED
+        content = line[:-2]
+        if b"\r" in content or b"\n" in content or b":" not in content:
+            return IdentityAttemptFailureKind.MALFORMED
+        name, value = content.split(b":", 1)
+        if _HEADER_NAME.fullmatch(name) is None:
+            return IdentityAttemptFailureKind.MALFORMED
+        if any((byte < 0x20 and byte != 0x09) or byte == 0x7F for byte in value):
+            return IdentityAttemptFailureKind.MALFORMED
+        if value.startswith(b" "):
+            value = value[1:]
+        normalized = name.lower()
+        if normalized in {
+            b"content-type",
+            b"content-encoding",
+            b"content-length",
+        } and normalized in headers:
+            return IdentityAttemptFailureKind.MALFORMED
+        headers.setdefault(normalized, []).append(value)
+    return headers
 
 
 def _canonical_decimal(value: bytes) -> bool:
