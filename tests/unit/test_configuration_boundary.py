@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +45,7 @@ class ConfigurationBoundaryTests(unittest.TestCase):
             "limits",
             "inventory",
             "evidence",
+            "hardcover_provider",
             "providers",
             "reviewers",
             "policy",
@@ -119,6 +122,119 @@ class ConfigurationBoundaryTests(unittest.TestCase):
         self.assertEqual(opening["wall_seconds"]["maximum"], 3_600)
         self.assertEqual(opening["child_cpu_seconds"]["const"], 30)
         self.assertEqual(opening["termination_grace_seconds"]["const"], 2)
+        hardcover = definitions["HardcoverProviderInput"]
+        secret = hardcover["properties"]["secret_reference"]["anyOf"][0]
+        self.assertEqual((secret["minLength"], secret["maxLength"]), (1, 256))
+        self.assertEqual(secret["x-maxUtf8Bytes"], 1_024)
+        self.assertEqual(secret["x-forbiddenUnicodeCategories"], ["Cc", "Cf", "Cs"])
+        self.assertIn("/\\.{1,2}", secret["pattern"])
+        self.assertEqual(
+            hardcover["properties"]["authority_revision"]["minimum"], 1
+        )
+        self.assertEqual(
+            hardcover["properties"]["authority_revision"]["maximum"],
+            2_147_483_647,
+        )
+        self.assertEqual(
+            hardcover["allOf"][0]["then"]["properties"]["secret_reference"],
+            {"type": "null"},
+        )
+        self.assertEqual(
+            hardcover["allOf"][1]["then"]["properties"]["secret_reference"],
+            {"type": "string"},
+        )
+
+    def test_hardcover_schema_and_runtime_acceptance_remain_in_parity(self) -> None:
+        definition = json.loads(configuration_schema_json())["$defs"][
+            "HardcoverProviderInput"
+        ]
+        secret = definition["properties"]["secret_reference"]["anyOf"][0]
+        self.assertEqual(secret["minLength"], 1)
+        self.assertEqual(secret["maxLength"], 256)
+        self.assertEqual(secret["x-maxUtf8Bytes"], 1_024)
+        self.assertIsNotNone(re.fullmatch(secret["pattern"], "/run/secrets/hardcover"))
+        for invalid_reference in (
+            "/run/./secret",
+            "/run/../secret",
+            "/run/secret\u200b",
+            "/run/secret\U000110bd",
+            "/run/secret ",
+            "/run/secret://token",
+        ):
+            with self.subTest(
+                schema_pattern_rejects=invalid_reference.encode("unicode_escape")
+            ):
+                self.assertIsNone(re.fullmatch(secret["pattern"], invalid_reference))
+
+        accepted = (
+            {"enabled": False, "secret_reference": None, "authority_revision": 1},
+            {
+                "enabled": True,
+                "secret_reference": "/run/secrets/hardcover",
+                "authority_revision": 2_147_483_647,
+            },
+        )
+        rejected = (
+            {"enabled": True, "secret_reference": None, "authority_revision": 1},
+            {"enabled": False, "secret_reference": "/secret", "authority_revision": 1},
+            {
+                "enabled": True,
+                "secret_reference": "/run/./secret",
+                "authority_revision": 1,
+            },
+            {
+                "enabled": True,
+                "secret_reference": "/run/../secret",
+                "authority_revision": 1,
+            },
+            {
+                "enabled": True,
+                "secret_reference": "/run/secret\u200b",
+                "authority_revision": 1,
+            },
+            {"enabled": True, "secret_reference": "/secret", "authority_revision": 0},
+        )
+        for block in accepted:
+            with self.subTest(accepted=block):
+                source = self.source()
+                source["hardcover_provider"] = block
+                validate_configuration(source)
+        for block in rejected:
+            with self.subTest(rejected=block):
+                source = self.source()
+                source["hardcover_provider"] = block
+                with self.assertRaises(ConfigurationError):
+                    validate_configuration(source)
+
+    def test_hardcover_contract_artifacts_are_exact(self) -> None:
+        expected = {
+            "hardcover-config-v1.json": (
+                "5d21d05239ba3d83e03d06a9e0ac1949adee5e0333b9311fc3c7fef67194db89"
+            ),
+            "hardcover-private-query-v1.schema.json": (
+                "05637dcf584f527468f96c59244bf371b0b8ab09379accf54b78af124cd2f765"
+            ),
+            "hardcover-private-query-v1.json": (
+                "7a04acca26307529d5e9caeaa5b66f438214046d5418614f89b2e78595cfcd6c"
+            ),
+        }
+        for name, digest in expected.items():
+            with self.subTest(name=name):
+                artifact = ROOT / "docs" / "reference" / name
+                self.assertEqual(
+                    hashlib.sha256(artifact.read_bytes()).hexdigest(), digest
+                )
+        block = (
+            "hardcover_provider:\n"
+            "  enabled: false\n"
+            "  secret_reference: null\n"
+            "  authority_revision: 1\n"
+        ).encode()
+        self.assertEqual(len(block), 86)
+        self.assertEqual(
+            hashlib.sha256(block).hexdigest(),
+            "767abb8942b7cf6af367f58a3d6e44799954336149986a9f1c0212b1fd62439e",
+        )
 
     def test_checked_in_synthetic_file_maps_to_immutable_secret_free_values(
         self,

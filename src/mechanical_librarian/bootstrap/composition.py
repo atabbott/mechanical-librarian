@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 import os
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -64,6 +64,12 @@ from mechanical_librarian.application.connection_probe import (
     InspectLibraryConnection,
 )
 from mechanical_librarian.application.configuration import ConfigurationError
+from mechanical_librarian.application.hardcover_identity import (
+    HardcoverIdentityReport,
+    InertPreviewReport,
+    inert_preview,
+    preactivation_report,
+)
 from mechanical_librarian.application.job_heartbeat import (
     HeartbeatOutcome,
     HeartbeatResult,
@@ -154,7 +160,11 @@ from mechanical_librarian.domain.inventory import (
 )
 from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanState, ScanUsage
 from mechanical_librarian.domain.inventory_polling import PollPolicy, PollRequest
-from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.domain.hardcover_identity import validate_private_query
+from mechanical_librarian.infrastructure.configuration import (
+    load_configuration_file,
+    validate_hardcover_provider,
+)
 from mechanical_librarian.infrastructure.observability.inventory_polling import (
     LoggingInventoryPollTelemetry,
 )
@@ -1481,6 +1491,29 @@ def _run_synthetic_title_review_case_report(
             connection.close()
 
 
+def _run_hardcover_identity_report(configuration_path: Path) -> HardcoverIdentityReport:
+    configuration = load_configuration_file(configuration_path)
+    return preactivation_report(configuration.hardcover_provider)
+
+
+def _run_hardcover_inert_preview(
+    source: Mapping[str, object],
+    *,
+    privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
+) -> InertPreviewReport:
+    if (
+        set(source) != {"schema", "scenario", "config", "private_query"}
+        or source.get("schema") != "hardcover-synthetic-input-v3"
+        or source.get("scenario") != "inert-report-v3"
+        or not isinstance(source.get("config"), Mapping)
+        or not isinstance(source.get("private_query"), Mapping)
+    ):
+        raise ValueError("synthetic input is invalid")
+    configuration = validate_hardcover_provider(source["config"])
+    query = validate_private_query(source["private_query"])
+    return inert_preview(configuration, query, privacy_observer=privacy_observer)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Assemble the current process and delegate to its CLI interface."""
 
@@ -1500,6 +1533,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         synthetic_title_proposal_runner=_run_synthetic_title_proposal_report,
         hardcover_title_proposal_runner=_run_hardcover_title_proposal_report,
         synthetic_title_review_case_runner=_run_synthetic_title_review_case_report,
+        hardcover_identity_runner=_run_hardcover_identity_report,
+        hardcover_inert_preview_runner=_run_hardcover_inert_preview,
     )
 
 

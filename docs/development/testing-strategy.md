@@ -291,6 +291,27 @@ egress. Enabled-only secret resolution, redaction, cancellation, restart,
 identical replay, reuse, invalidation, supersession, and atomic outcome
 publication are covered.
 
+Increment 1 qualifies the installed `hardcover-identity-report` before any
+provider adapter exists. Production disabled and not-activated trap cases prove
+zero query-file, database, credential, client, DNS, proxy, socket, and network
+access. Owner-only private-query tests cover canonical-parent descriptor opens,
+no-follow final components, stable before/after identity, exact size-plus-one
+reads, strict UTF-8, duplicate and unknown keys, ISBN checksums/equivalence, and
+title scalar/control boundaries. The C1-only registry and executable public
+scanner enumerate the exact present-tree configuration, query, schema, matrix,
+example, privacy-contract, and registry artifacts for `inert-report-v3` only.
+Tests reproduce the committed aggregate byte-for-byte and verify its digest.
+The exact executed privacy variants are the canonical input, a title-only
+alternate, and a valid ISBN-10 alternate whose canonical ISBN-13 is also
+covered. Their raw input/query serializations and projections are scanned.
+Golden, mutation, boundary, and invalid-extra cases use the real
+config/query/CLI seams. Privacy spies poison every captured channel with every
+declared source class, while independent mutations and output mutations prove
+that encoded resources, digests, forbidden key fragments, malformed counters,
+and additional or missing properties are rejected. Runtime emits only the
+schema-v5 allowlist and no title- or query-bearing hash, fingerprint,
+persistence, log, export, report, audit, trace, metric, or stable correlation.
+
 F09f parser and outcome tests cover disabled, unavailable credential,
 authentication failure, rate limiting, timeout, outage, malformed or oversized
 response, empty result, no match, multiple or ambiguous match, incompatible

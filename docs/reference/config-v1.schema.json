@@ -440,6 +440,88 @@
       "title": "EvidenceInput",
       "type": "object"
     },
+    "HardcoverProviderInput": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": false
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "properties": {
+              "secret_reference": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "properties": {
+              "secret_reference": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "authority_revision": {
+          "maximum": 2147483647,
+          "minimum": 1,
+          "title": "Authority Revision",
+          "type": "integer"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "secret_reference": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^/(?!.*(?:/\\.{1,2})(?:/|$))(?!.*://)(?!.*[\\u0000-\\u001f\\u007f-\\u009f\\u00ad\\u0600-\\u0605\\u061c\\u06dd\\u070f\\u0890-\\u0891\\u08e2\\u180e\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u206f\\ud800-\\udfff\\ufeff\\ufff9-\\ufffb𑂽𑃍𓐰-𓐿𛲠-𛲣𝅳-𝅺󠀁󠀠-󠁿])(?!.*[\\s\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]$).{0,255}$",
+              "type": "string",
+              "x-forbiddenUnicodeCategories": [
+                "Cc",
+                "Cf",
+                "Cs"
+              ],
+              "x-maxUtf8Bytes": 1024
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Secret Reference"
+        }
+      },
+      "required": [
+        "enabled",
+        "secret_reference",
+        "authority_revision"
+      ],
+      "title": "HardcoverProviderInput",
+      "type": "object"
+    },
     "InventoryInput": {
       "additionalProperties": false,
       "properties": {
@@ -736,6 +818,14 @@
         },
         "maximum_document_bytes": 67108864,
         "maximum_text_characters": 524288
+      }
+    },
+    "hardcover_provider": {
+      "$ref": "#/$defs/HardcoverProviderInput",
+      "default": {
+        "authority_revision": 1,
+        "enabled": false,
+        "secret_reference": null
       }
     },
     "instance_name": {

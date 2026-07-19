@@ -35,11 +35,10 @@ that same loader before comparing them. Its output contains only fixed schema
 paths and the impacts below; it retains no old or new values and performs no
 persistence, probing, secret resolution, or mutation.
 
-In current `config-v1`, only `connections.secret_reference` is a structured
-credential reference. The `providers` and `reviewers` paths participate in
-aggregate impact detection but do not yet define structured credential-reference
-or role-scoped resolution contracts. The detailed provider/reviewer secret
-contracts below are planned extensions, not current behavior.
+Current `config-v1` has structured references at
+`connections.secret_reference` and the optional `hardcover_provider` block.
+The legacy `providers` list remains readable and inert; `reviewers` participates
+in aggregate impact detection but does not define a role-scoped credential.
 
 ### Current group coverage
 
@@ -55,7 +54,8 @@ hidden fields or environment behavior.
 | Media mounts | `name`, `library_type`, `container_path`, `service_path`, `read_only` |
 | Inventory traversal and polling | `page_size`, `max_pages`, `max_items`, `max_response_bytes`, `timeout_seconds`, `stability_delay_seconds`, `poll_generation`, `max_attempts`, `max_elapsed_seconds`, `initial_backoff_seconds`, `max_backoff_seconds`, `connect_timeout_seconds`, `read_timeout_seconds`, `max_in_flight_requests` |
 | Evidence extraction | `enabled_formats`, `maximum_document_bytes`, `maximum_text_characters`, and the versioned `epub_package` and `epub_opening` resource profiles; shared parser limits remain under `limits` |
-| Providers | ordered, unique provider identifiers; an empty list disables providers |
+| Hardcover provider | optional exact `enabled`, `secret_reference`, and `authority_revision` block; absence means disabled revision 1 |
+| Legacy providers | ordered, unique inert provider identifiers |
 | Reviewers | ordered, unique reviewer identifiers; an empty list disables reviewers |
 | Policy | `policy_version` |
 | Backups and retention | `backups_enabled`, `evidence_days`, `job_log_days`, `maximum_artifact_bytes` |
@@ -65,6 +65,28 @@ Public base URL, timezone/locale overrides, connection event policy, per-mount
 evidence selection, structured provider/reviewer authentication, detailed
 policy rules, notification schedules, and offsite backup targets are planned
 extensions. They are deliberately rejected as unknown fields today.
+
+### Disabled Hardcover provider
+
+The additive `hardcover-config-v1` extension is optional and does not change
+the `config-v1` schema version. Absence maps exactly to the following block:
+
+```yaml
+hardcover_provider:
+  enabled: false
+  secret_reference: null
+  authority_revision: 1
+```
+
+A present block requires exactly those three fields. `enabled` is a strict
+boolean and `authority_revision` is a strict integer from 1 through
+2,147,483,647. Disabled configuration requires a null reference. Enabled
+configuration requires a 1–256-scalar absolute reference of at most 1,024
+UTF-8 bytes; it rejects NUL, URI syntax, boundary Unicode whitespace, control
+or format characters, and dot path components. Export reports only `enabled`,
+`authority_revision`, and `secret_configured`. It never reports the reference.
+Every block change requires restart plus candidate and review re-evaluation.
+See [`hardcover-config-v1.json`](hardcover-config-v1.json).
 
 ### `config-v1` impact matrix
 
@@ -91,6 +113,7 @@ re-evaluation, notification reconfiguration, and backup-readiness revalidation.
 | `evidence.maximum_text_characters` | restart and evidence re-evaluation |
 | Any `evidence.epub_package` numeric field | restart and EPUB package evidence re-extraction |
 | Any `evidence.epub_opening` numeric field | restart and EPUB opening evidence re-extraction |
+| Any `hardcover_provider` field | restart, candidate and review re-evaluation |
 | `providers` | restart, candidate and review re-evaluation |
 | `reviewers` | restart and review re-evaluation |
 | `policy.policy_version` | restart and review re-evaluation |
@@ -255,8 +278,10 @@ retains no decoded or diagnostic markup artifact.
 
 ### Providers
 
-The structured provider group is planned beyond the current aggregate
-`providers` impact path:
+The installed F09f preactivation boundary adds only the exact optional
+`hardcover_provider` block documented above. The legacy aggregate `providers`
+impact path remains inert. Later activation may add separately versioned
+provider operation fields such as:
 
 - enabled providers and order;
 - credentials by secret reference;
@@ -277,33 +302,32 @@ absolute secret-file reference, and output format. The fixed endpoint, query,
 operation, headers, transport bounds, and generated title are not configurable.
 Omitting the reference records `provider_disabled` without secret access, DNS,
 or egress. There is no hidden environment-variable, encrypted-store, provider
-registry, or generic egress configuration. Current `config-v1` continues to
-reject detailed Hardcover and provider-secret fields as unknown.
+registry, or generic egress configuration. Current `config-v1` accepts only the
+exact installed preactivation `hardcover_provider` block and rejects every
+other detailed Hardcover or provider-secret field as unknown.
 
 The live-compatible command and transport/parser contract is
-[documented separately](hardcover-f09b-contract.md). F09f's future production
-provider must define its own versioned structured configuration, persisted
-work, freshness/reuse, and restart behavior rather than turning this proof-of-
-concept CLI into an implicit schema extension.
+[documented separately](hardcover-f09b-contract.md). F09f activation must add
+its own versioned operation, persisted-work, freshness/reuse, and restart
+contracts rather than turning this proof-of-concept CLI into an implicit schema
+extension.
 
-### Planned F09f configuration boundary
+### Installed F09f preactivation boundary
 
-F09f will extend the documented versioned configuration contract rather than
-reuse F09b's command-only secret reference or add hidden environment behavior.
-Before F09f can move from Triaged to Ready, its exact configuration fields,
-defaults, validation, compatibility identity, and migration impact must be
-frozen together with its external query/authentication and response contract.
-This plan does not add a current `config-v1` field or define that future schema.
+F09f increment 1 extends the documented `config-v1` contract with the exact
+optional `hardcover_provider` preactivation block. It does not reuse F09b's
+command-only secret reference and adds no hidden environment behavior. Its
+defaults, strict validation, redacted export, and restart/candidate/review
+impacts are installed now; provider authentication, external response handling,
+and durable identity work remain future activation behavior.
 
-The frozen F09f configuration must be disabled by default and identify
-credentials only by a validated secret reference. Configuration loading may
-validate the reference shape, but secret resolution occurs only for enabled
-provider work after the application-built bounded query input has passed
-validation.
-Disabled composition constructs no provider adapter or client, resolves no
-secret, and performs no DNS or egress. Tokens, secret values, and secret paths
-are never configuration exports, persisted provider observations, logs,
-diagnostics, audit fields, or report values.
+The installed configuration is disabled by default and identifies credentials
+only by a validated secret reference. Configuration loading validates only the
+reference shape. Increment 1 never resolves it: both disabled and enabled
+configuration return before private query, persistence, credential, provider,
+DNS, client, proxy, transport, or network authority. Tokens, secret values, and
+secret paths are never configuration exports, persisted provider observations,
+logs, diagnostics, audit fields, or report values.
 
 The configured operation must allowlist only the application-built bounded
 ISBN-and-title lookup, supported provider capability, expected host, and finite

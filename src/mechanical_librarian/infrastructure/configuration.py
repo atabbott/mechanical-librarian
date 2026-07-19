@@ -24,6 +24,7 @@ from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     ConfigurationError,
     ConfigurationImportPlan,
+    HardcoverProviderConfiguration,
     plan_projected_import,
     project_configuration,
 )
@@ -77,6 +78,28 @@ EndpointText = Annotated[
 ]
 SecretReferenceText = Annotated[
     str, StringConstraints(strict=True, min_length=1, max_length=256)
+]
+_HARDCOVER_SECRET_REFERENCE_PATTERN = (
+    r"^/(?!.*(?:/\.{1,2})(?:/|$))(?!.*://)"
+    r"(?!.*[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c"
+    r"\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f"
+    r"\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff"
+    r"\ufeff\ufff9-\ufffb"
+    "\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3"
+    "\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f"
+    r"])(?!.*[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f"
+    r"\u205f\u3000]$).{0,255}$"
+)
+HardcoverSecretReferenceText = Annotated[
+    str,
+    StringConstraints(strict=True, min_length=1, max_length=256),
+    Field(
+        json_schema_extra={
+            "pattern": _HARDCOVER_SECRET_REFERENCE_PATTERN,
+            "x-maxUtf8Bytes": 1024,
+            "x-forbiddenUnicodeCategories": ["Cc", "Cf", "Cs"],
+        }
+    ),
 ]
 AbsolutePathText = Annotated[
     str, StringConstraints(strict=True, min_length=1, max_length=1024, pattern=r"^/")
@@ -274,6 +297,41 @@ class RetentionInput(BaseModel):
     ] = 1_073_741_824
 
 
+class HardcoverProviderInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        strict=True,
+        hide_input_in_errors=True,
+        json_schema_extra={
+            "allOf": [
+                {
+                    "if": {
+                        "properties": {"enabled": {"const": False}},
+                        "required": ["enabled"],
+                    },
+                    "then": {
+                        "properties": {"secret_reference": {"type": "null"}}
+                    },
+                },
+                {
+                    "if": {
+                        "properties": {"enabled": {"const": True}},
+                        "required": ["enabled"],
+                    },
+                    "then": {
+                        "properties": {"secret_reference": {"type": "string"}}
+                    },
+                },
+            ]
+        },
+    )
+
+    enabled: StrictBool
+    secret_reference: HardcoverSecretReferenceText | None
+    authority_revision: Annotated[StrictInt, Field(ge=1, le=2_147_483_647)]
+
+
 class ConfigurationInput(BaseModel):
     """The single strict transport schema used by every supported config source."""
 
@@ -286,6 +344,11 @@ class ConfigurationInput(BaseModel):
     limits: ResourceLimitsInput = ResourceLimitsInput()
     inventory: InventoryInput = InventoryInput()
     evidence: EvidenceInput = EvidenceInput()
+    hardcover_provider: HardcoverProviderInput = HardcoverProviderInput(
+        enabled=False,
+        secret_reference=None,
+        authority_revision=1,
+    )
     providers: Annotated[
         list[IdentifierText],
         Field(max_length=64, json_schema_extra={"uniqueItems": True}),
@@ -320,6 +383,22 @@ def load_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
     """Compatibility name for the single supported strict mapping boundary."""
 
     return validate_configuration(source)
+
+
+def validate_hardcover_provider(
+    source: Mapping[str, Any],
+) -> HardcoverProviderConfiguration:
+    """Validate the exact provider block through the production transport seam."""
+
+    try:
+        validated = HardcoverProviderInput.model_validate(source)
+        return HardcoverProviderConfiguration(**validated.model_dump(mode="python"))
+    except ConfigurationError:
+        raise
+    except (TypeError, ValueError, ValidationError):
+        raise ConfigurationError(
+            "Hardcover provider configuration is invalid"
+        ) from None
 
 
 def plan_import(
@@ -413,5 +492,6 @@ __all__ = [
     "load_configuration",
     "load_configuration_file",
     "plan_import",
+    "validate_hardcover_provider",
     "validate_configuration",
 ]

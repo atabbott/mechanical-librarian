@@ -101,9 +101,10 @@ being partially implemented inside it.
 - F09f follows completed F09b and adds the disabled-by-default configured
   Hardcover lane. It persists one bounded title plus strict ISBN-backed book
   and compatible ebook-edition identity as one provider lineage, but remains
-  target-independent and has no proposal authority. F09f stays Triaged until
-  its exact external query, authentication, response/error contract,
-  cardinality rules, bounds, fixtures, and live qualification are frozen.
+  target-independent and has no proposal authority. Its first increment ships
+  only strict inert configuration/query/report seams: disabled returns before
+  private input, while enabled returns `provider_not_activated`. Later
+  increments implement the already-frozen external and durable contracts.
 - F09g follows F07b and F09f and owns the current Audiobookshelf target/source
   join. One usable current F07 title, exactly one distinct canonical
   checksum-valid edition-applicable local ISBN, one unique compatible

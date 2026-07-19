@@ -158,6 +158,13 @@ plans, authorization, migrations with data transformation, or update systems.
 Require explicit threat analysis, ADR or governing contract, end-to-end tests,
 and maintainer approval.
 
+F09f increment 1 is Tier 2 despite its inert runtime because it establishes a
+credential-configuration and hostile private-file boundary. Exact-head
+acceptance, code-quality, safety, and challenger review are required, together
+with architecture checks, privacy spies, exact installed-wheel and container
+command demonstrations, and one aggregate PASS qualification receipt. No live
+Hardcover call is part of this increment.
+
 ## Definition of done
 
 A change is done only when:

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TextIO
 
@@ -60,6 +61,12 @@ from mechanical_librarian.application.title_review_cases import (
     SyntheticTitleReviewCaseReport,
     render_title_review_case_text,
 )
+from mechanical_librarian.application.hardcover_identity import (
+    HardcoverIdentityOutcome,
+    HardcoverIdentityReport,
+    InertPreviewReport,
+    render_report_text as render_hardcover_identity_text,
+)
 from mechanical_librarian.domain.local_evidence import (
     EpubPackageLimits,
     LocalEvidenceCapability,
@@ -81,6 +88,8 @@ SyntheticTitleProposalRunner = Callable[[Path, str], SyntheticTitleProposalRepor
 HardcoverTitleProposalRunner = Callable[[Path, Path | None], SyntheticTitleProposalReport]
 SyntheticTitleReviewCaseRunner = Callable[[Path, str], SyntheticTitleReviewCaseReport]
 EpubOpeningEvidenceRunner = Callable[[Path, Path, str, str, int], EpubEvidenceResult]
+HardcoverIdentityRunner = Callable[[Path], HardcoverIdentityReport]
+HardcoverInertPreviewRunner = Callable[[Mapping[str, object]], InertPreviewReport]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -134,6 +143,7 @@ _EPUB_PACKAGE_EXIT = {
     LocalEvidenceOutcome.INTERNAL_FAILURE: 70,
 }
 _EPUB_EVIDENCE_FAILURE = "EPUB opening evidence failed safely.\n"
+_HARDCOVER_IDENTITY_FAILURE = "Hardcover identity report failed safely.\n"
 
 
 class _EpubArgumentError(ValueError):
@@ -152,6 +162,52 @@ class _TitleArgumentError(ValueError):
 class _TitleArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise _TitleArgumentError(message)
+
+
+class _HardcoverIdentityArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise _TitleArgumentError(message)
+
+
+def _hardcover_identity_parser() -> argparse.ArgumentParser:
+    parser = _HardcoverIdentityArgumentParser(
+        prog="mechanical-librarian hardcover-identity-report"
+    )
+    parser.add_argument("--config", metavar="PATH", type=Path)
+    parser.add_argument("--database", metavar="PATH", type=_database_path)
+    parser.add_argument("--query-file", metavar="PATH", type=Path)
+    parser.add_argument("--mode", choices=("synthetic-preview",))
+    parser.add_argument("--scenario", choices=("inert-report-v3",))
+    parser.add_argument("--input")
+    parser.add_argument("--format", choices=("json", "text"), default="json")
+    return parser
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate input field")
+        result[key] = value
+    return result
+
+
+def _read_synthetic_input(stream: TextIO | None) -> Mapping[str, object]:
+    if stream is None:
+        payload = sys.stdin.buffer.read(65_537)
+        if not payload or len(payload) > 65_536:
+            raise ValueError("input size is invalid")
+        text = payload.decode("utf-8", "strict")
+    else:
+        text = stream.read(65_537)
+        if not text or len(text.encode("utf-8", "strict")) > 65_536:
+            raise ValueError("input size is invalid")
+    if text.startswith("\ufeff"):
+        raise ValueError("input encoding is invalid")
+    source = json.loads(text, object_pairs_hook=_unique_json_object)
+    if not isinstance(source, Mapping):
+        raise ValueError("input document is invalid")
+    return source
 
 
 def _epub_parser() -> argparse.ArgumentParser:
@@ -434,6 +490,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     title_review.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
     title_review.add_argument("--format", choices=("json", "text"), default="json")
+    commands.add_parser(
+        "hardcover-identity-report",
+        help="report inert configured Hardcover ISBN/title identity readiness",
+    )
     return parser
 
 
@@ -454,6 +514,9 @@ def main(
     synthetic_title_proposal_runner: SyntheticTitleProposalRunner | None = None,
     hardcover_title_proposal_runner: HardcoverTitleProposalRunner | None = None,
     synthetic_title_review_case_runner: SyntheticTitleReviewCaseRunner | None = None,
+    hardcover_identity_runner: HardcoverIdentityRunner | None = None,
+    hardcover_inert_preview_runner: HardcoverInertPreviewRunner | None = None,
+    stdin: TextIO | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -462,6 +525,78 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    if raw_arguments[:1] == ["hardcover-identity-report"]:
+        try:
+            hardcover_arguments = _hardcover_identity_parser().parse_args(
+                raw_arguments[1:]
+            )
+        except _TitleArgumentError:
+            errors.write(_HARDCOVER_IDENTITY_FAILURE)
+            return 2
+        synthetic = hardcover_arguments.mode == "synthetic-preview"
+        if synthetic:
+            exact = (
+                hardcover_arguments.scenario == "inert-report-v3"
+                and hardcover_arguments.input == "-"
+                and hardcover_arguments.format == "json"
+                and hardcover_arguments.config is None
+                and hardcover_arguments.database is None
+                and hardcover_arguments.query_file is None
+            )
+            if not exact:
+                errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                return 2
+            try:
+                source = _read_synthetic_input(stdin)
+                report = (
+                    InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
+                    if hardcover_inert_preview_runner is None
+                    else hardcover_inert_preview_runner(source)
+                )
+            except (KeyboardInterrupt, Exception):
+                report = InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
+            if type(report) is not InertPreviewReport:
+                errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                return 2
+            try:
+                report.validate()
+                rendered = report.to_json()
+            except (KeyboardInterrupt, Exception):
+                errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                return 2
+            output.write(rendered + "\n")
+            return 0 if report.outcome is HardcoverIdentityOutcome.DISABLED else 2
+        exact = (
+            hardcover_arguments.mode is None
+            and hardcover_arguments.scenario is None
+            and hardcover_arguments.input is None
+            and hardcover_arguments.config is not None
+            and hardcover_arguments.database is not None
+            and hardcover_arguments.query_file is not None
+        )
+        if not exact or hardcover_identity_runner is None:
+            errors.write(_HARDCOVER_IDENTITY_FAILURE)
+            return 2
+        try:
+            report = hardcover_identity_runner(hardcover_arguments.config)
+            if (
+                type(report) is not HardcoverIdentityReport
+                or report.outcome
+                not in {
+                    HardcoverIdentityOutcome.DISABLED,
+                    HardcoverIdentityOutcome.PROVIDER_NOT_ACTIVATED,
+                }
+            ):
+                raise TypeError("invalid preactivation report")
+            output.write(
+                report.to_json() + "\n"
+                if hardcover_arguments.format == "json"
+                else render_hardcover_identity_text(report)
+            )
+            return 0
+        except (KeyboardInterrupt, Exception):
+            errors.write(_HARDCOVER_IDENTITY_FAILURE)
+            return 2
     if raw_arguments[:1] == ["epub-opening-evidence"]:
         try:
             arguments = _epub_opening_evidence_parser().parse_args(raw_arguments[1:])

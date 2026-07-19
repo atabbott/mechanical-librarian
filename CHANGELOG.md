@@ -7,6 +7,15 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added the first inert F09f increment: additive disabled-by-default
+  `hardcover_provider` configuration, a strict owner-only private ISBN/title
+  query reader, and the installed `hardcover-identity-report`. Production
+  returns `disabled` or `provider_not_activated` before private input,
+  database, credential, client, DNS, or network access. The retained
+  contributor-driven `inert-report-v3` preview exercises the real validation
+  seams while emitting only the schema-v5 privacy allowlist and no input
+  digest, title, ISBN, query, resource identity, proposal, or write authority.
+
 - Adopted bounded `Deliver slice` transactions for new functionality. A slice
   may now merge through sequential, independently safe vertical increments;
   constituent tickets close when complete and only the activation increment

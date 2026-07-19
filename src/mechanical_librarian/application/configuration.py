@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+import unicodedata
 from typing import Any, Callable
 
 from mechanical_librarian.domain.identifiers import (
@@ -327,6 +328,58 @@ class InventoryConfiguration:
 
 
 @dataclass(frozen=True, repr=False)
+class HardcoverProviderConfiguration:
+    """Restart-bound provider configuration with a redacted representation."""
+
+    enabled: bool = False
+    secret_reference: str | None = None
+    authority_revision: int = 1
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ConfigurationError("Hardcover provider enabled is malformed")
+        if (
+            type(self.authority_revision) is not int
+            or not 1 <= self.authority_revision <= 2_147_483_647
+        ):
+            raise ConfigurationError("Hardcover authority revision is malformed")
+        if not self.enabled:
+            if self.secret_reference is not None:
+                raise ConfigurationError("disabled Hardcover provider has a secret")
+            return
+        value = self.secret_reference
+        try:
+            encoded = value.encode("utf-8") if type(value) is str else b""
+        except UnicodeError:
+            encoded = b""
+        if (
+            type(value) is not str
+            or not 1 <= len(value) <= 256
+            or not 1 <= len(encoded) <= 1_024
+            or not value.startswith("/")
+            or value.strip() != value
+            or "\x00" in value
+            or "://" in value
+            or any(part in {".", ".."} for part in value.split("/"))
+            or any(
+                unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+                for character in value
+            )
+        ):
+            raise ConfigurationError("Hardcover secret reference is malformed")
+
+    def __repr__(self) -> str:
+        return "HardcoverProviderConfiguration(<redacted>)"
+
+    def export(self) -> dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "authority_revision": self.authority_revision,
+            "secret_configured": self.secret_reference is not None,
+        }
+
+
+@dataclass(frozen=True, repr=False)
 class ApplicationConfiguration:
     schema_version: SchemaVersion
     instance_name: str
@@ -335,6 +388,9 @@ class ApplicationConfiguration:
     limits: ResourceLimits
     inventory: InventoryConfiguration = field(default_factory=InventoryConfiguration)
     evidence: EvidenceConfiguration = field(default_factory=EvidenceConfiguration)
+    hardcover_provider: HardcoverProviderConfiguration = field(
+        default_factory=HardcoverProviderConfiguration
+    )
     providers: tuple[str, ...] = ()
     reviewers: tuple[str, ...] = ()
     policy: PolicyConfiguration = PolicyConfiguration()
@@ -365,6 +421,7 @@ class ApplicationConfiguration:
             type(self.limits) is not ResourceLimits
             or type(self.inventory) is not InventoryConfiguration
             or type(self.evidence) is not EvidenceConfiguration
+            or type(self.hardcover_provider) is not HardcoverProviderConfiguration
             or type(self.policy) is not PolicyConfiguration
             or type(self.retention) is not RetentionConfiguration
         ):
@@ -451,6 +508,7 @@ class ApplicationConfiguration:
                     },
                 },
             },
+            "hardcover_provider": self.hardcover_provider.export(),
             "providers": list(self.providers),
             "reviewers": list(self.reviewers),
             "policy": {"policy_version": self.policy.policy_version},
@@ -474,6 +532,7 @@ _CONFIGURATION_FIELDS = frozenset(
         "limits",
         "inventory",
         "evidence",
+        "hardcover_provider",
         "providers",
         "reviewers",
         "policy",
@@ -531,6 +590,9 @@ _EPUB_PACKAGE_FIELDS = frozenset({"profile", *EpubPackageLimits.HARD_CAPS})
 _EPUB_OPENING_FIELDS = frozenset({"profile", *EpubOpeningLimits.HARD_CAPS})
 _RETENTION_FIELDS = frozenset(
     {"evidence_days", "job_log_days", "maximum_artifact_bytes"}
+)
+_HARDCOVER_PROVIDER_FIELDS = frozenset(
+    {"enabled", "secret_reference", "authority_revision"}
 )
 _READ_ONLY_CAPABILITY_OVERRIDES = frozenset(
     {
@@ -614,6 +676,15 @@ def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration
             epub_package=epub_package,
             epub_opening=epub_opening,
         )
+        hardcover_source = source.get("hardcover_provider", {})
+        _only(hardcover_source, _HARDCOVER_PROVIDER_FIELDS, "Hardcover provider")
+        hardcover_provider = HardcoverProviderConfiguration(
+            enabled=_boolean(
+                hardcover_source.get("enabled", False), "Hardcover provider enabled"
+            ),
+            secret_reference=hardcover_source.get("secret_reference"),
+            authority_revision=hardcover_source.get("authority_revision", 1),
+        )
         policy_source = source.get("policy", {})
         _only(policy_source, _POLICY_FIELDS, "policy")
         policy = PolicyConfiguration(
@@ -643,6 +714,7 @@ def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration
             limits=limits,
             inventory=inventory,
             evidence=evidence,
+            hardcover_provider=hardcover_provider,
             providers=_text_tuple(source.get("providers", ()), "providers"),
             reviewers=_text_tuple(source.get("reviewers", ()), "reviewers"),
             policy=policy,
@@ -814,6 +886,21 @@ _IMPACT_MATRIX: tuple[
         "evidence.maximum_text_characters",
         _evidence_projection("maximum_text_characters"),
         (_R, _E),
+    ),
+    (
+        "hardcover_provider.enabled",
+        lambda configuration: configuration.hardcover_provider.enabled,
+        (_R, _C, _V),
+    ),
+    (
+        "hardcover_provider.secret_reference",
+        lambda configuration: configuration.hardcover_provider.secret_reference,
+        (_R, _C, _V),
+    ),
+    (
+        "hardcover_provider.authority_revision",
+        lambda configuration: configuration.hardcover_provider.authority_revision,
+        (_R, _C, _V),
     ),
     *(
         (

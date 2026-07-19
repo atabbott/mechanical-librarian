@@ -63,6 +63,7 @@ release standards as code.
 - [EPUB fixture materialization](operations/epub-fixture-materialization.md)
 - [Synthetic title proposal report](operations/synthetic-title-proposal-report.md)
 - [Hardcover title proposal report](operations/hardcover-title-proposal-report.md)
+- [Hardcover identity report](operations/hardcover-identity-report.md)
 - [Synthetic title review case report](operations/synthetic-title-review-case-report.md)
 - [Deployment model](operations/deployment.md)
 - [Backups and recovery](operations/backups-and-recovery.md)
@@ -74,6 +75,8 @@ release standards as code.
 - [Configuration contract](reference/configuration.md)
 - [Compatibility policy](reference/compatibility.md)
 - [F09b Hardcover proof-of-concept contract](reference/hardcover-f09b-contract.md)
+- [F09f Hardcover configuration contract](reference/hardcover-config-v1.json)
+- [F09f private query contract](reference/hardcover-private-query-v1.json)
 - [Lifecycle and state machines](reference/state-machines.md)
 - [Glossary](reference/glossary.md)
 
