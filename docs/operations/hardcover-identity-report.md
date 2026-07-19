@@ -196,9 +196,10 @@ The executor inspects the persisted 30-second aggregate deadline and caller
 deadline before trying the gate. A busy gate returns `in_progress` without a
 claim or start. After acquiring the gate, the executor re-inspects the exact
 generation without mutation: `pending` may continue, `claimed` or `retry_wait`
-returns `in_progress`, `succeeded` returns `matched`, and `failed` or
-`cancelled` fails closed as `persistence_failure` because this projection does
-not reconstruct a terminal reason. Under the gate, claim still does not consume
+returns `in_progress`, and a reconciled still-current `succeeded` returns
+`matched`. Missing, inconsistent, or expired current evidence and `failed` or
+`cancelled` fail closed as `persistence_failure`; this projection does not
+reconstruct a terminal reason. Under the gate, claim still does not consume
 budget; atomic renew-and-start requires six seconds remaining, renews the lease
 for 15 seconds,
 and alone authorizes one provider attempt. Its context ends at the earlier of

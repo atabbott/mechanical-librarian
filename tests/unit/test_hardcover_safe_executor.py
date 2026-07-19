@@ -350,6 +350,97 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                 )
                 self.assertEqual(competing_snapshot, (1, 1, attempts, state))
 
+    def test_rejects_inconsistent_post_gate_current_match_without_local_mutation(
+        self,
+    ) -> None:
+        for corruption in (
+            "missing-current",
+            "expired-current",
+            "different-generation",
+            "malformed-observation",
+            "malformed-current-pointer",
+        ):
+            with self.subTest(corruption=corruption):
+                self.clock.now = ORIGIN
+                request = self.request(f"post-gate-current-{corruption}")
+                provider = _Provider(self.matched(), self.clock)
+                accepted = self.work.accept(request.work_key, self.clock.now)
+                acquire = self.gate.try_acquire
+                competing_snapshot = None
+
+                def acquire_after_corrupting_current_match():
+                    nonlocal competing_snapshot
+                    competing = self.work.claim(
+                        accepted.reference,
+                        "competing-worker",
+                        self.clock.now,
+                        gate_owned=True,
+                    )
+                    started = self.work.start(
+                        competing,
+                        "competing-worker",
+                        self.clock.now,
+                        gate_owned=True,
+                    )
+                    self.work.publish_matched(
+                        started,
+                        "competing-worker",
+                        self.clock.now,
+                        IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+                        gate_owned=True,
+                    )
+
+                    if corruption == "missing-current":
+                        self.connection.execute(
+                            "DELETE FROM current_hardcover_identity WHERE work_key=?",
+                            (request.work_key,),
+                        )
+                    elif corruption == "expired-current":
+                        self.clock.now += timedelta(days=1, microseconds=1)
+                    elif corruption == "different-generation":
+                        self.connection.execute("PRAGMA foreign_keys=OFF")
+                        self.connection.execute(
+                            "UPDATE current_hardcover_identity SET generation=2 WHERE work_key=?",
+                            (request.work_key,),
+                        )
+                    elif corruption == "malformed-observation":
+                        self.connection.execute(
+                            "DROP TRIGGER hardcover_identity_observations_no_update"
+                        )
+                        self.connection.execute(
+                            "UPDATE hardcover_identity_observations "
+                            "SET canonical_observation='{}' WHERE work_key=?",
+                            (request.work_key,),
+                        )
+                    else:
+                        self.connection.execute("PRAGMA foreign_keys=OFF")
+                        self.connection.execute(
+                            "UPDATE current_hardcover_identity "
+                            "SET observation_id='malformed' WHERE work_key=?",
+                            (request.work_key,),
+                        )
+                    if self.connection.in_transaction:
+                        self.connection.commit()
+                    self.connection.execute("PRAGMA foreign_keys=ON")
+                    competing_snapshot = self._work_counts(request.work_key)
+                    return acquire()
+
+                with patch.object(
+                    self.gate,
+                    "try_acquire",
+                    side_effect=acquire_after_corrupting_current_match,
+                ):
+                    report = self.execute(request, provider)
+
+                self.assertEqual(
+                    report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE
+                )
+                self.assertEqual(provider.starts, 0)
+                self.assertEqual(
+                    self._work_counts(request.work_key), competing_snapshot
+                )
+                self.assertEqual(competing_snapshot, (1, 1, 1, "succeeded"))
+
     def test_stale_current_is_reserved_before_inspection_and_attempt(self) -> None:
         request = self.request("stale")
         accepted = self.work.accept(request.work_key, self.clock.now)

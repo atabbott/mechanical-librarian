@@ -145,6 +145,38 @@ class SQLiteHardcoverIdentityWorkRepository:
                 deadline = _parse_time(row[7])
                 fence = _nonnegative_int(row[1], "fence")
                 attempts = _nonnegative_int(row[2], "attempt count")
+                if state is IdentityWorkState.SUCCEEDED:
+                    current_rows = self._connection.execute(
+                        "SELECT generation,observation_id,status,current_since,expires_at "
+                        "FROM current_hardcover_identity WHERE work_key=?",
+                        (reference.work_key,),
+                    ).fetchall()
+                    if len(current_rows) != 1:
+                        raise IdentityWorkPersistenceError(
+                            "current identity work is inconsistent"
+                        )
+                    (
+                        current_generation,
+                        observation_id,
+                        status,
+                        current_since,
+                        expires_at,
+                    ) = _current_row(current_rows[0])
+                    if (
+                        current_generation != reference.generation
+                        or status != "matched"
+                        or now > _parse_time(expires_at)
+                    ):
+                        raise IdentityWorkPersistenceError(
+                            "current identity work is inconsistent"
+                        )
+                    self._validate_current_match(
+                        reference,
+                        observation_id,
+                        current_since,
+                        expires_at,
+                    )
+                    return IdentityWorkReadiness(reference, state, deadline)
                 if state in TERMINAL_STATES:
                     results = self._connection.execute(
                         "SELECT outcome,fence,published_at "

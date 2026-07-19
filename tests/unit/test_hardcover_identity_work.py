@@ -404,6 +404,29 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                 )
                 self.assertEqual(self.connection.total_changes, changes)
 
+    def test_inspect_requires_a_still_current_succeeded_generation(self) -> None:
+        accepted, started = self.started_claim()
+        published_at = ORIGIN + timedelta(seconds=3)
+        self.repository.publish_matched(
+            started,
+            "worker-a",
+            published_at,
+            MATCHED,
+            gate_owned=True,
+        )
+        expires_at = published_at + timedelta(hours=24)
+        changes = self.connection.total_changes
+
+        projection = self.repository.inspect(accepted.reference, expires_at)
+
+        self.assertEqual(projection.state, IdentityWorkState.SUCCEEDED)
+        self.assertEqual(self.connection.total_changes, changes)
+        with self.assertRaisesRegex(IdentityWorkPersistenceError, "inconsistent"):
+            self.repository.inspect(
+                accepted.reference, expires_at + timedelta(microseconds=1)
+            )
+        self.assertEqual(self.connection.total_changes, changes)
+
     def test_accept_commits_generation_candidate_and_deadline_atomically(self) -> None:
         status = self.accept()
         self.assertEqual(status.outcome, IdentityWorkOutcome.IN_PROGRESS)
