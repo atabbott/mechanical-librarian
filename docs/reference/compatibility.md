@@ -216,7 +216,7 @@ lifecycle, retry, proposal, or write compatibility. Enabled production remains
 
 The exact cumulative compatibility registry is
 `preview-registry-c3-v6.json` / SHA-256
-`cf8e23665fe40ea926843ceacbb8a5ef96f0ae93a884f8245aaac0fdf29dc778`.
+`95d971c2d6e689044320512f415caa38b6c944cab2ec91132669523f16ab2fed`.
 It derives from installed C2 and contains exactly the inert, identity-decision,
 and fixed-adapter scenarios; future durable-work and executor definitions are
 not current compatibility data.

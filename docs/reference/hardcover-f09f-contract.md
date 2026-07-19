@@ -159,7 +159,7 @@ addresses, and secrets are forbidden from stdout, stderr, exceptions, logs,
 traces/spans, metrics, persistence, exports, reports, and audit records.
 
 The exact current-head registry is `preview-registry-c3-v6.json`, SHA-256
-`cf8e23665fe40ea926843ceacbb8a5ef96f0ae93a884f8245aaac0fdf29dc778`.
+`95d971c2d6e689044320512f415caa38b6c944cab2ec91132669523f16ab2fed`.
 It derives from installed C2
 `557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11`
 and includes exactly `inert-report-v3`, `identity-decision-v3`, and

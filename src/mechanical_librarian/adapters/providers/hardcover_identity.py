@@ -115,7 +115,7 @@ class IdentityByteChannel(Protocol):
 
 
 class IdentityBodyReader(Protocol):
-    def read_chunk(self) -> bytes | None: ...
+    def read_chunk(self, max_bytes: int) -> bytes | None: ...
 
     def close(self) -> None: ...
 
@@ -177,19 +177,29 @@ class StructuralIdentityBodyReader:
     def read_count(self) -> int:
         return self._read_count
 
-    def read_chunk(self) -> bytes | None:
+    def read_chunk(self, max_bytes: int) -> bytes | None:
         if self._closed:
             return None
+        if type(max_bytes) is not int or not 1 <= max_bytes <= MAX_RESPONSE_BYTES + 1:
+            raise ValueError("Hardcover identity body request is invalid")
         try:
             chunk = next(self._chunks)
         except StopIteration:
             self.close()
             return None
         self._read_count += 1
+        if chunk == b"":
+            self.close()
+            return None
         return chunk
 
     def close(self) -> None:
+        if self._closed:
+            return
         self._closed = True
+        close = getattr(self._chunks, "close", None)
+        if callable(close):
+            close()
 
 
 class IdentityChannelFailure(RuntimeError):
@@ -824,14 +834,16 @@ def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailu
     payload = bytearray()
     try:
         while True:
-            chunk = read_chunk()
+            remaining = MAX_RESPONSE_BYTES - len(payload)
+            requested = remaining + 1
+            chunk = read_chunk(requested)
             if chunk is None:
                 break
-            if type(chunk) is not bytes:
+            if type(chunk) is not bytes or not chunk:
                 return IdentityAttemptFailureKind.MALFORMED
-            payload.extend(chunk)
-            if len(payload) > MAX_RESPONSE_BYTES:
+            if len(chunk) > requested or len(chunk) > remaining:
                 return IdentityAttemptFailureKind.OVERSIZED
+            payload.extend(chunk)
     except KeyboardInterrupt:
         return IdentityAttemptFailureKind.CANCELLED
     except Exception:

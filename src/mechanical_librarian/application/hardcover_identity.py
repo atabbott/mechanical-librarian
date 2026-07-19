@@ -175,7 +175,7 @@ class FixedAdapterPreviewReport:
                 FixedAdapterOutcome.MATCHED: 1 <= self.row_count <= 3,
                 FixedAdapterOutcome.AUTHENTICATION: self.row_count == 0,
                 FixedAdapterOutcome.AUTHORIZATION: self.row_count == 0,
-                FixedAdapterOutcome.MALFORMED: self.row_count == 0,
+                FixedAdapterOutcome.MALFORMED: 0 <= self.row_count <= 4,
                 FixedAdapterOutcome.OVERSIZED: self.row_count == 0,
                 FixedAdapterOutcome.EMPTY: self.row_count == 0,
                 FixedAdapterOutcome.NO_MATCH: self.row_count == 0,

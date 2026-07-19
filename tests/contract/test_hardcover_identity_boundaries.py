@@ -113,7 +113,7 @@ class HardcoverIdentityBoundaryTests(unittest.TestCase):
         class FailedReader:
             closed = False
 
-            def read_chunk(self) -> bytes | None:
+            def read_chunk(self, max_bytes: int) -> bytes | None:
                 raise RuntimeError("private-reader-detail")
 
             def close(self) -> None:
@@ -126,6 +126,74 @@ class HardcoverIdentityBoundaryTests(unittest.TestCase):
         self.assertIs(result, IdentityAttemptFailureKind.UNAVAILABLE)
         self.assertTrue(reader.closed)
         self.assertNotIn("private-reader-detail", repr(result))
+
+    def test_reader_over_return_is_rejected_before_payload_copy(self) -> None:
+        class ViolatingReader:
+            closed = False
+            requests: list[int] = []
+
+            def read_chunk(self, max_bytes: int) -> bytes | None:
+                self.requests.append(max_bytes)
+                return b"A" * (max_bytes + 1)
+
+            def close(self) -> None:
+                self.closed = True
+
+        reader = ViolatingReader()
+        payload = bytearray()
+        with patch.object(
+            adapter, "bytearray", return_value=payload, create=True
+        ):
+            result = adapter._bounded_body(
+                (b"Content-Type: application/json\r\n",), reader
+            )
+        self.assertIs(result, IdentityAttemptFailureKind.OVERSIZED)
+        self.assertEqual(reader.requests, [65_537])
+        self.assertTrue(reader.closed)
+        self.assertEqual(payload, b"")
+
+    def test_compliant_reader_receives_only_remaining_plus_one(self) -> None:
+        class CappedReader:
+            def __init__(self) -> None:
+                self.remaining = 65_537
+                self.requests: list[int] = []
+                self.closed = False
+
+            def read_chunk(self, max_bytes: int) -> bytes | None:
+                self.requests.append(max_bytes)
+                size = min(max_bytes, self.remaining)
+                self.remaining -= size
+                return b"A" * size if size else None
+
+            def close(self) -> None:
+                self.closed = True
+
+        reader = CappedReader()
+        result = adapter._bounded_body(
+            (b"Content-Type: application/json\r\n",), reader
+        )
+        self.assertIs(result, IdentityAttemptFailureKind.OVERSIZED)
+        self.assertEqual(reader.requests, [65_537])
+        self.assertTrue(reader.closed)
+
+    def test_structural_reader_close_finalizes_underlying_generator(self) -> None:
+        finalized = False
+
+        def chunks() -> object:
+            nonlocal finalized
+            try:
+                yield b"A" * 65_537
+                raise AssertionError("producer advanced after oversize")
+            finally:
+                finalized = True
+
+        reader = adapter.StructuralIdentityBodyReader(chunks())
+        result = adapter._bounded_body(
+            (b"Content-Type: application/json\r\n",), reader
+        )
+        self.assertIs(result, IdentityAttemptFailureKind.OVERSIZED)
+        self.assertTrue(reader.closed)
+        self.assertTrue(finalized)
 
     def test_depth_limit_minus_exact_plus_and_string_aware_scan(self) -> None:
         def nested(depth: int) -> str:

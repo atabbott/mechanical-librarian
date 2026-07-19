@@ -271,6 +271,8 @@ class HardcoverFixedAdapterCliTests(unittest.TestCase):
             (FixedAdapterOutcome.NO_MATCH, 0, True, False, AddressPolicyOutcome.ACCEPTED),
             (FixedAdapterOutcome.AMBIGUOUS, 2, True, False, AddressPolicyOutcome.ACCEPTED),
             (FixedAdapterOutcome.AMBIGUOUS, 4, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.MALFORMED, 0, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.MALFORMED, 4, True, False, AddressPolicyOutcome.ACCEPTED),
             (FixedAdapterOutcome.INCOMPATIBLE, 4, True, False, AddressPolicyOutcome.ACCEPTED),
             (FixedAdapterOutcome.INCOMPATIBLE, 0, False, False, AddressPolicyOutcome.REJECTED),
         )
@@ -283,6 +285,7 @@ class HardcoverFixedAdapterCliTests(unittest.TestCase):
             (FixedAdapterOutcome.MATCHED, 4, True, False, AddressPolicyOutcome.ACCEPTED),
             (FixedAdapterOutcome.NO_MATCH, 1, True, False, AddressPolicyOutcome.ACCEPTED),
             (FixedAdapterOutcome.AMBIGUOUS, 1, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.MALFORMED, 5, True, False, AddressPolicyOutcome.ACCEPTED),
             (FixedAdapterOutcome.MATCHED, 1, False, False, AddressPolicyOutcome.ACCEPTED),
             (FixedAdapterOutcome.MATCHED, 1, True, True, AddressPolicyOutcome.ACCEPTED),
             (FixedAdapterOutcome.INCOMPATIBLE, 1, False, False, AddressPolicyOutcome.REJECTED),
@@ -294,6 +297,35 @@ class HardcoverFixedAdapterCliTests(unittest.TestCase):
             with self.subTest(invalid=values):
                 with self.assertRaises(TypeError):
                     FixedAdapterPreviewReport(*values).to_json()
+
+    def test_self_referencing_alias_reports_validated_malformed_rows(self) -> None:
+        source = self.source()
+        document = json.loads(source["response"]["raw_body_bytes_utf8"])
+        alias = document["data"]["editions"][1]
+        alias["canonical_id"] = alias["id"]
+        alias["book"]["canonical_id"] = alias["book"]["id"]
+        body = json.dumps(
+            document,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        source["response"]["raw_body_bytes_utf8"] = body
+        source["response"]["raw_header_lines_bytes_utf8"][-1] = (
+            f"Content-Length: {len(body.encode())}\r\n"
+        )
+        code, output, errors = self.run_preview(source)
+        self.assertEqual((code, errors), (0, ""))
+        self.assertEqual(
+            json.loads(output)["result"],
+            {
+                "actual_network": False,
+                "address_policy": "accepted",
+                "outcome": "malformed",
+                "peer_equal": True,
+                "row_count": 2,
+            },
+        )
 
 
 if __name__ == "__main__":

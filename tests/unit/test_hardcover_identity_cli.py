@@ -780,10 +780,10 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c3-fixed-adapter-example-output.json": "09bbf56b45a896c1a4a8ec0ef2ac45a3863d2e55370e901693677de7209baa40",
             "c3-fixed-adapter-input-schema.json": "4c17b1aaab8ec8796c0981c022ef249a780f03a3ee7296480271cc0bcbb9582a",
             "c3-fixed-adapter-variant-matrix.json": "207dcef3ceccdace6addda731055b60e40d0688d0c920a703f5f828b30f472b4",
-            "c3-preview-output-schema-v1.json": "d43f193739d4221c85d9231e552e4f2dd67f9613a713e766fd1b313bd90dd46b",
+            "c3-preview-output-schema-v1.json": "40980c861683de4f56b8fb7fa60a769a47ea1223c798c858c79fd876d7f694da",
             "c3-preview-output-privacy-contract-v1.json": "32ec6078b981b15d3255296cb0f41346b5840686ae859ea48176cdb047895b37",
             "c3-preview-output-privacy-scan-v1.json": "bedc4f12909da3b255a81e83537bf0019859f393fb9c460085411f9e30df021b",
-            "preview-registry-c3-v6.json": "cf8e23665fe40ea926843ceacbb8a5ef96f0ae93a884f8245aaac0fdf29dc778",
+            "preview-registry-c3-v6.json": "95d971c2d6e689044320512f415caa38b6c944cab2ec91132669523f16ab2fed",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)
