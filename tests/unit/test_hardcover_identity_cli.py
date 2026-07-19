@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import base64
 from contextlib import ExitStack, contextmanager
 import io
 import hashlib
@@ -369,6 +370,98 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             self.assertEqual(output, "")
             self.assertNotIn("978", errors)
             self.assertNotIn("Synthetic", errors)
+
+    def test_identity_privacy_capture_rejects_forbidden_forms_in_every_channel(
+        self,
+    ) -> None:
+        local_title = "WkxPrivateLocalTitle91"
+        provider_title = "WkxPrivateProviderTitle92"
+        source = self.identity_input(
+            title=local_title,
+            rows=[self.identity_row(title=provider_title)],
+        )
+        raw_values = (
+            local_title,
+            provider_title,
+            str(source["canonical_isbn_13"]),
+            str(source["derived_isbn_10"]),
+            "1001",
+            "2001",
+            json.dumps(source, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            "77c36a2cb2b2c1a7e8a00292d21b4e2417233dc7f11f411e17d7491a6664f34d",
+            "tests/fixtures/hardcover_identity/c2-identity-decision-input.json",
+        )
+        forbidden = {
+            form.casefold()
+            for value in raw_values
+            for form in (
+                value,
+                value.encode("utf-8").hex(),
+                base64.b64encode(value.encode("utf-8")).decode("ascii"),
+                hashlib.sha256(value.encode("utf-8")).hexdigest(),
+            )
+        }
+        observed: list[tuple[str, tuple[object, ...]]] = []
+        log_calls: list[object] = []
+        with _zero_authority(), patch.object(
+            logging.Logger,
+            "_log",
+            side_effect=lambda *args, **kwargs: log_calls.append((args, kwargs)),
+        ), patch(
+            "hashlib.sha256", side_effect=_AuthorityTrap("runtime hashing reached")
+        ):
+            report = _run_hardcover_identity_decision_preview(
+                source,
+                privacy_observer=lambda channel, values: observed.append(
+                    (channel, values)
+                ),
+            )
+            code, stdout, stderr = self.run_identity_preview(source)
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertEqual(report.comparison.value, "different")
+
+        invalid = copy.deepcopy(source)
+        invalid["derived_isbn_10"] = "0306406152"
+        try:
+            _run_hardcover_identity_decision_preview(invalid)
+        except ValueError as error:
+            exception_channel = _exception_chain_metadata(error)
+        else:
+            self.fail("invalid private input unexpectedly succeeded")
+
+        channels: dict[str, list[object]] = {
+            "json stdout": [stdout, report.to_json()],
+            "text stdout": [],
+            "stderr": [stderr],
+            "exceptions": exception_channel,
+            "structured logs": log_calls,
+            "audit logs": [],
+            "traces and spans": observed,
+            "metrics": observed,
+            "database rows": [],
+            "exports": [],
+            "reports": [report.to_json()],
+            "hash inputs": [],
+            "fingerprint inputs": [],
+        }
+
+        def assert_private(captured: dict[str, list[object]]) -> None:
+            for channel, values in captured.items():
+                rendered = repr(values).casefold()
+                for value in forbidden:
+                    if value in rendered:
+                        raise AssertionError(
+                            f"forbidden private form reached {channel}"
+                        )
+
+        assert_private(channels)
+        injected = next(iter(forbidden))
+        for channel in channels:
+            with self.subTest(injected_channel=channel):
+                corrupted = copy.deepcopy(channels)
+                corrupted[channel].append(injected)
+                with self.assertRaises(AssertionError):
+                    assert_private(corrupted)
 
     def test_production_disabled_and_enabled_short_circuit_before_private_authority(
         self,

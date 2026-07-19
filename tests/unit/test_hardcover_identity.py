@@ -5,6 +5,7 @@ import os
 import stat
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -320,6 +321,7 @@ class BookIdentityDecisionTests(unittest.TestCase):
                     title="Different Provider Bytes",
                 ),
             ),
+            (self.row(), self.row()),
         )
         for rows in cases:
             with self.subTest(rows=len(rows)):
@@ -327,6 +329,12 @@ class BookIdentityDecisionTests(unittest.TestCase):
                     decide_book_identity(self.query(), rows).outcome,
                     IdentityDecisionOutcome.MALFORMED,
                 )
+
+    def test_non_text_book_state_is_incompatible_without_exception(self) -> None:
+        row = self.row()
+        bad_book = replace(row.book, state=[])
+        decision = decide_book_identity(self.query(), (replace(row, book=bad_book),))
+        self.assertEqual(decision.outcome, IdentityDecisionOutcome.INCOMPATIBLE)
 
     def test_979_forbids_isbn10_and_zero_rows_do_not_match(self) -> None:
         valid = self.row(isbn_10=None, isbn_13="9790000000001")

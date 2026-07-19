@@ -211,6 +211,7 @@ def decide_book_identity(
         lambda row: row.book.id,
         lambda row: row.book.canonical_id,
         lambda row: _semantic_projection(row),
+        allow_duplicate=True,
     )
     if edition_graph is None or book_graph is None:
         return _decision(IdentityDecisionOutcome.MALFORMED, len(observations))
@@ -289,6 +290,7 @@ def _compatible(row: ProviderIdentityObservation, query: IsbnIdentity) -> bool:
         and _optional_positive_int32(book.canonical_id)
         and type(book.book_status_id) is int
         and book.book_status_id == 1
+        and type(book.state) is str
         and book.state in {"normalized", "processed"}
         and _valid_title(book.title)
         and book.parent_book_id is None
@@ -353,16 +355,19 @@ def _alias_graph(
     identifier,
     canonical_identifier,
     semantic_projection,
+    *,
+    allow_duplicate: bool = False,
 ) -> tuple[set[int], dict[int, ProviderIdentityObservation]] | None:
     by_id: dict[int, ProviderIdentityObservation] = {}
     for row in rows:
         row_id = identifier(row)
         prior = by_id.get(row_id)
-        if prior is not None and (
-            canonical_identifier(prior) != canonical_identifier(row)
-            or semantic_projection(prior) != semantic_projection(row)
-        ):
-            return None
+        if prior is not None:
+            if not allow_duplicate or (
+                canonical_identifier(prior) != canonical_identifier(row)
+                or semantic_projection(prior) != semantic_projection(row)
+            ):
+                return None
         by_id[row_id] = row
     roots: set[int] = set()
     for row in rows:
