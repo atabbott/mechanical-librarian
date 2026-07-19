@@ -126,6 +126,71 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
         return accepted
 
+    def candidate_three_retry_wait(self):
+        accepted, first = self.started_claim()
+        self.repository.publish_failed(
+            first,
+            "worker-a",
+            ORIGIN + timedelta(seconds=3),
+            retryable=True,
+            gate_owned=True,
+        )
+        second = self.repository.claim(
+            accepted.reference,
+            "worker-b",
+            ORIGIN + timedelta(seconds=4),
+            gate_owned=True,
+        )
+        second = self.repository.renew_and_start(
+            second,
+            "worker-b",
+            ORIGIN + timedelta(seconds=5),
+            gate_owned=True,
+        )
+        self.repository.publish_failed(
+            second,
+            "worker-b",
+            ORIGIN + timedelta(seconds=6),
+            retryable=True,
+            gate_owned=True,
+        )
+        return accepted
+
+    def assert_candidate_three_history_rejected(self, reference) -> None:
+        before = self.connection.execute(
+            "SELECT state,fence,attempt_count,lease_owner,lease_expires_at,updated_at "
+            "FROM hardcover_identity_generations WHERE work_key=? AND generation=?",
+            (reference.work_key, reference.generation),
+        ).fetchone()
+        claim_count = self.connection.execute(
+            "SELECT COUNT(*) FROM hardcover_identity_claims WHERE work_key=? AND generation=?",
+            (reference.work_key, reference.generation),
+        ).fetchone()
+        changes = self.connection.total_changes
+        with self.assertRaisesRegex(IdentityWorkPersistenceError, "history"):
+            self.repository.claim(
+                reference,
+                "worker-c",
+                ORIGIN + timedelta(seconds=7),
+                gate_owned=True,
+            )
+        self.assertEqual(self.connection.total_changes, changes)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,fence,attempt_count,lease_owner,lease_expires_at,updated_at "
+                "FROM hardcover_identity_generations WHERE work_key=? AND generation=?",
+                (reference.work_key, reference.generation),
+            ).fetchone(),
+            before,
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_claims WHERE work_key=? AND generation=?",
+                (reference.work_key, reference.generation),
+            ).fetchone(),
+            claim_count,
+        )
+
     def test_closed_observation_has_one_exact_canonical_shape(self) -> None:
         canonical = '{"outcome":"matched","row_count":2}'
         self.assertEqual(MATCHED.to_canonical_json(), canonical)
@@ -974,6 +1039,69 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             gate_owned=True,
         )
         self.assertEqual((retry.candidate, retry.fence), (2, 2))
+
+    def test_candidate_three_claim_reconciles_complete_valid_history(self) -> None:
+        accepted = self.candidate_three_retry_wait()
+        third = self.repository.claim(
+            accepted.reference,
+            "worker-c",
+            ORIGIN + timedelta(seconds=7),
+            gate_owned=True,
+        )
+        self.assertEqual((third.candidate, third.fence), (3, 3))
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT attempt,fence,candidate,outcome FROM hardcover_identity_attempts ORDER BY attempt"
+            ).fetchall(),
+            [(1, 1, 1, "failed"), (2, 2, 2, "failed")],
+        )
+
+    def test_candidate_three_claim_rejects_corrupt_first_attempt_fence(self) -> None:
+        accepted = self.candidate_three_retry_wait()
+        self.connection.execute(
+            "DROP TRIGGER hardcover_identity_attempts_finalize_only"
+        )
+        self.connection.execute("PRAGMA foreign_keys=OFF")
+        self.connection.execute(
+            "UPDATE hardcover_identity_attempts SET fence=10 WHERE work_key=? AND generation=1 AND attempt=1",
+            (WORK_KEY,),
+        )
+        self.assert_candidate_three_history_rejected(accepted.reference)
+
+    def test_candidate_three_claim_rejects_corrupt_first_attempt_candidate(self) -> None:
+        accepted = self.candidate_three_retry_wait()
+        self.connection.execute(
+            "DROP TRIGGER hardcover_identity_attempts_finalize_only"
+        )
+        self.connection.execute("PRAGMA foreign_keys=OFF")
+        self.connection.execute(
+            "UPDATE hardcover_identity_attempts SET candidate=2 WHERE work_key=? AND generation=1 AND attempt=1",
+            (WORK_KEY,),
+        )
+        self.assert_candidate_three_history_rejected(accepted.reference)
+
+    def test_candidate_three_claim_rejects_corrupt_first_attempt_chronology(self) -> None:
+        accepted = self.candidate_three_retry_wait()
+        self.connection.execute(
+            "DROP TRIGGER hardcover_identity_attempts_finalize_only"
+        )
+        self.connection.execute(
+            "UPDATE hardcover_identity_attempts SET started_at=? WHERE work_key=? AND generation=1 AND attempt=1",
+            ("2025-12-31T23:59:59.000000Z", WORK_KEY),
+        )
+        self.assert_candidate_three_history_rejected(accepted.reference)
+
+    def test_candidate_three_claim_rejects_corrupt_first_retry_history(self) -> None:
+        accepted = self.candidate_three_retry_wait()
+        self.connection.execute(
+            "DROP TRIGGER hardcover_identity_events_no_update"
+        )
+        self.connection.execute(
+            "UPDATE hardcover_identity_events SET occurred_at=? "
+            "WHERE work_key=? AND generation=1 AND fence=1 AND kind='started'",
+            ("2026-01-01T00:00:02.500000Z", WORK_KEY),
+        )
+        self.assert_candidate_three_history_rejected(accepted.reference)
 
     def test_third_interrupted_attempt_commits_terminal_failed_result(self) -> None:
         accepted, first = self.started_claim()

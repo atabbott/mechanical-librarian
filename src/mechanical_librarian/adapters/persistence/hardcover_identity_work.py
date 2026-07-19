@@ -490,58 +490,131 @@ class SQLiteHardcoverIdentityWorkRepository:
     ) -> int:
         schedules = self._connection.execute(
             "SELECT fence,candidate,due_at,reason,created_at FROM hardcover_identity_retry_schedules "
-            "WHERE work_key=? AND generation=? AND fence>=? ORDER BY fence",
-            (reference.work_key, reference.generation, fence),
+            "WHERE work_key=? AND generation=? ORDER BY fence",
+            (reference.work_key, reference.generation),
         ).fetchall()
-        if len(schedules) != 1 or schedules[0][0] != fence:
+        if fence < 2 or [row[0] for row in schedules] != list(range(2, fence + 1)):
             raise IdentityWorkPersistenceError("identity work retry schedule is unavailable")
-        _, raw_candidate, raw_due, reason, raw_created = schedules[0]
-        candidate = _positive_int(raw_candidate, "candidate")
-        if reason not in {"interrupted", "retryable"}:
-            raise IdentityWorkPersistenceError("identity work retry schedule is corrupt")
-        if type(raw_due) is not str or type(raw_created) is not str:
-            raise IdentityWorkPersistenceError("identity work retry schedule is corrupt")
-        due = _parse_time(raw_due)
-        created = _parse_time(raw_created)
-        if created > due or generation_row[5] != raw_created:
+        parsed_schedules: dict[int, tuple[int, datetime, str, datetime, str]] = {}
+        for raw_fence, raw_candidate, raw_due, reason, raw_created in schedules:
+            schedule_fence = _positive_int(raw_fence, "retry fence")
+            schedule_candidate = _positive_int(raw_candidate, "candidate")
+            if (
+                schedule_candidate > MAX_ATTEMPTS
+                or reason not in {"interrupted", "retryable"}
+                or type(raw_due) is not str
+                or type(raw_created) is not str
+            ):
+                raise IdentityWorkPersistenceError(
+                    "identity work retry schedule is corrupt"
+                )
+            due = _parse_time(raw_due)
+            created = _parse_time(raw_created)
+            if created > due:
+                raise IdentityWorkPersistenceError(
+                    "identity work retry schedule is corrupt"
+                )
+            parsed_schedules[schedule_fence] = (
+                schedule_candidate,
+                due,
+                reason,
+                created,
+                raw_created,
+            )
+
+        candidate, due, _, _, raw_created = parsed_schedules[fence]
+        if (
+            candidate > MAX_ATTEMPTS
+            or _nonnegative_int(generation_row[1], "fence") != fence
+            or generation_row[5] != raw_created
+        ):
             raise IdentityWorkPersistenceError("identity work retry schedule is corrupt")
         if now < due:
             raise IdentityWorkPersistenceError("identity work retry is not due")
+
         candidate_rows = self._connection.execute(
-            "SELECT created_at FROM hardcover_identity_candidates WHERE work_key=? AND generation=? AND candidate=?",
-            (reference.work_key, reference.generation, candidate),
-        ).fetchall()
-        if (
-            len(candidate_rows) != 1
-            or type(candidate_rows[0][0]) is not str
-            or _parse_time(candidate_rows[0][0]) > created
-        ):
-            raise IdentityWorkPersistenceError("identity work retry candidate is corrupt")
-        previous_fence = fence - 1
-        if previous_fence < 1:
-            raise IdentityWorkPersistenceError("identity work retry fence is corrupt")
-        claims = self._connection.execute(
-            "SELECT candidate,claimed_at FROM hardcover_identity_claims WHERE work_key=? AND generation=? AND fence=?",
-            (reference.work_key, reference.generation, previous_fence),
-        ).fetchall()
-        if (
-            len(claims) != 1
-            or type(claims[0][1]) is not str
-            or _parse_time(claims[0][1]) > created
-        ):
-            raise IdentityWorkPersistenceError("identity work retry history is corrupt")
-        previous_candidate = _positive_int(claims[0][0], "claim candidate")
-        attempts = self._connection.execute(
-            "SELECT attempt,candidate,resolved_at,outcome FROM hardcover_identity_attempts WHERE work_key=? AND generation=? AND fence=?",
-            (reference.work_key, reference.generation, previous_fence),
-        ).fetchall()
-        all_attempts = self._connection.execute(
-            "SELECT COUNT(*) FROM hardcover_identity_attempts WHERE work_key=? AND generation=?",
+            "SELECT candidate,created_at FROM hardcover_identity_candidates "
+            "WHERE work_key=? AND generation=? ORDER BY candidate",
             (reference.work_key, reference.generation),
-        ).fetchone()
+        ).fetchall()
+        if [row[0] for row in candidate_rows] != list(range(1, candidate + 1)):
+            raise IdentityWorkPersistenceError("identity work retry candidate is corrupt")
+        candidate_created: dict[int, datetime] = {}
+        for raw_number, raw_candidate_created in candidate_rows:
+            if type(raw_candidate_created) is not str:
+                raise IdentityWorkPersistenceError(
+                    "identity work retry candidate is corrupt"
+                )
+            candidate_created[_positive_int(raw_number, "candidate")] = _parse_time(
+                raw_candidate_created
+            )
+
+        claims = self._connection.execute(
+            "SELECT fence,candidate,owner,claimed_at,lease_expires_at FROM hardcover_identity_claims "
+            "WHERE work_key=? AND generation=? ORDER BY fence",
+            (reference.work_key, reference.generation),
+        ).fetchall()
+        if [row[0] for row in claims] != list(range(1, fence)):
+            raise IdentityWorkPersistenceError("identity work retry history is corrupt")
+        parsed_claims: dict[int, tuple[int, datetime, datetime]] = {}
+        for (
+            raw_claim_fence,
+            raw_claim_candidate,
+            raw_owner,
+            raw_claimed,
+            raw_lease,
+        ) in claims:
+            claim_fence = _positive_int(raw_claim_fence, "claim fence")
+            claim_candidate = _positive_int(raw_claim_candidate, "claim candidate")
+            if (
+                claim_candidate > MAX_ATTEMPTS
+                or type(raw_owner) is not str
+                or not 1 <= len(raw_owner) <= 64
+                or not raw_owner[0].islower()
+                or set(raw_owner)
+                - set("abcdefghijklmnopqrstuvwxyz0123456789_-")
+                or type(raw_claimed) is not str
+                or type(raw_lease) is not str
+            ):
+                raise IdentityWorkPersistenceError(
+                    "identity work retry history is corrupt"
+                )
+            claimed = _parse_time(raw_claimed)
+            lease = _parse_time(raw_lease)
+            if (
+                claim_candidate not in candidate_created
+                or candidate_created[claim_candidate] > claimed
+                or lease != claimed + LEASE_DURATION
+            ):
+                raise IdentityWorkPersistenceError(
+                    "identity work retry history is corrupt"
+                )
+            if claim_fence == 1:
+                if claim_candidate != 1:
+                    raise IdentityWorkPersistenceError(
+                        "identity work retry history is corrupt"
+                    )
+            else:
+                scheduled_candidate, scheduled_due, _, _, _ = parsed_schedules[
+                    claim_fence
+                ]
+                if claim_candidate != scheduled_candidate or claimed < scheduled_due:
+                    raise IdentityWorkPersistenceError(
+                        "identity work retry history is corrupt"
+                    )
+            parsed_claims[claim_fence] = (claim_candidate, claimed, lease)
+
+        attempts = self._connection.execute(
+            "SELECT attempt,fence,candidate,started_at,resolved_at,outcome "
+            "FROM hardcover_identity_attempts WHERE work_key=? AND generation=? "
+            "ORDER BY attempt",
+            (reference.work_key, reference.generation),
+        ).fetchall()
+        attempt_count = _nonnegative_int(generation_row[2], "attempt count")
         if (
-            all_attempts is None
-            or all_attempts != (_nonnegative_int(generation_row[2], "attempt count"),)
+            attempt_count > MAX_ATTEMPTS
+            or [row[0] for row in attempts]
+            != list(range(1, attempt_count + 1))
             or self._connection.execute(
                 "SELECT COUNT(*) FROM hardcover_identity_results WHERE work_key=? AND generation=?",
                 (reference.work_key, reference.generation),
@@ -549,32 +622,134 @@ class SQLiteHardcoverIdentityWorkRepository:
             != (0,)
         ):
             raise IdentityWorkPersistenceError("identity work retry history is corrupt")
-        events = self._connection.execute(
-            "SELECT kind,from_state,to_state,occurred_at FROM hardcover_identity_events "
-            "WHERE work_key=? AND generation=? AND fence=? AND kind IN ('recovered','retry_scheduled')",
-            (reference.work_key, reference.generation, fence),
-        ).fetchall()
-        expected_event = (
-            "recovered" if reason == "interrupted" else "retry_scheduled",
-            "claimed",
-            "retry_wait",
-            raw_created,
-        )
-        if events != [expected_event]:
-            raise IdentityWorkPersistenceError("identity work retry history is corrupt")
-        if attempts:
-            if len(attempts) != 1:
-                raise IdentityWorkPersistenceError("identity work retry history is corrupt")
-            attempt, attempt_candidate, resolved_at, outcome = attempts[0]
+        attempts_by_fence: dict[int, tuple[int, datetime, datetime, str]] = {}
+        for (
+            raw_attempt,
+            raw_attempt_fence,
+            raw_attempt_candidate,
+            raw_started,
+            raw_resolved,
+            outcome,
+        ) in attempts:
+            attempt = _positive_int(raw_attempt, "attempt")
+            attempt_fence = _positive_int(raw_attempt_fence, "attempt fence")
+            attempt_candidate = _positive_int(raw_attempt_candidate, "attempt candidate")
+            claim = parsed_claims.get(attempt_fence)
             if (
-                _positive_int(attempt, "attempt") + 1 != candidate
-                or attempt_candidate != previous_candidate
-                or type(resolved_at) is not str
-                or _parse_time(resolved_at) != created
-                or outcome != ("interrupted" if reason == "interrupted" else "failed")
+                claim is None
+                or attempt_fence in attempts_by_fence
+                or attempt_candidate != attempt
+                or attempt_candidate != claim[0]
+                or type(raw_started) is not str
+                or type(raw_resolved) is not str
+                or outcome not in {"failed", "interrupted"}
             ):
-                raise IdentityWorkPersistenceError("identity work retry history is corrupt")
-        elif reason != "interrupted" or candidate != previous_candidate:
+                raise IdentityWorkPersistenceError(
+                    "identity work retry history is corrupt"
+                )
+            started = _parse_time(raw_started)
+            resolved = _parse_time(raw_resolved)
+            if not claim[1] <= started <= claim[2] or resolved < started:
+                raise IdentityWorkPersistenceError(
+                    "identity work retry history is corrupt"
+                )
+            if (
+                outcome == "failed"
+                and resolved > started + LEASE_DURATION
+                or outcome == "interrupted"
+                and resolved <= started + LEASE_DURATION
+            ):
+                raise IdentityWorkPersistenceError(
+                    "identity work retry history is corrupt"
+                )
+            attempts_by_fence[attempt_fence] = (
+                attempt,
+                started,
+                resolved,
+                outcome,
+            )
+
+        expected_events: list[tuple[str, str, str, int, str]] = []
+        for claim_fence, (
+            claim_candidate,
+            claimed,
+            claim_lease,
+        ) in parsed_claims.items():
+            expected_events.append(
+                (
+                    "claimed",
+                    "pending" if claim_fence == 1 else "retry_wait",
+                    "claimed",
+                    claim_fence,
+                    _time(claimed),
+                )
+            )
+            schedule_fence = claim_fence + 1
+            schedule_candidate, _, reason, created, schedule_timestamp = (
+                parsed_schedules[schedule_fence]
+            )
+            attempt = attempts_by_fence.get(claim_fence)
+            if attempt is None:
+                coherent = (
+                    reason == "interrupted"
+                    and schedule_candidate == claim_candidate
+                    and created > claim_lease
+                )
+            else:
+                attempt_number, started, resolved, outcome = attempt
+                coherent = (
+                    schedule_candidate == attempt_number + 1
+                    and resolved == created
+                    and outcome
+                    == ("interrupted" if reason == "interrupted" else "failed")
+                )
+                expected_events.append(
+                    (
+                        "started",
+                        "claimed",
+                        "claimed",
+                        claim_fence,
+                        _time(started),
+                    )
+                )
+            if (
+                not coherent
+                or schedule_candidate not in candidate_created
+                or candidate_created[schedule_candidate] > created
+            ):
+                raise IdentityWorkPersistenceError(
+                    "identity work retry history is corrupt"
+                )
+            if schedule_candidate > claim_candidate:
+                if (
+                    schedule_candidate != claim_candidate + 1
+                    or candidate_created[schedule_candidate] != created
+                ):
+                    raise IdentityWorkPersistenceError(
+                        "identity work retry history is corrupt"
+                    )
+            elif schedule_candidate != claim_candidate:
+                raise IdentityWorkPersistenceError(
+                    "identity work retry history is corrupt"
+                )
+            expected_events.append(
+                (
+                    "recovered" if reason == "interrupted" else "retry_scheduled",
+                    "claimed",
+                    "retry_wait",
+                    schedule_fence,
+                    schedule_timestamp,
+                )
+            )
+
+        events = self._connection.execute(
+            "SELECT kind,from_state,to_state,fence,occurred_at FROM hardcover_identity_events "
+            "WHERE work_key=? AND generation=? "
+            "AND kind IN ('claimed','started','recovered','retry_scheduled') "
+            "ORDER BY sequence",
+            (reference.work_key, reference.generation),
+        ).fetchall()
+        if events != expected_events:
             raise IdentityWorkPersistenceError("identity work retry history is corrupt")
         return candidate
 
