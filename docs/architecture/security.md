@@ -511,6 +511,40 @@ of scope for unattended operation and must never be hidden configuration.
 
 ## Security testing requirements
 
+F09f durable Hardcover identity work treats contributor preview JSON,
+disposable database identity and parent ownership/mode/emptiness, persisted
+rows and retry schedules, process interruption, wall-clock chronology, and
+competing lease owners as hostile boundaries. Atomic
+acceptance prevents partial generations. A claim reserves without consuming;
+gate-held start records consumption before later transport could be permitted.
+Monotonic fences plus exact owner checks prevent stale or ABA cancellation or
+publication. The immutable persisted claim's candidate, owner, fence, and lease
+identity are reconciled before start, recovery, cancellation, or publication;
+only current claimed work is cancellable. Retry claims derive their
+candidate/fence from one current due
+schedule and reconcile it against immutable claim, attempt, candidate, result,
+reason, and timestamp history before mutation. Matched-pointer reuse likewise
+reconciles the successful generation, terminal result, terminal generation
+timestamp, exact fence/timestamps,
+observation digest, and closed structural observation. Aggregate/attempt
+exhaustion commits terminal evidence, while
+currentness expiry and unreserved next-generation creation share one
+transaction and repeated readers retain stale status. Append-only records and
+finalize-once attempts make restart and corruption visible.
+
+The installed preview injects gate ownership structurally and has no provider
+secret, query-file, DNS, socket, HTTP, process loop, signal, proposal, review,
+or production-write authority. It persists no ISBN, title, provider payload,
+path, credential, or contributor script. Production remains preactivated and
+returns before opening this repository. Tests trap all egress and secret seams,
+compare the reconstructed schema-8 sentinel/logical snapshot, inject migration
+and publication failures, reopen before and after starts, and prove stale
+fences leave state unchanged. Disposable preview publication retains one
+no-follow directory descriptor from validation through descriptor-relative
+serialized staging, synchronization, and no-replace linking without a
+process-global working-directory change; device/inode/owner/mode
+revalidation rejects parent swaps without publishing into the replacement.
+
 F07b treats the service path projection, private logical binding, EPUB archive,
 and persisted canonical report as hostile inputs. Callers can supply only
 strict opaque references and a bounded file index. Resolution requires one

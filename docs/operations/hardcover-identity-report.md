@@ -104,3 +104,73 @@ It contains only the C1 inert and C2 identity scenarios and binds the C2-scoped
 output schema, privacy contract, and privacy scan. See the
 [F09f identity contract](../reference/hardcover-f09f-contract.md) for exact
 compatibility, alias, precedence, and privacy rules.
+
+### Durable work and recovery preview
+
+F09f increment 4 installs a repository-backed qualification scenario without
+activating the production provider:
+
+```text
+mechanical-librarian hardcover-identity-report \
+  --mode synthetic-preview --scenario durable-work-v3 \
+  --input - --database ABSENT_DISPOSABLE_PATH --format json
+```
+
+The path must be absolute and absent beneath a newly prepared empty directory
+owned by the invoking user with mode `0700`; relative paths, existing entries,
+permissive parents, and nonempty parents are rejected before mutation. The
+command builds an owner-only staged database, regenerates the genuine schema-8
+migration prefix plus sentinel, compares its canonical logical snapshot digest,
+checks its recorded checksums, integrity, and foreign keys, then proves the
+additive schema-9 migration and publishes the completed database without
+replacing a competing entry. Existing databases are rejected unchanged.
+
+The canonical script exercises acceptance, a fenced claim, request-start
+accounting, publication rollback, process restart, lease-expiry recovery,
+stale-fence rejection, retry, matched publication, and the exact 24-hour
+currentness boundary. Gate ownership is an injected structural fact; this
+increment installs no deployment gate, process loop, query-file read, secret
+lookup, DNS, socket, HTTP, live Hardcover access, proposal, review, or write
+authority. Production mode still returns `disabled` or
+`provider_not_activated` before opening durable identity work.
+
+From the repository root, the canonical demonstration is:
+
+```sh
+preview_dir="$(mktemp -d)"
+uv run --frozen --no-editable --reinstall-package mechanical-librarian \
+  mechanical-librarian hardcover-identity-report \
+  --mode synthetic-preview --scenario durable-work-v3 --input - \
+  --database "$preview_dir/state.sqlite" --format json \
+  < tests/fixtures/hardcover_identity/c4-durable-work-input.json
+```
+
+Stdout must be byte-identical to
+`tests/fixtures/hardcover_identity/c4-durable-work-example-output.json`.
+The cumulative C4 registry is `preview-registry-c4-v6.json`, SHA-256
+`3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81`.
+The registry also binds contributor-independent schema-8 logical snapshot and
+ledger resources used only for qualification; runtime reconstructs and
+validates the prefix and never loads the expected output before emission.
+
+### Durable data lifecycle
+
+Schema 9 stores only an opaque work key and bounded structural state:
+generations, candidates, claims, attempts, retry schedules, events, terminal
+results, observations, and the currentness pointer. Candidates, claims,
+schedules, events, results, and observations are append-only. Attempts can be
+finalized once; generation and current-pointer changes are fenced transactions.
+No query ISBN, local title, credential, provider payload, path, or contributor
+script is stored. The observation is a closed provider-neutral value serialized
+only as `{"outcome":"matched","row_count":N}` with `N` from 1 through 4;
+arbitrary maps and provider fields cannot enter the persistence adapter.
+
+This increment deliberately has no row-level retention or deletion executor.
+Keep the work history with the curator database under the configured curator
+data backup policy. Aggregate export means a verified stopped-state backup of
+the complete `/data` database and its migration ledger; copying selected rows
+is not a supported recovery artifact. To erase this preview state, stop every
+Mechanical Librarian process, retain any required audit/backup evidence, and
+delete the whole disposable database. Never delete individual identity-work
+rows or edit the current pointer. Production retention controls and supported
+selective export/deletion require a later activated surface.

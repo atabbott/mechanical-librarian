@@ -67,7 +67,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.database = Path(self.temporary.name) / "state.sqlite3"
         self.connection = connect(self.database)
-        self.assertEqual(migrate(self.connection), 8)
+        self.assertEqual(migrate(self.connection), len(MIGRATIONS))
         target = TargetId(
             AdapterId("audiobookshelf"),
             ConnectionId("connection"),
@@ -1736,7 +1736,7 @@ class SQLiteEpubOpeningEvidenceTests(unittest.TestCase):
         restored_raw.close()
         restored = connect(restored_path)
         try:
-            self.assertEqual(migrate(restored), 8)
+            self.assertEqual(migrate(restored), len(MIGRATIONS))
             with patch.object(sqlite_foundation, "MIGRATIONS", MIGRATIONS[:7]):
                 with self.assertRaises(SchemaError):
                     migrate(restored)

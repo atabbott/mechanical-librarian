@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from mechanical_librarian.application.configuration import (
     HardcoverProviderConfiguration,
@@ -20,6 +21,14 @@ from mechanical_librarian.domain.hardcover_identity import (
     decide_book_identity,
     isbn_identity,
     validate_private_query,
+)
+from mechanical_librarian.domain.hardcover_identity_work import (
+    IdentityMatchOutcome,
+    IdentityWorkClaim,
+    IdentityWorkObservation,
+    IdentityWorkOutcome,
+    IdentityWorkReference,
+    IdentityWorkStatus,
 )
 
 
@@ -225,6 +234,53 @@ class FixedAdapterPreviewReport:
                     "peer_equal": self.peer_equal,
                     "actual_network": self.actual_network,
                     "address_policy": self.address_policy.value,
+                },
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DurableWorkPreviewReport:
+    outcome: str
+    schema_from: int
+    schema_to: int
+    migration_rollback_verified: bool
+    migration_idempotence_verified: bool
+    publication_rollback_verified: bool
+    interrupted_recovery_gate_owned: bool
+
+    def validate(self) -> None:
+        if (
+            self.outcome not in {"matched", "stale", "persistence_failure", "in_progress"}
+            or type(self.outcome) is not str
+            or type(self.schema_from) is not int
+            or self.schema_from != 8
+            or type(self.schema_to) is not int
+            or self.schema_to != 9
+            or self.migration_rollback_verified is not True
+            or self.migration_idempotence_verified is not True
+            or self.publication_rollback_verified is not True
+            or self.interrupted_recovery_gate_owned is not True
+        ):
+            raise TypeError("Hardcover durable work preview report is malformed")
+
+    def to_json(self) -> str:
+        self.validate()
+        return json.dumps(
+            {
+                "schema": "hardcover-synthetic-output-v5",
+                "scenario": "durable-work-v3",
+                "result": {
+                    "outcome": self.outcome,
+                    "schema_from": self.schema_from,
+                    "schema_to": self.schema_to,
+                    "migration_rollback_verified": self.migration_rollback_verified,
+                    "migration_idempotence_verified": self.migration_idempotence_verified,
+                    "publication_rollback_verified": self.publication_rollback_verified,
+                    "interrupted_recovery_gate_owned": self.interrupted_recovery_gate_owned,
                 },
             },
             ensure_ascii=True,
@@ -737,9 +793,324 @@ def render_report_text(report: HardcoverIdentityReport) -> str:
     )
 
 
+@runtime_checkable
+class HardcoverIdentityWorkPersistence(Protocol):
+    """Application-owned durable identity-work transaction contract."""
+
+    def accept(self, work_key: str, now: datetime) -> IdentityWorkStatus: ...
+
+    def claim(
+        self,
+        reference: IdentityWorkReference,
+        owner: str,
+        now: datetime,
+        *,
+        gate_owned: bool,
+    ) -> IdentityWorkClaim: ...
+
+    def renew_and_start(
+        self,
+        claim: IdentityWorkClaim,
+        owner: str,
+        now: datetime,
+        *,
+        gate_owned: bool,
+    ) -> IdentityWorkClaim | IdentityWorkStatus: ...
+
+    def recover_interrupted(
+        self, claim: IdentityWorkClaim, now: datetime, *, gate_owned: bool
+    ) -> int | IdentityWorkStatus: ...
+
+    def publish_matched(
+        self,
+        claim: IdentityWorkClaim,
+        owner: str,
+        now: datetime,
+        observation: IdentityWorkObservation,
+        *,
+        gate_owned: bool,
+        fail_before_commit: bool = False,
+    ) -> IdentityWorkStatus: ...
+
+    def publish_failed(
+        self,
+        claim: IdentityWorkClaim,
+        owner: str,
+        now: datetime,
+        *,
+        retryable: bool,
+        gate_owned: bool,
+        fail_before_commit: bool = False,
+    ) -> IdentityWorkStatus: ...
+
+    def cancel(
+        self,
+        claim: IdentityWorkClaim,
+        owner: str,
+        now: datetime,
+        *,
+        gate_owned: bool,
+    ) -> None: ...
+
+
+class IdentityWorkPersistenceError(RuntimeError):
+    """Value-free application boundary for durable identity-work failures."""
+
+
+class StaleIdentityWorkFence(IdentityWorkPersistenceError):
+    """The caller no longer owns the claimed generation."""
+
+
+@dataclass(frozen=True, slots=True)
+class DurableWorkPreviewCheckpoint:
+    accepted: IdentityWorkStatus
+    interrupted: IdentityWorkClaim
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.accepted) is not IdentityWorkStatus
+            or type(self.interrupted) is not IdentityWorkClaim
+        ):
+            raise ValueError("Hardcover durable work checkpoint is malformed")
+
+
+class ManageHardcoverIdentityWork:
+    """Own the application workflow over one provider-neutral persistence port."""
+
+    def __init__(self, persistence: HardcoverIdentityWorkPersistence) -> None:
+        if not isinstance(persistence, HardcoverIdentityWorkPersistence):
+            raise TypeError("Hardcover identity work persistence is malformed")
+        self._persistence = persistence
+
+    def accept(self, work_key: str, now: datetime) -> IdentityWorkStatus:
+        result = self._persistence.accept(work_key, now)
+        if (
+            type(result) is not IdentityWorkStatus
+            or result.reference.work_key != work_key
+            or result.outcome
+            not in {
+                IdentityWorkOutcome.MATCHED,
+                IdentityWorkOutcome.STALE,
+                IdentityWorkOutcome.IN_PROGRESS,
+                IdentityWorkOutcome.PERSISTENCE_FAILURE,
+            }
+        ):
+            raise TypeError("Hardcover identity work acceptance is malformed")
+        return result
+
+    def claim(
+        self,
+        reference: IdentityWorkReference,
+        owner: str,
+        now: datetime,
+        *,
+        gate_owned: bool,
+    ) -> IdentityWorkClaim:
+        result = self._persistence.claim(reference, owner, now, gate_owned=gate_owned)
+        if type(result) is not IdentityWorkClaim or result.reference != reference:
+            raise TypeError("Hardcover identity work claim is malformed")
+        return result
+
+    def start(
+        self,
+        claim: IdentityWorkClaim,
+        owner: str,
+        now: datetime,
+        *,
+        gate_owned: bool,
+    ) -> IdentityWorkClaim | IdentityWorkStatus:
+        result = self._persistence.renew_and_start(
+            claim, owner, now, gate_owned=gate_owned
+        )
+        if type(result) is IdentityWorkClaim and (
+            result.reference == claim.reference
+            and result.candidate == claim.candidate
+            and result.fence == claim.fence
+        ):
+            return result
+        if (
+            type(result) is IdentityWorkStatus
+            and result.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED
+            and result.reference == claim.reference
+            and result.candidate == claim.candidate
+        ):
+            return result
+        raise TypeError("Hardcover identity work start result is malformed")
+
+    def recover(
+        self, claim: IdentityWorkClaim, now: datetime, *, gate_owned: bool
+    ) -> int | IdentityWorkStatus:
+        result = self._persistence.recover_interrupted(
+            claim, now, gate_owned=gate_owned
+        )
+        if type(result) is int and result > claim.fence:
+            return result
+        if (
+            type(result) is IdentityWorkStatus
+            and result.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED
+            and result.reference == claim.reference
+            and result.candidate == claim.candidate
+        ):
+            return result
+        raise TypeError("Hardcover identity work recovery result is malformed")
+
+    def publish_matched(
+        self,
+        claim: IdentityWorkClaim,
+        owner: str,
+        now: datetime,
+        observation: IdentityWorkObservation,
+        *,
+        gate_owned: bool,
+        fail_before_commit: bool = False,
+    ) -> IdentityWorkStatus:
+        result = self._persistence.publish_matched(
+            claim,
+            owner,
+            now,
+            observation,
+            gate_owned=gate_owned,
+            fail_before_commit=fail_before_commit,
+        )
+        if (
+            type(result) is not IdentityWorkStatus
+            or result.reference != claim.reference
+            or result.outcome
+            not in {IdentityWorkOutcome.MATCHED, IdentityWorkOutcome.PERSISTENCE_FAILURE}
+            or (
+                result.outcome is IdentityWorkOutcome.MATCHED
+                and result.candidate != claim.candidate
+            )
+        ):
+            raise TypeError("Hardcover identity work publication is malformed")
+        return result
+
+    def publish_failed(
+        self,
+        claim: IdentityWorkClaim,
+        owner: str,
+        now: datetime,
+        *,
+        retryable: bool,
+        gate_owned: bool,
+        fail_before_commit: bool = False,
+    ) -> IdentityWorkStatus:
+        result = self._persistence.publish_failed(
+            claim,
+            owner,
+            now,
+            retryable=retryable,
+            gate_owned=gate_owned,
+            fail_before_commit=fail_before_commit,
+        )
+        if (
+            type(result) is not IdentityWorkStatus
+            or result.reference != claim.reference
+            or result.outcome
+            not in {
+                IdentityWorkOutcome.IN_PROGRESS,
+                IdentityWorkOutcome.PERSISTENCE_FAILURE,
+            }
+        ):
+            raise TypeError("Hardcover identity work failure result is malformed")
+        return result
+
+    def cancel(
+        self,
+        claim: IdentityWorkClaim,
+        owner: str,
+        now: datetime,
+        *,
+        gate_owned: bool,
+    ) -> None:
+        result = self._persistence.cancel(claim, owner, now, gate_owned=gate_owned)
+        if result is not None:
+            raise TypeError("Hardcover identity work cancellation is malformed")
+
+    def begin_preview(
+        self, work_key: str, origin: datetime
+    ) -> DurableWorkPreviewCheckpoint:
+        """Execute the pre-restart durable-work script through the owned port."""
+
+        at = lambda microseconds: origin + timedelta(microseconds=microseconds)
+        accepted = self.accept(work_key, at(500_000))
+        claim = self.claim(
+            accepted.reference, "worker-a", at(1_600_000), gate_owned=True
+        )
+        started = self.start(claim, "worker-a", at(1_700_000), gate_owned=True)
+        if type(started) is not IdentityWorkClaim:
+            raise IdentityWorkPersistenceError("identity work preview start was exhausted")
+        claim = started
+        try:
+            self.publish_matched(
+                claim,
+                "worker-a",
+                at(2_800_000),
+                IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 2),
+                gate_owned=True,
+                fail_before_commit=True,
+            )
+        except IdentityWorkPersistenceError:
+            pass
+        else:
+            raise IdentityWorkPersistenceError(
+                "identity publication rollback was not exercised"
+            )
+        return DurableWorkPreviewCheckpoint(accepted, claim)
+
+    def resume_preview(
+        self,
+        checkpoint: DurableWorkPreviewCheckpoint,
+        origin: datetime,
+    ) -> tuple[IdentityWorkStatus, IdentityWorkStatus]:
+        """Execute the post-restart recovery and currentness script."""
+
+        if type(checkpoint) is not DurableWorkPreviewCheckpoint:
+            raise TypeError("Hardcover durable work checkpoint is malformed")
+        at = lambda microseconds: origin + timedelta(microseconds=microseconds)
+        if self.recover(
+            checkpoint.interrupted, at(16_900_000), gate_owned=True
+        ) != 2:
+            raise IdentityWorkPersistenceError("identity recovery fence is inconsistent")
+        try:
+            self.publish_matched(
+                checkpoint.interrupted,
+                "worker-a",
+                at(17_000_000),
+                IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+                gate_owned=True,
+            )
+        except StaleIdentityWorkFence:
+            pass
+        else:
+            raise IdentityWorkPersistenceError("stale identity fence was accepted")
+        retry = self.claim(
+            checkpoint.accepted.reference,
+            "worker-b",
+            at(17_000_000),
+            gate_owned=True,
+        )
+        started = self.start(retry, "worker-b", at(17_100_000), gate_owned=True)
+        if type(started) is not IdentityWorkClaim:
+            raise IdentityWorkPersistenceError("identity work preview retry was exhausted")
+        retry = started
+        self.publish_matched(
+            retry,
+            "worker-b",
+            at(18_200_000),
+            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 2),
+            gate_owned=True,
+        )
+        exact = self.accept(checkpoint.accepted.reference.work_key, at(86_418_200_000))
+        stale = self.accept(checkpoint.accepted.reference.work_key, at(86_418_200_001))
+        return exact, stale
+
+
 __all__ = [
     "AddressPolicyOutcome",
     "BookIdentityProvider",
+    "DurableWorkPreviewReport",
+    "DurableWorkPreviewCheckpoint",
     "FixedAdapterOutcome",
     "FixedAdapterAttemptEvidence",
     "FixedAdapterPreviewReport",
@@ -751,10 +1122,14 @@ __all__ = [
     "IdentityAttemptResult",
     "IdentityDecisionPreviewReport",
     "IdentityReportError",
+    "IdentityWorkPersistenceError",
     "InertPreviewReport",
     "IsbnIdentityQuery",
+    "HardcoverIdentityWorkPersistence",
+    "ManageHardcoverIdentityWork",
     "RunHardcoverIdentityReport",
     "RunHardcoverFixedAdapterPreview",
+    "StaleIdentityWorkFence",
     "fixed_adapter_preview_report",
     "inert_preview",
     "preactivation_report",

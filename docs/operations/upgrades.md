@@ -135,6 +135,25 @@ tables or edit `schema_migrations`. After upgrade, run `state-check`,
 `inventory-inspect`, and one isolated `epub-opening-evidence` execution plus
 restart reuse.
 
+The F09f durable-identity migration is additive and forward-only from every
+genuine schema prefix through schema 8. Migration 9 adds bounded generations,
+candidates, claims, attempts, retry schedules, append-only events, terminal
+results, bounded observations, and the matched-current pointer. It transforms
+no existing row. Interruption at early, middle, and final statements leaves the
+complete schema-8 prefix and version ledger usable; a clean retry applies
+migration 9 exactly once.
+
+Before upgrading important state, stop relevant work and retain a verified
+pre-schema-9 curator-data copy. Downgrade requires stopping the newer process
+and restoring that whole copy. Never delete schema-9 objects or edit the
+migration ledger. After upgrade, run `state-check`, inspect pending/claimed work
+while stopped, and execute `durable-work-v3` using a separate initially absent
+database beneath an empty owner-owned mode-`0700` disposable directory. The
+scenario proves the schema-8 sentinel and canonical snapshot before migration,
+then migration, restart, recovery,
+publication rollback, stale-fence rejection, and currentness without live
+provider or production-database authority.
+
 ## Verification
 
 After upgrade:

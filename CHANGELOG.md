@@ -7,6 +7,19 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added the report-only F09f durable Hardcover identity-work increment. Schema
+  9 adds bounded immutable generations, candidates, claims, attempts, retry
+  schedules, events, results, observations, and exact currentness with atomic
+  acceptance/publication, 15-second leases, monotonic fences, restart recovery,
+  due-schedule-derived retries, terminal exhaustion, stale-owner cancellation
+  rejection, and exact 24-hour matched reuse with unreserved stale refresh. The installed
+  `durable-work-v3` preview proves schema-8 migration rollback, schema-9
+  idempotence, publication rollback, restart, recovery, and expiry using an
+  absolute absent database beneath an empty owner-only disposable directory.
+  It reconstructs and compares the schema-8 sentinel/logical snapshot before
+  migration and adds no live provider, credential, network,
+  proposal, review, or write authority; production remains preactivated.
+
 - Added the first inert F09f increment: additive disabled-by-default
   `hardcover_provider` configuration, a strict owner-only private ISBN/title
   query reader, and the installed `hardcover-identity-report`. Production

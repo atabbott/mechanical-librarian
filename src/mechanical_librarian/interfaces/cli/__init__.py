@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -62,6 +64,7 @@ from mechanical_librarian.application.title_review_cases import (
     render_title_review_case_text,
 )
 from mechanical_librarian.application.hardcover_identity import (
+    DurableWorkPreviewReport,
     FixedAdapterPreviewReport,
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
@@ -97,6 +100,9 @@ HardcoverIdentityDecisionPreviewRunner = Callable[
 ]
 HardcoverFixedAdapterPreviewRunner = Callable[
     [Mapping[str, object]], FixedAdapterPreviewReport
+]
+HardcoverDurableWorkPreviewRunner = Callable[
+    [Mapping[str, object], Path], DurableWorkPreviewReport
 ]
 
 _FAILURE_MESSAGES = {
@@ -187,7 +193,12 @@ def _hardcover_identity_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=("synthetic-preview",))
     parser.add_argument(
         "--scenario",
-        choices=("inert-report-v3", "identity-decision-v3", "fixed-adapter-v3"),
+        choices=(
+            "inert-report-v3",
+            "identity-decision-v3",
+            "fixed-adapter-v3",
+            "durable-work-v3",
+        ),
     )
     parser.add_argument("--input")
     parser.add_argument("--format", choices=("json", "text"), default="json")
@@ -335,6 +346,26 @@ def _database_path(value: str) -> Path:
     if path == Path(":memory:"):
         raise argparse.ArgumentTypeError("database must be a durable filesystem path")
     return path
+
+
+def _durable_preview_database_path(path: Path) -> None:
+    """Require an absent canonical path in one empty owner-only directory."""
+
+    try:
+        parent_status = path.parent.lstat()
+        entries = tuple(path.parent.iterdir())
+    except (OSError, RuntimeError):
+        raise ValueError("durable work preview database path is invalid") from None
+    if (
+        not path.is_absolute()
+        or len(os.fsencode(path)) > 4096
+        or os.path.lexists(path)
+        or not stat.S_ISDIR(parent_status.st_mode)
+        or stat.S_IMODE(parent_status.st_mode) != 0o700
+        or parent_status.st_uid != os.geteuid()
+        or entries
+    ):
+        raise ValueError("durable work preview database path is invalid")
 
 
 def _provider_secret_reference(value: str) -> Path:
@@ -533,6 +564,9 @@ def main(
     hardcover_fixed_adapter_preview_runner: (
         HardcoverFixedAdapterPreviewRunner | None
     ) = None,
+    hardcover_durable_work_preview_runner: (
+        HardcoverDurableWorkPreviewRunner | None
+    ) = None,
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
@@ -552,19 +586,30 @@ def main(
             return 2
         synthetic = hardcover_arguments.mode == "synthetic-preview"
         if synthetic:
+            durable = hardcover_arguments.scenario == "durable-work-v3"
             exact = (
                 hardcover_arguments.scenario
-                in {"inert-report-v3", "identity-decision-v3", "fixed-adapter-v3"}
+                in {
+                    "inert-report-v3",
+                    "identity-decision-v3",
+                    "fixed-adapter-v3",
+                    "durable-work-v3",
+                }
                 and hardcover_arguments.input == "-"
                 and hardcover_arguments.format == "json"
                 and hardcover_arguments.config is None
-                and hardcover_arguments.database is None
                 and hardcover_arguments.query_file is None
+                and (
+                    (durable and hardcover_arguments.database is not None)
+                    or (not durable and hardcover_arguments.database is None)
+                )
             )
             if not exact:
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
             try:
+                if durable:
+                    _durable_preview_database_path(hardcover_arguments.database)
                 source = _read_synthetic_input(stdin)
                 if hardcover_arguments.scenario == "inert-report-v3":
                     report = (
@@ -576,10 +621,16 @@ def main(
                     if hardcover_identity_decision_preview_runner is None:
                         raise ValueError("identity decision preview is unavailable")
                     report = hardcover_identity_decision_preview_runner(source)
-                else:
+                elif hardcover_arguments.scenario == "fixed-adapter-v3":
                     if hardcover_fixed_adapter_preview_runner is None:
                         raise ValueError("fixed adapter preview is unavailable")
                     report = hardcover_fixed_adapter_preview_runner(source)
+                else:
+                    if hardcover_durable_work_preview_runner is None:
+                        raise ValueError("durable work preview is unavailable")
+                    report = hardcover_durable_work_preview_runner(
+                        source, hardcover_arguments.database
+                    )
             except Exception:
                 if hardcover_arguments.scenario == "inert-report-v3":
                     report = InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
@@ -594,7 +645,11 @@ def main(
                 if type(report) is not IdentityDecisionPreviewReport:
                     errors.write(_HARDCOVER_IDENTITY_FAILURE)
                     return 2
-            elif type(report) is not FixedAdapterPreviewReport:
+            elif hardcover_arguments.scenario == "fixed-adapter-v3":
+                if type(report) is not FixedAdapterPreviewReport:
+                    errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                    return 2
+            elif type(report) is not DurableWorkPreviewReport:
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
             try:
@@ -607,6 +662,7 @@ def main(
             if type(report) in {
                 IdentityDecisionPreviewReport,
                 FixedAdapterPreviewReport,
+                DurableWorkPreviewReport,
             }:
                 return 0
             return 0 if report.outcome is HardcoverIdentityOutcome.DISABLED else 2
