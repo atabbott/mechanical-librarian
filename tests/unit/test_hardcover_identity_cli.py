@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import copy
 from contextlib import ExitStack, contextmanager
+import errno
 import io
 import hashlib
 import json
 import logging
 import os
+import signal
 import subprocess
+import sys
 import tempfile
+import textwrap
+import time
 import traceback
 import unittest
 from pathlib import Path
@@ -699,6 +704,103 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                     self.assertEqual(json.loads(output.getvalue())["outcome"], outcome)
                     self.assertNotIn("must-not-open", output.getvalue())
 
+    def test_real_sigint_while_production_config_read_blocks_propagates(self) -> None:
+        script = textwrap.dedent(
+            """
+            import os
+            import signal
+            import sys
+            import time
+            from pathlib import Path
+
+            from mechanical_librarian.interfaces.cli import main
+
+            def blocking_config_runner(config):
+                descriptor = os.open(config, os.O_RDONLY | os.O_NONBLOCK)
+                try:
+                    while True:
+                        try:
+                            payload = os.read(descriptor, 1)
+                        except BlockingIOError:
+                            payload = None
+                        if payload:
+                            raise AssertionError("unexpected synthetic config input")
+                        time.sleep(0.01)
+                finally:
+                    os.close(descriptor)
+
+            config, marker = map(Path, sys.argv[1:])
+            signal.signal(signal.SIGINT, signal.default_int_handler)
+            marker.write_text("ready", encoding="utf-8")
+            try:
+                exit_code = main(
+                    [
+                        "hardcover-identity-report",
+                        "--config",
+                        str(config),
+                        "--database",
+                        "/synthetic-unused-state.sqlite3",
+                        "--query-file",
+                        "/synthetic-unused-query.json",
+                        "--format",
+                        "json",
+                    ],
+                    state_check_runner=lambda: None,
+                    hardcover_identity_runner=blocking_config_runner,
+                )
+            except KeyboardInterrupt:
+                signal.signal(signal.SIGINT, signal.SIG_DFL)
+                os.kill(os.getpid(), signal.SIGINT)
+                raise AssertionError("default SIGINT did not terminate")
+            raise SystemExit(exit_code)
+            """
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.fifo"
+            marker = root / "ready"
+            os.mkfifo(config)
+            process = subprocess.Popen(
+                [sys.executable, "-c", script, str(config), str(marker)],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            writer: int | None = None
+            deadline = time.monotonic() + 5
+            try:
+                while not marker.exists():
+                    if process.poll() is not None:
+                        output, errors = process.communicate()
+                        self.fail(
+                            f"subprocess exited before readiness: {output!r} {errors!r}"
+                        )
+                    if time.monotonic() >= deadline:
+                        self.fail("subprocess did not report readiness")
+                    time.sleep(0.01)
+                while writer is None:
+                    try:
+                        writer = os.open(config, os.O_WRONLY | os.O_NONBLOCK)
+                    except OSError as error:
+                        if error.errno != errno.ENXIO:
+                            raise
+                        if time.monotonic() >= deadline:
+                            self.fail("subprocess did not block on the config FIFO")
+                        time.sleep(0.01)
+                process.send_signal(signal.SIGINT)
+                output, errors = process.communicate(timeout=5)
+            finally:
+                if writer is not None:
+                    os.close(writer)
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+            self.assertEqual(process.returncode, -signal.SIGINT)
+            self.assertEqual(output, "")
+            self.assertEqual(errors, "")
+
     def test_composition_lookup_authority_traps_are_executable(self) -> None:
         invocations = (
             ("provider", lambda: composition_module.HardcoverTitleProvider(None)),
@@ -776,6 +878,15 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c2-preview-output-privacy-contract-v1.json": "315984420942e5819c760391b371d452ee5be178c1b30085effe1d8d4e81d47d",
             "c2-preview-output-privacy-scan-v1.json": "81a0aad7d18f16470b13a8533df0d6a5192e056576aed211509aae9d33383452",
             "preview-registry-c2-v6.json": "557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11",
+            "c3-fixed-adapter-input.json": "8944fd8edda4c4e2907ddb845d1ab3ccb833bfe1016d031f0497203ac44f229a",
+            "c3-fixed-adapter-example-output.json": "09bbf56b45a896c1a4a8ec0ef2ac45a3863d2e55370e901693677de7209baa40",
+            "c3-fixed-adapter-input-schema.json": "5487c3373d590ee4ed9bc35e07870f8d87356456c5683704fb6feedfebf7923b",
+            "c3-utf8-byte-length-meta-schema-v1.json": "6e661639a611c463c65303efc2c83f97e9b522d23ee30c2e4e78f0d4c4e703b1",
+            "c3-fixed-adapter-variant-matrix.json": "207dcef3ceccdace6addda731055b60e40d0688d0c920a703f5f828b30f472b4",
+            "c3-preview-output-schema-v1.json": "40980c861683de4f56b8fb7fa60a769a47ea1223c798c858c79fd876d7f694da",
+            "c3-preview-output-privacy-contract-v1.json": "32ec6078b981b15d3255296cb0f41346b5840686ae859ea48176cdb047895b37",
+            "c3-preview-output-privacy-scan-v1.json": "bedc4f12909da3b255a81e83537bf0019859f393fb9c460085411f9e30df021b",
+            "preview-registry-c3-v6.json": "394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)

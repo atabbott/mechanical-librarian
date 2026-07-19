@@ -57,6 +57,9 @@ from mechanical_librarian.adapters.providers.synthetic_title import (
 from mechanical_librarian.adapters.providers.synthetic_hardcover_identity import (
     SyntheticBookIdentityProvider,
 )
+from mechanical_librarian.adapters.providers.hardcover_identity import (
+    StructuralHardcoverIdentityPreview,
+)
 from mechanical_librarian.adapters.providers.hardcover_title import (
     AddressResolver,
     HardcoverTitleProvider,
@@ -68,10 +71,12 @@ from mechanical_librarian.application.connection_probe import (
 )
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.hardcover_identity import (
+    FixedAdapterPreviewReport,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
     InertPreviewReport,
     IsbnIdentityQuery,
+    RunHardcoverFixedAdapterPreview,
     RunHardcoverIdentityReport,
     inert_preview,
     preactivation_report,
@@ -1578,6 +1583,14 @@ def _run_hardcover_identity_decision_preview(
     )
 
 
+def _run_hardcover_fixed_adapter_preview(
+    source: Mapping[str, object],
+) -> FixedAdapterPreviewReport:
+    return RunHardcoverFixedAdapterPreview().run(
+        StructuralHardcoverIdentityPreview(), source
+    )
+
+
 def _synthetic_identity_row(source: object) -> ProviderIdentityObservation:
     if not isinstance(source, Mapping) or set(source) != {
         "id",
@@ -1701,6 +1714,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         hardcover_identity_decision_preview_runner=(
             _run_hardcover_identity_decision_preview
         ),
+        hardcover_fixed_adapter_preview_runner=_run_hardcover_fixed_adapter_preview,
     )
 
 
