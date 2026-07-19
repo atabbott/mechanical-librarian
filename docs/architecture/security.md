@@ -518,10 +518,14 @@ competing lease owners as hostile boundaries. Atomic
 acceptance prevents partial generations. A claim reserves without consuming;
 gate-held start records consumption before later transport could be permitted.
 Monotonic fences plus exact owner checks prevent stale or ABA cancellation or
-publication. Retry claims derive their candidate/fence from one current due
+publication. The immutable persisted claim's candidate, owner, fence, and lease
+identity are reconciled before start, recovery, cancellation, or publication;
+only current claimed work is cancellable. Retry claims derive their
+candidate/fence from one current due
 schedule and reconcile it against immutable claim, attempt, candidate, result,
 reason, and timestamp history before mutation. Matched-pointer reuse likewise
-reconciles the successful generation, terminal result, exact fence/timestamps,
+reconciles the successful generation, terminal result, terminal generation
+timestamp, exact fence/timestamps,
 observation digest, and closed structural observation. Aggregate/attempt
 exhaustion commits terminal evidence, while
 currentness expiry and unreserved next-generation creation share one
@@ -537,7 +541,8 @@ compare the reconstructed schema-8 sentinel/logical snapshot, inject migration
 and publication failures, reopen before and after starts, and prove stale
 fences leave state unchanged. Disposable preview publication retains one
 no-follow directory descriptor from validation through descriptor-relative
-staging, synchronization, and no-replace linking; device/inode/owner/mode
+serialized staging, synchronization, and no-replace linking without a
+process-global working-directory change; device/inode/owner/mode
 revalidation rejects parent swaps without publishing into the replacement.
 
 F07b treats the service path projection, private logical binding, EPUB archive,

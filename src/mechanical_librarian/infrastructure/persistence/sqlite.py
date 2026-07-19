@@ -10,7 +10,6 @@ import shutil
 import sqlite3
 import stat
 import tempfile
-import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -675,7 +674,7 @@ _HARDCOVER_IDENTITY_CLAIMS_TABLE_SQL = (
     "work_key TEXT NOT NULL, generation INTEGER NOT NULL, fence INTEGER NOT NULL CHECK (fence BETWEEN 1 AND 2147483647), "
     "candidate INTEGER NOT NULL CHECK (candidate BETWEEN 1 AND 3), owner TEXT NOT NULL CHECK (length(owner) BETWEEN 1 AND 64 AND owner NOT GLOB '*[^a-z0-9_-]*'), "
     "claimed_at TEXT NOT NULL CHECK (" + _timestamp_constraint("claimed_at") + "), lease_expires_at TEXT NOT NULL CHECK (" + _timestamp_constraint("lease_expires_at") + "), "
-    "PRIMARY KEY(work_key,generation,fence), FOREIGN KEY(work_key,generation,candidate) REFERENCES hardcover_identity_candidates(work_key,generation,candidate))"
+    "PRIMARY KEY(work_key,generation,fence), UNIQUE(work_key,generation,fence,candidate), FOREIGN KEY(work_key,generation,candidate) REFERENCES hardcover_identity_candidates(work_key,generation,candidate))"
 )
 _HARDCOVER_IDENTITY_ATTEMPTS_TABLE_SQL = (
     "CREATE TABLE hardcover_identity_attempts ("
@@ -683,7 +682,7 @@ _HARDCOVER_IDENTITY_ATTEMPTS_TABLE_SQL = (
     "started_at TEXT NOT NULL CHECK (" + _timestamp_constraint("started_at") + "), resolved_at TEXT CHECK (" + _timestamp_constraint("resolved_at", nullable=True) + "), "
     "outcome TEXT CHECK (outcome IS NULL OR outcome IN ('matched','interrupted','failed','cancelled')), "
     "PRIMARY KEY(work_key,generation,attempt), UNIQUE(work_key,generation,fence), "
-    "FOREIGN KEY(work_key,generation,fence) REFERENCES hardcover_identity_claims(work_key,generation,fence), "
+    "FOREIGN KEY(work_key,generation,fence,candidate) REFERENCES hardcover_identity_claims(work_key,generation,fence,candidate), "
     "CHECK ((resolved_at IS NULL)=(outcome IS NULL) AND (resolved_at IS NULL OR started_at<=resolved_at)))"
 )
 _HARDCOVER_IDENTITY_RETRIES_TABLE_SQL = (
@@ -1317,7 +1316,7 @@ _RECOVERY_COPY_SUFFIXES = ("", "-journal", "-wal")
 _STAGED_PREFIX = ".mechanical-librarian-state-"
 _PUBLICATION_SETTLE_TIMEOUT_SECONDS = 5.0
 _PUBLICATION_SETTLE_POLL_SECONDS = 0.001
-_BOUND_DIRECTORY_LOCK = threading.RLock()
+_BOUND_STAGED_MAX_BYTES = 64 * 1024 * 1024
 
 
 def path_entry_exists(path: Path) -> bool:
@@ -1333,6 +1332,115 @@ def _directory_identity(status: os.stat_result) -> tuple[int, int, int, int]:
         status.st_uid,
         stat.S_IMODE(status.st_mode),
     )
+
+
+@dataclass(frozen=True)
+class BoundStagedState:
+    """One private staged database addressed only through a held directory."""
+
+    parent: BoundDisposableState
+    name: str
+    identity: tuple[int, int]
+
+    def _open(self, flags: int) -> int:
+        self.parent._revalidate_directory()
+        try:
+            descriptor = os.open(
+                self.name,
+                flags | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=self.parent.directory_descriptor,
+            )
+            status = os.fstat(descriptor)
+        except OSError:
+            raise SchemaError("prepared state is unavailable") from None
+        if (
+            not stat.S_ISREG(status.st_mode)
+            or status.st_nlink != 1
+            or (status.st_dev, status.st_ino) != self.identity
+            or stat.S_IMODE(status.st_mode) & 0o077
+        ):
+            os.close(descriptor)
+            raise SchemaError("prepared state identity is inconsistent")
+        return descriptor
+
+    def read_bytes(self) -> bytes:
+        descriptor = self._open(os.O_RDONLY)
+        try:
+            status = os.fstat(descriptor)
+            if not 1 <= status.st_size <= _BOUND_STAGED_MAX_BYTES:
+                raise SchemaError("prepared state size is invalid")
+            chunks: list[bytes] = []
+            remaining = status.st_size + 1
+            while remaining:
+                chunk = os.read(descriptor, remaining)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            value = b"".join(chunks)
+            final_status = os.fstat(descriptor)
+            if (
+                len(value) != status.st_size
+                or final_status.st_size != status.st_size
+                or (final_status.st_dev, final_status.st_ino) != self.identity
+            ):
+                raise SchemaError("prepared state changed while reading")
+            return value
+        except OSError:
+            raise SchemaError("prepared state could not be read") from None
+        finally:
+            os.close(descriptor)
+
+    def write_bytes(self, value: bytes) -> None:
+        if type(value) is not bytes or not 1 <= len(value) <= _BOUND_STAGED_MAX_BYTES:
+            raise SchemaError("prepared state bytes are invalid")
+        descriptor = self._open(os.O_WRONLY | os.O_TRUNC)
+        try:
+            position = 0
+            while position < len(value):
+                written = os.write(descriptor, value[position:])
+                if written < 1:
+                    raise OSError("short descriptor write")
+                position += written
+            os.fsync(descriptor)
+        except OSError:
+            raise SchemaError("prepared state could not be written") from None
+        finally:
+            os.close(descriptor)
+
+    def connect(self) -> sqlite3.Connection:
+        return _connect_serialized_state(None)
+
+    def connect_existing(self) -> sqlite3.Connection:
+        return _connect_serialized_state(self.read_bytes())
+
+    def persist(self, connection: sqlite3.Connection) -> None:
+        if connection.in_transaction:
+            raise SchemaError("prepared state still has an active transaction")
+        _verify_integrity(connection)
+        try:
+            value = connection.serialize()
+        except sqlite3.Error:
+            raise SchemaError("prepared state could not be serialized") from None
+        self.write_bytes(value)
+
+
+def _connect_serialized_state(value: bytes | None) -> sqlite3.Connection:
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(
+            ":memory:", isolation_level=None, check_same_thread=True
+        )
+        if value is not None:
+            connection.deserialize(value)
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA synchronous = FULL")
+        connection.execute("PRAGMA busy_timeout = 5000")
+        return connection
+    except sqlite3.Error:
+        if connection is not None:
+            connection.close()
+        raise SchemaError("descriptor-bound database could not be opened") from None
 
 
 @dataclass(frozen=True)
@@ -1358,16 +1466,14 @@ class BoundDisposableState:
             raise SchemaError("durable work preview directory was replaced")
 
     @contextmanager
-    def staged_state(self) -> Iterator[Path]:
-        """Yield a relative SQLite path resolved from the held directory."""
+    def staged_state(self) -> Iterator[BoundStagedState]:
+        """Yield one staged database without changing process-global state."""
 
         self._revalidate_directory()
         name = f"{_STAGED_PREFIX}{secrets.token_hex(16)}.sqlite"
         descriptor: int | None = None
-        prior_directory: int | None = None
         failure: BaseException | None = None
         cleanup_failed = False
-        _BOUND_DIRECTORY_LOCK.acquire()
         try:
             descriptor = os.open(
                 name,
@@ -1379,26 +1485,17 @@ class BoundDisposableState:
                 dir_fd=self.directory_descriptor,
             )
             os.fchmod(descriptor, 0o600)
+            status = os.fstat(descriptor)
+            identity = (status.st_dev, status.st_ino)
             os.close(descriptor)
             descriptor = None
-            prior_directory = os.open(
-                ".", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            )
-            os.fchdir(self.directory_descriptor)
-            yield Path(name)
+            yield BoundStagedState(self, name, identity)
         except BaseException as error:
             failure = error
             raise
         finally:
             if descriptor is not None:
                 os.close(descriptor)
-            if prior_directory is not None:
-                try:
-                    os.fchdir(prior_directory)
-                except OSError:
-                    cleanup_failed = True
-                finally:
-                    os.close(prior_directory)
             for suffix in _STATE_SUFFIXES:
                 try:
                     os.unlink(f"{name}{suffix}", dir_fd=self.directory_descriptor)
@@ -1406,17 +1503,16 @@ class BoundDisposableState:
                     pass
                 except OSError:
                     cleanup_failed = True
-            _BOUND_DIRECTORY_LOCK.release()
             if cleanup_failed:
                 if failure is not None:
                     failure.add_note("private descriptor-bound staging cleanup failed")
                 else:
                     raise SchemaError("private state staging could not be removed")
 
-    def publish(self, staged: Path) -> bool:
+    def publish(self, staged: BoundStagedState) -> bool:
         """Publish by descriptor without reopening the caller-supplied parent."""
 
-        if staged.parent != Path(".") or not staged.name.startswith(_STAGED_PREFIX):
+        if type(staged) is not BoundStagedState or staged.parent is not self:
             raise SchemaError("prepared state is not descriptor-bound")
         self._revalidate_directory()
         try:
@@ -1427,7 +1523,11 @@ class BoundDisposableState:
             )
         except OSError:
             raise SchemaError("prepared state is unavailable") from None
-        if not stat.S_ISREG(staged_status.st_mode) or staged_status.st_nlink != 1:
+        if (
+            not stat.S_ISREG(staged_status.st_mode)
+            or staged_status.st_nlink != 1
+            or (staged_status.st_dev, staged_status.st_ino) != staged.identity
+        ):
             raise SchemaError("prepared state is not an exclusive regular file")
         if stat.S_IMODE(staged_status.st_mode) & 0o077:
             raise SchemaError("prepared state permissions are too broad")
@@ -1443,11 +1543,7 @@ class BoundDisposableState:
 
         descriptor: int | None = None
         try:
-            descriptor = os.open(
-                staged.name,
-                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=self.directory_descriptor,
-            )
+            descriptor = staged._open(os.O_RDONLY)
             os.fsync(descriptor)
         except OSError:
             raise SchemaError("prepared state could not be synchronized") from None
@@ -1816,7 +1912,14 @@ def _enable_wal(connection: sqlite3.Connection) -> None:
         journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()
     except sqlite3.Error:
         raise SchemaError("database journal mode could not be enabled") from None
-    if journal_mode != ("wal",):
+    database = connection.execute("PRAGMA database_list").fetchone()
+    descriptor_serialized_memory = (
+        journal_mode == ("memory",)
+        and database is not None
+        and len(database) == 3
+        and database[1:] == ("main", "")
+    )
+    if journal_mode != ("wal",) and not descriptor_serialized_memory:
         raise SchemaError("database journal mode could not be enabled")
 
 

@@ -158,6 +158,18 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
 
     def test_domain_transition_graph_is_closed(self) -> None:
+        self.assertNotIn(
+            (IdentityWorkState.PENDING, IdentityWorkState.CANCELLED),
+            LEGAL_TRANSITIONS,
+        )
+        self.assertNotIn(
+            (IdentityWorkState.RETRY_WAIT, IdentityWorkState.CANCELLED),
+            LEGAL_TRANSITIONS,
+        )
+        self.assertIn(
+            (IdentityWorkState.CLAIMED, IdentityWorkState.CANCELLED),
+            LEGAL_TRANSITIONS,
+        )
         for before in IdentityWorkState:
             for after in IdentityWorkState:
                 with self.subTest(before=before, after=after):
@@ -357,6 +369,105 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             [(1, 1, "interrupted")],
         )
 
+    def test_candidate_substitution_rejects_every_current_claim_mutation(self) -> None:
+        accepted = self.accept()
+        claim = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        substituted = IdentityWorkClaim(
+            claim.reference,
+            2,
+            claim.fence,
+            claim.lease_expires_at,
+        )
+        before_generation = self.connection.execute(
+            "SELECT state,fence,attempt_count,lease_owner,lease_expires_at,updated_at "
+            "FROM hardcover_identity_generations"
+        ).fetchone()
+        before_counts = self.connection.execute(
+            "SELECT "
+            "(SELECT COUNT(*) FROM hardcover_identity_attempts),"
+            "(SELECT COUNT(*) FROM hardcover_identity_results),"
+            "(SELECT COUNT(*) FROM hardcover_identity_events)"
+        ).fetchone()
+        operations = (
+            lambda: self.repository.renew_and_start(
+                substituted,
+                "worker-a",
+                ORIGIN + timedelta(seconds=2),
+                gate_owned=True,
+            ),
+            lambda: self.repository.recover_interrupted(
+                substituted,
+                ORIGIN + timedelta(seconds=17),
+                gate_owned=True,
+            ),
+            lambda: self.repository.cancel(
+                substituted,
+                "worker-a",
+                ORIGIN + timedelta(seconds=2),
+                gate_owned=True,
+            ),
+        )
+        for operation in operations:
+            with self.subTest(operation=operation), self.assertRaises(
+                StaleIdentityWorkFence
+            ):
+                operation()
+            self.assertEqual(
+                self.connection.execute(
+                    "SELECT state,fence,attempt_count,lease_owner,lease_expires_at,updated_at "
+                    "FROM hardcover_identity_generations"
+                ).fetchone(),
+                before_generation,
+            )
+            self.assertEqual(
+                self.connection.execute(
+                    "SELECT "
+                    "(SELECT COUNT(*) FROM hardcover_identity_attempts),"
+                    "(SELECT COUNT(*) FROM hardcover_identity_results),"
+                    "(SELECT COUNT(*) FROM hardcover_identity_events)"
+                ).fetchone(),
+                before_counts,
+            )
+
+    def test_attempt_candidate_must_match_its_immutable_claim(self) -> None:
+        accepted = self.accept()
+        claim = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        self.connection.execute(
+            "INSERT INTO hardcover_identity_candidates(work_key,generation,candidate,created_at) "
+            "VALUES(?,?,2,?)",
+            (WORK_KEY, 1, "2026-01-01T00:00:01.000000Z"),
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.connection.execute(
+                "INSERT INTO hardcover_identity_attempts("
+                "work_key,generation,attempt,fence,candidate,started_at"
+                ") VALUES(?,?,?,?,?,?)",
+                (
+                    WORK_KEY,
+                    1,
+                    1,
+                    claim.fence,
+                    2,
+                    "2026-01-01T00:00:02.000000Z",
+                ),
+            )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_attempts"
+            ).fetchone(),
+            (0,),
+        )
+
     def test_recovery_rejects_live_lease_and_reclaims_prestart_candidate(self) -> None:
         accepted = self.accept()
         claim = self.repository.claim(
@@ -468,6 +579,33 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                 "SELECT work_key,generation,status,current_since,expires_at "
                 "FROM current_hardcover_identity ORDER BY work_key"
             ).fetchall(),
+            before,
+        )
+
+    def test_matched_reuse_reconciles_terminal_generation_timestamp(self) -> None:
+        _, claim = self.started_claim()
+        self.repository.publish_matched(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=3),
+            MATCHED,
+            gate_owned=True,
+        )
+        before = self.connection.execute(
+            "SELECT generation,status,current_since,expires_at "
+            "FROM current_hardcover_identity"
+        ).fetchone()
+        self.connection.execute(
+            "UPDATE hardcover_identity_generations SET updated_at=? WHERE work_key=?",
+            ("2026-01-01T00:00:04.000000Z", WORK_KEY),
+        )
+        with self.assertRaisesRegex(IdentityWorkPersistenceError, "inconsistent"):
+            self.repository.accept(WORK_KEY, ORIGIN + timedelta(seconds=5))
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT generation,status,current_since,expires_at "
+                "FROM current_hardcover_identity"
+            ).fetchone(),
             before,
         )
 
@@ -661,7 +799,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
         self.assertIsInstance(started, IdentityWorkClaim)
         self.repository.publish_failed(
-            claim,
+            started,
             "worker-a",
             ORIGIN + timedelta(seconds=3),
             retryable=True,

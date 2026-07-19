@@ -1666,14 +1666,14 @@ def _run_hardcover_durable_work_preview(
     origin = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     with bound_disposable_state(database) as bound, bound.staged_state() as staged:
-        connection = connect(staged)
+        connection = staged.connect()
         try:
             if migrate_to_version(connection, 8) != 8:
                 raise SchemaError("schema-eight preview could not be regenerated")
             connection.execute(
                 "INSERT INTO instance_metadata(key,value) VALUES('synthetic_schema8_sentinel','fixture-v1')"
             )
-            finalize_staged_state(connection)
+            staged.persist(connection)
             snapshot = "\n".join(connection.iterdump()) + "\n"
             if hashlib.sha256(snapshot.encode("utf-8")).hexdigest() != _SCHEMA8_SNAPSHOT_SHA256:
                 raise SchemaError("schema-eight logical snapshot is inconsistent")
@@ -1719,10 +1719,11 @@ def _run_hardcover_durable_work_preview(
             )
             if not publication_rollback_verified:
                 raise SchemaError("identity publication rollback proof failed")
+            staged.persist(connection)
         finally:
             connection.close()
 
-        connection = connect_existing(staged)
+        connection = staged.connect_existing()
         try:
             service = ManageHardcoverIdentityWork(
                 SQLiteHardcoverIdentityWorkRepository(connection)
@@ -1730,7 +1731,7 @@ def _run_hardcover_durable_work_preview(
             exact, stale = service.resume_preview(checkpoint, origin)
             if exact.outcome.value != "matched" or stale.outcome.value != "stale" or stale.reference.generation != 2:
                 raise SchemaError("identity currentness boundary proof failed")
-            finalize_staged_state(connection)
+            staged.persist(connection)
         finally:
             connection.close()
         if not bound.publish(staged):

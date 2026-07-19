@@ -230,7 +230,9 @@ generation-attempt history before mutation. Missing, duplicate, early, or
 logically impossible schedules fail without mutation. Aggregate exhaustion or
 a third interrupted attempt commits terminal
 `failed` evidence. Earlier fences cannot start, recover, cancel, or publish,
-and cancellation requires the exact current claim owner and fence. Terminal
+and cancellation is supported only for the exact current claimed work owner,
+fence, candidate, and lease identity. Pending and retry-waiting work cannot be
+cancelled through this increment. Terminal
 publication finalizes the attempt, appends result and a closed structural
 observation whose only canonical fields are `outcome:"matched"` and bounded
 `row_count`, updates matched currentness, transitions the generation,
@@ -241,7 +243,9 @@ Matched currentness is reusable through exactly 24 hours. At greater age, one
 transaction marks the old pointer expired and creates one unreserved next
 generation. Reuse first reconciles the pointer with the referenced successful
 generation, matched terminal result, exact fence/timestamps, observation digest,
-and closed canonical observation; inconsistent state fails without mutation.
+and closed canonical observation. The succeeded generation's terminal
+`updated_at`, result publication, observation creation, and current-pointer
+timestamp must be exactly equal; inconsistent state fails without mutation.
 Immutable candidate, claim, retry, event, result, and observation
 records plus finalize-once attempts preserve restart evidence. Mutable
 generation and current-pointer rows are constrained to the closed state model.
@@ -257,7 +261,8 @@ returns `provider_not_activated` before this
 repository, a private query, credential, adapter, or network is opened.
 The preview opens the directory once with no-follow directory semantics,
 captures device, inode, owner, and mode, and retains that descriptor through
-relative staging and no-replace publication. Parent replacement and symlink
+descriptor-relative serialized staging and no-replace publication without
+changing the process working directory. Parent replacement and symlink
 swaps are rejected and private staging is removed, including on base exceptions.
 
 The exact current-head registry is `preview-registry-c4-v6.json`, SHA-256

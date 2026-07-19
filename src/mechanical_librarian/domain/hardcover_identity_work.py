@@ -43,8 +43,6 @@ LEGAL_TRANSITIONS = frozenset(
         (IdentityWorkState.CLAIMED, IdentityWorkState.RETRY_WAIT),
         (IdentityWorkState.CLAIMED, IdentityWorkState.SUCCEEDED),
         (IdentityWorkState.CLAIMED, IdentityWorkState.FAILED),
-        (IdentityWorkState.PENDING, IdentityWorkState.CANCELLED),
-        (IdentityWorkState.RETRY_WAIT, IdentityWorkState.CANCELLED),
         (IdentityWorkState.CLAIMED, IdentityWorkState.CANCELLED),
     }
 )

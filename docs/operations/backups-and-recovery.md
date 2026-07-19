@@ -71,6 +71,9 @@ gate may recover an expired 15-second lease; recovery finalizes the old attempt
 as interrupted and advances the fence before a retry can be claimed. Stale
 owners cannot cancel or publish. An expired pre-start claim retains its
 candidate; retry claims require the unique current schedule to be due. The
+claim's immutable candidate, owner, fence, and lease identity must still match
+the current generation; candidate-substituted claim values are never recovery
+authority. The
 third interrupted attempt or insufficient aggregate time commits terminal
 failed evidence instead of leaving an expired active claim. Schedule reason,
 chronology, current fence, candidate, prior claim, attempt, and terminal-result

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -20,6 +21,41 @@ CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
+    def test_bound_staging_preserves_unrelated_thread_relative_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = root / "disposable"
+            parent.mkdir(mode=0o700)
+            marker = root / "marker.txt"
+            marker.write_text("stable", encoding="utf-8")
+            relative_marker = Path(os.path.relpath(marker, Path.cwd()))
+            started = threading.Event()
+            failures: list[BaseException] = []
+
+            def read_relative_marker() -> None:
+                started.wait()
+                try:
+                    for _ in range(100):
+                        self.assertEqual(
+                            relative_marker.read_text(encoding="utf-8"), "stable"
+                        )
+                except BaseException as error:
+                    failures.append(error)
+
+            worker = threading.Thread(target=read_relative_marker)
+            worker.start()
+            try:
+                with sqlite.bound_disposable_state(parent / "state.sqlite") as bound:
+                    with bound.staged_state() as staged:
+                        started.set()
+                        staged.write_bytes(b"descriptor-bound")
+                        worker.join(timeout=5)
+            finally:
+                started.set()
+                worker.join(timeout=5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(failures, [])
+
     def test_bound_disposable_state_rejects_parent_swap_value_free(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
