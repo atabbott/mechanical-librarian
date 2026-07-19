@@ -21,6 +21,38 @@ CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
+    def test_bound_staging_closes_descriptor_when_fstat_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "disposable"
+            parent.mkdir(mode=0o700)
+            opened: list[int] = []
+            real_fstat = sqlite.os.fstat
+
+            with sqlite.bound_disposable_state(parent / "state.sqlite") as bound:
+                with bound.staged_state() as staged:
+                    staged.write_bytes(b"descriptor-bound")
+
+                    def fail_staged_fstat(descriptor: int):
+                        status = real_fstat(descriptor)
+                        if (status.st_dev, status.st_ino) == staged.identity:
+                            opened.append(descriptor)
+                            raise OSError("injected staged fstat failure")
+                        return status
+
+                    with (
+                        patch.object(
+                            sqlite.os,
+                            "fstat",
+                            side_effect=fail_staged_fstat,
+                        ),
+                        self.assertRaisesRegex(SchemaError, "unavailable"),
+                    ):
+                        staged.read_bytes()
+
+                    self.assertEqual(len(opened), 1)
+                    with self.assertRaises(OSError):
+                        real_fstat(opened[0])
+
     def test_bound_staging_preserves_unrelated_thread_relative_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

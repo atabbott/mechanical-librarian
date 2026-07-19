@@ -1344,6 +1344,7 @@ class BoundStagedState:
 
     def _open(self, flags: int) -> int:
         self.parent._revalidate_directory()
+        descriptor: int | None = None
         try:
             descriptor = os.open(
                 self.name,
@@ -1351,8 +1352,15 @@ class BoundStagedState:
                 dir_fd=self.parent.directory_descriptor,
             )
             status = os.fstat(descriptor)
-        except OSError:
-            raise SchemaError("prepared state is unavailable") from None
+        except BaseException as error:
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    error.add_note("prepared state descriptor cleanup failed")
+            if isinstance(error, OSError):
+                raise SchemaError("prepared state is unavailable") from None
+            raise
         if (
             not stat.S_ISREG(status.st_mode)
             or status.st_nlink != 1
