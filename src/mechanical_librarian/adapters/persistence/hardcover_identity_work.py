@@ -14,7 +14,7 @@ from mechanical_librarian.application.hardcover_identity import (
 )
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkClaim,
-    IdentityWorkInspection,
+    IdentityWorkReadiness,
     IdentityWorkObservation,
     IdentityWorkOutcome,
     IdentityWorkReference,
@@ -124,7 +124,7 @@ class SQLiteHardcoverIdentityWorkRepository:
 
     def inspect(
         self, reference: IdentityWorkReference, now: datetime
-    ) -> IdentityWorkInspection:
+    ) -> IdentityWorkReadiness:
         """Read one active generation without changing its lifecycle state."""
 
         _require_reference(reference)
@@ -159,9 +159,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                         raise IdentityWorkPersistenceError(
                             "identity work candidate is unavailable"
                         )
-                    return IdentityWorkInspection(
-                        reference, state, 1, fence, deadline
-                    )
+                    return IdentityWorkReadiness(reference, state, deadline)
                 if state is IdentityWorkState.RETRY_WAIT:
                     schedule = self._connection.execute(
                         "SELECT candidate,due_at FROM hardcover_identity_retry_schedules WHERE work_key=? AND generation=? AND fence=?",
@@ -177,9 +175,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                         raise IdentityWorkPersistenceError(
                             "identity work retry schedule is corrupt"
                         )
-                    return IdentityWorkInspection(
-                        reference, state, candidate, fence, deadline, due
-                    )
+                    return IdentityWorkReadiness(reference, state, deadline)
                 claim_rows = self._connection.execute(
                     "SELECT candidate,lease_expires_at FROM hardcover_identity_claims WHERE work_key=? AND generation=? AND fence=?",
                     (reference.work_key, reference.generation, fence),
@@ -189,12 +185,10 @@ class SQLiteHardcoverIdentityWorkRepository:
                         "identity work claim is unavailable"
                     )
                 candidate = _positive_int(claim_rows[0][0], "candidate")
-                claim = IdentityWorkClaim(
+                IdentityWorkClaim(
                     reference, candidate, fence, _parse_time(claim_rows[0][1])
                 )
-                return IdentityWorkInspection(
-                    reference, state, candidate, fence, deadline, claim=claim
-                )
+                return IdentityWorkReadiness(reference, state, deadline)
         except (IdentityWorkPersistenceError, ValueError, TypeError):
             raise
         except (sqlite3.Error, OSError):
@@ -525,7 +519,10 @@ class SQLiteHardcoverIdentityWorkRepository:
                         claim.reference, claim.fence, timestamp, resolve_attempt=False
                     )
                     result = IdentityWorkStatus(
-                        IdentityWorkOutcome.PERSISTENCE_FAILURE, claim.reference
+                        IdentityWorkOutcome.RETRY_EXHAUSTED
+                        if retryable
+                        else IdentityWorkOutcome.PERSISTENCE_FAILURE,
+                        claim.reference,
                     )
                 if fail_before_commit:
                     raise IdentityWorkPersistenceError("injected identity failure publication")

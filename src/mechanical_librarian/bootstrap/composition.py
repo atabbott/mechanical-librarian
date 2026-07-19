@@ -1865,9 +1865,12 @@ def _safe_executor_request(
 ) -> HardcoverIdentityExecutionRequest:
     return HardcoverIdentityExecutionRequest(
         secrets.token_hex(32),
-        "synthetic-c5-worker",
+        _C5_INTERNAL_OWNER,
         query,
     )
+
+
+_C5_INTERNAL_OWNER = "internal-safe-executor-owner-v1-noncontributor-boundary"
 
 
 def _safe_executor_match() -> IdentityAttemptResult:
@@ -1915,6 +1918,7 @@ def _validate_safe_executor_preview_input(source: Mapping[str, object]) -> None:
         "caller_expired",
         "caller_deadline",
         "late_match",
+        "late_exhausted",
         "gate_failure",
         "stale_refresh",
     }
@@ -1947,7 +1951,7 @@ def _validate_safe_executor_preview_input(source: Mapping[str, object]) -> None:
             or type(deadline) is not int
             or not 0 <= deadline <= 30_000
             or type(duration) is not int
-            or not 0 <= duration <= 10_000
+            or not 0 <= duration <= 30_000
         ):
             raise ValueError("safe executor preview input is malformed")
         if operation == "caller_expired" and deadline != 0:
@@ -1956,16 +1960,24 @@ def _validate_safe_executor_preview_input(source: Mapping[str, object]) -> None:
             raise ValueError("safe executor preview input is malformed")
         if operation == "late_match" and duration < min(deadline, 5_000):
             raise ValueError("safe executor preview input is malformed")
+        if operation == "late_exhausted" and (
+            deadline != 30_000 or duration != 4_001
+        ):
+            raise ValueError("safe executor preview input is malformed")
         if operation not in {"caller_expired", "caller_deadline"} and deadline < 5_000:
             raise ValueError("safe executor preview input is malformed")
 
 
 def _run_hardcover_safe_executor_preview(
-    source: Mapping[str, object], database: Path
+    source: Mapping[str, object],
+    database: Path,
+    privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
 ) -> SafeExecutorPreviewReport:
     """Exercise the real lifecycle, repository, and descriptor gate without egress."""
 
     _validate_safe_executor_preview_input(source)
+    if privacy_observer is not None and not callable(privacy_observer):
+        raise TypeError("safe executor privacy observer must be callable")
     query = validate_private_query(
         {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
     )
@@ -1990,6 +2002,7 @@ def _run_hardcover_safe_executor_preview(
             gate = _ObservedGate(raw_gate)
             clock = _SyntheticExecutorClock(datetime.now(timezone.utc))
             providers: list[_SyntheticExecutorProvider] = []
+            owners: list[str] = []
             verified = {
                 "deadline": False,
                 "caller": False,
@@ -2002,11 +2015,12 @@ def _run_hardcover_safe_executor_preview(
                 deadline_ms = case["caller_deadline_ms"]
                 duration_ms = case["provider_duration_ms"]
                 request = _safe_executor_request(query)
+                owners.append(request.owner)
                 provider_result = (
                     IdentityAttemptResult.failed(
                         IdentityAttemptFailureKind.UNAVAILABLE
                     )
-                    if operation == "unavailable"
+                    if operation in {"unavailable", "late_exhausted"}
                     else _safe_executor_match()
                 )
                 provider = _SyntheticExecutorProvider(
@@ -2054,6 +2068,9 @@ def _run_hardcover_safe_executor_preview(
                 elif operation == "aggregate_expired":
                     service.accept(request.work_key, clock.now)
                     clock.now += timedelta(seconds=30)
+                elif operation == "late_exhausted":
+                    service.accept(request.work_key, clock.now)
+                    clock.now += timedelta(seconds=20)
 
                 before_acquire = gate.acquisitions
                 context = _safe_executor_context(clock, deadline_ms)
@@ -2074,6 +2091,7 @@ def _run_hardcover_safe_executor_preview(
                     "caller_expired": "retry_exhausted",
                     "caller_deadline": "matched",
                     "late_match": "in_progress",
+                    "late_exhausted": "retry_exhausted",
                     "gate_failure": "persistence_failure",
                     "stale_refresh": "matched",
                 }[operation]
@@ -2093,6 +2111,7 @@ def _run_hardcover_safe_executor_preview(
                     "caller_expired": (1, "pending", 0),
                     "caller_deadline": (1, "succeeded", 1),
                     "late_match": (1, "retry_wait", 1),
+                    "late_exhausted": (1, "failed", 1),
                     "gate_failure": (1, "pending", 0),
                     "stale_refresh": (2, "succeeded", 1),
                 }[operation]
@@ -2103,6 +2122,7 @@ def _run_hardcover_safe_executor_preview(
                         "unavailable",
                         "caller_deadline",
                         "late_match",
+                        "late_exhausted",
                         "stale_refresh",
                     }
                 )
@@ -2112,7 +2132,7 @@ def _run_hardcover_safe_executor_preview(
                     verified["deadline"] = gate.acquisitions == before_acquire
                 elif operation == "caller_deadline":
                     verified["caller"] = provider.deadlines == [context.deadline.at]
-                elif operation == "late_match":
+                elif operation in {"late_match", "late_exhausted"}:
                     matched_publications = connection.execute(
                         "SELECT COUNT(*) FROM hardcover_identity_results "
                         "WHERE work_key=? AND outcome='matched'",
@@ -2122,16 +2142,15 @@ def _run_hardcover_safe_executor_preview(
                 elif operation == "gate_failure":
                     verified["closed"] = provider.starts == 0
 
-            dump = "\n".join(connection.iterdump())
-            labels_private = all(
-                case["label"] not in dump and case["process"] not in dump
-                for case in cases
+            labels_private = (
+                48 < len(_C5_INTERNAL_OWNER) <= 64
+                and all(owner == _C5_INTERNAL_OWNER for owner in owners)
             )
         finally:
             connection.close()
 
     starts = sum(provider.starts for provider in providers)
-    return SafeExecutorPreviewReport(
+    report = SafeExecutorPreviewReport(
         outcome="all_cases_passed",
         cases_executed=len(cases),
         attempts_started=starts,
@@ -2146,6 +2165,29 @@ def _run_hardcover_safe_executor_preview(
         closed_mapping_verified=verified["closed"],
         contributor_labels_private=labels_private,
     )
+    if privacy_observer is not None:
+        observations = (
+            (
+                "traces",
+                ("hardcover.synthetic.safe_executor", "safe-executor-v3"),
+            ),
+            ("spans", ("one-attempt-case-set", report.outcome)),
+            (
+                "metrics",
+                (
+                    "hardcover_safe_executor_preview_total",
+                    (("outcome", report.outcome),),
+                    1,
+                    None,
+                ),
+            ),
+        )
+        try:
+            for observer_channel, observer_values in observations:
+                privacy_observer(observer_channel, observer_values)
+        except Exception as exc:
+            raise SchemaError("safe executor privacy observation failed") from exc
+    return report
 
 
 def _synthetic_identity_row(source: object) -> ProviderIdentityObservation:

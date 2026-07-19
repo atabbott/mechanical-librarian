@@ -278,13 +278,19 @@ atomically starts only under that gate, invokes the provider exactly once, and
 publishes through the current durable fence. The attempt deadline is the
 earlier of the caller deadline and start plus five seconds; results at or after
 that boundary are late and publish as timeout. A busy gate, existing claimed or
-retry-wait state, and retryable publication return `in_progress`. This executor
+retry-wait state, and retryable publication with at least the exact six-second
+reserve return `in_progress`. A successfully committed retryable terminal with
+less reserve returns `retry_exhausted`, not `persistence_failure`. This executor
 does not wait, loop, recover, cancel, install signal handlers, or start a later
 candidate; those lifecycle responsibilities remain separately tracked.
 
 The exact C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`33e480ddb383283d8a9e1a026847778dc0e59becf88f4870a4e957ff7ac2fe7d`.
+`2056699e704aa71d6da2e07bf945582e5766f4bad68d8e378c654a7300a91d48`.
 It derives from the exact C4 registry and binds a separate cumulative C5 output
 schema, privacy contract, privacy scan, and strict semantic fixture set without
-modifying predecessor evidence. Contributor labels, process names, and the
-exact serialized stdin are absent from every SQLite database-prefix channel.
+modifying predecessor evidence. Contributor labels and process names are
+control-only: a fixed 55-character owner outside their complete syntax domains
+crosses the persistence seam, and no runtime or persisted value derives from
+them. Sentinel-bearing and ordinary-vocabulary collision variants prove that
+flow without treating equal incidental text as a leak. The exact serialized
+stdin is absent from every SQLite database-prefix channel.

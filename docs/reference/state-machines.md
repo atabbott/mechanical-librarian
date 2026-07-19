@@ -276,7 +276,11 @@ One started attempt holds the gate through provider return and publication. Its
 deadline is the earlier of the caller deadline and start plus five seconds; a
 result at or beyond the boundary is published as timeout. Rate limiting,
 timeout, and unavailability publish retry-wait evidence and return
-`in_progress`, but this executor does not wait or start the next candidate.
+`in_progress` when the persisted aggregate window retains at least the exact
+six-second retry reserve. If retryable publication commits terminal failure
+because less reserve remains, the public result is `retry_exhausted`; that
+successful durable terminal is not a persistence failure. This executor does
+not wait or start the next candidate.
 The repository's retry, interruption, cancellation, and recovery transitions
 remain durable state-machine capabilities for later orchestration rather than
 behavior of this executor increment.

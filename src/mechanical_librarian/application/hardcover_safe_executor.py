@@ -262,11 +262,16 @@ class RunSafeHardcoverIdentity:
                 retryable=True,
                 gate_owned=True,
             )
-            return _report(
-                HardcoverIdentityOutcome.IN_PROGRESS
-                if status.outcome is IdentityWorkOutcome.IN_PROGRESS
-                else HardcoverIdentityOutcome.PERSISTENCE_FAILURE
-            )
+            outcome = {
+                IdentityWorkOutcome.IN_PROGRESS: HardcoverIdentityOutcome.IN_PROGRESS,
+                IdentityWorkOutcome.RETRY_EXHAUSTED: (
+                    HardcoverIdentityOutcome.RETRY_EXHAUSTED
+                ),
+                IdentityWorkOutcome.PERSISTENCE_FAILURE: (
+                    HardcoverIdentityOutcome.PERSISTENCE_FAILURE
+                ),
+            }.get(status.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+            return _report(outcome)
 
         terminal = {
             IdentityAttemptFailureKind.AUTHENTICATION: HardcoverIdentityOutcome.AUTHENTICATION,

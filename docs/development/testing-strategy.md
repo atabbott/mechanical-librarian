@@ -331,7 +331,8 @@ injected clock, and structural provider. Tests prove persisted aggregate and
 caller deadlines before gate acquisition, gate before claim/start, atomic start
 as the sole send authority, the earlier caller/five-second attempt cutoff,
 post-return late-result rejection, retryable publication without an in-process
-retry, busy-gate behavior, stale-generation replacement, and closed ordinary
+retry, the exact six-second retry reserve and `retry_exhausted` mapping when
+less reserve remains, busy-gate behavior, stale-generation replacement, and closed ordinary
 failure mapping.
 
 Gate tests use independent contenders and canonical parent aliases, then race
@@ -345,6 +346,14 @@ contributor-stdin, contributor-label, private-value persistence/output,
 malformed schedule, clock regression, stale fence, and production-composition
 traps remain active. Persistence privacy scans every SQLite main, WAL, and SHM
 channel after close.
+
+The C5 privacy contract reuses the shared projection scanner across 17 capture
+channels and seven source classes. Canonical, taint-sentinel, and ordinary-word
+collision variants prove contributor controls do not supply identity; one base
+corpus scan, completeness failures, and representative poison for every
+channel/source pair make that boundary executable. The immutable predecessor
+title-only proof remains bound by issue #276 and the exact C4 registry rather
+than being duplicated in C5.
 
 F09g tests first reject a stale or mismatched target, snapshot, source, file, or
 F07b evidence before provider disclosure or scheduling/binding new F09f work;

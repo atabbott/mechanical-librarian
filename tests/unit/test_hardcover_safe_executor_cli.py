@@ -137,7 +137,9 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         for index, case in enumerate(alternate["cases"]):
             case["label"] = f"alternate-{index}"
             case["process"] = f"participant-{index}"
-        alternate["cases"][2]["provider_duration_ms"] = 6000
+        next(
+            case for case in alternate["cases"] if case["operation"] == "late_match"
+        )["provider_duration_ms"] = 6000
         code, output, errors = self.run_preview(alternate)
         self.assertEqual((code, errors), (0, ""))
         self.assertEqual(
@@ -235,7 +237,7 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         payload = registry_path.read_bytes()
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "33e480ddb383283d8a9e1a026847778dc0e59becf88f4870a4e957ff7ac2fe7d",
+            "2056699e704aa71d6da2e07bf945582e5766f4bad68d8e378c654a7300a91d48",
         )
         registry = json.loads(payload)
         self.assertEqual(

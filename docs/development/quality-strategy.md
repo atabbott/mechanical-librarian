@@ -174,9 +174,11 @@ challenge; architecture/compile/diff/privacy checks; the complete suite;
 deterministic wheel build; and installed-wheel disposable-state qualification.
 Systematic proof must include contention, exact deadline boundaries,
 gate-before-claim/start, late provider return, retryable publication without an
-executor retry, stale generation replacement, path aliases and entry
+executor retry, exact six-second reserve and insufficient-reserve terminal
+mapping, stale generation replacement, path aliases and entry
 replacement, ordinary and base-exception cleanup, exact-input and
-contributor-label persistence privacy, no egress, and no production
+contributor-control data-flow privacy with collision-safe taint sentinels and
+per-channel/source poisoning, no egress, and no production
 composition. No live Hardcover call is part of increment 5. Retry scheduling,
 waiting, cancellation, signal handling, and restart orchestration remain a
 later increment.

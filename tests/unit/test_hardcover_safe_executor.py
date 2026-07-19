@@ -78,6 +78,18 @@ class _LateProvider(_Provider):
         return super().lookup(query, context)
 
 
+class _PublishAtProvider(_Provider):
+    def __init__(
+        self, result: object, clock: _Clock, published_at: datetime
+    ) -> None:
+        super().__init__(result, clock)
+        self.published_at = published_at
+
+    def lookup(self, query: object, context: OperationContext) -> object:
+        self.clock.now = self.published_at
+        return super().lookup(query, context)
+
+
 class _FailingGate:
     def try_acquire(self) -> object:
         raise HardcoverIdentityGateError("synthetic gate failure")
@@ -331,6 +343,43 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             ).fetchone(),
             ("retry_wait",),
         )
+
+    def test_late_result_respects_exact_six_second_retry_reserve(self) -> None:
+        for offset, outcome, state in (
+            (
+                timedelta(seconds=24),
+                HardcoverIdentityOutcome.IN_PROGRESS,
+                "retry_wait",
+            ),
+            (
+                timedelta(seconds=24, microseconds=1),
+                HardcoverIdentityOutcome.RETRY_EXHAUSTED,
+                "failed",
+            ),
+        ):
+            with self.subTest(offset=offset):
+                request = self.request(f"late-reserve-{offset}")
+                self.work.accept(request.work_key, ORIGIN)
+                self.clock.now = ORIGIN + timedelta(seconds=20)
+                provider = _PublishAtProvider(
+                    IdentityAttemptResult.failed(
+                        IdentityAttemptFailureKind.UNAVAILABLE
+                    ),
+                    self.clock,
+                    ORIGIN + offset,
+                )
+                report = self.execute(request, provider)
+                self.assertEqual(report.outcome, outcome)
+                self.assertEqual(provider.starts, 1)
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT state FROM hardcover_identity_generations "
+                        "WHERE work_key=?",
+                        (request.work_key,),
+                    ).fetchone(),
+                    (state,),
+                )
+                self.clock.now = ORIGIN
 
     def test_gate_acquisition_and_release_fail_closed(self) -> None:
         for gate in (_FailingGate(), _ReleaseFailureGate()):

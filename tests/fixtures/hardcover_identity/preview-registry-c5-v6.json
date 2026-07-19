@@ -1,14 +1,14 @@
 {
   "available_through_increment": "Execute one bounded Hardcover identity attempt with durable authority",
   "output_privacy_contract": {
-    "bytes": 4062,
+    "bytes": 2680,
     "path": "preview-output-privacy-contract-c5-v3.json",
-    "sha256": "fb5f9e16922b02f85fbc632452f8a56a2a45a8e8ab19ae01e3945796d80767d2"
+    "sha256": "4df0ca6da6ee96f59f3e78218297939544dc58b558144955afe34b9d7eac1159"
   },
   "output_privacy_scan": {
-    "bytes": 4215,
+    "bytes": 1804,
     "path": "preview-output-privacy-scan-c5-v3.json",
-    "sha256": "f0bbc34ac3655774e74e0073b1799855434da4fe2ac60665051269807e06e03f"
+    "sha256": "cfc78ac3ef48028703be51cf2f142cf68293d98e4169242b35651ab95a5a5de5"
   },
   "output_schema": {
     "bytes": 3979,
@@ -244,24 +244,24 @@
       "increment_title": "Execute one bounded Hardcover identity attempt with durable authority",
       "resources": {
         "canonical_example_input": {
-          "bytes": 1354,
+          "bytes": 1509,
           "path": "c5-safe-executor-input.json",
-          "sha256": "996a9b77206ea9636ceb6d6de86bcc729b9e60450e746d37a70365c832633f6c"
+          "sha256": "6cbc58460ab2f1fdd9540b87ed91ae8ba858442e2f995bac248e03e4750ece4b"
         },
         "canonical_example_output": {
-          "bytes": 342,
+          "bytes": 343,
           "path": "c5-safe-executor-example-output.json",
-          "sha256": "dbc08d6ed8237f2908270e4726a029fba5fa8937275cb507494abd4b592e6a77"
+          "sha256": "9686ac45ad83d43861fa869ef81dea2cf175de36b7076baa52d2f84a2f5f27c6"
         },
         "input_schema": {
-          "bytes": 960,
+          "bytes": 977,
           "path": "c5-safe-executor-input-schema.json",
-          "sha256": "f6ff70d659051a105f2f4227b49136f86966ca37665a88af889990424dacb659"
+          "sha256": "7b0c0a34f9994364b32a32f3b23ba0b4242c6944cd73c47abdc65385e4be9846"
         },
         "variant_matrix": {
-          "bytes": 1111,
+          "bytes": 1194,
           "path": "c5-safe-executor-variant-matrix.json",
-          "sha256": "e7717a9b51fc56eab9cdee8d252fc3152a24fb0b3bd367937ab072bdf23b068a"
+          "sha256": "4e5d5515ddd8ae9a6eda77917a591447d88eed3167b6bf53e779a81e48c04ada"
         }
       },
       "scenario": "safe-executor-v3",

@@ -574,7 +574,16 @@ records consumption, and is the sole send authority. The attempt context ends
 at the earlier of the caller deadline and start plus five seconds. A result at
 or after that exact boundary is converted to timeout before publication.
 `rate_limited`, `timeout`, and `unavailable` publish retryable durable state and
-return `in_progress`; a future invocation is not started by this executor.
+return `in_progress` when at least the exact six-second retry reserve remains.
+A committed retryable terminal caused by insufficient reserve returns
+`retry_exhausted`, not `persistence_failure`; a future invocation is not started
+by this executor.
+
+The synthetic C5 contributor label and process fields never supply durable
+identity. The executor uses one fixed 55-character internal owner outside the
+complete label and process syntax domains. Qualification uses sentinel-bearing
+controls, owner readback, and an internal-vocabulary collision variant, so an
+equal word such as `pending` is not confused with contributor-derived flow.
 Ordinary gate, provider, and persistence failures map to closed public outcomes,
 while interpreter control flow is re-raised after gate cleanup.
 

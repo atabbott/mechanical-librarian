@@ -85,57 +85,21 @@ class IdentityWorkClaim:
 
 
 @dataclass(frozen=True, slots=True)
-class IdentityWorkInspection:
-    """Minimum active-generation state exposed to application orchestration."""
+class IdentityWorkReadiness:
+    """Only the active readiness facts required before one attempt."""
 
     reference: IdentityWorkReference
     state: IdentityWorkState
-    candidate: int
-    fence: int
     aggregate_deadline: datetime
-    retry_due_at: datetime | None = None
-    claim: IdentityWorkClaim | None = None
 
     def __post_init__(self) -> None:
         if (
             type(self.reference) is not IdentityWorkReference
             or type(self.state) is not IdentityWorkState
             or self.state not in ACTIVE_STATES
-            or type(self.candidate) is not int
-            or not 1 <= self.candidate <= 3
-            or type(self.fence) is not int
-            or self.fence < 0
         ):
-            raise ValueError("identity work inspection is malformed")
+            raise ValueError("identity work readiness is malformed")
         _require_time(self.aggregate_deadline)
-        if self.retry_due_at is not None:
-            _require_time(self.retry_due_at)
-        if self.claim is not None and type(self.claim) is not IdentityWorkClaim:
-            raise ValueError("identity work inspection is malformed")
-        valid = {
-            IdentityWorkState.PENDING: (
-                self.candidate == 1
-                and self.fence == 0
-                and self.retry_due_at is None
-                and self.claim is None
-            ),
-            IdentityWorkState.RETRY_WAIT: (
-                self.fence >= 1
-                and self.retry_due_at is not None
-                and self.claim is None
-                and self.retry_due_at <= self.aggregate_deadline
-            ),
-            IdentityWorkState.CLAIMED: (
-                self.fence >= 1
-                and self.retry_due_at is None
-                and self.claim is not None
-                and self.claim.reference == self.reference
-                and self.claim.candidate == self.candidate
-                and self.claim.fence == self.fence
-            ),
-        }[self.state]
-        if not valid:
-            raise ValueError("identity work inspection is malformed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,7 +182,7 @@ def _require_time(value: object) -> None:
 __all__ = [
     "ACTIVE_STATES",
     "IdentityWorkClaim",
-    "IdentityWorkInspection",
+    "IdentityWorkReadiness",
     "IdentityMatchOutcome",
     "IdentityWorkObservation",
     "IdentityWorkOutcome",

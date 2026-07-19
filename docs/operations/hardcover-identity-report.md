@@ -204,7 +204,7 @@ uv run --frozen --no-editable --reinstall-package mechanical-librarian \
 Stdout must be byte-identical to
 `tests/fixtures/hardcover_identity/c5-safe-executor-example-output.json`.
 The cumulative C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`33e480ddb383283d8a9e1a026847778dc0e59becf88f4870a4e957ff7ac2fe7d`.
+`2056699e704aa71d6da2e07bf945582e5766f4bad68d8e378c654a7300a91d48`.
 It derives from the merged C4 registry and adds only `safe-executor-v3`.
 
 The gate is deployment-scoped, not credential-scoped. Operators must not reuse

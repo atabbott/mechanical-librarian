@@ -25,7 +25,7 @@ from mechanical_librarian.domain.hardcover_identity import (
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityMatchOutcome,
     IdentityWorkClaim,
-    IdentityWorkInspection,
+    IdentityWorkReadiness,
     IdentityWorkObservation,
     IdentityWorkOutcome,
     IdentityWorkReference,
@@ -889,7 +889,7 @@ class HardcoverIdentityWorkPersistence(Protocol):
 
     def inspect(
         self, reference: IdentityWorkReference, now: datetime
-    ) -> IdentityWorkInspection: ...
+    ) -> IdentityWorkReadiness: ...
 
     def claim(
         self,
@@ -992,10 +992,10 @@ class ManageHardcoverIdentityWork:
 
     def inspect(
         self, reference: IdentityWorkReference, now: datetime
-    ) -> IdentityWorkInspection:
+    ) -> IdentityWorkReadiness:
         result = self._persistence.inspect(reference, now)
-        if type(result) is not IdentityWorkInspection or result.reference != reference:
-            raise TypeError("Hardcover identity work inspection is malformed")
+        if type(result) is not IdentityWorkReadiness or result.reference != reference:
+            raise TypeError("Hardcover identity work readiness is malformed")
         return result
 
     def claim(
@@ -1110,6 +1110,7 @@ class ManageHardcoverIdentityWork:
             not in {
                 IdentityWorkOutcome.IN_PROGRESS,
                 IdentityWorkOutcome.PERSISTENCE_FAILURE,
+                IdentityWorkOutcome.RETRY_EXHAUSTED,
             }
         ):
             raise TypeError("Hardcover identity work failure result is malformed")

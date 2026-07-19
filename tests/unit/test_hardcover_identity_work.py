@@ -21,7 +21,7 @@ from mechanical_librarian.domain.hardcover_identity_work import (
     LEGAL_TRANSITIONS,
     IdentityMatchOutcome,
     IdentityWorkClaim,
-    IdentityWorkInspection,
+    IdentityWorkReadiness,
     IdentityWorkOutcome,
     IdentityWorkObservation,
     IdentityWorkReference,
@@ -63,13 +63,8 @@ class ProtocolPersistenceCollaborator:
         return self.accept_result
 
     def inspect(self, reference, now):
-        return IdentityWorkInspection(
-            reference,
-            IdentityWorkState.CLAIMED,
-            1,
-            1,
-            ORIGIN + timedelta(seconds=30),
-            claim=self.claim_result,
+        return IdentityWorkReadiness(
+            reference, IdentityWorkState.CLAIMED, ORIGIN + timedelta(seconds=30)
         )
 
     def claim(self, reference, owner, now, *, gate_owned):

@@ -896,14 +896,14 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "preview-output-privacy-scan-v2.json": "81aa8c3db583bdd326ccda572dcb510060bb1868e93b449737d71adef7bee7bc",
             "preview-registry-c4-v6.json": "3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81",
             "schema8-logical-snapshot-ledger.json": "140d3d17ad743f8860ff216052976344ff2f7258096f45765d286b9b4887508c",
-            "c5-safe-executor-input.json": "996a9b77206ea9636ceb6d6de86bcc729b9e60450e746d37a70365c832633f6c",
-            "c5-safe-executor-input-schema.json": "f6ff70d659051a105f2f4227b49136f86966ca37665a88af889990424dacb659",
-            "c5-safe-executor-example-output.json": "dbc08d6ed8237f2908270e4726a029fba5fa8937275cb507494abd4b592e6a77",
-            "c5-safe-executor-variant-matrix.json": "e7717a9b51fc56eab9cdee8d252fc3152a24fb0b3bd367937ab072bdf23b068a",
+            "c5-safe-executor-input.json": "6cbc58460ab2f1fdd9540b87ed91ae8ba858442e2f995bac248e03e4750ece4b",
+            "c5-safe-executor-input-schema.json": "7b0c0a34f9994364b32a32f3b23ba0b4242c6944cd73c47abdc65385e4be9846",
+            "c5-safe-executor-example-output.json": "9686ac45ad83d43861fa869ef81dea2cf175de36b7076baa52d2f84a2f5f27c6",
+            "c5-safe-executor-variant-matrix.json": "4e5d5515ddd8ae9a6eda77917a591447d88eed3167b6bf53e779a81e48c04ada",
             "preview-output-schema-c5-v6.json": "24a75efc9f8696c448d6d9e8597e3eb8f5aee821a5e784db8cef3b71c866da43",
-            "preview-output-privacy-contract-c5-v3.json": "fb5f9e16922b02f85fbc632452f8a56a2a45a8e8ab19ae01e3945796d80767d2",
-            "preview-output-privacy-scan-c5-v3.json": "f0bbc34ac3655774e74e0073b1799855434da4fe2ac60665051269807e06e03f",
-            "preview-registry-c5-v6.json": "33e480ddb383283d8a9e1a026847778dc0e59becf88f4870a4e957ff7ac2fe7d",
+            "preview-output-privacy-contract-c5-v3.json": "4df0ca6da6ee96f59f3e78218297939544dc58b558144955afe34b9d7eac1159",
+            "preview-output-privacy-scan-c5-v3.json": "cfc78ac3ef48028703be51cf2f142cf68293d98e4169242b35651ab95a5a5de5",
+            "preview-registry-c5-v6.json": "2056699e704aa71d6da2e07bf945582e5766f4bad68d8e378c654a7300a91d48",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)
