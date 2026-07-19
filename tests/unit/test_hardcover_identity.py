@@ -9,8 +9,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mechanical_librarian.domain.hardcover_identity import (
+    IdentityDecisionOutcome,
     PrivateIdentityQuery,
     PrivateQueryError,
+    ProviderBookObservation,
+    ProviderIdentityObservation,
+    TitleComparison,
+    decide_book_identity,
+    isbn_identity,
     validate_private_query,
 )
 from mechanical_librarian.infrastructure.security.private_query import (
@@ -174,6 +180,174 @@ class PrivateIdentityQueryTests(unittest.TestCase):
                     ):
                         with self.assertRaises(PrivateQueryError):
                             read_private_query(query)
+
+
+class BookIdentityDecisionTests(unittest.TestCase):
+    def query(
+        self, isbn: str = "9780000000019", title: str = "Synthetic Ebook Alpha"
+    ) -> PrivateIdentityQuery:
+        return validate_private_query({"isbn": isbn, "title": title})
+
+    def row(
+        self,
+        *,
+        edition_id: int = 1001,
+        book_id: int = 2001,
+        edition_canonical_id: int | None = None,
+        book_canonical_id: int | None = None,
+        isbn_10: str | None = "0000000019",
+        isbn_13: str | None = "9780000000019",
+        title: str = "Synthetic Ebook Alpha",
+        reading_format_id: int = 4,
+        edition_state: str = "normalized",
+        book_state: str = "processed",
+    ) -> ProviderIdentityObservation:
+        return ProviderIdentityObservation(
+            id=edition_id,
+            book_id=book_id,
+            canonical_id=edition_canonical_id,
+            isbn_10=isbn_10,
+            isbn_10_valid=True if isbn_10 is not None else None,
+            isbn_13=isbn_13,
+            isbn_13_valid=True if isbn_13 is not None else None,
+            isbns_match=True,
+            reading_format_id=reading_format_id,
+            state=edition_state,
+            compilation=False,
+            book=ProviderBookObservation(
+                id=book_id,
+                canonical_id=book_canonical_id,
+                book_status_id=1,
+                state=book_state,
+                title=title,
+                parent_book_id=None,
+                compilation=False,
+                is_partial_book=False,
+            ),
+        )
+
+    def test_isbn_equivalence_covers_isbn10_978_and_979(self) -> None:
+        from_10 = isbn_identity("0000000019")
+        from_13 = isbn_identity("9780000000019")
+        isbn_979 = isbn_identity("9790000000001")
+        self.assertEqual(from_10, from_13)
+        self.assertEqual(from_13.equivalent_isbn_10, "0000000019")
+        self.assertEqual(isbn_979.canonical_isbn_13, "9790000000001")
+        self.assertIsNone(isbn_979.equivalent_isbn_10)
+
+    def test_one_primary_and_exact_alias_collapse_to_one_identity(self) -> None:
+        primary = self.row()
+        alias = self.row(
+            edition_id=1002,
+            book_id=2002,
+            edition_canonical_id=1001,
+            book_canonical_id=2001,
+        )
+        decision = decide_book_identity(self.query(), (alias, primary))
+        self.assertEqual(decision.outcome, IdentityDecisionOutcome.MATCHED)
+        self.assertEqual(decision.rows_validated, 2)
+        self.assertEqual(decision.aliases_collapsed, 1)
+        self.assertEqual(decision.comparison, TitleComparison.EQUAL)
+        self.assertEqual(decision.identity.edition_id, 1001)
+        self.assertEqual(decision.identity.book_id, 2001)
+        for value in (repr(primary), repr(alias), repr(decision), repr(decision.identity)):
+            self.assertNotIn("Synthetic", value)
+            self.assertNotIn("978", value)
+
+    def test_two_primaries_and_four_compatible_rows_are_ambiguous(self) -> None:
+        distinct = decide_book_identity(
+            self.query(),
+            (self.row(), self.row(edition_id=1002, book_id=2002)),
+        )
+        four = decide_book_identity(
+            self.query(),
+            (
+                self.row(),
+                self.row(edition_id=1002, book_id=2002, edition_canonical_id=1001, book_canonical_id=2001),
+                self.row(edition_id=1003, book_id=2003, edition_canonical_id=1001, book_canonical_id=2001),
+                self.row(edition_id=1004, book_id=2004, edition_canonical_id=1001, book_canonical_id=2001),
+            ),
+        )
+        self.assertEqual(distinct.outcome, IdentityDecisionOutcome.AMBIGUOUS)
+        self.assertEqual(four.outcome, IdentityDecisionOutcome.AMBIGUOUS)
+
+    def test_incompatibility_precedes_four_row_ambiguity(self) -> None:
+        rows = tuple(
+            self.row(
+                edition_id=1000 + index,
+                book_id=2000 + index,
+                edition_canonical_id=None if index == 1 else 1001,
+                book_canonical_id=None if index == 1 else 2001,
+                reading_format_id=3 if index == 4 else 4,
+            )
+            for index in range(1, 5)
+        )
+        decision = decide_book_identity(self.query(), rows)
+        self.assertEqual(decision.outcome, IdentityDecisionOutcome.INCOMPATIBLE)
+        self.assertEqual(decision.rows_validated, 4)
+
+    def test_alias_cycles_dangling_references_and_semantic_changes_are_malformed(self) -> None:
+        cases = (
+            (
+                self.row(edition_canonical_id=1002, book_canonical_id=2002),
+                self.row(edition_id=1002, book_id=2002, edition_canonical_id=1001, book_canonical_id=2001),
+            ),
+            (self.row(edition_canonical_id=9999, book_canonical_id=9998),),
+            (
+                self.row(),
+                self.row(
+                    edition_id=1002,
+                    book_id=2002,
+                    edition_canonical_id=1001,
+                    book_canonical_id=2001,
+                    title="Different Provider Bytes",
+                ),
+            ),
+        )
+        for rows in cases:
+            with self.subTest(rows=len(rows)):
+                self.assertEqual(
+                    decide_book_identity(self.query(), rows).outcome,
+                    IdentityDecisionOutcome.MALFORMED,
+                )
+
+    def test_979_forbids_isbn10_and_zero_rows_do_not_match(self) -> None:
+        valid = self.row(isbn_10=None, isbn_13="9790000000001")
+        invalid = self.row(isbn_10="0000000019", isbn_13="9790000000001")
+        self.assertEqual(
+            decide_book_identity(self.query("9790000000001"), (valid,)).outcome,
+            IdentityDecisionOutcome.MATCHED,
+        )
+        self.assertEqual(
+            decide_book_identity(self.query("9790000000001"), (invalid,)).outcome,
+            IdentityDecisionOutcome.INCOMPATIBLE,
+        )
+        self.assertEqual(
+            decide_book_identity(self.query(), ()).outcome,
+            IdentityDecisionOutcome.NO_MATCH,
+        )
+
+    def test_permutation_and_linkage_ids_do_not_change_identity_semantics(self) -> None:
+        primary = self.row()
+        alias = self.row(
+            edition_id=1002,
+            book_id=2002,
+            edition_canonical_id=1001,
+            book_canonical_id=2001,
+        )
+        forward = decide_book_identity(self.query(), (primary, alias))
+        reverse = decide_book_identity(self.query(), (alias, primary))
+        self.assertEqual(forward, reverse)
+
+    def test_local_title_changes_only_transient_coarse_comparison(self) -> None:
+        equal = decide_book_identity(self.query(), (self.row(),))
+        different = decide_book_identity(
+            self.query(title="Locally Different Title"), (self.row(),)
+        )
+        self.assertEqual(equal.outcome, different.outcome)
+        self.assertEqual(equal.identity, different.identity)
+        self.assertEqual(equal.comparison, TitleComparison.EQUAL)
+        self.assertEqual(different.comparison, TitleComparison.DIFFERENT)
 
 
 if __name__ == "__main__":
