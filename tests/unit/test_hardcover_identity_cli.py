@@ -887,6 +887,15 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c3-preview-output-privacy-contract-v1.json": "32ec6078b981b15d3255296cb0f41346b5840686ae859ea48176cdb047895b37",
             "c3-preview-output-privacy-scan-v1.json": "bedc4f12909da3b255a81e83537bf0019859f393fb9c460085411f9e30df021b",
             "preview-registry-c3-v6.json": "394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02",
+            "c4-durable-work-input.json": "983ae3fbd9cb394772389e99dc722c81066e0d1ed268be7adc9623fdaf6c991e",
+            "c4-durable-work-example-output.json": "d4beb29ec1542f093c6054f104ae857a86332c98dc01dc216b9072788547e949",
+            "c4-durable-work-input-schema.json": "f1d5c475af492c36469bb222b622afe232aebd5d0956d3b2afcd2f54b64c50a2",
+            "c4-durable-work-variant-matrix.json": "5e1c6aedc4f322b7d6d979853a50913e5373cd97e695f4c1dc8a832eaba5a002",
+            "preview-output-schema-v5.json": "fd0f7d4e0248faa97ceddd6cbe442c23dfae4f48c8a02b47ee3df36bc7eedec7",
+            "preview-output-privacy-contract-v2.json": "02a897d7f3c997cc1c99b5f3ad808f3e636f704305cefa13ea44c8c5fb0c18e3",
+            "preview-output-privacy-scan-v2.json": "81aa8c3db583bdd326ccda572dcb510060bb1868e93b449737d71adef7bee7bc",
+            "preview-registry-c4-v6.json": "3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81",
+            "schema8-logical-snapshot-ledger.json": "140d3d17ad743f8860ff216052976344ff2f7258096f45765d286b9b4887508c",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)

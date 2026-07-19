@@ -1,7 +1,8 @@
 # Hardcover F09f Identity Contract
 
-This reference defines the provider-neutral identity decision and the fixed,
-bounded Hardcover ISBN adapter installed through F09f increment 3. The adapter
+This reference defines the provider-neutral identity decision, the fixed,
+bounded Hardcover ISBN adapter, and durable work repository installed through
+F09f increment 4. The adapter
 is proved only through a credential-free structural byte channel and is not
 composed into production.
 
@@ -199,3 +200,47 @@ That meta-schema requires the project UTF-8 byte-length vocabulary; the
 `actual_network:false`, and `address_policy`. Request/response/header bytes,
 addresses, ISBNs, titles, provider IDs, tokens, fixture/resource identities,
 digests, and correlations remain forbidden across every runtime channel.
+
+## Durable identity work
+
+The application derives an opaque 64-hex work key before persistence. The
+repository never accepts or stores a raw ISBN, local title, provider payload,
+credential, query, or path. One work key has monotonically increasing
+generations and at most one `pending`, `claimed`, or `retry_wait` generation.
+Acceptance atomically creates generation, candidate 1, aggregate start, exact
+30-second deadline, and its event.
+
+A gate-held claim reserves a candidate under a monotonically increasing fence
+and 15-second lease without consuming an attempt. `renew_and_start` requires
+the exact owner and fence and at least six seconds remaining, renews the lease
+to wall-now plus 15 seconds, and commits the started attempt before a later
+transport could be allowed. At most three attempts exist. This increment does
+not compose a gate or transport into production.
+
+After the lease of a started attempt expires, a later injected gate owner may
+finalize it once as interrupted, advance the fence, and append the next
+candidate and retry schedule. Earlier fences cannot start, recover, cancel, or
+publish. Terminal publication finalizes the attempt, appends result and bounded
+canonical observation, updates matched currentness, transitions the generation,
+and appends its event in one transaction. Failure before commit leaves all
+those records and the previous current pointer unchanged.
+
+Matched currentness is reusable through exactly 24 hours. At greater age, one
+transaction marks the old pointer expired and creates one unreserved next
+generation. Immutable candidate, claim, retry, event, result, and observation
+records plus finalize-once attempts preserve restart evidence. Mutable
+generation and current-pointer rows are constrained to the closed state model.
+
+Migration 9 is additive and forward-only from the genuine schema-8 prefix.
+The `durable-work-v3` preview reconstructs migrations 1–8, verifies their
+checksum ledger and database integrity, injects a migration-statement rollback,
+applies migration 9 twice, and runs publication rollback, restart, recovery,
+stale-fence, retry, and currentness proofs on an initially absent disposable
+database. Production still returns `provider_not_activated` before this
+repository, a private query, credential, adapter, or network is opened.
+
+The exact current-head registry is `preview-registry-c4-v6.json`, SHA-256
+`3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81`.
+It derives from the installed C3 registry and binds the canonical C4 input,
+output, closed input schema, variant matrix, cumulative schema-v5 output,
+privacy contract/scan, and contributor-independent schema-8 dump and ledger.

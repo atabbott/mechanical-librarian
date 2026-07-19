@@ -62,6 +62,7 @@ from mechanical_librarian.application.title_review_cases import (
     render_title_review_case_text,
 )
 from mechanical_librarian.application.hardcover_identity import (
+    DurableWorkPreviewReport,
     FixedAdapterPreviewReport,
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
@@ -97,6 +98,9 @@ HardcoverIdentityDecisionPreviewRunner = Callable[
 ]
 HardcoverFixedAdapterPreviewRunner = Callable[
     [Mapping[str, object]], FixedAdapterPreviewReport
+]
+HardcoverDurableWorkPreviewRunner = Callable[
+    [Mapping[str, object], Path], DurableWorkPreviewReport
 ]
 
 _FAILURE_MESSAGES = {
@@ -187,7 +191,12 @@ def _hardcover_identity_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=("synthetic-preview",))
     parser.add_argument(
         "--scenario",
-        choices=("inert-report-v3", "identity-decision-v3", "fixed-adapter-v3"),
+        choices=(
+            "inert-report-v3",
+            "identity-decision-v3",
+            "fixed-adapter-v3",
+            "durable-work-v3",
+        ),
     )
     parser.add_argument("--input")
     parser.add_argument("--format", choices=("json", "text"), default="json")
@@ -533,6 +542,9 @@ def main(
     hardcover_fixed_adapter_preview_runner: (
         HardcoverFixedAdapterPreviewRunner | None
     ) = None,
+    hardcover_durable_work_preview_runner: (
+        HardcoverDurableWorkPreviewRunner | None
+    ) = None,
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
@@ -552,14 +564,23 @@ def main(
             return 2
         synthetic = hardcover_arguments.mode == "synthetic-preview"
         if synthetic:
+            durable = hardcover_arguments.scenario == "durable-work-v3"
             exact = (
                 hardcover_arguments.scenario
-                in {"inert-report-v3", "identity-decision-v3", "fixed-adapter-v3"}
+                in {
+                    "inert-report-v3",
+                    "identity-decision-v3",
+                    "fixed-adapter-v3",
+                    "durable-work-v3",
+                }
                 and hardcover_arguments.input == "-"
                 and hardcover_arguments.format == "json"
                 and hardcover_arguments.config is None
-                and hardcover_arguments.database is None
                 and hardcover_arguments.query_file is None
+                and (
+                    (durable and hardcover_arguments.database is not None)
+                    or (not durable and hardcover_arguments.database is None)
+                )
             )
             if not exact:
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
@@ -576,10 +597,16 @@ def main(
                     if hardcover_identity_decision_preview_runner is None:
                         raise ValueError("identity decision preview is unavailable")
                     report = hardcover_identity_decision_preview_runner(source)
-                else:
+                elif hardcover_arguments.scenario == "fixed-adapter-v3":
                     if hardcover_fixed_adapter_preview_runner is None:
                         raise ValueError("fixed adapter preview is unavailable")
                     report = hardcover_fixed_adapter_preview_runner(source)
+                else:
+                    if hardcover_durable_work_preview_runner is None:
+                        raise ValueError("durable work preview is unavailable")
+                    report = hardcover_durable_work_preview_runner(
+                        source, hardcover_arguments.database
+                    )
             except Exception:
                 if hardcover_arguments.scenario == "inert-report-v3":
                     report = InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
@@ -594,7 +621,11 @@ def main(
                 if type(report) is not IdentityDecisionPreviewReport:
                     errors.write(_HARDCOVER_IDENTITY_FAILURE)
                     return 2
-            elif type(report) is not FixedAdapterPreviewReport:
+            elif hardcover_arguments.scenario == "fixed-adapter-v3":
+                if type(report) is not FixedAdapterPreviewReport:
+                    errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                    return 2
+            elif type(report) is not DurableWorkPreviewReport:
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
             try:
@@ -607,6 +638,7 @@ def main(
             if type(report) in {
                 IdentityDecisionPreviewReport,
                 FixedAdapterPreviewReport,
+                DurableWorkPreviewReport,
             }:
                 return 0
             return 0 if report.outcome is HardcoverIdentityOutcome.DISABLED else 2

@@ -233,6 +233,53 @@ class FixedAdapterPreviewReport:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class DurableWorkPreviewReport:
+    outcome: str
+    schema_from: int
+    schema_to: int
+    migration_rollback_verified: bool
+    migration_idempotence_verified: bool
+    publication_rollback_verified: bool
+    interrupted_recovery_gate_owned: bool
+
+    def validate(self) -> None:
+        if (
+            self.outcome not in {"matched", "stale", "persistence_failure", "in_progress"}
+            or type(self.outcome) is not str
+            or type(self.schema_from) is not int
+            or self.schema_from != 8
+            or type(self.schema_to) is not int
+            or self.schema_to != 9
+            or self.migration_rollback_verified is not True
+            or self.migration_idempotence_verified is not True
+            or self.publication_rollback_verified is not True
+            or self.interrupted_recovery_gate_owned is not True
+        ):
+            raise TypeError("Hardcover durable work preview report is malformed")
+
+    def to_json(self) -> str:
+        self.validate()
+        return json.dumps(
+            {
+                "schema": "hardcover-synthetic-output-v5",
+                "scenario": "durable-work-v3",
+                "result": {
+                    "outcome": self.outcome,
+                    "schema_from": self.schema_from,
+                    "schema_to": self.schema_to,
+                    "migration_rollback_verified": self.migration_rollback_verified,
+                    "migration_idempotence_verified": self.migration_idempotence_verified,
+                    "publication_rollback_verified": self.publication_rollback_verified,
+                    "interrupted_recovery_gate_owned": self.interrupted_recovery_gate_owned,
+                },
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
 def fixed_adapter_preview_report(
     result: IdentityAttemptResult,
     query: IsbnIdentityQuery,
@@ -740,6 +787,7 @@ def render_report_text(report: HardcoverIdentityReport) -> str:
 __all__ = [
     "AddressPolicyOutcome",
     "BookIdentityProvider",
+    "DurableWorkPreviewReport",
     "FixedAdapterOutcome",
     "FixedAdapterAttemptEvidence",
     "FixedAdapterPreviewReport",

@@ -28,6 +28,11 @@ from mechanical_librarian.adapters.persistence.inventory_polling import (
 from mechanical_librarian.adapters.persistence.epub_opening_evidence import (
     SQLiteEpubOpeningEvidenceRepository,
 )
+from mechanical_librarian.adapters.persistence.hardcover_identity_work import (
+    IdentityWorkPersistenceError,
+    SQLiteHardcoverIdentityWorkRepository,
+    StaleIdentityWorkFence,
+)
 from mechanical_librarian.adapters.library_services.synthetic import (
     SyntheticLibraryReader,
     synthetic_capabilities,
@@ -71,6 +76,7 @@ from mechanical_librarian.application.connection_probe import (
 )
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.hardcover_identity import (
+    DurableWorkPreviewReport,
     FixedAdapterPreviewReport,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
@@ -201,11 +207,13 @@ from mechanical_librarian.infrastructure.security.provider_secrets import (
     ProviderSecretUnavailable,
 )
 from mechanical_librarian.infrastructure.persistence.sqlite import (
+    MIGRATIONS,
     SchemaError,
     connect,
     connect_existing,
     finalize_staged_state,
     migrate,
+    migrate_to_version,
     path_entry_exists,
     preflight,
     publish_staged_state,
@@ -1591,6 +1599,192 @@ def _run_hardcover_fixed_adapter_preview(
     )
 
 
+_DURABLE_WORK_OPERATIONS = (
+    ("regenerate_schema8", "preview", "exact-prefix-1-through-8", 0, None, None),
+    ("verify_snapshot", "preview", "dump-ledger-integrity-fk-match", 100_000, None, None),
+    ("apply_migration9", "preview", "schema9", 200_000, None, None),
+    ("verify_migration9_idempotence", "preview", "schema9-unchanged", 300_000, None, None),
+    ("accept", "api", None, 500_000, None, None),
+    ("gate_acquire", "worker-a", None, 1_500_000, None, None),
+    ("claim", "worker-a", None, 1_600_000, 1, 1),
+    ("renew_start", "worker-a", None, 1_700_000, 1, 1),
+    ("socket_close", "worker-a", "matched", 2_700_000, None, None),
+    ("publish", "worker-a", "failure-before-commit", 2_800_000, None, 1),
+    ("gate_release", "worker-a", None, 2_900_000, None, None),
+    ("restart", "worker-b", None, 16_700_000, None, None),
+    ("gate_acquire", "worker-b", None, 16_800_000, None, None),
+    ("recover", "worker-b", "interrupted", 16_900_000, None, 2),
+    ("claim", "worker-b", None, 17_000_000, 2, 2),
+    ("renew_start", "worker-b", None, 17_100_000, 2, 2),
+    ("socket_close", "worker-b", "matched", 18_100_000, None, None),
+    ("publish", "worker-b", "matched", 18_200_000, None, 2),
+    ("gate_release", "worker-b", None, 18_300_000, None, None),
+    ("read_current", "api", "reuse", 86_418_200_000, None, None),
+    ("expire_current", "api", "stale", 86_418_200_001, None, None),
+)
+
+
+def _validate_durable_work_preview_input(source: Mapping[str, object]) -> None:
+    if set(source) != {"schema", "scenario", "failure_points", "script"}:
+        raise ValueError("durable work preview input is malformed")
+    if source.get("schema") != "hardcover-synthetic-input-v3" or source.get("scenario") != "durable-work-v3":
+        raise ValueError("durable work preview input is malformed")
+    if source.get("failure_points") != [
+        "migration_statement",
+        "publication_before_commit",
+        "restart_after_start",
+        "stale_fence",
+    ]:
+        raise ValueError("durable work preview input is malformed")
+    script = source.get("script")
+    if type(script) is not list or len(script) != len(_DURABLE_WORK_OPERATIONS):
+        raise ValueError("durable work preview input is malformed")
+    for row, (op, process, result, wall_us, candidate, fence) in zip(
+        script, _DURABLE_WORK_OPERATIONS, strict=True
+    ):
+        expected: dict[str, object] = {"op": op, "process": process, "wall_us": wall_us}
+        if result is not None:
+            expected["result"] = result
+        if candidate is not None:
+            expected["candidate"] = candidate
+        if fence is not None:
+            expected["fence"] = fence
+        if type(row) is not dict or row != expected:
+            raise ValueError("durable work preview input is malformed")
+
+
+def _run_hardcover_durable_work_preview(
+    source: Mapping[str, object], database: Path
+) -> DurableWorkPreviewReport:
+    """Exercise migration and repository recovery without provider authority."""
+
+    _validate_durable_work_preview_input(source)
+    preflight(database)
+    if path_entry_exists(database):
+        raise SchemaError("durable work preview requires an absent database")
+    work_key = hashlib.sha256(b"public-synthetic-hardcover-work-v3").hexdigest()
+    origin = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    at = lambda microseconds: origin + timedelta(microseconds=microseconds)
+
+    with staged_state(database) as staged:
+        connection = connect(staged)
+        try:
+            if migrate_to_version(connection, 8) != 8:
+                raise SchemaError("schema-eight preview could not be regenerated")
+            ledger = connection.execute(
+                "SELECT version,checksum FROM schema_migrations ORDER BY version"
+            ).fetchall()
+            if ledger != [(item.version, item.checksum) for item in MIGRATIONS[:8]]:
+                raise SchemaError("schema-eight ledger is inconsistent")
+            if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)] or connection.execute("PRAGMA foreign_key_check").fetchall():
+                raise SchemaError("schema-eight preview is inconsistent")
+
+            migration_rollback_verified = False
+            try:
+                connection.execute("BEGIN EXCLUSIVE")
+                connection.execute(MIGRATIONS[8].statements[0])
+                raise sqlite3.OperationalError("injected migration interruption")
+            except sqlite3.OperationalError:
+                connection.rollback()
+                migration_rollback_verified = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='hardcover_identity_generations'"
+                ).fetchone() is None
+            if not migration_rollback_verified or migrate(connection) != 9 or migrate(connection) != 9:
+                raise SchemaError("schema-nine migration proof failed")
+            migration_idempotence_verified = connection.execute(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version=9"
+            ).fetchone() == (1,)
+
+            repository = SQLiteHardcoverIdentityWorkRepository(connection)
+            accepted = repository.accept(work_key, at(500_000))
+            claim = repository.claim(
+                accepted.reference, 1, "worker-a", at(1_600_000), gate_owned=True
+            )
+            claim = repository.renew_and_start(
+                claim, "worker-a", at(1_700_000), gate_owned=True
+            )
+            try:
+                repository.publish_matched(
+                    claim,
+                    "worker-a",
+                    at(2_800_000),
+                    {"outcome": "matched", "rows": 2},
+                    gate_owned=True,
+                    fail_before_commit=True,
+                )
+            except IdentityWorkPersistenceError:
+                pass
+            publication_rollback_verified = (
+                connection.execute(
+                    "SELECT COUNT(*) FROM hardcover_identity_results WHERE work_key=?",
+                    (work_key,),
+                ).fetchone()
+                == (0,)
+                and connection.execute(
+                    "SELECT COUNT(*) FROM current_hardcover_identity WHERE work_key=?",
+                    (work_key,),
+                ).fetchone()
+                == (0,)
+            )
+            if not publication_rollback_verified:
+                raise SchemaError("identity publication rollback proof failed")
+        finally:
+            connection.close()
+
+        connection = connect_existing(staged)
+        try:
+            repository = SQLiteHardcoverIdentityWorkRepository(connection)
+            next_fence = repository.recover_interrupted(
+                claim, at(16_900_000), gate_owned=True
+            )
+            if next_fence != 2:
+                raise SchemaError("identity recovery fence is inconsistent")
+            try:
+                repository.publish_matched(
+                    claim,
+                    "worker-a",
+                    at(17_000_000),
+                    {"outcome": "matched"},
+                    gate_owned=True,
+                )
+            except StaleIdentityWorkFence:
+                pass
+            else:
+                raise SchemaError("stale identity fence was accepted")
+            retry = repository.claim(
+                accepted.reference, 2, "worker-b", at(17_000_000), gate_owned=True
+            )
+            retry = repository.renew_and_start(
+                retry, "worker-b", at(17_100_000), gate_owned=True
+            )
+            repository.publish_matched(
+                retry,
+                "worker-b",
+                at(18_200_000),
+                {"outcome": "matched", "rows": 2},
+                gate_owned=True,
+            )
+            exact = repository.accept(work_key, at(86_418_200_000))
+            stale = repository.accept(work_key, at(86_418_200_001))
+            if exact.outcome.value != "matched" or stale.outcome.value != "stale" or stale.reference.generation != 2:
+                raise SchemaError("identity currentness boundary proof failed")
+            finalize_staged_state(connection)
+        finally:
+            connection.close()
+        if not publish_staged_state(staged, database):
+            raise SchemaError("durable work preview database publication raced")
+
+    return DurableWorkPreviewReport(
+        outcome="stale",
+        schema_from=8,
+        schema_to=9,
+        migration_rollback_verified=migration_rollback_verified,
+        migration_idempotence_verified=migration_idempotence_verified,
+        publication_rollback_verified=publication_rollback_verified,
+        interrupted_recovery_gate_owned=True,
+    )
+
+
 def _synthetic_identity_row(source: object) -> ProviderIdentityObservation:
     if not isinstance(source, Mapping) or set(source) != {
         "id",
@@ -1715,6 +1909,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _run_hardcover_identity_decision_preview
         ),
         hardcover_fixed_adapter_preview_runner=_run_hardcover_fixed_adapter_preview,
+        hardcover_durable_work_preview_runner=_run_hardcover_durable_work_preview,
     )
 
 
