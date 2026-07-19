@@ -64,6 +64,7 @@ from mechanical_librarian.application.title_review_cases import (
 from mechanical_librarian.application.hardcover_identity import (
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
+    IdentityDecisionPreviewReport,
     InertPreviewReport,
     render_report_text as render_hardcover_identity_text,
 )
@@ -90,6 +91,9 @@ SyntheticTitleReviewCaseRunner = Callable[[Path, str], SyntheticTitleReviewCaseR
 EpubOpeningEvidenceRunner = Callable[[Path, Path, str, str, int], EpubEvidenceResult]
 HardcoverIdentityRunner = Callable[[Path], HardcoverIdentityReport]
 HardcoverInertPreviewRunner = Callable[[Mapping[str, object]], InertPreviewReport]
+HardcoverIdentityDecisionPreviewRunner = Callable[
+    [Mapping[str, object]], IdentityDecisionPreviewReport
+]
 
 _FAILURE_MESSAGES = {
     StateCheckOutcome.INVALID: "State check failed: invalid state.\n",
@@ -177,7 +181,9 @@ def _hardcover_identity_parser() -> argparse.ArgumentParser:
     parser.add_argument("--database", metavar="PATH", type=_database_path)
     parser.add_argument("--query-file", metavar="PATH", type=Path)
     parser.add_argument("--mode", choices=("synthetic-preview",))
-    parser.add_argument("--scenario", choices=("inert-report-v3",))
+    parser.add_argument(
+        "--scenario", choices=("inert-report-v3", "identity-decision-v3")
+    )
     parser.add_argument("--input")
     parser.add_argument("--format", choices=("json", "text"), default="json")
     return parser
@@ -516,6 +522,9 @@ def main(
     synthetic_title_review_case_runner: SyntheticTitleReviewCaseRunner | None = None,
     hardcover_identity_runner: HardcoverIdentityRunner | None = None,
     hardcover_inert_preview_runner: HardcoverInertPreviewRunner | None = None,
+    hardcover_identity_decision_preview_runner: (
+        HardcoverIdentityDecisionPreviewRunner | None
+    ) = None,
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
@@ -536,7 +545,8 @@ def main(
         synthetic = hardcover_arguments.mode == "synthetic-preview"
         if synthetic:
             exact = (
-                hardcover_arguments.scenario == "inert-report-v3"
+                hardcover_arguments.scenario
+                in {"inert-report-v3", "identity-decision-v3"}
                 and hardcover_arguments.input == "-"
                 and hardcover_arguments.format == "json"
                 and hardcover_arguments.config is None
@@ -548,14 +558,27 @@ def main(
                 return 2
             try:
                 source = _read_synthetic_input(stdin)
-                report = (
-                    InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
-                    if hardcover_inert_preview_runner is None
-                    else hardcover_inert_preview_runner(source)
-                )
+                if hardcover_arguments.scenario == "inert-report-v3":
+                    report = (
+                        InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
+                        if hardcover_inert_preview_runner is None
+                        else hardcover_inert_preview_runner(source)
+                    )
+                else:
+                    if hardcover_identity_decision_preview_runner is None:
+                        raise ValueError("identity decision preview is unavailable")
+                    report = hardcover_identity_decision_preview_runner(source)
             except (KeyboardInterrupt, Exception):
-                report = InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
-            if type(report) is not InertPreviewReport:
+                if hardcover_arguments.scenario == "inert-report-v3":
+                    report = InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
+                else:
+                    errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                    return 2
+            if hardcover_arguments.scenario == "inert-report-v3":
+                if type(report) is not InertPreviewReport:
+                    errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                    return 2
+            elif type(report) is not IdentityDecisionPreviewReport:
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
             try:
@@ -565,6 +588,8 @@ def main(
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
             output.write(rendered + "\n")
+            if type(report) is IdentityDecisionPreviewReport:
+                return 0
             return 0 if report.outcome is HardcoverIdentityOutcome.DISABLED else 2
         exact = (
             hardcover_arguments.mode is None

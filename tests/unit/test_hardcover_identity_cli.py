@@ -21,6 +21,7 @@ from mechanical_librarian.application.hardcover_identity import (
 )
 from mechanical_librarian.bootstrap import composition as composition_module
 from mechanical_librarian.bootstrap.composition import (
+    _run_hardcover_identity_decision_preview,
     _run_hardcover_identity_report,
     _run_hardcover_inert_preview,
 )
@@ -148,6 +149,226 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             },
             "private_query": {"isbn": "9780000000019", "title": title},
         }
+
+    def identity_row(
+        self,
+        *,
+        edition_id: int = 1001,
+        book_id: int = 2001,
+        edition_canonical_id: int | None = None,
+        book_canonical_id: int | None = None,
+        isbn_10: str | None = "0000000019",
+        isbn_13: str = "9780000000019",
+        title: str = "Synthetic Ebook Alpha",
+    ) -> dict[str, object]:
+        return {
+            "id": edition_id,
+            "book_id": book_id,
+            "canonical_id": edition_canonical_id,
+            "isbn_10": isbn_10,
+            "isbn_10_valid": True if isbn_10 is not None else None,
+            "isbn_13": isbn_13,
+            "isbn_13_valid": True,
+            "isbns_match": True,
+            "reading_format_id": 4,
+            "state": "normalized",
+            "compilation": False,
+            "book": {
+                "id": book_id,
+                "canonical_id": book_canonical_id,
+                "book_status_id": 1,
+                "state": "processed",
+                "title": title,
+                "parent_book_id": None,
+                "compilation": False,
+                "is_partial_book": False,
+            },
+        }
+
+    def identity_input(
+        self,
+        *,
+        title: str = "Synthetic Ebook Alpha",
+        rows: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
+        return {
+            "schema": "hardcover-synthetic-input-v3",
+            "scenario": "identity-decision-v3",
+            "canonical_isbn_13": "9780000000019",
+            "derived_isbn_10": "0000000019",
+            "local_title": title,
+            "provider_rows": [self.identity_row()] if rows is None else rows,
+        }
+
+    def run_identity_preview(
+        self, source: object, *, payload: str | None = None
+    ) -> tuple[int, str, str]:
+        output = io.StringIO()
+        errors = io.StringIO()
+        exit_code = main(
+            [
+                "hardcover-identity-report",
+                "--mode",
+                "synthetic-preview",
+                "--scenario",
+                "identity-decision-v3",
+                "--input",
+                "-",
+                "--format",
+                "json",
+            ],
+            state_check_runner=Mock(),
+            hardcover_identity_decision_preview_runner=(
+                _run_hardcover_identity_decision_preview
+            ),
+            stdin=io.StringIO(json.dumps(source) if payload is None else payload),
+            stdout=output,
+            stderr=errors,
+        )
+        return exit_code, output.getvalue(), errors.getvalue()
+
+    def test_identity_decision_preview_is_derived_through_zero_authority_seam(
+        self,
+    ) -> None:
+        source = self.identity_input(
+            rows=[
+                self.identity_row(),
+                self.identity_row(
+                    edition_id=1002,
+                    book_id=2002,
+                    edition_canonical_id=1001,
+                    book_canonical_id=2001,
+                ),
+            ]
+        )
+        with _zero_authority(), patch.object(
+            Path, "read_text", side_effect=_AuthorityTrap("fixture read")
+        ), patch.object(
+            Path, "read_bytes", side_effect=_AuthorityTrap("fixture read")
+        ):
+            code, output, errors = self.run_identity_preview(source)
+        self.assertEqual(code, 0)
+        self.assertEqual(errors, "")
+        self.assertEqual(
+            json.loads(output),
+            {
+                "schema": "hardcover-synthetic-output-v5",
+                "scenario": "identity-decision-v3",
+                "result": {
+                    "outcome": "matched",
+                    "rows_validated": 2,
+                    "aliases_collapsed": 1,
+                    "comparison": "equal",
+                },
+            },
+        )
+        for forbidden in ("9780000000019", "0000000019", "Synthetic Ebook"):
+            self.assertNotIn(forbidden, output)
+
+    def test_identity_variants_cover_permutation_title_979_and_differing_output(
+        self,
+    ) -> None:
+        primary = self.identity_row()
+        alias = self.identity_row(
+            edition_id=1002,
+            book_id=2002,
+            edition_canonical_id=1001,
+            book_canonical_id=2001,
+        )
+        _, forward, _ = self.run_identity_preview(
+            self.identity_input(rows=[primary, alias])
+        )
+        _, reverse, _ = self.run_identity_preview(
+            self.identity_input(rows=[alias, primary])
+        )
+        self.assertEqual(forward, reverse)
+
+        _, changed_title, _ = self.run_identity_preview(
+            self.identity_input(title="Different Local Title", rows=[primary, alias])
+        )
+        self.assertEqual(json.loads(changed_title)["result"]["comparison"], "different")
+        forward_result = json.loads(forward)["result"]
+        changed_result = json.loads(changed_title)["result"]
+        self.assertEqual(
+            {key: value for key, value in forward_result.items() if key != "comparison"},
+            {key: value for key, value in changed_result.items() if key != "comparison"},
+        )
+
+        isbn_979 = self.identity_input(
+            rows=[self.identity_row(isbn_10=None, isbn_13="9790000000001")]
+        )
+        isbn_979["canonical_isbn_13"] = "9790000000001"
+        isbn_979["derived_isbn_10"] = None
+        code, output, errors = self.run_identity_preview(isbn_979)
+        self.assertEqual((code, errors), (0, ""))
+        self.assertEqual(json.loads(output)["result"]["outcome"], "matched")
+
+        two_primaries = self.identity_input(
+            rows=[primary, self.identity_row(edition_id=1002, book_id=2002)]
+        )
+        _, different_output, _ = self.run_identity_preview(two_primaries)
+        self.assertEqual(json.loads(different_output)["result"]["outcome"], "ambiguous")
+        self.assertNotEqual(forward, different_output)
+
+    def test_identity_precedence_and_alias_graph_failures_are_public_results(
+        self,
+    ) -> None:
+        four_rows = [
+            self.identity_row(
+                edition_id=1000 + index,
+                book_id=2000 + index,
+                edition_canonical_id=None if index == 1 else 1001,
+                book_canonical_id=None if index == 1 else 2001,
+            )
+            for index in range(1, 5)
+        ]
+        four_rows[3]["reading_format_id"] = 3
+        _, incompatible, _ = self.run_identity_preview(
+            self.identity_input(rows=four_rows)
+        )
+        self.assertEqual(json.loads(incompatible)["result"]["outcome"], "incompatible")
+
+        cycle = [
+            self.identity_row(
+                edition_canonical_id=1002, book_canonical_id=2002
+            ),
+            self.identity_row(
+                edition_id=1002,
+                book_id=2002,
+                edition_canonical_id=1001,
+                book_canonical_id=2001,
+            ),
+        ]
+        _, malformed, _ = self.run_identity_preview(self.identity_input(rows=cycle))
+        self.assertEqual(json.loads(malformed)["result"]["outcome"], "malformed")
+
+    def test_identity_closed_input_failures_are_value_free(self) -> None:
+        cases: list[tuple[object, str | None]] = []
+        extra = self.identity_input()
+        extra["extra"] = True
+        cases.append((extra, None))
+        missing = self.identity_input()
+        del missing["provider_rows"]
+        cases.append((missing, None))
+        wrong_derived = self.identity_input()
+        wrong_derived["derived_isbn_10"] = "0306406152"
+        cases.append((wrong_derived, None))
+        cases.append(
+            (
+                {},
+                '{"schema":"hardcover-synthetic-input-v3",'
+                '"scenario":"identity-decision-v3",'
+                '"scenario":"identity-decision-v3"}',
+            )
+        )
+        cases.append(({}, " " * 65_537))
+        for source, payload in cases:
+            with self.subTest(payload_size=len(payload or "")), _zero_authority():
+                code, output, errors = self.run_identity_preview(source, payload=payload)
+            self.assertEqual(code, 2)
+            self.assertEqual(output, "")
+            self.assertNotIn("978", errors)
+            self.assertNotIn("Synthetic", errors)
 
     def test_production_disabled_and_enabled_short_circuit_before_private_authority(
         self,

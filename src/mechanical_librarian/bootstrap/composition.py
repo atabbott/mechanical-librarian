@@ -66,7 +66,11 @@ from mechanical_librarian.application.connection_probe import (
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.hardcover_identity import (
     HardcoverIdentityReport,
+    IdentityAttemptResult,
+    IdentityDecisionPreviewReport,
     InertPreviewReport,
+    IsbnIdentityQuery,
+    RunHardcoverIdentityReport,
     inert_preview,
     preactivation_report,
 )
@@ -160,7 +164,12 @@ from mechanical_librarian.domain.inventory import (
 )
 from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanState, ScanUsage
 from mechanical_librarian.domain.inventory_polling import PollPolicy, PollRequest
-from mechanical_librarian.domain.hardcover_identity import validate_private_query
+from mechanical_librarian.domain.hardcover_identity import (
+    ProviderBookObservation,
+    ProviderIdentityObservation,
+    isbn_identity,
+    validate_private_query,
+)
 from mechanical_librarian.infrastructure.configuration import (
     load_configuration_file,
     validate_hardcover_provider,
@@ -1514,6 +1523,179 @@ def _run_hardcover_inert_preview(
     return inert_preview(configuration, query, privacy_observer=privacy_observer)
 
 
+class _SyntheticBookIdentityProvider:
+    def __init__(
+        self,
+        expected_query: IsbnIdentityQuery,
+        observations: tuple[ProviderIdentityObservation, ...],
+    ) -> None:
+        self._expected_query = expected_query
+        self._observations = observations
+        self._called = False
+
+    def lookup(
+        self, query: IsbnIdentityQuery, context: OperationContext
+    ) -> IdentityAttemptResult:
+        if self._called or query != self._expected_query:
+            raise ValueError("synthetic identity provider invocation is invalid")
+        if type(context) is not OperationContext:
+            raise TypeError("synthetic identity context is malformed")
+        self._called = True
+        return IdentityAttemptResult.success(self._observations)
+
+
+def _run_hardcover_identity_decision_preview(
+    source: Mapping[str, object],
+    *,
+    privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
+) -> IdentityDecisionPreviewReport:
+    if set(source) != {
+        "schema",
+        "scenario",
+        "canonical_isbn_13",
+        "derived_isbn_10",
+        "local_title",
+        "provider_rows",
+    } or source.get("schema") != "hardcover-synthetic-input-v3" or source.get(
+        "scenario"
+    ) != "identity-decision-v3":
+        raise ValueError("synthetic input is invalid")
+    canonical_isbn = source.get("canonical_isbn_13")
+    derived_isbn_10 = source.get("derived_isbn_10")
+    local_title = source.get("local_title")
+    provider_rows = source.get("provider_rows")
+    if (
+        type(canonical_isbn) is not str
+        or len(canonical_isbn) != 13
+        or not canonical_isbn.isascii()
+        or not canonical_isbn.isdigit()
+        or (derived_isbn_10 is not None and type(derived_isbn_10) is not str)
+        or type(local_title) is not str
+        or not 1 <= len(local_title) <= 512
+        or type(provider_rows) is not list
+        or len(provider_rows) > 4
+    ):
+        raise ValueError("synthetic input is invalid")
+    query = validate_private_query({"isbn": canonical_isbn, "title": local_title})
+    identity = isbn_identity(canonical_isbn)
+    if derived_isbn_10 != identity.equivalent_isbn_10:
+        raise ValueError("synthetic input is invalid")
+    observations = tuple(_synthetic_identity_row(row) for row in provider_rows)
+    typed_query = IsbnIdentityQuery(
+        identity.canonical_isbn_13, identity.equivalent_isbn_10
+    )
+    provider = _SyntheticBookIdentityProvider(typed_query, observations)
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    context = OperationContext(
+        Deadline(now + timedelta(seconds=5)),
+        CancellationProbe(CancellationId("hardcover-identity-preview"), lambda: False),
+        ResourceBounds(4, 65_536),
+        TimeProbe(lambda: now),
+    )
+    return RunHardcoverIdentityReport().run(
+        provider, query, context, privacy_observer=privacy_observer
+    )
+
+
+def _synthetic_identity_row(source: object) -> ProviderIdentityObservation:
+    if not isinstance(source, Mapping) or set(source) != {
+        "id",
+        "book_id",
+        "canonical_id",
+        "isbn_10",
+        "isbn_10_valid",
+        "isbn_13",
+        "isbn_13_valid",
+        "isbns_match",
+        "reading_format_id",
+        "state",
+        "compilation",
+        "book",
+    }:
+        raise ValueError("synthetic provider row is invalid")
+    if not isinstance(source.get("book"), Mapping):
+        raise ValueError("synthetic provider row is invalid")
+    book = _synthetic_book(source["book"])
+    if not (
+        _json_positive_integer(source.get("id"))
+        and _json_positive_integer(source.get("book_id"))
+        and _json_optional_integer(source.get("canonical_id"))
+        and _json_optional_text(source.get("isbn_10"))
+        and _json_optional_boolean(source.get("isbn_10_valid"))
+        and _json_optional_text(source.get("isbn_13"))
+        and _json_optional_boolean(source.get("isbn_13_valid"))
+        and _json_optional_boolean(source.get("isbns_match"))
+        and type(source.get("reading_format_id")) is int
+        and type(source.get("state")) is str
+        and type(source.get("compilation")) is bool
+    ):
+        raise ValueError("synthetic provider row is invalid")
+    return ProviderIdentityObservation(
+        id=source["id"],
+        book_id=source["book_id"],
+        canonical_id=source["canonical_id"],
+        isbn_10=source["isbn_10"],
+        isbn_10_valid=source["isbn_10_valid"],
+        isbn_13=source["isbn_13"],
+        isbn_13_valid=source["isbn_13_valid"],
+        isbns_match=source["isbns_match"],
+        reading_format_id=source["reading_format_id"],
+        state=source["state"],
+        compilation=source["compilation"],
+        book=book,
+    )
+
+
+def _synthetic_book(source: Mapping[str, object]) -> ProviderBookObservation:
+    if set(source) != {
+        "id",
+        "canonical_id",
+        "book_status_id",
+        "state",
+        "title",
+        "parent_book_id",
+        "compilation",
+        "is_partial_book",
+    } or not (
+        _json_positive_integer(source.get("id"))
+        and _json_optional_integer(source.get("canonical_id"))
+        and type(source.get("book_status_id")) is int
+        and type(source.get("state")) is str
+        and type(source.get("title")) is str
+        and 1 <= len(source["title"]) <= 512
+        and _json_optional_integer(source.get("parent_book_id"))
+        and type(source.get("compilation")) is bool
+        and type(source.get("is_partial_book")) is bool
+    ):
+        raise ValueError("synthetic provider book is invalid")
+    return ProviderBookObservation(
+        id=source["id"],
+        canonical_id=source["canonical_id"],
+        book_status_id=source["book_status_id"],
+        state=source["state"],
+        title=source["title"],
+        parent_book_id=source["parent_book_id"],
+        compilation=source["compilation"],
+        is_partial_book=source["is_partial_book"],
+    )
+
+
+def _json_positive_integer(value: object) -> bool:
+    return type(value) is int and value >= 1
+
+
+def _json_optional_integer(value: object) -> bool:
+    return value is None or type(value) is int
+
+
+def _json_optional_boolean(value: object) -> bool:
+    return value is None or type(value) is bool
+
+
+def _json_optional_text(value: object) -> bool:
+    return value is None or type(value) is str
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Assemble the current process and delegate to its CLI interface."""
 
@@ -1535,6 +1717,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         synthetic_title_review_case_runner=_run_synthetic_title_review_case_report,
         hardcover_identity_runner=_run_hardcover_identity_report,
         hardcover_inert_preview_runner=_run_hardcover_inert_preview,
+        hardcover_identity_decision_preview_runner=(
+            _run_hardcover_identity_decision_preview
+        ),
     )
 
 
