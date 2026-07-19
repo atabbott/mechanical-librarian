@@ -33,8 +33,12 @@ class SqliteFoundationTests(unittest.TestCase):
                 with bound.staged_state() as staged:
                     staged.write_bytes(b"owned staged state")
                     staged_path = parent / staged.name
-                    staged_path.unlink()
-                    staged_path.write_bytes(replacement)
+                    held_descriptor = os.open(staged_path, os.O_RDONLY)
+                    try:
+                        staged_path.unlink()
+                        staged_path.write_bytes(replacement)
+                    finally:
+                        os.close(held_descriptor)
                     staged_path.chmod(0o600)
 
                     def capture_open(path, flags, *args, **kwargs):
