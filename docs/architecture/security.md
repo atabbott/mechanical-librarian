@@ -545,6 +545,55 @@ serialized staging, synchronization, and no-replace linking without a
 process-global working-directory change; device/inode/owner/mode
 revalidation rejects parent swaps without publishing into the replacement.
 
+F09f increment 5 replaces structural gate assertions only in the new
+`safe-executor-v3` synthetic lane. `RunSafeHardcoverIdentity` owns acceptance,
+inspection of the persisted aggregate deadline, nonblocking gate acquisition,
+claim/fence, atomic start accounting, one typed provider attempt, and durable
+publication. The provider port owns exactly one attempt and cannot claim,
+retry, wait, recover, or publish. Durable retry state remains available for a
+later orchestrator, but this executor never waits, retries, recovers, installs
+signal handlers, or loops. Production composition remains absent.
+
+The deployment gate canonicalizes the state parent and binds its directory,
+database, and exact `.mechanical-librarian-hardcover-identity.lock` entries to
+open descriptors. The root is effective-user-owned and private; database and
+lock are regular, effective-user-owned, link-count-one entries opened with
+no-follow and close-on-exec flags. The lock is mode `0600`, acquired with
+nonblocking `flock`, and its entry/descriptor identity is checked after open,
+after acquisition, and immediately before send. Canonical parent aliases
+converge on the same device/inode and lock. Dot/dotdot, nonconverging or changed
+identity, final symlink, hardlink, nonregular database, permissive root, and
+lock/database replacement fail closed. The lock is stable and never unlinked
+during operation.
+
+The persisted 30-second aggregate window is inspected before gate acquisition,
+and the caller deadline is checked at the same boundary. A busy gate returns
+`in_progress` without claim or start. Under the gate, atomic renew-and-start
+requires six seconds remaining, extends the current fence lease to 15 seconds,
+records consumption, and is the sole send authority. The attempt context ends
+at the earlier of the caller deadline and start plus five seconds. A result at
+or after that exact boundary is converted to timeout before publication.
+`rate_limited`, `timeout`, and `unavailable` publish retryable durable state and
+return `in_progress` when at least the exact six-second retry reserve remains.
+A committed retryable terminal caused by insufficient reserve returns
+`retry_exhausted`, not `persistence_failure`; a future invocation is not started
+by this executor.
+
+The synthetic C5 contributor label and process fields never supply durable
+identity. The executor uses one fixed 55-character internal owner outside the
+complete label and process syntax domains. Qualification uses sentinel-bearing
+controls, owner readback, and an internal-vocabulary collision variant, so an
+equal word such as `pending` is not confused with contributor-derived flow.
+The persistence scanner likewise ignores only eight-hex 32-bit digest prefixes
+inside arbitrary SQLite bytes/text/hex because unrelated durable identities can
+collide. It still rejects exact/raw contributor values, full encodings and
+collision-resistant digests, and causal poison. A synthetic-only observer
+materializes and exactly restores one timestamp transaction so qualification
+captures nonempty main, WAL, and SHM while present without changing durable
+domain state or production authority.
+Ordinary gate, provider, and persistence failures map to closed public outcomes,
+while interpreter control flow is re-raised after gate cleanup.
+
 F07b treats the service path projection, private logical binding, EPUB archive,
 and persisted canonical report as hostile inputs. Callers can supply only
 strict opaque references and a bounded file index. Resolution requires one

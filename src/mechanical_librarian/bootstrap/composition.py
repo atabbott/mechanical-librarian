@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
+import secrets
 import sqlite3
 import stat
 from collections.abc import Callable, Mapping, Sequence
@@ -79,13 +81,20 @@ from mechanical_librarian.application.hardcover_identity import (
     FixedAdapterPreviewReport,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
+    IdentityAttemptFailureKind,
+    IdentityAttemptResult,
     InertPreviewReport,
     IsbnIdentityQuery,
     ManageHardcoverIdentityWork,
     RunHardcoverFixedAdapterPreview,
     RunHardcoverIdentityReport,
+    SafeExecutorPreviewReport,
     inert_preview,
     preactivation_report,
+)
+from mechanical_librarian.application.hardcover_safe_executor import (
+    HardcoverIdentityExecutionRequest,
+    RunSafeHardcoverIdentity,
 )
 from mechanical_librarian.application.job_heartbeat import (
     HeartbeatOutcome,
@@ -183,6 +192,11 @@ from mechanical_librarian.domain.hardcover_identity import (
     isbn_identity,
     validate_private_query,
 )
+from mechanical_librarian.domain.hardcover_identity_work import (
+    IdentityMatchOutcome,
+    IdentityWorkClaim,
+    IdentityWorkObservation,
+)
 from mechanical_librarian.infrastructure.configuration import (
     load_configuration_file,
     validate_hardcover_provider,
@@ -219,6 +233,9 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
     preflight,
     publish_staged_state,
     staged_state,
+)
+from mechanical_librarian.infrastructure.hardcover_identity_gate import (
+    DescriptorHardcoverIdentityGate,
 )
 from mechanical_librarian.interfaces.cli import main as cli_main
 from urllib.parse import urlsplit
@@ -1762,6 +1779,439 @@ def _run_hardcover_durable_work_preview(
     )
 
 
+class _SyntheticExecutorClock:
+    def __init__(self, now: datetime) -> None:
+        self.now = now
+
+
+class _ObservedGateLease:
+    def __init__(self, inner: object, gate: _ObservedGate) -> None:
+        self._inner = inner
+        self._gate = gate
+
+    def validate_for_send(self) -> None:
+        if not self._gate.held:
+            raise SchemaError("safe executor gate order is invalid")
+        self._gate.send_validations += 1
+        self._inner.validate_for_send()
+
+    def release(self) -> None:
+        self._inner.release()
+        self._gate.held = False
+        self._gate.releases += 1
+
+
+class _ObservedGate:
+    def __init__(self, inner: DescriptorHardcoverIdentityGate) -> None:
+        self._inner = inner
+        self.held = False
+        self.acquisitions = 0
+        self.releases = 0
+        self.send_validations = 0
+
+    def try_acquire(self) -> _ObservedGateLease | None:
+        if self.held:
+            raise SchemaError("safe executor gate was acquired recursively")
+        lease = self._inner.try_acquire()
+        if lease is None:
+            return None
+        self.held = True
+        self.acquisitions += 1
+        return _ObservedGateLease(lease, self)
+
+
+class _SyntheticExecutorProvider:
+    def __init__(
+        self,
+        result: IdentityAttemptResult,
+        clock: _SyntheticExecutorClock,
+        duration_ms: int,
+    ) -> None:
+        self._result = result
+        self._clock = clock
+        self._duration = timedelta(milliseconds=duration_ms)
+        self.starts = 0
+        self.deadlines: list[datetime] = []
+
+    def lookup(
+        self, query: IsbnIdentityQuery, context: OperationContext
+    ) -> IdentityAttemptResult:
+        self.starts += 1
+        self.deadlines.append(context.deadline.at)
+        self._clock.now += self._duration
+        return self._result
+
+
+class _SyntheticFailingGate:
+    def try_acquire(self) -> object:
+        raise SchemaError("safe executor synthetic gate failure")
+
+
+def _safe_executor_context(
+    clock: _SyntheticExecutorClock, caller_deadline_ms: int
+) -> OperationContext:
+    return OperationContext(
+        Deadline(clock.now + timedelta(milliseconds=caller_deadline_ms)),
+        CancellationProbe(
+            CancellationId("hardcover-safe-executor-preview"), lambda: False
+        ),
+        ResourceBounds(4, 65_536),
+        TimeProbe(lambda: clock.now),
+    )
+
+
+def _safe_executor_request(
+    query: object,
+) -> HardcoverIdentityExecutionRequest:
+    return HardcoverIdentityExecutionRequest(
+        secrets.token_hex(32),
+        _C5_INTERNAL_OWNER,
+        query,
+    )
+
+
+_C5_INTERNAL_OWNER = "internal-safe-executor-owner-v1-noncontributor-boundary"
+
+
+def _safe_executor_match() -> IdentityAttemptResult:
+    row = ProviderIdentityObservation(
+        id=1001,
+        book_id=2001,
+        canonical_id=None,
+        isbn_10="0000000019",
+        isbn_10_valid=True,
+        isbn_13="9780000000019",
+        isbn_13_valid=True,
+        isbns_match=True,
+        reading_format_id=4,
+        state="normalized",
+        compilation=False,
+        book=ProviderBookObservation(
+            id=2001,
+            canonical_id=None,
+            book_status_id=1,
+            state="processed",
+            title="Synthetic Ebook Alpha",
+            parent_book_id=None,
+            compilation=False,
+            is_partial_book=False,
+        ),
+    )
+    return IdentityAttemptResult.success((row,))
+
+
+def _validate_safe_executor_preview_input(source: Mapping[str, object]) -> None:
+    if (
+        set(source) != {"schema", "scenario", "cases"}
+        or source.get("schema") != "hardcover-synthetic-input-v3"
+        or source.get("scenario") != "safe-executor-v3"
+    ):
+        raise ValueError("safe executor preview input is malformed")
+    cases = source.get("cases")
+    if type(cases) is not list or not 1 <= len(cases) <= 16:
+        raise ValueError("safe executor preview input is malformed")
+    operations = {
+        "matched",
+        "unavailable",
+        "busy_gate",
+        "aggregate_expired",
+        "caller_expired",
+        "caller_deadline",
+        "late_match",
+        "late_exhausted",
+        "gate_failure",
+        "stale_refresh",
+    }
+    for case in cases:
+        if not isinstance(case, Mapping) or set(case) != {
+            "label",
+            "process",
+            "operation",
+            "caller_deadline_ms",
+            "provider_duration_ms",
+        }:
+            raise ValueError("safe executor preview input is malformed")
+        label = case.get("label")
+        process = case.get("process")
+        operation = case.get("operation")
+        deadline = case.get("caller_deadline_ms")
+        duration = case.get("provider_duration_ms")
+        if (
+            type(label) is not str
+            or not 1 <= len(label) <= 48
+            or not label.isascii()
+            or not label.isprintable()
+            or label.strip() != label
+            or type(process) is not str
+            or not 1 <= len(process) <= 32
+            or not process.isascii()
+            or not process.isprintable()
+            or process.strip() != process
+            or operation not in operations
+            or type(deadline) is not int
+            or not 0 <= deadline <= 30_000
+            or type(duration) is not int
+            or not 0 <= duration <= 30_000
+        ):
+            raise ValueError("safe executor preview input is malformed")
+        if operation == "caller_expired" and deadline != 0:
+            raise ValueError("safe executor preview input is malformed")
+        if operation == "caller_deadline" and not 1 <= deadline < 5_000:
+            raise ValueError("safe executor preview input is malformed")
+        if operation == "late_match" and duration < min(deadline, 5_000):
+            raise ValueError("safe executor preview input is malformed")
+        if operation == "late_exhausted" and (
+            deadline != 30_000 or duration != 4_001
+        ):
+            raise ValueError("safe executor preview input is malformed")
+        if operation not in {"caller_expired", "caller_deadline"} and deadline < 5_000:
+            raise ValueError("safe executor preview input is malformed")
+
+
+def _run_hardcover_safe_executor_preview(
+    source: Mapping[str, object],
+    database: Path,
+    privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
+) -> SafeExecutorPreviewReport:
+    """Exercise the real lifecycle, repository, and descriptor gate without egress."""
+
+    _validate_safe_executor_preview_input(source)
+    if privacy_observer is not None and not callable(privacy_observer):
+        raise TypeError("safe executor privacy observer must be callable")
+    query = validate_private_query(
+        {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+    )
+    cases = source["cases"]
+
+    with bound_disposable_state(database) as bound, bound.staged_state() as staged:
+        connection = staged.connect()
+        try:
+            migrate(connection)
+            staged.persist(connection)
+        finally:
+            connection.close()
+        if not bound.publish(staged):
+            raise SchemaError("safe executor preview database publication raced")
+
+        connection = connect_existing(database)
+        try:
+            service = ManageHardcoverIdentityWork(
+                SQLiteHardcoverIdentityWorkRepository(connection)
+            )
+            raw_gate = DescriptorHardcoverIdentityGate(database)
+            gate = _ObservedGate(raw_gate)
+            clock = _SyntheticExecutorClock(datetime.now(timezone.utc))
+            providers: list[_SyntheticExecutorProvider] = []
+            owners: list[str] = []
+            # Each operation-specific proof is universal over the selected
+            # applicable cases and therefore true for an empty applicable set.
+            verified = {
+                "deadline": True,
+                "caller": True,
+                "late": True,
+                "closed": True,
+            }
+
+            for case in cases:
+                operation = case["operation"]
+                deadline_ms = case["caller_deadline_ms"]
+                duration_ms = case["provider_duration_ms"]
+                request = _safe_executor_request(query)
+                owners.append(request.owner)
+                provider_result = (
+                    IdentityAttemptResult.failed(
+                        IdentityAttemptFailureKind.UNAVAILABLE
+                    )
+                    if operation in {"unavailable", "late_exhausted"}
+                    else _safe_executor_match()
+                )
+                provider = _SyntheticExecutorProvider(
+                    provider_result, clock, duration_ms
+                )
+                providers.append(provider)
+                selected_gate: object = gate
+                held = None
+                if operation == "busy_gate":
+                    held = raw_gate.try_acquire()
+                    if held is None:
+                        raise SchemaError("safe executor busy proof could not acquire")
+                elif operation == "gate_failure":
+                    selected_gate = _SyntheticFailingGate()
+                elif operation == "stale_refresh":
+                    seed = service.accept(request.work_key, clock.now)
+                    seed_lease = gate.try_acquire()
+                    if seed_lease is None:
+                        raise SchemaError("safe executor stale seed gate failed")
+                    try:
+                        claim = service.claim(
+                            seed.reference,
+                            request.owner,
+                            clock.now,
+                            gate_owned=True,
+                        )
+                        started = service.start(
+                            claim,
+                            request.owner,
+                            clock.now,
+                            gate_owned=True,
+                        )
+                        if type(started) is not IdentityWorkClaim:
+                            raise SchemaError("safe executor stale seed start failed")
+                        service.publish_matched(
+                            started,
+                            request.owner,
+                            clock.now,
+                            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+                            gate_owned=True,
+                        )
+                    finally:
+                        seed_lease.release()
+                    clock.now += timedelta(hours=24, microseconds=1)
+                elif operation == "aggregate_expired":
+                    service.accept(request.work_key, clock.now)
+                    clock.now += timedelta(seconds=30)
+                elif operation == "late_exhausted":
+                    service.accept(request.work_key, clock.now)
+                    clock.now += timedelta(seconds=20)
+
+                before_acquire = gate.acquisitions
+                context = _safe_executor_context(clock, deadline_ms)
+                runner = RunHardcoverIdentityReport(
+                    RunSafeHardcoverIdentity(service, provider, selected_gate)
+                )
+                try:
+                    report = runner.run(request, context)
+                finally:
+                    if held is not None:
+                        held.release()
+
+                expected = {
+                    "matched": "matched",
+                    "unavailable": "in_progress",
+                    "busy_gate": "in_progress",
+                    "aggregate_expired": "retry_exhausted",
+                    "caller_expired": "retry_exhausted",
+                    "caller_deadline": "matched",
+                    "late_match": "in_progress",
+                    "late_exhausted": "retry_exhausted",
+                    "gate_failure": "persistence_failure",
+                    "stale_refresh": "matched",
+                }[operation]
+                if report.outcome.value != expected:
+                    raise SchemaError("safe executor semantic case failed")
+                durable = connection.execute(
+                    "SELECT generation,state,attempt_count "
+                    "FROM hardcover_identity_generations WHERE work_key=? "
+                    "ORDER BY generation DESC LIMIT 1",
+                    (request.work_key,),
+                ).fetchone()
+                expected_durable = {
+                    "matched": (1, "succeeded", 1),
+                    "unavailable": (1, "retry_wait", 1),
+                    "busy_gate": (1, "pending", 0),
+                    "aggregate_expired": (1, "pending", 0),
+                    "caller_expired": (1, "pending", 0),
+                    "caller_deadline": (1, "succeeded", 1),
+                    "late_match": (1, "retry_wait", 1),
+                    "late_exhausted": (1, "failed", 1),
+                    "gate_failure": (1, "pending", 0),
+                    "stale_refresh": (2, "succeeded", 1),
+                }[operation]
+                expected_starts = int(
+                    operation
+                    in {
+                        "matched",
+                        "unavailable",
+                        "caller_deadline",
+                        "late_match",
+                        "late_exhausted",
+                        "stale_refresh",
+                    }
+                )
+                if durable != expected_durable or provider.starts != expected_starts:
+                    raise SchemaError("safe executor durable semantic case failed")
+                if operation == "aggregate_expired":
+                    verified["deadline"] = (
+                        verified["deadline"]
+                        and gate.acquisitions == before_acquire
+                    )
+                elif operation == "caller_deadline":
+                    verified["caller"] = (
+                        verified["caller"]
+                        and provider.deadlines == [context.deadline.at]
+                    )
+                elif operation in {"late_match", "late_exhausted"}:
+                    matched_publications = connection.execute(
+                        "SELECT COUNT(*) FROM hardcover_identity_results "
+                        "WHERE work_key=? AND outcome='matched'",
+                        (request.work_key,),
+                    ).fetchone()
+                    verified["late"] = (
+                        verified["late"] and matched_publications == (0,)
+                    )
+                elif operation == "gate_failure":
+                    verified["closed"] = (
+                        verified["closed"] and provider.starts == 0
+                    )
+
+            if privacy_observer is not None:
+                try:
+                    privacy_observer(
+                        "persistence_checkpoint", ("sqlite-main-wal-shm",)
+                    )
+                except Exception as exc:
+                    raise SchemaError(
+                        "safe executor privacy persistence observation failed"
+                    ) from exc
+
+            labels_private = (
+                48 < len(_C5_INTERNAL_OWNER) <= 64
+                and all(owner == _C5_INTERNAL_OWNER for owner in owners)
+            )
+        finally:
+            connection.close()
+
+    starts = sum(provider.starts for provider in providers)
+    report = SafeExecutorPreviewReport(
+        outcome="all_cases_passed",
+        cases_executed=len(cases),
+        attempts_started=starts,
+        gate_order_verified=(
+            gate.send_validations == starts
+            and gate.acquisitions == gate.releases
+            and not gate.held
+        ),
+        deadline_before_gate_verified=verified["deadline"],
+        caller_deadline_verified=verified["caller"],
+        late_result_rejected=verified["late"],
+        closed_mapping_verified=verified["closed"],
+        contributor_labels_private=labels_private,
+    )
+    if privacy_observer is not None:
+        observations = (
+            (
+                "traces",
+                ("hardcover.synthetic.safe_executor", "safe-executor-v3"),
+            ),
+            ("spans", ("one-attempt-case-set", report.outcome)),
+            (
+                "metrics",
+                (
+                    "hardcover_safe_executor_preview_total",
+                    (("outcome", report.outcome),),
+                    1,
+                    None,
+                ),
+            ),
+        )
+        try:
+            for observer_channel, observer_values in observations:
+                privacy_observer(observer_channel, observer_values)
+        except Exception as exc:
+            raise SchemaError("safe executor privacy observation failed") from exc
+    return report
+
+
 def _synthetic_identity_row(source: object) -> ProviderIdentityObservation:
     if not isinstance(source, Mapping) or set(source) != {
         "id",
@@ -1887,6 +2337,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         hardcover_fixed_adapter_preview_runner=_run_hardcover_fixed_adapter_preview,
         hardcover_durable_work_preview_runner=_run_hardcover_durable_work_preview,
+        hardcover_safe_executor_preview_runner=_run_hardcover_safe_executor_preview,
     )
 
 

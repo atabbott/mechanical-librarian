@@ -1,0 +1,1 @@
+{"result":{"attempts_started":6,"caller_deadline_verified":true,"cases_executed":10,"closed_mapping_verified":true,"contributor_labels_private":true,"deadline_before_gate_verified":true,"gate_order_verified":true,"late_result_rejected":true,"outcome":"all_cases_passed"},"scenario":"safe-executor-v3","schema":"hardcover-synthetic-output-v5"}

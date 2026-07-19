@@ -70,6 +70,7 @@ from mechanical_librarian.application.hardcover_identity import (
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
     InertPreviewReport,
+    SafeExecutorPreviewReport,
     render_report_text as render_hardcover_identity_text,
 )
 from mechanical_librarian.domain.local_evidence import (
@@ -103,6 +104,9 @@ HardcoverFixedAdapterPreviewRunner = Callable[
 ]
 HardcoverDurableWorkPreviewRunner = Callable[
     [Mapping[str, object], Path], DurableWorkPreviewReport
+]
+HardcoverSafeExecutorPreviewRunner = Callable[
+    [Mapping[str, object], Path], SafeExecutorPreviewReport
 ]
 
 _FAILURE_MESSAGES = {
@@ -198,6 +202,7 @@ def _hardcover_identity_parser() -> argparse.ArgumentParser:
             "identity-decision-v3",
             "fixed-adapter-v3",
             "durable-work-v3",
+            "safe-executor-v3",
         ),
     )
     parser.add_argument("--input")
@@ -567,6 +572,9 @@ def main(
     hardcover_durable_work_preview_runner: (
         HardcoverDurableWorkPreviewRunner | None
     ) = None,
+    hardcover_safe_executor_preview_runner: (
+        HardcoverSafeExecutorPreviewRunner | None
+    ) = None,
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
@@ -586,7 +594,10 @@ def main(
             return 2
         synthetic = hardcover_arguments.mode == "synthetic-preview"
         if synthetic:
-            durable = hardcover_arguments.scenario == "durable-work-v3"
+            durable = hardcover_arguments.scenario in {
+                "durable-work-v3",
+                "safe-executor-v3",
+            }
             exact = (
                 hardcover_arguments.scenario
                 in {
@@ -594,6 +605,7 @@ def main(
                     "identity-decision-v3",
                     "fixed-adapter-v3",
                     "durable-work-v3",
+                    "safe-executor-v3",
                 }
                 and hardcover_arguments.input == "-"
                 and hardcover_arguments.format == "json"
@@ -625,10 +637,16 @@ def main(
                     if hardcover_fixed_adapter_preview_runner is None:
                         raise ValueError("fixed adapter preview is unavailable")
                     report = hardcover_fixed_adapter_preview_runner(source)
-                else:
+                elif hardcover_arguments.scenario == "durable-work-v3":
                     if hardcover_durable_work_preview_runner is None:
                         raise ValueError("durable work preview is unavailable")
                     report = hardcover_durable_work_preview_runner(
+                        source, hardcover_arguments.database
+                    )
+                else:
+                    if hardcover_safe_executor_preview_runner is None:
+                        raise ValueError("safe executor preview is unavailable")
+                    report = hardcover_safe_executor_preview_runner(
                         source, hardcover_arguments.database
                     )
             except Exception:
@@ -649,7 +667,14 @@ def main(
                 if type(report) is not FixedAdapterPreviewReport:
                     errors.write(_HARDCOVER_IDENTITY_FAILURE)
                     return 2
-            elif type(report) is not DurableWorkPreviewReport:
+            elif hardcover_arguments.scenario == "durable-work-v3" and type(
+                report
+            ) is not DurableWorkPreviewReport:
+                errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                return 2
+            elif hardcover_arguments.scenario == "safe-executor-v3" and type(
+                report
+            ) is not SafeExecutorPreviewReport:
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
             try:
@@ -663,6 +688,7 @@ def main(
                 IdentityDecisionPreviewReport,
                 FixedAdapterPreviewReport,
                 DurableWorkPreviewReport,
+                SafeExecutorPreviewReport,
             }:
                 return 0
             return 0 if report.outcome is HardcoverIdentityOutcome.DISABLED else 2

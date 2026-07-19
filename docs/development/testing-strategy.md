@@ -324,6 +324,44 @@ unrestricted identifiers, target/library identifiers, media paths, and caches.
 Private exact-installed-artifact qualification uses a dedicated non-production
 account and disposable state, retaining only a redacted aggregate.
 
+F09f increment 5 keeps ordinary and installed qualification entirely
+credential-free. `safe-executor-v3` runs a strict semantic case set through the
+real one-attempt application executor, schema-9 repository, descriptor gate,
+injected clock, and structural provider. Tests prove persisted aggregate and
+caller deadlines before gate acquisition, gate before claim/start, atomic start
+as the sole send authority, the earlier caller/five-second attempt cutoff,
+post-return late-result rejection, retryable publication without an in-process
+retry, the exact six-second retry reserve and `retry_exhausted` mapping when
+less reserve remains, busy-gate behavior, stale-generation replacement, and closed ordinary
+failure mapping.
+
+Gate tests use independent contenders and canonical parent aliases, then race
+or replace parent, database, and lock identities. They reject dot/dotdot,
+symlink, hardlink, FIFO/nonregular, wrong owner/mode/link count, permissive
+roots, and nonconverging identities; verify nonblocking contention, mode 0600,
+stable inode, revalidation immediately before send, and no unlink. Executor
+tests re-raise base interpreter control flow only after gate cleanup and do not
+install process signal handlers. Egress, secret, fixture-oracle, exact
+contributor-stdin, contributor-label, private-value persistence/output,
+malformed schedule, clock regression, stale fence, and production-composition
+traps remain active. Under the existing synthetic privacy observer, a test-only
+connection commits and exactly restores one timestamp solely to materialize WAL
+frames. Qualification asserts and scans nonempty SQLite main, WAL, and SHM while
+present, verifies exact pre/post readback, then scans main again after close.
+
+The C5 privacy contract reuses the shared projection scanner across 17 capture
+channels and seven source classes. Canonical, taint-sentinel, and ordinary-word
+collision variants prove contributor controls do not supply identity; one base
+corpus scan, completeness failures, and representative poison for every
+channel/source pair make that boundary executable. The immutable predecessor
+title-only proof remains bound by issue #276 and the exact C4 registry rather
+than being duplicated in C5.
+Arbitrary SQLite binary, Latin-1, and hexadecimal capture omits only eight-hex
+32-bit digest prefixes from substring matching because unrelated work-key bytes
+can collide. Exact/raw values, full encodings and collision-resistant digests,
+hash/fingerprint spies, causal poison, and all non-persistence channels retain
+the complete projection corpus.
+
 F09g tests first reject a stale or mismatched target, snapshot, source, file, or
 F07b evidence before provider disclosure or scheduling/binding new F09f work;
 F09f durable retry/restart remains target-independent after that handoff. The

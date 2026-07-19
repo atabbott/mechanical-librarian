@@ -1,8 +1,10 @@
 # Hardcover Identity Report
 
-`hardcover-identity-report` is the installed, report-only F09f surface. In the
-current preactivation increment it cannot contact Hardcover or open a private
-query, database, or provider secret.
+`hardcover-identity-report` is the installed, report-only F09f surface.
+Production remains preactivated: it cannot contact Hardcover or open a private
+query, database, or provider secret. Contributor synthetic scenarios may open
+only an explicitly supplied absent disposable database and never compose a
+provider credential or network client.
 
 ## Production syntax
 
@@ -152,6 +154,87 @@ The cumulative C4 registry is `preview-registry-c4-v6.json`, SHA-256
 The registry also binds contributor-independent schema-8 logical snapshot and
 ledger resources used only for qualification; runtime reconstructs and
 validates the prefix and never loads the expected output before emission.
+
+### Safe executor preview
+
+F09f increment 5 installs the foreground lifecycle and deployment gate behind
+one synthetic-only executable scenario:
+
+```text
+mechanical-librarian hardcover-identity-report \
+  --mode synthetic-preview --scenario safe-executor-v3 \
+  --input - --database ABSENT_DISPOSABLE_PATH --format json
+```
+
+The disposable-path rules are the same as the durable-work preview. The
+command publishes an owner-only schema-9 database, retains the owner-only
+`.mechanical-librarian-hardcover-identity.lock`, and runs a strict set of
+semantic cases through the real one-attempt application executor, repository,
+and descriptor-bound nonblocking `flock`. It proves persisted aggregate and
+caller deadlines before the gate, one successful and one retryable attempt,
+busy-gate behavior, caller-deadline clipping, exact late-result rejection,
+closed gate-failure mapping, and stale-generation replacement. There is no DNS,
+socket, HTTP, credential, live Hardcover request, proposal, or production
+composition. Contributor labels and process names are control-only. One fixed
+internal owner crosses the persistence seam; no persisted/runtime identity or
+value is derived from those controls, and equal incidental vocabulary is
+allowed.
+Qualification captures transient WAL/SHM only under the synthetic privacy
+observer, using one exactly restored test-only timestamp mutation; no such
+materialization path is production authority.
+
+The operation-specific proof booleans are universal predicates over the
+selected applicable cases. If a valid strict subset selects no corresponding
+operation, that proof is true for the empty applicable set. If one or more
+corresponding operations are selected, the proof is true only when every
+selected applicable case passes its actual hard check. `all_cases_passed`
+still requires every proof boolean to be exactly true. The canonical ten-case
+fixture is the separate complete applicability-coverage proof; a successful
+strict subset demonstrates semantic evaluation without claiming that coverage.
+
+The executor inspects the persisted 30-second aggregate deadline and caller
+deadline before trying the gate. A busy gate returns `in_progress` without a
+claim or start. After acquiring the gate, the executor re-inspects the exact
+generation without mutation: `pending` may continue, `claimed` or `retry_wait`
+returns `in_progress`, and a reconciled still-current `succeeded` returns
+`matched`. Missing, inconsistent, or expired current evidence and `failed` or
+`cancelled` fail closed as `persistence_failure`; this projection does not
+reconstruct a terminal reason. Under the gate, claim still does not consume
+budget; atomic renew-and-start requires six seconds remaining, renews the lease
+for 15 seconds,
+and alone authorizes one provider attempt. Its context ends at the earlier of
+the caller deadline and start plus five seconds. A provider result arriving at
+or after that boundary is converted to timeout before durable publication.
+Retryable outcomes with at least the exact six-second reserve publish
+retry-wait state and return `in_progress`. If insufficient reserve instead
+causes publication to commit terminal failure, the result is
+`retry_exhausted`. This increment does not wait, retry, recover, cancel, or
+install signal handlers.
+The gate remains held through durable publication and is released on every
+ordinary and base-exception path.
+
+The canonical demonstration is:
+
+```sh
+preview_dir="$(mktemp -d)"
+uv run --frozen --no-editable --reinstall-package mechanical-librarian \
+  mechanical-librarian hardcover-identity-report \
+  --mode synthetic-preview --scenario safe-executor-v3 --input - \
+  --database "$preview_dir/state.sqlite" --format json \
+  < tests/fixtures/hardcover_identity/c5-safe-executor-input.json
+```
+
+Stdout must be byte-identical to
+`tests/fixtures/hardcover_identity/c5-safe-executor-example-output.json`.
+The cumulative C5 registry is `preview-registry-c5-v6.json`, SHA-256
+`0f0ae4c1284af4562d8c2c90c0626d47dfbbe927c10400c3e8849bd3d4c33a3a`.
+It derives from the merged C4 registry and adds only `safe-executor-v3`.
+
+The gate is deployment-scoped, not credential-scoped. Operators must not reuse
+one Hardcover credential across independently configured deployments. The
+lock file is never individually removed or replaced while a deployment may be
+running. Disposal means stopping every process and removing the whole state
+root under the stopped-state procedure.
 
 ### Durable data lifecycle
 

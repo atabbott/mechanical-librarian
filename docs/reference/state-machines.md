@@ -265,3 +265,22 @@ the pointer expired and creates exactly one unreserved pending next generation.
 Repeated readers retain `stale` while reusing that active generation. Wall timestamps determine
 durable chronology; fences determine ownership and never derive authority from
 time alone.
+
+The increment-5 foreground executor observes active durable state and its
+persisted aggregate deadline before any external authority. Exact aggregate or
+caller expiry maps to `retry_exhausted` without trying the deployment gate.
+Busy returns `in_progress` without claim or start. Only pending work is executed;
+claimed or retry-wait state returns `in_progress` for a later orchestrator.
+
+One started attempt holds the gate through provider return and publication. Its
+deadline is the earlier of the caller deadline and start plus five seconds; a
+result at or beyond the boundary is published as timeout. Rate limiting,
+timeout, and unavailability publish retry-wait evidence and return
+`in_progress` when the persisted aggregate window retains at least the exact
+six-second retry reserve. If retryable publication commits terminal failure
+because less reserve remains, the public result is `retry_exhausted`; that
+successful durable terminal is not a persistence failure. This executor does
+not wait or start the next candidate.
+The repository's retry, interruption, cancellation, and recovery transitions
+remain durable state-machine capabilities for later orchestration rather than
+behavior of this executor increment.

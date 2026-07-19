@@ -165,6 +165,26 @@ with architecture checks, privacy spies, exact installed-wheel and container
 command demonstrations, and one aggregate PASS qualification receipt. No live
 Hardcover call is part of this increment.
 
+F09f increment 5 is also Tier 2 because its synthetic-only activation
+establishes the eventual network-start authority boundary: application-owned
+lifecycle for one attempt, cross-process descriptor/flock exclusivity,
+persisted aggregate and caller deadlines, and durable outcome publication. Ready
+evidence requires exact-head acceptance, code-quality, safety, and publication
+challenge; architecture/compile/diff/privacy checks; the complete suite;
+deterministic wheel build; and installed-wheel disposable-state qualification.
+Systematic proof must include contention, exact deadline boundaries,
+gate-before-claim/start, late provider return, retryable publication without an
+executor retry, exact six-second reserve and insufficient-reserve terminal
+mapping, stale generation replacement, path aliases and entry
+replacement, ordinary and base-exception cleanup, exact-input and
+contributor-control data-flow privacy with collision-safe taint sentinels and
+per-channel/source poisoning, actual transient WAL/SHM capture, and rejection of
+raw or full-digest persistence poison without treating unrelated 32-bit digest
+prefix collisions as flow, no egress, and no production
+composition. No live Hardcover call is part of increment 5. Retry scheduling,
+waiting, cancellation, signal handling, and restart orchestration remain a
+later increment.
+
 ## Definition of done
 
 A change is done only when:

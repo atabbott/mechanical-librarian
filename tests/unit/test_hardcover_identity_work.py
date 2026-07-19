@@ -21,6 +21,7 @@ from mechanical_librarian.domain.hardcover_identity_work import (
     LEGAL_TRANSITIONS,
     IdentityMatchOutcome,
     IdentityWorkClaim,
+    IdentityWorkReadiness,
     IdentityWorkOutcome,
     IdentityWorkObservation,
     IdentityWorkReference,
@@ -61,6 +62,11 @@ class ProtocolPersistenceCollaborator:
     def accept(self, work_key: str, now: datetime):
         return self.accept_result
 
+    def inspect(self, reference, now):
+        return IdentityWorkReadiness(
+            reference, IdentityWorkState.CLAIMED, ORIGIN + timedelta(seconds=30)
+        )
+
     def claim(self, reference, owner, now, *, gate_owned):
         return self.claim_result
 
@@ -78,7 +84,14 @@ class ProtocolPersistenceCollaborator:
         )
 
     def publish_failed(
-        self, claim, owner, now, *, retryable, gate_owned, fail_before_commit=False
+        self,
+        claim,
+        owner,
+        now,
+        *,
+        retryable,
+        gate_owned,
+        fail_before_commit=False,
     ):
         return IdentityWorkStatus(
             IdentityWorkOutcome.PERSISTENCE_FAILURE, claim.reference
@@ -330,6 +343,89 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                             validate_transition(before, after)
         with self.assertRaises(TypeError):
             validate_transition("pending", IdentityWorkState.CLAIMED)  # type: ignore[arg-type]
+
+    def test_inspect_projects_each_terminal_state_without_mutation(self) -> None:
+        for index, terminal in enumerate(("matched", "failed", "cancelled"), 3):
+            with self.subTest(terminal=terminal):
+                key = str(index) * 64
+                accepted = self.repository.accept(key, ORIGIN)
+                claim = self.repository.claim(
+                    accepted.reference,
+                    "worker-a",
+                    ORIGIN + timedelta(seconds=1),
+                    gate_owned=True,
+                )
+                if terminal == "cancelled":
+                    self.repository.cancel(
+                        claim,
+                        "worker-a",
+                        ORIGIN + timedelta(seconds=2),
+                        gate_owned=True,
+                    )
+                    expected = IdentityWorkState.CANCELLED
+                else:
+                    started = self.repository.renew_and_start(
+                        claim,
+                        "worker-a",
+                        ORIGIN + timedelta(seconds=2),
+                        gate_owned=True,
+                    )
+                    if terminal == "matched":
+                        self.repository.publish_matched(
+                            started,
+                            "worker-a",
+                            ORIGIN + timedelta(seconds=3),
+                            MATCHED,
+                            gate_owned=True,
+                        )
+                        expected = IdentityWorkState.SUCCEEDED
+                    else:
+                        self.repository.publish_failed(
+                            started,
+                            "worker-a",
+                            ORIGIN + timedelta(seconds=3),
+                            retryable=False,
+                            gate_owned=True,
+                        )
+                        expected = IdentityWorkState.FAILED
+
+                changes = self.connection.total_changes
+                projection = self.repository.inspect(
+                    accepted.reference, ORIGIN + timedelta(seconds=4)
+                )
+
+                self.assertEqual(
+                    projection,
+                    IdentityWorkReadiness(
+                        accepted.reference,
+                        expected,
+                        ORIGIN + timedelta(seconds=30),
+                    ),
+                )
+                self.assertEqual(self.connection.total_changes, changes)
+
+    def test_inspect_requires_a_still_current_succeeded_generation(self) -> None:
+        accepted, started = self.started_claim()
+        published_at = ORIGIN + timedelta(seconds=3)
+        self.repository.publish_matched(
+            started,
+            "worker-a",
+            published_at,
+            MATCHED,
+            gate_owned=True,
+        )
+        expires_at = published_at + timedelta(hours=24)
+        changes = self.connection.total_changes
+
+        projection = self.repository.inspect(accepted.reference, expires_at)
+
+        self.assertEqual(projection.state, IdentityWorkState.SUCCEEDED)
+        self.assertEqual(self.connection.total_changes, changes)
+        with self.assertRaisesRegex(IdentityWorkPersistenceError, "inconsistent"):
+            self.repository.inspect(
+                accepted.reference, expires_at + timedelta(microseconds=1)
+            )
+        self.assertEqual(self.connection.total_changes, changes)
 
     def test_accept_commits_generation_candidate_and_deadline_atomically(self) -> None:
         status = self.accept()

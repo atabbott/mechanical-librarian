@@ -85,6 +85,23 @@ class IdentityWorkClaim:
 
 
 @dataclass(frozen=True, slots=True)
+class IdentityWorkReadiness:
+    """Exact-reference lifecycle facts required around one attempt."""
+
+    reference: IdentityWorkReference
+    state: IdentityWorkState
+    aggregate_deadline: datetime
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.reference) is not IdentityWorkReference
+            or type(self.state) is not IdentityWorkState
+        ):
+            raise ValueError("identity work readiness is malformed")
+        _require_time(self.aggregate_deadline)
+
+
+@dataclass(frozen=True, slots=True)
 class IdentityWorkStatus:
     outcome: IdentityWorkOutcome
     reference: IdentityWorkReference
@@ -164,6 +181,7 @@ def _require_time(value: object) -> None:
 __all__ = [
     "ACTIVE_STATES",
     "IdentityWorkClaim",
+    "IdentityWorkReadiness",
     "IdentityMatchOutcome",
     "IdentityWorkObservation",
     "IdentityWorkOutcome",

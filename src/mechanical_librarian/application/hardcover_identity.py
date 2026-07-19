@@ -25,6 +25,7 @@ from mechanical_librarian.domain.hardcover_identity import (
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityMatchOutcome,
     IdentityWorkClaim,
+    IdentityWorkReadiness,
     IdentityWorkObservation,
     IdentityWorkOutcome,
     IdentityWorkReference,
@@ -39,6 +40,19 @@ class HardcoverIdentityOutcome(StrEnum):
     DISABLED = "disabled"
     PROVIDER_NOT_ACTIVATED = "provider_not_activated"
     INVALID_INPUT = "invalid_input"
+    MATCHED = "matched"
+    AUTHENTICATION = "authentication"
+    AUTHORIZATION = "authorization"
+    MALFORMED = "malformed"
+    OVERSIZED = "oversized"
+    EMPTY = "empty"
+    NO_MATCH = "no_match"
+    AMBIGUOUS = "ambiguous"
+    INCOMPATIBLE = "incompatible"
+    CANCELLED = "cancelled"
+    IN_PROGRESS = "in_progress"
+    PERSISTENCE_FAILURE = "persistence_failure"
+    RETRY_EXHAUSTED = "retry_exhausted"
 
 
 class IdentityAttemptFailureKind(StrEnum):
@@ -281,6 +295,59 @@ class DurableWorkPreviewReport:
                     "migration_idempotence_verified": self.migration_idempotence_verified,
                     "publication_rollback_verified": self.publication_rollback_verified,
                     "interrupted_recovery_gate_owned": self.interrupted_recovery_gate_owned,
+                },
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SafeExecutorPreviewReport:
+    outcome: str
+    cases_executed: int
+    attempts_started: int
+    gate_order_verified: bool
+    deadline_before_gate_verified: bool
+    caller_deadline_verified: bool
+    late_result_rejected: bool
+    closed_mapping_verified: bool
+    contributor_labels_private: bool
+
+    def validate(self) -> None:
+        if (
+            self.outcome != "all_cases_passed"
+            or type(self.outcome) is not str
+            or type(self.cases_executed) is not int
+            or not 1 <= self.cases_executed <= 16
+            or type(self.attempts_started) is not int
+            or not 0 <= self.attempts_started <= self.cases_executed
+            or self.gate_order_verified is not True
+            or self.deadline_before_gate_verified is not True
+            or self.caller_deadline_verified is not True
+            or self.late_result_rejected is not True
+            or self.closed_mapping_verified is not True
+            or self.contributor_labels_private is not True
+        ):
+            raise TypeError("Hardcover safe executor preview report is malformed")
+
+    def to_json(self) -> str:
+        self.validate()
+        return json.dumps(
+            {
+                "schema": "hardcover-synthetic-output-v5",
+                "scenario": "safe-executor-v3",
+                "result": {
+                    "outcome": self.outcome,
+                    "cases_executed": self.cases_executed,
+                    "attempts_started": self.attempts_started,
+                    "gate_order_verified": self.gate_order_verified,
+                    "deadline_before_gate_verified": self.deadline_before_gate_verified,
+                    "caller_deadline_verified": self.caller_deadline_verified,
+                    "late_result_rejected": self.late_result_rejected,
+                    "closed_mapping_verified": self.closed_mapping_verified,
+                    "contributor_labels_private": self.contributor_labels_private,
                 },
             },
             ensure_ascii=True,
@@ -532,16 +599,37 @@ class IdentityDecisionPreviewReport:
 
 
 class RunHardcoverIdentityReport:
-    """Run exactly one provider attempt and discard all private observations."""
+    """Own the safe durable lifecycle or run the isolated decision seam."""
+
+    def __init__(self, safe_executor: object | None = None) -> None:
+        if safe_executor is not None and not callable(
+            getattr(safe_executor, "run", None)
+        ):
+            raise TypeError("Hardcover safe executor is malformed")
+        self._safe_executor = safe_executor
 
     def run(
         self,
-        provider: BookIdentityProvider,
-        query: PrivateIdentityQuery,
-        context: OperationContext,
+        provider: BookIdentityProvider | object,
+        query: PrivateIdentityQuery | OperationContext,
+        context: OperationContext | None = None,
         *,
         privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
-    ) -> IdentityDecisionPreviewReport:
+    ) -> IdentityDecisionPreviewReport | HardcoverIdentityReport:
+        if context is None:
+            from mechanical_librarian.application.hardcover_safe_executor import (
+                HardcoverIdentityExecutionRequest,
+                RunSafeHardcoverIdentity,
+            )
+
+            if (
+                type(self._safe_executor) is not RunSafeHardcoverIdentity
+                or type(provider) is not HardcoverIdentityExecutionRequest
+                or type(query) is not OperationContext
+                or privacy_observer is not None
+            ):
+                raise TypeError("Hardcover identity execution input is malformed")
+            return self._safe_executor.run(provider, query)
         if type(query) is not PrivateIdentityQuery or type(context) is not OperationContext:
             provider = None
             query = None
@@ -799,6 +887,10 @@ class HardcoverIdentityWorkPersistence(Protocol):
 
     def accept(self, work_key: str, now: datetime) -> IdentityWorkStatus: ...
 
+    def inspect(
+        self, reference: IdentityWorkReference, now: datetime
+    ) -> IdentityWorkReadiness: ...
+
     def claim(
         self,
         reference: IdentityWorkReference,
@@ -896,6 +988,14 @@ class ManageHardcoverIdentityWork:
             }
         ):
             raise TypeError("Hardcover identity work acceptance is malformed")
+        return result
+
+    def inspect(
+        self, reference: IdentityWorkReference, now: datetime
+    ) -> IdentityWorkReadiness:
+        result = self._persistence.inspect(reference, now)
+        if type(result) is not IdentityWorkReadiness or result.reference != reference:
+            raise TypeError("Hardcover identity work readiness is malformed")
         return result
 
     def claim(
@@ -1010,6 +1110,7 @@ class ManageHardcoverIdentityWork:
             not in {
                 IdentityWorkOutcome.IN_PROGRESS,
                 IdentityWorkOutcome.PERSISTENCE_FAILURE,
+                IdentityWorkOutcome.RETRY_EXHAUSTED,
             }
         ):
             raise TypeError("Hardcover identity work failure result is malformed")
@@ -1129,6 +1230,7 @@ __all__ = [
     "ManageHardcoverIdentityWork",
     "RunHardcoverIdentityReport",
     "RunHardcoverFixedAdapterPreview",
+    "SafeExecutorPreviewReport",
     "StaleIdentityWorkFence",
     "fixed_adapter_preview_report",
     "inert_preview",

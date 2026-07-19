@@ -265,8 +265,38 @@ descriptor-relative serialized staging and no-replace publication without
 changing the process working directory. Parent replacement and symlink
 swaps are rejected and private staging is removed, including on base exceptions.
 
-The exact current-head registry is `preview-registry-c4-v6.json`, SHA-256
+The exact increment-4 registry is `preview-registry-c4-v6.json`, SHA-256
 `3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81`.
 It derives from the installed C3 registry and binds the canonical C4 input,
 output, closed input schema, variant matrix, cumulative schema-v5 output,
 privacy contract/scan, and contributor-independent schema-8 dump and ledger.
+
+Increment 5 adds one bounded executor invocation without activating production
+composition. It accepts or refreshes one work generation, inspects the
+persisted aggregate deadline before acquiring the deployment gate, claims and
+atomically starts only under that gate, invokes the provider exactly once, and
+publishes through the current durable fence. The attempt deadline is the
+earlier of the caller deadline and start plus five seconds; results at or after
+that boundary are late and publish as timeout. A busy gate, existing claimed or
+retry-wait state, and retryable publication with at least the exact six-second
+reserve return `in_progress`. A successfully committed retryable terminal with
+less reserve returns `retry_exhausted`, not `persistence_failure`. This executor
+does not wait, loop, recover, cancel, install signal handlers, or start a later
+candidate; those lifecycle responsibilities remain separately tracked.
+
+The exact C5 registry is `preview-registry-c5-v6.json`, SHA-256
+`0f0ae4c1284af4562d8c2c90c0626d47dfbbe927c10400c3e8849bd3d4c33a3a`.
+It derives from the exact C4 registry and binds a separate cumulative C5 output
+schema, privacy contract, privacy scan, and strict semantic fixture set without
+modifying predecessor evidence. Contributor labels and process names are
+control-only: a fixed 55-character owner outside their complete syntax domains
+crosses the persistence seam, and no runtime or persisted value derives from
+them. Sentinel-bearing and ordinary-vocabulary collision variants prove that
+flow without treating equal incidental text as a leak. The exact serialized
+stdin is absent from every SQLite database-prefix channel.
+Privacy qualification materializes disposable-state WAL frames only through a
+test-only observer transaction whose timestamp value is restored and read back
+exactly. It scans nonempty main, WAL, and SHM while present and main after close.
+For arbitrary SQLite binary/text/hex, only eight-hex 32-bit digest prefixes are
+excluded as collision-prone substring evidence; exact/raw values, full
+encodings, full collision-resistant digests, and causal poison remain forbidden.
