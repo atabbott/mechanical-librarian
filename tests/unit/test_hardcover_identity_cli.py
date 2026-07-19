@@ -474,6 +474,14 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c1-inert-report-privacy-contract-v1.json": "75a6be84afab11ae5a154415960108f15f9db3e34ffd8a2a22cc23edc2c68da3",
             "c1-inert-report-privacy-scan-v1.json": "df030bb495712da448dccc896765dc2fad4ce893666da2bdd22c87e054fcf726",
             "c1-inert-report-registry-v1.json": "eb3ec8a5454a3e4a21f9bbfe9b8b2308687de00f6a95df7533055a6083009619",
+            "c2-identity-decision-input.json": "c6ed8d6ad0253af139e07164668bb49a6763d8e979dd21fcd9e638a9861129fb",
+            "c2-identity-decision-example-output.json": "319744d9311c6c6b43ea104dbc90846a23be3eea53a0f9f7e6bdba1c7aaff779",
+            "c2-identity-decision-input-schema.json": "daab0b30e32cf20ebf631e5cb97e6e94f51243867d45377882acf757cf1ea36e",
+            "c2-identity-decision-variant-matrix.json": "d3cb1432d994e18527fdf354a6882d6d57b92d1358f2cfd745070dbccb529359",
+            "c2-preview-output-schema-v1.json": "1194180fdbd86d9b244481eb1c8676ef78788406783bfa35b355aa7907670f1c",
+            "c2-preview-output-privacy-contract-v1.json": "315984420942e5819c760391b371d452ee5be178c1b30085effe1d8d4e81d47d",
+            "c2-preview-output-privacy-scan-v1.json": "81a0aad7d18f16470b13a8533df0d6a5192e056576aed211509aae9d33383452",
+            "preview-registry-c2-v6.json": "77c36a2cb2b2c1a7e8a00292d21b4e2417233dc7f11f411e17d7491a6664f34d",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)
@@ -513,6 +521,61 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             payload = (fixture_root / name).read_text(encoding="utf-8").casefold()
             for marker in future_markers:
                 self.assertNotIn(marker, payload)
+
+    def test_c2_registry_binds_only_installed_c1_and_c2_resources(self) -> None:
+        fixture_root = ROOT / "tests/fixtures/hardcover_identity"
+        registry = json.loads(
+            (fixture_root / "preview-registry-c2-v6.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            registry["predecessor_registry_sha256"],
+            "eb3ec8a5454a3e4a21f9bbfe9b8b2308687de00f6a95df7533055a6083009619",
+        )
+        self.assertEqual(
+            [scenario["scenario"] for scenario in registry["scenarios"]],
+            ["inert-report-v3", "identity-decision-v3"],
+        )
+        bindings = (
+            registry["output_schema"],
+            registry["output_privacy_contract"],
+            registry["output_privacy_scan"],
+            *(
+                resource
+                for scenario in registry["scenarios"]
+                for resource in scenario["resources"].values()
+            ),
+        )
+        for binding in bindings:
+            path = fixture_root / binding["path"]
+            with self.subTest(path=path.name):
+                payload = path.read_bytes()
+                self.assertEqual(len(payload), binding["bytes"])
+                self.assertEqual(hashlib.sha256(payload).hexdigest(), binding["sha256"])
+        for name in (
+            "c2-preview-output-schema-v1.json",
+            "c2-preview-output-privacy-contract-v1.json",
+            "c2-preview-output-privacy-scan-v1.json",
+            "preview-registry-c2-v6.json",
+        ):
+            payload = (fixture_root / name).read_text(encoding="utf-8")
+            for marker in ("fixed-adapter-v3", "durable-work-v3", "safe-executor-v3"):
+                self.assertNotIn(marker, payload)
+
+        source = json.loads(
+            (fixture_root / "c2-identity-decision-input.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        code, output, errors = self.run_identity_preview(source)
+        self.assertEqual((code, errors), (0, ""))
+        self.assertEqual(
+            output,
+            (fixture_root / "c2-identity-decision-example-output.json").read_text(
+                encoding="utf-8"
+            ),
+        )
 
     def test_c1_generator_runs_directly_from_repository_root(self) -> None:
         paths = tuple(
