@@ -224,10 +224,15 @@ post-construction mutation, forged-exception, traceback-local, `SystemExit`, or
 
 The exact cumulative compatibility registry is
 `preview-registry-c3-v6.json` / SHA-256
-`ff6c3c68fee3cb4f7712bdb650e0685c8fc4b4d345a573c195e7904863f65943`.
+`394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02`.
 It derives from installed C2 and contains exactly the inert, identity-decision,
 and fixed-adapter scenarios; future durable-work and executor definitions are
 not current compatibility data.
+
+The fixed-adapter schema uses the project-owned UTF-8 byte-length meta-schema,
+digest `6e661639a611c463c65303efc2c83f97e9b522d23ee30c2e4e78f0d4c4e703b1`,
+so registry resolution must recognize the required vocabulary and execute its
+byte keyword rather than silently treating it as an annotation.
 
 Schema 7 adds only the F10a synthetic case, current-or-retired state, and
 append-only attributable transitions. It remains forward-only and does not

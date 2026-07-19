@@ -182,12 +182,18 @@ addresses, and secrets are forbidden from stdout, stderr, exceptions, logs,
 traces/spans, metrics, persistence, exports, reports, and audit records.
 
 The exact current-head registry is `preview-registry-c3-v6.json`, SHA-256
-`ff6c3c68fee3cb4f7712bdb650e0685c8fc4b4d345a573c195e7904863f65943`.
+`394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02`.
 It derives from installed C2
 `557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11`
 and includes exactly `inert-report-v3`, `identity-decision-v3`, and
 `fixed-adapter-v3`. The C3-scoped output schema, privacy contract, and privacy
 scan exclude every future durable-work and executor scenario.
+
+The fixed-adapter input schema resolves the project meta-schema
+`https://mechanical-librarian.github.io/schemas/utf8-byte-length-meta-v1`,
+SHA-256 `6e661639a611c463c65303efc2c83f97e9b522d23ee30c2e4e78f0d4c4e703b1`.
+That meta-schema requires the project UTF-8 byte-length vocabulary; the
+`mlUtf8MaxBytes` keyword is executable and cannot be treated as an annotation.
 
 `fixed-adapter-v3` emits only `outcome`, `row_count`, `peer_equal`, the constant
 `actual_network:false`, and `address_policy`. Request/response/header bytes,

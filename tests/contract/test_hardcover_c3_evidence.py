@@ -16,7 +16,10 @@ from mechanical_librarian.application.hardcover_identity import (
     IsbnIdentityQuery,
 )
 from mechanical_librarian.application.schema_validation import (
+    UTF8_BYTE_LENGTH_META_SCHEMA,
     UTF8_BYTE_LENGTH_VOCABULARY,
+    SchemaResourceRegistry,
+    meta_schema_validates,
     validates_utf8_byte_limits,
 )
 
@@ -26,13 +29,54 @@ FIXTURES = ROOT / "tests/fixtures/hardcover_identity"
 
 
 class HardcoverC3EvidenceTests(unittest.TestCase):
-    def test_c3_byte_vocabulary_matches_runtime_multibyte_boundaries(self) -> None:
+    def schema_resources(
+        self,
+    ) -> tuple[dict[str, object], dict[str, object], SchemaResourceRegistry]:
         schema = json.loads(
             (FIXTURES / "c3-fixed-adapter-input-schema.json").read_text(
                 encoding="utf-8"
             )
         )
-        self.assertIs(schema["$vocabulary"][UTF8_BYTE_LENGTH_VOCABULARY], True)
+        meta = json.loads(
+            (FIXTURES / "c3-utf8-byte-length-meta-schema-v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        return schema, meta, SchemaResourceRegistry((meta,))
+
+    def test_custom_meta_schema_validates_and_requires_byte_vocabulary(self) -> None:
+        schema, meta, registry = self.schema_resources()
+        self.assertEqual(schema["$schema"], UTF8_BYTE_LENGTH_META_SCHEMA)
+        self.assertNotIn("$vocabulary", schema)
+        self.assertIs(meta["$vocabulary"][UTF8_BYTE_LENGTH_VOCABULARY], True)
+        self.assertTrue(meta_schema_validates(schema, registry))
+
+        missing = json.loads(json.dumps(meta))
+        del missing["$vocabulary"][UTF8_BYTE_LENGTH_VOCABULARY]
+        with self.assertRaisesRegex(ValueError, "vocabulary is absent"):
+            meta_schema_validates(schema, SchemaResourceRegistry((missing,)))
+
+    def test_external_registry_resolution_cannot_silently_ignore_vocabulary(
+        self,
+    ) -> None:
+        schema, meta, _ = self.schema_resources()
+
+        class ExternalRegistry:
+            def __init__(self) -> None:
+                self.resolved: list[str] = []
+
+            def resolve(self, uri: str) -> dict[str, object]:
+                self.resolved.append(uri)
+                if uri != meta["$id"]:
+                    raise ValueError("external schema resource is unavailable")
+                return meta
+
+        external = ExternalRegistry()
+        self.assertTrue(meta_schema_validates(schema, external))
+        self.assertEqual(external.resolved, [UTF8_BYTE_LENGTH_META_SCHEMA])
+
+    def test_c3_byte_vocabulary_matches_runtime_multibyte_boundaries(self) -> None:
+        schema, _, registry = self.schema_resources()
         canonical = json.loads(
             (FIXTURES / "c3-fixed-adapter-input.json").read_text(encoding="utf-8")
         )
@@ -53,7 +97,7 @@ class HardcoverC3EvidenceTests(unittest.TestCase):
                 for part in path[:-1]:
                     target = target[part]
                 target[path[-1]] = value
-                schema_valid = validates_utf8_byte_limits(schema, source)
+                schema_valid = validates_utf8_byte_limits(schema, source, registry)
                 with patch.object(
                     adapter,
                     "identity_query_from_canonical_body",
@@ -87,8 +131,12 @@ class HardcoverC3EvidenceTests(unittest.TestCase):
                 "09bbf56b45a896c1a4a8ec0ef2ac45a3863d2e55370e901693677de7209baa40",
             ),
             "c3-fixed-adapter-input-schema.json": (
-                1951,
-                "0cfb8b483f62bb410a47cb88a7e5b2b4785f339df65a03c3f7706167dd633f42",
+                1880,
+                "5487c3373d590ee4ed9bc35e07870f8d87356456c5683704fb6feedfebf7923b",
+            ),
+            "c3-utf8-byte-length-meta-schema-v1.json": (
+                842,
+                "6e661639a611c463c65303efc2c83f97e9b522d23ee30c2e4e78f0d4c4e703b1",
             ),
             "c3-fixed-adapter-variant-matrix.json": (
                 987,
@@ -107,8 +155,8 @@ class HardcoverC3EvidenceTests(unittest.TestCase):
                 "bedc4f12909da3b255a81e83537bf0019859f393fb9c460085411f9e30df021b",
             ),
             "preview-registry-c3-v6.json": (
-                5881,
-                "ff6c3c68fee3cb4f7712bdb650e0685c8fc4b4d345a573c195e7904863f65943",
+                6040,
+                "394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02",
             ),
         }
         for name, (size, digest) in expected.items():
