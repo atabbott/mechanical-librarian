@@ -710,15 +710,27 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             import os
             import signal
             import sys
+            import time
             from pathlib import Path
 
             from mechanical_librarian.interfaces.cli import main
 
             def blocking_config_runner(config):
-                with config.open("rb") as source:
-                    source.read()
+                descriptor = os.open(config, os.O_RDONLY | os.O_NONBLOCK)
+                try:
+                    while True:
+                        try:
+                            payload = os.read(descriptor, 1)
+                        except BlockingIOError:
+                            payload = None
+                        if payload:
+                            raise AssertionError("unexpected synthetic config input")
+                        time.sleep(0.01)
+                finally:
+                    os.close(descriptor)
 
             config, marker = map(Path, sys.argv[1:])
+            signal.signal(signal.SIGINT, signal.default_int_handler)
             marker.write_text("ready", encoding="utf-8")
             try:
                 exit_code = main(
