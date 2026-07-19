@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import copy
 from contextlib import ExitStack, contextmanager
+import errno
 import io
 import hashlib
 import json
 import logging
 import os
+import signal
 import subprocess
+import sys
 import tempfile
+import textwrap
+import time
 import traceback
 import unittest
 from pathlib import Path
@@ -698,6 +703,91 @@ class HardcoverIdentityCliTests(unittest.TestCase):
                     self.assertEqual(errors.getvalue(), "")
                     self.assertEqual(json.loads(output.getvalue())["outcome"], outcome)
                     self.assertNotIn("must-not-open", output.getvalue())
+
+    def test_real_sigint_while_production_config_read_blocks_propagates(self) -> None:
+        script = textwrap.dedent(
+            """
+            import os
+            import signal
+            import sys
+            from pathlib import Path
+
+            from mechanical_librarian.interfaces.cli import main
+
+            def blocking_config_runner(config):
+                with config.open("rb") as source:
+                    source.read()
+
+            config, marker = map(Path, sys.argv[1:])
+            marker.write_text("ready", encoding="utf-8")
+            try:
+                exit_code = main(
+                    [
+                        "hardcover-identity-report",
+                        "--config",
+                        str(config),
+                        "--database",
+                        "/synthetic-unused-state.sqlite3",
+                        "--query-file",
+                        "/synthetic-unused-query.json",
+                        "--format",
+                        "json",
+                    ],
+                    state_check_runner=lambda: None,
+                    hardcover_identity_runner=blocking_config_runner,
+                )
+            except KeyboardInterrupt:
+                signal.signal(signal.SIGINT, signal.SIG_DFL)
+                os.kill(os.getpid(), signal.SIGINT)
+                raise AssertionError("default SIGINT did not terminate")
+            raise SystemExit(exit_code)
+            """
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.fifo"
+            marker = root / "ready"
+            os.mkfifo(config)
+            process = subprocess.Popen(
+                [sys.executable, "-c", script, str(config), str(marker)],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            writer: int | None = None
+            deadline = time.monotonic() + 5
+            try:
+                while not marker.exists():
+                    if process.poll() is not None:
+                        output, errors = process.communicate()
+                        self.fail(
+                            f"subprocess exited before readiness: {output!r} {errors!r}"
+                        )
+                    if time.monotonic() >= deadline:
+                        self.fail("subprocess did not report readiness")
+                    time.sleep(0.01)
+                while writer is None:
+                    try:
+                        writer = os.open(config, os.O_WRONLY | os.O_NONBLOCK)
+                    except OSError as error:
+                        if error.errno != errno.ENXIO:
+                            raise
+                        if time.monotonic() >= deadline:
+                            self.fail("subprocess did not block on the config FIFO")
+                        time.sleep(0.01)
+                process.send_signal(signal.SIGINT)
+                output, errors = process.communicate(timeout=5)
+            finally:
+                if writer is not None:
+                    os.close(writer)
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate()
+            self.assertEqual(process.returncode, -signal.SIGINT)
+            self.assertEqual(output, "")
+            self.assertEqual(errors, "")
 
     def test_composition_lookup_authority_traps_are_executable(self) -> None:
         invocations = (

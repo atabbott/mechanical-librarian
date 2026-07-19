@@ -638,7 +638,7 @@ def main(
                 else render_hardcover_identity_text(report)
             )
             return 0
-        except (KeyboardInterrupt, Exception):
+        except Exception:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
             return 2
     if raw_arguments[:1] == ["epub-opening-evidence"]:
