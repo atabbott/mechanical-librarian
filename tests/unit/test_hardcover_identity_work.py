@@ -5,7 +5,9 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
+from mechanical_librarian.adapters.persistence import hardcover_identity_work
 from mechanical_librarian.adapters.persistence.hardcover_identity_work import (
     IdentityWorkPersistenceError,
     SQLiteHardcoverIdentityWorkRepository,
@@ -98,6 +100,33 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
 
     def accept(self, *, key: str = WORK_KEY, when: datetime = ORIGIN):
         return self.repository.accept(key, when)
+
+    def test_transaction_cleanup_failure_never_masks_control_flow(self) -> None:
+        class RollbackFailureConnection:
+            in_transaction = False
+
+            def execute(self, statement: str) -> None:
+                self.assert_begin(statement)
+                self.in_transaction = True
+
+            def assert_begin(self, statement: str) -> None:
+                self_test.assertEqual(statement, "BEGIN IMMEDIATE")
+
+            def commit(self) -> None:
+                raise AssertionError("commit must not run")
+
+            def rollback(self) -> None:
+                raise OSError("private cleanup failure")
+
+        self_test = self
+        connection = RollbackFailureConnection()
+        with self.assertRaises(KeyboardInterrupt) as caught:
+            with hardcover_identity_work._transaction(connection):  # type: ignore[arg-type]
+                raise KeyboardInterrupt
+        self.assertEqual(
+            caught.exception.__notes__,
+            ["identity work transaction rollback failed"],
+        )
 
     def started_claim(self, *, key: str = WORK_KEY):
         accepted = self.accept(key=key)
@@ -347,6 +376,54 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                 (0,),
             )
 
+    def test_keyboard_interrupt_rolls_back_partial_accept_and_allows_next_mutation(self) -> None:
+        with (
+            patch.object(self.repository, "_event", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.accept()
+        self.assertFalse(self.connection.in_transaction)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT "
+                "(SELECT COUNT(*) FROM hardcover_identity_generations),"
+                "(SELECT COUNT(*) FROM hardcover_identity_candidates),"
+                "(SELECT COUNT(*) FROM hardcover_identity_events)"
+            ).fetchone(),
+            (0, 0, 0),
+        )
+
+        accepted = self.accept()
+        self.assertEqual((accepted.reference.generation, accepted.candidate), (1, 1))
+        self.assertFalse(self.connection.in_transaction)
+
+    def test_keyboard_interrupt_rolls_back_partial_publication_and_allows_retry(self) -> None:
+        _, started = self.started_claim()
+        before_dump = tuple(self.connection.iterdump())
+        with (
+            patch.object(self.repository, "_event", side_effect=KeyboardInterrupt),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.repository.publish_matched(
+                started,
+                "worker-a",
+                ORIGIN + timedelta(seconds=3),
+                MATCHED,
+                gate_owned=True,
+            )
+        self.assertFalse(self.connection.in_transaction)
+        self.assertEqual(tuple(self.connection.iterdump()), before_dump)
+
+        result = self.repository.publish_matched(
+            started,
+            "worker-a",
+            ORIGIN + timedelta(seconds=3),
+            MATCHED,
+            gate_owned=True,
+        )
+        self.assertEqual(result.outcome, IdentityWorkOutcome.MATCHED)
+        self.assertFalse(self.connection.in_transaction)
+
     def test_claim_reserves_and_only_start_consumes_one_attempt(self) -> None:
         accepted = self.accept()
         claim = self.repository.claim(
@@ -457,6 +534,66 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.assertEqual(tuple(restarted_connection.iterdump()), before_dump)
         self.assertEqual(
             restarted_connection.execute(
+                "SELECT "
+                "(SELECT COUNT(*) FROM hardcover_identity_attempts),"
+                "(SELECT COUNT(*) FROM hardcover_identity_events WHERE kind='started')"
+            ).fetchone(),
+            (1, 1),
+        )
+
+    def test_first_start_rejects_in_between_generation_timestamp_value_free(self) -> None:
+        accepted = self.accept()
+        claimed = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        self.connection.execute(
+            "UPDATE hardcover_identity_generations SET updated_at=? WHERE work_key=?",
+            ("2026-01-01T00:00:01.500000Z", WORK_KEY),
+        )
+        before_dump = tuple(self.connection.iterdump())
+        changes = self.connection.total_changes
+
+        with self.assertRaises(StaleIdentityWorkFence):
+            self.repository.renew_and_start(
+                claimed,
+                "worker-a",
+                ORIGIN + timedelta(seconds=2),
+                gate_owned=True,
+            )
+
+        self.assertEqual(self.connection.total_changes, changes)
+        self.assertEqual(tuple(self.connection.iterdump()), before_dump)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_attempts"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_start_replay_rejects_in_between_generation_timestamp_value_free(self) -> None:
+        _, started = self.started_claim()
+        self.connection.execute(
+            "UPDATE hardcover_identity_generations SET updated_at=? WHERE work_key=?",
+            ("2026-01-01T00:00:02.500000Z", WORK_KEY),
+        )
+        before_dump = tuple(self.connection.iterdump())
+        changes = self.connection.total_changes
+
+        with self.assertRaises(StaleIdentityWorkFence):
+            self.repository.renew_and_start(
+                started,
+                "worker-a",
+                ORIGIN + timedelta(seconds=3),
+                gate_owned=True,
+            )
+
+        self.assertEqual(self.connection.total_changes, changes)
+        self.assertEqual(tuple(self.connection.iterdump()), before_dump)
+        self.assertEqual(
+            self.connection.execute(
                 "SELECT "
                 "(SELECT COUNT(*) FROM hardcover_identity_attempts),"
                 "(SELECT COUNT(*) FROM hardcover_identity_events WHERE kind='started')"

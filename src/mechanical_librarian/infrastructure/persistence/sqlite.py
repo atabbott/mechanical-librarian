@@ -1402,8 +1402,9 @@ class BoundStagedState:
     def write_bytes(self, value: bytes) -> None:
         if type(value) is not bytes or not 1 <= len(value) <= _BOUND_STAGED_MAX_BYTES:
             raise SchemaError("prepared state bytes are invalid")
-        descriptor = self._open(os.O_WRONLY | os.O_TRUNC)
+        descriptor = self._open(os.O_WRONLY)
         try:
+            os.ftruncate(descriptor, 0)
             position = 0
             while position < len(value):
                 written = os.write(descriptor, value[position:])
@@ -1480,6 +1481,7 @@ class BoundDisposableState:
         self._revalidate_directory()
         name = f"{_STAGED_PREFIX}{secrets.token_hex(16)}.sqlite"
         descriptor: int | None = None
+        identity: tuple[int, int] | None = None
         failure: BaseException | None = None
         cleanup_failed = False
         try:
@@ -1505,6 +1507,20 @@ class BoundDisposableState:
             if descriptor is not None:
                 os.close(descriptor)
             for suffix in _STATE_SUFFIXES:
+                if suffix == "" and identity is not None:
+                    try:
+                        status = os.stat(
+                            name,
+                            dir_fd=self.directory_descriptor,
+                            follow_symlinks=False,
+                        )
+                    except FileNotFoundError:
+                        continue
+                    except OSError:
+                        cleanup_failed = True
+                        continue
+                    if (status.st_dev, status.st_ino) != identity:
+                        continue
                 try:
                     os.unlink(f"{name}{suffix}", dir_fd=self.directory_descriptor)
                 except FileNotFoundError:
@@ -1576,16 +1592,42 @@ class BoundDisposableState:
             self._revalidate_directory()
         except SchemaError:
             try:
-                os.unlink(self.target.name, dir_fd=self.directory_descriptor)
+                published_status = os.stat(
+                    self.target.name,
+                    dir_fd=self.directory_descriptor,
+                    follow_symlinks=False,
+                )
+                if (published_status.st_dev, published_status.st_ino) == staged.identity:
+                    os.unlink(self.target.name, dir_fd=self.directory_descriptor)
             except OSError:
                 pass
             raise
+        published_descriptor: int | None = None
+        try:
+            published_descriptor = os.open(
+                self.target.name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=self.directory_descriptor,
+            )
+            published_status = os.fstat(published_descriptor)
+        except OSError:
+            if published_descriptor is not None:
+                os.close(published_descriptor)
+            raise SchemaError("published state is unavailable") from None
+        if (
+            not stat.S_ISREG(published_status.st_mode)
+            or (published_status.st_dev, published_status.st_ino) != staged.identity
+        ):
+            os.close(published_descriptor)
+            raise SchemaError("published state identity is inconsistent")
         try:
             os.fsync(self.directory_descriptor)
             os.unlink(staged.name, dir_fd=self.directory_descriptor)
             os.fsync(self.directory_descriptor)
         except OSError:
             raise SchemaError("private state staging could not be removed") from None
+        finally:
+            os.close(published_descriptor)
         return True
 
 

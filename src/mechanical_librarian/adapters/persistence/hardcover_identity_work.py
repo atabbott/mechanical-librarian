@@ -958,10 +958,12 @@ class SQLiteHardcoverIdentityWorkRepository:
                 and not started_events
             )
             already_started = False
+            exact_updated_at = claimed_at
         elif len(attempts) == 1:
             attempt, candidate, started_at, resolved_at, outcome = attempts[0]
             try:
-                expected_lease = _parse_time(str(started_at)) + LEASE_DURATION
+                started_time = _parse_time(str(started_at))
+                expected_lease = started_time + LEASE_DURATION
             except IdentityWorkPersistenceError:
                 raise StaleIdentityWorkFence("identity work fence is stale") from None
             coherent_current_lease = (
@@ -975,9 +977,11 @@ class SQLiteHardcoverIdentityWorkRepository:
                 and started_events == [("claimed", "claimed", started_at)]
             )
             already_started = True
+            exact_updated_at = started_time
         else:
             coherent_current_lease = False
             already_started = False
+            exact_updated_at = claimed_at
         expected_owner = persisted_owner if owner is None else owner
         exact_lease = claim.lease_expires_at == current_lease
         if lease == "start" and already_started:
@@ -992,6 +996,7 @@ class SQLiteHardcoverIdentityWorkRepository:
             or claimed_at > initial_lease
             or initial_lease > current_lease
             or not coherent_current_lease
+            or _parse_time(str(row[5])) != exact_updated_at
             or now < _parse_time(str(row[5]))
         ):
             raise StaleIdentityWorkFence("identity work fence is stale")
@@ -1129,8 +1134,12 @@ def _transaction(connection: sqlite3.Connection) -> Iterator[None]:
     try:
         yield
         connection.commit()
-    except Exception:
-        connection.rollback()
+    except BaseException as error:
+        if connection.in_transaction:
+            try:
+                connection.rollback()
+            except BaseException:
+                error.add_note("identity work transaction rollback failed")
         raise
 
 

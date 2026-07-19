@@ -21,6 +21,97 @@ CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
+    def test_bound_staging_rejects_pretruncate_replacement_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "disposable"
+            parent.mkdir(mode=0o700)
+            replacement = b"unrelated replacement state"
+            opened: list[int] = []
+            real_open = sqlite.os.open
+
+            with sqlite.bound_disposable_state(parent / "state.sqlite") as bound:
+                with bound.staged_state() as staged:
+                    staged.write_bytes(b"owned staged state")
+                    staged_path = parent / staged.name
+                    staged_path.unlink()
+                    staged_path.write_bytes(replacement)
+                    staged_path.chmod(0o600)
+
+                    def capture_open(path, flags, *args, **kwargs):
+                        descriptor = real_open(path, flags, *args, **kwargs)
+                        if path == staged.name:
+                            opened.append(descriptor)
+                        return descriptor
+
+                    with (
+                        patch.object(sqlite.os, "open", side_effect=capture_open),
+                        self.assertRaisesRegex(SchemaError, "identity"),
+                    ):
+                        staged.write_bytes(b"must not truncate replacement")
+
+                    self.assertEqual(staged_path.read_bytes(), replacement)
+                    self.assertEqual(len(opened), 1)
+                    with self.assertRaises(OSError):
+                        sqlite.os.fstat(opened[0])
+
+            self.assertEqual(staged_path.read_bytes(), replacement)
+
+    def test_bound_publication_rejects_link_time_replacement_without_deletion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "disposable"
+            parent.mkdir(mode=0o700)
+            target = parent / "state.sqlite"
+            replacement = b"unrelated publication replacement"
+            opened: list[int] = []
+            real_link = sqlite.os.link
+            real_open = sqlite.os.open
+
+            with sqlite.bound_disposable_state(target) as bound:
+                with bound.staged_state() as staged:
+                    staged.write_bytes(b"owned staged state")
+
+                    def link_then_replace(*args, **kwargs) -> None:
+                        real_link(*args, **kwargs)
+                        sqlite.os.unlink(
+                            target.name,
+                            dir_fd=bound.directory_descriptor,
+                        )
+                        descriptor = real_open(
+                            target.name,
+                            os.O_WRONLY
+                            | os.O_CREAT
+                            | os.O_EXCL
+                            | getattr(os, "O_NOFOLLOW", 0),
+                            0o600,
+                            dir_fd=bound.directory_descriptor,
+                        )
+                        try:
+                            os.write(descriptor, replacement)
+                            os.fsync(descriptor)
+                        finally:
+                            os.close(descriptor)
+
+                    def capture_open(path, flags, *args, **kwargs):
+                        descriptor = real_open(path, flags, *args, **kwargs)
+                        if path == target.name:
+                            opened.append(descriptor)
+                        return descriptor
+
+                    with (
+                        patch.object(sqlite.os, "link", side_effect=link_then_replace),
+                        patch.object(sqlite.os, "open", side_effect=capture_open),
+                        self.assertRaisesRegex(SchemaError, "published state identity"),
+                    ):
+                        bound.publish(staged)
+
+                    self.assertEqual(target.read_bytes(), replacement)
+                    self.assertEqual(staged.read_bytes(), b"owned staged state")
+                    self.assertEqual(len(opened), 1)
+                    with self.assertRaises(OSError):
+                        sqlite.os.fstat(opened[0])
+
+            self.assertEqual(target.read_bytes(), replacement)
+
     def test_bound_staging_closes_descriptor_when_fstat_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory) / "disposable"
