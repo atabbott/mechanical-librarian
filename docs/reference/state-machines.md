@@ -224,3 +224,39 @@ Every transition is an audit event with a reason and actor.
 
 The [review-experience contract](../product/review-experience.md) defines the
 user-facing behavior associated with these states.
+
+## Hardcover identity work
+
+Each opaque work key has monotonically increasing generations. At most one
+generation is active:
+
+```text
+pending -> claimed -> succeeded
+   |          |    -> failed
+   |          |    -> retry_wait -> claimed
+   |          |    -> cancelled
+   |          -> cancelled
+   -> cancelled
+```
+
+Acceptance creates generation, candidate 1, aggregate start, exact 30-second
+deadline, and the first event in one transaction. Failure creates none of
+them. A claim reserves a candidate and advances its fence but does not consume
+an attempt. Only a gate-held `renew_and_start` transaction records a started
+attempt and increments the bounded attempt count. It requires at least six
+seconds remaining and renews the lease to wall-now plus 15 seconds.
+
+Only the exact current fence and lease owner can start or publish. After a
+started claim's lease expires, a later gate owner finalizes that attempt as
+`interrupted`, advances the fence, appends candidate and retry facts, and makes
+the generation claimable. An old owner cannot mutate the new fence, preventing
+ABA publication. A terminal publication finalizes the attempt, appends result
+and bounded observation, advances currentness, transitions the generation, and
+adds its event atomically. Any failure rolls all of those effects back.
+
+A compatible matched pointer is reusable through exactly 24 hours after its
+publication timestamp. At 24 hours plus one microsecond, one transaction marks
+the pointer expired and creates exactly one unreserved pending next generation.
+Repeated readers reuse that active generation. Wall timestamps determine
+durable chronology; fences determine ownership and never derive authority from
+time alone.

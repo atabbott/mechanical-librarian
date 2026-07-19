@@ -633,6 +633,29 @@ read/write semantics requires a new schema or adapter contract version and a
 documented migration. Capability declarations narrow available workflows; they
 never authorize a write.
 
+## Durable Hardcover identity compatibility
+
+Schema 9 adds Hardcover identity work without transforming schema-8 rows. A
+work generation is compatible for matched-current reuse only when its opaque
+application-derived work key denotes the same validated identity inputs and
+its matched pointer is no older than exactly 24 hours. Generation number,
+candidate number, attempt number, and fence are monotonic within that work-key
+namespace and are never reset or inferred after restart.
+
+The state values `pending`, `claimed`, `retry_wait`, `succeeded`, `failed`, and
+`cancelled`, the terminal result meanings, the 30-second aggregate window,
+15-second lease, six-second start threshold, three-attempt bound, and exact
+24-hour matched-currentness boundary are compatibility semantics. Changing a
+meaning or bound requires a new application contract and a documented durable
+migration; an older binary must not open schema 9. Append-only history remains
+attributable to its original contract rather than being reinterpreted.
+
+The installed `durable-work-v3` input is a closed qualification DSL, not a
+production job or persisted request format. Its canonical public fixtures may
+grow only through a new scenario/schema version. Contributor input cannot
+override schema bindings, work keys, database identity, gate ownership, or
+provider authority.
+
 ## Deprecation
 
 Each deprecation notice states:

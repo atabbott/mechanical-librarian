@@ -58,6 +58,29 @@ the verified copy, run `state-check`, run a new read-only inventory
 reconciliation, confirm selectors with `inventory-inspect`, and execute one
 `epub-opening-evidence` canary against isolated fixtures.
 
+Before the forward-only F09f schema-9 migration of important state, stop
+identity workers and retain a verified pre-schema-9 curator-data copy.
+Migration 9 is additive from the genuine schema-8 prefix and transforms no
+existing row. Interruption at any migration statement rolls all identity-work
+objects and the version row back together; retry then applies migration 9 once.
+An older binary must not open schema 9.
+
+Started identity attempts are recoverable state, not permission to repeat
+network work. After restart, only a later owner holding the external execution
+gate may recover an expired 15-second lease; recovery finalizes the old attempt
+as interrupted and advances the fence before a retry can be claimed. Stale
+owners cannot publish. Terminal publication and current-pointer advancement are
+one transaction, so interruption preserves the earlier pointer and leaves the
+started claim recoverable.
+
+Downgrade is restore-only: stop every newer process, restore the complete
+verified pre-schema-9 database, run `state-check`, and exercise
+`durable-work-v3` against a separate absent disposable path. Do not delete
+schema-9 tables, claims, events, observations, or current pointers, and do not
+edit `schema_migrations`. There is no supported selected-row restore; use the
+whole stopped curator-data backup so generation and fence history cannot be
+split.
+
 ### Host snapshots
 
 Filesystem or ZFS snapshots are defense in depth. Document dataset coverage,

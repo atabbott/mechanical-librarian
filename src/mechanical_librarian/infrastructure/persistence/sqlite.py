@@ -643,6 +643,101 @@ _EPUB_EVIDENCE_EVENTS_NO_UPDATE_SQL = (
 _EPUB_EVIDENCE_EVENTS_NO_DELETE_SQL = (
     "CREATE TRIGGER epub_evidence_events_no_delete BEFORE DELETE ON epub_evidence_events BEGIN SELECT RAISE(ABORT, 'epub evidence events are append-only'); END"
 )
+
+_HARDCOVER_IDENTITY_GENERATIONS_TABLE_SQL = (
+    "CREATE TABLE hardcover_identity_generations ("
+    "work_key TEXT NOT NULL CHECK (typeof(work_key)='text' AND length(work_key)=64 AND work_key NOT GLOB '*[^0-9a-f]*'), "
+    "generation INTEGER NOT NULL CHECK (typeof(generation)='integer' AND generation BETWEEN 1 AND 2147483647), "
+    "state TEXT NOT NULL CHECK (state IN ('pending','claimed','retry_wait','succeeded','failed','cancelled')), "
+    "fence INTEGER NOT NULL DEFAULT 0 CHECK (typeof(fence)='integer' AND fence BETWEEN 0 AND 2147483647), "
+    "attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (typeof(attempt_count)='integer' AND attempt_count BETWEEN 0 AND 3), "
+    "aggregate_started_at TEXT NOT NULL CHECK (" + _timestamp_constraint("aggregate_started_at") + "), "
+    "aggregate_deadline TEXT NOT NULL CHECK (" + _timestamp_constraint("aggregate_deadline") + "), "
+    "lease_owner TEXT CHECK (lease_owner IS NULL OR (typeof(lease_owner)='text' AND length(lease_owner) BETWEEN 1 AND 64 AND lease_owner NOT GLOB '*[^a-z0-9_-]*')), "
+    "lease_expires_at TEXT CHECK (" + _timestamp_constraint("lease_expires_at", nullable=True) + "), "
+    "created_at TEXT NOT NULL CHECK (" + _timestamp_constraint("created_at") + "), "
+    "updated_at TEXT NOT NULL CHECK (" + _timestamp_constraint("updated_at") + "), "
+    "PRIMARY KEY(work_key,generation), "
+    "CHECK ((state='claimed')=(lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)), "
+    "CHECK (aggregate_started_at<=aggregate_deadline AND created_at<=updated_at))"
+)
+_HARDCOVER_IDENTITY_CANDIDATES_TABLE_SQL = (
+    "CREATE TABLE hardcover_identity_candidates ("
+    "work_key TEXT NOT NULL, generation INTEGER NOT NULL, candidate INTEGER NOT NULL CHECK (candidate BETWEEN 1 AND 3), "
+    "created_at TEXT NOT NULL CHECK (" + _timestamp_constraint("created_at") + "), "
+    "PRIMARY KEY(work_key,generation,candidate), FOREIGN KEY(work_key,generation) REFERENCES hardcover_identity_generations(work_key,generation))"
+)
+_HARDCOVER_IDENTITY_CLAIMS_TABLE_SQL = (
+    "CREATE TABLE hardcover_identity_claims ("
+    "work_key TEXT NOT NULL, generation INTEGER NOT NULL, fence INTEGER NOT NULL CHECK (fence BETWEEN 1 AND 2147483647), "
+    "candidate INTEGER NOT NULL CHECK (candidate BETWEEN 1 AND 3), owner TEXT NOT NULL CHECK (length(owner) BETWEEN 1 AND 64 AND owner NOT GLOB '*[^a-z0-9_-]*'), "
+    "claimed_at TEXT NOT NULL CHECK (" + _timestamp_constraint("claimed_at") + "), lease_expires_at TEXT NOT NULL CHECK (" + _timestamp_constraint("lease_expires_at") + "), "
+    "PRIMARY KEY(work_key,generation,fence), FOREIGN KEY(work_key,generation,candidate) REFERENCES hardcover_identity_candidates(work_key,generation,candidate))"
+)
+_HARDCOVER_IDENTITY_ATTEMPTS_TABLE_SQL = (
+    "CREATE TABLE hardcover_identity_attempts ("
+    "work_key TEXT NOT NULL, generation INTEGER NOT NULL, attempt INTEGER NOT NULL CHECK (attempt BETWEEN 1 AND 3), fence INTEGER NOT NULL, candidate INTEGER NOT NULL, "
+    "started_at TEXT NOT NULL CHECK (" + _timestamp_constraint("started_at") + "), resolved_at TEXT CHECK (" + _timestamp_constraint("resolved_at", nullable=True) + "), "
+    "outcome TEXT CHECK (outcome IS NULL OR outcome IN ('matched','interrupted','failed','cancelled')), "
+    "PRIMARY KEY(work_key,generation,attempt), UNIQUE(work_key,generation,fence), "
+    "FOREIGN KEY(work_key,generation,fence) REFERENCES hardcover_identity_claims(work_key,generation,fence), "
+    "CHECK ((resolved_at IS NULL)=(outcome IS NULL) AND (resolved_at IS NULL OR started_at<=resolved_at)))"
+)
+_HARDCOVER_IDENTITY_RETRIES_TABLE_SQL = (
+    "CREATE TABLE hardcover_identity_retry_schedules ("
+    "work_key TEXT NOT NULL, generation INTEGER NOT NULL, fence INTEGER NOT NULL, candidate INTEGER NOT NULL CHECK (candidate BETWEEN 1 AND 3), "
+    "due_at TEXT NOT NULL CHECK (" + _timestamp_constraint("due_at") + "), reason TEXT NOT NULL CHECK (reason IN ('interrupted','retryable')), "
+    "created_at TEXT NOT NULL CHECK (" + _timestamp_constraint("created_at") + "), "
+    "PRIMARY KEY(work_key,generation,fence), FOREIGN KEY(work_key,generation) REFERENCES hardcover_identity_generations(work_key,generation))"
+)
+_HARDCOVER_IDENTITY_EVENTS_TABLE_SQL = (
+    "CREATE TABLE hardcover_identity_events ("
+    "work_key TEXT NOT NULL, generation INTEGER NOT NULL, sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 2147483647), "
+    "kind TEXT NOT NULL CHECK (kind IN ('accepted','claimed','started','recovered','published','cancelled','expired')), "
+    "from_state TEXT, to_state TEXT NOT NULL, fence INTEGER NOT NULL CHECK (fence BETWEEN 0 AND 2147483647), "
+    "occurred_at TEXT NOT NULL CHECK (" + _timestamp_constraint("occurred_at") + "), "
+    "PRIMARY KEY(work_key,generation,sequence), FOREIGN KEY(work_key,generation) REFERENCES hardcover_identity_generations(work_key,generation))"
+)
+_HARDCOVER_IDENTITY_RESULTS_TABLE_SQL = (
+    "CREATE TABLE hardcover_identity_results ("
+    "work_key TEXT NOT NULL, generation INTEGER NOT NULL, fence INTEGER NOT NULL, outcome TEXT NOT NULL CHECK (outcome IN ('matched','failed','cancelled')), "
+    "published_at TEXT NOT NULL CHECK (" + _timestamp_constraint("published_at") + "), "
+    "PRIMARY KEY(work_key,generation), FOREIGN KEY(work_key,generation) REFERENCES hardcover_identity_generations(work_key,generation))"
+)
+_HARDCOVER_IDENTITY_OBSERVATIONS_TABLE_SQL = (
+    "CREATE TABLE hardcover_identity_observations ("
+    "observation_id TEXT PRIMARY KEY CHECK (length(observation_id)=64 AND observation_id NOT GLOB '*[^0-9a-f]*'), "
+    "work_key TEXT NOT NULL, generation INTEGER NOT NULL, canonical_observation TEXT NOT NULL CHECK (typeof(canonical_observation)='text' AND length(CAST(canonical_observation AS BLOB)) BETWEEN 2 AND 8192), "
+    "created_at TEXT NOT NULL CHECK (" + _timestamp_constraint("created_at") + "), "
+    "UNIQUE(work_key,generation), FOREIGN KEY(work_key,generation) REFERENCES hardcover_identity_results(work_key,generation))"
+)
+_CURRENT_HARDCOVER_IDENTITY_TABLE_SQL = (
+    "CREATE TABLE current_hardcover_identity ("
+    "work_key TEXT PRIMARY KEY, generation INTEGER NOT NULL, observation_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK (status IN ('matched','expired')), "
+    "current_since TEXT NOT NULL CHECK (" + _timestamp_constraint("current_since") + "), expires_at TEXT NOT NULL CHECK (" + _timestamp_constraint("expires_at") + "), "
+    "FOREIGN KEY(work_key,generation) REFERENCES hardcover_identity_results(work_key,generation), FOREIGN KEY(observation_id) REFERENCES hardcover_identity_observations(observation_id), "
+    "CHECK (current_since<=expires_at))"
+)
+_HARDCOVER_APPEND_ONLY_TRIGGERS = tuple(
+    f"CREATE TRIGGER {table}_no_{operation} BEFORE {operation.upper()} ON {table} BEGIN SELECT RAISE(ABORT,'immutable hardcover identity record'); END"
+    for table in (
+        "hardcover_identity_candidates",
+        "hardcover_identity_claims",
+        "hardcover_identity_retry_schedules",
+        "hardcover_identity_events",
+        "hardcover_identity_results",
+        "hardcover_identity_observations",
+    )
+    for operation in ("update", "delete")
+)
+_HARDCOVER_ATTEMPTS_FINALIZE_ONLY_SQL = (
+    "CREATE TRIGGER hardcover_identity_attempts_finalize_only BEFORE UPDATE ON hardcover_identity_attempts "
+    "WHEN OLD.resolved_at IS NOT NULL OR NEW.work_key!=OLD.work_key OR NEW.generation!=OLD.generation OR NEW.attempt!=OLD.attempt OR NEW.fence!=OLD.fence OR NEW.candidate!=OLD.candidate OR NEW.started_at!=OLD.started_at OR NEW.resolved_at IS NULL OR NEW.outcome IS NULL "
+    "BEGIN SELECT RAISE(ABORT,'identity attempt update is not finalization'); END"
+)
+_HARDCOVER_ATTEMPTS_NO_DELETE_SQL = (
+    "CREATE TRIGGER hardcover_identity_attempts_no_delete BEFORE DELETE ON hardcover_identity_attempts BEGIN SELECT RAISE(ABORT,'immutable hardcover identity attempt'); END"
+)
 MIGRATIONS = (
     Migration(
         1,
@@ -821,6 +916,38 @@ MIGRATIONS = (
                 "current_epub_opening_evidence",
                 "epub_evidence_checkpoints",
                 "epub_evidence_events",
+            }
+        ),
+    ),
+    Migration(
+        9,
+        (
+            _HARDCOVER_IDENTITY_GENERATIONS_TABLE_SQL,
+            _HARDCOVER_IDENTITY_CANDIDATES_TABLE_SQL,
+            _HARDCOVER_IDENTITY_CLAIMS_TABLE_SQL,
+            _HARDCOVER_IDENTITY_ATTEMPTS_TABLE_SQL,
+            _HARDCOVER_IDENTITY_RETRIES_TABLE_SQL,
+            _HARDCOVER_IDENTITY_EVENTS_TABLE_SQL,
+            _HARDCOVER_IDENTITY_RESULTS_TABLE_SQL,
+            _HARDCOVER_IDENTITY_OBSERVATIONS_TABLE_SQL,
+            _CURRENT_HARDCOVER_IDENTITY_TABLE_SQL,
+            *_HARDCOVER_APPEND_ONLY_TRIGGERS,
+            _HARDCOVER_ATTEMPTS_FINALIZE_ONLY_SQL,
+            _HARDCOVER_ATTEMPTS_NO_DELETE_SQL,
+            "CREATE UNIQUE INDEX hardcover_identity_one_active_generation ON hardcover_identity_generations(work_key) WHERE state IN ('pending','claimed','retry_wait')",
+            "CREATE INDEX hardcover_identity_claimable ON hardcover_identity_generations(state,lease_expires_at,updated_at,work_key,generation)",
+        ),
+        frozenset(
+            {
+                "hardcover_identity_generations",
+                "hardcover_identity_candidates",
+                "hardcover_identity_claims",
+                "hardcover_identity_attempts",
+                "hardcover_identity_retry_schedules",
+                "hardcover_identity_events",
+                "hardcover_identity_results",
+                "hardcover_identity_observations",
+                "current_hardcover_identity",
             }
         ),
     ),
@@ -1474,15 +1601,32 @@ def _enable_wal(connection: sqlite3.Connection) -> None:
         raise SchemaError("database journal mode could not be enabled")
 
 
-def migrate(connection: sqlite3.Connection) -> int:
-    """Apply ordered migrations atomically, rejecting tampered or newer schemas."""
+def migrate_to_version(connection: sqlite3.Connection, target_version: int) -> int:
+    """Apply a genuine supported schema prefix for upgrade qualification."""
+
+    if type(target_version) is not int or not 1 <= target_version <= len(MIGRATIONS):
+        raise SchemaError("migration target version is unsupported")
 
     known = _validated_migrations(connection)
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+    ).fetchone() is not None:
+        applied_max = connection.execute(
+            "SELECT COALESCE(MAX(version),0) FROM schema_migrations"
+        ).fetchone()
+        if (
+            applied_max is None
+            or type(applied_max[0]) is not int
+            or applied_max[0] > target_version
+        ):
+            raise SchemaError(
+                "database schema is newer than the requested migration target"
+            )
     _enable_wal(connection)
     try:
         connection.execute("BEGIN EXCLUSIVE")
         applied = _validate_existing_schema(connection, known)
-        for migration in MIGRATIONS:
+        for migration in MIGRATIONS[:target_version]:
             if migration.version not in applied:
                 for statement in migration.statements:
                     _validate_statement(statement)
@@ -1502,7 +1646,13 @@ def migrate(connection: sqlite3.Connection) -> int:
         if connection.in_transaction:
             connection.rollback()
         raise SchemaError("migration failed and was rolled back") from None
-    return max(known)
+    return target_version
+
+
+def migrate(connection: sqlite3.Connection) -> int:
+    """Apply ordered migrations atomically, rejecting tampered or newer schemas."""
+
+    return migrate_to_version(connection, len(MIGRATIONS))
 
 
 def finalize_staged_state(connection: sqlite3.Connection) -> None:

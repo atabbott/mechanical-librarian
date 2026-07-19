@@ -50,8 +50,8 @@ class SqliteFoundationTests(unittest.TestCase):
                 (proposal.lineage, proposal.set_id),
             )
 
-            self.assertEqual(migrate(connection), 8)
-            self.assertEqual(migrate(connection), 8)
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
+            self.assertEqual(migrate(connection), CURRENT_VERSION)
             self.assertEqual(
                 connection.execute(
                     "SELECT canonical_set FROM synthetic_title_proposal_sets WHERE set_id = ?",
@@ -84,7 +84,7 @@ class SqliteFoundationTests(unittest.TestCase):
                             "INSERT INTO instance_metadata(key, value) VALUES (?, ?)",
                             (f"schema-{version}-sentinel", "preserved"),
                         )
-                        self.assertEqual(migrate(connection), 8)
+                        self.assertEqual(migrate(connection), CURRENT_VERSION)
                         self.assertEqual(
                             connection.execute(
                                 "SELECT value FROM instance_metadata WHERE key = ?",
@@ -134,7 +134,7 @@ class SqliteFoundationTests(unittest.TestCase):
                             ).fetchall(),
                             [],
                         )
-                        self.assertEqual(migrate(connection), 8)
+                        self.assertEqual(migrate(connection), CURRENT_VERSION)
                     finally:
                         connection.close()
 
@@ -187,7 +187,7 @@ class SqliteFoundationTests(unittest.TestCase):
                             ).fetchall(),
                             [],
                         )
-                        self.assertEqual(migrate(connection), 8)
+                        self.assertEqual(migrate(connection), CURRENT_VERSION)
                         self.assertEqual(
                             connection.execute(
                                 "SELECT value FROM instance_metadata WHERE key="
