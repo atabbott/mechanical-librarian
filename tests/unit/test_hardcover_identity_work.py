@@ -601,6 +601,222 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             (1, 1),
         )
 
+    def test_first_and_retry_start_reject_corrupt_claim_provenance_value_free(self) -> None:
+        for claim_kind in ("first", "retry"):
+            for corruption in (
+                "backdated",
+                "wrong_initial_lease",
+                "missing_event",
+                "extra_event",
+                "mismatched_event",
+            ):
+                with (
+                    self.subTest(claim_kind=claim_kind, corruption=corruption),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    connection = connect(Path(directory) / "state.sqlite")
+                    try:
+                        migrate(connection)
+                        repository = SQLiteHardcoverIdentityWorkRepository(connection)
+                        accepted = repository.accept(WORK_KEY, ORIGIN)
+                        claim = repository.claim(
+                            accepted.reference,
+                            "worker-a",
+                            ORIGIN + timedelta(seconds=1),
+                            gate_owned=True,
+                        )
+                        owner = "worker-a"
+                        started_at = ORIGIN + timedelta(seconds=2)
+                        if claim_kind == "retry":
+                            started = repository.renew_and_start(
+                                claim,
+                                owner,
+                                started_at,
+                                gate_owned=True,
+                            )
+                            repository.publish_failed(
+                                started,
+                                owner,
+                                ORIGIN + timedelta(seconds=3),
+                                retryable=True,
+                                gate_owned=True,
+                            )
+                            owner = "worker-b"
+                            claim = repository.claim(
+                                accepted.reference,
+                                owner,
+                                ORIGIN + timedelta(seconds=4),
+                                gate_owned=True,
+                            )
+                            started_at = ORIGIN + timedelta(seconds=5)
+
+                        if corruption in {"backdated", "wrong_initial_lease"}:
+                            connection.execute(
+                                "DROP TRIGGER hardcover_identity_claims_no_update"
+                            )
+                        if corruption == "backdated":
+                            backdated = (
+                                "2026-01-01T00:00:00.500000Z"
+                                if claim_kind == "first"
+                                else "2026-01-01T00:00:03.500000Z"
+                            )
+                            connection.execute(
+                                "UPDATE hardcover_identity_claims SET claimed_at=? "
+                                "WHERE work_key=? AND generation=? AND fence=?",
+                                (
+                                    backdated,
+                                    WORK_KEY,
+                                    claim.reference.generation,
+                                    claim.fence,
+                                ),
+                            )
+                            connection.execute(
+                                "UPDATE hardcover_identity_generations SET updated_at=? "
+                                "WHERE work_key=? AND generation=?",
+                                (backdated, WORK_KEY, claim.reference.generation),
+                            )
+                        elif corruption == "wrong_initial_lease":
+                            connection.execute(
+                                "UPDATE hardcover_identity_claims SET lease_expires_at=? "
+                                "WHERE work_key=? AND generation=? AND fence=?",
+                                (
+                                    hardcover_identity_work._time(
+                                        claim.lease_expires_at + timedelta(seconds=1)
+                                    ),
+                                    WORK_KEY,
+                                    claim.reference.generation,
+                                    claim.fence,
+                                ),
+                            )
+                        elif corruption == "missing_event":
+                            connection.execute(
+                                "DROP TRIGGER hardcover_identity_events_no_delete"
+                            )
+                            connection.execute(
+                                "DELETE FROM hardcover_identity_events WHERE work_key=? "
+                                "AND generation=? AND fence=? AND kind='claimed'",
+                                (WORK_KEY, claim.reference.generation, claim.fence),
+                            )
+                        elif corruption == "extra_event":
+                            sequence = connection.execute(
+                                "SELECT MAX(sequence)+1 FROM hardcover_identity_events "
+                                "WHERE work_key=? AND generation=?",
+                                (WORK_KEY, claim.reference.generation),
+                            ).fetchone()[0]
+                            connection.execute(
+                                "INSERT INTO hardcover_identity_events"
+                                "(work_key,generation,sequence,kind,from_state,to_state,fence,occurred_at) "
+                                "SELECT work_key,generation,?,'claimed',from_state,to_state,fence,occurred_at "
+                                "FROM hardcover_identity_events WHERE work_key=? AND generation=? "
+                                "AND fence=? AND kind='claimed'",
+                                (
+                                    sequence,
+                                    WORK_KEY,
+                                    claim.reference.generation,
+                                    claim.fence,
+                                ),
+                            )
+                        else:
+                            connection.execute(
+                                "DROP TRIGGER hardcover_identity_events_no_update"
+                            )
+                            connection.execute(
+                                "UPDATE hardcover_identity_events SET occurred_at=? "
+                                "WHERE work_key=? AND generation=? AND fence=? AND kind='claimed'",
+                                (
+                                    hardcover_identity_work._time(
+                                        started_at - timedelta(microseconds=1)
+                                    ),
+                                    WORK_KEY,
+                                    claim.reference.generation,
+                                    claim.fence,
+                                ),
+                            )
+
+                        before_dump = tuple(connection.iterdump())
+                        changes = connection.total_changes
+                        with self.assertRaises(StaleIdentityWorkFence) as caught:
+                            repository.renew_and_start(
+                                claim,
+                                owner,
+                                started_at,
+                                gate_owned=True,
+                            )
+                        self.assertEqual(str(caught.exception), "identity work fence is stale")
+                        self.assertEqual(connection.total_changes, changes)
+                        self.assertEqual(tuple(connection.iterdump()), before_dump)
+                    finally:
+                        connection.close()
+
+    def test_claim_provenance_is_checked_before_every_post_claim_mutation(self) -> None:
+        for operation in ("recover", "publish", "fail", "cancel"):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as directory:
+                connection = connect(Path(directory) / "state.sqlite")
+                try:
+                    migrate(connection)
+                    repository = SQLiteHardcoverIdentityWorkRepository(connection)
+                    accepted = repository.accept(WORK_KEY, ORIGIN)
+                    claim = repository.claim(
+                        accepted.reference,
+                        "worker-a",
+                        ORIGIN + timedelta(seconds=1),
+                        gate_owned=True,
+                    )
+                    if operation in {"publish", "fail", "cancel"}:
+                        claim = repository.renew_and_start(
+                            claim,
+                            "worker-a",
+                            ORIGIN + timedelta(seconds=2),
+                            gate_owned=True,
+                        )
+                    connection.execute(
+                        "DROP TRIGGER hardcover_identity_events_no_delete"
+                    )
+                    connection.execute(
+                        "DELETE FROM hardcover_identity_events WHERE work_key=? "
+                        "AND generation=? AND fence=? AND kind='claimed'",
+                        (WORK_KEY, claim.reference.generation, claim.fence),
+                    )
+                    before_dump = tuple(connection.iterdump())
+                    changes = connection.total_changes
+
+                    with self.assertRaises(StaleIdentityWorkFence) as caught:
+                        if operation == "recover":
+                            repository.recover_interrupted(
+                                claim,
+                                ORIGIN + timedelta(seconds=17),
+                                gate_owned=True,
+                            )
+                        elif operation == "publish":
+                            repository.publish_matched(
+                                claim,
+                                "worker-a",
+                                ORIGIN + timedelta(seconds=3),
+                                MATCHED,
+                                gate_owned=True,
+                            )
+                        elif operation == "fail":
+                            repository.publish_failed(
+                                claim,
+                                "worker-a",
+                                ORIGIN + timedelta(seconds=3),
+                                retryable=True,
+                                gate_owned=True,
+                            )
+                        else:
+                            repository.cancel(
+                                claim,
+                                "worker-a",
+                                ORIGIN + timedelta(seconds=3),
+                                gate_owned=True,
+                            )
+
+                    self.assertEqual(str(caught.exception), "identity work fence is stale")
+                    self.assertEqual(connection.total_changes, changes)
+                    self.assertEqual(tuple(connection.iterdump()), before_dump)
+                finally:
+                    connection.close()
+
     def test_start_replay_rejects_different_stale_and_corrupt_claims_value_free(self) -> None:
         for case in ("different", "stale", "corrupt"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:

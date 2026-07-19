@@ -1616,17 +1616,43 @@ class BoundDisposableState:
             raise SchemaError("published state is unavailable") from None
         if (
             not stat.S_ISREG(published_status.st_mode)
+            or published_status.st_nlink != 2
             or (published_status.st_dev, published_status.st_ino) != staged.identity
         ):
             os.close(published_descriptor)
             raise SchemaError("published state identity is inconsistent")
+        final_descriptor: int | None = None
         try:
+            os.fsync(published_descriptor)
             os.fsync(self.directory_descriptor)
             os.unlink(staged.name, dir_fd=self.directory_descriptor)
             os.fsync(self.directory_descriptor)
+            remaining_status = os.fstat(published_descriptor)
+            if (
+                not stat.S_ISREG(remaining_status.st_mode)
+                or remaining_status.st_nlink != 1
+                or (remaining_status.st_dev, remaining_status.st_ino)
+                != staged.identity
+            ):
+                raise SchemaError("published state identity is inconsistent")
+            self._revalidate_directory()
+            final_descriptor = os.open(
+                self.target.name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=self.directory_descriptor,
+            )
+            final_status = os.fstat(final_descriptor)
+            if (
+                not stat.S_ISREG(final_status.st_mode)
+                or final_status.st_nlink != 1
+                or (final_status.st_dev, final_status.st_ino) != staged.identity
+            ):
+                raise SchemaError("published state identity is inconsistent")
         except OSError:
-            raise SchemaError("private state staging could not be removed") from None
+            raise SchemaError("published state could not be finalized") from None
         finally:
+            if final_descriptor is not None:
+                os.close(final_descriptor)
             os.close(published_descriptor)
         return True
 

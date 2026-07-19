@@ -940,6 +940,76 @@ class SQLiteHardcoverIdentityWorkRepository:
             current_lease = _parse_time(str(row[4]))
         except IdentityWorkPersistenceError:
             raise StaleIdentityWorkFence("identity work fence is stale") from None
+        candidate_rows = self._connection.execute(
+            "SELECT created_at FROM hardcover_identity_candidates "
+            "WHERE work_key=? AND generation=? AND candidate=?",
+            (
+                claim.reference.work_key,
+                claim.reference.generation,
+                persisted_candidate_number,
+            ),
+        ).fetchall()
+        claimed_events = self._connection.execute(
+            "SELECT e.from_state,e.to_state,e.fence,c.candidate,e.occurred_at "
+            "FROM hardcover_identity_events e JOIN hardcover_identity_claims c "
+            "ON c.work_key=e.work_key AND c.generation=e.generation AND c.fence=e.fence "
+            "WHERE e.work_key=? AND e.generation=? AND e.kind='claimed' AND e.fence=?",
+            (claim.reference.work_key, claim.reference.generation, claim.fence),
+        ).fetchall()
+        expected_claimed_from = "pending" if claim.fence == 1 else "retry_wait"
+        try:
+            candidate_created = (
+                _parse_time(str(candidate_rows[0][0]))
+                if len(candidate_rows) == 1 and type(candidate_rows[0][0]) is str
+                else None
+            )
+            claim_origin_is_coherent = (
+                candidate_created is not None
+                and candidate_created <= claimed_at
+                and initial_lease == claimed_at + LEASE_DURATION
+                and claimed_events
+                == [
+                    (
+                        expected_claimed_from,
+                        "claimed",
+                        claim.fence,
+                        persisted_candidate_number,
+                        _time(claimed_at),
+                    )
+                ]
+            )
+            if claim.fence == 1:
+                claim_origin_is_coherent = (
+                    claim_origin_is_coherent and persisted_candidate_number == 1
+                )
+            else:
+                schedules = self._connection.execute(
+                    "SELECT candidate,due_at,created_at FROM hardcover_identity_retry_schedules "
+                    "WHERE work_key=? AND generation=? AND fence=?",
+                    (
+                        claim.reference.work_key,
+                        claim.reference.generation,
+                        claim.fence,
+                    ),
+                ).fetchall()
+                if (
+                    len(schedules) != 1
+                    or schedules[0][0] != persisted_candidate_number
+                    or type(schedules[0][1]) is not str
+                    or type(schedules[0][2]) is not str
+                ):
+                    claim_origin_is_coherent = False
+                else:
+                    due_at = _parse_time(schedules[0][1])
+                    schedule_created = _parse_time(schedules[0][2])
+                    claim_origin_is_coherent = (
+                        claim_origin_is_coherent
+                        and schedule_created <= due_at <= claimed_at
+                        and candidate_created is not None
+                        and candidate_created <= schedule_created
+                    )
+        except IdentityWorkPersistenceError:
+            raise StaleIdentityWorkFence("identity work fence is stale") from None
         attempts = self._connection.execute(
             "SELECT attempt,candidate,started_at,resolved_at,outcome FROM hardcover_identity_attempts "
             "WHERE work_key=? AND generation=? AND fence=?",
@@ -973,6 +1043,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                 and attempt == persisted_candidate_number
                 and resolved_at is None
                 and outcome is None
+                and claimed_at <= started_time <= initial_lease
                 and current_lease == expected_lease
                 and started_events == [("claimed", "claimed", started_at)]
             )
@@ -993,8 +1064,7 @@ class SQLiteHardcoverIdentityWorkRepository:
             or persisted_owner != expected_owner
             or row[3] != persisted_owner
             or not exact_lease
-            or claimed_at > initial_lease
-            or initial_lease > current_lease
+            or not claim_origin_is_coherent
             or not coherent_current_lease
             or _parse_time(str(row[5])) != exact_updated_at
             or now < _parse_time(str(row[5]))
