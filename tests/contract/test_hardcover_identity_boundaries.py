@@ -226,6 +226,180 @@ class HardcoverIdentityBoundaryTests(unittest.TestCase):
                     IdentityAttemptFailureKind.MALFORMED,
                 )
 
+    def test_body_callable_discovery_is_typed_closed_and_value_free(self) -> None:
+        class CloseTracker:
+            close_calls = 0
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        class MissingRead(CloseTracker):
+            pass
+
+        class NoncallableRead(CloseTracker):
+            read_chunk = False
+
+        def hostile_read_property(error: BaseException) -> type[CloseTracker]:
+            class HostileRead(CloseTracker):
+                @property
+                def read_chunk(self) -> object:
+                    raise error
+
+            return HostileRead
+
+        cases = (
+            (MissingRead(), IdentityAttemptFailureKind.MALFORMED),
+            (NoncallableRead(), IdentityAttemptFailureKind.MALFORMED),
+            (
+                hostile_read_property(RuntimeError("private-read-access"))(),
+                IdentityAttemptFailureKind.UNAVAILABLE,
+            ),
+            (
+                hostile_read_property(SystemExit("private-read-base"))(),
+                IdentityAttemptFailureKind.UNAVAILABLE,
+            ),
+            (
+                hostile_read_property(KeyboardInterrupt("private-read-cancel"))(),
+                IdentityAttemptFailureKind.CANCELLED,
+            ),
+        )
+        for reader, expected in cases:
+            with self.subTest(expected=expected):
+                result = adapter._bounded_body(
+                    (b"Content-Type: application/json\r\n",), reader
+                )
+                self.assertIs(result, expected)
+                self.assertEqual(reader.close_calls, 1)
+                self.assertNotIn("private-", repr(result))
+
+    def test_body_read_invocation_maps_every_base_failure_and_closes_once(self) -> None:
+        class FailedRead:
+            def __init__(self, error: BaseException) -> None:
+                self.error = error
+                self.close_calls = 0
+
+            def read_chunk(self, max_bytes: int) -> bytes | None:
+                raise self.error
+
+            def close(self) -> None:
+                self.close_calls += 1
+
+        for error, expected in (
+            (RuntimeError("private-read-call"), IdentityAttemptFailureKind.UNAVAILABLE),
+            (SystemExit("private-read-base"), IdentityAttemptFailureKind.UNAVAILABLE),
+            (
+                KeyboardInterrupt("private-read-cancel"),
+                IdentityAttemptFailureKind.CANCELLED,
+            ),
+        ):
+            with self.subTest(error=type(error).__name__):
+                reader = FailedRead(error)
+                result = adapter._bounded_body(
+                    (b"Content-Type: application/json\r\n",), reader
+                )
+                self.assertIs(result, expected)
+                self.assertEqual(reader.close_calls, 1)
+                self.assertNotIn("private-", repr(result))
+
+    def test_close_discovery_and_invocation_never_override_body_results(self) -> None:
+        class MissingClose:
+            def read_chunk(self, max_bytes: int) -> None:
+                return None
+
+        class NoncallableClose(MissingClose):
+            close = False
+
+        def hostile_close_property(error: BaseException) -> type[MissingClose]:
+            class HostileClose(MissingClose):
+                @property
+                def close(self) -> object:
+                    raise error
+
+            return HostileClose
+
+        for reader in (
+            MissingClose(),
+            NoncallableClose(),
+            hostile_close_property(RuntimeError("private-close-access"))(),
+            hostile_close_property(SystemExit("private-close-base"))(),
+            hostile_close_property(KeyboardInterrupt("private-close-cancel"))(),
+        ):
+            with self.subTest(reader=type(reader).__name__):
+                self.assertIs(
+                    adapter._bounded_body(
+                        (b"Content-Type: application/json\r\n",), reader
+                    ),
+                    IdentityAttemptFailureKind.MALFORMED,
+                )
+                adapter._close_body(reader)
+
+        class RaisingClose:
+            def __init__(
+                self,
+                values: list[bytes | None | BaseException],
+                close_error: BaseException,
+            ) -> None:
+                self.values = iter(values)
+                self.close_error = close_error
+                self.close_calls = 0
+
+            def read_chunk(self, max_bytes: int) -> bytes | None:
+                value = next(self.values)
+                if isinstance(value, BaseException):
+                    raise value
+                return value
+
+            def close(self) -> None:
+                self.close_calls += 1
+                raise self.close_error
+
+        paths = (
+            ((), (b"malformed-header",), IdentityAttemptFailureKind.MALFORMED),
+            (
+                (b"Content-Type: application/json\r\n",),
+                (RuntimeError("private-read"),),
+                IdentityAttemptFailureKind.UNAVAILABLE,
+            ),
+            (
+                (b"Content-Type: application/json\r\n",),
+                (b"A" * 65_537,),
+                IdentityAttemptFailureKind.OVERSIZED,
+            ),
+            (
+                (b"Content-Type: application/json\r\n",),
+                (b"{}", None),
+                b"{}",
+            ),
+        )
+        for close_error in (
+            RuntimeError("private-close-call"),
+            SystemExit("private-close-base"),
+            KeyboardInterrupt("private-close-cancel"),
+        ):
+            for lines, values, expected in paths:
+                with self.subTest(
+                    close_error=type(close_error).__name__, expected=expected
+                ):
+                    reader = RaisingClose(list(values), close_error)
+                    result = adapter._bounded_body(lines, reader)
+                    self.assertEqual(result, expected)
+                    self.assertEqual(reader.close_calls, 1)
+
+        class HostileIterator:
+            def __iter__(self) -> HostileIterator:
+                return self
+
+            def __next__(self) -> bytes:
+                return b"must-not-read"
+
+            @property
+            def close(self) -> object:
+                raise KeyboardInterrupt("private-producer-close")
+
+        structural = adapter.StructuralIdentityBodyReader(HostileIterator())
+        structural.close()
+        self.assertTrue(structural.closed)
+
     def test_depth_limit_minus_exact_plus_and_string_aware_scan(self) -> None:
         def nested(depth: int) -> str:
             return '{"x":' * depth + "0" + "}" * depth

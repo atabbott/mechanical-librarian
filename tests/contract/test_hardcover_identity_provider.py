@@ -439,7 +439,14 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             def exchange(self, request: object, context: object) -> object:
                 return self.response
 
-        for kind in ("subclass", "malformed", "close_failure"):
+        for kind in (
+            "subclass",
+            "malformed",
+            "close_failure",
+            "close_accessor_runtime",
+            "close_accessor_base",
+            "close_accessor_cancel",
+        ):
             with self.subTest(kind=kind):
                 if kind == "close_failure":
                     class FailedCloseReader:
@@ -450,6 +457,26 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                             raise RuntimeError("private-close-detail")
 
                     reader: object = FailedCloseReader()
+                elif kind.startswith("close_accessor"):
+                    error = {
+                        "close_accessor_runtime": RuntimeError(
+                            "private-close-access"
+                        ),
+                        "close_accessor_base": SystemExit("private-close-base"),
+                        "close_accessor_cancel": KeyboardInterrupt(
+                            "private-close-cancel"
+                        ),
+                    }[kind]
+
+                    class FailedCloseAccessor:
+                        access_calls = 0
+
+                        @property
+                        def close(self) -> object:
+                            self.access_calls += 1
+                            raise error
+
+                    reader = FailedCloseAccessor()
                 else:
                     reader = StructuralIdentityBodyReader(iter((b"must-not-read",)))
                 if kind == "subclass":
@@ -469,9 +496,51 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 if kind == "close_failure":
                     self.assertEqual(reader.close_calls, 1)
                     self.assertNotIn("private-close-detail", repr(result))
+                elif kind.startswith("close_accessor"):
+                    self.assertEqual(reader.access_calls, 1)
+                    self.assertNotIn("private-close", repr(result))
                 else:
                     self.assertTrue(reader.closed)
                     self.assertEqual(reader.read_count, 0)
+
+    def test_exact_malformed_head_suppresses_hostile_close_accessors(self) -> None:
+        class ReturningChannel:
+            def __init__(self, response: object) -> None:
+                self.response = response
+
+            def exchange(self, request: object, context: object) -> object:
+                return self.response
+
+        for error in (
+            RuntimeError("private-close-access"),
+            SystemExit("private-close-base"),
+            KeyboardInterrupt("private-close-cancel"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                class HostileCloseReader:
+                    access_calls = 0
+
+                    def read_chunk(self, max_bytes: int) -> bytes | None:
+                        return b"must-not-read"
+
+                    @property
+                    def close(self) -> object:
+                        self.access_calls += 1
+                        raise error
+
+                reader = HostileCloseReader()
+                response = RawIdentityResponseHead(
+                    b"malformed-status\r\n", (), reader, "1.1.1.1"
+                )
+                result = HardcoverIdentityProvider(
+                    lambda host, port: ("1.1.1.1",),
+                    ReturningChannel(response),
+                    b"synthetic-noncredential",
+                ).lookup(self.query(), self.context())
+                self.assertEqual(
+                    result.failure.kind, IdentityAttemptFailureKind.MALFORMED
+                )
+                self.assertEqual(reader.access_calls, 1)
 
     def test_structural_channel_requires_the_exact_ordered_header_tuple(self) -> None:
         query = self.query()

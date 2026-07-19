@@ -12,7 +12,7 @@ import ipaddress
 import json
 import re
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Protocol
@@ -197,9 +197,7 @@ class StructuralIdentityBodyReader:
         if self._closed:
             return
         self._closed = True
-        close = getattr(self._chunks, "close", None)
-        if callable(close):
-            close()
+        _invoke_body_close(_body_close_callable(self._chunks))
 
 
 class IdentityChannelFailure(RuntimeError):
@@ -751,12 +749,41 @@ def _safe_preflight(context: OperationContext) -> IdentityAttemptFailureKind | N
 
 
 def _close_body(reader: object) -> None:
-    close = getattr(reader, "close", None)
-    if callable(close):
-        try:
-            close()
-        except BaseException:
-            pass
+    _invoke_body_close(_body_close_callable(reader))
+
+
+def _body_close_callable(reader: object) -> Callable[[], object] | None:
+    try:
+        close = getattr(reader, "close", None)
+        return close if callable(close) else None
+    except BaseException:
+        return None
+
+
+def _invoke_body_close(close: Callable[[], object] | None) -> None:
+    if close is None:
+        return
+    try:
+        close()
+    except BaseException:
+        pass
+
+
+def _body_read_callable(
+    reader: object,
+) -> tuple[
+    Callable[[int], object] | None,
+    IdentityAttemptFailureKind | None,
+]:
+    try:
+        read_chunk = getattr(reader, "read_chunk", None)
+        if not callable(read_chunk):
+            return None, IdentityAttemptFailureKind.MALFORMED
+        return read_chunk, None
+    except KeyboardInterrupt:
+        return None, IdentityAttemptFailureKind.CANCELLED
+    except BaseException:
+        return None, IdentityAttemptFailureKind.UNAVAILABLE
 
 
 def _acquire_response_body(response: object) -> object:
@@ -790,14 +817,14 @@ def _status_failure(status: int) -> IdentityAttemptFailureKind | None:
 
 
 def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailureKind:
-    read_chunk = getattr(reader, "read_chunk", None)
-    close = getattr(reader, "close", None)
-    if not callable(read_chunk) or not callable(close):
-        _close_body(reader)
-        return IdentityAttemptFailureKind.MALFORMED
+    read_chunk, read_failure = _body_read_callable(reader)
+    close = _body_close_callable(reader)
+    if read_failure is not None or read_chunk is None or close is None:
+        _invoke_body_close(close)
+        return read_failure or IdentityAttemptFailureKind.MALFORMED
     parsed_headers = _parse_headers(lines)
     if isinstance(parsed_headers, IdentityAttemptFailureKind):
-        _close_body(reader)
+        _invoke_body_close(close)
         return parsed_headers
     headers = parsed_headers
 
@@ -807,7 +834,7 @@ def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailu
         or content_type[0].strip(b" \t") != content_type[0]
         or _CONTENT_TYPE.fullmatch(content_type[0]) is None
     ):
-        _close_body(reader)
+        _invoke_body_close(close)
         return IdentityAttemptFailureKind.MALFORMED
     encoding = headers.get(b"content-encoding", [])
     if len(encoding) > 1 or (
@@ -817,20 +844,20 @@ def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailu
             or encoding[0].lower() != b"identity"
         )
     ):
-        _close_body(reader)
+        _invoke_body_close(close)
         return IdentityAttemptFailureKind.MALFORMED
     declared = headers.get(b"content-length", [])
     if len(declared) > 1:
-        _close_body(reader)
+        _invoke_body_close(close)
         return IdentityAttemptFailureKind.MALFORMED
     declared_length: int | None = None
     if declared:
         raw = declared[0]
         if raw.strip(b" \t") != raw or not _canonical_decimal(raw):
-            _close_body(reader)
+            _invoke_body_close(close)
             return IdentityAttemptFailureKind.MALFORMED
         if len(raw) > 5 or (len(raw) == 5 and raw > b"65536"):
-            _close_body(reader)
+            _invoke_body_close(close)
             return IdentityAttemptFailureKind.OVERSIZED
         declared_length = int(raw)
     payload = bytearray()
@@ -848,10 +875,10 @@ def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailu
             payload.extend(chunk)
     except KeyboardInterrupt:
         return IdentityAttemptFailureKind.CANCELLED
-    except Exception:
+    except BaseException:
         return IdentityAttemptFailureKind.UNAVAILABLE
     finally:
-        _close_body(reader)
+        _invoke_body_close(close)
     if declared_length is not None and declared_length != len(payload):
         return IdentityAttemptFailureKind.MALFORMED
     if not payload:
