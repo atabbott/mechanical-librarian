@@ -519,7 +519,11 @@ acceptance prevents partial generations. A claim reserves without consuming;
 gate-held start records consumption before later transport could be permitted.
 Monotonic fences plus exact owner checks prevent stale or ABA cancellation or
 publication. Retry claims derive their candidate/fence from one current due
-schedule. Aggregate/attempt exhaustion commits terminal evidence, while
+schedule and reconcile it against immutable claim, attempt, candidate, result,
+reason, and timestamp history before mutation. Matched-pointer reuse likewise
+reconciles the successful generation, terminal result, exact fence/timestamps,
+observation digest, and closed structural observation. Aggregate/attempt
+exhaustion commits terminal evidence, while
 currentness expiry and unreserved next-generation creation share one
 transaction and repeated readers retain stale status. Append-only records and
 finalize-once attempts make restart and corruption visible.
@@ -531,7 +535,10 @@ path, credential, or contributor script. Production remains preactivated and
 returns before opening this repository. Tests trap all egress and secret seams,
 compare the reconstructed schema-8 sentinel/logical snapshot, inject migration
 and publication failures, reopen before and after starts, and prove stale
-fences leave state unchanged.
+fences leave state unchanged. Disposable preview publication retains one
+no-follow directory descriptor from validation through descriptor-relative
+staging, synchronization, and no-replace linking; device/inode/owner/mode
+revalidation rejects parent swaps without publishing into the replacement.
 
 F07b treats the service path projection, private logical binding, EPUB archive,
 and persisted canonical report as hostile inputs. Callers can supply only

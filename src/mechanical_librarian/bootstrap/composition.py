@@ -209,6 +209,7 @@ from mechanical_librarian.infrastructure.security.provider_secrets import (
 from mechanical_librarian.infrastructure.persistence.sqlite import (
     MIGRATIONS,
     SchemaError,
+    bound_disposable_state,
     connect,
     connect_existing,
     finalize_staged_state,
@@ -1626,23 +1627,6 @@ _DURABLE_WORK_OPERATIONS = (
 _SCHEMA8_SNAPSHOT_SHA256 = "1040b8eefc8703503a9f515543c3618908bd7af0d08fae7700806b37a48811ed"
 
 
-def _validate_durable_preview_database(database: Path) -> None:
-    try:
-        parent_status = database.parent.lstat()
-        entries = tuple(database.parent.iterdir())
-    except OSError:
-        raise SchemaError("durable work preview path is unavailable") from None
-    if (
-        not database.is_absolute()
-        or os.path.lexists(database)
-        or not stat.S_ISDIR(parent_status.st_mode)
-        or stat.S_IMODE(parent_status.st_mode) != 0o700
-        or parent_status.st_uid != os.geteuid()
-        or entries
-    ):
-        raise SchemaError("durable work preview path is invalid")
-
-
 def _validate_durable_work_preview_input(source: Mapping[str, object]) -> None:
     if set(source) != {"schema", "scenario", "failure_points", "script"}:
         raise ValueError("durable work preview input is malformed")
@@ -1678,12 +1662,10 @@ def _run_hardcover_durable_work_preview(
     """Exercise migration and repository recovery without provider authority."""
 
     _validate_durable_work_preview_input(source)
-    _validate_durable_preview_database(database)
-    preflight(database)
     work_key = hashlib.sha256(b"public-synthetic-hardcover-work-v3").hexdigest()
     origin = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
-    with staged_state(database) as staged:
+    with bound_disposable_state(database) as bound, bound.staged_state() as staged:
         connection = connect(staged)
         try:
             if migrate_to_version(connection, 8) != 8:
@@ -1751,7 +1733,7 @@ def _run_hardcover_durable_work_preview(
             finalize_staged_state(connection)
         finally:
             connection.close()
-        if not publish_staged_state(staged, database):
+        if not bound.publish(staged):
             raise SchemaError("durable work preview database publication raced")
 
     return DurableWorkPreviewReport(

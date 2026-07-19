@@ -224,17 +224,25 @@ After an unstarted claim expires, recovery advances the fence and schedules the
 same candidate. After a started attempt expires, recovery finalizes it once as
 interrupted and schedules the next candidate. A retry claim derives its
 candidate and fence from the unique current due schedule; callers cannot select
-one. Aggregate exhaustion or a third interrupted attempt commits terminal
+one. The repository reconciles its exact reason, creation/due chronology,
+fence, candidate, prior immutable claim, attempt, terminal-result, and
+generation-attempt history before mutation. Missing, duplicate, early, or
+logically impossible schedules fail without mutation. Aggregate exhaustion or
+a third interrupted attempt commits terminal
 `failed` evidence. Earlier fences cannot start, recover, cancel, or publish,
 and cancellation requires the exact current claim owner and fence. Terminal
-publication finalizes the attempt, appends result and bounded
-canonical observation, updates matched currentness, transitions the generation,
+publication finalizes the attempt, appends result and a closed structural
+observation whose only canonical fields are `outcome:"matched"` and bounded
+`row_count`, updates matched currentness, transitions the generation,
 and appends its event in one transaction. Failure before commit leaves all
 those records and the previous current pointer unchanged.
 
 Matched currentness is reusable through exactly 24 hours. At greater age, one
 transaction marks the old pointer expired and creates one unreserved next
-generation. Immutable candidate, claim, retry, event, result, and observation
+generation. Reuse first reconciles the pointer with the referenced successful
+generation, matched terminal result, exact fence/timestamps, observation digest,
+and closed canonical observation; inconsistent state fails without mutation.
+Immutable candidate, claim, retry, event, result, and observation
 records plus finalize-once attempts preserve restart evidence. Mutable
 generation and current-pointer rows are constrained to the closed state model.
 
@@ -247,6 +255,10 @@ stale-fence, retry, and currentness proofs on an initially absent disposable
 database beneath an empty owner-only disposable directory. Production still
 returns `provider_not_activated` before this
 repository, a private query, credential, adapter, or network is opened.
+The preview opens the directory once with no-follow directory semantics,
+captures device, inode, owner, and mode, and retains that descriptor through
+relative staging and no-replace publication. Parent replacement and symlink
+swaps are rejected and private staging is removed, including on base exceptions.
 
 The exact current-head registry is `preview-registry-c4-v6.json`, SHA-256
 `3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81`.

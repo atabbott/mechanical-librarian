@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -22,6 +23,10 @@ class IdentityWorkOutcome(StrEnum):
     PERSISTENCE_FAILURE = "persistence_failure"
     IN_PROGRESS = "in_progress"
     RETRY_EXHAUSTED = "retry_exhausted"
+
+
+class IdentityMatchOutcome(StrEnum):
+    MATCHED = "matched"
 
 
 ACTIVE_STATES = frozenset(
@@ -98,6 +103,50 @@ class IdentityWorkStatus:
             raise ValueError("identity work status is malformed")
 
 
+@dataclass(frozen=True, slots=True)
+class IdentityWorkObservation:
+    """Closed provider-neutral structural result safe for durable persistence."""
+
+    outcome: IdentityMatchOutcome
+    row_count: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.outcome) is not IdentityMatchOutcome
+            or type(self.row_count) is not int
+            or not 1 <= self.row_count <= 4
+        ):
+            raise ValueError("identity work observation is malformed")
+
+    def to_canonical_json(self) -> str:
+        return json.dumps(
+            {"outcome": self.outcome.value, "row_count": self.row_count},
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @classmethod
+    def from_canonical_json(cls, value: object) -> IdentityWorkObservation:
+        if type(value) is not str or not 2 <= len(value.encode("utf-8")) <= 128:
+            raise ValueError("identity work observation is malformed")
+        try:
+            source = json.loads(value)
+        except (json.JSONDecodeError, RecursionError):
+            raise ValueError("identity work observation is malformed") from None
+        if type(source) is not dict or set(source) != {"outcome", "row_count"}:
+            raise ValueError("identity work observation is malformed")
+        try:
+            observation = cls(
+                IdentityMatchOutcome(source["outcome"]), source["row_count"]
+            )
+        except (TypeError, ValueError):
+            raise ValueError("identity work observation is malformed") from None
+        if observation.to_canonical_json() != value:
+            raise ValueError("identity work observation is malformed")
+        return observation
+
+
 def _digest(value: object) -> bool:
     return type(value) is str and len(value) == 64 and not set(value) - set("0123456789abcdef")
 
@@ -117,6 +166,8 @@ def _require_time(value: object) -> None:
 __all__ = [
     "ACTIVE_STATES",
     "IdentityWorkClaim",
+    "IdentityMatchOutcome",
+    "IdentityWorkObservation",
     "IdentityWorkOutcome",
     "IdentityWorkReference",
     "IdentityWorkState",

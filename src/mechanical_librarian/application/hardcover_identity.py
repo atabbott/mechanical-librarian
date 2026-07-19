@@ -23,7 +23,10 @@ from mechanical_librarian.domain.hardcover_identity import (
     validate_private_query,
 )
 from mechanical_librarian.domain.hardcover_identity_work import (
+    IdentityMatchOutcome,
     IdentityWorkClaim,
+    IdentityWorkObservation,
+    IdentityWorkOutcome,
     IdentityWorkReference,
     IdentityWorkStatus,
 )
@@ -803,7 +806,7 @@ class HardcoverIdentityWorkPersistence(Protocol):
         now: datetime,
         *,
         gate_owned: bool,
-    ) -> IdentityWorkClaim | IdentityWorkStatus: ...
+    ) -> IdentityWorkClaim: ...
 
     def renew_and_start(
         self,
@@ -812,7 +815,7 @@ class HardcoverIdentityWorkPersistence(Protocol):
         now: datetime,
         *,
         gate_owned: bool,
-    ) -> IdentityWorkClaim: ...
+    ) -> IdentityWorkClaim | IdentityWorkStatus: ...
 
     def recover_interrupted(
         self, claim: IdentityWorkClaim, now: datetime, *, gate_owned: bool
@@ -823,7 +826,7 @@ class HardcoverIdentityWorkPersistence(Protocol):
         claim: IdentityWorkClaim,
         owner: str,
         now: datetime,
-        observation: object,
+        observation: IdentityWorkObservation,
         *,
         gate_owned: bool,
         fail_before_commit: bool = False,
@@ -880,7 +883,20 @@ class ManageHardcoverIdentityWork:
         self._persistence = persistence
 
     def accept(self, work_key: str, now: datetime) -> IdentityWorkStatus:
-        return self._persistence.accept(work_key, now)
+        result = self._persistence.accept(work_key, now)
+        if (
+            type(result) is not IdentityWorkStatus
+            or result.reference.work_key != work_key
+            or result.outcome
+            not in {
+                IdentityWorkOutcome.MATCHED,
+                IdentityWorkOutcome.STALE,
+                IdentityWorkOutcome.IN_PROGRESS,
+                IdentityWorkOutcome.PERSISTENCE_FAILURE,
+            }
+        ):
+            raise TypeError("Hardcover identity work acceptance is malformed")
+        return result
 
     def claim(
         self,
@@ -889,8 +905,11 @@ class ManageHardcoverIdentityWork:
         now: datetime,
         *,
         gate_owned: bool,
-    ) -> IdentityWorkClaim | IdentityWorkStatus:
-        return self._persistence.claim(reference, owner, now, gate_owned=gate_owned)
+    ) -> IdentityWorkClaim:
+        result = self._persistence.claim(reference, owner, now, gate_owned=gate_owned)
+        if type(result) is not IdentityWorkClaim or result.reference != reference:
+            raise TypeError("Hardcover identity work claim is malformed")
+        return result
 
     def start(
         self,
@@ -899,29 +918,53 @@ class ManageHardcoverIdentityWork:
         now: datetime,
         *,
         gate_owned: bool,
-    ) -> IdentityWorkClaim:
-        return self._persistence.renew_and_start(
+    ) -> IdentityWorkClaim | IdentityWorkStatus:
+        result = self._persistence.renew_and_start(
             claim, owner, now, gate_owned=gate_owned
         )
+        if type(result) is IdentityWorkClaim and (
+            result.reference == claim.reference
+            and result.candidate == claim.candidate
+            and result.fence == claim.fence
+        ):
+            return result
+        if (
+            type(result) is IdentityWorkStatus
+            and result.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED
+            and result.reference == claim.reference
+            and result.candidate == claim.candidate
+        ):
+            return result
+        raise TypeError("Hardcover identity work start result is malformed")
 
     def recover(
         self, claim: IdentityWorkClaim, now: datetime, *, gate_owned: bool
     ) -> int | IdentityWorkStatus:
-        return self._persistence.recover_interrupted(
+        result = self._persistence.recover_interrupted(
             claim, now, gate_owned=gate_owned
         )
+        if type(result) is int and result > claim.fence:
+            return result
+        if (
+            type(result) is IdentityWorkStatus
+            and result.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED
+            and result.reference == claim.reference
+            and result.candidate == claim.candidate
+        ):
+            return result
+        raise TypeError("Hardcover identity work recovery result is malformed")
 
     def publish_matched(
         self,
         claim: IdentityWorkClaim,
         owner: str,
         now: datetime,
-        observation: object,
+        observation: IdentityWorkObservation,
         *,
         gate_owned: bool,
         fail_before_commit: bool = False,
     ) -> IdentityWorkStatus:
-        return self._persistence.publish_matched(
+        result = self._persistence.publish_matched(
             claim,
             owner,
             now,
@@ -929,6 +972,18 @@ class ManageHardcoverIdentityWork:
             gate_owned=gate_owned,
             fail_before_commit=fail_before_commit,
         )
+        if (
+            type(result) is not IdentityWorkStatus
+            or result.reference != claim.reference
+            or result.outcome
+            not in {IdentityWorkOutcome.MATCHED, IdentityWorkOutcome.PERSISTENCE_FAILURE}
+            or (
+                result.outcome is IdentityWorkOutcome.MATCHED
+                and result.candidate != claim.candidate
+            )
+        ):
+            raise TypeError("Hardcover identity work publication is malformed")
+        return result
 
     def publish_failed(
         self,
@@ -940,7 +995,7 @@ class ManageHardcoverIdentityWork:
         gate_owned: bool,
         fail_before_commit: bool = False,
     ) -> IdentityWorkStatus:
-        return self._persistence.publish_failed(
+        result = self._persistence.publish_failed(
             claim,
             owner,
             now,
@@ -948,6 +1003,17 @@ class ManageHardcoverIdentityWork:
             gate_owned=gate_owned,
             fail_before_commit=fail_before_commit,
         )
+        if (
+            type(result) is not IdentityWorkStatus
+            or result.reference != claim.reference
+            or result.outcome
+            not in {
+                IdentityWorkOutcome.IN_PROGRESS,
+                IdentityWorkOutcome.PERSISTENCE_FAILURE,
+            }
+        ):
+            raise TypeError("Hardcover identity work failure result is malformed")
+        return result
 
     def cancel(
         self,
@@ -957,7 +1023,9 @@ class ManageHardcoverIdentityWork:
         *,
         gate_owned: bool,
     ) -> None:
-        self._persistence.cancel(claim, owner, now, gate_owned=gate_owned)
+        result = self._persistence.cancel(claim, owner, now, gate_owned=gate_owned)
+        if result is not None:
+            raise TypeError("Hardcover identity work cancellation is malformed")
 
     def begin_preview(
         self, work_key: str, origin: datetime
@@ -978,7 +1046,7 @@ class ManageHardcoverIdentityWork:
                 claim,
                 "worker-a",
                 at(2_800_000),
-                {"outcome": "matched", "rows": 2},
+                IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 2),
                 gate_owned=True,
                 fail_before_commit=True,
             )
@@ -1009,7 +1077,7 @@ class ManageHardcoverIdentityWork:
                 checkpoint.interrupted,
                 "worker-a",
                 at(17_000_000),
-                {"outcome": "matched"},
+                IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
                 gate_owned=True,
             )
         except StaleIdentityWorkFence:
@@ -1030,7 +1098,7 @@ class ManageHardcoverIdentityWork:
             retry,
             "worker-b",
             at(18_200_000),
-            {"outcome": "matched", "rows": 2},
+            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 2),
             gate_owned=True,
         )
         exact = self.accept(checkpoint.accepted.reference.work_key, at(86_418_200_000))

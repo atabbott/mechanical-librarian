@@ -20,6 +20,36 @@ CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
+    def test_bound_disposable_state_rejects_parent_swap_value_free(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = root / "disposable"
+            moved = root / "moved"
+            parent.mkdir(mode=0o700)
+            target = parent / "state.sqlite"
+
+            with self.assertRaisesRegex(SchemaError, "replaced"):
+                with sqlite.bound_disposable_state(target) as bound:
+                    with bound.staged_state() as staged:
+                        staged.write_bytes(b"complete staged state")
+                        parent.rename(moved)
+                        parent.mkdir(mode=0o700)
+                        bound.publish(staged)
+
+            self.assertEqual(tuple(parent.iterdir()), ())
+            self.assertEqual(tuple(moved.iterdir()), ())
+
+    def test_bound_disposable_state_preserves_base_exception_and_cleans(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "disposable"
+            parent.mkdir(mode=0o700)
+            target = parent / "state.sqlite"
+            with self.assertRaises(KeyboardInterrupt):
+                with sqlite.bound_disposable_state(target) as bound:
+                    with bound.staged_state():
+                        raise KeyboardInterrupt
+            self.assertEqual(tuple(parent.iterdir()), ())
+
     def test_f10a_migration_is_additive_from_genuine_schema_six_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")

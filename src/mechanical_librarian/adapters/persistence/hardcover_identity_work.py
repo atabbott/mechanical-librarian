@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -15,6 +14,7 @@ from mechanical_librarian.application.hardcover_identity import (
 )
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkClaim,
+    IdentityWorkObservation,
     IdentityWorkOutcome,
     IdentityWorkReference,
     IdentityWorkState,
@@ -44,18 +44,24 @@ class SQLiteHardcoverIdentityWorkRepository:
         try:
             with _transaction(self._connection):
                 current = self._connection.execute(
-                    "SELECT generation,status,current_since,expires_at FROM current_hardcover_identity WHERE work_key=?",
+                    "SELECT generation,observation_id,status,current_since,expires_at FROM current_hardcover_identity WHERE work_key=?",
                     (work_key,),
                 ).fetchone()
                 expired = False
                 if current is not None:
-                    generation, status, current_since, expires_at = _current_row(current)
+                    generation, observation_id, status, current_since, expires_at = _current_row(current)
                     reference = IdentityWorkReference(work_key, generation)
                     if now < _parse_time(current_since):
                         raise IdentityWorkPersistenceError("identity work chronology is invalid")
                     if status == "matched" and now <= _parse_time(expires_at):
+                        self._validate_current_match(
+                            reference, observation_id, current_since, expires_at
+                        )
                         return IdentityWorkStatus(IdentityWorkOutcome.MATCHED, reference)
                     if status == "matched":
+                        self._validate_current_match(
+                            reference, observation_id, current_since, expires_at
+                        )
                         self._connection.execute(
                             "UPDATE current_hardcover_identity SET status='expired' WHERE work_key=? AND status='matched'",
                             (work_key,),
@@ -122,7 +128,7 @@ class SQLiteHardcoverIdentityWorkRepository:
         now: datetime,
         *,
         gate_owned: bool,
-    ) -> IdentityWorkClaim | IdentityWorkStatus:
+    ) -> IdentityWorkClaim:
         _require_reference(reference)
         _owner(owner)
         _require_gate(gate_owned)
@@ -152,16 +158,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                         raise IdentityWorkPersistenceError("identity work candidate is corrupt")
                     candidate = 1
                 else:
-                    schedules = self._connection.execute(
-                        "SELECT candidate,due_at FROM hardcover_identity_retry_schedules WHERE work_key=? AND generation=? AND fence=?",
-                        (reference.work_key, reference.generation, fence),
-                    ).fetchall()
-                    if len(schedules) != 1:
-                        raise IdentityWorkPersistenceError("identity work retry schedule is unavailable")
-                    candidate = _positive_int(schedules[0][0], "candidate")
-                    due_at = schedules[0][1]
-                    if type(due_at) is not str or now < _parse_time(due_at):
-                        raise IdentityWorkPersistenceError("identity work retry is not due")
+                    candidate = self._retry_candidate(reference, fence, now, row)
                     if self._connection.execute(
                         "SELECT 1 FROM hardcover_identity_claims WHERE work_key=? AND generation=? AND fence=?",
                         (reference.work_key, reference.generation, fence),
@@ -192,7 +189,7 @@ class SQLiteHardcoverIdentityWorkRepository:
         now: datetime,
         *,
         gate_owned: bool,
-    ) -> IdentityWorkClaim:
+    ) -> IdentityWorkClaim | IdentityWorkStatus:
         _require_claim(claim)
         _owner(owner)
         _require_gate(gate_owned)
@@ -312,7 +309,7 @@ class SQLiteHardcoverIdentityWorkRepository:
         claim: IdentityWorkClaim,
         owner: str,
         now: datetime,
-        observation: object,
+        observation: IdentityWorkObservation,
         *,
         gate_owned: bool,
         fail_before_commit: bool = False,
@@ -495,6 +492,146 @@ class SQLiteHardcoverIdentityWorkRepository:
             raise IdentityWorkPersistenceError("identity work generation is unavailable")
         return row
 
+    def _retry_candidate(
+        self,
+        reference: IdentityWorkReference,
+        fence: int,
+        now: datetime,
+        generation_row: tuple[object, ...],
+    ) -> int:
+        schedules = self._connection.execute(
+            "SELECT fence,candidate,due_at,reason,created_at FROM hardcover_identity_retry_schedules "
+            "WHERE work_key=? AND generation=? AND fence>=? ORDER BY fence",
+            (reference.work_key, reference.generation, fence),
+        ).fetchall()
+        if len(schedules) != 1 or schedules[0][0] != fence:
+            raise IdentityWorkPersistenceError("identity work retry schedule is unavailable")
+        _, raw_candidate, raw_due, reason, raw_created = schedules[0]
+        candidate = _positive_int(raw_candidate, "candidate")
+        if reason not in {"interrupted", "retryable"}:
+            raise IdentityWorkPersistenceError("identity work retry schedule is corrupt")
+        if type(raw_due) is not str or type(raw_created) is not str:
+            raise IdentityWorkPersistenceError("identity work retry schedule is corrupt")
+        due = _parse_time(raw_due)
+        created = _parse_time(raw_created)
+        if created > due or generation_row[5] != raw_created:
+            raise IdentityWorkPersistenceError("identity work retry schedule is corrupt")
+        if now < due:
+            raise IdentityWorkPersistenceError("identity work retry is not due")
+        candidate_rows = self._connection.execute(
+            "SELECT created_at FROM hardcover_identity_candidates WHERE work_key=? AND generation=? AND candidate=?",
+            (reference.work_key, reference.generation, candidate),
+        ).fetchall()
+        if (
+            len(candidate_rows) != 1
+            or type(candidate_rows[0][0]) is not str
+            or _parse_time(candidate_rows[0][0]) > created
+        ):
+            raise IdentityWorkPersistenceError("identity work retry candidate is corrupt")
+        previous_fence = fence - 1
+        if previous_fence < 1:
+            raise IdentityWorkPersistenceError("identity work retry fence is corrupt")
+        claims = self._connection.execute(
+            "SELECT candidate,claimed_at FROM hardcover_identity_claims WHERE work_key=? AND generation=? AND fence=?",
+            (reference.work_key, reference.generation, previous_fence),
+        ).fetchall()
+        if (
+            len(claims) != 1
+            or type(claims[0][1]) is not str
+            or _parse_time(claims[0][1]) > created
+        ):
+            raise IdentityWorkPersistenceError("identity work retry history is corrupt")
+        previous_candidate = _positive_int(claims[0][0], "claim candidate")
+        attempts = self._connection.execute(
+            "SELECT attempt,candidate,resolved_at,outcome FROM hardcover_identity_attempts WHERE work_key=? AND generation=? AND fence=?",
+            (reference.work_key, reference.generation, previous_fence),
+        ).fetchall()
+        all_attempts = self._connection.execute(
+            "SELECT COUNT(*) FROM hardcover_identity_attempts WHERE work_key=? AND generation=?",
+            (reference.work_key, reference.generation),
+        ).fetchone()
+        if (
+            all_attempts is None
+            or all_attempts != (_nonnegative_int(generation_row[2], "attempt count"),)
+            or self._connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_results WHERE work_key=? AND generation=?",
+                (reference.work_key, reference.generation),
+            ).fetchone()
+            != (0,)
+        ):
+            raise IdentityWorkPersistenceError("identity work retry history is corrupt")
+        events = self._connection.execute(
+            "SELECT kind,from_state,to_state,occurred_at FROM hardcover_identity_events "
+            "WHERE work_key=? AND generation=? AND fence=? AND kind IN ('recovered','retry_scheduled')",
+            (reference.work_key, reference.generation, fence),
+        ).fetchall()
+        expected_event = (
+            "recovered" if reason == "interrupted" else "retry_scheduled",
+            "claimed",
+            "retry_wait",
+            raw_created,
+        )
+        if events != [expected_event]:
+            raise IdentityWorkPersistenceError("identity work retry history is corrupt")
+        if attempts:
+            if len(attempts) != 1:
+                raise IdentityWorkPersistenceError("identity work retry history is corrupt")
+            attempt, attempt_candidate, resolved_at, outcome = attempts[0]
+            if (
+                _positive_int(attempt, "attempt") + 1 != candidate
+                or attempt_candidate != previous_candidate
+                or type(resolved_at) is not str
+                or _parse_time(resolved_at) != created
+                or outcome != ("interrupted" if reason == "interrupted" else "failed")
+            ):
+                raise IdentityWorkPersistenceError("identity work retry history is corrupt")
+        elif reason != "interrupted" or candidate != previous_candidate:
+            raise IdentityWorkPersistenceError("identity work retry history is corrupt")
+        return candidate
+
+    def _validate_current_match(
+        self,
+        reference: IdentityWorkReference,
+        observation_id: str,
+        current_since: str,
+        expires_at: str,
+    ) -> None:
+        rows = self._connection.execute(
+            "SELECT g.state,g.fence,r.outcome,r.fence,r.published_at,o.observation_id,o.canonical_observation,o.created_at "
+            "FROM hardcover_identity_generations g "
+            "JOIN hardcover_identity_results r ON r.work_key=g.work_key AND r.generation=g.generation "
+            "JOIN hardcover_identity_observations o ON o.work_key=r.work_key AND o.generation=r.generation "
+            "WHERE g.work_key=? AND g.generation=?",
+            (reference.work_key, reference.generation),
+        ).fetchall()
+        if len(rows) != 1:
+            raise IdentityWorkPersistenceError("current identity work is inconsistent")
+        row = rows[0]
+        canonical = row[6]
+        if type(canonical) is not str:
+            raise IdentityWorkPersistenceError("current identity work is inconsistent")
+        try:
+            IdentityWorkObservation.from_canonical_json(canonical)
+        except ValueError:
+            raise IdentityWorkPersistenceError("current identity work is inconsistent") from None
+        expected_id = hashlib.sha256(
+            f"{reference.work_key}:{reference.generation}:".encode("ascii")
+            + canonical.encode("utf-8")
+        ).hexdigest()
+        published = row[4]
+        if (
+            row[0] != "succeeded"
+            or _positive_int(row[1], "fence") != _positive_int(row[3], "result fence")
+            or row[2] != "matched"
+            or row[5] != observation_id
+            or observation_id != expected_id
+            or type(published) is not str
+            or row[7] != published
+            or current_since != published
+            or expires_at != _time(_parse_time(published) + CURRENTNESS_WINDOW)
+        ):
+            raise IdentityWorkPersistenceError("current identity work is inconsistent")
+
     def _reserve_pending(
         self, work_key: str, generation: int, timestamp: str, now: datetime
     ) -> int:
@@ -649,12 +786,15 @@ def _nonnegative_int(value: object, label: str) -> int:
     return value
 
 
-def _current_row(row: tuple[object, ...]) -> tuple[int, str, str, str]:
+def _current_row(row: tuple[object, ...]) -> tuple[int, str, str, str, str]:
     if (
-        len(row) != 4
-        or row[1] not in {"matched", "expired"}
-        or type(row[2]) is not str
+        len(row) != 5
+        or type(row[1]) is not str
+        or len(row[1]) != 64
+        or set(row[1]) - set("0123456789abcdef")
+        or row[2] not in {"matched", "expired"}
         or type(row[3]) is not str
+        or type(row[4]) is not str
     ):
         raise IdentityWorkPersistenceError("current identity work is corrupt")
     return (
@@ -662,19 +802,14 @@ def _current_row(row: tuple[object, ...]) -> tuple[int, str, str, str]:
         str(row[1]),
         str(row[2]),
         str(row[3]),
+        str(row[4]),
     )
 
 
 def _canonical_observation(value: object) -> str:
-    if type(value) is not dict or not value or len(value) > 8:
-        raise ValueError("identity work observation is malformed")
-    try:
-        canonical = json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    except (TypeError, ValueError, RecursionError):
-        raise ValueError("identity work observation is malformed") from None
-    if not 2 <= len(canonical.encode("utf-8")) <= 8192 or json.loads(canonical) != value:
-        raise ValueError("identity work observation is malformed")
-    return canonical
+    if type(value) is not IdentityWorkObservation:
+        raise TypeError("identity work observation is malformed")
+    return value.to_canonical_json()
 
 
 @contextmanager

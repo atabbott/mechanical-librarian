@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import stat
 import tempfile
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1315,12 +1317,228 @@ _RECOVERY_COPY_SUFFIXES = ("", "-journal", "-wal")
 _STAGED_PREFIX = ".mechanical-librarian-state-"
 _PUBLICATION_SETTLE_TIMEOUT_SECONDS = 5.0
 _PUBLICATION_SETTLE_POLL_SECONDS = 0.001
+_BOUND_DIRECTORY_LOCK = threading.RLock()
 
 
 def path_entry_exists(path: Path) -> bool:
     """Return whether a directory entry exists without following symlinks."""
 
     return os.path.lexists(path)
+
+
+def _directory_identity(status: os.stat_result) -> tuple[int, int, int, int]:
+    return (
+        status.st_dev,
+        status.st_ino,
+        status.st_uid,
+        stat.S_IMODE(status.st_mode),
+    )
+
+
+@dataclass(frozen=True)
+class BoundDisposableState:
+    """Descriptor-bound staging in one validated disposable directory."""
+
+    target: Path
+    directory_descriptor: int
+    directory_identity: tuple[int, int, int, int]
+
+    def _revalidate_directory(self) -> None:
+        try:
+            status = self.target.parent.lstat()
+            descriptor_status = os.fstat(self.directory_descriptor)
+        except OSError:
+            raise SchemaError("durable work preview directory was replaced") from None
+        if (
+            not stat.S_ISDIR(status.st_mode)
+            or not stat.S_ISDIR(descriptor_status.st_mode)
+            or _directory_identity(status) != self.directory_identity
+            or _directory_identity(descriptor_status) != self.directory_identity
+        ):
+            raise SchemaError("durable work preview directory was replaced")
+
+    @contextmanager
+    def staged_state(self) -> Iterator[Path]:
+        """Yield a relative SQLite path resolved from the held directory."""
+
+        self._revalidate_directory()
+        name = f"{_STAGED_PREFIX}{secrets.token_hex(16)}.sqlite"
+        descriptor: int | None = None
+        prior_directory: int | None = None
+        failure: BaseException | None = None
+        cleanup_failed = False
+        _BOUND_DIRECTORY_LOCK.acquire()
+        try:
+            descriptor = os.open(
+                name,
+                os.O_RDWR
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=self.directory_descriptor,
+            )
+            os.fchmod(descriptor, 0o600)
+            os.close(descriptor)
+            descriptor = None
+            prior_directory = os.open(
+                ".", os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            )
+            os.fchdir(self.directory_descriptor)
+            yield Path(name)
+        except BaseException as error:
+            failure = error
+            raise
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+            if prior_directory is not None:
+                try:
+                    os.fchdir(prior_directory)
+                except OSError:
+                    cleanup_failed = True
+                finally:
+                    os.close(prior_directory)
+            for suffix in _STATE_SUFFIXES:
+                try:
+                    os.unlink(f"{name}{suffix}", dir_fd=self.directory_descriptor)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    cleanup_failed = True
+            _BOUND_DIRECTORY_LOCK.release()
+            if cleanup_failed:
+                if failure is not None:
+                    failure.add_note("private descriptor-bound staging cleanup failed")
+                else:
+                    raise SchemaError("private state staging could not be removed")
+
+    def publish(self, staged: Path) -> bool:
+        """Publish by descriptor without reopening the caller-supplied parent."""
+
+        if staged.parent != Path(".") or not staged.name.startswith(_STAGED_PREFIX):
+            raise SchemaError("prepared state is not descriptor-bound")
+        self._revalidate_directory()
+        try:
+            staged_status = os.stat(
+                staged.name,
+                dir_fd=self.directory_descriptor,
+                follow_symlinks=False,
+            )
+        except OSError:
+            raise SchemaError("prepared state is unavailable") from None
+        if not stat.S_ISREG(staged_status.st_mode) or staged_status.st_nlink != 1:
+            raise SchemaError("prepared state is not an exclusive regular file")
+        if stat.S_IMODE(staged_status.st_mode) & 0o077:
+            raise SchemaError("prepared state permissions are too broad")
+        try:
+            entries = set(os.listdir(self.directory_descriptor))
+        except OSError:
+            raise SchemaError("durable work preview directory is unavailable") from None
+        expected_entries = {staged.name}
+        if entries != expected_entries:
+            if self.target.name in entries:
+                return False
+            raise SchemaError("prepared state still requires recovery sidecars")
+
+        descriptor: int | None = None
+        try:
+            descriptor = os.open(
+                staged.name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=self.directory_descriptor,
+            )
+            os.fsync(descriptor)
+        except OSError:
+            raise SchemaError("prepared state could not be synchronized") from None
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+
+        self._revalidate_directory()
+        try:
+            os.link(
+                staged.name,
+                self.target.name,
+                src_dir_fd=self.directory_descriptor,
+                dst_dir_fd=self.directory_descriptor,
+                follow_symlinks=False,
+            )
+        except FileExistsError:
+            return False
+        except OSError:
+            raise SchemaError("prepared state could not be published") from None
+        try:
+            self._revalidate_directory()
+        except SchemaError:
+            try:
+                os.unlink(self.target.name, dir_fd=self.directory_descriptor)
+            except OSError:
+                pass
+            raise
+        try:
+            os.fsync(self.directory_descriptor)
+            os.unlink(staged.name, dir_fd=self.directory_descriptor)
+            os.fsync(self.directory_descriptor)
+        except OSError:
+            raise SchemaError("private state staging could not be removed") from None
+        return True
+
+
+@contextmanager
+def bound_disposable_state(target: Path) -> Iterator[BoundDisposableState]:
+    """Bind one absent target in a new, empty, private, euid-owned parent."""
+
+    if not target.is_absolute() or target.name in {"", ".", ".."}:
+        raise SchemaError("durable work preview path is invalid")
+    descriptor: int | None = None
+    failure: BaseException | None = None
+    try:
+        descriptor = os.open(
+            target.parent,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        descriptor_status = os.fstat(descriptor)
+        path_status = target.parent.lstat()
+        identity = _directory_identity(descriptor_status)
+        if (
+            not stat.S_ISDIR(descriptor_status.st_mode)
+            or not stat.S_ISDIR(path_status.st_mode)
+            or identity != _directory_identity(path_status)
+            or identity[2] != os.geteuid()
+            or identity[3] != 0o700
+            or os.listdir(descriptor)
+        ):
+            raise SchemaError("durable work preview path is invalid")
+        try:
+            os.stat(target.name, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise SchemaError("durable work preview path is invalid")
+        bound = BoundDisposableState(target, descriptor, identity)
+        yield bound
+        bound._revalidate_directory()
+    except BaseException as error:
+        failure = error
+        if isinstance(error, SchemaError):
+            raise
+        if isinstance(error, OSError):
+            raise SchemaError("durable work preview path is unavailable") from None
+        raise
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                if failure is not None:
+                    failure.add_note("durable work preview directory cleanup failed")
+                else:
+                    raise SchemaError(
+                        "durable work preview directory cleanup failed"
+                    ) from None
 
 
 @contextmanager

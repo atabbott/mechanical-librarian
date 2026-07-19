@@ -161,7 +161,9 @@ results, observations, and the currentness pointer. Candidates, claims,
 schedules, events, results, and observations are append-only. Attempts can be
 finalized once; generation and current-pointer changes are fenced transactions.
 No query ISBN, local title, credential, provider payload, path, or contributor
-script is stored.
+script is stored. The observation is a closed provider-neutral value serialized
+only as `{"outcome":"matched","row_count":N}` with `N` from 1 through 4;
+arbitrary maps and provider fields cannot enter the persistence adapter.
 
 This increment deliberately has no row-level retention or deletion executor.
 Keep the work history with the curator database under the configured curator

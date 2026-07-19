@@ -72,7 +72,10 @@ as interrupted and advances the fence before a retry can be claimed. Stale
 owners cannot cancel or publish. An expired pre-start claim retains its
 candidate; retry claims require the unique current schedule to be due. The
 third interrupted attempt or insufficient aggregate time commits terminal
-failed evidence instead of leaving an expired active claim. Terminal
+failed evidence instead of leaving an expired active claim. Schedule reason,
+chronology, current fence, candidate, prior claim, attempt, and terminal-result
+history are reconciled before a claim; never edit or reconstruct an individual
+schedule to recover a worker. Terminal
 publication and current-pointer advancement are
 one transaction, so interruption preserves the earlier pointer and leaves the
 started claim recoverable.
