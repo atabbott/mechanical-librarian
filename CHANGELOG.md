@@ -16,6 +16,15 @@ versioning after the first public release.
   seams while emitting only the schema-v5 privacy allowlist and no input
   digest, title, ISBN, query, resource identity, proposal, or write authority.
 
+- Added the supported contributor-driven `identity-decision-v3` synthetic
+  preview to the installed `hardcover-identity-report`. It evaluates one
+  bounded, structurally supplied ISBN/title observation set through the
+  provider-neutral decision seam and emits only the redacted schema-v5 result.
+  This is synthetic-preview behavior only: production remains report-only and
+  returns `provider_not_activated` before provider credentials, clients, DNS,
+  network access, proposals, or writes; no production provider lookup is
+  activated by this increment.
+
 - Adopted bounded `Deliver slice` transactions for new functionality. A slice
   may now merge through sequential, independently safe vertical increments;
   constituent tickets close when complete and only the activation increment

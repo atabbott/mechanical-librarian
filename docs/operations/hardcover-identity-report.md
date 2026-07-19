@@ -65,3 +65,42 @@ scanner can be run from the repository root with
 the exact present-tree aggregate in `c1-inert-report-privacy-scan-v1.json`.
 Neither artifact makes claims about future scenarios; both contain only
 `inert-report-v3`.
+
+### Synthetic identity decision
+
+```text
+mechanical-librarian hardcover-identity-report \
+  --mode synthetic-preview --scenario identity-decision-v3 \
+  --input - --format json
+```
+
+The closed input contains one canonical ISBN-13 and its derived ISBN-10 (or
+`null` for `979`), one transient local title, and zero to four structural
+provider rows. The application calls the provider-neutral `BookIdentityProvider`
+port exactly once through an injected in-memory fake, validates every row,
+resolves edition and book aliases independently, and emits only outcome,
+validated-row count, collapsed-alias count, and coarse title comparison.
+
+The fake performs no decision and grants no file, secret, DNS, socket, network,
+database, proposal, review, or write authority. Expected output and registry
+resources are qualification oracles and are not read before runtime emission.
+Production mode remains `disabled` or `provider_not_activated`.
+
+From the repository root, the canonical demonstration is:
+
+```sh
+uv run --frozen --no-editable --reinstall-package mechanical-librarian \
+  mechanical-librarian hardcover-identity-report \
+  --mode synthetic-preview --scenario identity-decision-v3 \
+  --input - --format json \
+  < tests/fixtures/hardcover_identity/c2-identity-decision-input.json
+```
+
+Its stdout must be byte-identical to
+`tests/fixtures/hardcover_identity/c2-identity-decision-example-output.json`.
+The current cumulative registry is `preview-registry-c2-v6.json`, SHA-256
+`557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11`.
+It contains only the C1 inert and C2 identity scenarios and binds the C2-scoped
+output schema, privacy contract, and privacy scan. See the
+[F09f identity contract](../reference/hardcover-f09f-contract.md) for exact
+compatibility, alias, precedence, and privacy rules.

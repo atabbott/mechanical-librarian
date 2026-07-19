@@ -28,6 +28,27 @@ status, and links to snapshots. It does not duplicate every current metadata
 field. External IDs are never assumed globally unique across connections or
 libraries.
 
+### Transient book identity decision
+
+F09f's `BookIdentity` is a transient provider-neutral decision, not a
+`LibraryItem`, target join, evidence record, or persisted identity. A private
+ISBN/title query is split at the application boundary: the provider port sees
+only canonical ISBN-13 plus its optional ISBN-10 equivalent, while the local
+title stays outside the port and participates only in a post-match coarse
+comparison.
+
+Typed book and ebook-edition observations enter one pure domain function. The
+function owns ISBN compatibility, exact provider-title semantic equality,
+independent book/edition alias graphs, cardinality, and decision precedence.
+Provider linkage IDs resolve aliases but do not define semantic equality. The
+selected provider identity never enters the redacted preview report; only the
+closed outcome, bounded counts, and transient comparison leave the application.
+
+The application-owned `BookIdentityProvider` port defines one attempt. Retry,
+persistence, lifecycle publication, proposals, review, target association, and
+writes remain separate future orchestration concerns. The current structural
+fake exercises the port without provider or production authority.
+
 ### ItemSnapshot
 
 Immutable observation of current service state at a point in time. Contains a

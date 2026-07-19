@@ -17,10 +17,12 @@ from unittest.mock import Mock, patch
 from mechanical_librarian.application.hardcover_identity import (
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
+    IdentityDecisionPreviewReport,
     InertPreviewReport,
 )
 from mechanical_librarian.bootstrap import composition as composition_module
 from mechanical_librarian.bootstrap.composition import (
+    _run_hardcover_identity_decision_preview,
     _run_hardcover_identity_report,
     _run_hardcover_inert_preview,
 )
@@ -38,6 +40,12 @@ from tests.support.hardcover_c1_privacy import (
     c1_input_variants,
     forbidden_source_corpus,
     validate_output_document,
+)
+from tests.support.hardcover_c2_privacy import (
+    C2_CAPTURE_CHANNELS,
+    assert_channels_private as assert_c2_channels_private,
+    c2_input_variants,
+    forbidden_source_corpus as c2_forbidden_source_corpus,
 )
 
 
@@ -149,6 +157,513 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "private_query": {"isbn": "9780000000019", "title": title},
         }
 
+    def identity_row(
+        self,
+        *,
+        edition_id: int = 1001,
+        book_id: int = 2001,
+        edition_canonical_id: int | None = None,
+        book_canonical_id: int | None = None,
+        isbn_10: str | None = "0000000019",
+        isbn_13: str = "9780000000019",
+        title: str = "Synthetic Ebook Alpha",
+    ) -> dict[str, object]:
+        return {
+            "id": edition_id,
+            "book_id": book_id,
+            "canonical_id": edition_canonical_id,
+            "isbn_10": isbn_10,
+            "isbn_10_valid": True if isbn_10 is not None else None,
+            "isbn_13": isbn_13,
+            "isbn_13_valid": True,
+            "isbns_match": True,
+            "reading_format_id": 4,
+            "state": "normalized",
+            "compilation": False,
+            "book": {
+                "id": book_id,
+                "canonical_id": book_canonical_id,
+                "book_status_id": 1,
+                "state": "processed",
+                "title": title,
+                "parent_book_id": None,
+                "compilation": False,
+                "is_partial_book": False,
+            },
+        }
+
+    def identity_input(
+        self,
+        *,
+        title: str = "Synthetic Ebook Alpha",
+        rows: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
+        return {
+            "schema": "hardcover-synthetic-input-v3",
+            "scenario": "identity-decision-v3",
+            "canonical_isbn_13": "9780000000019",
+            "derived_isbn_10": "0000000019",
+            "local_title": title,
+            "provider_rows": [self.identity_row()] if rows is None else rows,
+        }
+
+    def run_identity_preview(
+        self, source: object, *, payload: str | None = None
+    ) -> tuple[int, str, str]:
+        output = io.StringIO()
+        errors = io.StringIO()
+        exit_code = main(
+            [
+                "hardcover-identity-report",
+                "--mode",
+                "synthetic-preview",
+                "--scenario",
+                "identity-decision-v3",
+                "--input",
+                "-",
+                "--format",
+                "json",
+            ],
+            state_check_runner=Mock(),
+            hardcover_identity_decision_preview_runner=(
+                _run_hardcover_identity_decision_preview
+            ),
+            stdin=io.StringIO(json.dumps(source) if payload is None else payload),
+            stdout=output,
+            stderr=errors,
+        )
+        return exit_code, output.getvalue(), errors.getvalue()
+
+    def test_identity_decision_preview_is_derived_through_zero_authority_seam(
+        self,
+    ) -> None:
+        source = self.identity_input(
+            rows=[
+                self.identity_row(),
+                self.identity_row(
+                    edition_id=1002,
+                    book_id=2002,
+                    edition_canonical_id=1001,
+                    book_canonical_id=2001,
+                ),
+            ]
+        )
+        with _zero_authority(), patch.object(
+            Path, "read_text", side_effect=_AuthorityTrap("fixture read")
+        ), patch.object(
+            Path, "read_bytes", side_effect=_AuthorityTrap("fixture read")
+        ):
+            code, output, errors = self.run_identity_preview(source)
+        self.assertEqual(code, 0)
+        self.assertEqual(errors, "")
+        self.assertEqual(
+            json.loads(output),
+            {
+                "schema": "hardcover-synthetic-output-v5",
+                "scenario": "identity-decision-v3",
+                "result": {
+                    "outcome": "matched",
+                    "rows_validated": 2,
+                    "aliases_collapsed": 1,
+                    "comparison": "equal",
+                },
+            },
+        )
+        for forbidden in ("9780000000019", "0000000019", "Synthetic Ebook"):
+            self.assertNotIn(forbidden, output)
+
+    def test_composition_constructs_the_provider_adapter(self) -> None:
+        source = self.identity_input()
+        adapter = composition_module.SyntheticBookIdentityProvider
+        with patch.object(
+            composition_module,
+            "SyntheticBookIdentityProvider",
+            wraps=adapter,
+        ) as constructor:
+            report = _run_hardcover_identity_decision_preview(source)
+        constructor.assert_called_once()
+        self.assertEqual(
+            constructor.call_args.args[0].canonical_isbn_13,
+            "9780000000019",
+        )
+        self.assertEqual(report.outcome.value, "matched")
+
+    def test_identity_variants_cover_permutation_title_979_and_differing_output(
+        self,
+    ) -> None:
+        primary = self.identity_row()
+        alias = self.identity_row(
+            edition_id=1002,
+            book_id=2002,
+            edition_canonical_id=1001,
+            book_canonical_id=2001,
+        )
+        _, forward, _ = self.run_identity_preview(
+            self.identity_input(rows=[primary, alias])
+        )
+        _, reverse, _ = self.run_identity_preview(
+            self.identity_input(rows=[alias, primary])
+        )
+        self.assertEqual(forward, reverse)
+
+        _, changed_title, _ = self.run_identity_preview(
+            self.identity_input(title="Different Local Title", rows=[primary, alias])
+        )
+        self.assertEqual(json.loads(changed_title)["result"]["comparison"], "different")
+        forward_result = json.loads(forward)["result"]
+        changed_result = json.loads(changed_title)["result"]
+        self.assertEqual(
+            {key: value for key, value in forward_result.items() if key != "comparison"},
+            {key: value for key, value in changed_result.items() if key != "comparison"},
+        )
+
+        isbn_979 = self.identity_input(
+            rows=[self.identity_row(isbn_10=None, isbn_13="9790000000001")]
+        )
+        isbn_979["canonical_isbn_13"] = "9790000000001"
+        isbn_979["derived_isbn_10"] = None
+        code, output, errors = self.run_identity_preview(isbn_979)
+        self.assertEqual((code, errors), (0, ""))
+        self.assertEqual(json.loads(output)["result"]["outcome"], "matched")
+
+        two_primaries = self.identity_input(
+            rows=[primary, self.identity_row(edition_id=1002, book_id=2002)]
+        )
+        _, different_output, _ = self.run_identity_preview(two_primaries)
+        self.assertEqual(json.loads(different_output)["result"]["outcome"], "ambiguous")
+        self.assertNotEqual(forward, different_output)
+
+    def test_identity_precedence_and_alias_graph_failures_are_public_results(
+        self,
+    ) -> None:
+        four_rows = [
+            self.identity_row(
+                edition_id=1000 + index,
+                book_id=2000 + index,
+                edition_canonical_id=None if index == 1 else 1001,
+                book_canonical_id=None if index == 1 else 2001,
+            )
+            for index in range(1, 5)
+        ]
+        four_rows[3]["reading_format_id"] = 3
+        _, incompatible, _ = self.run_identity_preview(
+            self.identity_input(rows=four_rows)
+        )
+        self.assertEqual(json.loads(incompatible)["result"]["outcome"], "incompatible")
+
+        cycle = [
+            self.identity_row(
+                edition_canonical_id=1002, book_canonical_id=2002
+            ),
+            self.identity_row(
+                edition_id=1002,
+                book_id=2002,
+                edition_canonical_id=1001,
+                book_canonical_id=2001,
+            ),
+        ]
+        _, malformed, _ = self.run_identity_preview(self.identity_input(rows=cycle))
+        self.assertEqual(json.loads(malformed)["result"]["outcome"], "malformed")
+
+    def test_identity_closed_input_failures_are_value_free(self) -> None:
+        cases: list[tuple[object, str | None]] = []
+        extra = self.identity_input()
+        extra["extra"] = True
+        cases.append((extra, None))
+        missing = self.identity_input()
+        del missing["provider_rows"]
+        cases.append((missing, None))
+        wrong_derived = self.identity_input()
+        wrong_derived["derived_isbn_10"] = "0306406152"
+        cases.append((wrong_derived, None))
+        cases.append(
+            (
+                {},
+                '{"schema":"hardcover-synthetic-input-v3",'
+                '"scenario":"identity-decision-v3",'
+                '"scenario":"identity-decision-v3"}',
+            )
+        )
+        cases.append(({}, " " * 65_537))
+        for source, payload in cases:
+            with self.subTest(payload_size=len(payload or "")), _zero_authority():
+                code, output, errors = self.run_identity_preview(source, payload=payload)
+            self.assertEqual(code, 2)
+            self.assertEqual(output, "")
+            self.assertNotIn("978", errors)
+            self.assertNotIn("Synthetic", errors)
+
+    def test_identity_privacy_capture_rejects_forbidden_forms_in_every_channel(
+        self,
+    ) -> None:
+        variants = c2_input_variants(ROOT)
+        corpus = c2_forbidden_source_corpus(ROOT, variants=variants)
+        channels: dict[str, list[str]] = {
+            name: [] for name in C2_CAPTURE_CHANNELS
+        }
+        real_hashes = {
+            name: getattr(hashlib, name)
+            for name in (
+                "md5",
+                "sha1",
+                "sha224",
+                "sha256",
+                "sha384",
+                "sha512",
+                "sha3_256",
+                "sha3_512",
+                "blake2s",
+                "blake2b",
+            )
+        }
+        real_hash_new = hashlib.new
+
+        def hash_spy(name: str):
+            def invoke(value: bytes = b"", *args: object, **kwargs: object):
+                channels["hash_inputs"].append(repr((name, value)))
+                return real_hashes[name](value, *args, **kwargs)
+
+            return invoke
+
+        def hash_new_spy(name: str, value: bytes = b"", **kwargs: object) -> object:
+            channels["hash_inputs"].append(repr((name, value)))
+            return real_hash_new(name, value, **kwargs)
+
+        def channel_spy(channel: str, failure: str):
+            def invoke(*args: object, **kwargs: object) -> None:
+                channels[channel].append(repr((args, kwargs)))
+                raise _AuthorityTrap(failure)
+
+            return invoke
+
+        def privacy_observer(channel: str, values: tuple[object, ...]) -> None:
+            if channel == "metrics":
+                name, labels, value, exemplar = values
+                for target, observed in (
+                    ("metric_names", name),
+                    ("metric_labels", labels),
+                    ("metric_values", value),
+                    ("metric_exemplars", exemplar),
+                ):
+                    channels[target].append(repr(observed))
+                return
+            channels[channel].append(repr(values))
+
+        original_to_json = IdentityDecisionPreviewReport.to_json
+
+        def report_spy(report: IdentityDecisionPreviewReport) -> str:
+            rendered = original_to_json(report)
+            channels["exports"].append(rendered)
+            channels["reports"].append(rendered)
+            return rendered
+
+        def observed_runner(source: dict[str, object]) -> IdentityDecisionPreviewReport:
+            try:
+                return _run_hardcover_identity_decision_preview(
+                    source, privacy_observer=privacy_observer
+                )
+            except BaseException as error:
+                channels["exceptions"].extend(_exception_chain_metadata(error))
+                raise
+
+        argv = [
+            "hardcover-identity-report",
+            "--mode",
+            "synthetic-preview",
+            "--scenario",
+            "identity-decision-v3",
+            "--input",
+            "-",
+            "--format",
+            "json",
+        ]
+        persistence_targets = (
+            "SQLiteInventoryRepository",
+            "SQLiteInventoryV2Repository",
+            "SQLiteInventoryPollingRepository",
+            "SQLiteEpubOpeningEvidenceRepository",
+            "SQLiteTitleProposalRepository",
+            "SQLiteTitleReviewCaseRepository",
+            "SQLiteJobHeartbeatRepository",
+        )
+        outputs: list[str] = []
+        with ExitStack() as stack:
+            stack.enter_context(_zero_authority())
+            stack.enter_context(
+                patch.object(
+                    logging.Logger,
+                    "_log",
+                    side_effect=channel_spy("structured_logs", "logging reached"),
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "mechanical_librarian.adapters.persistence.audit."
+                    "SQLiteAuditRepository.append",
+                    side_effect=channel_spy("audit_logs", "audit reached"),
+                )
+            )
+            stack.enter_context(
+                patch.object(IdentityDecisionPreviewReport, "to_json", new=report_spy)
+            )
+            for name in real_hashes:
+                stack.enter_context(
+                    patch(f"hashlib.{name}", side_effect=hash_spy(name))
+                )
+            stack.enter_context(patch("hashlib.new", side_effect=hash_new_spy))
+            for target in (
+                "mechanical_librarian.bootstrap.composition.Fingerprint",
+                "mechanical_librarian.domain.identifiers.Fingerprint",
+            ):
+                stack.enter_context(
+                    patch(
+                        target,
+                        side_effect=channel_spy(
+                            "fingerprint_inputs", "fingerprint reached"
+                        ),
+                    )
+                )
+            for name in persistence_targets:
+                stack.enter_context(
+                    patch(
+                        f"mechanical_librarian.bootstrap.composition.{name}",
+                        side_effect=channel_spy("database_rows", "database reached"),
+                    )
+                )
+
+            for variant in variants:
+                output = io.StringIO()
+                errors = io.StringIO()
+                self.assertEqual(
+                    main(
+                        argv,
+                        state_check_runner=Mock(),
+                        hardcover_identity_decision_preview_runner=observed_runner,
+                        stdin=io.StringIO(variant.input_payload.decode("utf-8")),
+                        stdout=output,
+                        stderr=errors,
+                    ),
+                    0,
+                )
+                channels["json_stdout"].append(output.getvalue())
+                channels["stderr"].append(errors.getvalue())
+                outputs.append(output.getvalue())
+
+            invalid = copy.deepcopy(variants[0].source)
+            invalid["derived_isbn_10"] = "0306406152"
+            code, output, errors = self.run_identity_preview(invalid)
+            self.assertEqual(code, 2)
+            channels["json_stdout"].append(output)
+            channels["stderr"].append(errors)
+            try:
+                observed_runner(invalid)
+            except ValueError:
+                pass
+            else:
+                self.fail("invalid private input unexpectedly succeeded")
+
+            text_output = io.StringIO()
+            text_errors = io.StringIO()
+            self.assertEqual(
+                main(
+                    [*argv[:-1], "text"],
+                    state_check_runner=Mock(),
+                    hardcover_identity_decision_preview_runner=observed_runner,
+                    stdin=io.StringIO(variants[0].input_payload.decode("utf-8")),
+                    stdout=text_output,
+                    stderr=text_errors,
+                ),
+                2,
+            )
+            channels["text_stdout"].append(text_output.getvalue())
+            channels["stderr"].append(text_errors.getvalue())
+
+        self.assertEqual(
+            [json.loads(value)["result"]["comparison"] for value in outputs],
+            ["equal", "different", "different"],
+        )
+        for channel in (
+            "hash_inputs",
+            "fingerprint_inputs",
+            "structured_logs",
+            "audit_logs",
+            "database_rows",
+        ):
+            self.assertEqual(channels[channel], [], channel)
+        for channel in (
+            "exceptions",
+            "traces",
+            "spans",
+            "metric_names",
+            "metric_labels",
+            "metric_values",
+            "metric_exemplars",
+            "exports",
+            "reports",
+        ):
+            self.assertTrue(channels[channel], channel)
+
+        probes = (
+            ("local_title", "WkxDiffe"),
+            ("local_title", "PrivateL"),
+            ("local_title", "length:31"),
+            ("provider_title", "ProviderTitle"),
+            ("isbn_identity", "97800000"),
+            ("provider_identity", "edition:1001"),
+            ("resource_identity", "hardcoveridentity"),
+        )
+        for source_class, projection in probes:
+            self.assertIn(projection, corpus[source_class])
+        self.assertIn(
+            hashlib.md5(
+                variants[0].local_title.encode(), usedforsecurity=False
+            ).hexdigest(),
+            corpus["local_title"],
+        )
+        self.assertIn(
+            hashlib.sha3_512(variants[0].query_payload).hexdigest(),
+            corpus["serialized_private_query"],
+        )
+        self.assertIn(
+            hashlib.blake2b(variants[0].input_payload).hexdigest(),
+            corpus["serialized_input"],
+        )
+        assert_c2_channels_private(channels, corpus)
+
+        incomplete = dict(channels)
+        del incomplete[C2_CAPTURE_CHANNELS[-1]]
+        with self.assertRaises(PrivacyEvidenceError):
+            assert_c2_channels_private(incomplete, corpus)
+        incomplete_corpus = dict(corpus)
+        del incomplete_corpus["resource_identity"]
+        with self.assertRaises(PrivacyEvidenceError):
+            assert_c2_channels_private(channels, incomplete_corpus)
+
+        for channel in C2_CAPTURE_CHANNELS:
+            for source_class, projections in corpus.items():
+                for projection in projections:
+                    poisoned = {
+                        name: list(values) for name, values in channels.items()
+                    }
+                    poisoned[channel].append(projection)
+                    isolated = {
+                        name: frozenset({f"absent-probe:{name}"})
+                        for name in corpus
+                    }
+                    isolated[source_class] = frozenset({projection})
+                    with self.assertRaises(PrivacyEvidenceError):
+                        assert_c2_channels_private(poisoned, isolated)
+
+        projected_cause = next(iter(corpus["serialized_private_query"]))
+        cause = ValueError(projected_cause)
+        handled = RuntimeError("handled synthetic identity failure")
+        handled.__cause__ = cause
+        handled.add_note(projected_cause)
+        poisoned = {name: list(values) for name, values in channels.items()}
+        poisoned["exceptions"].extend(_exception_chain_metadata(handled))
+        with self.assertRaises(PrivacyEvidenceError):
+            assert_c2_channels_private(poisoned, corpus)
+
     def test_production_disabled_and_enabled_short_circuit_before_private_authority(
         self,
     ) -> None:
@@ -253,6 +768,14 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c1-inert-report-privacy-contract-v1.json": "75a6be84afab11ae5a154415960108f15f9db3e34ffd8a2a22cc23edc2c68da3",
             "c1-inert-report-privacy-scan-v1.json": "df030bb495712da448dccc896765dc2fad4ce893666da2bdd22c87e054fcf726",
             "c1-inert-report-registry-v1.json": "eb3ec8a5454a3e4a21f9bbfe9b8b2308687de00f6a95df7533055a6083009619",
+            "c2-identity-decision-input.json": "c6ed8d6ad0253af139e07164668bb49a6763d8e979dd21fcd9e638a9861129fb",
+            "c2-identity-decision-example-output.json": "319744d9311c6c6b43ea104dbc90846a23be3eea53a0f9f7e6bdba1c7aaff779",
+            "c2-identity-decision-input-schema.json": "daab0b30e32cf20ebf631e5cb97e6e94f51243867d45377882acf757cf1ea36e",
+            "c2-identity-decision-variant-matrix.json": "d3cb1432d994e18527fdf354a6882d6d57b92d1358f2cfd745070dbccb529359",
+            "c2-preview-output-schema-v1.json": "0ff4003920471f37661dded39e2400ac0944a0edea13be9a5d8df49ffc037991",
+            "c2-preview-output-privacy-contract-v1.json": "315984420942e5819c760391b371d452ee5be178c1b30085effe1d8d4e81d47d",
+            "c2-preview-output-privacy-scan-v1.json": "81a0aad7d18f16470b13a8533df0d6a5192e056576aed211509aae9d33383452",
+            "preview-registry-c2-v6.json": "557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)
@@ -292,6 +815,161 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             payload = (fixture_root / name).read_text(encoding="utf-8").casefold()
             for marker in future_markers:
                 self.assertNotIn(marker, payload)
+
+    def test_c2_registry_binds_only_installed_c1_and_c2_resources(self) -> None:
+        fixture_root = ROOT / "tests/fixtures/hardcover_identity"
+        output_schema = json.loads(
+            (fixture_root / "c2-preview-output-schema-v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        inert_properties = output_schema["$defs"]["inert_report_result"][
+            "properties"
+        ]
+        for key in (
+            "private_file_opened",
+            "database_opened",
+            "secret_opened",
+            "network_started",
+        ):
+            self.assertEqual(inert_properties[key], {"const": False})
+
+        branches = output_schema["$defs"]["identity_decision_result"]["oneOf"]
+
+        def signature(branch: dict[str, object]) -> tuple[object, ...]:
+            properties = branch["properties"]
+            return (
+                properties["outcome"],
+                properties["rows_validated"],
+                properties["aliases_collapsed"],
+                properties["comparison"],
+                branch["additionalProperties"],
+                branch["type"],
+            )
+
+        integer = lambda minimum, maximum: {
+            "maximum": maximum,
+            "minimum": minimum,
+            "type": "integer",
+        }
+        expected_signatures = (
+            (
+                {"const": "matched"},
+                {"const": 1},
+                {"const": 0},
+                {"enum": ["equal", "different"]},
+                False,
+                "object",
+            ),
+            (
+                {"const": "matched"},
+                {"const": 2},
+                {"const": 1},
+                {"enum": ["equal", "different"]},
+                False,
+                "object",
+            ),
+            (
+                {"const": "matched"},
+                {"const": 3},
+                {"const": 2},
+                {"enum": ["equal", "different"]},
+                False,
+                "object",
+            ),
+            (
+                {"const": "no_match"},
+                {"const": 0},
+                {"const": 0},
+                {"const": "not_compared"},
+                False,
+                "object",
+            ),
+            (
+                {"const": "ambiguous"},
+                integer(2, 4),
+                {"const": 0},
+                {"const": "not_compared"},
+                False,
+                "object",
+            ),
+            (
+                {"const": "incompatible"},
+                integer(0, 4),
+                {"const": 0},
+                {"const": "not_compared"},
+                False,
+                "object",
+            ),
+            (
+                {"const": "malformed"},
+                integer(0, 4),
+                {"const": 0},
+                {"const": "not_compared"},
+                False,
+                "object",
+            ),
+        )
+        self.assertEqual(
+            tuple(signature(branch) for branch in branches), expected_signatures
+        )
+        for branch in branches:
+            self.assertEqual(
+                branch["required"],
+                ["outcome", "rows_validated", "aliases_collapsed", "comparison"],
+            )
+        registry = json.loads(
+            (fixture_root / "preview-registry-c2-v6.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            registry["predecessor_registry_sha256"],
+            "eb3ec8a5454a3e4a21f9bbfe9b8b2308687de00f6a95df7533055a6083009619",
+        )
+        self.assertEqual(
+            [scenario["scenario"] for scenario in registry["scenarios"]],
+            ["inert-report-v3", "identity-decision-v3"],
+        )
+        bindings = (
+            registry["output_schema"],
+            registry["output_privacy_contract"],
+            registry["output_privacy_scan"],
+            *(
+                resource
+                for scenario in registry["scenarios"]
+                for resource in scenario["resources"].values()
+            ),
+        )
+        for binding in bindings:
+            path = fixture_root / binding["path"]
+            with self.subTest(path=path.name):
+                payload = path.read_bytes()
+                self.assertEqual(len(payload), binding["bytes"])
+                self.assertEqual(hashlib.sha256(payload).hexdigest(), binding["sha256"])
+        for name in (
+            "c2-preview-output-schema-v1.json",
+            "c2-preview-output-privacy-contract-v1.json",
+            "c2-preview-output-privacy-scan-v1.json",
+            "preview-registry-c2-v6.json",
+        ):
+            payload = (fixture_root / name).read_text(encoding="utf-8")
+            for marker in ("fixed-adapter-v3", "durable-work-v3", "safe-executor-v3"):
+                self.assertNotIn(marker, payload)
+
+        source = json.loads(
+            (fixture_root / "c2-identity-decision-input.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        code, output, errors = self.run_identity_preview(source)
+        self.assertEqual((code, errors), (0, ""))
+        self.assertEqual(
+            output,
+            (fixture_root / "c2-identity-decision-example-output.json").read_text(
+                encoding="utf-8"
+            ),
+        )
 
     def test_c1_generator_runs_directly_from_repository_root(self) -> None:
         paths = tuple(

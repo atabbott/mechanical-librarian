@@ -18,6 +18,7 @@ PRODUCTION_LAYERS = {
 ROOT_MODULES = {"__init__", "__main__", "_version"}
 APPLICATION_PORT_MODULES = {
     "mechanical_librarian.application.audit",
+    "mechanical_librarian.application.hardcover_identity",
     "mechanical_librarian.application.job_heartbeat",
     "mechanical_librarian.application.ports",
 }
@@ -311,6 +312,14 @@ class ImportBoundaryTests(unittest.TestCase):
             )
         )
 
+    def test_provider_adapter_can_implement_hardcover_identity_port(self) -> None:
+        self.assertFalse(
+            violates_boundary(
+                "mechanical_librarian.adapters.providers.hardcover_identity",
+                "mechanical_librarian.application.hardcover_identity",
+            )
+        )
+
     def test_infrastructure_cannot_implement_persistence_port(self) -> None:
         self.assertTrue(
             violates_boundary(
@@ -324,6 +333,14 @@ class ImportBoundaryTests(unittest.TestCase):
             violates_boundary(
                 "mechanical_librarian.infrastructure.jobs.worker",
                 "mechanical_librarian.application.ports",
+            )
+        )
+
+    def test_infrastructure_cannot_implement_hardcover_identity_port(self) -> None:
+        self.assertTrue(
+            violates_boundary(
+                "mechanical_librarian.infrastructure.providers.hardcover_identity",
+                "mechanical_librarian.application.hardcover_identity",
             )
         )
 

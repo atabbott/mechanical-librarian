@@ -80,6 +80,12 @@ Owns use cases such as inventory reconciliation, evidence collection, proposal
 resolution, review, apply preparation, verification, and rollback. It depends
 on domain types and ports.
 
+F09f adds a narrow `BookIdentityProvider` port owned by this layer. It accepts a
+typed ISBN identity and existing `OperationContext`, returns one closed attempt
+result, and owns no retry, persistence, or public lifecycle mapping. The
+application delegates all compatibility and alias selection to the pure domain
+module and projects only a redacted preview result.
+
 ### Adapters
 
 Translate external services into application-owned contracts:
@@ -112,6 +118,13 @@ candidate, proposal, reviewer-packet, decision, or apply-plan contracts.
 Raw vendor semantics stay inside the owning adapter. An external item value may
 cross only as an uninterpreted `ExternalItemId` member of its fully scoped
 canonical `TargetId`, never as a free or unscoped identifier.
+
+At the current F09f head, only a structural in-memory fake implements the book
+identity port. It is assembled for `identity-decision-v3`, returns typed
+contributor-supplied observations, and has no transport, credential, database,
+target, proposal, review, or write authority. A future Hardcover adapter must
+implement the same application port without moving its payload or lifecycle
+rules into the domain.
 
 ### Infrastructure
 

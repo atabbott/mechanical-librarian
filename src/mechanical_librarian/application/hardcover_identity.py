@@ -6,17 +6,121 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Protocol
 
 from mechanical_librarian.application.configuration import (
     HardcoverProviderConfiguration,
 )
-from mechanical_librarian.domain.hardcover_identity import PrivateIdentityQuery
+from mechanical_librarian.application.ports import OperationContext
+from mechanical_librarian.domain.hardcover_identity import (
+    IdentityDecisionOutcome,
+    PrivateIdentityQuery,
+    ProviderIdentityObservation,
+    TitleComparison,
+    decide_book_identity,
+    isbn_identity,
+)
+
+
+MAX_IDENTITY_OBSERVATIONS = 4
 
 
 class HardcoverIdentityOutcome(StrEnum):
     DISABLED = "disabled"
     PROVIDER_NOT_ACTIVATED = "provider_not_activated"
     INVALID_INPUT = "invalid_input"
+
+
+class IdentityAttemptFailureKind(StrEnum):
+    AUTHENTICATION = "authentication"
+    AUTHORIZATION = "authorization"
+    UNAVAILABLE = "unavailable"
+    RATE_LIMITED = "rate_limited"
+    TIMEOUT = "timeout"
+    CANCELLED = "cancelled"
+    MALFORMED = "malformed"
+    OVERSIZED = "oversized"
+    INCOMPATIBLE = "incompatible"
+
+
+class IdentityReportError(RuntimeError):
+    """A value-free failure while running one identity attempt."""
+
+
+@dataclass(frozen=True, repr=False, slots=True)
+class IsbnIdentityQuery:
+    canonical_isbn_13: str
+    equivalent_isbn_10: str | None
+
+    def __post_init__(self) -> None:
+        try:
+            parsed = isbn_identity(self.canonical_isbn_13)
+        except ValueError:
+            raise ValueError("ISBN identity query is malformed") from None
+        if (
+            parsed.canonical_isbn_13 != self.canonical_isbn_13
+            or parsed.equivalent_isbn_10 != self.equivalent_isbn_10
+        ):
+            raise ValueError("ISBN identity query is malformed")
+
+    @classmethod
+    def from_private(cls, query: PrivateIdentityQuery) -> IsbnIdentityQuery:
+        if type(query) is not PrivateIdentityQuery:
+            raise TypeError("private identity query is malformed")
+        parsed = isbn_identity(query.canonical_isbn)
+        return cls(parsed.canonical_isbn_13, parsed.equivalent_isbn_10)
+
+    def __repr__(self) -> str:
+        return "IsbnIdentityQuery(<redacted>)"
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityAttemptFailure:
+    kind: IdentityAttemptFailureKind
+
+    def __post_init__(self) -> None:
+        if type(self.kind) is not IdentityAttemptFailureKind:
+            raise ValueError("identity attempt failure is malformed")
+
+
+@dataclass(frozen=True, repr=False, slots=True)
+class IdentityAttemptResult:
+    observations: tuple[ProviderIdentityObservation, ...] | None = None
+    failure: IdentityAttemptFailure | None = None
+
+    def __post_init__(self) -> None:
+        if (self.observations is None) == (self.failure is None):
+            raise ValueError("identity attempt result must contain exactly one result")
+        if self.observations is not None:
+            if type(self.observations) is not tuple:
+                raise ValueError("identity attempt observations are malformed")
+            if len(self.observations) > MAX_IDENTITY_OBSERVATIONS:
+                raise ValueError("identity attempt observations exceed the resource limit")
+            if any(
+                type(row) is not ProviderIdentityObservation for row in self.observations
+            ):
+                raise ValueError("identity attempt observations are malformed")
+        if self.failure is not None and type(self.failure) is not IdentityAttemptFailure:
+            raise ValueError("identity attempt failure is malformed")
+
+    @classmethod
+    def success(
+        cls, observations: tuple[ProviderIdentityObservation, ...]
+    ) -> IdentityAttemptResult:
+        return cls(observations=observations)
+
+    @classmethod
+    def failed(cls, kind: IdentityAttemptFailureKind) -> IdentityAttemptResult:
+        return cls(failure=IdentityAttemptFailure(kind))
+
+    def __repr__(self) -> str:
+        return "IdentityAttemptResult(<redacted>)"
+
+
+class BookIdentityProvider(Protocol):
+    def lookup(
+        self, query: IsbnIdentityQuery, context: OperationContext
+    ) -> IdentityAttemptResult: ...
 
 
 @dataclass(frozen=True)
@@ -77,6 +181,140 @@ class InertPreviewReport:
             sort_keys=True,
             separators=(",", ":"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityDecisionPreviewReport:
+    outcome: IdentityDecisionOutcome
+    rows_validated: int
+    aliases_collapsed: int
+    comparison: TitleComparison
+
+    def validate(self) -> None:
+        types_and_ranges_valid = (
+            type(self.outcome) is IdentityDecisionOutcome
+            and type(self.rows_validated) is int
+            and 0 <= self.rows_validated <= 4
+            and type(self.aliases_collapsed) is int
+            and 0 <= self.aliases_collapsed <= 3
+            and type(self.comparison) is TitleComparison
+        )
+        if not types_and_ranges_valid:
+            raise TypeError("Hardcover identity decision preview report is malformed")
+        outcome_valid = {
+            IdentityDecisionOutcome.MATCHED: (
+                1 <= self.rows_validated <= 3
+                and self.aliases_collapsed == self.rows_validated - 1
+                and self.comparison
+                in {TitleComparison.EQUAL, TitleComparison.DIFFERENT}
+            ),
+            IdentityDecisionOutcome.NO_MATCH: (
+                self.rows_validated == 0
+                and self.aliases_collapsed == 0
+                and self.comparison is TitleComparison.NOT_COMPARED
+            ),
+            IdentityDecisionOutcome.AMBIGUOUS: (
+                2 <= self.rows_validated <= 4
+                and self.aliases_collapsed == 0
+                and self.comparison is TitleComparison.NOT_COMPARED
+            ),
+            IdentityDecisionOutcome.INCOMPATIBLE: (
+                self.aliases_collapsed == 0
+                and self.comparison is TitleComparison.NOT_COMPARED
+            ),
+            IdentityDecisionOutcome.MALFORMED: (
+                self.aliases_collapsed == 0
+                and self.comparison is TitleComparison.NOT_COMPARED
+            ),
+        }[self.outcome]
+        if not outcome_valid:
+            raise TypeError("Hardcover identity decision preview report is malformed")
+
+    def to_json(self) -> str:
+        self.validate()
+        return json.dumps(
+            {
+                "schema": "hardcover-synthetic-output-v5",
+                "scenario": "identity-decision-v3",
+                "result": {
+                    "outcome": self.outcome.value,
+                    "rows_validated": self.rows_validated,
+                    "aliases_collapsed": self.aliases_collapsed,
+                    "comparison": self.comparison.value,
+                },
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
+class RunHardcoverIdentityReport:
+    """Run exactly one provider attempt and discard all private observations."""
+
+    def run(
+        self,
+        provider: BookIdentityProvider,
+        query: PrivateIdentityQuery,
+        context: OperationContext,
+        *,
+        privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
+    ) -> IdentityDecisionPreviewReport:
+        lookup = getattr(provider, "lookup", None)
+        if not callable(lookup):
+            raise TypeError("book identity provider is malformed")
+        if type(query) is not PrivateIdentityQuery or type(context) is not OperationContext:
+            raise TypeError("identity report input is malformed")
+        if privacy_observer is not None and not callable(privacy_observer):
+            raise TypeError("Hardcover privacy observer is malformed")
+
+        result = lookup(IsbnIdentityQuery.from_private(query), context)
+        if type(result) is not IdentityAttemptResult:
+            raise IdentityReportError("identity provider returned a malformed result")
+        if result.failure is not None:
+            outcome = _failure_outcome(result.failure.kind)
+            decision_report = IdentityDecisionPreviewReport(
+                outcome, 0, 0, TitleComparison.NOT_COMPARED
+            )
+        else:
+            decision = decide_book_identity(query, result.observations)
+            decision_report = IdentityDecisionPreviewReport(
+                decision.outcome,
+                decision.rows_validated,
+                decision.aliases_collapsed,
+                decision.comparison,
+            )
+        decision_report.validate()
+        if privacy_observer is not None:
+            privacy_observer(
+                "traces",
+                ("hardcover.synthetic.identity_decision", "identity-decision-v3"),
+            )
+            privacy_observer(
+                "spans",
+                ("lookup-and-decide", decision_report.outcome.value),
+            )
+            privacy_observer(
+                "metrics",
+                (
+                    "hardcover_identity_preview_total",
+                    (("outcome", decision_report.outcome.value),),
+                    1,
+                    None,
+                ),
+            )
+        return decision_report
+
+
+def _failure_outcome(kind: IdentityAttemptFailureKind) -> IdentityDecisionOutcome:
+    if kind is IdentityAttemptFailureKind.INCOMPATIBLE:
+        return IdentityDecisionOutcome.INCOMPATIBLE
+    if kind in {
+        IdentityAttemptFailureKind.MALFORMED,
+        IdentityAttemptFailureKind.OVERSIZED,
+    }:
+        return IdentityDecisionOutcome.MALFORMED
+    raise IdentityReportError("identity provider attempt did not produce a decision")
 
 
 def preactivation_report(
@@ -147,9 +385,17 @@ def render_report_text(report: HardcoverIdentityReport) -> str:
 
 
 __all__ = [
+    "BookIdentityProvider",
     "HardcoverIdentityOutcome",
     "HardcoverIdentityReport",
+    "IdentityAttemptFailure",
+    "IdentityAttemptFailureKind",
+    "IdentityAttemptResult",
+    "IdentityDecisionPreviewReport",
+    "IdentityReportError",
     "InertPreviewReport",
+    "IsbnIdentityQuery",
+    "RunHardcoverIdentityReport",
     "inert_preview",
     "preactivation_report",
     "render_report_text",
