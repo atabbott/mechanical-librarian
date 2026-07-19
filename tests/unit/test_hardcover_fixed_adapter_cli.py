@@ -214,6 +214,66 @@ class HardcoverFixedAdapterCliTests(unittest.TestCase):
             self.assertEqual(output, "")
             self.assertEqual(errors, "Hardcover identity report failed safely.\n")
 
+    def test_keyboard_interrupt_propagates_from_input_runner_and_render(self) -> None:
+        arguments = [
+            "hardcover-identity-report",
+            "--mode",
+            "synthetic-preview",
+            "--scenario",
+            "fixed-adapter-v3",
+            "--input",
+            "-",
+            "--format",
+            "json",
+        ]
+
+        class InterruptedInput(io.StringIO):
+            def read(self, size: int = -1) -> str:
+                raise KeyboardInterrupt
+
+        report = FixedAdapterPreviewReport(
+            FixedAdapterOutcome.MATCHED,
+            1,
+            True,
+            False,
+            AddressPolicyOutcome.ACCEPTED,
+        )
+        cases = (
+            ("input", InterruptedInput(), Mock(return_value=report), None),
+            (
+                "runner",
+                io.StringIO(json.dumps(self.source())),
+                Mock(side_effect=KeyboardInterrupt),
+                None,
+            ),
+            (
+                "render",
+                io.StringIO(json.dumps(self.source())),
+                Mock(return_value=report),
+                patch.object(
+                    FixedAdapterPreviewReport,
+                    "to_json",
+                    side_effect=KeyboardInterrupt,
+                ),
+            ),
+        )
+        for phase, input_stream, runner, render_patch in cases:
+            with self.subTest(phase=phase):
+                output = io.StringIO()
+                errors = io.StringIO()
+                context = render_patch if render_patch is not None else ExitStack()
+                with context, self.assertRaises(KeyboardInterrupt):
+                    main(
+                        arguments,
+                        state_check_runner=Mock(),
+                        hardcover_fixed_adapter_preview_runner=runner,
+                        stdin=input_stream,
+                        stdout=output,
+                        stderr=errors,
+                    )
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(errors.getvalue(), "")
+
     def test_fixed_transport_text_boundaries_are_exact(self) -> None:
         for size, accepted in ((127, True), (128, True), (129, False)):
             with self.subTest(status_line_bytes=size):

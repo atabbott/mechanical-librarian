@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import json
+import signal
+import subprocess
+import sys
+import textwrap
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.providers import hardcover_identity as adapter
@@ -33,6 +38,9 @@ from mechanical_librarian.application.ports import (
     ResourceBounds,
     TimeProbe,
 )
+
+
+ROOT = Path(__file__).parents[2]
 
 
 class HardcoverIdentityProviderContractTests(unittest.TestCase):
@@ -515,6 +523,162 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 self.assertEqual(reader.close_calls, 1)
                 self.assertEqual(channel.release_calls, release_calls)
                 self.assertNotIn("private-", repr(result))
+
+    def test_keyboard_interrupt_releases_response_and_propagates(self) -> None:
+        state = {"interrupt_after_exchange": False}
+        payload = self.response_body()
+
+        class Reader:
+            def __init__(
+                self, *, interrupt_read: bool = False, close_result: bool = True
+            ) -> None:
+                self.interrupt_read = interrupt_read
+                self.close_result = close_result
+                self.values = iter((payload, None))
+                self.close_calls = 0
+
+            def read_chunk(self, max_bytes: int) -> bytes | None:
+                if self.interrupt_read:
+                    raise KeyboardInterrupt
+                return next(self.values)
+
+            def close(self) -> bool:
+                self.close_calls += 1
+                return self.close_result
+
+        class Channel:
+            def __init__(self, reader: Reader) -> None:
+                self.release_calls = 0
+                self.response = RawIdentityResponseHead(
+                    b"HTTP/1.1 200 OK\r\n",
+                    (
+                        b"Content-Type: application/json\r\n",
+                        f"Content-Length: {len(payload)}\r\n".encode(),
+                    ),
+                    reader,
+                    "1.1.1.1",
+                )
+
+            def exchange(
+                self, request: object, context: object
+            ) -> RawIdentityResponseHead:
+                state["interrupt_after_exchange"] = True
+                return self.response
+
+            def release(self, response: object) -> bool:
+                self.release_calls += 1
+                return True
+
+        for phase in ("read", "read_fallback", "preflight", "parse"):
+            with self.subTest(phase=phase):
+                state["interrupt_after_exchange"] = False
+                reader = Reader(
+                    interrupt_read=phase in {"read", "read_fallback"},
+                    close_result=phase != "read_fallback",
+                )
+                channel = Channel(reader)
+                now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+                def current_time() -> datetime:
+                    if phase == "preflight" and state["interrupt_after_exchange"]:
+                        raise KeyboardInterrupt
+                    return now
+
+                operation_context = OperationContext(
+                    Deadline(now + timedelta(seconds=5)),
+                    CancellationProbe(
+                        CancellationId("hardcover-c3-interrupt"), lambda: False
+                    ),
+                    ResourceBounds(4, 65_536),
+                    TimeProbe(current_time),
+                )
+                parse_patch = (
+                    patch.object(
+                        adapter, "_parse_observations", side_effect=KeyboardInterrupt
+                    )
+                    if phase == "parse"
+                    else patch.object(
+                        adapter,
+                        "_parse_observations",
+                        wraps=adapter._parse_observations,
+                    )
+                )
+                with parse_patch, self.assertRaises(KeyboardInterrupt):
+                    HardcoverIdentityProvider(
+                        lambda host, port: ("1.1.1.1",),
+                        channel,
+                        b"synthetic-noncredential",
+                    ).lookup(self.query(), operation_context)
+                self.assertEqual(reader.close_calls, 1)
+                self.assertEqual(
+                    channel.release_calls, 1 if phase == "read_fallback" else 0
+                )
+
+    def test_real_sigint_while_reader_blocks_closes_and_propagates(self) -> None:
+        script = textwrap.dedent(
+            '''
+            import threading
+            from datetime import datetime, timedelta, timezone
+            from mechanical_librarian.adapters.providers.hardcover_identity import (
+                HardcoverIdentityProvider, RawIdentityResponseHead,
+            )
+            from mechanical_librarian.application.hardcover_identity import IsbnIdentityQuery
+            from mechanical_librarian.application.ports import (
+                CancellationId, CancellationProbe, Deadline, OperationContext,
+                ResourceBounds, TimeProbe,
+            )
+
+            class Reader:
+                def read_chunk(self, max_bytes):
+                    print("READING", flush=True)
+                    threading.Event().wait()
+                def close(self):
+                    print("CLOSED", flush=True)
+                    return True
+
+            class Channel:
+                def __init__(self, reader):
+                    self.response = RawIdentityResponseHead(
+                        b"HTTP/1.1 200 OK\\r\\n",
+                        (b"Content-Type: application/json\\r\\n",),
+                        reader,
+                        "1.1.1.1",
+                    )
+                def exchange(self, request, context):
+                    return self.response
+                def release(self, response):
+                    return False
+
+            now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+            context = OperationContext(
+                Deadline(now + timedelta(seconds=5)),
+                CancellationProbe(CancellationId("real-sigint"), lambda: False),
+                ResourceBounds(4, 65_536),
+                TimeProbe(lambda: now),
+            )
+            reader = Reader()
+            HardcoverIdentityProvider(
+                lambda host, port: ("1.1.1.1",),
+                Channel(reader),
+                b"synthetic-noncredential",
+            ).lookup(IsbnIdentityQuery("9780000000019", "0000000019"), context)
+            '''
+        )
+        process = subprocess.Popen(
+            [sys.executable, "-c", script],
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertIsNotNone(process.stdout)
+        self.assertEqual(process.stdout.readline(), "READING\n")
+        process.send_signal(signal.SIGINT)
+        output, errors = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, -signal.SIGINT)
+        self.assertEqual(output, "CLOSED\n")
+        self.assertIn("KeyboardInterrupt", errors)
 
     def test_channel_failure_uses_trusted_typed_metadata(self) -> None:
         class RaisingChannel:

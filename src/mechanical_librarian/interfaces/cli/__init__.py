@@ -580,7 +580,7 @@ def main(
                     if hardcover_fixed_adapter_preview_runner is None:
                         raise ValueError("fixed adapter preview is unavailable")
                     report = hardcover_fixed_adapter_preview_runner(source)
-            except (KeyboardInterrupt, Exception):
+            except Exception:
                 if hardcover_arguments.scenario == "inert-report-v3":
                     report = InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
                 else:
@@ -600,7 +600,7 @@ def main(
             try:
                 report.validate()
                 rendered = report.to_json()
-            except (KeyboardInterrupt, Exception):
+            except Exception:
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
             output.write(rendered + "\n")

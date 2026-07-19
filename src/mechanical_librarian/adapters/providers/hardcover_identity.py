@@ -307,35 +307,43 @@ class HardcoverIdentityProvider:
         except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         body_reader = response.body_reader
-        candidate: bytes | IdentityAttemptFailureKind
-        if not _peer_equal(response.connected_peer_address, addresses[0]):
-            candidate = IdentityAttemptFailureKind.UNAVAILABLE
-        else:
-            preflight = _safe_preflight(context)
-            if preflight is not None:
-                candidate = preflight
+        candidate: (
+            tuple[ProviderIdentityObservation, ...] | IdentityAttemptFailureKind
+        )
+        try:
+            if not _peer_equal(response.connected_peer_address, addresses[0]):
+                candidate = IdentityAttemptFailureKind.UNAVAILABLE
             else:
-                status = _parse_status(response.status_line)
-                if status is None:
-                    candidate = IdentityAttemptFailureKind.MALFORMED
+                preflight = _safe_preflight(context)
+                if preflight is not None:
+                    candidate = preflight
                 else:
-                    mapped = _status_failure(status)
-                    candidate = (
-                        mapped
-                        if mapped is not None
-                        else _bounded_body(
-                            response.header_lines, body_reader, _close_after=False
+                    status = _parse_status(response.status_line)
+                    if status is None:
+                        candidate = IdentityAttemptFailureKind.MALFORMED
+                    else:
+                        mapped = _status_failure(status)
+                        payload = (
+                            mapped
+                            if mapped is not None
+                            else _bounded_body(
+                                response.header_lines,
+                                body_reader,
+                                _close_after=False,
+                            )
                         )
-                    )
-        if not _release_response(self._channel, response, body_reader):
+                        candidate = (
+                            payload
+                            if isinstance(payload, IdentityAttemptFailureKind)
+                            else _parse_observations(payload)
+                        )
+        finally:
+            released = _release_response(self._channel, response, body_reader)
+        if not released:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         if isinstance(candidate, IdentityAttemptFailureKind):
             return IdentityAttemptResult.failed(candidate)
-        payload = candidate
-        observations = _parse_observations(payload)
-        if isinstance(observations, IdentityAttemptFailureKind):
-            return IdentityAttemptResult.failed(observations)
-        return IdentityAttemptResult.success(observations)
+        return IdentityAttemptResult.success(candidate)
 
 
 class StructuralIdentityByteChannel:
