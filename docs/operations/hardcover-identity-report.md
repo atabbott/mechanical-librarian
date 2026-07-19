@@ -1,8 +1,10 @@
 # Hardcover Identity Report
 
-`hardcover-identity-report` is the installed, report-only F09f surface. In the
-current preactivation increment it cannot contact Hardcover or open a private
-query, database, or provider secret.
+`hardcover-identity-report` is the installed, report-only F09f surface.
+Production remains preactivated: it cannot contact Hardcover or open a private
+query, database, or provider secret. Contributor synthetic scenarios may open
+only an explicitly supplied absent disposable database and never compose a
+provider credential or network client.
 
 ## Production syntax
 
@@ -152,6 +154,59 @@ The cumulative C4 registry is `preview-registry-c4-v6.json`, SHA-256
 The registry also binds contributor-independent schema-8 logical snapshot and
 ledger resources used only for qualification; runtime reconstructs and
 validates the prefix and never loads the expected output before emission.
+
+### Safe executor preview
+
+F09f increment 5 installs the foreground lifecycle and deployment gate behind
+one synthetic-only executable scenario:
+
+```text
+mechanical-librarian hardcover-identity-report \
+  --mode synthetic-preview --scenario safe-executor-v3 \
+  --input - --database ABSENT_DISPOSABLE_PATH --format json
+```
+
+The disposable-path rules are the same as the durable-work preview. The
+command publishes an owner-only schema-9 database, retains the owner-only
+`.mechanical-librarian-hardcover-identity.lock`, and runs six independent
+synthetic generations through the real application executor, repository, and
+descriptor-bound nonblocking `flock`. It proves retry then match, exact
+deadline before gate acquisition, cancellation before and during an attempt,
+post-start death and later fenced recovery, the three-start cap, and one-shot
+no-retry behavior. There is no DNS, socket, HTTP, credential, live Hardcover
+request, proposal, or production composition.
+
+The executor checks the durable 30-second aggregate deadline before trying the
+gate. A busy gate returns `in_progress` without a claim or start. Under the
+gate, claim still does not consume budget; atomic renew-and-start requires six
+seconds remaining, renews the lease for 15 seconds, and alone authorizes one
+five-second transport attempt. Retry delays are exactly one second after start
+one and two seconds after start two, extended by a valid later `Retry-After`
+value. The gate remains held through confirmed close and durable publication,
+then is released before waiting.
+
+The canonical demonstration is:
+
+```sh
+preview_dir="$(mktemp -d)"
+uv run --frozen --no-editable --reinstall-package mechanical-librarian \
+  mechanical-librarian hardcover-identity-report \
+  --mode synthetic-preview --scenario safe-executor-v3 --input - \
+  --database "$preview_dir/state.sqlite" --format json \
+  < tests/fixtures/hardcover_identity/c5-safe-executor-input.json
+```
+
+Stdout must be byte-identical to
+`tests/fixtures/hardcover_identity/c5-safe-executor-example-output.json`.
+The cumulative C5 registry is `preview-registry-c5-v6.json`, SHA-256
+`4f3233ce2ee822367536cb3ac05694769f67ea4911e749cac917b5a3e920ad35`.
+It derives from the merged C4 registry and adds only `safe-executor-v3`.
+
+The gate is deployment-scoped, not credential-scoped. Operators must not reuse
+one Hardcover credential across independently configured deployments. The
+lock file is never individually removed or replaced while a deployment may be
+running. Disposal means stopping every process and removing the whole state
+root under the stopped-state procedure.
 
 ### Durable data lifecycle
 

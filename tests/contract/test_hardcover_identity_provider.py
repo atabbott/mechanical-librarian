@@ -243,6 +243,44 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         result = self.provider(empty).lookup(self.query(), self.context())
         self.assertEqual(result.failure.kind, IdentityAttemptFailureKind.EMPTY)
 
+    def test_retry_after_accepts_only_one_exact_bounded_ascii_delay(self) -> None:
+        for value, expected in ((b"0", 0), (b"1", 1), (b"30", 30)):
+            with self.subTest(value=value):
+                channel = self.channel(
+                    status=b"HTTP/1.1 429 Synthetic\r\n",
+                    body=b"ignored",
+                    headers=(b"Retry-After:" + value + b"\r\n",),
+                )
+                result = self.provider(channel).lookup(
+                    self.query(), self.context()
+                )
+                self.assertEqual(
+                    (result.failure.kind, result.failure.retry_after_seconds),
+                    (IdentityAttemptFailureKind.RATE_LIMITED, expected),
+                )
+        for headers in (
+            (b"Retry-After: 1\r\n",),
+            (b"Retry-After:\t1\r\n",),
+            (b"Retry-After:+1\r\n",),
+            (b"Retry-After:01\r\n",),
+            (b"Retry-After:31\r\n",),
+            (b"Retry-After:1,2\r\n",),
+            (b"Retry-After:Wed, 21 Oct 2015 07:28:00 GMT\r\n",),
+            (b"Retry-After:1\r\n", b"retry-after:2\r\n"),
+        ):
+            with self.subTest(headers=headers):
+                channel = self.channel(
+                    status=b"HTTP/1.1 429 Synthetic\r\n",
+                    body=b"ignored",
+                    headers=headers,
+                )
+                result = self.provider(channel).lookup(
+                    self.query(), self.context()
+                )
+                self.assertEqual(
+                    result.failure.kind, IdentityAttemptFailureKind.MALFORMED
+                )
+
         no_match = self.channel(body=self.response_body([]))
         result = self.provider(no_match).lookup(self.query(), self.context())
         self.assertEqual(result.observations, ())

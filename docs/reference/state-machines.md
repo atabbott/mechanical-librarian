@@ -265,3 +265,21 @@ the pointer expired and creates exactly one unreserved pending next generation.
 Repeated readers retain `stale` while reusing that active generation. Wall timestamps determine
 durable chronology; fences determine ownership and never derive authority from
 time alone.
+
+The foreground executor observes active durable state before any external
+authority. At or beyond the aggregate deadline, pending or retry-wait work
+transitions directly to terminal `failed`; cancellation transitions either
+waiting state directly to `cancelled`. Otherwise a contender may try the
+deployment gate. Busy returns `in_progress` without state mutation. Retry-wait
+is claimable only at its persisted due time; an unexpired claim remains
+`in_progress`, while an expired claim is recovered only under newly acquired
+gate ownership.
+
+Each started attempt holds the gate through transport close and publication.
+Retryable attempt 1 schedules candidate 2 at close/publication time plus one
+second; retryable attempt 2 schedules candidate 3 plus two seconds. A later
+valid Retry-After extends that due time. The gate is released before waiting
+and reacquired before the retry claim. Attempt 3, missing six-second reserve,
+or a retry due beyond deadline-minus-six transitions to terminal `failed` and
+maps publicly to `retry_exhausted`. `interrupted`, rate limiting, timeout, and
+unavailability are internal evidence, never terminal public outcomes.

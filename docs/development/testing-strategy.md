@@ -324,6 +324,26 @@ unrestricted identifiers, target/library identifiers, media paths, and caches.
 Private exact-installed-artifact qualification uses a dedicated non-production
 account and disposable state, retaining only a redacted aggregate.
 
+F09f increment 5 keeps ordinary and installed qualification entirely
+credential-free. `safe-executor-v3` runs six independent generations through
+the real application executor, schema-9 repository, descriptor gate, injected
+clock/waiter, and structural provider. Tests prove deadline-before-gate,
+gate-before-claim/start, atomic start as the sole send authority, five-second
+attempt cutoff, exact one/two-second and Retry-After-aware due times,
+release-before-wait, restart persistence, same-process cancellation, post-start
+death consumption, later fenced recovery, one-shot behavior, three starts, and
+no fourth send.
+
+Gate tests use independent contenders and canonical parent aliases, then race
+or replace parent, database, and lock identities. They reject dot/dotdot,
+symlink, hardlink, FIFO/nonregular, wrong owner/mode/link count, permissive
+roots, and nonconverging identities; verify nonblocking contention, mode 0600,
+stable inode, revalidation immediately before send, and no unlink. Signal tests
+cover both signals, partial installation, exact handler restoration, main-thread
+restriction, ordinary errors, and unmasked interpreter control flow. Egress,
+secret, fixture-oracle, private-value persistence/output, malformed schedule,
+clock regression, stale fence, and production-composition traps remain active.
+
 F09g tests first reject a stale or mismatched target, snapshot, source, file, or
 F07b evidence before provider disclosure or scheduling/binding new F09f work;
 F09f durable retry/restart remains target-independent after that handoff. The

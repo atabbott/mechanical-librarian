@@ -309,6 +309,7 @@ class HardcoverIdentityProvider:
         candidate: (
             tuple[ProviderIdentityObservation, ...] | IdentityAttemptFailureKind
         )
+        retry_after_seconds: int | None = None
         try:
             if not _peer_equal(response.connected_peer_address, addresses[0]):
                 candidate = IdentityAttemptFailureKind.UNAVAILABLE
@@ -322,6 +323,13 @@ class HardcoverIdentityProvider:
                         candidate = IdentityAttemptFailureKind.MALFORMED
                     else:
                         mapped = _status_failure(status)
+                        if mapped is IdentityAttemptFailureKind.RATE_LIMITED:
+                            valid_retry_after, retry_after_seconds = (
+                                _retry_after_seconds(response.header_lines)
+                            )
+                            if not valid_retry_after:
+                                mapped = IdentityAttemptFailureKind.MALFORMED
+                                retry_after_seconds = None
                         payload = (
                             mapped
                             if mapped is not None
@@ -341,7 +349,14 @@ class HardcoverIdentityProvider:
         if not released:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         if isinstance(candidate, IdentityAttemptFailureKind):
-            return IdentityAttemptResult.failed(candidate)
+            return IdentityAttemptResult.failed(
+                candidate,
+                retry_after_seconds=(
+                    retry_after_seconds
+                    if candidate is IdentityAttemptFailureKind.RATE_LIMITED
+                    else None
+                ),
+            )
         return IdentityAttemptResult.success(candidate)
 
 
@@ -890,6 +905,31 @@ def _status_failure(status: int) -> IdentityAttemptFailureKind | None:
     if 500 <= status <= 599:
         return IdentityAttemptFailureKind.UNAVAILABLE
     return IdentityAttemptFailureKind.INCOMPATIBLE
+
+
+def _retry_after_seconds(lines: object) -> tuple[bool, int | None]:
+    """Parse the sole accepted Retry-After form without OWS or date syntax."""
+
+    parsed = _parse_headers(lines)
+    if isinstance(parsed, IdentityAttemptFailureKind):
+        return False, None
+    values = parsed.get(b"retry-after", [])
+    if not values:
+        return True, None
+    if len(values) != 1:
+        return False, None
+    raw_lines = [
+        line[:-2].split(b":", 1)[1]
+        for line in lines
+        if line[:-2].split(b":", 1)[0].lower() == b"retry-after"
+    ]
+    if len(raw_lines) != 1 or raw_lines[0] != values[0]:
+        return False, None
+    raw = values[0]
+    if not _canonical_decimal(raw) or len(raw) > 2:
+        return False, None
+    seconds = int(raw)
+    return (seconds <= 30), (seconds if seconds <= 30 else None)
 
 
 def _release_response(channel: object, response: object, reader: object) -> bool:

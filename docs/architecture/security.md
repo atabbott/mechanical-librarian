@@ -545,6 +545,42 @@ serialized staging, synchronization, and no-replace linking without a
 process-global working-directory change; device/inode/owner/mode
 revalidation rejects parent swaps without publishing into the replacement.
 
+F09f increment 5 replaces structural gate assertions only in the new
+`safe-executor-v3` synthetic lane. `RunHardcoverIdentityReport` owns acceptance,
+deadline, nonblocking gate acquisition, claim/fence, atomic start accounting,
+one typed provider attempt, cancellation, retry/recovery, and publication. The
+provider port owns exactly one attempt and cannot claim, retry, wait, recover,
+or publish. Production composition remains absent.
+
+The deployment gate canonicalizes the state parent and binds its directory,
+database, and exact `.mechanical-librarian-hardcover-identity.lock` entries to
+open descriptors. The root is effective-user-owned and private; database and
+lock are regular, effective-user-owned, link-count-one entries opened with
+no-follow and close-on-exec flags. The lock is mode `0600`, acquired with
+nonblocking `flock`, and its entry/descriptor identity is checked after open,
+after acquisition, and immediately before send. Canonical parent aliases
+converge on the same device/inode and lock. Dot/dotdot, nonconverging or changed
+identity, final symlink, hardlink, nonregular database, permissive root, and
+lock/database replacement fail closed. The lock is stable and never unlinked
+during operation.
+
+The 30-second durable aggregate window includes contention, transport, close,
+publication, and waits. Deadline is checked before gate acquisition. Atomic
+renew-and-start requires six seconds remaining, extends the current fence lease
+to 15 seconds, records consumption, and is the sole send authority. The
+transport context cuts off at start plus five seconds, reserving one second for
+confirmed close and publication. Only `rate_limited`, `timeout`, and
+`unavailable` retry; fixed one/two-second delays use the later valid bounded
+Retry-After and are persisted only when the due time leaves the full start
+reserve. Interrupted post-start work consumes its attempt; pre-start recovery
+reuses its candidate. No fourth start exists.
+
+Temporary SIGINT/SIGTERM handlers set only an in-memory cancellation event and
+restore the exact previous handlers on every exit. Claimed cancellation closes
+the attempt before current-fence publication and gate release; waiting work is
+cancelled durably without a send. Interpreter control flow is not translated.
+Hard kill relies on lease expiry, new gate ownership, and fenced recovery.
+
 F07b treats the service path projection, private logical binding, EPUB archive,
 and persisted canonical report as hostile inputs. Callers can supply only
 strict opaque references and a bounded file index. Resolution requires one

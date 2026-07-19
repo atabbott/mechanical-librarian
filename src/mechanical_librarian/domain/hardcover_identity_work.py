@@ -23,6 +23,7 @@ class IdentityWorkOutcome(StrEnum):
     PERSISTENCE_FAILURE = "persistence_failure"
     IN_PROGRESS = "in_progress"
     RETRY_EXHAUSTED = "retry_exhausted"
+    CANCELLED = "cancelled"
 
 
 class IdentityMatchOutcome(StrEnum):
@@ -44,6 +45,10 @@ LEGAL_TRANSITIONS = frozenset(
         (IdentityWorkState.CLAIMED, IdentityWorkState.SUCCEEDED),
         (IdentityWorkState.CLAIMED, IdentityWorkState.FAILED),
         (IdentityWorkState.CLAIMED, IdentityWorkState.CANCELLED),
+        (IdentityWorkState.PENDING, IdentityWorkState.FAILED),
+        (IdentityWorkState.RETRY_WAIT, IdentityWorkState.FAILED),
+        (IdentityWorkState.PENDING, IdentityWorkState.CANCELLED),
+        (IdentityWorkState.RETRY_WAIT, IdentityWorkState.CANCELLED),
     }
 )
 
@@ -82,6 +87,61 @@ class IdentityWorkClaim:
         if type(self.fence) is not int or self.fence < 1:
             raise ValueError("identity work claim is malformed")
         _require_time(self.lease_expires_at)
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityWorkInspection:
+    """The minimum durable state needed to resume one active generation."""
+
+    reference: IdentityWorkReference
+    state: IdentityWorkState
+    candidate: int
+    fence: int
+    aggregate_deadline: datetime
+    retry_due_at: datetime | None = None
+    claim: IdentityWorkClaim | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.reference) is not IdentityWorkReference
+            or type(self.state) is not IdentityWorkState
+            or self.state not in ACTIVE_STATES
+            or type(self.candidate) is not int
+            or not 1 <= self.candidate <= 3
+            or type(self.fence) is not int
+            or self.fence < 0
+        ):
+            raise ValueError("identity work inspection is malformed")
+        _require_time(self.aggregate_deadline)
+        if self.retry_due_at is not None:
+            _require_time(self.retry_due_at)
+        if self.claim is not None and type(self.claim) is not IdentityWorkClaim:
+            raise ValueError("identity work inspection is malformed")
+        valid = {
+            IdentityWorkState.PENDING: (
+                self.candidate == 1
+                and self.fence == 0
+                and self.retry_due_at is None
+                and self.claim is None
+            ),
+            IdentityWorkState.RETRY_WAIT: (
+                2 <= self.candidate <= 3
+                and self.fence >= 2
+                and self.retry_due_at is not None
+                and self.claim is None
+                and self.retry_due_at <= self.aggregate_deadline
+            ),
+            IdentityWorkState.CLAIMED: (
+                self.fence >= 1
+                and self.retry_due_at is None
+                and self.claim is not None
+                and self.claim.reference == self.reference
+                and self.claim.candidate == self.candidate
+                and self.claim.fence == self.fence
+            ),
+        }[self.state]
+        if not valid:
+            raise ValueError("identity work inspection is malformed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +224,7 @@ def _require_time(value: object) -> None:
 __all__ = [
     "ACTIVE_STATES",
     "IdentityWorkClaim",
+    "IdentityWorkInspection",
     "IdentityMatchOutcome",
     "IdentityWorkObservation",
     "IdentityWorkOutcome",
