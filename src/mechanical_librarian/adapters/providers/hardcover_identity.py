@@ -546,6 +546,10 @@ class StructuralHardcoverIdentityPreview:
         query = identity_query_from_canonical_body(request_body)
         selected = transport["selected_address"]
         peer = transport["connected_peer_address"]
+        validated_selected = _validated_addresses((selected,))
+        channel_selected = (
+            validated_selected[0] if validated_selected is not None else selected
+        )
         body_reader = StructuralIdentityBodyReader(iter((response_body,)))
         raw_response = RawIdentityResponseHead(
             status_line,
@@ -558,7 +562,7 @@ class StructuralHardcoverIdentityPreview:
             expected_url=request["url"],
             expected_body=request_body,
             expected_token=b"structural-preview-noncredential",
-            selected_address=selected,
+            selected_address=channel_selected,
             connected_peer_address=peer,
             hostname=transport["hostname"],
             resolution_count=transport["resolution_count"],

@@ -149,6 +149,27 @@ class HardcoverFixedAdapterCliTests(unittest.TestCase):
         self.assertEqual(json.loads(output)["result"]["outcome"], "no_match")
         self.assertEqual(json.loads(output)["result"]["row_count"], 0)
 
+    def test_noncanonical_public_ipv6_uses_validated_channel_address(self) -> None:
+        expanded = "2001:4860:4860:0000:0000:0000:0000:8888"
+        compressed = "2001:4860:4860::8888"
+        for peer in (expanded, compressed):
+            with self.subTest(peer=peer):
+                source = self.source()
+                source["transport"]["selected_address"] = expanded
+                source["transport"]["connected_peer_address"] = peer
+                code, output, errors = self.run_preview(source)
+                self.assertEqual((code, errors), (0, ""))
+                self.assertEqual(
+                    json.loads(output)["result"],
+                    {
+                        "actual_network": False,
+                        "address_policy": "accepted",
+                        "outcome": "matched",
+                        "peer_equal": True,
+                        "row_count": 2,
+                    },
+                )
+
     def test_row_permutation_and_four_row_validation_precede_selection(self) -> None:
         source = self.source()
         document = json.loads(source["response"]["raw_body_bytes_utf8"])
