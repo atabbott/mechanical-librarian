@@ -195,7 +195,9 @@ reserved, multicast, unspecified, scoped, and IPv4-mapped addresses before the
 channel is opened.
 
 The adapter constructs only the frozen canonical ISBN GraphQL body. It resolves
-once, selects one validated public address deterministically, preserves the
+once under a four-answer cap, bounds each resolved and peer address to the
+39-byte/scalar IPv6 textual maximum before parsing or sorting, selects one
+validated public address deterministically, preserves the
 Hardcover hostname for Host and TLS SNI/certificate verification, forbids
 re-resolution, and requires the connected peer to equal the selected address.
 Bearer authentication is attached only after exact method, HTTPS origin/path,
@@ -206,7 +208,11 @@ channel must retain dedicated TLS-client, no-redirect, no-environment-proxy,
 no-cookie, no-ambient-credential, no-compression, no-HTTP/2, and connection-
 close behavior; this increment intentionally provides no network channel.
 
-HTTP response bytes remain hostile. Non-200 bodies are closed without parsing.
+HTTP response bytes remain hostile. Status lines are capped at 128 bytes before
+parsing. Non-200 bodies are released without parsing. Every post-exchange path
+requires either positively confirmed reader close or a positively confirmed
+transport-owned release fallback; otherwise only value-free `unavailable` may
+escape, including when the candidate was success or a status-derived result.
 HTTP 200 enforces exact header cardinality and grammar, 65,536 streamed bytes,
 strict UTF-8 once without BOM, string-aware depth 8, 128 value nodes, 96
 members, four cumulative list elements, per-string and cumulative Unicode/byte

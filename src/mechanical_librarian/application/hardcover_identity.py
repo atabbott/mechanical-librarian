@@ -48,6 +48,14 @@ class IdentityAttemptFailureKind(StrEnum):
 class IdentityReportError(RuntimeError):
     """A value-free failure while running one identity attempt."""
 
+    def __init__(
+        self,
+        message: str,
+        kind: IdentityAttemptFailureKind | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+
 
 @dataclass(frozen=True, repr=False, slots=True)
 class IsbnIdentityQuery:
@@ -290,10 +298,19 @@ class RunHardcoverFixedAdapterPreview:
         preview: FixedAdapterStructuralPreview,
         source: Mapping[str, object],
     ) -> FixedAdapterPreviewReport:
-        invoke = getattr(preview, "run", None)
-        if not callable(invoke) or not isinstance(source, Mapping):
+        if not isinstance(source, Mapping):
             raise TypeError("Hardcover structural preview input is malformed")
-        evidence = invoke(source)
+        invoke = _attempt_method(preview, "run", "Hardcover structural preview")
+        try:
+            evidence = invoke(source)
+        except KeyboardInterrupt:
+            raise _attempt_error(
+                "Hardcover structural preview", IdentityAttemptFailureKind.CANCELLED
+            ) from None
+        except BaseException:
+            raise _attempt_error(
+                "Hardcover structural preview", IdentityAttemptFailureKind.UNAVAILABLE
+            ) from None
         if type(evidence) is not FixedAdapterAttemptEvidence:
             raise IdentityReportError("Hardcover structural preview is malformed")
         return fixed_adapter_preview_report(
@@ -441,15 +458,22 @@ class RunHardcoverIdentityReport:
         *,
         privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
     ) -> IdentityDecisionPreviewReport:
-        lookup = getattr(provider, "lookup", None)
-        if not callable(lookup):
-            raise TypeError("book identity provider is malformed")
         if type(query) is not PrivateIdentityQuery or type(context) is not OperationContext:
             raise TypeError("identity report input is malformed")
         if privacy_observer is not None and not callable(privacy_observer):
             raise TypeError("Hardcover privacy observer is malformed")
 
-        result = lookup(IsbnIdentityQuery.from_private(query), context)
+        lookup = _attempt_method(provider, "lookup", "book identity provider")
+        try:
+            result = lookup(IsbnIdentityQuery.from_private(query), context)
+        except KeyboardInterrupt:
+            raise _attempt_error(
+                "identity provider attempt", IdentityAttemptFailureKind.CANCELLED
+            ) from None
+        except BaseException:
+            raise _attempt_error(
+                "identity provider attempt", IdentityAttemptFailureKind.UNAVAILABLE
+            ) from None
         if type(result) is not IdentityAttemptResult:
             raise IdentityReportError("identity provider returned a malformed result")
         if result.failure is not None:
@@ -467,15 +491,15 @@ class RunHardcoverIdentityReport:
             )
         decision_report.validate()
         if privacy_observer is not None:
-            privacy_observer(
+            _notify_observer(privacy_observer,
                 "traces",
                 ("hardcover.synthetic.identity_decision", "identity-decision-v3"),
             )
-            privacy_observer(
+            _notify_observer(privacy_observer,
                 "spans",
                 ("lookup-and-decide", decision_report.outcome.value),
             )
-            privacy_observer(
+            _notify_observer(privacy_observer,
                 "metrics",
                 (
                     "hardcover_identity_preview_total",
@@ -495,7 +519,50 @@ def _failure_outcome(kind: IdentityAttemptFailureKind) -> IdentityDecisionOutcom
         IdentityAttemptFailureKind.OVERSIZED,
     }:
         return IdentityDecisionOutcome.MALFORMED
-    raise IdentityReportError("identity provider attempt did not produce a decision")
+    raise IdentityReportError(
+        "identity provider attempt did not produce a decision", kind
+    )
+
+
+def _attempt_error(
+    label: str,
+    kind: IdentityAttemptFailureKind,
+) -> IdentityReportError:
+    suffix = (
+        "cancelled"
+        if kind is IdentityAttemptFailureKind.CANCELLED
+        else "unavailable"
+    )
+    return IdentityReportError(f"{label} is {suffix}", kind)
+
+
+def _attempt_method(owner: object, name: str, label: str) -> Callable[..., object]:
+    try:
+        method = getattr(owner, name, None)
+    except KeyboardInterrupt:
+        raise _attempt_error(label, IdentityAttemptFailureKind.CANCELLED) from None
+    except BaseException:
+        raise _attempt_error(label, IdentityAttemptFailureKind.UNAVAILABLE) from None
+    if not callable(method):
+        raise TypeError(f"{label} is malformed")
+    return method
+
+
+def _notify_observer(
+    observer: Callable[[str, tuple[object, ...]], None],
+    channel: str,
+    values: tuple[object, ...],
+) -> None:
+    try:
+        observer(channel, values)
+    except KeyboardInterrupt:
+        raise _attempt_error(
+            "Hardcover privacy observer", IdentityAttemptFailureKind.CANCELLED
+        ) from None
+    except BaseException:
+        raise _attempt_error(
+            "Hardcover privacy observer", IdentityAttemptFailureKind.UNAVAILABLE
+        ) from None
 
 
 def preactivation_report(
@@ -531,15 +598,15 @@ def inert_preview(
     else:
         report = InertPreviewReport(HardcoverIdentityOutcome.DISABLED)
     if privacy_observer is not None:
-        privacy_observer(
+        _notify_observer(privacy_observer,
             "traces",
             ("hardcover.synthetic.inert_preview", "inert-report-v3"),
         )
-        privacy_observer(
+        _notify_observer(privacy_observer,
             "spans",
             ("validate-and-report", report.outcome.value),
         )
-        privacy_observer(
+        _notify_observer(privacy_observer,
             "metrics",
             (
                 "hardcover_identity_preview_total",

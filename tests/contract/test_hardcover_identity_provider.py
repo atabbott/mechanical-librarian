@@ -23,7 +23,10 @@ from mechanical_librarian.adapters.providers.hardcover_identity import (
 )
 from mechanical_librarian.application.hardcover_identity import (
     IdentityAttemptFailureKind,
+    IdentityReportError,
     IsbnIdentityQuery,
+    RunHardcoverFixedAdapterPreview,
+    RunHardcoverIdentityReport,
 )
 from mechanical_librarian.application.ports import (
     CancellationId,
@@ -33,6 +36,7 @@ from mechanical_librarian.application.ports import (
     ResourceBounds,
     TimeProbe,
 )
+from mechanical_librarian.domain.hardcover_identity import validate_private_query
 
 
 class HardcoverIdentityProviderContractTests(unittest.TestCase):
@@ -424,6 +428,70 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         self.assertEqual(result.failure.kind, IdentityAttemptFailureKind.CANCELLED)
         self.assertNotIn("private-interrupt-detail", repr(result))
 
+    def test_each_context_authority_stage_handles_every_base_failure(self) -> None:
+        now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        for failure_call in range(1, 6):
+            for error, expected in (
+                (SystemExit("private-system-exit"), IdentityAttemptFailureKind.UNAVAILABLE),
+                (GeneratorExit("private-generator-exit"), IdentityAttemptFailureKind.UNAVAILABLE),
+                (KeyboardInterrupt("private-cancel"), IdentityAttemptFailureKind.CANCELLED),
+            ):
+                with self.subTest(
+                    failure_call=failure_call, error=type(error).__name__
+                ):
+                    calls = 0
+
+                    def time_probe() -> datetime:
+                        nonlocal calls
+                        calls += 1
+                        # TimeProbe validates one value at construction; the
+                        # matrix counts only attempt-time observations.
+                        if calls - 1 == failure_call:
+                            raise error
+                        return now
+
+                    context = OperationContext(
+                        Deadline(now + timedelta(seconds=5)),
+                        CancellationProbe(
+                            CancellationId("hardcover-c3-stage"), lambda: False
+                        ),
+                        ResourceBounds(4, 65_536),
+                        TimeProbe(time_probe),
+                    )
+                    payload = self.response_body()
+                    reader = StructuralIdentityBodyReader(iter((payload,)))
+                    response = RawIdentityResponseHead(
+                        b"HTTP/1.1 200 OK\r\n",
+                        (
+                            b"Content-Type: application/json\r\n",
+                            f"Content-Length: {len(payload)}\r\n".encode(),
+                        ),
+                        reader,
+                        "1.1.1.1",
+                    )
+                    channel = StructuralIdentityByteChannel(
+                        expected_method="POST",
+                        expected_url=HARDCOVER_IDENTITY_URL,
+                        expected_body=self.body(),
+                        expected_token=b"synthetic-noncredential",
+                        selected_address="1.1.1.1",
+                        connected_peer_address="1.1.1.1",
+                        hostname="api.hardcover.app",
+                        resolution_count=1,
+                        tls_sni="api.hardcover.app",
+                        tls_peer_name="api.hardcover.app",
+                        proxy_mode="disabled",
+                        address_policy_capability="validated-public-address",
+                        actual_network=False,
+                        byte_channel="post-policy-in-memory",
+                        response=response,
+                    )
+                    result = self.provider(channel).lookup(self.query(), context)
+                    self.assertEqual(result.failure.kind, expected)
+                    self.assertEqual(channel.called, failure_call == 5)
+                    self.assertEqual(reader.closed, failure_call == 5)
+                    self.assertNotIn("private-", repr(result))
+
     def test_every_returned_malformed_head_releases_body_ownership(self) -> None:
         class ResponseSubclass(RawIdentityResponseHead):
             pass
@@ -491,7 +559,10 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     b"synthetic-noncredential",
                 ).lookup(self.query(), self.context())
                 self.assertEqual(
-                    result.failure.kind, IdentityAttemptFailureKind.MALFORMED
+                    result.failure.kind,
+                    IdentityAttemptFailureKind.UNAVAILABLE
+                    if kind.startswith("close_")
+                    else IdentityAttemptFailureKind.MALFORMED,
                 )
                 if kind == "close_failure":
                     self.assertEqual(reader.close_calls, 1)
@@ -538,9 +609,408 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     b"synthetic-noncredential",
                 ).lookup(self.query(), self.context())
                 self.assertEqual(
-                    result.failure.kind, IdentityAttemptFailureKind.MALFORMED
+                    result.failure.kind, IdentityAttemptFailureKind.UNAVAILABLE
                 )
                 self.assertEqual(reader.access_calls, 1)
+
+    def test_injected_authority_failures_are_typed_value_free_and_no_send(self) -> None:
+        errors = (
+            (RuntimeError("private-runtime"), IdentityAttemptFailureKind.UNAVAILABLE),
+            (SystemExit("private-system-exit"), IdentityAttemptFailureKind.UNAVAILABLE),
+            (GeneratorExit("private-generator-exit"), IdentityAttemptFailureKind.UNAVAILABLE),
+            (KeyboardInterrupt("private-cancel"), IdentityAttemptFailureKind.CANCELLED),
+        )
+
+        class CountingChannel:
+            def __init__(self, error: BaseException | None = None) -> None:
+                self.error = error
+                self.calls = 0
+
+            def exchange(self, request: object, context: object) -> object:
+                self.calls += 1
+                if self.error is not None:
+                    raise self.error
+                raise AssertionError("unexpected exchange")
+
+        for error, expected in errors:
+            for stage in ("resolver", "authenticator", "exchange"):
+                with self.subTest(stage=stage, error=type(error).__name__):
+                    channel = CountingChannel(error if stage == "exchange" else None)
+
+                    def resolver(host: str, port: int) -> tuple[str, ...]:
+                        if stage == "resolver":
+                            raise error
+                        return ("1.1.1.1",)
+
+                    provider = HardcoverIdentityProvider(
+                        resolver, channel, b"synthetic-noncredential"
+                    )
+                    patcher = (
+                        patch.object(
+                            adapter,
+                            "authorize_identity_request",
+                            side_effect=error,
+                        )
+                        if stage == "authenticator"
+                        else patch.object(
+                            adapter,
+                            "authorize_identity_request",
+                            wraps=authorize_identity_request,
+                        )
+                    )
+                    with patcher:
+                        result = provider.lookup(self.query(), self.context())
+                    self.assertEqual(result.failure.kind, expected)
+                    self.assertNotIn("private-", repr(result))
+                    self.assertEqual(channel.calls, 1 if stage == "exchange" else 0)
+
+        class StagedExchangeChannel:
+            def __init__(self, value: object) -> None:
+                self.value = value
+                self.accesses = 0
+
+            @property
+            def exchange(self) -> object:
+                self.accesses += 1
+                if self.accesses == 1:
+                    return lambda request, context: None
+                if isinstance(self.value, BaseException):
+                    raise self.value
+                return self.value
+
+        for value, expected in (
+            (None, IdentityAttemptFailureKind.UNAVAILABLE),
+            (SystemExit("private-exchange-access"), IdentityAttemptFailureKind.UNAVAILABLE),
+            (GeneratorExit("private-exchange-base"), IdentityAttemptFailureKind.UNAVAILABLE),
+            (KeyboardInterrupt("private-exchange-cancel"), IdentityAttemptFailureKind.CANCELLED),
+        ):
+            with self.subTest(exchange_accessor=type(value).__name__):
+                channel = StagedExchangeChannel(value)
+                result = HardcoverIdentityProvider(
+                    lambda host, port: ("1.1.1.1",),
+                    channel,
+                    b"synthetic-noncredential",
+                ).lookup(self.query(), self.context())
+                self.assertEqual(result.failure.kind, expected)
+                self.assertEqual(channel.accesses, 2)
+                self.assertNotIn("private-", repr(result))
+
+    def test_application_attempt_accessors_and_calls_are_typed_value_free(self) -> None:
+        private_query = validate_private_query(
+            {"isbn": "9780000000019", "title": "Synthetic Title"}
+        )
+        for error, expected in (
+            (SystemExit("private-system-exit"), IdentityAttemptFailureKind.UNAVAILABLE),
+            (GeneratorExit("private-generator-exit"), IdentityAttemptFailureKind.UNAVAILABLE),
+            (KeyboardInterrupt("private-cancel"), IdentityAttemptFailureKind.CANCELLED),
+        ):
+            for method, runner in (
+                (
+                    "lookup",
+                    lambda owner: RunHardcoverIdentityReport().run(
+                        owner, private_query, self.context()
+                    ),
+                ),
+                (
+                    "run",
+                    lambda owner: RunHardcoverFixedAdapterPreview().run(owner, {}),
+                ),
+            ):
+                with self.subTest(method=method, error=type(error).__name__):
+                    class HostileAccessor:
+                        def __getattribute__(self, name: str) -> object:
+                            if name == method:
+                                raise error
+                            return super().__getattribute__(name)
+
+                    class HostileCall:
+                        def lookup(self, query: object, context: object) -> object:
+                            raise error
+
+                        def run(self, source: object) -> object:
+                            raise error
+
+                    for owner in (HostileAccessor(), HostileCall()):
+                        with self.assertRaises(IdentityReportError) as caught:
+                            runner(owner)
+                        self.assertIs(caught.exception.kind, expected)
+                        self.assertNotIn("private-", str(caught.exception))
+                        self.assertIsNone(caught.exception.__cause__)
+
+    def test_response_release_is_conclusive_on_every_post_exchange_exit(self) -> None:
+        class Reader:
+            def __init__(
+                self,
+                chunks: tuple[bytes | None | BaseException, ...],
+                close_value: object = False,
+            ) -> None:
+                self.chunks = iter(chunks)
+                self.close_value = close_value
+                self.close_calls = 0
+
+            def read_chunk(self, max_bytes: int) -> bytes | None:
+                value = next(self.chunks)
+                if isinstance(value, BaseException):
+                    raise value
+                return value
+
+            def close(self) -> object:
+                self.close_calls += 1
+                if isinstance(self.close_value, BaseException):
+                    raise self.close_value
+                return self.close_value
+
+        class Channel:
+            def __init__(self, response: object, release_value: object) -> None:
+                self.response = response
+                self.release_value = release_value
+                self.release_calls = 0
+
+            def exchange(self, request: object, context: object) -> object:
+                return self.response
+
+            def release(self, response: object) -> object:
+                self.release_calls += 1
+                if isinstance(self.release_value, BaseException):
+                    raise self.release_value
+                return self.release_value
+
+        payload = self.response_body()
+        paths = (
+            (
+                "status",
+                b"HTTP/1.1 401 Synthetic\r\n",
+                (),
+                (b"must-not-read",),
+                IdentityAttemptFailureKind.AUTHENTICATION,
+            ),
+            (
+                "malformed",
+                b"malformed\r\n",
+                (),
+                (b"must-not-read",),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                "overflow",
+                b"HTTP/1.1 200 OK\r\n",
+                (b"Content-Type: application/json\r\n",),
+                (b"A" * 65_537,),
+                IdentityAttemptFailureKind.OVERSIZED,
+            ),
+            (
+                "read_failure",
+                b"HTTP/1.1 200 OK\r\n",
+                (b"Content-Type: application/json\r\n",),
+                (SystemExit("private-read"),),
+                IdentityAttemptFailureKind.UNAVAILABLE,
+            ),
+            (
+                "cancellation",
+                b"HTTP/1.1 200 OK\r\n",
+                (b"Content-Type: application/json\r\n",),
+                (KeyboardInterrupt("private-read-cancel"),),
+                IdentityAttemptFailureKind.CANCELLED,
+            ),
+            (
+                "success",
+                b"HTTP/1.1 200 OK\r\n",
+                (
+                    b"Content-Type: application/json\r\n",
+                    f"Content-Length: {len(payload)}\r\n".encode(),
+                ),
+                (payload, None),
+                None,
+            ),
+        )
+        for name, status, headers, chunks, expected in paths:
+            for released in (True, False):
+                with self.subTest(path=name, fallback=released):
+                    reader = Reader(chunks)
+                    response = RawIdentityResponseHead(
+                        status, headers, reader, "1.1.1.1"
+                    )
+                    channel = Channel(response, released)
+                    result = HardcoverIdentityProvider(
+                        lambda host, port: ("1.1.1.1",),
+                        channel,
+                        b"synthetic-noncredential",
+                    ).lookup(self.query(), self.context())
+                    if not released:
+                        self.assertEqual(
+                            result.failure.kind,
+                            IdentityAttemptFailureKind.UNAVAILABLE,
+                        )
+                    elif expected is None:
+                        self.assertIsNone(result.failure)
+                    else:
+                        self.assertEqual(result.failure.kind, expected)
+                    self.assertEqual(reader.close_calls, 1)
+                    self.assertEqual(channel.release_calls, 1)
+                    self.assertNotIn("private-", repr(result))
+
+    def test_release_fallback_covers_every_close_and_release_capability_shape(self) -> None:
+        class MissingClose:
+            pass
+
+        class NoncallableClose:
+            close = False
+
+        def hostile_close(error: BaseException) -> object:
+            class HostileClose:
+                @property
+                def close(self) -> object:
+                    raise error
+
+            return HostileClose()
+
+        class FallbackChannel:
+            def __init__(self, reader: object, fallback: object) -> None:
+                self.response = RawIdentityResponseHead(
+                    b"malformed\r\n", (), reader, "1.1.1.1"
+                )
+                self.fallback = fallback
+                self.release_calls = 0
+
+            def exchange(self, request: object, context: object) -> object:
+                return self.response
+
+            @property
+            def release(self) -> object:
+                if isinstance(self.fallback, BaseException):
+                    raise self.fallback
+
+                def invoke(response: object) -> object:
+                    self.release_calls += 1
+                    return self.fallback
+
+                return invoke
+
+        readers = (
+            MissingClose(),
+            NoncallableClose(),
+            hostile_close(RuntimeError("private-close-access")),
+            hostile_close(SystemExit("private-close-base")),
+            hostile_close(GeneratorExit("private-close-generator")),
+            hostile_close(KeyboardInterrupt("private-close-cancel")),
+        )
+        for reader in readers:
+            with self.subTest(reader=type(reader).__name__):
+                channel = FallbackChannel(reader, True)
+                result = HardcoverIdentityProvider(
+                    lambda host, port: ("1.1.1.1",),
+                    channel,
+                    b"synthetic-noncredential",
+                ).lookup(self.query(), self.context())
+                self.assertEqual(result.failure.kind, IdentityAttemptFailureKind.MALFORMED)
+                self.assertEqual(channel.release_calls, 1)
+                self.assertNotIn("private-", repr(result))
+
+        for fallback in (
+            None,
+            False,
+            RuntimeError("private-release-access"),
+            SystemExit("private-release-base"),
+            GeneratorExit("private-release-generator"),
+            KeyboardInterrupt("private-release-cancel"),
+        ):
+            with self.subTest(fallback=type(fallback).__name__):
+                channel = FallbackChannel(MissingClose(), fallback)
+                result = HardcoverIdentityProvider(
+                    lambda host, port: ("1.1.1.1",),
+                    channel,
+                    b"synthetic-noncredential",
+                ).lookup(self.query(), self.context())
+                self.assertEqual(
+                    result.failure.kind, IdentityAttemptFailureKind.UNAVAILABLE
+                )
+                self.assertNotIn("private-", repr(result))
+
+        class Reader:
+            def __init__(self, chunks: tuple[bytes | None, ...], close_value: object) -> None:
+                self.chunks = iter(chunks)
+                self.close_value = close_value
+                self.close_calls = 0
+
+            def read_chunk(self, max_bytes: int) -> bytes | None:
+                return next(self.chunks)
+
+            def close(self) -> object:
+                self.close_calls += 1
+                if isinstance(self.close_value, BaseException):
+                    raise self.close_value
+                return self.close_value
+
+        class Channel:
+            def __init__(self, response: object, fallback: object) -> None:
+                self.response = response
+                self.fallback = fallback
+                self.release_calls = 0
+
+            def exchange(self, request: object, context: object) -> object:
+                return self.response
+
+            def release(self, response: object) -> object:
+                self.release_calls += 1
+                if isinstance(self.fallback, BaseException):
+                    raise self.fallback
+                return self.fallback
+
+        payload = self.response_body()
+        normal_reader = Reader((payload, None), True)
+        normal_response = RawIdentityResponseHead(
+            b"HTTP/1.1 200 OK\r\n",
+            (
+                b"Content-Type: application/json\r\n",
+                f"Content-Length: {len(payload)}\r\n".encode(),
+            ),
+            normal_reader,
+            "1.1.1.1",
+        )
+        normal_channel = Channel(normal_response, False)
+        normal_result = HardcoverIdentityProvider(
+            lambda host, port: ("1.1.1.1",),
+            normal_channel,
+            b"synthetic-noncredential",
+        ).lookup(self.query(), self.context())
+        self.assertIsNone(normal_result.failure)
+        self.assertEqual(normal_reader.close_calls, 1)
+        self.assertEqual(normal_channel.release_calls, 0)
+
+        for close_value in (
+            SystemExit("private-close"),
+            GeneratorExit("private-close-base"),
+            KeyboardInterrupt("private-close-cancel"),
+        ):
+            for fallback in (
+                True,
+                False,
+                SystemExit("private-release"),
+                KeyboardInterrupt("private-release-cancel"),
+            ):
+                with self.subTest(
+                    close=type(close_value).__name__, fallback=type(fallback).__name__
+                ):
+                    reader = Reader((payload, None), close_value)
+                    response = RawIdentityResponseHead(
+                        b"HTTP/1.1 200 OK\r\n",
+                        (b"Content-Type: application/json\r\n",),
+                        reader,
+                        "1.1.1.1",
+                    )
+                    channel = Channel(response, fallback)
+                    result = HardcoverIdentityProvider(
+                        lambda host, port: ("1.1.1.1",),
+                        channel,
+                        b"synthetic-noncredential",
+                    ).lookup(self.query(), self.context())
+                    if fallback is True:
+                        self.assertIsNone(result.failure)
+                    else:
+                        self.assertEqual(
+                            result.failure.kind, IdentityAttemptFailureKind.UNAVAILABLE
+                        )
+                    self.assertNotIn("private-", repr(result))
 
     def test_structural_channel_requires_the_exact_ordered_header_tuple(self) -> None:
         query = self.query()

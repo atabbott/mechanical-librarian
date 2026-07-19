@@ -45,7 +45,10 @@ The sole request contract is `hardcover-isbn-identity-v1`:
 The adapter resolves once per attempt, rejects an empty answer or any private,
 loopback, link-local, multicast, reserved, unspecified, scoped, or IPv4-mapped
 IPv6 address before opening the byte channel, and never re-resolves after
-selection. The authenticator attaches `Authorization: Bearer <raw-token>` only
+selection. Resolution is bounded before address parsing or sorting to four
+answers; each answer and the connected-peer text is bounded to the 39 ASCII
+bytes/scalars required by an IPv6 address. The authenticator attaches
+`Authorization: Bearer <raw-token>` only
 after revalidating the complete method, destination, query bytes, operation,
 variables, canonical body, contract identity, selected public address, Host,
 SNI, and peer plan. A near miss receives no authorization and no send.
@@ -59,7 +62,14 @@ keep-alive disabled. Increment 3 intentionally supplies no such channel.
 Only HTTP 200 is parsed. HTTP 401 and 403 become `authentication` and
 `authorization`; 408, 429, and 500–599 remain internal timeout, rate-limit, and
 unavailable failures; redirects and other statuses are `incompatible`. A
-non-200 body is closed without JSON parsing or retention.
+status line is rejected above 128 bytes before parsing. A non-200 body is
+released without JSON parsing or retention.
+
+Every post-exchange exit uses one conclusive release operation. The body reader
+first confirms normal close; a failed, absent, non-callable, or raising close
+invokes the byte-channel-owned release fallback. If neither confirms release,
+the attempt returns only value-free `unavailable`, replacing success and every
+status- or body-derived candidate.
 
 A 200 response must have exactly one unpadded `Content-Type` matching
 `application/json` with an optional unquoted UTF-8 charset, at most one absent

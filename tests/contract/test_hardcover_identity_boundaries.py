@@ -77,7 +77,30 @@ class HardcoverIdentityBoundaryTests(unittest.TestCase):
                     content_type + (b"Content-Length: " + declared + b"\r\n",),
                     (b"{}",),
                 )
-                self.assertIs(result, expected)
+            self.assertIs(result, expected)
+
+    def test_transport_metadata_caps_reject_before_address_parsing(self) -> None:
+        public = ("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9")
+        for count, accepted in ((3, True), (4, True), (5, False)):
+            with self.subTest(resolver_cardinality=count):
+                result = adapter._validated_addresses(public[:count])
+                self.assertIs(result is not None, accepted)
+
+        for size, bounded in ((38, True), (39, True), (40, False)):
+            with self.subTest(ip_scalars=size):
+                self.assertIs(adapter._bounded_ip_text("A" * size), bounded)
+        self.assertFalse(adapter._bounded_ip_text("é" * 19))
+
+        with patch.object(adapter.ipaddress, "ip_address") as parse:
+            self.assertIsNone(adapter._validated_addresses(("A" * 40,)))
+            self.assertFalse(adapter._peer_equal("A" * 40, "1.1.1.1"))
+        parse.assert_not_called()
+
+        prefix = b"HTTP/1.1 200 "
+        for size, accepted in ((127, True), (128, True), (129, False)):
+            with self.subTest(status_bytes=size):
+                status = prefix + b"A" * (size - len(prefix) - 2) + b"\r\n"
+                self.assertIs(adapter._parse_status(status) is not None, accepted)
 
     def test_declared_oversize_closes_without_reading_body(self) -> None:
         reader = adapter.StructuralIdentityBodyReader(iter((b"must-not-read",)))

@@ -58,6 +58,10 @@ OPERATION_CONTRACT_SHA256 = (
 )
 MAX_REQUEST_BYTES = 8_192
 MAX_RESPONSE_BYTES = 65_536
+MAX_RESOLVER_ADDRESSES = 4
+MAX_IP_TEXT_SCALARS = 39
+MAX_IP_TEXT_BYTES = 39
+MAX_STATUS_LINE_BYTES = 128
 MAX_JSON_DEPTH = 8
 MAX_JSON_NODES = 128
 MAX_JSON_MEMBERS = 96
@@ -113,11 +117,13 @@ class IdentityByteChannel(Protocol):
         self, request: AuthorizedIdentityRequest, context: OperationContext
     ) -> RawIdentityResponseHead: ...
 
+    def release(self, response: object) -> bool: ...
+
 
 class IdentityBodyReader(Protocol):
     def read_chunk(self, max_bytes: int) -> bytes | None: ...
 
-    def close(self) -> None: ...
+    def close(self) -> bool: ...
 
 
 @dataclass(frozen=True, repr=False, slots=True)
@@ -193,11 +199,16 @@ class StructuralIdentityBodyReader:
             return None
         return chunk
 
-    def close(self) -> None:
+    def close(self) -> bool:
         if self._closed:
-            return
+            return True
         self._closed = True
-        _invoke_body_close(_body_close_callable(self._chunks))
+        return _close_owned_iterator(self._chunks)
+
+    def abort(self) -> bool:
+        """Transport-owned fallback for the structural in-memory producer."""
+
+        return self.close()
 
 
 class IdentityChannelFailure(RuntimeError):
@@ -223,7 +234,11 @@ class HardcoverIdentityProvider:
         channel: IdentityByteChannel,
         token: bytes,
     ) -> None:
-        if not callable(resolver) or not callable(getattr(channel, "exchange", None)):
+        try:
+            exchange = getattr(channel, "exchange", None)
+        except BaseException:
+            exchange = None
+        if not callable(resolver) or not callable(exchange):
             raise ValueError("Hardcover identity provider construction is invalid")
         if not _valid_token(token):
             raise ValueError("Hardcover identity provider construction is invalid")
@@ -242,13 +257,12 @@ class HardcoverIdentityProvider:
         if preflight is not None:
             return IdentityAttemptResult.failed(preflight)
         try:
-            addresses = _validated_addresses(
-                self._resolver(HARDCOVER_IDENTITY_HOST, 443)
-            )
+            resolved = self._resolver(HARDCOVER_IDENTITY_HOST, 443)
         except KeyboardInterrupt:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
-        except Exception:
+        except BaseException:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
+        addresses = _validated_addresses(resolved)
         if not addresses:
             return IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.INCOMPATIBLE
@@ -260,41 +274,59 @@ class HardcoverIdentityProvider:
         preflight = _safe_preflight(context)
         if preflight is not None:
             return IdentityAttemptResult.failed(preflight)
-        authorized = authorize_identity_request(request, query, self._token)
+        try:
+            authorized = authorize_identity_request(request, query, self._token)
+        except KeyboardInterrupt:
+            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
+        except BaseException:
+            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         if authorized is None:
             return IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.INCOMPATIBLE
             )
+        exchange, exchange_failure = _injected_callable(
+            self._channel, "exchange", IdentityAttemptFailureKind.UNAVAILABLE
+        )
+        if exchange_failure is not None or exchange is None:
+            return IdentityAttemptResult.failed(
+                exchange_failure or IdentityAttemptFailureKind.UNAVAILABLE
+            )
         try:
-            response = self._channel.exchange(authorized, context)
+            response = exchange(authorized, context)
         except IdentityChannelFailure as error:
             return IdentityAttemptResult.failed(error.kind)
         except KeyboardInterrupt:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
-        except Exception:
+        except BaseException:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         body_reader = _acquire_response_body(response)
+        candidate: bytes | IdentityAttemptFailureKind
         if type(response) is not RawIdentityResponseHead:
-            _close_body(body_reader)
-            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.MALFORMED)
-        if not _peer_equal(response.connected_peer_address, addresses[0]):
-            _close_body(body_reader)
+            candidate = IdentityAttemptFailureKind.MALFORMED
+        elif not _peer_equal(response.connected_peer_address, addresses[0]):
+            candidate = IdentityAttemptFailureKind.UNAVAILABLE
+        else:
+            preflight = _safe_preflight(context)
+            if preflight is not None:
+                candidate = preflight
+            else:
+                status = _parse_status(response.status_line)
+                if status is None:
+                    candidate = IdentityAttemptFailureKind.MALFORMED
+                else:
+                    mapped = _status_failure(status)
+                    candidate = (
+                        mapped
+                        if mapped is not None
+                        else _bounded_body(
+                            response.header_lines, body_reader, _close_after=False
+                        )
+                    )
+        if not _release_response(self._channel, response, body_reader):
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
-        preflight = _safe_preflight(context)
-        if preflight is not None:
-            _close_body(body_reader)
-            return IdentityAttemptResult.failed(preflight)
-        status = _parse_status(response.status_line)
-        if status is None:
-            _close_body(body_reader)
-            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.MALFORMED)
-        mapped = _status_failure(status)
-        if mapped is not None:
-            _close_body(body_reader)
-            return IdentityAttemptResult.failed(mapped)
-        payload = _bounded_body(response.header_lines, body_reader)
-        if isinstance(payload, IdentityAttemptFailureKind):
-            return IdentityAttemptResult.failed(payload)
+        if isinstance(candidate, IdentityAttemptFailureKind):
+            return IdentityAttemptResult.failed(candidate)
+        payload = candidate
         observations = _parse_observations(payload)
         if isinstance(observations, IdentityAttemptFailureKind):
             return IdentityAttemptResult.failed(observations)
@@ -348,6 +380,7 @@ class StructuralIdentityByteChannel:
         )
         self._response = response
         self._called = False
+        self._released = False
 
     @property
     def called(self) -> bool:
@@ -388,6 +421,22 @@ class StructuralIdentityByteChannel:
             raise IdentityChannelFailure(preflight)
         self._called = True
         return self._response
+
+    def release(self, response: object) -> bool:
+        if response is not self._response:
+            return False
+        reader = self._response.body_reader
+        abort, failure = _injected_callable(
+            reader, "abort", IdentityAttemptFailureKind.UNAVAILABLE
+        )
+        if failure is not None or abort is None:
+            return False
+        try:
+            confirmed = abort()
+        except BaseException:
+            return False
+        self._released = confirmed is True
+        return self._released
 
 
 class StructuralHardcoverIdentityPreview:
@@ -442,7 +491,8 @@ class StructuralHardcoverIdentityPreview:
             }
             or transport.get("hostname") != HARDCOVER_IDENTITY_HOST
             or type(transport.get("selected_address")) is not str
-            or type(transport.get("connected_peer_address")) is not str
+            or not _bounded_ip_text(transport.get("selected_address"))
+            or not _bounded_ip_text(transport.get("connected_peer_address"))
             or type(transport.get("resolution_count")) is not int
             or transport.get("resolution_count") != 1
             or transport.get("sni") != HARDCOVER_IDENTITY_HOST
@@ -534,7 +584,7 @@ class StructuralHardcoverIdentityPreview:
         )
         result = provider.lookup(query, context)
         if not channel.called:
-            body_reader.close()
+            channel.release(raw_response)
         return FixedAdapterAttemptEvidence(
             result,
             query,
@@ -674,11 +724,15 @@ def _canonical_body(query: IsbnIdentityQuery) -> bytes:
 
 
 def _validated_addresses(values: object) -> tuple[str, ...] | None:
-    if type(values) is not tuple or not values:
+    if (
+        type(values) is not tuple
+        or not values
+        or len(values) > MAX_RESOLVER_ADDRESSES
+    ):
         return None
     parsed: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
     for value in values:
-        if type(value) is not str or not _public_address(value):
+        if not _bounded_ip_text(value) or not _public_address(value):
             return None
         parsed.add(ipaddress.ip_address(value))
     return tuple(str(item) for item in sorted(parsed, key=lambda x: (x.version, int(x))))
@@ -706,8 +760,17 @@ def _public_address(value: str) -> bool:
     )
 
 
+def _bounded_ip_text(value: object) -> bool:
+    if type(value) is not str or not 1 <= len(value) <= MAX_IP_TEXT_SCALARS:
+        return False
+    try:
+        return len(value.encode("ascii", "strict")) <= MAX_IP_TEXT_BYTES
+    except UnicodeError:
+        return False
+
+
 def _peer_equal(observed: object, expected: object) -> bool:
-    if type(observed) is not str or type(expected) is not str:
+    if not _bounded_ip_text(observed) or not _bounded_ip_text(expected):
         return False
     try:
         return ipaddress.ip_address(observed) == ipaddress.ip_address(expected)
@@ -741,7 +804,7 @@ def _safe_preflight(context: OperationContext) -> IdentityAttemptFailureKind | N
         )
     except KeyboardInterrupt:
         return IdentityAttemptFailureKind.CANCELLED
-    except Exception:
+    except BaseException:
         return IdentityAttemptFailureKind.UNAVAILABLE
     if result.failure is None:
         return None
@@ -750,6 +813,24 @@ def _safe_preflight(context: OperationContext) -> IdentityAttemptFailureKind | N
 
 def _close_body(reader: object) -> None:
     _invoke_body_close(_body_close_callable(reader))
+
+
+def _close_owned_iterator(iterator: object) -> bool:
+    """Conclude an owned iterator, treating absence as no external resource."""
+
+    try:
+        close = getattr(iterator, "close", None)
+    except BaseException:
+        return False
+    if close is None:
+        return True
+    if not callable(close):
+        return False
+    try:
+        close()
+    except BaseException:
+        return False
+    return True
 
 
 def _body_close_callable(reader: object) -> Callable[[], object] | None:
@@ -786,6 +867,22 @@ def _body_read_callable(
         return None, IdentityAttemptFailureKind.UNAVAILABLE
 
 
+def _injected_callable(
+    owner: object,
+    name: str,
+    missing: IdentityAttemptFailureKind,
+) -> tuple[Callable[..., object] | None, IdentityAttemptFailureKind | None]:
+    try:
+        capability = getattr(owner, name, None)
+    except KeyboardInterrupt:
+        return None, IdentityAttemptFailureKind.CANCELLED
+    except BaseException:
+        return None, IdentityAttemptFailureKind.UNAVAILABLE
+    if not callable(capability):
+        return None, missing
+    return capability, None
+
+
 def _acquire_response_body(response: object) -> object:
     try:
         return getattr(response, "body_reader", None)
@@ -794,7 +891,7 @@ def _acquire_response_body(response: object) -> object:
 
 
 def _parse_status(line: object) -> int | None:
-    if type(line) is not bytes:
+    if type(line) is not bytes or len(line) > MAX_STATUS_LINE_BYTES:
         return None
     match = _STATUS_LINE.fullmatch(line)
     return int(match.group(1)) if match is not None else None
@@ -816,16 +913,59 @@ def _status_failure(status: int) -> IdentityAttemptFailureKind | None:
     return IdentityAttemptFailureKind.INCOMPATIBLE
 
 
-def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailureKind:
-    read_chunk, read_failure = _body_read_callable(reader)
+def _release_response(channel: object, response: object, reader: object) -> bool:
+    """Confirm response ownership release through close or transport fallback."""
+
     close = _body_close_callable(reader)
-    if read_failure is not None or read_chunk is None or close is None:
-        _invoke_body_close(close)
-        return read_failure or IdentityAttemptFailureKind.MALFORMED
+    if close is not None:
+        try:
+            confirmation = close()
+        except BaseException:
+            confirmation = False
+        if confirmation is True:
+            return True
+        if confirmation is not False:
+            try:
+                if getattr(reader, "closed", False) is True:
+                    return True
+            except BaseException:
+                pass
+    release, failure = _injected_callable(
+        channel, "release", IdentityAttemptFailureKind.UNAVAILABLE
+    )
+    if failure is not None or release is None:
+        return False
+    try:
+        return release(response) is True
+    except BaseException:
+        return False
+
+
+def _bounded_body(
+    lines: object,
+    reader: object,
+    *,
+    _close_after: bool = True,
+) -> bytes | IdentityAttemptFailureKind:
+    read_chunk, read_failure = _body_read_callable(reader)
+    close = _body_close_callable(reader) if _close_after else None
+
+    def finish(
+        value: bytes | IdentityAttemptFailureKind,
+    ) -> bytes | IdentityAttemptFailureKind:
+        if _close_after:
+            _invoke_body_close(close)
+        return value
+
+    if (
+        read_failure is not None
+        or read_chunk is None
+        or (_close_after and close is None)
+    ):
+        return finish(read_failure or IdentityAttemptFailureKind.MALFORMED)
     parsed_headers = _parse_headers(lines)
     if isinstance(parsed_headers, IdentityAttemptFailureKind):
-        _invoke_body_close(close)
-        return parsed_headers
+        return finish(parsed_headers)
     headers = parsed_headers
 
     content_type = headers.get(b"content-type", [])
@@ -834,8 +974,7 @@ def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailu
         or content_type[0].strip(b" \t") != content_type[0]
         or _CONTENT_TYPE.fullmatch(content_type[0]) is None
     ):
-        _invoke_body_close(close)
-        return IdentityAttemptFailureKind.MALFORMED
+        return finish(IdentityAttemptFailureKind.MALFORMED)
     encoding = headers.get(b"content-encoding", [])
     if len(encoding) > 1 or (
         encoding
@@ -844,21 +983,17 @@ def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailu
             or encoding[0].lower() != b"identity"
         )
     ):
-        _invoke_body_close(close)
-        return IdentityAttemptFailureKind.MALFORMED
+        return finish(IdentityAttemptFailureKind.MALFORMED)
     declared = headers.get(b"content-length", [])
     if len(declared) > 1:
-        _invoke_body_close(close)
-        return IdentityAttemptFailureKind.MALFORMED
+        return finish(IdentityAttemptFailureKind.MALFORMED)
     declared_length: int | None = None
     if declared:
         raw = declared[0]
         if raw.strip(b" \t") != raw or not _canonical_decimal(raw):
-            _invoke_body_close(close)
-            return IdentityAttemptFailureKind.MALFORMED
+            return finish(IdentityAttemptFailureKind.MALFORMED)
         if len(raw) > 5 or (len(raw) == 5 and raw > b"65536"):
-            _invoke_body_close(close)
-            return IdentityAttemptFailureKind.OVERSIZED
+            return finish(IdentityAttemptFailureKind.OVERSIZED)
         declared_length = int(raw)
     payload = bytearray()
     try:
@@ -869,15 +1004,15 @@ def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailu
             if chunk is None:
                 break
             if type(chunk) is not bytes or not chunk:
-                return IdentityAttemptFailureKind.MALFORMED
+                return finish(IdentityAttemptFailureKind.MALFORMED)
             if len(chunk) > requested or len(chunk) > remaining:
-                return IdentityAttemptFailureKind.OVERSIZED
+                return finish(IdentityAttemptFailureKind.OVERSIZED)
             payload.extend(chunk)
     except KeyboardInterrupt:
-        return IdentityAttemptFailureKind.CANCELLED
+        return finish(IdentityAttemptFailureKind.CANCELLED)
     except BaseException:
-        return IdentityAttemptFailureKind.UNAVAILABLE
-    finally:
+        return finish(IdentityAttemptFailureKind.UNAVAILABLE)
+    if _close_after:
         _invoke_body_close(close)
     if declared_length is not None and declared_length != len(payload):
         return IdentityAttemptFailureKind.MALFORMED
