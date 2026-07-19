@@ -323,11 +323,11 @@ class SafeExecutorPreviewReport:
             or not 1 <= self.cases_executed <= 16
             or type(self.attempts_started) is not int
             or not 0 <= self.attempts_started <= self.cases_executed
-            or type(self.gate_order_verified) is not bool
-            or type(self.deadline_before_gate_verified) is not bool
-            or type(self.caller_deadline_verified) is not bool
-            or type(self.late_result_rejected) is not bool
-            or type(self.closed_mapping_verified) is not bool
+            or self.gate_order_verified is not True
+            or self.deadline_before_gate_verified is not True
+            or self.caller_deadline_verified is not True
+            or self.late_result_rejected is not True
+            or self.closed_mapping_verified is not True
             or self.contributor_labels_private is not True
         ):
             raise TypeError("Hardcover safe executor preview report is malformed")

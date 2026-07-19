@@ -167,6 +167,10 @@ class RunSafeHardcoverIdentity:
         lease: IdentityDeploymentGateLease,
     ) -> HardcoverIdentityReport:
         now = context.observed_at
+        active = self._work.inspect(reference, now)
+        if active.state is not IdentityWorkState.PENDING:
+            return _report(HardcoverIdentityOutcome.IN_PROGRESS)
+        aggregate_deadline = active.aggregate_deadline
         if now >= aggregate_deadline or context.deadline.expired_at(now):
             return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
         claim = self._work.claim(

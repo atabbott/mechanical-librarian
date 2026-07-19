@@ -19,6 +19,7 @@ from mechanical_librarian.application.hardcover_identity import (
     IdentityAttemptResult,
     ManageHardcoverIdentityWork,
     RunHardcoverIdentityReport,
+    SafeExecutorPreviewReport,
 )
 from mechanical_librarian.application.hardcover_safe_executor import (
     HardcoverIdentityExecutionRequest,
@@ -247,6 +248,50 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             (0,),
         )
 
+    def test_rechecks_pending_state_after_gate_acquisition(self) -> None:
+        request = self.request("pending-gate-race")
+        provider = _Provider(self.matched(), self.clock)
+        accepted = self.work.accept(request.work_key, self.clock.now)
+        acquire = self.gate.try_acquire
+
+        def acquire_after_competing_retry():
+            competing = self.work.claim(
+                accepted.reference,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            started = self.work.start(
+                competing,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            self.work.publish_failed(
+                started,
+                "competing-worker",
+                self.clock.now,
+                retryable=True,
+                gate_owned=True,
+            )
+            return acquire()
+
+        with patch.object(
+            self.gate, "try_acquire", side_effect=acquire_after_competing_retry
+        ):
+            report = self.execute(request, provider)
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(provider.starts, 0)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("retry_wait", 1),
+        )
+
     def test_stale_current_is_reserved_before_inspection_and_attempt(self) -> None:
         request = self.request("stale")
         accepted = self.work.accept(request.work_key, self.clock.now)
@@ -393,6 +438,33 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                     report.outcome,
                     HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
                 )
+
+    def test_preview_report_rejects_false_proof_flags(self) -> None:
+        values = {
+            "outcome": "all_cases_passed",
+            "cases_executed": 10,
+            "attempts_started": 6,
+            "gate_order_verified": True,
+            "deadline_before_gate_verified": True,
+            "caller_deadline_verified": True,
+            "late_result_rejected": True,
+            "closed_mapping_verified": True,
+            "contributor_labels_private": True,
+        }
+        for field in (
+            "gate_order_verified",
+            "deadline_before_gate_verified",
+            "caller_deadline_verified",
+            "late_result_rejected",
+            "closed_mapping_verified",
+        ):
+            with self.subTest(field=field):
+                invalid = dict(values)
+                invalid[field] = False
+                with self.assertRaisesRegex(
+                    TypeError, "Hardcover safe executor preview report is malformed"
+                ):
+                    SafeExecutorPreviewReport(**invalid).validate()
 
     def test_control_flow_exception_propagates_after_gate_release(self) -> None:
         with self.assertRaises(_ProcessDeath):
