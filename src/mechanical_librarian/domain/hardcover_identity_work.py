@@ -23,7 +23,6 @@ class IdentityWorkOutcome(StrEnum):
     PERSISTENCE_FAILURE = "persistence_failure"
     IN_PROGRESS = "in_progress"
     RETRY_EXHAUSTED = "retry_exhausted"
-    CANCELLED = "cancelled"
 
 
 class IdentityMatchOutcome(StrEnum):
@@ -45,10 +44,6 @@ LEGAL_TRANSITIONS = frozenset(
         (IdentityWorkState.CLAIMED, IdentityWorkState.SUCCEEDED),
         (IdentityWorkState.CLAIMED, IdentityWorkState.FAILED),
         (IdentityWorkState.CLAIMED, IdentityWorkState.CANCELLED),
-        (IdentityWorkState.PENDING, IdentityWorkState.FAILED),
-        (IdentityWorkState.RETRY_WAIT, IdentityWorkState.FAILED),
-        (IdentityWorkState.PENDING, IdentityWorkState.CANCELLED),
-        (IdentityWorkState.RETRY_WAIT, IdentityWorkState.CANCELLED),
     }
 )
 
@@ -91,7 +86,7 @@ class IdentityWorkClaim:
 
 @dataclass(frozen=True, slots=True)
 class IdentityWorkInspection:
-    """The minimum durable state needed to resume one active generation."""
+    """Minimum active-generation state exposed to application orchestration."""
 
     reference: IdentityWorkReference
     state: IdentityWorkState
@@ -125,8 +120,7 @@ class IdentityWorkInspection:
                 and self.claim is None
             ),
             IdentityWorkState.RETRY_WAIT: (
-                2 <= self.candidate <= 3
-                and self.fence >= 2
+                self.fence >= 1
                 and self.retry_due_at is not None
                 and self.claim is None
                 and self.retry_due_at <= self.aggregate_deadline

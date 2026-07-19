@@ -72,14 +72,6 @@ class ProtocolPersistenceCollaborator:
             claim=self.claim_result,
         )
 
-    def finish_waiting(self, reference, now, *, cancelled):
-        return IdentityWorkStatus(
-            IdentityWorkOutcome.CANCELLED
-            if cancelled
-            else IdentityWorkOutcome.RETRY_EXHAUSTED,
-            reference,
-        )
-
     def claim(self, reference, owner, now, *, gate_owned):
         return self.claim_result
 
@@ -103,7 +95,6 @@ class ProtocolPersistenceCollaborator:
         now,
         *,
         retryable,
-        retry_at=None,
         gate_owned,
         fail_before_commit=False,
     ):
@@ -335,11 +326,11 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
 
     def test_domain_transition_graph_is_closed(self) -> None:
-        self.assertIn(
+        self.assertNotIn(
             (IdentityWorkState.PENDING, IdentityWorkState.CANCELLED),
             LEGAL_TRANSITIONS,
         )
-        self.assertIn(
+        self.assertNotIn(
             (IdentityWorkState.RETRY_WAIT, IdentityWorkState.CANCELLED),
             LEGAL_TRANSITIONS,
         )

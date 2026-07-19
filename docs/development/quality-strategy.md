@@ -167,15 +167,19 @@ Hardcover call is part of this increment.
 
 F09f increment 5 is also Tier 2 because its synthetic-only activation
 establishes the eventual network-start authority boundary: application-owned
-lifecycle, cross-process descriptor/flock exclusivity, durable deadlines and
-retries, signal restoration, cancellation, and process-death recovery. Ready
+lifecycle for one attempt, cross-process descriptor/flock exclusivity,
+persisted aggregate and caller deadlines, and durable outcome publication. Ready
 evidence requires exact-head acceptance, code-quality, safety, and publication
 challenge; architecture/compile/diff/privacy checks; the complete suite;
 deterministic wheel build; and installed-wheel disposable-state qualification.
-Systematic proof must include contention, exact deadlines, retry-due races,
-wall regression, pre/post-start death, stale fences, path aliases and entry
-replacement, cancellation, three starts/no fourth, no egress, and no
-production composition. No live Hardcover call is part of increment 5.
+Systematic proof must include contention, exact deadline boundaries,
+gate-before-claim/start, late provider return, retryable publication without an
+executor retry, stale generation replacement, path aliases and entry
+replacement, ordinary and base-exception cleanup, exact-input and
+contributor-label persistence privacy, no egress, and no production
+composition. No live Hardcover call is part of increment 5. Retry scheduling,
+waiting, cancellation, signal handling, and restart orchestration remain a
+later increment.
 
 ## Definition of done
 

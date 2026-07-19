@@ -325,24 +325,26 @@ Private exact-installed-artifact qualification uses a dedicated non-production
 account and disposable state, retaining only a redacted aggregate.
 
 F09f increment 5 keeps ordinary and installed qualification entirely
-credential-free. `safe-executor-v3` runs six independent generations through
-the real application executor, schema-9 repository, descriptor gate, injected
-clock/waiter, and structural provider. Tests prove deadline-before-gate,
-gate-before-claim/start, atomic start as the sole send authority, five-second
-attempt cutoff, exact one/two-second and Retry-After-aware due times,
-release-before-wait, restart persistence, same-process cancellation, post-start
-death consumption, later fenced recovery, one-shot behavior, three starts, and
-no fourth send.
+credential-free. `safe-executor-v3` runs a strict semantic case set through the
+real one-attempt application executor, schema-9 repository, descriptor gate,
+injected clock, and structural provider. Tests prove persisted aggregate and
+caller deadlines before gate acquisition, gate before claim/start, atomic start
+as the sole send authority, the earlier caller/five-second attempt cutoff,
+post-return late-result rejection, retryable publication without an in-process
+retry, busy-gate behavior, stale-generation replacement, and closed ordinary
+failure mapping.
 
 Gate tests use independent contenders and canonical parent aliases, then race
 or replace parent, database, and lock identities. They reject dot/dotdot,
 symlink, hardlink, FIFO/nonregular, wrong owner/mode/link count, permissive
 roots, and nonconverging identities; verify nonblocking contention, mode 0600,
-stable inode, revalidation immediately before send, and no unlink. Signal tests
-cover both signals, partial installation, exact handler restoration, main-thread
-restriction, ordinary errors, and unmasked interpreter control flow. Egress,
-secret, fixture-oracle, private-value persistence/output, malformed schedule,
-clock regression, stale fence, and production-composition traps remain active.
+stable inode, revalidation immediately before send, and no unlink. Executor
+tests re-raise base interpreter control flow only after gate cleanup and do not
+install process signal handlers. Egress, secret, fixture-oracle, exact
+contributor-stdin, contributor-label, private-value persistence/output,
+malformed schedule, clock regression, stale fence, and production-composition
+traps remain active. Persistence privacy scans every SQLite main, WAL, and SHM
+channel after close.
 
 F09g tests first reject a stale or mismatched target, snapshot, source, file, or
 F07b evidence before provider disclosure or scheduling/binding new F09f work;

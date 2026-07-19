@@ -92,6 +92,7 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         return stack
 
     def test_canonical_preview_matches_oracle_without_egress_or_fixture_reads(self) -> None:
+        serialized_input = json.dumps(self.source).encode()
         with self.authority_traps(), patch.object(
             Path, "read_bytes", side_effect=_AuthorityTrap("fixture read")
         ), patch.object(
@@ -112,46 +113,85 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         self.assertEqual(lock.stat().st_nlink, 1)
         self.assertNotIn("isbn", output.casefold())
         self.assertNotIn("database", output.casefold())
-        persisted = self.database.read_bytes()
+        persisted_channels = b"".join(
+            path.read_bytes()
+            for path in self.root.iterdir()
+            if path.name.startswith(self.database.name)
+        )
         for private in (
             b"9780000000019",
             b"0000000019",
             b"Synthetic Ebook Alpha",
-            json.dumps(self.source, sort_keys=True).encode(),
-            b"retry_then_match",
-            b"worker-a",
+            serialized_input,
+            *(
+                value.encode("ascii")
+                for case in self.source["cases"]
+                for value in (case["label"], case["process"])
+            ),
         ):
-            self.assertNotIn(private, persisted)
+            self.assertNotIn(private, persisted_channels)
+
+    def test_schema_valid_labels_order_and_timings_are_semantically_evaluated(self) -> None:
+        alternate = copy.deepcopy(self.source)
+        alternate["cases"].reverse()
+        for index, case in enumerate(alternate["cases"]):
+            case["label"] = f"alternate-{index}"
+            case["process"] = f"participant-{index}"
+        alternate["cases"][2]["provider_duration_ms"] = 6000
+        code, output, errors = self.run_preview(alternate)
+        self.assertEqual((code, errors), (0, ""))
+        self.assertEqual(
+            output,
+            (FIXTURES / "c5-safe-executor-example-output.json").read_text(
+                encoding="utf-8"
+            ),
+        )
+
+        subset = copy.deepcopy(self.source)
+        subset["cases"] = subset["cases"][:2]
+        subset_root = self.root / "subset"
+        subset_root.mkdir(mode=0o700)
+        subset_database = subset_root / "state.sqlite"
+        code, output, errors = self.run_preview(subset, database=subset_database)
+        self.assertEqual((code, errors), (0, ""))
+        self.assertNotEqual(
+            output,
+            (FIXTURES / "c5-safe-executor-example-output.json").read_text(
+                encoding="utf-8"
+            ),
+        )
+        report = json.loads(output)
+        self.assertEqual(report["result"]["cases_executed"], 2)
+        self.assertEqual(report["result"]["attempts_started"], 2)
 
     def test_input_mutations_fail_before_database_or_gate_creation(self) -> None:
         variants: list[object] = []
-        for key in ("schema", "scenario", "events"):
+        for key in ("schema", "scenario", "cases"):
             missing = copy.deepcopy(self.source)
             del missing[key]
             variants.append(missing)
         extra = copy.deepcopy(self.source)
         extra["extra"] = True
         variants.append(extra)
-        for index, (event_index, key, value) in enumerate(
-            (
-                (0, "mono_ns", 1),
-                (1, "event", "gate_release"),
-                (2, "fence", 2),
-                (3, "candidate", 2),
-                (20, "signal", "SIGTERM"),
-                (34, "result", "acquired"),
-                (48, "case", "renamed"),
-            )
+        for case_index, key, value in (
+            (0, "operation", "retry_loop"),
+            (1, "process", "participant-\u2603"),
+            (2, "caller_deadline_ms", -1),
+            (3, "caller_deadline_ms", 1),
+            (4, "caller_deadline_ms", 5000),
+            (5, "caller_deadline_ms", 5000),
+            (6, "provider_duration_ms", 4999),
+            (7, "provider_duration_ms", 10001),
         ):
             changed = copy.deepcopy(self.source)
-            changed["events"][event_index][key] = value
+            changed["cases"][case_index][key] = value
             variants.append(changed)
-        reordered = copy.deepcopy(self.source)
-        reordered["events"][1], reordered["events"][2] = (
-            reordered["events"][2],
-            reordered["events"][1],
-        )
-        variants.append(reordered)
+        missing_case_field = copy.deepcopy(self.source)
+        del missing_case_field["cases"][0]["process"]
+        variants.append(missing_case_field)
+        extra_case_field = copy.deepcopy(self.source)
+        extra_case_field["cases"][0]["extra"] = True
+        variants.append(extra_case_field)
 
         for index, variant in enumerate(variants):
             with self.subTest(index=index):
@@ -195,7 +235,7 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         payload = registry_path.read_bytes()
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "4f3233ce2ee822367536cb3ac05694769f67ea4911e749cac917b5a3e920ad35",
+            "33e480ddb383283d8a9e1a026847778dc0e59becf88f4870a4e957ff7ac2fe7d",
         )
         registry = json.loads(payload)
         self.assertEqual(
@@ -218,6 +258,31 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
                 data = resource.read_bytes()
                 self.assertEqual(len(data), binding["bytes"])
                 self.assertEqual(hashlib.sha256(data).hexdigest(), binding["sha256"])
+        for key in ("output_schema", "output_privacy_contract", "output_privacy_scan"):
+            binding = registry[key]
+            resource = FIXTURES / binding["path"]
+            data = resource.read_bytes()
+            self.assertEqual(len(data), binding["bytes"])
+            self.assertEqual(hashlib.sha256(data).hexdigest(), binding["sha256"])
+        output_schema = json.loads(
+            (FIXTURES / registry["output_schema"]["path"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        safe_result = output_schema["$defs"]["safe_executor_result"]
+        self.assertFalse(safe_result["additionalProperties"])
+        self.assertEqual(
+            set(safe_result["required"]), set(safe_result["properties"])
+        )
+        privacy = json.loads(
+            (FIXTURES / registry["output_privacy_contract"]["path"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            set(privacy["allowed_runtime_results"]["safe-executor-v3"]),
+            set(safe_result["properties"]),
+        )
 
 
 if __name__ == "__main__":

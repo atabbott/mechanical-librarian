@@ -6,10 +6,9 @@ import asyncio
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import stat
-import signal
-import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -193,6 +192,11 @@ from mechanical_librarian.domain.hardcover_identity import (
     isbn_identity,
     validate_private_query,
 )
+from mechanical_librarian.domain.hardcover_identity_work import (
+    IdentityMatchOutcome,
+    IdentityWorkClaim,
+    IdentityWorkObservation,
+)
 from mechanical_librarian.infrastructure.configuration import (
     load_configuration_file,
     validate_hardcover_provider,
@@ -229,9 +233,6 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
     preflight,
     publish_staged_state,
     staged_state,
-)
-from mechanical_librarian.infrastructure.cancellation_signals import (
-    temporary_cancellation_signals,
 )
 from mechanical_librarian.infrastructure.hardcover_identity_gate import (
     DescriptorHardcoverIdentityGate,
@@ -1778,11 +1779,6 @@ def _run_hardcover_durable_work_preview(
     )
 
 
-_SAFE_EXECUTOR_CANONICAL_INPUT_SHA256 = (
-    "cfbe4dc7189bf66d6dec8378cc2b4ac5959fbc228a800c62539bafcb90d97618"
-)
-
-
 class _SyntheticExecutorClock:
     def __init__(self, now: datetime) -> None:
         self.now = now
@@ -1824,56 +1820,40 @@ class _ObservedGate:
         return _ObservedGateLease(lease, self)
 
 
-class _ObservedWaiter:
-    def __init__(self, clock: _SyntheticExecutorClock, gate: _ObservedGate) -> None:
-        self._clock = clock
-        self._gate = gate
-        self.waits = 0
-
-    def wait_until(self, due_at: datetime, context: OperationContext) -> None:
-        if self._gate.held:
-            raise SchemaError("safe executor waited while holding the gate")
-        self.waits += 1
-        if not context.cancelled:
-            self._clock.now = due_at
-
-
 class _SyntheticExecutorProvider:
     def __init__(
         self,
-        results: Sequence[IdentityAttemptResult | BaseException],
-        *,
-        cancellation: threading.Event | None = None,
+        result: IdentityAttemptResult,
+        clock: _SyntheticExecutorClock,
+        duration_ms: int,
     ) -> None:
-        self._results = list(results)
-        self._cancellation = cancellation
+        self._result = result
+        self._clock = clock
+        self._duration = timedelta(milliseconds=duration_ms)
         self.starts = 0
+        self.deadlines: list[datetime] = []
 
     def lookup(
         self, query: IsbnIdentityQuery, context: OperationContext
     ) -> IdentityAttemptResult:
         self.starts += 1
-        if self._cancellation is not None:
-            self._cancellation.set()
-        if not self._results:
-            raise SchemaError("safe executor provider script is exhausted")
-        result = self._results.pop(0)
-        if isinstance(result, BaseException):
-            raise result
-        return result
+        self.deadlines.append(context.deadline.at)
+        self._clock.now += self._duration
+        return self._result
 
 
-class _SyntheticExecutorDeath(BaseException):
-    pass
+class _SyntheticFailingGate:
+    def try_acquire(self) -> object:
+        raise SchemaError("safe executor synthetic gate failure")
 
 
 def _safe_executor_context(
-    clock: _SyntheticExecutorClock, cancellation: threading.Event
+    clock: _SyntheticExecutorClock, caller_deadline_ms: int
 ) -> OperationContext:
     return OperationContext(
-        Deadline(clock.now + timedelta(minutes=5)),
+        Deadline(clock.now + timedelta(milliseconds=caller_deadline_ms)),
         CancellationProbe(
-            CancellationId("hardcover-safe-executor-preview"), cancellation.is_set
+            CancellationId("hardcover-safe-executor-preview"), lambda: False
         ),
         ResourceBounds(4, 65_536),
         TimeProbe(lambda: clock.now),
@@ -1881,13 +1861,12 @@ def _safe_executor_context(
 
 
 def _safe_executor_request(
-    label: str, query: object, *, one_shot: bool = False
+    query: object,
 ) -> HardcoverIdentityExecutionRequest:
     return HardcoverIdentityExecutionRequest(
-        hashlib.sha256(f"safe-executor-v3:{label}".encode("ascii")).hexdigest(),
-        "worker-a",
+        secrets.token_hex(32),
+        "synthetic-c5-worker",
         query,
-        one_shot,
     )
 
 
@@ -1919,22 +1898,66 @@ def _safe_executor_match() -> IdentityAttemptResult:
 
 
 def _validate_safe_executor_preview_input(source: Mapping[str, object]) -> None:
-    if set(source) != {"schema", "scenario", "events"}:
-        raise ValueError("safe executor preview input is malformed")
-    try:
-        canonical = json.dumps(
-            source,
-            ensure_ascii=True,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("ascii")
-    except (TypeError, ValueError, UnicodeError, RecursionError):
-        raise ValueError("safe executor preview input is malformed") from None
     if (
-        hashlib.sha256(canonical).hexdigest()
-        != _SAFE_EXECUTOR_CANONICAL_INPUT_SHA256
+        set(source) != {"schema", "scenario", "cases"}
+        or source.get("schema") != "hardcover-synthetic-input-v3"
+        or source.get("scenario") != "safe-executor-v3"
     ):
         raise ValueError("safe executor preview input is malformed")
+    cases = source.get("cases")
+    if type(cases) is not list or not 1 <= len(cases) <= 16:
+        raise ValueError("safe executor preview input is malformed")
+    operations = {
+        "matched",
+        "unavailable",
+        "busy_gate",
+        "aggregate_expired",
+        "caller_expired",
+        "caller_deadline",
+        "late_match",
+        "gate_failure",
+        "stale_refresh",
+    }
+    for case in cases:
+        if not isinstance(case, Mapping) or set(case) != {
+            "label",
+            "process",
+            "operation",
+            "caller_deadline_ms",
+            "provider_duration_ms",
+        }:
+            raise ValueError("safe executor preview input is malformed")
+        label = case.get("label")
+        process = case.get("process")
+        operation = case.get("operation")
+        deadline = case.get("caller_deadline_ms")
+        duration = case.get("provider_duration_ms")
+        if (
+            type(label) is not str
+            or not 1 <= len(label) <= 48
+            or not label.isascii()
+            or not label.isprintable()
+            or label.strip() != label
+            or type(process) is not str
+            or not 1 <= len(process) <= 32
+            or not process.isascii()
+            or not process.isprintable()
+            or process.strip() != process
+            or operation not in operations
+            or type(deadline) is not int
+            or not 0 <= deadline <= 30_000
+            or type(duration) is not int
+            or not 0 <= duration <= 10_000
+        ):
+            raise ValueError("safe executor preview input is malformed")
+        if operation == "caller_expired" and deadline != 0:
+            raise ValueError("safe executor preview input is malformed")
+        if operation == "caller_deadline" and not 1 <= deadline < 5_000:
+            raise ValueError("safe executor preview input is malformed")
+        if operation == "late_match" and duration < min(deadline, 5_000):
+            raise ValueError("safe executor preview input is malformed")
+        if operation not in {"caller_expired", "caller_deadline"} and deadline < 5_000:
+            raise ValueError("safe executor preview input is malformed")
 
 
 def _run_hardcover_safe_executor_preview(
@@ -1946,8 +1969,7 @@ def _run_hardcover_safe_executor_preview(
     query = validate_private_query(
         {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
     )
-    origin = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    cancellation = threading.Event()
+    cases = source["cases"]
 
     with bound_disposable_state(database) as bound, bound.staged_state() as staged:
         connection = staged.connect()
@@ -1964,161 +1986,165 @@ def _run_hardcover_safe_executor_preview(
             service = ManageHardcoverIdentityWork(
                 SQLiteHardcoverIdentityWorkRepository(connection)
             )
-            gate = _ObservedGate(DescriptorHardcoverIdentityGate(database))
-            clock = _SyntheticExecutorClock(origin)
-            waiter = _ObservedWaiter(clock, gate)
+            raw_gate = DescriptorHardcoverIdentityGate(database)
+            gate = _ObservedGate(raw_gate)
+            clock = _SyntheticExecutorClock(datetime.now(timezone.utc))
+            providers: list[_SyntheticExecutorProvider] = []
+            verified = {
+                "deadline": False,
+                "caller": False,
+                "late": False,
+                "closed": False,
+            }
 
-            def execute(
-                label: str,
-                provider: _SyntheticExecutorProvider,
-                *,
-                one_shot: bool = False,
-            ) -> HardcoverIdentityReport:
+            for case in cases:
+                operation = case["operation"]
+                deadline_ms = case["caller_deadline_ms"]
+                duration_ms = case["provider_duration_ms"]
+                request = _safe_executor_request(query)
+                provider_result = (
+                    IdentityAttemptResult.failed(
+                        IdentityAttemptFailureKind.UNAVAILABLE
+                    )
+                    if operation == "unavailable"
+                    else _safe_executor_match()
+                )
+                provider = _SyntheticExecutorProvider(
+                    provider_result, clock, duration_ms
+                )
+                providers.append(provider)
+                selected_gate: object = gate
+                held = None
+                if operation == "busy_gate":
+                    held = raw_gate.try_acquire()
+                    if held is None:
+                        raise SchemaError("safe executor busy proof could not acquire")
+                elif operation == "gate_failure":
+                    selected_gate = _SyntheticFailingGate()
+                elif operation == "stale_refresh":
+                    seed = service.accept(request.work_key, clock.now)
+                    seed_lease = gate.try_acquire()
+                    if seed_lease is None:
+                        raise SchemaError("safe executor stale seed gate failed")
+                    try:
+                        claim = service.claim(
+                            seed.reference,
+                            request.owner,
+                            clock.now,
+                            gate_owned=True,
+                        )
+                        started = service.start(
+                            claim,
+                            request.owner,
+                            clock.now,
+                            gate_owned=True,
+                        )
+                        if type(started) is not IdentityWorkClaim:
+                            raise SchemaError("safe executor stale seed start failed")
+                        service.publish_matched(
+                            started,
+                            request.owner,
+                            clock.now,
+                            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+                            gate_owned=True,
+                        )
+                    finally:
+                        seed_lease.release()
+                    clock.now += timedelta(hours=24, microseconds=1)
+                elif operation == "aggregate_expired":
+                    service.accept(request.work_key, clock.now)
+                    clock.now += timedelta(seconds=30)
+
+                before_acquire = gate.acquisitions
+                context = _safe_executor_context(clock, deadline_ms)
                 runner = RunHardcoverIdentityReport(
-                    RunSafeHardcoverIdentity(service, provider, gate, waiter)
+                    RunSafeHardcoverIdentity(service, provider, selected_gate)
                 )
-                return runner.run(
-                    _safe_executor_request(label, query, one_shot=one_shot),
-                    _safe_executor_context(clock, cancellation),
-                )
+                try:
+                    report = runner.run(request, context)
+                finally:
+                    if held is not None:
+                        held.release()
 
-            retry_provider = _SyntheticExecutorProvider(
-                (
-                    IdentityAttemptResult.failed(
-                        IdentityAttemptFailureKind.UNAVAILABLE
-                    ),
-                    _safe_executor_match(),
+                expected = {
+                    "matched": "matched",
+                    "unavailable": "in_progress",
+                    "busy_gate": "in_progress",
+                    "aggregate_expired": "retry_exhausted",
+                    "caller_expired": "retry_exhausted",
+                    "caller_deadline": "matched",
+                    "late_match": "in_progress",
+                    "gate_failure": "persistence_failure",
+                    "stale_refresh": "matched",
+                }[operation]
+                if report.outcome.value != expected:
+                    raise SchemaError("safe executor semantic case failed")
+                durable = connection.execute(
+                    "SELECT generation,state,attempt_count "
+                    "FROM hardcover_identity_generations WHERE work_key=? "
+                    "ORDER BY generation DESC LIMIT 1",
+                    (request.work_key,),
+                ).fetchone()
+                expected_durable = {
+                    "matched": (1, "succeeded", 1),
+                    "unavailable": (1, "retry_wait", 1),
+                    "busy_gate": (1, "pending", 0),
+                    "aggregate_expired": (1, "pending", 0),
+                    "caller_expired": (1, "pending", 0),
+                    "caller_deadline": (1, "succeeded", 1),
+                    "late_match": (1, "retry_wait", 1),
+                    "gate_failure": (1, "pending", 0),
+                    "stale_refresh": (2, "succeeded", 1),
+                }[operation]
+                expected_starts = int(
+                    operation
+                    in {
+                        "matched",
+                        "unavailable",
+                        "caller_deadline",
+                        "late_match",
+                        "stale_refresh",
+                    }
                 )
+                if durable != expected_durable or provider.starts != expected_starts:
+                    raise SchemaError("safe executor durable semantic case failed")
+                if operation == "aggregate_expired":
+                    verified["deadline"] = gate.acquisitions == before_acquire
+                elif operation == "caller_deadline":
+                    verified["caller"] = provider.deadlines == [context.deadline.at]
+                elif operation == "late_match":
+                    matched_publications = connection.execute(
+                        "SELECT COUNT(*) FROM hardcover_identity_results "
+                        "WHERE work_key=? AND outcome='matched'",
+                        (request.work_key,),
+                    ).fetchone()
+                    verified["late"] = matched_publications == (0,)
+                elif operation == "gate_failure":
+                    verified["closed"] = provider.starts == 0
+
+            dump = "\n".join(connection.iterdump())
+            labels_private = all(
+                case["label"] not in dump and case["process"] not in dump
+                for case in cases
             )
-            retry = execute("retry-then-match", retry_provider)
-            if retry.outcome.value != "matched" or retry_provider.starts != 2:
-                raise SchemaError("safe executor retry proof failed")
-
-            clock.now = origin + timedelta(seconds=40)
-            busy_request = _safe_executor_request("busy-deadline", query)
-            service.accept(busy_request.work_key, clock.now)
-            before_deadline_gate = gate.acquisitions
-            clock.now += timedelta(seconds=30)
-            busy = RunHardcoverIdentityReport(
-                RunSafeHardcoverIdentity(
-                    service, _SyntheticExecutorProvider(()), gate, waiter
-                )
-            ).run(busy_request, _safe_executor_context(clock, cancellation))
-            if (
-                busy.outcome.value != "retry_exhausted"
-                or gate.acquisitions != before_deadline_gate
-            ):
-                raise SchemaError("safe executor deadline proof failed")
-
-            clock.now = origin + timedelta(seconds=80)
-            cancellation.set()
-            cancelled_waiting = execute(
-                "cancel-before-start", _SyntheticExecutorProvider(())
-            )
-            cancellation.clear()
-            if cancelled_waiting.outcome.value != "cancelled":
-                raise SchemaError("safe executor cancellation proof failed")
-
-            clock.now = origin + timedelta(seconds=120)
-            cancelled_transport = execute(
-                "cancel-during-transport",
-                _SyntheticExecutorProvider(
-                    (
-                        IdentityAttemptResult.failed(
-                            IdentityAttemptFailureKind.CANCELLED
-                        ),
-                    ),
-                    cancellation=cancellation,
-                ),
-            )
-            cancellation.clear()
-            if cancelled_transport.outcome.value != "cancelled":
-                raise SchemaError("safe executor transport cancellation proof failed")
-
-            clock.now = origin + timedelta(seconds=160)
-            death_request = _safe_executor_request("death-after-start", query)
-            try:
-                execute(
-                    "death-after-start",
-                    _SyntheticExecutorProvider((_SyntheticExecutorDeath(),)),
-                )
-            except _SyntheticExecutorDeath:
-                pass
-            else:
-                raise SchemaError("safe executor death proof failed")
-            clock.now += timedelta(seconds=15, microseconds=1)
-            death_provider = _SyntheticExecutorProvider(
-                (
-                    IdentityAttemptResult.failed(
-                        IdentityAttemptFailureKind.UNAVAILABLE
-                    ),
-                    IdentityAttemptResult.failed(
-                        IdentityAttemptFailureKind.UNAVAILABLE
-                    ),
-                )
-            )
-            recovered = RunHardcoverIdentityReport(
-                RunSafeHardcoverIdentity(service, death_provider, gate, waiter)
-            ).run(death_request, _safe_executor_context(clock, cancellation))
-            if (
-                recovered.outcome.value != "retry_exhausted"
-                or death_provider.starts != 2
-            ):
-                raise SchemaError("safe executor recovery proof failed")
-
-            clock.now = origin + timedelta(seconds=220)
-            one_shot_provider = _SyntheticExecutorProvider(
-                (
-                    IdentityAttemptResult.failed(
-                        IdentityAttemptFailureKind.UNAVAILABLE
-                    ),
-                )
-            )
-            one_shot = execute("one-shot", one_shot_provider, one_shot=True)
-            if (
-                one_shot.outcome.value != "retry_exhausted"
-                or one_shot_provider.starts != 1
-            ):
-                raise SchemaError("safe executor one-shot proof failed")
-
-            prior_handlers = {
-                number: signal.getsignal(number)
-                for number in (signal.SIGINT, signal.SIGTERM)
-            }
-            signal_event = threading.Event()
-            with temporary_cancellation_signals(signal_event):
-                handler = signal.getsignal(signal.SIGINT)
-                if not callable(handler):
-                    raise SchemaError("safe executor signal proof failed")
-                handler(signal.SIGINT, None)
-            signals_verified = signal_event.is_set() and prior_handlers == {
-                number: signal.getsignal(number)
-                for number in (signal.SIGINT, signal.SIGTERM)
-            }
-
-            generations = connection.execute(
-                "SELECT COUNT(*) FROM hardcover_identity_generations"
-            ).fetchone()
-            death_attempts = connection.execute(
-                "SELECT attempt_count FROM hardcover_identity_generations WHERE work_key=?",
-                (death_request.work_key,),
-            ).fetchone()
         finally:
             connection.close()
 
+    starts = sum(provider.starts for provider in providers)
     return SafeExecutorPreviewReport(
         outcome="all_cases_passed",
-        independent_generations=generations[0] if generations else 0,
+        cases_executed=len(cases),
+        attempts_started=starts,
         gate_order_verified=(
-            gate.send_validations == 7
-            and gate.acquisitions == 7
-            and gate.releases == 7
+            gate.send_validations == starts
+            and gate.acquisitions == gate.releases
+            and not gate.held
         ),
-        release_before_wait_verified=waiter.waits == 2 and not gate.held,
-        death_recovery_gate_owned=death_attempts == (3,),
-        fourth_start_forbidden=death_attempts == (3,),
-        same_process_signals_verified=signals_verified,
-        one_shot_egress_count=one_shot_provider.starts,
+        deadline_before_gate_verified=verified["deadline"],
+        caller_deadline_verified=verified["caller"],
+        late_result_rejected=verified["late"],
+        closed_mapping_verified=verified["closed"],
+        contributor_labels_private=labels_private,
     )
 
 

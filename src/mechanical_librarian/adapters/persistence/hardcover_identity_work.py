@@ -125,7 +125,7 @@ class SQLiteHardcoverIdentityWorkRepository:
     def inspect(
         self, reference: IdentityWorkReference, now: datetime
     ) -> IdentityWorkInspection:
-        """Read one active generation without reserving, claiming, or renewing it."""
+        """Read one active generation without changing its lifecycle state."""
 
         _require_reference(reference)
         _time(now)
@@ -200,80 +200,6 @@ class SQLiteHardcoverIdentityWorkRepository:
         except (sqlite3.Error, OSError):
             raise IdentityWorkPersistenceError(
                 "identity work could not be inspected"
-            ) from None
-
-    def finish_waiting(
-        self,
-        reference: IdentityWorkReference,
-        now: datetime,
-        *,
-        cancelled: bool,
-    ) -> IdentityWorkStatus:
-        """Cancel or exhaust work that has not started a live attempt."""
-
-        _require_reference(reference)
-        if type(cancelled) is not bool:
-            raise TypeError("identity work completion is malformed")
-        timestamp = _time(now)
-        terminal = IdentityWorkState.CANCELLED if cancelled else IdentityWorkState.FAILED
-        result = (
-            IdentityWorkOutcome.CANCELLED
-            if cancelled
-            else IdentityWorkOutcome.RETRY_EXHAUSTED
-        )
-        event = "cancelled" if cancelled else "failed"
-        try:
-            with _transaction(self._connection):
-                row = self._generation(reference)
-                state = _state(row[0])
-                if state not in {IdentityWorkState.PENDING, IdentityWorkState.RETRY_WAIT}:
-                    raise IdentityWorkPersistenceError(
-                        "identity work is not waiting"
-                    )
-                if type(row[5]) is not str or now < _parse_time(row[5]):
-                    raise IdentityWorkPersistenceError(
-                        "identity work chronology is invalid"
-                    )
-                validate_transition(state, terminal)
-                fence = _nonnegative_int(row[1], "fence")
-                changed = self._connection.execute(
-                    "UPDATE hardcover_identity_generations SET state=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE work_key=? AND generation=? AND state=? AND fence=?",
-                    (
-                        terminal.value,
-                        timestamp,
-                        reference.work_key,
-                        reference.generation,
-                        state.value,
-                        fence,
-                    ),
-                ).rowcount
-                if changed != 1:
-                    raise StaleIdentityWorkFence("identity work fence is stale")
-                self._connection.execute(
-                    "INSERT INTO hardcover_identity_results(work_key,generation,fence,outcome,published_at) VALUES(?,?,?,?,?)",
-                    (
-                        reference.work_key,
-                        reference.generation,
-                        fence,
-                        event,
-                        timestamp,
-                    ),
-                )
-                self._event(
-                    reference.work_key,
-                    reference.generation,
-                    event,
-                    state.value,
-                    terminal.value,
-                    fence,
-                    timestamp,
-                )
-                return IdentityWorkStatus(result, reference)
-        except (IdentityWorkPersistenceError, ValueError, TypeError):
-            raise
-        except (sqlite3.Error, OSError):
-            raise IdentityWorkPersistenceError(
-                "identity work could not be completed"
             ) from None
 
     def claim(
@@ -538,7 +464,6 @@ class SQLiteHardcoverIdentityWorkRepository:
         now: datetime,
         *,
         retryable: bool,
-        retry_at: datetime | None = None,
         gate_owned: bool,
         fail_before_commit: bool = False,
     ) -> IdentityWorkStatus:
@@ -549,10 +474,6 @@ class SQLiteHardcoverIdentityWorkRepository:
         _require_gate(gate_owned)
         if type(retryable) is not bool or type(fail_before_commit) is not bool:
             raise TypeError("identity work failure publication is malformed")
-        if retry_at is not None:
-            _time(retry_at)
-            if retry_at < now:
-                raise ValueError("identity work retry time is malformed")
         timestamp = _time(now)
         try:
             with _transaction(self._connection):
@@ -566,12 +487,11 @@ class SQLiteHardcoverIdentityWorkRepository:
                 if changed != 1:
                     raise IdentityWorkPersistenceError("identity work has no started attempt")
                 deadline = _parse_time(str(row[7])) if row[7] is not None else None
-                due_at = retry_at if retry_at is not None else now
                 if (
                     retryable
                     and attempt < MAX_ATTEMPTS
                     and deadline is not None
-                    and due_at <= deadline - MINIMUM_START_LEASE
+                    and deadline - now >= MINIMUM_START_LEASE
                 ):
                     candidate = attempt + 1
                     next_fence = claim.fence + 1
@@ -581,7 +501,14 @@ class SQLiteHardcoverIdentityWorkRepository:
                     )
                     self._connection.execute(
                         "INSERT INTO hardcover_identity_retry_schedules(work_key,generation,fence,candidate,due_at,reason,created_at) VALUES(?,?,?,?,?,'retryable',?)",
-                        (claim.reference.work_key, claim.reference.generation, next_fence, candidate, _time(due_at), timestamp),
+                        (
+                            claim.reference.work_key,
+                            claim.reference.generation,
+                            next_fence,
+                            candidate,
+                            timestamp,
+                            timestamp,
+                        ),
                     )
                     changed = self._connection.execute(
                         "UPDATE hardcover_identity_generations SET state='retry_wait',fence=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE work_key=? AND generation=? AND state='claimed' AND fence=? AND lease_owner=?",

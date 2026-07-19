@@ -266,20 +266,17 @@ Repeated readers retain `stale` while reusing that active generation. Wall times
 durable chronology; fences determine ownership and never derive authority from
 time alone.
 
-The foreground executor observes active durable state before any external
-authority. At or beyond the aggregate deadline, pending or retry-wait work
-transitions directly to terminal `failed`; cancellation transitions either
-waiting state directly to `cancelled`. Otherwise a contender may try the
-deployment gate. Busy returns `in_progress` without state mutation. Retry-wait
-is claimable only at its persisted due time; an unexpired claim remains
-`in_progress`, while an expired claim is recovered only under newly acquired
-gate ownership.
+The increment-5 foreground executor observes active durable state and its
+persisted aggregate deadline before any external authority. Exact aggregate or
+caller expiry maps to `retry_exhausted` without trying the deployment gate.
+Busy returns `in_progress` without claim or start. Only pending work is executed;
+claimed or retry-wait state returns `in_progress` for a later orchestrator.
 
-Each started attempt holds the gate through transport close and publication.
-Retryable attempt 1 schedules candidate 2 at close/publication time plus one
-second; retryable attempt 2 schedules candidate 3 plus two seconds. A later
-valid Retry-After extends that due time. The gate is released before waiting
-and reacquired before the retry claim. Attempt 3, missing six-second reserve,
-or a retry due beyond deadline-minus-six transitions to terminal `failed` and
-maps publicly to `retry_exhausted`. `interrupted`, rate limiting, timeout, and
-unavailability are internal evidence, never terminal public outcomes.
+One started attempt holds the gate through provider return and publication. Its
+deadline is the earlier of the caller deadline and start plus five seconds; a
+result at or beyond the boundary is published as timeout. Rate limiting,
+timeout, and unavailability publish retry-wait evidence and return
+`in_progress`, but this executor does not wait or start the next candidate.
+The repository's retry, interruption, cancellation, and recovery transitions
+remain durable state-machine capabilities for later orchestration rather than
+behavior of this executor increment.

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import hashlib
 import os
-import signal
 import sqlite3
 import tempfile
 import threading
@@ -37,8 +37,9 @@ from mechanical_librarian.domain.hardcover_identity import (
     ProviderIdentityObservation,
     validate_private_query,
 )
-from mechanical_librarian.infrastructure.cancellation_signals import (
-    temporary_cancellation_signals,
+from mechanical_librarian.domain.hardcover_identity_work import (
+    IdentityMatchOutcome,
+    IdentityWorkObservation,
 )
 from mechanical_librarian.infrastructure.hardcover_identity_gate import (
     LOCK_NAME,
@@ -56,28 +57,43 @@ class _Clock:
         self.now = ORIGIN
 
 
-class _Waiter:
-    def __init__(self, clock: _Clock) -> None:
+class _Provider:
+    def __init__(self, result: object, clock: _Clock) -> None:
+        self.result = result
         self.clock = clock
-        self.due: list[datetime] = []
-
-    def wait_until(self, due_at: datetime, context: OperationContext) -> None:
-        self.due.append(due_at)
-        if not context.cancelled:
-            self.clock.now = due_at
-
-
-class _ScriptedProvider:
-    def __init__(self, *results: object) -> None:
-        self.results = list(results)
-        self.starts: list[datetime] = []
+        self.starts = 0
+        self.deadlines: list[datetime] = []
 
     def lookup(self, query: object, context: OperationContext) -> object:
-        self.starts.append(context.observed_at)
-        result = self.results.pop(0)
-        if isinstance(result, BaseException):
-            raise result
-        return result
+        self.starts += 1
+        self.deadlines.append(context.deadline.at)
+        if isinstance(self.result, BaseException):
+            raise self.result
+        return self.result
+
+
+class _LateProvider(_Provider):
+    def lookup(self, query: object, context: OperationContext) -> object:
+        self.clock.now = context.deadline.at
+        return super().lookup(query, context)
+
+
+class _FailingGate:
+    def try_acquire(self) -> object:
+        raise HardcoverIdentityGateError("synthetic gate failure")
+
+
+class _ReleaseFailureLease:
+    def validate_for_send(self) -> None:
+        pass
+
+    def release(self) -> None:
+        raise HardcoverIdentityGateError("synthetic release failure")
+
+
+class _ReleaseFailureGate:
+    def try_acquire(self) -> _ReleaseFailureLease:
+        return _ReleaseFailureLease()
 
 
 class _ProcessDeath(BaseException):
@@ -99,15 +115,14 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         )
         self.clock = _Clock()
         self.cancelled = threading.Event()
-        self.waiter = _Waiter(self.clock)
         self.gate = DescriptorHardcoverIdentityGate(self.database)
         self.query = validate_private_query(
             {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
         )
 
-    def context(self) -> OperationContext:
+    def context(self, deadline: datetime | None = None) -> OperationContext:
         return OperationContext(
-            Deadline(ORIGIN + timedelta(minutes=5)),
+            Deadline(deadline or self.clock.now + timedelta(minutes=5)),
             CancellationProbe(
                 CancellationId("hardcover-safe-test"), self.cancelled.is_set
             ),
@@ -115,14 +130,11 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             TimeProbe(lambda: self.clock.now),
         )
 
-    def request(self, label: str, *, one_shot: bool = False):
-        import hashlib
-
+    def request(self, label: str) -> HardcoverIdentityExecutionRequest:
         return HardcoverIdentityExecutionRequest(
             hashlib.sha256(label.encode("ascii")).hexdigest(),
-            "worker-a",
+            "synthetic-worker",
             self.query,
-            one_shot,
         )
 
     def matched(self) -> IdentityAttemptResult:
@@ -151,62 +163,70 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         )
         return IdentityAttemptResult.success((row,))
 
-    def executor(self, provider: _ScriptedProvider) -> RunHardcoverIdentityReport:
-        safe = RunSafeHardcoverIdentity(self.work, provider, self.gate, self.waiter)
-        return RunHardcoverIdentityReport(safe)
-
-    def test_retry_releases_gate_waits_exactly_and_matches_on_second_start(self) -> None:
-        provider = _ScriptedProvider(
-            IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE),
-            self.matched(),
+    def execute(
+        self,
+        request: HardcoverIdentityExecutionRequest,
+        provider: object,
+        *,
+        context: OperationContext | None = None,
+        gate: object | None = None,
+    ):
+        safe = RunSafeHardcoverIdentity(
+            self.work,
+            provider,
+            self.gate if gate is None else gate,
         )
-        report = self.executor(provider).run(self.request("retry-match"), self.context())
+        return RunHardcoverIdentityReport(safe).run(
+            request,
+            self.context() if context is None else context,
+        )
+
+    def test_one_attempt_matches_and_releases_gate(self) -> None:
+        provider = _Provider(self.matched(), self.clock)
+        report = self.execute(self.request("matched"), provider)
         self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
-        self.assertEqual(len(provider.starts), 2)
-        self.assertEqual(provider.starts[1] - provider.starts[0], timedelta(seconds=1))
-        self.assertEqual(self.waiter.due, [ORIGIN + timedelta(seconds=1)])
+        self.assertEqual(provider.starts, 1)
         contender = self.gate.try_acquire()
         self.assertIsNotNone(contender)
         contender.release()
 
-    def test_retry_after_uses_later_delay_and_third_failure_has_no_fourth_send(self) -> None:
-        provider = _ScriptedProvider(
-            IdentityAttemptResult.failed(
-                IdentityAttemptFailureKind.RATE_LIMITED,
-                retry_after_seconds=3,
-            ),
+    def test_retryable_attempt_publishes_retry_wait_without_retrying(self) -> None:
+        request = self.request("unavailable")
+        provider = _Provider(
             IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE),
-            IdentityAttemptResult.failed(IdentityAttemptFailureKind.TIMEOUT),
+            self.clock,
         )
-        report = self.executor(provider).run(self.request("three-starts"), self.context())
-        self.assertEqual(report.outcome, HardcoverIdentityOutcome.RETRY_EXHAUSTED)
-        self.assertEqual(len(provider.starts), 3)
-        self.assertEqual(provider.starts[1] - provider.starts[0], timedelta(seconds=3))
-        self.assertEqual(provider.starts[2] - provider.starts[1], timedelta(seconds=2))
+        report = self.execute(request, provider)
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(provider.starts, 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("retry_wait", 1),
+        )
 
-    def test_exact_aggregate_deadline_finishes_before_gate_attempt(self) -> None:
-        request = self.request("exact-deadline")
-        accepted = self.work.accept(request.work_key, self.clock.now)
+    def test_persisted_deadline_is_checked_before_gate(self) -> None:
+        request = self.request("deadline")
+        self.work.accept(request.work_key, self.clock.now)
         self.clock.now += timedelta(seconds=30)
         with patch.object(self.gate, "try_acquire") as acquire:
-            report = self.executor(_ScriptedProvider()).run(request, self.context())
+            report = self.execute(request, _Provider(self.matched(), self.clock))
         self.assertEqual(report.outcome, HardcoverIdentityOutcome.RETRY_EXHAUSTED)
         acquire.assert_not_called()
-        row = self.connection.execute(
-            "SELECT state FROM hardcover_identity_generations WHERE work_key=? AND generation=?",
-            (request.work_key, accepted.reference.generation),
-        ).fetchone()
-        self.assertEqual(row, ("failed",))
 
     def test_busy_gate_does_not_claim_or_start(self) -> None:
         held = self.gate.try_acquire()
         self.assertIsNotNone(held)
+        request = self.request("busy")
+        provider = _Provider(self.matched(), self.clock)
         try:
-            request = self.request("busy")
-            report = self.executor(_ScriptedProvider()).run(request, self.context())
+            report = self.execute(request, provider)
         finally:
             held.release()
         self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(provider.starts, 0)
         self.assertEqual(
             self.connection.execute(
                 "SELECT COUNT(*) FROM hardcover_identity_claims WHERE work_key=?",
@@ -215,65 +235,125 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             (0,),
         )
 
-    def test_one_shot_consumes_one_start_and_never_waits(self) -> None:
-        provider = _ScriptedProvider(
-            IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
+    def test_stale_current_is_reserved_before_inspection_and_attempt(self) -> None:
+        request = self.request("stale")
+        accepted = self.work.accept(request.work_key, self.clock.now)
+        claim = self.work.claim(
+            accepted.reference,
+            request.owner,
+            self.clock.now,
+            gate_owned=True,
         )
-        report = self.executor(provider).run(
-            self.request("one-shot", one_shot=True), self.context()
+        started = self.work.start(
+            claim,
+            request.owner,
+            self.clock.now,
+            gate_owned=True,
         )
-        self.assertEqual(report.outcome, HardcoverIdentityOutcome.RETRY_EXHAUSTED)
-        self.assertEqual(len(provider.starts), 1)
-        self.assertEqual(self.waiter.due, [])
-
-    def test_provider_cancellation_is_durable_and_gate_is_released(self) -> None:
-        class CancellingProvider(_ScriptedProvider):
-            def lookup(inner, query: object, context: OperationContext) -> object:
-                self.cancelled.set()
-                return IdentityAttemptResult.failed(
-                    IdentityAttemptFailureKind.CANCELLED
-                )
-
-        report = self.executor(CancellingProvider()).run(
-            self.request("cancelled"), self.context()
+        self.work.publish_matched(
+            started,
+            request.owner,
+            self.clock.now,
+            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+            gate_owned=True,
         )
-        self.assertEqual(report.outcome, HardcoverIdentityOutcome.CANCELLED)
+        self.clock.now += timedelta(hours=24, microseconds=1)
+        provider = _Provider(self.matched(), self.clock)
+        report = self.execute(request, provider)
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(provider.starts, 1)
         self.assertEqual(
             self.connection.execute(
-                "SELECT state FROM hardcover_identity_generations WHERE work_key=?",
-                (self.request("cancelled").work_key,),
+                "SELECT COUNT(*) FROM hardcover_identity_generations WHERE work_key=?",
+                (request.work_key,),
             ).fetchone(),
-            ("cancelled",),
+            (2,),
         )
-        contender = self.gate.try_acquire()
-        self.assertIsNotNone(contender)
-        contender.release()
 
-    def test_post_start_death_consumes_attempt_and_later_owner_recovers(self) -> None:
-        request = self.request("death")
-        with self.assertRaises(_ProcessDeath):
-            self.executor(_ScriptedProvider(_ProcessDeath())).run(
-                request, self.context()
+    def test_caller_deadline_is_preserved_for_attempt(self) -> None:
+        caller_deadline = ORIGIN + timedelta(seconds=2)
+        provider = _Provider(self.matched(), self.clock)
+        report = self.execute(
+            self.request("caller-deadline"),
+            provider,
+            context=self.context(caller_deadline),
+        )
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(provider.deadlines, [caller_deadline])
+
+    def test_expired_caller_stops_before_gate(self) -> None:
+        request = self.request("expired-caller")
+        with patch.object(self.gate, "try_acquire") as acquire:
+            report = self.execute(
+                request,
+                _Provider(self.matched(), self.clock),
+                context=self.context(ORIGIN),
             )
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.RETRY_EXHAUSTED)
+        acquire.assert_not_called()
+
+    def test_deadline_race_after_claim_returns_truthful_in_progress(self) -> None:
+        request = self.request("post-claim-deadline")
+        provider = _Provider(self.matched(), self.clock)
+        real_claim = self.work.claim
+
+        def claim_then_expire(*args: object, **kwargs: object):
+            claim = real_claim(*args, **kwargs)
+            self.clock.now = ORIGIN + timedelta(seconds=2)
+            return claim
+
+        with patch.object(self.work, "claim", side_effect=claim_then_expire):
+            report = self.execute(
+                request,
+                provider,
+                context=self.context(ORIGIN + timedelta(seconds=1)),
+            )
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(provider.starts, 0)
         self.assertEqual(
             self.connection.execute(
                 "SELECT state,attempt_count FROM hardcover_identity_generations WHERE work_key=?",
                 (request.work_key,),
             ).fetchone(),
-            ("claimed", 1),
+            ("claimed", 0),
         )
-        self.clock.now += timedelta(seconds=15, microseconds=1)
-        provider = _ScriptedProvider(self.matched())
-        report = self.executor(provider).run(request, self.context())
-        self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
-        self.assertEqual(len(provider.starts), 1)
+
+    def test_late_match_is_published_as_retry_wait_not_success(self) -> None:
+        request = self.request("late")
+        provider = _LateProvider(self.matched(), self.clock)
+        report = self.execute(request, provider)
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(provider.starts, 1)
         self.assertEqual(
             self.connection.execute(
-                "SELECT attempt_count,state FROM hardcover_identity_generations WHERE work_key=?",
+                "SELECT state FROM hardcover_identity_generations WHERE work_key=?",
                 (request.work_key,),
             ).fetchone(),
-            (2, "succeeded"),
+            ("retry_wait",),
         )
+
+    def test_gate_acquisition_and_release_fail_closed(self) -> None:
+        for gate in (_FailingGate(), _ReleaseFailureGate()):
+            with self.subTest(gate=type(gate).__name__):
+                report = self.execute(
+                    self.request(type(gate).__name__),
+                    _Provider(self.matched(), self.clock),
+                    gate=gate,
+                )
+                self.assertEqual(
+                    report.outcome,
+                    HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+                )
+
+    def test_control_flow_exception_propagates_after_gate_release(self) -> None:
+        with self.assertRaises(_ProcessDeath):
+            self.execute(
+                self.request("control-flow"),
+                _Provider(_ProcessDeath(), self.clock),
+            )
+        contender = self.gate.try_acquire()
+        self.assertIsNotNone(contender)
+        contender.release()
 
 
 class HardcoverIdentityGateTests(unittest.TestCase):
@@ -364,53 +444,6 @@ class HardcoverIdentityGateTests(unittest.TestCase):
         with self.assertRaises(HardcoverIdentityGateError):
             lease.validate_for_send()
         lease.release()
-
-
-class TemporaryCancellationSignalTests(unittest.TestCase):
-    def test_handlers_set_event_and_restore_exact_values_on_all_exits(self) -> None:
-        event = threading.Event()
-        before = {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)}
-        with self.assertRaises(KeyboardInterrupt):
-            with temporary_cancellation_signals(event):
-                current = signal.getsignal(signal.SIGINT)
-                current(signal.SIGINT, None)
-                self.assertTrue(event.is_set())
-                raise KeyboardInterrupt
-        self.assertEqual(
-            {number: signal.getsignal(number) for number in (signal.SIGINT, signal.SIGTERM)},
-            before,
-        )
-
-    def test_partial_install_restores_and_non_main_thread_is_rejected(self) -> None:
-        event = threading.Event()
-        original = signal.getsignal(signal.SIGINT)
-        real_signal = signal.signal
-
-        def fail_second(number: signal.Signals, handler: object):
-            if number == signal.SIGTERM:
-                raise OSError("synthetic")
-            return real_signal(number, handler)
-
-        with patch("signal.signal", side_effect=fail_second):
-            with self.assertRaises(OSError):
-                with temporary_cancellation_signals(event):
-                    pass
-        self.assertEqual(signal.getsignal(signal.SIGINT), original)
-
-        failures: list[BaseException] = []
-
-        def run() -> None:
-            try:
-                with temporary_cancellation_signals(event):
-                    pass
-            except BaseException as error:
-                failures.append(error)
-
-        thread = threading.Thread(target=run)
-        thread.start()
-        thread.join()
-        self.assertEqual(len(failures), 1)
-        self.assertIsInstance(failures[0], RuntimeError)
 
 
 if __name__ == "__main__":

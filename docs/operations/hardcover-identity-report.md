@@ -168,22 +168,27 @@ mechanical-librarian hardcover-identity-report \
 
 The disposable-path rules are the same as the durable-work preview. The
 command publishes an owner-only schema-9 database, retains the owner-only
-`.mechanical-librarian-hardcover-identity.lock`, and runs six independent
-synthetic generations through the real application executor, repository, and
-descriptor-bound nonblocking `flock`. It proves retry then match, exact
-deadline before gate acquisition, cancellation before and during an attempt,
-post-start death and later fenced recovery, the three-start cap, and one-shot
-no-retry behavior. There is no DNS, socket, HTTP, credential, live Hardcover
-request, proposal, or production composition.
+`.mechanical-librarian-hardcover-identity.lock`, and runs a strict set of
+semantic cases through the real one-attempt application executor, repository,
+and descriptor-bound nonblocking `flock`. It proves persisted aggregate and
+caller deadlines before the gate, one successful and one retryable attempt,
+busy-gate behavior, caller-deadline clipping, exact late-result rejection,
+closed gate-failure mapping, and stale-generation replacement. There is no DNS,
+socket, HTTP, credential, live Hardcover request, proposal, or production
+composition. Contributor labels and process names are translated to fixed
+internal synthetic identities and are absent from SQLite main, WAL, and SHM.
 
-The executor checks the durable 30-second aggregate deadline before trying the
-gate. A busy gate returns `in_progress` without a claim or start. Under the
-gate, claim still does not consume budget; atomic renew-and-start requires six
-seconds remaining, renews the lease for 15 seconds, and alone authorizes one
-five-second transport attempt. Retry delays are exactly one second after start
-one and two seconds after start two, extended by a valid later `Retry-After`
-value. The gate remains held through confirmed close and durable publication,
-then is released before waiting.
+The executor inspects the persisted 30-second aggregate deadline and caller
+deadline before trying the gate. A busy gate returns `in_progress` without a
+claim or start. Under the gate, claim still does not consume budget; atomic
+renew-and-start requires six seconds remaining, renews the lease for 15 seconds,
+and alone authorizes one provider attempt. Its context ends at the earlier of
+the caller deadline and start plus five seconds. A provider result arriving at
+or after that boundary is converted to timeout before durable publication.
+Retryable outcomes publish retry-wait state and return `in_progress`; this
+increment does not wait, retry, recover, cancel, or install signal handlers.
+The gate remains held through durable publication and is released on every
+ordinary and base-exception path.
 
 The canonical demonstration is:
 
@@ -199,7 +204,7 @@ uv run --frozen --no-editable --reinstall-package mechanical-librarian \
 Stdout must be byte-identical to
 `tests/fixtures/hardcover_identity/c5-safe-executor-example-output.json`.
 The cumulative C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`4f3233ce2ee822367536cb3ac05694769f67ea4911e749cac917b5a3e920ad35`.
+`33e480ddb383283d8a9e1a026847778dc0e59becf88f4870a4e957ff7ac2fe7d`.
 It derives from the merged C4 registry and adds only `safe-executor-v3`.
 
 The gate is deployment-scoped, not credential-scoped. Operators must not reuse

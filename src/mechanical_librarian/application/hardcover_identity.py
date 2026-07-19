@@ -129,18 +129,9 @@ def _isbn_identity_or_none(value: object):
 @dataclass(frozen=True, slots=True)
 class IdentityAttemptFailure:
     kind: IdentityAttemptFailureKind
-    retry_after_seconds: int | None = None
 
     def __post_init__(self) -> None:
-        if (
-            type(self.kind) is not IdentityAttemptFailureKind
-            or self.retry_after_seconds is not None
-            and (
-                self.kind is not IdentityAttemptFailureKind.RATE_LIMITED
-                or type(self.retry_after_seconds) is not int
-                or not 0 <= self.retry_after_seconds <= 30
-            )
-        ):
+        if type(self.kind) is not IdentityAttemptFailureKind:
             raise ValueError("identity attempt failure is malformed")
 
 
@@ -171,13 +162,8 @@ class IdentityAttemptResult:
         return cls(observations=observations)
 
     @classmethod
-    def failed(
-        cls,
-        kind: IdentityAttemptFailureKind,
-        *,
-        retry_after_seconds: int | None = None,
-    ) -> IdentityAttemptResult:
-        return cls(failure=IdentityAttemptFailure(kind, retry_after_seconds))
+    def failed(cls, kind: IdentityAttemptFailureKind) -> IdentityAttemptResult:
+        return cls(failure=IdentityAttemptFailure(kind))
 
     def __repr__(self) -> str:
         return "IdentityAttemptResult(<redacted>)"
@@ -320,27 +306,29 @@ class DurableWorkPreviewReport:
 @dataclass(frozen=True, slots=True)
 class SafeExecutorPreviewReport:
     outcome: str
-    independent_generations: int
+    cases_executed: int
+    attempts_started: int
     gate_order_verified: bool
-    release_before_wait_verified: bool
-    death_recovery_gate_owned: bool
-    fourth_start_forbidden: bool
-    same_process_signals_verified: bool
-    one_shot_egress_count: int
+    deadline_before_gate_verified: bool
+    caller_deadline_verified: bool
+    late_result_rejected: bool
+    closed_mapping_verified: bool
+    contributor_labels_private: bool
 
     def validate(self) -> None:
         if (
             self.outcome != "all_cases_passed"
             or type(self.outcome) is not str
-            or type(self.independent_generations) is not int
-            or self.independent_generations != 6
-            or self.gate_order_verified is not True
-            or self.release_before_wait_verified is not True
-            or self.death_recovery_gate_owned is not True
-            or self.fourth_start_forbidden is not True
-            or self.same_process_signals_verified is not True
-            or type(self.one_shot_egress_count) is not int
-            or self.one_shot_egress_count != 1
+            or type(self.cases_executed) is not int
+            or not 1 <= self.cases_executed <= 16
+            or type(self.attempts_started) is not int
+            or not 0 <= self.attempts_started <= self.cases_executed
+            or type(self.gate_order_verified) is not bool
+            or type(self.deadline_before_gate_verified) is not bool
+            or type(self.caller_deadline_verified) is not bool
+            or type(self.late_result_rejected) is not bool
+            or type(self.closed_mapping_verified) is not bool
+            or self.contributor_labels_private is not True
         ):
             raise TypeError("Hardcover safe executor preview report is malformed")
 
@@ -352,13 +340,14 @@ class SafeExecutorPreviewReport:
                 "scenario": "safe-executor-v3",
                 "result": {
                     "outcome": self.outcome,
-                    "independent_generations": self.independent_generations,
+                    "cases_executed": self.cases_executed,
+                    "attempts_started": self.attempts_started,
                     "gate_order_verified": self.gate_order_verified,
-                    "release_before_wait_verified": self.release_before_wait_verified,
-                    "death_recovery_gate_owned": self.death_recovery_gate_owned,
-                    "fourth_start_forbidden": self.fourth_start_forbidden,
-                    "same_process_signals_verified": self.same_process_signals_verified,
-                    "one_shot_egress_count": self.one_shot_egress_count,
+                    "deadline_before_gate_verified": self.deadline_before_gate_verified,
+                    "caller_deadline_verified": self.caller_deadline_verified,
+                    "late_result_rejected": self.late_result_rejected,
+                    "closed_mapping_verified": self.closed_mapping_verified,
+                    "contributor_labels_private": self.contributor_labels_private,
                 },
             },
             ensure_ascii=True,
@@ -902,14 +891,6 @@ class HardcoverIdentityWorkPersistence(Protocol):
         self, reference: IdentityWorkReference, now: datetime
     ) -> IdentityWorkInspection: ...
 
-    def finish_waiting(
-        self,
-        reference: IdentityWorkReference,
-        now: datetime,
-        *,
-        cancelled: bool,
-    ) -> IdentityWorkStatus: ...
-
     def claim(
         self,
         reference: IdentityWorkReference,
@@ -950,7 +931,6 @@ class HardcoverIdentityWorkPersistence(Protocol):
         now: datetime,
         *,
         retryable: bool,
-        retry_at: datetime | None = None,
         gate_owned: bool,
         fail_before_commit: bool = False,
     ) -> IdentityWorkStatus: ...
@@ -1016,29 +996,6 @@ class ManageHardcoverIdentityWork:
         result = self._persistence.inspect(reference, now)
         if type(result) is not IdentityWorkInspection or result.reference != reference:
             raise TypeError("Hardcover identity work inspection is malformed")
-        return result
-
-    def finish_waiting(
-        self,
-        reference: IdentityWorkReference,
-        now: datetime,
-        *,
-        cancelled: bool,
-    ) -> IdentityWorkStatus:
-        result = self._persistence.finish_waiting(
-            reference, now, cancelled=cancelled
-        )
-        expected = (
-            IdentityWorkOutcome.CANCELLED
-            if cancelled
-            else IdentityWorkOutcome.RETRY_EXHAUSTED
-        )
-        if (
-            type(result) is not IdentityWorkStatus
-            or result.reference != reference
-            or result.outcome is not expected
-        ):
-            raise TypeError("Hardcover identity work completion is malformed")
         return result
 
     def claim(
@@ -1135,7 +1092,6 @@ class ManageHardcoverIdentityWork:
         now: datetime,
         *,
         retryable: bool,
-        retry_at: datetime | None = None,
         gate_owned: bool,
         fail_before_commit: bool = False,
     ) -> IdentityWorkStatus:
@@ -1144,7 +1100,6 @@ class ManageHardcoverIdentityWork:
             owner,
             now,
             retryable=retryable,
-            retry_at=retry_at,
             gate_owned=gate_owned,
             fail_before_commit=fail_before_commit,
         )

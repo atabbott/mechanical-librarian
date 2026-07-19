@@ -896,11 +896,14 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "preview-output-privacy-scan-v2.json": "81aa8c3db583bdd326ccda572dcb510060bb1868e93b449737d71adef7bee7bc",
             "preview-registry-c4-v6.json": "3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81",
             "schema8-logical-snapshot-ledger.json": "140d3d17ad743f8860ff216052976344ff2f7258096f45765d286b9b4887508c",
-            "c5-safe-executor-input.json": "fed8b5bf0332527456c0ae02d1720e8166cc62b30cfcbf8661d9781193e4c08f",
-            "c5-safe-executor-input-schema.json": "35f4ee64a1771b43d8d25134c087578f9f2bb6c2236e7a5b4a5b1e08f1d0da55",
-            "c5-safe-executor-example-output.json": "7b7c7271ab364f6b73c595f05ca17d49f80062f70c67052cd6635f7610d16b5c",
-            "c5-safe-executor-variant-matrix.json": "14b50c34c57530f78bc4c72fabce221781e57c2393cbef808e499ad86826aa14",
-            "preview-registry-c5-v6.json": "4f3233ce2ee822367536cb3ac05694769f67ea4911e749cac917b5a3e920ad35",
+            "c5-safe-executor-input.json": "996a9b77206ea9636ceb6d6de86bcc729b9e60450e746d37a70365c832633f6c",
+            "c5-safe-executor-input-schema.json": "f6ff70d659051a105f2f4227b49136f86966ca37665a88af889990424dacb659",
+            "c5-safe-executor-example-output.json": "dbc08d6ed8237f2908270e4726a029fba5fa8937275cb507494abd4b592e6a77",
+            "c5-safe-executor-variant-matrix.json": "e7717a9b51fc56eab9cdee8d252fc3152a24fb0b3bd367937ab072bdf23b068a",
+            "preview-output-schema-c5-v6.json": "24a75efc9f8696c448d6d9e8597e3eb8f5aee821a5e784db8cef3b71c866da43",
+            "preview-output-privacy-contract-c5-v3.json": "fb5f9e16922b02f85fbc632452f8a56a2a45a8e8ab19ae01e3945796d80767d2",
+            "preview-output-privacy-scan-c5-v3.json": "f0bbc34ac3655774e74e0073b1799855434da4fe2ac60665051269807e06e03f",
+            "preview-registry-c5-v6.json": "33e480ddb383283d8a9e1a026847778dc0e59becf88f4870a4e957ff7ac2fe7d",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)

@@ -265,8 +265,26 @@ descriptor-relative serialized staging and no-replace publication without
 changing the process working directory. Parent replacement and symlink
 swaps are rejected and private staging is removed, including on base exceptions.
 
-The exact current-head registry is `preview-registry-c4-v6.json`, SHA-256
+The exact increment-4 registry is `preview-registry-c4-v6.json`, SHA-256
 `3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81`.
 It derives from the installed C3 registry and binds the canonical C4 input,
 output, closed input schema, variant matrix, cumulative schema-v5 output,
 privacy contract/scan, and contributor-independent schema-8 dump and ledger.
+
+Increment 5 adds one bounded executor invocation without activating production
+composition. It accepts or refreshes one work generation, inspects the
+persisted aggregate deadline before acquiring the deployment gate, claims and
+atomically starts only under that gate, invokes the provider exactly once, and
+publishes through the current durable fence. The attempt deadline is the
+earlier of the caller deadline and start plus five seconds; results at or after
+that boundary are late and publish as timeout. A busy gate, existing claimed or
+retry-wait state, and retryable publication return `in_progress`. This executor
+does not wait, loop, recover, cancel, install signal handlers, or start a later
+candidate; those lifecycle responsibilities remain separately tracked.
+
+The exact C5 registry is `preview-registry-c5-v6.json`, SHA-256
+`33e480ddb383283d8a9e1a026847778dc0e59becf88f4870a4e957ff7ac2fe7d`.
+It derives from the exact C4 registry and binds a separate cumulative C5 output
+schema, privacy contract, privacy scan, and strict semantic fixture set without
+modifying predecessor evidence. Contributor labels, process names, and the
+exact serialized stdin are absent from every SQLite database-prefix channel.

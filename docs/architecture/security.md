@@ -546,11 +546,13 @@ process-global working-directory change; device/inode/owner/mode
 revalidation rejects parent swaps without publishing into the replacement.
 
 F09f increment 5 replaces structural gate assertions only in the new
-`safe-executor-v3` synthetic lane. `RunHardcoverIdentityReport` owns acceptance,
-deadline, nonblocking gate acquisition, claim/fence, atomic start accounting,
-one typed provider attempt, cancellation, retry/recovery, and publication. The
-provider port owns exactly one attempt and cannot claim, retry, wait, recover,
-or publish. Production composition remains absent.
+`safe-executor-v3` synthetic lane. `RunSafeHardcoverIdentity` owns acceptance,
+inspection of the persisted aggregate deadline, nonblocking gate acquisition,
+claim/fence, atomic start accounting, one typed provider attempt, and durable
+publication. The provider port owns exactly one attempt and cannot claim,
+retry, wait, recover, or publish. Durable retry state remains available for a
+later orchestrator, but this executor never waits, retries, recovers, installs
+signal handlers, or loops. Production composition remains absent.
 
 The deployment gate canonicalizes the state parent and binds its directory,
 database, and exact `.mechanical-librarian-hardcover-identity.lock` entries to
@@ -564,22 +566,17 @@ identity, final symlink, hardlink, nonregular database, permissive root, and
 lock/database replacement fail closed. The lock is stable and never unlinked
 during operation.
 
-The 30-second durable aggregate window includes contention, transport, close,
-publication, and waits. Deadline is checked before gate acquisition. Atomic
-renew-and-start requires six seconds remaining, extends the current fence lease
-to 15 seconds, records consumption, and is the sole send authority. The
-transport context cuts off at start plus five seconds, reserving one second for
-confirmed close and publication. Only `rate_limited`, `timeout`, and
-`unavailable` retry; fixed one/two-second delays use the later valid bounded
-Retry-After and are persisted only when the due time leaves the full start
-reserve. Interrupted post-start work consumes its attempt; pre-start recovery
-reuses its candidate. No fourth start exists.
-
-Temporary SIGINT/SIGTERM handlers set only an in-memory cancellation event and
-restore the exact previous handlers on every exit. Claimed cancellation closes
-the attempt before current-fence publication and gate release; waiting work is
-cancelled durably without a send. Interpreter control flow is not translated.
-Hard kill relies on lease expiry, new gate ownership, and fenced recovery.
+The persisted 30-second aggregate window is inspected before gate acquisition,
+and the caller deadline is checked at the same boundary. A busy gate returns
+`in_progress` without claim or start. Under the gate, atomic renew-and-start
+requires six seconds remaining, extends the current fence lease to 15 seconds,
+records consumption, and is the sole send authority. The attempt context ends
+at the earlier of the caller deadline and start plus five seconds. A result at
+or after that exact boundary is converted to timeout before publication.
+`rate_limited`, `timeout`, and `unavailable` publish retryable durable state and
+return `in_progress`; a future invocation is not started by this executor.
+Ordinary gate, provider, and persistence failures map to closed public outcomes,
+while interpreter control flow is re-raised after gate cleanup.
 
 F07b treats the service path projection, private logical binding, EPUB archive,
 and persisted canonical report as hostile inputs. Callers can supply only
