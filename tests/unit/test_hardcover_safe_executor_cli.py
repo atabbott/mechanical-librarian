@@ -237,7 +237,7 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         payload = registry_path.read_bytes()
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "2056699e704aa71d6da2e07bf945582e5766f4bad68d8e378c654a7300a91d48",
+            "0f0ae4c1284af4562d8c2c90c0626d47dfbbe927c10400c3e8849bd3d4c33a3a",
         )
         registry = json.loads(payload)
         self.assertEqual(

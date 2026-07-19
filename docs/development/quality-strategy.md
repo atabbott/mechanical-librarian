@@ -178,7 +178,9 @@ executor retry, exact six-second reserve and insufficient-reserve terminal
 mapping, stale generation replacement, path aliases and entry
 replacement, ordinary and base-exception cleanup, exact-input and
 contributor-control data-flow privacy with collision-safe taint sentinels and
-per-channel/source poisoning, no egress, and no production
+per-channel/source poisoning, actual transient WAL/SHM capture, and rejection of
+raw or full-digest persistence poison without treating unrelated 32-bit digest
+prefix collisions as flow, no egress, and no production
 composition. No live Hardcover call is part of increment 5. Retry scheduling,
 waiting, cancellation, signal handling, and restart orchestration remain a
 later increment.

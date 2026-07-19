@@ -1,14 +1,14 @@
 {
   "available_through_increment": "Execute one bounded Hardcover identity attempt with durable authority",
   "output_privacy_contract": {
-    "bytes": 2680,
+    "bytes": 3225,
     "path": "preview-output-privacy-contract-c5-v3.json",
-    "sha256": "4df0ca6da6ee96f59f3e78218297939544dc58b558144955afe34b9d7eac1159"
+    "sha256": "096238faaf64ceddbae3e94c03b246287b5e35095887d10cbb0923f865c97efc"
   },
   "output_privacy_scan": {
-    "bytes": 1804,
+    "bytes": 2478,
     "path": "preview-output-privacy-scan-c5-v3.json",
-    "sha256": "cfc78ac3ef48028703be51cf2f142cf68293d98e4169242b35651ab95a5a5de5"
+    "sha256": "4327999423526380770b3bec75c32940ad8e44274a0ac853e3720ee216b446b6"
   },
   "output_schema": {
     "bytes": 3979,

@@ -2142,6 +2142,16 @@ def _run_hardcover_safe_executor_preview(
                 elif operation == "gate_failure":
                     verified["closed"] = provider.starts == 0
 
+            if privacy_observer is not None:
+                try:
+                    privacy_observer(
+                        "persistence_checkpoint", ("sqlite-main-wal-shm",)
+                    )
+                except Exception as exc:
+                    raise SchemaError(
+                        "safe executor privacy persistence observation failed"
+                    ) from exc
+
             labels_private = (
                 48 < len(_C5_INTERNAL_OWNER) <= 64
                 and all(owner == _C5_INTERNAL_OWNER for owner in owners)

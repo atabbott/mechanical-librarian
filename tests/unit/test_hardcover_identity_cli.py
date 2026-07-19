@@ -901,9 +901,9 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c5-safe-executor-example-output.json": "9686ac45ad83d43861fa869ef81dea2cf175de36b7076baa52d2f84a2f5f27c6",
             "c5-safe-executor-variant-matrix.json": "4e5d5515ddd8ae9a6eda77917a591447d88eed3167b6bf53e779a81e48c04ada",
             "preview-output-schema-c5-v6.json": "24a75efc9f8696c448d6d9e8597e3eb8f5aee821a5e784db8cef3b71c866da43",
-            "preview-output-privacy-contract-c5-v3.json": "4df0ca6da6ee96f59f3e78218297939544dc58b558144955afe34b9d7eac1159",
-            "preview-output-privacy-scan-c5-v3.json": "cfc78ac3ef48028703be51cf2f142cf68293d98e4169242b35651ab95a5a5de5",
-            "preview-registry-c5-v6.json": "2056699e704aa71d6da2e07bf945582e5766f4bad68d8e378c654a7300a91d48",
+            "preview-output-privacy-contract-c5-v3.json": "096238faaf64ceddbae3e94c03b246287b5e35095887d10cbb0923f865c97efc",
+            "preview-output-privacy-scan-c5-v3.json": "4327999423526380770b3bec75c32940ad8e44274a0ac853e3720ee216b446b6",
+            "preview-registry-c5-v6.json": "0f0ae4c1284af4562d8c2c90c0626d47dfbbe927c10400c3e8849bd3d4c33a3a",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)

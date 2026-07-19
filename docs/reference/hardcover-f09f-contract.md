@@ -285,7 +285,7 @@ does not wait, loop, recover, cancel, install signal handlers, or start a later
 candidate; those lifecycle responsibilities remain separately tracked.
 
 The exact C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`2056699e704aa71d6da2e07bf945582e5766f4bad68d8e378c654a7300a91d48`.
+`0f0ae4c1284af4562d8c2c90c0626d47dfbbe927c10400c3e8849bd3d4c33a3a`.
 It derives from the exact C4 registry and binds a separate cumulative C5 output
 schema, privacy contract, privacy scan, and strict semantic fixture set without
 modifying predecessor evidence. Contributor labels and process names are
@@ -294,3 +294,9 @@ crosses the persistence seam, and no runtime or persisted value derives from
 them. Sentinel-bearing and ordinary-vocabulary collision variants prove that
 flow without treating equal incidental text as a leak. The exact serialized
 stdin is absent from every SQLite database-prefix channel.
+Privacy qualification materializes disposable-state WAL frames only through a
+test-only observer transaction whose timestamp value is restored and read back
+exactly. It scans nonempty main, WAL, and SHM while present and main after close.
+For arbitrary SQLite binary/text/hex, only eight-hex 32-bit digest prefixes are
+excluded as collision-prone substring evidence; exact/raw values, full
+encodings, full collision-resistant digests, and causal poison remain forbidden.

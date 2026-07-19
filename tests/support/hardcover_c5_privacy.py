@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -118,6 +119,7 @@ def c5_forbidden_corpus(
     database_paths: Sequence[Path],
     *,
     allowed_values: Sequence[str],
+    persistence_safe: bool = False,
 ) -> dict[str, frozenset[str]]:
     contributor = set()
     # Only the canonical and sentinel-bearing controls are taint sources. The
@@ -126,37 +128,49 @@ def c5_forbidden_corpus(
     for variant in variants:
         if variant.name == "taint-sentinel":
             for value in variant.contributor_values:
-                contributor.update(text_projections(value))
+                contributor.update(_text_projections(value, persistence_safe))
         elif variant.name == "canonical":
             for value in variant.contributor_values:
-                contributor.update(blob_projections(value.encode("utf-8")))
+                contributor.update(
+                    _blob_projections(value.encode("utf-8"), persistence_safe)
+                )
     query = {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
-    private_query = set(blob_projections(json.dumps(query).encode("utf-8")))
+    private_query = set(
+        _blob_projections(json.dumps(query).encode("utf-8"), persistence_safe)
+    )
     for value in query.values():
         private_query.update(
-            text_projections(value, allow_numeric_prefix=value.isdigit())
+            _text_projections(
+                value, persistence_safe, allow_numeric_prefix=value.isdigit()
+            )
         )
     isbn_identity = set()
     for value in ("9780000000019", "0000000019"):
-        isbn_identity.update(blob_projections(value.encode("ascii")))
+        isbn_identity.update(
+            _blob_projections(value.encode("ascii"), persistence_safe)
+        )
     provider_identity = set(
-        blob_projections(b"Synthetic Ebook Alpha")
-        | blob_projections(b'"id":1001')
-        | blob_projections(b'"book_id":2001')
+        _blob_projections(b"Synthetic Ebook Alpha", persistence_safe)
+        | _blob_projections(b'"id":1001', persistence_safe)
+        | _blob_projections(b'"book_id":2001', persistence_safe)
     )
     database_identity = set()
     for path in database_paths:
         for value in (str(path), path.name, str(path.parent), path.parent.name):
-            database_identity.update(text_projections(value))
+            database_identity.update(_text_projections(value, persistence_safe))
     serialized_input = set()
     for variant in variants:
-        serialized_input.update(blob_projections(variant.payload))
+        serialized_input.update(
+            _blob_projections(variant.payload, persistence_safe)
+        )
     resource_identity = set()
     for relative in C5_RESOURCE_PATHS:
         payload = (repo_root / relative).read_bytes()
         for value in (relative.as_posix(), relative.name):
-            resource_identity.update(blob_projections(value.encode("utf-8")))
-        resource_identity.update(blob_projections(payload))
+            resource_identity.update(
+                _blob_projections(value.encode("utf-8"), persistence_safe)
+            )
+        resource_identity.update(_blob_projections(payload, persistence_safe))
     corpus = {
         "contributor_control": contributor,
         "private_query": private_query,
@@ -178,14 +192,70 @@ def c5_forbidden_corpus(
 
 
 def assert_c5_channels_private(
-    channels: Mapping[str, list[str]], corpus: Mapping[str, frozenset[str]]
+    channels: Mapping[str, list[str]],
+    corpus: Mapping[str, frozenset[str]],
+    *,
+    persistence_corpus: Mapping[str, frozenset[str]] | None = None,
 ) -> None:
+    if persistence_corpus is None:
+        persistence_corpus = corpus
+    runtime_channels = {
+        channel: ([] if channel == "persistence" else values)
+        for channel, values in channels.items()
+    }
     assert_projection_channels_private(
-        channels,
+        runtime_channels,
         corpus,
         expected_channels=C5_CAPTURE_CHANNELS,
         expected_source_classes=C5_FORBIDDEN_SOURCE_CLASSES,
     )
+    persistence_channels = {
+        channel: (values if channel == "persistence" else [])
+        for channel, values in channels.items()
+    }
+    assert_projection_channels_private(
+        persistence_channels,
+        persistence_corpus,
+        expected_channels=C5_CAPTURE_CHANNELS,
+        expected_source_classes=C5_FORBIDDEN_SOURCE_CLASSES,
+    )
+
+
+def _blob_projections(payload: bytes, persistence_safe: bool) -> frozenset[str]:
+    projections = blob_projections(payload)
+    if not persistence_safe:
+        return projections
+    return projections - _short_digest_prefixes(payload)
+
+
+def _text_projections(
+    value: str,
+    persistence_safe: bool,
+    *,
+    allow_numeric_prefix: bool = False,
+) -> frozenset[str]:
+    projections = text_projections(
+        value, allow_numeric_prefix=allow_numeric_prefix
+    )
+    if not persistence_safe:
+        return projections
+    return projections - _short_digest_prefixes(value.encode("utf-8"))
+
+
+def _short_digest_prefixes(payload: bytes) -> frozenset[str]:
+    digesters = (
+        hashlib.md5(payload, usedforsecurity=False),
+        hashlib.sha1(payload, usedforsecurity=False),
+        hashlib.sha224(payload),
+        hashlib.sha256(payload),
+        hashlib.sha384(payload),
+        hashlib.sha512(payload),
+        hashlib.sha3_256(payload),
+        hashlib.sha3_512(payload),
+        hashlib.blake2s(payload),
+        hashlib.blake2b(payload),
+    )
+    return frozenset(digester.hexdigest()[:8] for digester in digesters)
 
 
 __all__ = [

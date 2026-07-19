@@ -584,6 +584,13 @@ identity. The executor uses one fixed 55-character internal owner outside the
 complete label and process syntax domains. Qualification uses sentinel-bearing
 controls, owner readback, and an internal-vocabulary collision variant, so an
 equal word such as `pending` is not confused with contributor-derived flow.
+The persistence scanner likewise ignores only eight-hex 32-bit digest prefixes
+inside arbitrary SQLite bytes/text/hex because unrelated durable identities can
+collide. It still rejects exact/raw contributor values, full encodings and
+collision-resistant digests, and causal poison. A synthetic-only observer
+materializes and exactly restores one timestamp transaction so qualification
+captures nonempty main, WAL, and SHM while present without changing durable
+domain state or production authority.
 Ordinary gate, provider, and persistence failures map to closed public outcomes,
 while interpreter control flow is re-raised after gate cleanup.
 

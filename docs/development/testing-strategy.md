@@ -344,8 +344,10 @@ tests re-raise base interpreter control flow only after gate cleanup and do not
 install process signal handlers. Egress, secret, fixture-oracle, exact
 contributor-stdin, contributor-label, private-value persistence/output,
 malformed schedule, clock regression, stale fence, and production-composition
-traps remain active. Persistence privacy scans every SQLite main, WAL, and SHM
-channel after close.
+traps remain active. Under the existing synthetic privacy observer, a test-only
+connection commits and exactly restores one timestamp solely to materialize WAL
+frames. Qualification asserts and scans nonempty SQLite main, WAL, and SHM while
+present, verifies exact pre/post readback, then scans main again after close.
 
 The C5 privacy contract reuses the shared projection scanner across 17 capture
 channels and seven source classes. Canonical, taint-sentinel, and ordinary-word
@@ -354,6 +356,11 @@ corpus scan, completeness failures, and representative poison for every
 channel/source pair make that boundary executable. The immutable predecessor
 title-only proof remains bound by issue #276 and the exact C4 registry rather
 than being duplicated in C5.
+Arbitrary SQLite binary, Latin-1, and hexadecimal capture omits only eight-hex
+32-bit digest prefixes from substring matching because unrelated work-key bytes
+can collide. Exact/raw values, full encodings and collision-resistant digests,
+hash/fingerprint spies, causal poison, and all non-persistence channels retain
+the complete projection corpus.
 
 F09g tests first reject a stale or mismatched target, snapshot, source, file, or
 F07b evidence before provider disclosure or scheduling/binding new F09f work;

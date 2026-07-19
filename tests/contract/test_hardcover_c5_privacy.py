@@ -38,6 +38,15 @@ def _render(value: object) -> str:
         return repr(value)
 
 
+def _assert_transient_coverage(
+    coverage: dict[Path, set[str]], databases: tuple[Path, ...]
+) -> None:
+    if set(coverage) != set(databases) or any(
+        coverage[database] != {"main", "wal", "shm"} for database in databases
+    ):
+        raise PrivacyEvidenceError("C5 SQLite transient coverage is incomplete")
+
+
 class HardcoverC5PrivacyContractTests(unittest.TestCase):
     def test_projection_oracle_covers_every_boundary_and_rejects_poison(self) -> None:
         variants = c5_input_variants(ROOT)
@@ -72,11 +81,25 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
             corpus = c5_forbidden_corpus(
                 ROOT, variants, databases, allowed_values=allowed
             )
+            persistence_corpus = c5_forbidden_corpus(
+                ROOT,
+                variants,
+                databases,
+                allowed_values=allowed,
+                persistence_safe=True,
+            )
+            transient_coverage: dict[Path, set[str]] = {}
+            active_database: Path | None = None
+            checkpoint_connection: sqlite3.Connection | None = None
             original_log = logging.Logger._log
             original_append = __import__(
                 "mechanical_librarian.adapters.persistence.audit",
                 fromlist=["SQLiteAuditRepository"],
             ).SQLiteAuditRepository.append
+            original_connect_existing = __import__(
+                "mechanical_librarian.bootstrap.composition",
+                fromlist=["connect_existing"],
+            ).connect_existing
             original_hashes = {
                 algorithm: getattr(hashlib, algorithm)
                 for algorithm in (
@@ -114,8 +137,77 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                 channels["fingerprint_inputs"].append(_render((args, kwargs)))
                 raise AssertionError("safe executor reached fingerprint authority")
 
+            def connect_existing_spy(path):
+                nonlocal checkpoint_connection
+                connection = original_connect_existing(path)
+                if path == active_database:
+                    checkpoint_connection = connection
+                return connection
+
             def observer(channel: str, values: tuple[object, ...]) -> None:
-                if channel == "metrics":
+                if channel == "persistence_checkpoint":
+                    self.assertEqual(values, ("sqlite-main-wal-shm",))
+                    self.assertIsNotNone(active_database)
+                    self.assertIsNotNone(checkpoint_connection)
+                    assert active_database is not None
+                    assert checkpoint_connection is not None
+                    self.assertEqual(
+                        checkpoint_connection.execute(
+                            "PRAGMA journal_mode = WAL"
+                        ).fetchone(),
+                        ("wal",),
+                    )
+                    original_updated_at = checkpoint_connection.execute(
+                        "SELECT updated_at FROM hardcover_identity_generations "
+                        "WHERE rowid=(SELECT MIN(rowid) "
+                        "FROM hardcover_identity_generations)"
+                    ).fetchone()
+                    self.assertIsNotNone(original_updated_at)
+                    checkpoint_connection.execute("BEGIN IMMEDIATE")
+                    checkpoint_connection.execute(
+                        "UPDATE hardcover_identity_generations "
+                        "SET updated_at='2099-01-01T00:00:00.000000Z' "
+                        "WHERE rowid=(SELECT MIN(rowid) "
+                        "FROM hardcover_identity_generations)"
+                    )
+                    checkpoint_connection.commit()
+                    paths = {
+                        "main": active_database,
+                        "wal": Path(f"{active_database}-wal"),
+                        "shm": Path(f"{active_database}-shm"),
+                    }
+                    try:
+                        presence = {
+                            kind: path.is_file() for kind, path in paths.items()
+                        }
+                        self.assertTrue(all(presence.values()), presence)
+                        transient_coverage[active_database] = set(paths)
+                        for payload in (
+                            path.read_bytes() for path in paths.values()
+                        ):
+                            self.assertTrue(payload)
+                            channels["persistence"].extend(
+                                (payload.decode("latin-1"), payload.hex())
+                            )
+                    finally:
+                        checkpoint_connection.execute("BEGIN IMMEDIATE")
+                        checkpoint_connection.execute(
+                            "UPDATE hardcover_identity_generations "
+                            "SET updated_at=? WHERE rowid=(SELECT MIN(rowid) "
+                            "FROM hardcover_identity_generations)",
+                            original_updated_at,
+                        )
+                        checkpoint_connection.commit()
+                        self.assertEqual(
+                            checkpoint_connection.execute(
+                                "SELECT updated_at "
+                                "FROM hardcover_identity_generations "
+                                "WHERE rowid=(SELECT MIN(rowid) "
+                                "FROM hardcover_identity_generations)"
+                            ).fetchone(),
+                            original_updated_at,
+                        )
+                elif channel == "metrics":
                     name, labels, value, exemplar = values
                     channels["metric_names"].append(_render(name))
                     channels["metric_labels"].append(_render(labels))
@@ -125,6 +217,8 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                     channels[channel].append(_render(values))
 
             def runner(source, database):
+                nonlocal active_database
+                active_database = database
                 try:
                     return _run_hardcover_safe_executor_preview(
                         source, database, privacy_observer=observer
@@ -146,6 +240,8 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                         )
                     )
                     raise
+                finally:
+                    active_database = None
 
             outputs = []
             report_type = __import__(
@@ -169,6 +265,10 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                 patch(
                     "mechanical_librarian.bootstrap.composition.Fingerprint",
                     new=fingerprint_spy,
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.connect_existing",
+                    new=connect_existing_spy,
                 ),
                 patch.object(report_type, "to_json", new=export_spy),
             ]
@@ -211,6 +311,17 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                     channels["stderr"].append(stderr.getvalue())
                     outputs.append(stdout.getvalue())
             self.assertEqual(len(set(outputs)), 1)
+            _assert_transient_coverage(transient_coverage, databases)
+            with self.assertRaises(PrivacyEvidenceError):
+                _assert_transient_coverage(
+                    {
+                        database: ({"main", "wal"} if index == 0 else set(kinds))
+                        for index, (database, kinds) in enumerate(
+                            transient_coverage.items()
+                        )
+                    },
+                    databases,
+                )
             self.assertTrue(channels["traces"])
             self.assertTrue(channels["spans"])
             self.assertTrue(channels["metric_names"])
@@ -229,12 +340,10 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                     connection.close()
                 self.assertEqual(owners, {_C5_INTERNAL_OWNER})
                 self.assertTrue(owners.isdisjoint(variant.contributor_values))
-                for path in database.parent.iterdir():
-                    if path.name.startswith(database.name):
-                        payload = path.read_bytes()
-                        channels["persistence"].extend(
-                            (payload.decode("latin-1"), payload.hex())
-                        )
+                payload = database.read_bytes()
+                channels["persistence"].extend(
+                    (payload.decode("latin-1"), payload.hex())
+                )
 
             invalid = copy.deepcopy(variants[0].source)
             invalid["cases"][0]["operation"] = "not-an-operation"
@@ -295,7 +404,9 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
             channels["stderr"].append(text_stderr.getvalue())
 
             try:
-                assert_c5_channels_private(channels, corpus)
+                assert_c5_channels_private(
+                    channels, corpus, persistence_corpus=persistence_corpus
+                )
             except PrivacyEvidenceError:
                 collisions = [
                     (channel, source_class, projection)
@@ -309,6 +420,7 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                 assert_c5_channels_private(
                     {key: value for key, value in channels.items() if key != "spans"},
                     corpus,
+                    persistence_corpus=persistence_corpus,
                 )
             with self.assertRaises(PrivacyEvidenceError):
                 assert_c5_channels_private(
@@ -318,18 +430,54 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                         for key, value in corpus.items()
                         if key != "provider_identity"
                     },
+                    persistence_corpus=persistence_corpus,
                 )
+            short_prefix = hashlib.blake2s(b"contributor-iota").hexdigest()[:8]
+            full_digest = hashlib.blake2s(b"contributor-iota").hexdigest()
+            self.assertIn(short_prefix, corpus["contributor_control"])
+            self.assertNotIn(short_prefix, persistence_corpus["contributor_control"])
+            collision = {key: list(values) for key, values in channels.items()}
+            collision["persistence"].append(
+                f"unrelated-work-key-bytes-{short_prefix}-only"
+            )
+            assert_c5_channels_private(
+                collision, corpus, persistence_corpus=persistence_corpus
+            )
+            for poison in ("contributor-iota", full_digest):
+                poisoned = {key: list(values) for key, values in channels.items()}
+                poisoned["persistence"].append(poison)
+                with self.assertRaises(PrivacyEvidenceError):
+                    assert_c5_channels_private(
+                        poisoned,
+                        corpus,
+                        persistence_corpus=persistence_corpus,
+                    )
             probe_corpus = {
                 source_class: frozenset({sorted(corpus[source_class])[0]})
                 for source_class in C5_FORBIDDEN_SOURCE_CLASSES
             }
+            persistence_probe_corpus = {
+                source_class: frozenset(
+                    {sorted(persistence_corpus[source_class])[0]}
+                )
+                for source_class in C5_FORBIDDEN_SOURCE_CLASSES
+            }
             for channel in C5_CAPTURE_CHANNELS:
                 for source_class in C5_FORBIDDEN_SOURCE_CLASSES:
-                    projection = next(iter(probe_corpus[source_class]))
+                    active_corpus = (
+                        persistence_probe_corpus
+                        if channel == "persistence"
+                        else probe_corpus
+                    )
+                    projection = next(iter(active_corpus[source_class]))
                     poisoned = {key: list(values) for key, values in channels.items()}
                     poisoned[channel].append(projection)
                     with self.assertRaises(PrivacyEvidenceError):
-                        assert_c5_channels_private(poisoned, probe_corpus)
+                        assert_c5_channels_private(
+                            poisoned,
+                            probe_corpus,
+                            persistence_corpus=persistence_probe_corpus,
+                        )
 
 
 if __name__ == "__main__":

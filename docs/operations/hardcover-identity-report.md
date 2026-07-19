@@ -177,6 +177,9 @@ closed gate-failure mapping, and stale-generation replacement. There is no DNS,
 socket, HTTP, credential, live Hardcover request, proposal, or production
 composition. Contributor labels and process names are translated to fixed
 internal synthetic identities and are absent from SQLite main, WAL, and SHM.
+Qualification captures transient WAL/SHM only under the synthetic privacy
+observer, using one exactly restored test-only timestamp mutation; no such
+materialization path is production authority.
 
 The executor inspects the persisted 30-second aggregate deadline and caller
 deadline before trying the gate. A busy gate returns `in_progress` without a
@@ -204,7 +207,7 @@ uv run --frozen --no-editable --reinstall-package mechanical-librarian \
 Stdout must be byte-identical to
 `tests/fixtures/hardcover_identity/c5-safe-executor-example-output.json`.
 The cumulative C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`2056699e704aa71d6da2e07bf945582e5766f4bad68d8e378c654a7300a91d48`.
+`0f0ae4c1284af4562d8c2c90c0626d47dfbbe927c10400c3e8849bd3d4c33a3a`.
 It derives from the merged C4 registry and adds only `safe-executor-v3`.
 
 The gate is deployment-scoped, not credential-scoped. Operators must not reuse
