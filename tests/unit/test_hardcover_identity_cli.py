@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import base64
 from contextlib import ExitStack, contextmanager
 import io
 import hashlib
@@ -18,6 +17,7 @@ from unittest.mock import Mock, patch
 from mechanical_librarian.application.hardcover_identity import (
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
+    IdentityDecisionPreviewReport,
     InertPreviewReport,
 )
 from mechanical_librarian.bootstrap import composition as composition_module
@@ -40,6 +40,12 @@ from tests.support.hardcover_c1_privacy import (
     c1_input_variants,
     forbidden_source_corpus,
     validate_output_document,
+)
+from tests.support.hardcover_c2_privacy import (
+    C2_CAPTURE_CHANNELS,
+    assert_channels_private as assert_c2_channels_private,
+    c2_input_variants,
+    forbidden_source_corpus as c2_forbidden_source_corpus,
 )
 
 
@@ -266,6 +272,22 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         for forbidden in ("9780000000019", "0000000019", "Synthetic Ebook"):
             self.assertNotIn(forbidden, output)
 
+    def test_composition_constructs_the_provider_adapter(self) -> None:
+        source = self.identity_input()
+        adapter = composition_module.SyntheticBookIdentityProvider
+        with patch.object(
+            composition_module,
+            "SyntheticBookIdentityProvider",
+            wraps=adapter,
+        ) as constructor:
+            report = _run_hardcover_identity_decision_preview(source)
+        constructor.assert_called_once()
+        self.assertEqual(
+            constructor.call_args.args[0].canonical_isbn_13,
+            "9780000000019",
+        )
+        self.assertEqual(report.outcome.value, "matched")
+
     def test_identity_variants_cover_permutation_title_979_and_differing_output(
         self,
     ) -> None:
@@ -374,94 +396,273 @@ class HardcoverIdentityCliTests(unittest.TestCase):
     def test_identity_privacy_capture_rejects_forbidden_forms_in_every_channel(
         self,
     ) -> None:
-        local_title = "WkxPrivateLocalTitle91"
-        provider_title = "WkxPrivateProviderTitle92"
-        source = self.identity_input(
-            title=local_title,
-            rows=[self.identity_row(title=provider_title)],
-        )
-        raw_values = (
-            local_title,
-            provider_title,
-            str(source["canonical_isbn_13"]),
-            str(source["derived_isbn_10"]),
-            "1001",
-            "2001",
-            json.dumps(source, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
-            "77c36a2cb2b2c1a7e8a00292d21b4e2417233dc7f11f411e17d7491a6664f34d",
-            "tests/fixtures/hardcover_identity/c2-identity-decision-input.json",
-        )
-        forbidden = {
-            form.casefold()
-            for value in raw_values
-            for form in (
-                value,
-                value.encode("utf-8").hex(),
-                base64.b64encode(value.encode("utf-8")).decode("ascii"),
-                hashlib.sha256(value.encode("utf-8")).hexdigest(),
+        variants = c2_input_variants(ROOT)
+        corpus = c2_forbidden_source_corpus(ROOT, variants=variants)
+        channels: dict[str, list[str]] = {
+            name: [] for name in C2_CAPTURE_CHANNELS
+        }
+        real_hashes = {
+            name: getattr(hashlib, name)
+            for name in (
+                "md5",
+                "sha1",
+                "sha224",
+                "sha256",
+                "sha384",
+                "sha512",
+                "sha3_256",
+                "sha3_512",
+                "blake2s",
+                "blake2b",
             )
         }
-        observed: list[tuple[str, tuple[object, ...]]] = []
-        log_calls: list[object] = []
-        with _zero_authority(), patch.object(
-            logging.Logger,
-            "_log",
-            side_effect=lambda *args, **kwargs: log_calls.append((args, kwargs)),
-        ), patch(
-            "hashlib.sha256", side_effect=_AuthorityTrap("runtime hashing reached")
-        ):
-            report = _run_hardcover_identity_decision_preview(
-                source,
-                privacy_observer=lambda channel, values: observed.append(
-                    (channel, values)
+        real_hash_new = hashlib.new
+
+        def hash_spy(name: str):
+            def invoke(value: bytes = b"", *args: object, **kwargs: object):
+                channels["hash_inputs"].append(repr((name, value)))
+                return real_hashes[name](value, *args, **kwargs)
+
+            return invoke
+
+        def hash_new_spy(name: str, value: bytes = b"", **kwargs: object) -> object:
+            channels["hash_inputs"].append(repr((name, value)))
+            return real_hash_new(name, value, **kwargs)
+
+        def channel_spy(channel: str, failure: str):
+            def invoke(*args: object, **kwargs: object) -> None:
+                channels[channel].append(repr((args, kwargs)))
+                raise _AuthorityTrap(failure)
+
+            return invoke
+
+        def privacy_observer(channel: str, values: tuple[object, ...]) -> None:
+            if channel == "metrics":
+                name, labels, value, exemplar = values
+                for target, observed in (
+                    ("metric_names", name),
+                    ("metric_labels", labels),
+                    ("metric_values", value),
+                    ("metric_exemplars", exemplar),
+                ):
+                    channels[target].append(repr(observed))
+                return
+            channels[channel].append(repr(values))
+
+        original_to_json = IdentityDecisionPreviewReport.to_json
+
+        def report_spy(report: IdentityDecisionPreviewReport) -> str:
+            rendered = original_to_json(report)
+            channels["exports"].append(rendered)
+            channels["reports"].append(rendered)
+            return rendered
+
+        def observed_runner(source: dict[str, object]) -> IdentityDecisionPreviewReport:
+            try:
+                return _run_hardcover_identity_decision_preview(
+                    source, privacy_observer=privacy_observer
+                )
+            except BaseException as error:
+                channels["exceptions"].extend(_exception_chain_metadata(error))
+                raise
+
+        argv = [
+            "hardcover-identity-report",
+            "--mode",
+            "synthetic-preview",
+            "--scenario",
+            "identity-decision-v3",
+            "--input",
+            "-",
+            "--format",
+            "json",
+        ]
+        persistence_targets = (
+            "SQLiteInventoryRepository",
+            "SQLiteInventoryV2Repository",
+            "SQLiteInventoryPollingRepository",
+            "SQLiteEpubOpeningEvidenceRepository",
+            "SQLiteTitleProposalRepository",
+            "SQLiteTitleReviewCaseRepository",
+            "SQLiteJobHeartbeatRepository",
+        )
+        outputs: list[str] = []
+        with ExitStack() as stack:
+            stack.enter_context(_zero_authority())
+            stack.enter_context(
+                patch.object(
+                    logging.Logger,
+                    "_log",
+                    side_effect=channel_spy("structured_logs", "logging reached"),
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "mechanical_librarian.adapters.persistence.audit."
+                    "SQLiteAuditRepository.append",
+                    side_effect=channel_spy("audit_logs", "audit reached"),
+                )
+            )
+            stack.enter_context(
+                patch.object(IdentityDecisionPreviewReport, "to_json", new=report_spy)
+            )
+            for name in real_hashes:
+                stack.enter_context(
+                    patch(f"hashlib.{name}", side_effect=hash_spy(name))
+                )
+            stack.enter_context(patch("hashlib.new", side_effect=hash_new_spy))
+            for target in (
+                "mechanical_librarian.bootstrap.composition.Fingerprint",
+                "mechanical_librarian.domain.identifiers.Fingerprint",
+            ):
+                stack.enter_context(
+                    patch(
+                        target,
+                        side_effect=channel_spy(
+                            "fingerprint_inputs", "fingerprint reached"
+                        ),
+                    )
+                )
+            for name in persistence_targets:
+                stack.enter_context(
+                    patch(
+                        f"mechanical_librarian.bootstrap.composition.{name}",
+                        side_effect=channel_spy("database_rows", "database reached"),
+                    )
+                )
+
+            for variant in variants:
+                output = io.StringIO()
+                errors = io.StringIO()
+                self.assertEqual(
+                    main(
+                        argv,
+                        state_check_runner=Mock(),
+                        hardcover_identity_decision_preview_runner=observed_runner,
+                        stdin=io.StringIO(variant.input_payload.decode("utf-8")),
+                        stdout=output,
+                        stderr=errors,
+                    ),
+                    0,
+                )
+                channels["json_stdout"].append(output.getvalue())
+                channels["stderr"].append(errors.getvalue())
+                outputs.append(output.getvalue())
+
+            invalid = copy.deepcopy(variants[0].source)
+            invalid["derived_isbn_10"] = "0306406152"
+            code, output, errors = self.run_identity_preview(invalid)
+            self.assertEqual(code, 2)
+            channels["json_stdout"].append(output)
+            channels["stderr"].append(errors)
+            try:
+                observed_runner(invalid)
+            except ValueError:
+                pass
+            else:
+                self.fail("invalid private input unexpectedly succeeded")
+
+            text_output = io.StringIO()
+            text_errors = io.StringIO()
+            self.assertEqual(
+                main(
+                    [*argv[:-1], "text"],
+                    state_check_runner=Mock(),
+                    hardcover_identity_decision_preview_runner=observed_runner,
+                    stdin=io.StringIO(variants[0].input_payload.decode("utf-8")),
+                    stdout=text_output,
+                    stderr=text_errors,
                 ),
+                2,
             )
-            code, stdout, stderr = self.run_identity_preview(source)
-        self.assertEqual((code, stderr), (0, ""))
-        self.assertEqual(report.comparison.value, "different")
+            channels["text_stdout"].append(text_output.getvalue())
+            channels["stderr"].append(text_errors.getvalue())
 
-        invalid = copy.deepcopy(source)
-        invalid["derived_isbn_10"] = "0306406152"
-        try:
-            _run_hardcover_identity_decision_preview(invalid)
-        except ValueError as error:
-            exception_channel = _exception_chain_metadata(error)
-        else:
-            self.fail("invalid private input unexpectedly succeeded")
+        self.assertEqual(
+            [json.loads(value)["result"]["comparison"] for value in outputs],
+            ["equal", "different", "different"],
+        )
+        for channel in (
+            "hash_inputs",
+            "fingerprint_inputs",
+            "structured_logs",
+            "audit_logs",
+            "database_rows",
+        ):
+            self.assertEqual(channels[channel], [], channel)
+        for channel in (
+            "exceptions",
+            "traces",
+            "spans",
+            "metric_names",
+            "metric_labels",
+            "metric_values",
+            "metric_exemplars",
+            "exports",
+            "reports",
+        ):
+            self.assertTrue(channels[channel], channel)
 
-        channels: dict[str, list[object]] = {
-            "json stdout": [stdout, report.to_json()],
-            "text stdout": [],
-            "stderr": [stderr],
-            "exceptions": exception_channel,
-            "structured logs": log_calls,
-            "audit logs": [],
-            "traces and spans": observed,
-            "metrics": observed,
-            "database rows": [],
-            "exports": [],
-            "reports": [report.to_json()],
-            "hash inputs": [],
-            "fingerprint inputs": [],
-        }
+        probes = (
+            ("local_title", "WkxDiffe"),
+            ("local_title", "PrivateL"),
+            ("local_title", "length:31"),
+            ("provider_title", "ProviderTitle"),
+            ("isbn_identity", "97800000"),
+            ("provider_identity", "edition:1001"),
+            ("resource_identity", "hardcoveridentity"),
+        )
+        for source_class, projection in probes:
+            self.assertIn(projection, corpus[source_class])
+        self.assertIn(
+            hashlib.md5(
+                variants[0].local_title.encode(), usedforsecurity=False
+            ).hexdigest(),
+            corpus["local_title"],
+        )
+        self.assertIn(
+            hashlib.sha3_512(variants[0].query_payload).hexdigest(),
+            corpus["serialized_private_query"],
+        )
+        self.assertIn(
+            hashlib.blake2b(variants[0].input_payload).hexdigest(),
+            corpus["serialized_input"],
+        )
+        assert_c2_channels_private(channels, corpus)
 
-        def assert_private(captured: dict[str, list[object]]) -> None:
-            for channel, values in captured.items():
-                rendered = repr(values).casefold()
-                for value in forbidden:
-                    if value in rendered:
-                        raise AssertionError(
-                            f"forbidden private form reached {channel}"
-                        )
+        incomplete = dict(channels)
+        del incomplete[C2_CAPTURE_CHANNELS[-1]]
+        with self.assertRaises(PrivacyEvidenceError):
+            assert_c2_channels_private(incomplete, corpus)
+        incomplete_corpus = dict(corpus)
+        del incomplete_corpus["resource_identity"]
+        with self.assertRaises(PrivacyEvidenceError):
+            assert_c2_channels_private(channels, incomplete_corpus)
 
-        assert_private(channels)
-        injected = next(iter(forbidden))
-        for channel in channels:
-            with self.subTest(injected_channel=channel):
-                corrupted = copy.deepcopy(channels)
-                corrupted[channel].append(injected)
-                with self.assertRaises(AssertionError):
-                    assert_private(corrupted)
+        for channel in C2_CAPTURE_CHANNELS:
+            for source_class, projections in corpus.items():
+                for projection in projections:
+                    poisoned = {
+                        name: list(values) for name, values in channels.items()
+                    }
+                    poisoned[channel].append(projection)
+                    isolated = {
+                        name: frozenset({f"absent-probe:{name}"})
+                        for name in corpus
+                    }
+                    isolated[source_class] = frozenset({projection})
+                    with self.assertRaises(PrivacyEvidenceError):
+                        assert_c2_channels_private(poisoned, isolated)
+
+        projected_cause = next(iter(corpus["serialized_private_query"]))
+        cause = ValueError(projected_cause)
+        handled = RuntimeError("handled synthetic identity failure")
+        handled.__cause__ = cause
+        handled.add_note(projected_cause)
+        poisoned = {name: list(values) for name, values in channels.items()}
+        poisoned["exceptions"].extend(_exception_chain_metadata(handled))
+        with self.assertRaises(PrivacyEvidenceError):
+            assert_c2_channels_private(poisoned, corpus)
 
     def test_production_disabled_and_enabled_short_circuit_before_private_authority(
         self,

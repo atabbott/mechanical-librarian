@@ -10,6 +10,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from mechanical_librarian.adapters.providers.synthetic_hardcover_identity import (
+    SyntheticBookIdentityProvider,
+)
 from mechanical_librarian.application.hardcover_identity import (
     IdentityAttemptFailureKind,
     IdentityAttemptResult,
@@ -450,6 +453,66 @@ class RunHardcoverIdentityReportTests(unittest.TestCase):
             ).failure.kind,
             IdentityAttemptFailureKind.INCOMPATIBLE,
         )
+
+    def test_preview_report_enforces_exact_closed_outcome_invariants(self) -> None:
+        valid = (
+            (IdentityDecisionOutcome.MATCHED, 1, 0, TitleComparison.EQUAL),
+            (IdentityDecisionOutcome.MATCHED, 3, 2, TitleComparison.DIFFERENT),
+            (IdentityDecisionOutcome.NO_MATCH, 0, 0, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.AMBIGUOUS, 2, 0, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.AMBIGUOUS, 4, 0, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.INCOMPATIBLE, 0, 0, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.INCOMPATIBLE, 4, 0, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.MALFORMED, 0, 0, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.MALFORMED, 4, 0, TitleComparison.NOT_COMPARED),
+        )
+        for values in valid:
+            with self.subTest(valid=values):
+                IdentityDecisionPreviewReport(*values).validate()
+
+        invalid = (
+            (IdentityDecisionOutcome.MATCHED, 0, 0, TitleComparison.EQUAL),
+            (IdentityDecisionOutcome.MATCHED, 4, 3, TitleComparison.DIFFERENT),
+            (IdentityDecisionOutcome.MATCHED, 2, 0, TitleComparison.EQUAL),
+            (IdentityDecisionOutcome.MATCHED, 2, 1, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.NO_MATCH, 1, 0, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.NO_MATCH, 0, 1, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.NO_MATCH, 0, 0, TitleComparison.EQUAL),
+            (IdentityDecisionOutcome.AMBIGUOUS, 1, 0, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.AMBIGUOUS, 2, 1, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.AMBIGUOUS, 2, 0, TitleComparison.DIFFERENT),
+            (IdentityDecisionOutcome.INCOMPATIBLE, 1, 1, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.INCOMPATIBLE, 1, 0, TitleComparison.EQUAL),
+            (IdentityDecisionOutcome.MALFORMED, 1, 1, TitleComparison.NOT_COMPARED),
+            (IdentityDecisionOutcome.MALFORMED, 1, 0, TitleComparison.DIFFERENT),
+            (IdentityDecisionOutcome.MATCHED, True, 0, TitleComparison.EQUAL),
+            (IdentityDecisionOutcome.NO_MATCH, 0, False, TitleComparison.NOT_COMPARED),
+            ("matched", 1, 0, TitleComparison.EQUAL),
+            (IdentityDecisionOutcome.MATCHED, 1, 0, "equal"),
+        )
+        for values in invalid:
+            with self.subTest(invalid=values):
+                with self.assertRaises(TypeError):
+                    IdentityDecisionPreviewReport(*values).to_json()
+
+    def test_synthetic_provider_adapter_is_single_use_and_owned_by_adapters(
+        self,
+    ) -> None:
+        query = IsbnIdentityQuery("9780000000019", "0000000019")
+        adapter = SyntheticBookIdentityProvider(query, (self.row(),))
+        self.assertEqual(
+            type(adapter).__module__,
+            "mechanical_librarian.adapters.providers.synthetic_hardcover_identity",
+        )
+        result = adapter.lookup(query, self.context())
+        self.assertEqual(result.observations, (self.row(),))
+        with self.assertRaisesRegex(ValueError, "invocation is invalid"):
+            adapter.lookup(query, self.context())
+        fresh = SyntheticBookIdentityProvider(query, ())
+        with self.assertRaisesRegex(ValueError, "invocation is invalid"):
+            fresh.lookup(
+                IsbnIdentityQuery("9780306406157", "0306406152"), self.context()
+            )
 
     def test_deterministic_provider_failures_map_without_private_values(self) -> None:
         class Provider:

@@ -186,21 +186,43 @@ class IdentityDecisionPreviewReport:
     comparison: TitleComparison
 
     def validate(self) -> None:
-        if (
-            type(self.outcome) is not IdentityDecisionOutcome
-            or type(self.rows_validated) is not int
-            or not 0 <= self.rows_validated <= 4
-            or type(self.aliases_collapsed) is not int
-            or not 0 <= self.aliases_collapsed <= 3
-            or type(self.comparison) is not TitleComparison
-            or (
-                self.outcome is not IdentityDecisionOutcome.MATCHED
-                and (
-                    self.aliases_collapsed != 0
-                    or self.comparison is not TitleComparison.NOT_COMPARED
-                )
-            )
-        ):
+        types_and_ranges_valid = (
+            type(self.outcome) is IdentityDecisionOutcome
+            and type(self.rows_validated) is int
+            and 0 <= self.rows_validated <= 4
+            and type(self.aliases_collapsed) is int
+            and 0 <= self.aliases_collapsed <= 3
+            and type(self.comparison) is TitleComparison
+        )
+        if not types_and_ranges_valid:
+            raise TypeError("Hardcover identity decision preview report is malformed")
+        outcome_valid = {
+            IdentityDecisionOutcome.MATCHED: (
+                1 <= self.rows_validated <= 3
+                and self.aliases_collapsed == self.rows_validated - 1
+                and self.comparison
+                in {TitleComparison.EQUAL, TitleComparison.DIFFERENT}
+            ),
+            IdentityDecisionOutcome.NO_MATCH: (
+                self.rows_validated == 0
+                and self.aliases_collapsed == 0
+                and self.comparison is TitleComparison.NOT_COMPARED
+            ),
+            IdentityDecisionOutcome.AMBIGUOUS: (
+                2 <= self.rows_validated <= 4
+                and self.aliases_collapsed == 0
+                and self.comparison is TitleComparison.NOT_COMPARED
+            ),
+            IdentityDecisionOutcome.INCOMPATIBLE: (
+                self.aliases_collapsed == 0
+                and self.comparison is TitleComparison.NOT_COMPARED
+            ),
+            IdentityDecisionOutcome.MALFORMED: (
+                self.aliases_collapsed == 0
+                and self.comparison is TitleComparison.NOT_COMPARED
+            ),
+        }[self.outcome]
+        if not outcome_valid:
             raise TypeError("Hardcover identity decision preview report is malformed")
 
     def to_json(self) -> str:

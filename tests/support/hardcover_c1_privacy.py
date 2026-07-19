@@ -380,23 +380,23 @@ def forbidden_source_corpus(
         "title": frozenset(
             projection
             for variant in executed
-            for projection in _text_projections(variant.title)
+            for projection in text_projections(variant.title)
         ),
         "canonical_isbn": frozenset(
             projection
             for variant in executed
             for value in (variant.raw_isbn, variant.canonical_isbn)
-            for projection in _text_projections(value, allow_numeric_prefix=True)
+            for projection in text_projections(value, allow_numeric_prefix=True)
         ),
         "serialized_private_query": frozenset(
             projection
             for variant in executed
-            for projection in _blob_projections(variant.query_payload)
+            for projection in blob_projections(variant.query_payload)
         ),
         "serialized_input": frozenset(
             projection
             for variant in executed
-            for projection in _blob_projections(variant.input_payload)
+            for projection in blob_projections(variant.input_payload)
         ),
         "provider_identity": frozenset(
             value
@@ -404,12 +404,12 @@ def forbidden_source_corpus(
                 "hpvbkq7319zxlmctvraozepdu",
                 "hpvedq8427zkxwmscnufajory",
             )
-            for value in _text_projections(identity)
+            for value in text_projections(identity)
         ),
         "resource_identity": frozenset(
             projection
             for seed in resource_seeds
-            for projection in _text_projections(seed, minimum_chunk_length=12)
+            for projection in text_projections(seed, minimum_chunk_length=12)
         ),
     }
     if tuple(corpus) != FORBIDDEN_SOURCE_CLASSES:
@@ -433,9 +433,24 @@ def forbidden_source_corpus(
 def assert_channels_private(
     channels: Mapping[str, list[str]], corpus: Mapping[str, frozenset[str]]
 ) -> None:
-    if set(channels) != set(CAPTURE_CHANNELS):
+    assert_projection_channels_private(
+        channels,
+        corpus,
+        expected_channels=CAPTURE_CHANNELS,
+        expected_source_classes=FORBIDDEN_SOURCE_CLASSES,
+    )
+
+
+def assert_projection_channels_private(
+    channels: Mapping[str, list[str]],
+    corpus: Mapping[str, frozenset[str]],
+    *,
+    expected_channels: tuple[str, ...],
+    expected_source_classes: tuple[str, ...],
+) -> None:
+    if set(channels) != set(expected_channels):
         raise PrivacyEvidenceError("privacy capture channels are incomplete")
-    if set(corpus) != set(FORBIDDEN_SOURCE_CLASSES):
+    if set(corpus) != set(expected_source_classes):
         raise PrivacyEvidenceError("privacy source classes are incomplete")
     for channel, values in channels.items():
         rendered = "\n".join(values)
@@ -551,7 +566,7 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def _text_projections(
+def text_projections(
     value: str,
     *,
     allow_numeric_prefix: bool = False,
@@ -610,11 +625,11 @@ def _text_projections(
         for projection in (chunk, chunk.casefold(), chunk.upper())
     }
     return frozenset(
-        textual | expanded_chunks | _digest_projections(encoded)
+        textual | expanded_chunks | digest_projections(encoded)
     )
 
 
-def _blob_projections(payload: bytes) -> frozenset[str]:
+def blob_projections(payload: bytes) -> frozenset[str]:
     return frozenset(
         {
             payload.decode("utf-8", "strict"),
@@ -623,12 +638,12 @@ def _blob_projections(payload: bytes) -> frozenset[str]:
             base64.b32encode(payload).decode("ascii"),
             base64.b64encode(payload).decode("ascii"),
             base64.urlsafe_b64encode(payload).decode("ascii"),
-            *_digest_projections(payload),
+            *digest_projections(payload),
         }
     )
 
 
-def _digest_projections(payload: bytes) -> set[str]:
+def digest_projections(payload: bytes) -> frozenset[str]:
     digesters = (
         hashlib.md5(payload, usedforsecurity=False),
         hashlib.sha1(payload, usedforsecurity=False),
@@ -653,7 +668,7 @@ def _digest_projections(payload: bytes) -> set[str]:
                 base64.urlsafe_b64encode(raw).decode("ascii"),
             }
         )
-    return result
+    return frozenset(result)
 
 
 def _reject_future_markers(payload: bytes) -> None:
@@ -674,12 +689,16 @@ __all__ = [
     "PrivacyEvidenceError",
     "TITLE_ONLY_ALTERNATE",
     "assert_channels_private",
+    "assert_projection_channels_private",
+    "blob_projections",
     "build_registry",
     "build_scan",
     "canonical_bytes",
     "c1_input_variants",
+    "digest_projections",
     "forbidden_source_corpus",
     "output_schema_document",
     "privacy_contract_document",
+    "text_projections",
     "validate_output_document",
 ]

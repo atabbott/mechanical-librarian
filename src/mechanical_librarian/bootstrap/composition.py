@@ -54,6 +54,9 @@ from mechanical_librarian.adapters.persistence.title_review_cases import (
 from mechanical_librarian.adapters.providers.synthetic_title import (
     SyntheticTitleProvider,
 )
+from mechanical_librarian.adapters.providers.synthetic_hardcover_identity import (
+    SyntheticBookIdentityProvider,
+)
 from mechanical_librarian.adapters.providers.hardcover_title import (
     AddressResolver,
     HardcoverTitleProvider,
@@ -66,7 +69,6 @@ from mechanical_librarian.application.connection_probe import (
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.hardcover_identity import (
     HardcoverIdentityReport,
-    IdentityAttemptResult,
     IdentityDecisionPreviewReport,
     InertPreviewReport,
     IsbnIdentityQuery,
@@ -1523,27 +1525,6 @@ def _run_hardcover_inert_preview(
     return inert_preview(configuration, query, privacy_observer=privacy_observer)
 
 
-class _SyntheticBookIdentityProvider:
-    def __init__(
-        self,
-        expected_query: IsbnIdentityQuery,
-        observations: tuple[ProviderIdentityObservation, ...],
-    ) -> None:
-        self._expected_query = expected_query
-        self._observations = observations
-        self._called = False
-
-    def lookup(
-        self, query: IsbnIdentityQuery, context: OperationContext
-    ) -> IdentityAttemptResult:
-        if self._called or query != self._expected_query:
-            raise ValueError("synthetic identity provider invocation is invalid")
-        if type(context) is not OperationContext:
-            raise TypeError("synthetic identity context is malformed")
-        self._called = True
-        return IdentityAttemptResult.success(self._observations)
-
-
 def _run_hardcover_identity_decision_preview(
     source: Mapping[str, object],
     *,
@@ -1584,7 +1565,7 @@ def _run_hardcover_identity_decision_preview(
     typed_query = IsbnIdentityQuery(
         identity.canonical_isbn_13, identity.equivalent_isbn_10
     )
-    provider = _SyntheticBookIdentityProvider(typed_query, observations)
+    provider = SyntheticBookIdentityProvider(typed_query, observations)
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     context = OperationContext(
         Deadline(now + timedelta(seconds=5)),
