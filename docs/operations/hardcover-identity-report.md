@@ -175,8 +175,10 @@ caller deadlines before the gate, one successful and one retryable attempt,
 busy-gate behavior, caller-deadline clipping, exact late-result rejection,
 closed gate-failure mapping, and stale-generation replacement. There is no DNS,
 socket, HTTP, credential, live Hardcover request, proposal, or production
-composition. Contributor labels and process names are translated to fixed
-internal synthetic identities and are absent from SQLite main, WAL, and SHM.
+composition. Contributor labels and process names are control-only. One fixed
+internal owner crosses the persistence seam; no persisted/runtime identity or
+value is derived from those controls, and equal incidental vocabulary is
+allowed.
 Qualification captures transient WAL/SHM only under the synthetic privacy
 observer, using one exactly restored test-only timestamp mutation; no such
 materialization path is production authority.
@@ -188,8 +190,11 @@ renew-and-start requires six seconds remaining, renews the lease for 15 seconds,
 and alone authorizes one provider attempt. Its context ends at the earlier of
 the caller deadline and start plus five seconds. A provider result arriving at
 or after that boundary is converted to timeout before durable publication.
-Retryable outcomes publish retry-wait state and return `in_progress`; this
-increment does not wait, retry, recover, cancel, or install signal handlers.
+Retryable outcomes with at least the exact six-second reserve publish
+retry-wait state and return `in_progress`. If insufficient reserve instead
+causes publication to commit terminal failure, the result is
+`retry_exhausted`. This increment does not wait, retry, recover, cancel, or
+install signal handlers.
 The gate remains held through durable publication and is released on every
 ordinary and base-exception path.
 
