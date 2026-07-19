@@ -10,12 +10,14 @@ import stat
 import tempfile
 import unittest
 from contextlib import ExitStack
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 import httpx
 
 from mechanical_librarian.bootstrap.composition import (
+    _SyntheticExecutorProvider,
     _run_hardcover_safe_executor_preview,
 )
 from mechanical_librarian.infrastructure.hardcover_identity_gate import LOCK_NAME
@@ -165,6 +167,38 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         report = json.loads(output)
         self.assertEqual(report["result"]["cases_executed"], 2)
         self.assertEqual(report["result"]["attempts_started"], 2)
+        for proof in (
+            "deadline_before_gate_verified",
+            "caller_deadline_verified",
+            "late_result_rejected",
+            "closed_mapping_verified",
+        ):
+            self.assertIs(report["result"][proof], True)
+
+    def test_selected_applicable_false_proof_is_rejected(self) -> None:
+        selected = copy.deepcopy(self.source)
+        selected["cases"] = [
+            next(
+                case
+                for case in selected["cases"]
+                if case["operation"] == "caller_deadline"
+            )
+        ]
+
+        class MismatchedCallerProofProvider(_SyntheticExecutorProvider):
+            def lookup(self, query, context):
+                result = super().lookup(query, context)
+                self.deadlines[:] = [context.deadline.at + timedelta(microseconds=1)]
+                return result
+
+        with patch(
+            "mechanical_librarian.bootstrap.composition._SyntheticExecutorProvider",
+            MismatchedCallerProofProvider,
+        ):
+            code, output, errors = self.run_preview(selected)
+
+        self.assertEqual((code, output), (2, ""))
+        self.assertEqual(errors, "Hardcover identity report failed safely.\n")
 
     def test_input_mutations_fail_before_database_or_gate_creation(self) -> None:
         variants: list[object] = []

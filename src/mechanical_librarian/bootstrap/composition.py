@@ -2003,11 +2003,13 @@ def _run_hardcover_safe_executor_preview(
             clock = _SyntheticExecutorClock(datetime.now(timezone.utc))
             providers: list[_SyntheticExecutorProvider] = []
             owners: list[str] = []
+            # Each operation-specific proof is universal over the selected
+            # applicable cases and therefore true for an empty applicable set.
             verified = {
-                "deadline": False,
-                "caller": False,
-                "late": False,
-                "closed": False,
+                "deadline": True,
+                "caller": True,
+                "late": True,
+                "closed": True,
             }
 
             for case in cases:
@@ -2129,18 +2131,28 @@ def _run_hardcover_safe_executor_preview(
                 if durable != expected_durable or provider.starts != expected_starts:
                     raise SchemaError("safe executor durable semantic case failed")
                 if operation == "aggregate_expired":
-                    verified["deadline"] = gate.acquisitions == before_acquire
+                    verified["deadline"] = (
+                        verified["deadline"]
+                        and gate.acquisitions == before_acquire
+                    )
                 elif operation == "caller_deadline":
-                    verified["caller"] = provider.deadlines == [context.deadline.at]
+                    verified["caller"] = (
+                        verified["caller"]
+                        and provider.deadlines == [context.deadline.at]
+                    )
                 elif operation in {"late_match", "late_exhausted"}:
                     matched_publications = connection.execute(
                         "SELECT COUNT(*) FROM hardcover_identity_results "
                         "WHERE work_key=? AND outcome='matched'",
                         (request.work_key,),
                     ).fetchone()
-                    verified["late"] = matched_publications == (0,)
+                    verified["late"] = (
+                        verified["late"] and matched_publications == (0,)
+                    )
                 elif operation == "gate_failure":
-                    verified["closed"] = provider.starts == 0
+                    verified["closed"] = (
+                        verified["closed"] and provider.starts == 0
+                    )
 
             if privacy_observer is not None:
                 try:

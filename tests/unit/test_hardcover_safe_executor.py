@@ -194,6 +194,17 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             self.context() if context is None else context,
         )
 
+    def _work_counts(self, work_key: str) -> tuple[object, ...]:
+        return self.connection.execute(
+            "SELECT "
+            "(SELECT COUNT(*) FROM hardcover_identity_generations WHERE work_key=?),"
+            "(SELECT COUNT(*) FROM hardcover_identity_claims WHERE work_key=?),"
+            "(SELECT COUNT(*) FROM hardcover_identity_attempts WHERE work_key=?),"
+            "(SELECT state FROM hardcover_identity_generations WHERE work_key=? "
+            "ORDER BY generation DESC LIMIT 1)",
+            (work_key, work_key, work_key, work_key),
+        ).fetchone()
+
     def test_one_attempt_matches_and_releases_gate(self) -> None:
         provider = _Provider(self.matched(), self.clock)
         report = self.execute(self.request("matched"), provider)
@@ -248,49 +259,96 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             (0,),
         )
 
-    def test_rechecks_pending_state_after_gate_acquisition(self) -> None:
-        request = self.request("pending-gate-race")
-        provider = _Provider(self.matched(), self.clock)
-        accepted = self.work.accept(request.work_key, self.clock.now)
-        acquire = self.gate.try_acquire
-
-        def acquire_after_competing_retry():
-            competing = self.work.claim(
-                accepted.reference,
-                "competing-worker",
-                self.clock.now,
-                gate_owned=True,
-            )
-            started = self.work.start(
-                competing,
-                "competing-worker",
-                self.clock.now,
-                gate_owned=True,
-            )
-            self.work.publish_failed(
-                started,
-                "competing-worker",
-                self.clock.now,
-                retryable=True,
-                gate_owned=True,
-            )
-            return acquire()
-
-        with patch.object(
-            self.gate, "try_acquire", side_effect=acquire_after_competing_retry
+    def test_reconciles_post_gate_lifecycle_races_without_local_mutation(self) -> None:
+        for transition, outcome, state, attempts in (
+            (
+                "matched",
+                HardcoverIdentityOutcome.MATCHED,
+                "succeeded",
+                1,
+            ),
+            (
+                "failed",
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+                "failed",
+                1,
+            ),
+            (
+                "cancelled",
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+                "cancelled",
+                0,
+            ),
+            (
+                "retry_wait",
+                HardcoverIdentityOutcome.IN_PROGRESS,
+                "retry_wait",
+                1,
+            ),
         ):
-            report = self.execute(request, provider)
+            with self.subTest(transition=transition):
+                request = self.request(f"post-gate-{transition}")
+                provider = _Provider(self.matched(), self.clock)
+                accepted = self.work.accept(request.work_key, self.clock.now)
+                acquire = self.gate.try_acquire
+                competing_snapshot = None
 
-        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
-        self.assertEqual(provider.starts, 0)
-        self.assertEqual(
-            self.connection.execute(
-                "SELECT state,attempt_count FROM hardcover_identity_generations "
-                "WHERE work_key=?",
-                (request.work_key,),
-            ).fetchone(),
-            ("retry_wait", 1),
-        )
+                def acquire_after_competing_transition():
+                    nonlocal competing_snapshot
+                    competing = self.work.claim(
+                        accepted.reference,
+                        "competing-worker",
+                        self.clock.now,
+                        gate_owned=True,
+                    )
+                    if transition == "cancelled":
+                        self.work.cancel(
+                            competing,
+                            "competing-worker",
+                            self.clock.now,
+                            gate_owned=True,
+                        )
+                    else:
+                        started = self.work.start(
+                            competing,
+                            "competing-worker",
+                            self.clock.now,
+                            gate_owned=True,
+                        )
+                        if transition == "matched":
+                            self.work.publish_matched(
+                                started,
+                                "competing-worker",
+                                self.clock.now,
+                                IdentityWorkObservation(
+                                    IdentityMatchOutcome.MATCHED, 1
+                                ),
+                                gate_owned=True,
+                            )
+                        else:
+                            self.work.publish_failed(
+                                started,
+                                "competing-worker",
+                                self.clock.now,
+                                retryable=transition == "retry_wait",
+                                gate_owned=True,
+                            )
+                    competing_snapshot = self._work_counts(request.work_key)
+                    return acquire()
+
+                with patch.object(
+                    self.gate,
+                    "try_acquire",
+                    side_effect=acquire_after_competing_transition,
+                ):
+                    report = self.execute(request, provider)
+
+                self.assertEqual(report.outcome, outcome)
+                self.assertEqual(provider.starts, 0)
+                self.assertEqual(
+                    self._work_counts(request.work_key), competing_snapshot
+                )
+                self.assertEqual(competing_snapshot, (1, 1, attempts, state))
 
     def test_stale_current_is_reserved_before_inspection_and_attempt(self) -> None:
         request = self.request("stale")

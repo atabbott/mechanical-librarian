@@ -20,6 +20,7 @@ from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkReference,
     IdentityWorkState,
     IdentityWorkStatus,
+    TERMINAL_STATES,
     validate_transition,
 )
 
@@ -125,7 +126,7 @@ class SQLiteHardcoverIdentityWorkRepository:
     def inspect(
         self, reference: IdentityWorkReference, now: datetime
     ) -> IdentityWorkReadiness:
-        """Read one active generation without changing its lifecycle state."""
+        """Read one exact generation without changing its lifecycle state."""
 
         _require_reference(reference)
         _time(now)
@@ -133,12 +134,6 @@ class SQLiteHardcoverIdentityWorkRepository:
             with _transaction(self._connection):
                 row = self._generation(reference)
                 state = _state(row[0])
-                if state not in {
-                    IdentityWorkState.PENDING,
-                    IdentityWorkState.CLAIMED,
-                    IdentityWorkState.RETRY_WAIT,
-                }:
-                    raise IdentityWorkPersistenceError("identity work is not active")
                 if type(row[5]) is not str or now < _parse_time(row[5]):
                     raise IdentityWorkPersistenceError(
                         "identity work chronology is invalid"
@@ -150,6 +145,29 @@ class SQLiteHardcoverIdentityWorkRepository:
                 deadline = _parse_time(row[7])
                 fence = _nonnegative_int(row[1], "fence")
                 attempts = _nonnegative_int(row[2], "attempt count")
+                if state in TERMINAL_STATES:
+                    results = self._connection.execute(
+                        "SELECT outcome,fence,published_at "
+                        "FROM hardcover_identity_results "
+                        "WHERE work_key=? AND generation=?",
+                        (reference.work_key, reference.generation),
+                    ).fetchall()
+                    expected = {
+                        IdentityWorkState.SUCCEEDED: "matched",
+                        IdentityWorkState.FAILED: "failed",
+                        IdentityWorkState.CANCELLED: "cancelled",
+                    }[state]
+                    if (
+                        len(results) != 1
+                        or results[0][0] != expected
+                        or _positive_int(results[0][1], "result fence") != fence
+                        or type(results[0][2]) is not str
+                        or _parse_time(results[0][2]) != _parse_time(row[5])
+                    ):
+                        raise IdentityWorkPersistenceError(
+                            "identity work terminal result is inconsistent"
+                        )
+                    return IdentityWorkReadiness(reference, state, deadline)
                 if state is IdentityWorkState.PENDING:
                     candidates = self._connection.execute(
                         "SELECT candidate FROM hardcover_identity_candidates WHERE work_key=? AND generation=? ORDER BY candidate",

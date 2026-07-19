@@ -183,10 +183,24 @@ Qualification captures transient WAL/SHM only under the synthetic privacy
 observer, using one exactly restored test-only timestamp mutation; no such
 materialization path is production authority.
 
+The operation-specific proof booleans are universal predicates over the
+selected applicable cases. If a valid strict subset selects no corresponding
+operation, that proof is true for the empty applicable set. If one or more
+corresponding operations are selected, the proof is true only when every
+selected applicable case passes its actual hard check. `all_cases_passed`
+still requires every proof boolean to be exactly true. The canonical ten-case
+fixture is the separate complete applicability-coverage proof; a successful
+strict subset demonstrates semantic evaluation without claiming that coverage.
+
 The executor inspects the persisted 30-second aggregate deadline and caller
 deadline before trying the gate. A busy gate returns `in_progress` without a
-claim or start. Under the gate, claim still does not consume budget; atomic
-renew-and-start requires six seconds remaining, renews the lease for 15 seconds,
+claim or start. After acquiring the gate, the executor re-inspects the exact
+generation without mutation: `pending` may continue, `claimed` or `retry_wait`
+returns `in_progress`, `succeeded` returns `matched`, and `failed` or
+`cancelled` fails closed as `persistence_failure` because this projection does
+not reconstruct a terminal reason. Under the gate, claim still does not consume
+budget; atomic renew-and-start requires six seconds remaining, renews the lease
+for 15 seconds,
 and alone authorizes one provider attempt. Its context ends at the earlier of
 the caller deadline and start plus five seconds. A provider result arriving at
 or after that boundary is converted to timeout before durable publication.

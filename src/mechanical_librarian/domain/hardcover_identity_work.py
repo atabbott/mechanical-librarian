@@ -86,7 +86,7 @@ class IdentityWorkClaim:
 
 @dataclass(frozen=True, slots=True)
 class IdentityWorkReadiness:
-    """Only the active readiness facts required before one attempt."""
+    """Exact-reference lifecycle facts required around one attempt."""
 
     reference: IdentityWorkReference
     state: IdentityWorkState
@@ -96,7 +96,6 @@ class IdentityWorkReadiness:
         if (
             type(self.reference) is not IdentityWorkReference
             or type(self.state) is not IdentityWorkState
-            or self.state not in ACTIVE_STATES
         ):
             raise ValueError("identity work readiness is malformed")
         _require_time(self.aggregate_deadline)

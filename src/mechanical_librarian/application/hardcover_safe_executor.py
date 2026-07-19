@@ -168,8 +168,18 @@ class RunSafeHardcoverIdentity:
     ) -> HardcoverIdentityReport:
         now = context.observed_at
         active = self._work.inspect(reference, now)
-        if active.state is not IdentityWorkState.PENDING:
+        if active.state in {
+            IdentityWorkState.CLAIMED,
+            IdentityWorkState.RETRY_WAIT,
+        }:
             return _report(HardcoverIdentityOutcome.IN_PROGRESS)
+        if active.state is IdentityWorkState.SUCCEEDED:
+            return _report(HardcoverIdentityOutcome.MATCHED)
+        if active.state in {
+            IdentityWorkState.FAILED,
+            IdentityWorkState.CANCELLED,
+        }:
+            return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
         aggregate_deadline = active.aggregate_deadline
         if now >= aggregate_deadline or context.deadline.expired_at(now):
             return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
