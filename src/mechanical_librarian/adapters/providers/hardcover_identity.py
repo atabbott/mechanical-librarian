@@ -172,26 +172,38 @@ class StructuralIdentityBodyReader:
 
     def __init__(self, chunks: Iterable[bytes]) -> None:
         self._chunks = iter(chunks)
-        self._closed = False
+        self._read_disabled = False
+        self._finalization_attempted = False
+        self._release_confirmed = False
         self._read_count = 0
 
     @property
     def closed(self) -> bool:
-        return self._closed
+        return self._release_confirmed
+
+    @property
+    def read_disabled(self) -> bool:
+        return self._read_disabled
+
+    @property
+    def finalization_attempted(self) -> bool:
+        return self._finalization_attempted
 
     @property
     def read_count(self) -> int:
         return self._read_count
 
     def read_chunk(self, max_bytes: int) -> bytes | None:
-        if self._closed:
+        if self._read_disabled:
             return None
         if type(max_bytes) is not int or not 1 <= max_bytes <= MAX_RESPONSE_BYTES + 1:
             raise ValueError("Hardcover identity body request is invalid")
         try:
             chunk = next(self._chunks)
         except StopIteration:
-            self.close()
+            self._read_disabled = True
+            self._finalization_attempted = True
+            self._release_confirmed = True
             return None
         self._read_count += 1
         if chunk == b"":
@@ -200,10 +212,13 @@ class StructuralIdentityBodyReader:
         return chunk
 
     def close(self) -> bool:
-        if self._closed:
+        if self._release_confirmed:
             return True
-        self._closed = True
-        return _close_owned_iterator(self._chunks)
+        self._read_disabled = True
+        self._finalization_attempted = True
+        confirmed = _close_owned_iterator(self._chunks)
+        self._release_confirmed = confirmed is True
+        return self._release_confirmed
 
     def abort(self) -> bool:
         """Transport-owned fallback for the structural in-memory producer."""
@@ -239,8 +254,16 @@ class HardcoverIdentityProvider:
         except BaseException:
             exchange = None
         if not callable(resolver) or not callable(exchange):
+            resolver = None
+            channel = None
+            token = b""
+            exchange = None
             raise ValueError("Hardcover identity provider construction is invalid")
         if not _valid_token(token):
+            resolver = None
+            channel = None
+            token = b""
+            exchange = None
             raise ValueError("Hardcover identity provider construction is invalid")
         self._resolver = resolver
         self._channel = channel
@@ -294,7 +317,9 @@ class HardcoverIdentityProvider:
         try:
             response = exchange(authorized, context)
         except IdentityChannelFailure as error:
-            return IdentityAttemptResult.failed(error.kind)
+            kind = _channel_failure_kind(error)
+            del error
+            return IdentityAttemptResult.failed(kind)
         except KeyboardInterrupt:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
         except BaseException:
@@ -443,6 +468,13 @@ class StructuralHardcoverIdentityPreview:
     """Decode and run the fixed contributor fixture behind the adapter seam."""
 
     def run(self, source: Mapping[str, object]) -> FixedAdapterAttemptEvidence:
+        evidence = _structural_preview_attempt(self, source)
+        if evidence is None:
+            source = {}
+            raise ValueError("synthetic input is invalid")
+        return evidence
+
+    def _run(self, source: Mapping[str, object]) -> FixedAdapterAttemptEvidence:
         if (
             not isinstance(source, Mapping)
             or set(source) != {"schema", "scenario", "request", "response", "transport"}
@@ -504,22 +536,19 @@ class StructuralHardcoverIdentityPreview:
             or transport.get("byte_channel") != "post-policy-in-memory"
         ):
             raise ValueError("synthetic input is invalid")
-        try:
-            request_body = request["body_bytes_utf8"].encode("utf-8", "strict")
-            status_line = response["raw_status_line_bytes_utf8"].encode(
-                "utf-8", "strict"
-            )
-            header_lines = tuple(
-                line.encode("utf-8", "strict")
-                for line in response["raw_header_lines_bytes_utf8"]
-            )
-            response_body = response["raw_body_bytes_utf8"].encode(
-                "utf-8", "strict"
-            )
-            started = _strict_preview_time(transport.get("attempt_started_wall"))
-            cutoff = _strict_preview_time(transport.get("attempt_cutoff_wall"))
-        except (UnicodeError, ValueError, TypeError):
-            raise ValueError("synthetic input is invalid") from None
+        request_body = request["body_bytes_utf8"].encode("utf-8", "strict")
+        status_line = response["raw_status_line_bytes_utf8"].encode(
+            "utf-8", "strict"
+        )
+        header_lines = tuple(
+            line.encode("utf-8", "strict")
+            for line in response["raw_header_lines_bytes_utf8"]
+        )
+        response_body = response["raw_body_bytes_utf8"].encode(
+            "utf-8", "strict"
+        )
+        started = _strict_preview_time(transport.get("attempt_started_wall"))
+        cutoff = _strict_preview_time(transport.get("attempt_cutoff_wall"))
         if (
             len(request_body) > MAX_REQUEST_BYTES
             or len(status_line) > 128
@@ -593,6 +622,16 @@ class StructuralHardcoverIdentityPreview:
         )
 
 
+def _structural_preview_attempt(
+    preview: StructuralHardcoverIdentityPreview,
+    source: Mapping[str, object],
+) -> FixedAdapterAttemptEvidence | None:
+    try:
+        return preview._run(source)
+    except BaseException:
+        return None
+
+
 def _strict_preview_time(value: object) -> datetime:
     if type(value) is not str or not value.endswith("Z"):
         raise ValueError("synthetic time is invalid")
@@ -607,7 +646,16 @@ def identity_query_from_canonical_body(body: bytes) -> IsbnIdentityQuery:
     """Recover the redacted typed query only from an exact canonical request body."""
 
     if type(body) is not bytes or not 1 <= len(body) <= MAX_REQUEST_BYTES:
+        body = b""
         raise ValueError("Hardcover identity request body is invalid")
+    query = _canonical_query_or_none(body)
+    if query is None:
+        body = b""
+        raise ValueError("Hardcover identity request body is invalid")
+    return query
+
+
+def _canonical_query_or_none(body: bytes) -> IsbnIdentityQuery | None:
     try:
         text = body.decode("utf-8", "strict")
         if text.startswith("\ufeff"):
@@ -619,8 +667,8 @@ def identity_query_from_canonical_body(body: bytes) -> IsbnIdentityQuery:
             parse_float=_reject_number,
             parse_constant=_reject_number,
         )
-    except (UnicodeError, ValueError, TypeError, json.JSONDecodeError):
-        raise ValueError("Hardcover identity request body is invalid") from None
+    except BaseException:
+        return None
     if (
         type(value) is not dict
         or set(value) != {"operationName", "query", "variables"}
@@ -630,16 +678,20 @@ def identity_query_from_canonical_body(body: bytes) -> IsbnIdentityQuery:
         or set(value["variables"]) != {"isbns"}
         or type(value["variables"]["isbns"]) is not list
     ):
-        raise ValueError("Hardcover identity request body is invalid")
+        return None
     isbns = value["variables"]["isbns"]
     if len(isbns) not in {1, 2} or any(type(item) is not str for item in isbns):
-        raise ValueError("Hardcover identity request body is invalid")
+        return None
     try:
         query = IsbnIdentityQuery(isbns[0], isbns[1] if len(isbns) == 2 else None)
-    except (TypeError, ValueError):
-        raise ValueError("Hardcover identity request body is invalid") from None
-    if _canonical_body(query) != body:
-        raise ValueError("Hardcover identity request body is invalid")
+    except BaseException:
+        return None
+    try:
+        canonical = _canonical_body(query)
+    except BaseException:
+        return None
+    if canonical != body:
+        return None
     return query
 
 
@@ -883,6 +935,22 @@ def _injected_callable(
     return capability, None
 
 
+def _channel_failure_kind(error: IdentityChannelFailure) -> IdentityAttemptFailureKind:
+    if type(error) is not IdentityChannelFailure:
+        return IdentityAttemptFailureKind.UNAVAILABLE
+    try:
+        kind = object.__getattribute__(error, "kind")
+    except BaseException:
+        return IdentityAttemptFailureKind.UNAVAILABLE
+    if type(kind) is not IdentityAttemptFailureKind or kind not in {
+        IdentityAttemptFailureKind.CANCELLED,
+        IdentityAttemptFailureKind.TIMEOUT,
+        IdentityAttemptFailureKind.UNAVAILABLE,
+    }:
+        return IdentityAttemptFailureKind.UNAVAILABLE
+    return kind
+
+
 def _acquire_response_body(response: object) -> object:
     try:
         return getattr(response, "body_reader", None)
@@ -924,12 +992,6 @@ def _release_response(channel: object, response: object, reader: object) -> bool
             confirmation = False
         if confirmation is True:
             return True
-        if confirmation is not False:
-            try:
-                if getattr(reader, "closed", False) is True:
-                    return True
-            except BaseException:
-                pass
     release, failure = _injected_callable(
         channel, "release", IdentityAttemptFailureKind.UNAVAILABLE
     )

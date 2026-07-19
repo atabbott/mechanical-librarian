@@ -7,6 +7,7 @@ from unittest.mock import patch
 from mechanical_librarian.adapters.providers import hardcover_identity as adapter
 from mechanical_librarian.application.hardcover_identity import (
     IdentityAttemptFailureKind,
+    IsbnIdentityQuery,
 )
 
 
@@ -101,6 +102,38 @@ class HardcoverIdentityBoundaryTests(unittest.TestCase):
             with self.subTest(status_bytes=size):
                 status = prefix + b"A" * (size - len(prefix) - 2) + b"\r\n"
                 self.assertIs(adapter._parse_status(status) is not None, accepted)
+
+    def test_private_parse_failures_clear_context_and_traceback_locals(self) -> None:
+        forbidden_text = "private-isbn-title-token-path"
+        forbidden_bytes = b"\xff" + forbidden_text.encode()
+
+        def assert_clean(error: BaseException, expected: str) -> None:
+            self.assertEqual(error.args, (expected,))
+            self.assertIsNone(error.__cause__)
+            self.assertIsNone(error.__context__)
+            self.assertFalse(getattr(error, "__notes__", ()))
+            traceback = error.__traceback__
+            while traceback is not None:
+                frame = traceback.tb_frame
+                if "/src/mechanical_librarian/" in frame.f_code.co_filename:
+                    for value in frame.f_locals.values():
+                        self.assertIsNot(value, forbidden_bytes)
+                        self.assertNotEqual(value, forbidden_text)
+                        self.assertNotIn(forbidden_text, repr(value))
+                        if isinstance(value, UnicodeDecodeError):
+                            self.assertIsNot(value.object, forbidden_bytes)
+                traceback = traceback.tb_next
+
+        with self.assertRaises(ValueError) as body_failure:
+            adapter.identity_query_from_canonical_body(forbidden_bytes)
+        assert_clean(
+            body_failure.exception,
+            "Hardcover identity request body is invalid",
+        )
+
+        with self.assertRaises(ValueError) as query_failure:
+            IsbnIdentityQuery(forbidden_text, None)
+        assert_clean(query_failure.exception, "ISBN identity query is malformed")
 
     def test_declared_oversize_closes_without_reading_body(self) -> None:
         reader = adapter.StructuralIdentityBodyReader(iter((b"must-not-read",)))
@@ -420,8 +453,65 @@ class HardcoverIdentityBoundaryTests(unittest.TestCase):
                 raise KeyboardInterrupt("private-producer-close")
 
         structural = adapter.StructuralIdentityBodyReader(HostileIterator())
-        structural.close()
-        self.assertTrue(structural.closed)
+        self.assertFalse(structural.close())
+        self.assertFalse(structural.closed)
+        self.assertTrue(structural.read_disabled)
+        self.assertTrue(structural.finalization_attempted)
+        self.assertFalse(structural.abort())
+        self.assertFalse(structural.closed)
+
+    def test_structural_release_state_requires_confirmed_underlying_finalization(self) -> None:
+        finalized = False
+
+        def producer() -> object:
+            nonlocal finalized
+            try:
+                yield b"private-body"
+            finally:
+                finalized = True
+
+        successful = adapter.StructuralIdentityBodyReader(producer())
+        self.assertFalse(successful.read_disabled)
+        self.assertFalse(successful.finalization_attempted)
+        self.assertFalse(successful.closed)
+        self.assertEqual(successful.read_chunk(64), b"private-body")
+        self.assertTrue(successful.close())
+        self.assertTrue(finalized)
+        self.assertTrue(successful.read_disabled)
+        self.assertTrue(successful.finalization_attempted)
+        self.assertTrue(successful.closed)
+        self.assertTrue(successful.close())
+
+        class RetryProducer:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def __iter__(self) -> RetryProducer:
+                return self
+
+            def __next__(self) -> bytes:
+                return b"must-not-read"
+
+            def close(self) -> None:
+                self.calls += 1
+                if self.calls == 1:
+                    raise SystemExit("private-first-close")
+
+        retry_producer = RetryProducer()
+        retry = adapter.StructuralIdentityBodyReader(retry_producer)
+        self.assertFalse(retry.close())
+        self.assertFalse(retry.closed)
+        self.assertTrue(retry.read_disabled)
+        self.assertTrue(retry.finalization_attempted)
+        self.assertTrue(retry.abort())
+        self.assertTrue(retry.closed)
+        self.assertEqual(retry_producer.calls, 2)
+
+        exhausted = adapter.StructuralIdentityBodyReader(iter(()))
+        self.assertIsNone(exhausted.read_chunk(1))
+        self.assertTrue(exhausted.closed)
+        self.assertTrue(exhausted.read_disabled)
+        self.assertTrue(exhausted.finalization_attempted)
 
     def test_depth_limit_minus_exact_plus_and_string_aware_scan(self) -> None:
         def nested(depth: int) -> str:

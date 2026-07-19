@@ -213,6 +213,14 @@ parsing. Non-200 bodies are released without parsing. Every post-exchange path
 requires either positively confirmed reader close or a positively confirmed
 transport-owned release fallback; otherwise only value-free `unavailable` may
 escape, including when the candidate was success or a status-derived result.
+Reader-local disablement and attempted finalization never imply release, and
+truthy/non-boolean close or fallback returns are rejected. Caught provider,
+preview, observer, parser, and injected-capability exceptions are reduced to
+typed sentinels before any public exception is raised; private exception/input
+objects are cleared from traceback locals, cause and context remain absent, and
+only allowlisted args with no notes are exposed. Transport failure metadata is
+accepted only from an exact failure type with an exact revalidated enum value;
+subclass accessors and post-construction mutation fail to unavailable.
 HTTP 200 enforces exact header cardinality and grammar, 65,536 streamed bytes,
 strict UTF-8 once without BOM, string-aware depth 8, 128 value nodes, 96
 members, four cumulative list elements, per-string and cumulative Unicode/byte

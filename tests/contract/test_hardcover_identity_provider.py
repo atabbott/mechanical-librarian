@@ -15,6 +15,7 @@ from mechanical_librarian.adapters.providers.hardcover_identity import (
     HardcoverIdentityProvider,
     IdentityChannelFailure,
     RawIdentityResponseHead,
+    StructuralHardcoverIdentityPreview,
     StructuralIdentityBodyReader,
     StructuralIdentityByteChannel,
     address_is_public,
@@ -926,6 +927,47 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 )
                 self.assertNotIn("private-", repr(result))
 
+        class DeclaredClose:
+            closed = True
+
+            def __init__(self, value: object) -> None:
+                self.value = value
+                self.calls = 0
+
+            def close(self) -> object:
+                self.calls += 1
+                return self.value
+
+        for close_value in (None, False, 0, 1, "true", object()):
+            for fallback, expected in (
+                (True, IdentityAttemptFailureKind.MALFORMED),
+                (False, IdentityAttemptFailureKind.UNAVAILABLE),
+            ):
+                with self.subTest(
+                    close_value=type(close_value).__name__, fallback=fallback
+                ):
+                    reader = DeclaredClose(close_value)
+                    channel = FallbackChannel(reader, fallback)
+                    result = HardcoverIdentityProvider(
+                        lambda host, port: ("1.1.1.1",),
+                        channel,
+                        b"synthetic-noncredential",
+                    ).lookup(self.query(), self.context())
+                    self.assertEqual(result.failure.kind, expected)
+                    self.assertEqual(reader.calls, 1)
+                    self.assertEqual(channel.release_calls, 1)
+
+        reader = DeclaredClose(True)
+        channel = FallbackChannel(reader, False)
+        result = HardcoverIdentityProvider(
+            lambda host, port: ("1.1.1.1",),
+            channel,
+            b"synthetic-noncredential",
+        ).lookup(self.query(), self.context())
+        self.assertEqual(result.failure.kind, IdentityAttemptFailureKind.MALFORMED)
+        self.assertEqual(reader.calls, 1)
+        self.assertEqual(channel.release_calls, 0)
+
         class Reader:
             def __init__(self, chunks: tuple[bytes | None, ...], close_value: object) -> None:
                 self.chunks = iter(chunks)
@@ -1011,6 +1053,159 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                             result.failure.kind, IdentityAttemptFailureKind.UNAVAILABLE
                         )
                     self.assertNotIn("private-", repr(result))
+
+    def test_channel_failure_metadata_is_exact_sealed_and_value_free(self) -> None:
+        class RaisingChannel:
+            def __init__(self, error: BaseException) -> None:
+                self.error = error
+
+            def exchange(self, request: object, context: object) -> object:
+                raise self.error
+
+        exact = IdentityChannelFailure(IdentityAttemptFailureKind.CANCELLED)
+        cases: list[tuple[BaseException, IdentityAttemptFailureKind]] = [
+            (exact, IdentityAttemptFailureKind.CANCELLED),
+        ]
+        for value in (None, True, "cancelled", object()):
+            mutated = IdentityChannelFailure(IdentityAttemptFailureKind.CANCELLED)
+            mutated.kind = value
+            cases.append((mutated, IdentityAttemptFailureKind.UNAVAILABLE))
+        missing = IdentityChannelFailure(IdentityAttemptFailureKind.TIMEOUT)
+        del missing.kind
+        cases.append((missing, IdentityAttemptFailureKind.UNAVAILABLE))
+
+        class HostileSubclass(IdentityChannelFailure):
+            @property
+            def kind(self) -> object:
+                raise KeyboardInterrupt("private-kind-access")
+
+            @kind.setter
+            def kind(self, value: object) -> None:
+                self.__dict__["shadow_kind"] = value
+
+        subclass = HostileSubclass(IdentityAttemptFailureKind.CANCELLED)
+        subclass.args = ("private-args",)
+        subclass.add_note("private-note")
+        subclass.__dict__["private"] = "private-dict"
+        cases.append((subclass, IdentityAttemptFailureKind.UNAVAILABLE))
+
+        mutated_args = IdentityChannelFailure(IdentityAttemptFailureKind.TIMEOUT)
+        mutated_args.args = ("private-args",)
+        mutated_args.add_note("private-note")
+        mutated_args.__dict__["private"] = "private-dict"
+        cases.append((mutated_args, IdentityAttemptFailureKind.TIMEOUT))
+
+        for error, expected in cases:
+            with self.subTest(error=type(error).__name__, expected=expected):
+                result = HardcoverIdentityProvider(
+                    lambda host, port: ("1.1.1.1",),
+                    RaisingChannel(error),
+                    b"synthetic-noncredential",
+                ).lookup(self.query(), self.context())
+                self.assertEqual(result.failure.kind, expected)
+                self.assertNotIn("private-", repr(result))
+
+    def test_translated_private_exceptions_clear_context_and_traceback_locals(self) -> None:
+        forbidden_text = "private-title-token-path"
+
+        class PrivateExit(SystemExit):
+            pass
+
+        private_error = PrivateExit(forbidden_text)
+        private_error.private = forbidden_text
+        private_error.add_note(forbidden_text)
+
+        def assert_clean(
+            error: BaseException,
+            expected_args: tuple[object, ...],
+            caught_private: BaseException = private_error,
+        ) -> None:
+            self.assertEqual(error.args, expected_args)
+            self.assertIsNone(error.__cause__)
+            self.assertIsNone(error.__context__)
+            self.assertFalse(getattr(error, "__notes__", ()))
+            traceback = error.__traceback__
+            while traceback is not None:
+                frame = traceback.tb_frame
+                if "/src/mechanical_librarian/" in frame.f_code.co_filename:
+                    for value in frame.f_locals.values():
+                        self.assertIsNot(value, caught_private)
+                        self.assertNotIn(forbidden_text, repr(value))
+                traceback = traceback.tb_next
+
+        private_query = validate_private_query(
+            {"isbn": "9780000000019", "title": forbidden_text}
+        )
+
+        class FailedProvider:
+            def lookup(self, query: object, context: object) -> object:
+                raise private_error
+
+        with self.assertRaises(IdentityReportError) as provider_failure:
+            RunHardcoverIdentityReport().run(
+                FailedProvider(), private_query, self.context()
+            )
+        assert_clean(
+            provider_failure.exception,
+            ("identity provider attempt is unavailable",),
+        )
+
+        class FailedPreview:
+            def run(self, source: object) -> object:
+                raise private_error
+
+        with self.assertRaises(IdentityReportError) as preview_failure:
+            RunHardcoverFixedAdapterPreview().run(
+                FailedPreview(), {"private": forbidden_text}
+            )
+        assert_clean(
+            preview_failure.exception,
+            ("Hardcover structural preview is unavailable",),
+        )
+
+        private_generator = GeneratorExit(forbidden_text)
+        private_generator.private = forbidden_text
+        private_generator.add_note(forbidden_text)
+
+        class FailedGeneratorPreview:
+            def run(self, source: object) -> object:
+                raise private_generator
+
+        with self.assertRaises(IdentityReportError) as generator_failure:
+            RunHardcoverFixedAdapterPreview().run(
+                FailedGeneratorPreview(), {"private": forbidden_text}
+            )
+        assert_clean(
+            generator_failure.exception,
+            ("Hardcover structural preview is unavailable",),
+            private_generator,
+        )
+
+        def failed_observer(channel: str, values: tuple[object, ...]) -> None:
+            raise private_error
+
+        with self.assertRaises(IdentityReportError) as observer_failure:
+            RunHardcoverIdentityReport().run(
+                self.provider(self.channel()),
+                private_query,
+                self.context(),
+                privacy_observer=failed_observer,
+            )
+        assert_clean(
+            observer_failure.exception,
+            ("Hardcover privacy observer is unavailable",),
+        )
+
+        source = {
+            "schema": "hardcover-synthetic-input-v3",
+            "scenario": "fixed-adapter-v3",
+            "request": {},
+            "response": {"private": forbidden_text},
+            "transport": {},
+        }
+        with self.assertRaises(ValueError) as structural_failure:
+            StructuralHardcoverIdentityPreview().run(source)
+        assert_clean(structural_failure.exception, ("synthetic input is invalid",))
 
     def test_structural_channel_requires_the_exact_ordered_header_tuple(self) -> None:
         query = self.query()

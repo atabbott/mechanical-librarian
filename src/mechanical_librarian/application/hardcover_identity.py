@@ -62,26 +62,45 @@ class IsbnIdentityQuery:
     canonical_isbn_13: str
     equivalent_isbn_10: str | None
 
-    def __post_init__(self) -> None:
-        try:
-            parsed = isbn_identity(self.canonical_isbn_13)
-        except ValueError:
-            raise ValueError("ISBN identity query is malformed") from None
-        if (
-            parsed.canonical_isbn_13 != self.canonical_isbn_13
-            or parsed.equivalent_isbn_10 != self.equivalent_isbn_10
-        ):
+    def __init__(
+        self,
+        canonical_isbn_13: str,
+        equivalent_isbn_10: str | None,
+    ) -> None:
+        parsed = _isbn_identity_or_none(canonical_isbn_13)
+        valid = (
+            parsed is not None
+            and parsed.canonical_isbn_13 == canonical_isbn_13
+            and parsed.equivalent_isbn_10 == equivalent_isbn_10
+        )
+        if not valid:
+            canonical_isbn_13 = ""
+            equivalent_isbn_10 = None
+            parsed = None
             raise ValueError("ISBN identity query is malformed")
+        object.__setattr__(self, "canonical_isbn_13", parsed.canonical_isbn_13)
+        object.__setattr__(self, "equivalent_isbn_10", parsed.equivalent_isbn_10)
 
     @classmethod
     def from_private(cls, query: PrivateIdentityQuery) -> IsbnIdentityQuery:
         if type(query) is not PrivateIdentityQuery:
+            query = None
             raise TypeError("private identity query is malformed")
-        parsed = isbn_identity(query.canonical_isbn)
+        parsed = _isbn_identity_or_none(query.canonical_isbn)
+        if parsed is None:
+            query = None
+            raise ValueError("private identity query is malformed")
         return cls(parsed.canonical_isbn_13, parsed.equivalent_isbn_10)
 
     def __repr__(self) -> str:
         return "IsbnIdentityQuery(<redacted>)"
+
+
+def _isbn_identity_or_none(value: object):
+    try:
+        return isbn_identity(value)
+    except BaseException:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,26 +318,46 @@ class RunHardcoverFixedAdapterPreview:
         source: Mapping[str, object],
     ) -> FixedAdapterPreviewReport:
         if not isinstance(source, Mapping):
+            preview = None
+            source = None
             raise TypeError("Hardcover structural preview input is malformed")
-        invoke = _attempt_method(preview, "run", "Hardcover structural preview")
-        try:
-            evidence = invoke(source)
-        except KeyboardInterrupt:
-            raise _attempt_error(
-                "Hardcover structural preview", IdentityAttemptFailureKind.CANCELLED
-            ) from None
-        except BaseException:
-            raise _attempt_error(
-                "Hardcover structural preview", IdentityAttemptFailureKind.UNAVAILABLE
-            ) from None
+        invoke, failure = _attempt_method(preview, "run")
+        if failure is not None or invoke is None:
+            preview = None
+            source = {}
+            invoke = None
+            _raise_attempt_boundary("Hardcover structural preview", failure)
+        evidence, failure = _attempt_call(invoke, source)
+        if failure is not None:
+            preview = None
+            source = {}
+            invoke = None
+            evidence = None
+            _raise_attempt_boundary("Hardcover structural preview", failure)
         if type(evidence) is not FixedAdapterAttemptEvidence:
+            preview = None
+            source = {}
+            invoke = None
+            evidence = None
             raise IdentityReportError("Hardcover structural preview is malformed")
-        return fixed_adapter_preview_report(
+        report, failure = _attempt_call(
+            fixed_adapter_preview_report,
             evidence.result,
             evidence.query,
             peer_equal=evidence.peer_equal,
             address_policy=evidence.address_policy,
         )
+        if failure is not None or type(report) is not FixedAdapterPreviewReport:
+            preview = None
+            source = {}
+            invoke = None
+            evidence = None
+            report = None
+            _raise_attempt_boundary(
+                "Hardcover structural preview",
+                failure or IdentityAttemptFailureKind.MALFORMED,
+            )
+        return report
 
 
 @dataclass(frozen=True)
@@ -459,25 +498,67 @@ class RunHardcoverIdentityReport:
         privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
     ) -> IdentityDecisionPreviewReport:
         if type(query) is not PrivateIdentityQuery or type(context) is not OperationContext:
+            provider = None
+            query = None
+            context = None
+            privacy_observer = None
             raise TypeError("identity report input is malformed")
         if privacy_observer is not None and not callable(privacy_observer):
+            provider = None
+            query = None
+            context = None
+            privacy_observer = None
             raise TypeError("Hardcover privacy observer is malformed")
 
-        lookup = _attempt_method(provider, "lookup", "book identity provider")
-        try:
-            result = lookup(IsbnIdentityQuery.from_private(query), context)
-        except KeyboardInterrupt:
-            raise _attempt_error(
-                "identity provider attempt", IdentityAttemptFailureKind.CANCELLED
-            ) from None
-        except BaseException:
-            raise _attempt_error(
-                "identity provider attempt", IdentityAttemptFailureKind.UNAVAILABLE
-            ) from None
+        lookup, failure = _attempt_method(provider, "lookup")
+        if failure is not None or lookup is None:
+            provider = None
+            query = None
+            context = None
+            privacy_observer = None
+            lookup = None
+            _raise_attempt_boundary("book identity provider", failure)
+        typed_query, failure = _attempt_call(IsbnIdentityQuery.from_private, query)
+        if failure is not None or type(typed_query) is not IsbnIdentityQuery:
+            provider = None
+            query = None
+            context = None
+            privacy_observer = None
+            lookup = None
+            typed_query = None
+            _raise_attempt_boundary(
+                "identity query",
+                failure or IdentityAttemptFailureKind.MALFORMED,
+            )
+        result, failure = _attempt_call(lookup, typed_query, context)
+        typed_query = None
+        if failure is not None:
+            provider = None
+            query = None
+            context = None
+            privacy_observer = None
+            lookup = None
+            result = None
+            _raise_attempt_boundary("identity provider attempt", failure)
         if type(result) is not IdentityAttemptResult:
+            provider = None
+            query = None
+            context = None
+            privacy_observer = None
+            lookup = None
+            result = None
             raise IdentityReportError("identity provider returned a malformed result")
         if result.failure is not None:
             outcome = _failure_outcome(result.failure.kind)
+            if outcome is None:
+                failure_kind = result.failure.kind
+                provider = None
+                query = None
+                context = None
+                privacy_observer = None
+                lookup = None
+                result = None
+                _raise_no_decision(failure_kind)
             decision_report = IdentityDecisionPreviewReport(
                 outcome, 0, 0, TitleComparison.NOT_COMPARED
             )
@@ -491,27 +572,42 @@ class RunHardcoverIdentityReport:
             )
         decision_report.validate()
         if privacy_observer is not None:
-            _notify_observer(privacy_observer,
-                "traces",
-                ("hardcover.synthetic.identity_decision", "identity-decision-v3"),
-            )
-            _notify_observer(privacy_observer,
-                "spans",
-                ("lookup-and-decide", decision_report.outcome.value),
-            )
-            _notify_observer(privacy_observer,
-                "metrics",
+            observations = (
                 (
-                    "hardcover_identity_preview_total",
-                    (("outcome", decision_report.outcome.value),),
-                    1,
-                    None,
+                    "traces",
+                    ("hardcover.synthetic.identity_decision", "identity-decision-v3"),
+                ),
+                ("spans", ("lookup-and-decide", decision_report.outcome.value)),
+                (
+                    "metrics",
+                    (
+                        "hardcover_identity_preview_total",
+                        (("outcome", decision_report.outcome.value),),
+                        1,
+                        None,
+                    ),
                 ),
             )
+            for observer_channel, observer_values in observations:
+                failure = _notify_observer(
+                    privacy_observer, observer_channel, observer_values
+                )
+                if failure is not None:
+                    provider = None
+                    query = None
+                    context = None
+                    privacy_observer = None
+                    lookup = None
+                    result = None
+                    observations = ()
+                    observer_values = ()
+                    _raise_attempt_boundary("Hardcover privacy observer", failure)
         return decision_report
 
 
-def _failure_outcome(kind: IdentityAttemptFailureKind) -> IdentityDecisionOutcome:
+def _failure_outcome(
+    kind: IdentityAttemptFailureKind,
+) -> IdentityDecisionOutcome | None:
     if kind is IdentityAttemptFailureKind.INCOMPATIBLE:
         return IdentityDecisionOutcome.INCOMPATIBLE
     if kind in {
@@ -519,9 +615,7 @@ def _failure_outcome(kind: IdentityAttemptFailureKind) -> IdentityDecisionOutcom
         IdentityAttemptFailureKind.OVERSIZED,
     }:
         return IdentityDecisionOutcome.MALFORMED
-    raise IdentityReportError(
-        "identity provider attempt did not produce a decision", kind
-    )
+    return None
 
 
 def _attempt_error(
@@ -536,33 +630,61 @@ def _attempt_error(
     return IdentityReportError(f"{label} is {suffix}", kind)
 
 
-def _attempt_method(owner: object, name: str, label: str) -> Callable[..., object]:
+def _raise_attempt_boundary(
+    label: str,
+    kind: IdentityAttemptFailureKind | None,
+) -> None:
+    if kind is IdentityAttemptFailureKind.MALFORMED or kind is None:
+        raise TypeError(f"{label} is malformed")
+    raise _attempt_error(label, kind)
+
+
+def _raise_no_decision(kind: IdentityAttemptFailureKind) -> None:
+    raise IdentityReportError(
+        "identity provider attempt did not produce a decision", kind
+    )
+
+
+def _attempt_method(
+    owner: object,
+    name: str,
+) -> tuple[Callable[..., object] | None, IdentityAttemptFailureKind | None]:
     try:
         method = getattr(owner, name, None)
     except KeyboardInterrupt:
-        raise _attempt_error(label, IdentityAttemptFailureKind.CANCELLED) from None
+        return None, IdentityAttemptFailureKind.CANCELLED
     except BaseException:
-        raise _attempt_error(label, IdentityAttemptFailureKind.UNAVAILABLE) from None
+        return None, IdentityAttemptFailureKind.UNAVAILABLE
     if not callable(method):
-        raise TypeError(f"{label} is malformed")
-    return method
+        return None, IdentityAttemptFailureKind.MALFORMED
+    return method, None
+
+
+def _attempt_call(
+    invoke: Callable[..., object],
+    *args: object,
+    **kwargs: object,
+) -> tuple[object | None, IdentityAttemptFailureKind | None]:
+    try:
+        return invoke(*args, **kwargs), None
+    except KeyboardInterrupt:
+        return None, IdentityAttemptFailureKind.CANCELLED
+    except BaseException:
+        return None, IdentityAttemptFailureKind.UNAVAILABLE
 
 
 def _notify_observer(
     observer: Callable[[str, tuple[object, ...]], None],
     channel: str,
     values: tuple[object, ...],
-) -> None:
+) -> IdentityAttemptFailureKind | None:
     try:
         observer(channel, values)
     except KeyboardInterrupt:
-        raise _attempt_error(
-            "Hardcover privacy observer", IdentityAttemptFailureKind.CANCELLED
-        ) from None
+        return IdentityAttemptFailureKind.CANCELLED
     except BaseException:
-        raise _attempt_error(
-            "Hardcover privacy observer", IdentityAttemptFailureKind.UNAVAILABLE
-        ) from None
+        return IdentityAttemptFailureKind.UNAVAILABLE
+    return None
 
 
 def preactivation_report(
@@ -588,6 +710,9 @@ def inert_preview(
     """Exercise real validation seams while retaining no private projection."""
 
     if privacy_observer is not None and not callable(privacy_observer):
+        configuration = None
+        query = None
+        privacy_observer = None
         raise TypeError("Hardcover privacy observer is malformed")
     if (
         type(configuration) is not HardcoverProviderConfiguration
@@ -598,23 +723,33 @@ def inert_preview(
     else:
         report = InertPreviewReport(HardcoverIdentityOutcome.DISABLED)
     if privacy_observer is not None:
-        _notify_observer(privacy_observer,
-            "traces",
-            ("hardcover.synthetic.inert_preview", "inert-report-v3"),
-        )
-        _notify_observer(privacy_observer,
-            "spans",
-            ("validate-and-report", report.outcome.value),
-        )
-        _notify_observer(privacy_observer,
-            "metrics",
+        observations = (
             (
-                "hardcover_identity_preview_total",
-                (("outcome", report.outcome.value),),
-                1,
-                None,
+                "traces",
+                ("hardcover.synthetic.inert_preview", "inert-report-v3"),
+            ),
+            ("spans", ("validate-and-report", report.outcome.value)),
+            (
+                "metrics",
+                (
+                    "hardcover_identity_preview_total",
+                    (("outcome", report.outcome.value),),
+                    1,
+                    None,
+                ),
             ),
         )
+        for observer_channel, observer_values in observations:
+            failure = _notify_observer(
+                privacy_observer, observer_channel, observer_values
+            )
+            if failure is not None:
+                configuration = None
+                query = None
+                privacy_observer = None
+                observations = ()
+                observer_values = ()
+                _raise_attempt_boundary("Hardcover privacy observer", failure)
     return report
 
 
