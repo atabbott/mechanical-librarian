@@ -464,6 +464,23 @@ class RunHardcoverIdentityReportTests(unittest.TestCase):
             IdentityAttemptFailureKind.INCOMPATIBLE,
         )
 
+    def test_attempt_success_enforces_the_value_free_observation_limit(self) -> None:
+        observation = self.row()
+        limit = (observation,) * 4
+        self.assertEqual(IdentityAttemptResult.success(limit).observations, limit)
+
+        oversized = (observation,) * 5
+        with self.assertRaisesRegex(ValueError, "resource limit") as caught:
+            IdentityAttemptResult.success(oversized)
+        rendered = str(caught.exception)
+        self.assertEqual(
+            rendered, "identity attempt observations exceed the resource limit"
+        )
+        self.assertNotIn("9780000000019", rendered)
+        self.assertNotIn("Synthetic Ebook Alpha", rendered)
+        with self.assertRaisesRegex(ValueError, "resource limit"):
+            IdentityAttemptResult(observations=oversized)
+
     def test_preview_report_enforces_exact_closed_outcome_invariants(self) -> None:
         valid = (
             (IdentityDecisionOutcome.MATCHED, 1, 0, TitleComparison.EQUAL),

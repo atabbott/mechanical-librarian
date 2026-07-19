@@ -22,6 +22,9 @@ from mechanical_librarian.domain.hardcover_identity import (
 )
 
 
+MAX_IDENTITY_OBSERVATIONS = 4
+
+
 class HardcoverIdentityOutcome(StrEnum):
     DISABLED = "disabled"
     PROVIDER_NOT_ACTIVATED = "provider_not_activated"
@@ -88,13 +91,15 @@ class IdentityAttemptResult:
     def __post_init__(self) -> None:
         if (self.observations is None) == (self.failure is None):
             raise ValueError("identity attempt result must contain exactly one result")
-        if self.observations is not None and (
-            type(self.observations) is not tuple
-            or any(
+        if self.observations is not None:
+            if type(self.observations) is not tuple:
+                raise ValueError("identity attempt observations are malformed")
+            if len(self.observations) > MAX_IDENTITY_OBSERVATIONS:
+                raise ValueError("identity attempt observations exceed the resource limit")
+            if any(
                 type(row) is not ProviderIdentityObservation for row in self.observations
-            )
-        ):
-            raise ValueError("identity attempt observations are malformed")
+            ):
+                raise ValueError("identity attempt observations are malformed")
         if self.failure is not None and type(self.failure) is not IdentityAttemptFailure:
             raise ValueError("identity attempt failure is malformed")
 
