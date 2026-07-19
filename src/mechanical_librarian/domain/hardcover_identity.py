@@ -27,10 +27,13 @@ class TitleComparison(StrEnum):
     NOT_COMPARED = "not_compared"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, repr=False, slots=True)
 class IsbnIdentity:
     canonical_isbn_13: str
     equivalent_isbn_10: str | None
+
+    def __repr__(self) -> str:
+        return "IsbnIdentity(<redacted>)"
 
 
 @dataclass(frozen=True, repr=False, slots=True)

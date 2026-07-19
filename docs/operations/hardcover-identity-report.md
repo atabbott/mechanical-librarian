@@ -99,7 +99,7 @@ uv run --frozen --no-editable --reinstall-package mechanical-librarian \
 Its stdout must be byte-identical to
 `tests/fixtures/hardcover_identity/c2-identity-decision-example-output.json`.
 The current cumulative registry is `preview-registry-c2-v6.json`, SHA-256
-`77c36a2cb2b2c1a7e8a00292d21b4e2417233dc7f11f411e17d7491a6664f34d`.
+`557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11`.
 It contains only the C1 inert and C2 identity scenarios and binds the C2-scoped
 output schema, privacy contract, and privacy scan. See the
 [F09f identity contract](../reference/hardcover-f09f-contract.md) for exact

@@ -772,10 +772,10 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c2-identity-decision-example-output.json": "319744d9311c6c6b43ea104dbc90846a23be3eea53a0f9f7e6bdba1c7aaff779",
             "c2-identity-decision-input-schema.json": "daab0b30e32cf20ebf631e5cb97e6e94f51243867d45377882acf757cf1ea36e",
             "c2-identity-decision-variant-matrix.json": "d3cb1432d994e18527fdf354a6882d6d57b92d1358f2cfd745070dbccb529359",
-            "c2-preview-output-schema-v1.json": "1194180fdbd86d9b244481eb1c8676ef78788406783bfa35b355aa7907670f1c",
+            "c2-preview-output-schema-v1.json": "0ff4003920471f37661dded39e2400ac0944a0edea13be9a5d8df49ffc037991",
             "c2-preview-output-privacy-contract-v1.json": "315984420942e5819c760391b371d452ee5be178c1b30085effe1d8d4e81d47d",
             "c2-preview-output-privacy-scan-v1.json": "81a0aad7d18f16470b13a8533df0d6a5192e056576aed211509aae9d33383452",
-            "preview-registry-c2-v6.json": "77c36a2cb2b2c1a7e8a00292d21b4e2417233dc7f11f411e17d7491a6664f34d",
+            "preview-registry-c2-v6.json": "557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)
@@ -818,6 +818,106 @@ class HardcoverIdentityCliTests(unittest.TestCase):
 
     def test_c2_registry_binds_only_installed_c1_and_c2_resources(self) -> None:
         fixture_root = ROOT / "tests/fixtures/hardcover_identity"
+        output_schema = json.loads(
+            (fixture_root / "c2-preview-output-schema-v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        inert_properties = output_schema["$defs"]["inert_report_result"][
+            "properties"
+        ]
+        for key in (
+            "private_file_opened",
+            "database_opened",
+            "secret_opened",
+            "network_started",
+        ):
+            self.assertEqual(inert_properties[key], {"const": False})
+
+        branches = output_schema["$defs"]["identity_decision_result"]["oneOf"]
+
+        def signature(branch: dict[str, object]) -> tuple[object, ...]:
+            properties = branch["properties"]
+            return (
+                properties["outcome"],
+                properties["rows_validated"],
+                properties["aliases_collapsed"],
+                properties["comparison"],
+                branch["additionalProperties"],
+                branch["type"],
+            )
+
+        integer = lambda minimum, maximum: {
+            "maximum": maximum,
+            "minimum": minimum,
+            "type": "integer",
+        }
+        expected_signatures = (
+            (
+                {"const": "matched"},
+                {"const": 1},
+                {"const": 0},
+                {"enum": ["equal", "different"]},
+                False,
+                "object",
+            ),
+            (
+                {"const": "matched"},
+                {"const": 2},
+                {"const": 1},
+                {"enum": ["equal", "different"]},
+                False,
+                "object",
+            ),
+            (
+                {"const": "matched"},
+                {"const": 3},
+                {"const": 2},
+                {"enum": ["equal", "different"]},
+                False,
+                "object",
+            ),
+            (
+                {"const": "no_match"},
+                {"const": 0},
+                {"const": 0},
+                {"const": "not_compared"},
+                False,
+                "object",
+            ),
+            (
+                {"const": "ambiguous"},
+                integer(2, 4),
+                {"const": 0},
+                {"const": "not_compared"},
+                False,
+                "object",
+            ),
+            (
+                {"const": "incompatible"},
+                integer(0, 4),
+                {"const": 0},
+                {"const": "not_compared"},
+                False,
+                "object",
+            ),
+            (
+                {"const": "malformed"},
+                integer(0, 4),
+                {"const": 0},
+                {"const": "not_compared"},
+                False,
+                "object",
+            ),
+        )
+        self.assertEqual(
+            tuple(signature(branch) for branch in branches), expected_signatures
+        )
+        for branch in branches:
+            self.assertEqual(
+                branch["required"],
+                ["outcome", "rows_validated", "aliases_collapsed", "comparison"],
+            )
         registry = json.loads(
             (fixture_root / "preview-registry-c2-v6.json").read_text(
                 encoding="utf-8"

@@ -100,6 +100,6 @@ addresses, and secrets are forbidden from stdout, stderr, exceptions, logs,
 traces/spans, metrics, persistence, exports, reports, and audit records.
 
 The exact current-head registry is `preview-registry-c2-v6.json`, SHA-256
-`77c36a2cb2b2c1a7e8a00292d21b4e2417233dc7f11f411e17d7491a6664f34d`.
+`557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11`.
 It derives from the installed C1 registry `eb3ec8a5454a3e4a21f9bbfe9b8b2308687de00f6a95df7533055a6083009619`
 and includes only `inert-report-v3` and `identity-decision-v3`.

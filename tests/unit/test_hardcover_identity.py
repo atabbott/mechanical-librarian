@@ -60,6 +60,16 @@ class PrivateIdentityQueryTests(unittest.TestCase):
         self.assertEqual(isbn10.canonical_isbn, "9780306406157")
         self.assertEqual(isbn10_x.canonical_isbn, "9780804429573")
         self.assertNotIn("Synthetic", repr(isbn13))
+        for value in (
+            isbn_identity("9780000000019"),
+            isbn_identity("0306406152"),
+            isbn_identity("9790000000001"),
+        ):
+            rendered = repr(value)
+            self.assertEqual(rendered, "IsbnIdentity(<redacted>)")
+            self.assertNotIn(value.canonical_isbn_13, rendered)
+            if value.equivalent_isbn_10 is not None:
+                self.assertNotIn(value.equivalent_isbn_10, rendered)
         with self.assertRaises(PrivateQueryError):
             PrivateIdentityQuery("9780000000019", "unvalidated")
 
