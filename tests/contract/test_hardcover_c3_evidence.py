@@ -30,8 +30,8 @@ class HardcoverC3EvidenceTests(unittest.TestCase):
                 "207dcef3ceccdace6addda731055b60e40d0688d0c920a703f5f828b30f472b4",
             ),
             "c3-preview-output-schema-v1.json": (
-                3712,
-                "cad3c6ca338aa6904551a24ae548dac9bdd38754e03119c296f9fdf702f51f86",
+                4426,
+                "d43f193739d4221c85d9231e552e4f2dd67f9613a713e766fd1b313bd90dd46b",
             ),
             "c3-preview-output-privacy-contract-v1.json": (
                 2790,
@@ -43,7 +43,7 @@ class HardcoverC3EvidenceTests(unittest.TestCase):
             ),
             "preview-registry-c3-v6.json": (
                 5881,
-                "b6676d94c889a579ef96b821fb3e9d9be780eb4aad791572cf5d326f08849577",
+                "cf8e23665fe40ea926843ceacbb8a5ef96f0ae93a884f8245aaac0fdf29dc778",
             ),
         }
         for name, (size, digest) in expected.items():
@@ -71,6 +71,22 @@ class HardcoverC3EvidenceTests(unittest.TestCase):
                 self.assertEqual(
                     resource["sha256"], hashlib.sha256(payload).hexdigest()
                 )
+
+        output_schema = json.loads(
+            (FIXTURES / "c3-preview-output-schema-v1.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        fixed = output_schema["$defs"]["fixed_adapter_result"]
+        self.assertEqual(len(fixed["oneOf"]), 5)
+        branches = [item["properties"] for item in fixed["oneOf"]]
+        self.assertEqual(branches[0]["address_policy"], {"const": "rejected"})
+        self.assertEqual(branches[0]["peer_equal"], {"const": False})
+        self.assertEqual(branches[0]["row_count"], {"const": 0})
+        self.assertEqual(branches[1]["row_count"]["minimum"], 1)
+        self.assertEqual(branches[1]["row_count"]["maximum"], 3)
+        self.assertEqual(branches[2]["row_count"], {"const": 0})
+        self.assertEqual(branches[3]["row_count"]["minimum"], 2)
         for key in ("output_schema", "output_privacy_contract", "output_privacy_scan"):
             resource = registry[key]
             payload = (FIXTURES / resource["path"]).read_bytes()

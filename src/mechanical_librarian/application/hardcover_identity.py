@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
@@ -151,15 +151,39 @@ class FixedAdapterPreviewReport:
     address_policy: AddressPolicyOutcome
 
     def validate(self) -> None:
-        if (
+        types_invalid = (
             type(self.outcome) is not FixedAdapterOutcome
             or type(self.row_count) is not int
-            or not 0 <= self.row_count <= 4
             or type(self.peer_equal) is not bool
             or type(self.actual_network) is not bool
-            or self.actual_network is not False
             or type(self.address_policy) is not AddressPolicyOutcome
-        ):
+        )
+        if types_invalid:
+            raise TypeError("Hardcover fixed adapter preview report is malformed")
+        rejected = (
+            self.address_policy is AddressPolicyOutcome.REJECTED
+            and self.outcome is FixedAdapterOutcome.INCOMPATIBLE
+            and self.row_count == 0
+            and self.peer_equal is False
+            and self.actual_network is False
+        )
+        accepted = (
+            self.address_policy is AddressPolicyOutcome.ACCEPTED
+            and self.peer_equal is True
+            and self.actual_network is False
+            and {
+                FixedAdapterOutcome.MATCHED: 1 <= self.row_count <= 3,
+                FixedAdapterOutcome.AUTHENTICATION: self.row_count == 0,
+                FixedAdapterOutcome.AUTHORIZATION: self.row_count == 0,
+                FixedAdapterOutcome.MALFORMED: self.row_count == 0,
+                FixedAdapterOutcome.OVERSIZED: self.row_count == 0,
+                FixedAdapterOutcome.EMPTY: self.row_count == 0,
+                FixedAdapterOutcome.NO_MATCH: self.row_count == 0,
+                FixedAdapterOutcome.AMBIGUOUS: 2 <= self.row_count <= 4,
+                FixedAdapterOutcome.INCOMPATIBLE: 0 <= self.row_count <= 4,
+            }[self.outcome]
+        )
+        if not (rejected or accepted):
             raise TypeError("Hardcover fixed adapter preview report is malformed")
 
     def to_json(self) -> str:
@@ -235,6 +259,49 @@ def fixed_adapter_preview_report(
     )
     report.validate()
     return report
+
+
+@dataclass(frozen=True, slots=True)
+class FixedAdapterAttemptEvidence:
+    result: IdentityAttemptResult
+    query: IsbnIdentityQuery
+    peer_equal: bool
+    address_policy: AddressPolicyOutcome
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.result) is not IdentityAttemptResult
+            or type(self.query) is not IsbnIdentityQuery
+            or type(self.peer_equal) is not bool
+            or type(self.address_policy) is not AddressPolicyOutcome
+        ):
+            raise ValueError("Hardcover fixed adapter evidence is malformed")
+
+
+class FixedAdapterStructuralPreview(Protocol):
+    def run(self, source: Mapping[str, object]) -> FixedAdapterAttemptEvidence: ...
+
+
+class RunHardcoverFixedAdapterPreview:
+    """Delegate contributor decoding to the adapter and map only public results."""
+
+    def run(
+        self,
+        preview: FixedAdapterStructuralPreview,
+        source: Mapping[str, object],
+    ) -> FixedAdapterPreviewReport:
+        invoke = getattr(preview, "run", None)
+        if not callable(invoke) or not isinstance(source, Mapping):
+            raise TypeError("Hardcover structural preview input is malformed")
+        evidence = invoke(source)
+        if type(evidence) is not FixedAdapterAttemptEvidence:
+            raise IdentityReportError("Hardcover structural preview is malformed")
+        return fixed_adapter_preview_report(
+            evidence.result,
+            evidence.query,
+            peer_equal=evidence.peer_equal,
+            address_policy=evidence.address_policy,
+        )
 
 
 @dataclass(frozen=True)
@@ -502,7 +569,9 @@ __all__ = [
     "AddressPolicyOutcome",
     "BookIdentityProvider",
     "FixedAdapterOutcome",
+    "FixedAdapterAttemptEvidence",
     "FixedAdapterPreviewReport",
+    "FixedAdapterStructuralPreview",
     "HardcoverIdentityOutcome",
     "HardcoverIdentityReport",
     "IdentityAttemptFailure",
@@ -513,6 +582,7 @@ __all__ = [
     "InertPreviewReport",
     "IsbnIdentityQuery",
     "RunHardcoverIdentityReport",
+    "RunHardcoverFixedAdapterPreview",
     "fixed_adapter_preview_report",
     "inert_preview",
     "preactivation_report",

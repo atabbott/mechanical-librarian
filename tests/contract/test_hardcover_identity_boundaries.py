@@ -11,6 +11,13 @@ from mechanical_librarian.application.hardcover_identity import (
 
 
 class HardcoverIdentityBoundaryTests(unittest.TestCase):
+    def bounded_body(
+        self, lines: tuple[bytes, ...], chunks: tuple[bytes, ...]
+    ) -> bytes | IdentityAttemptFailureKind:
+        return adapter._bounded_body(
+            lines, adapter.StructuralIdentityBodyReader(iter(chunks))
+        )
+
     def row(self, *, title: str = "Synthetic Provider Title") -> dict[str, object]:
         return {
             "id": 1001,
@@ -50,11 +57,11 @@ class HardcoverIdentityBoundaryTests(unittest.TestCase):
             with self.subTest(size=size):
                 payload = b" " * size
                 self.assertEqual(
-                    adapter._bounded_body(content_type, (payload[:1], payload[1:])),
+                    self.bounded_body(content_type, (payload[:1], payload[1:])),
                     payload,
                 )
         self.assertIs(
-            adapter._bounded_body(content_type, (b" " * 65_537,)),
+            self.bounded_body(content_type, (b" " * 65_537,)),
             IdentityAttemptFailureKind.OVERSIZED,
         )
 
@@ -66,11 +73,59 @@ class HardcoverIdentityBoundaryTests(unittest.TestCase):
             (b"065536", IdentityAttemptFailureKind.MALFORMED),
         ):
             with self.subTest(declared=declared):
-                result = adapter._bounded_body(
+                result = self.bounded_body(
                     content_type + (b"Content-Length: " + declared + b"\r\n",),
                     (b"{}",),
                 )
                 self.assertIs(result, expected)
+
+    def test_declared_oversize_closes_without_reading_body(self) -> None:
+        reader = adapter.StructuralIdentityBodyReader(iter((b"must-not-read",)))
+        result = adapter._bounded_body(
+            (
+                b"Content-Type: application/json\r\n",
+                b"Content-Length: 65537\r\n",
+            ),
+            reader,
+        )
+        self.assertIs(result, IdentityAttemptFailureKind.OVERSIZED)
+        self.assertEqual(reader.read_count, 0)
+        self.assertTrue(reader.closed)
+
+    def test_streaming_limit_stops_before_advancing_past_cap(self) -> None:
+        produced: list[int] = []
+
+        def chunks() -> object:
+            for chunk in (b"A" * 65_536, b"B", b"must-not-advance"):
+                produced.append(len(chunk))
+                yield chunk
+
+        reader = adapter.StructuralIdentityBodyReader(chunks())
+        result = adapter._bounded_body(
+            (b"Content-Type: application/json\r\n",), reader
+        )
+        self.assertIs(result, IdentityAttemptFailureKind.OVERSIZED)
+        self.assertEqual(produced, [65_536, 1])
+        self.assertEqual(reader.read_count, 2)
+        self.assertTrue(reader.closed)
+
+    def test_stream_reader_failures_are_closed_and_value_free(self) -> None:
+        class FailedReader:
+            closed = False
+
+            def read_chunk(self) -> bytes | None:
+                raise RuntimeError("private-reader-detail")
+
+            def close(self) -> None:
+                self.closed = True
+
+        reader = FailedReader()
+        result = adapter._bounded_body(
+            (b"Content-Type: application/json\r\n",), reader
+        )
+        self.assertIs(result, IdentityAttemptFailureKind.UNAVAILABLE)
+        self.assertTrue(reader.closed)
+        self.assertNotIn("private-reader-detail", repr(result))
 
     def test_depth_limit_minus_exact_plus_and_string_aware_scan(self) -> None:
         def nested(depth: int) -> str:

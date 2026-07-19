@@ -12,16 +12,27 @@ import ipaddress
 import json
 import re
 import unicodedata
-from collections.abc import Callable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Protocol
 
 from mechanical_librarian.application.hardcover_identity import (
+    AddressPolicyOutcome,
+    FixedAdapterAttemptEvidence,
     IdentityAttemptFailureKind,
     IdentityAttemptResult,
     IsbnIdentityQuery,
 )
-from mechanical_librarian.application.ports import FailureKind, OperationContext
+from mechanical_librarian.application.ports import (
+    CancellationId,
+    CancellationProbe,
+    Deadline,
+    FailureKind,
+    OperationContext,
+    ResourceBounds,
+    TimeProbe,
+)
 from mechanical_librarian.domain.hardcover_identity import (
     ProviderBookObservation,
     ProviderIdentityObservation,
@@ -100,7 +111,13 @@ class IdentityAddressResolver(Protocol):
 class IdentityByteChannel(Protocol):
     def exchange(
         self, request: AuthorizedIdentityRequest, context: OperationContext
-    ) -> RawIdentityResponse: ...
+    ) -> RawIdentityResponseHead: ...
+
+
+class IdentityBodyReader(Protocol):
+    def read_chunk(self) -> bytes | None: ...
+
+    def close(self) -> None: ...
 
 
 @dataclass(frozen=True, repr=False, slots=True)
@@ -134,14 +151,45 @@ class AuthorizedIdentityRequest:
 
 
 @dataclass(frozen=True, repr=False, slots=True)
-class RawIdentityResponse:
+class RawIdentityResponseHead:
     status_line: bytes
     header_lines: tuple[bytes, ...]
-    body_chunks: tuple[bytes, ...]
+    body_reader: IdentityBodyReader
     connected_peer_address: str
 
     def __repr__(self) -> str:
-        return "RawIdentityResponse(<redacted>)"
+        return "RawIdentityResponseHead(<redacted>)"
+
+
+class StructuralIdentityBodyReader:
+    """Single-use bounded-reader seam for an already-authorized response body."""
+
+    def __init__(self, chunks: Iterable[bytes]) -> None:
+        self._chunks = iter(chunks)
+        self._closed = False
+        self._read_count = 0
+
+    @property
+    def closed(self) -> bool:
+        return self._closed
+
+    @property
+    def read_count(self) -> int:
+        return self._read_count
+
+    def read_chunk(self) -> bytes | None:
+        if self._closed:
+            return None
+        try:
+            chunk = next(self._chunks)
+        except StopIteration:
+            self.close()
+            return None
+        self._read_count += 1
+        return chunk
+
+    def close(self) -> None:
+        self._closed = True
 
 
 class IdentityChannelFailure(RuntimeError):
@@ -182,13 +230,9 @@ class HardcoverIdentityProvider:
             return IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.INCOMPATIBLE
             )
-        preflight = context.preflight_result(
-            item_count=4, serialized_bytes=MAX_RESPONSE_BYTES
-        )
-        if preflight.failure is not None:
-            return IdentityAttemptResult.failed(
-                _context_failure(preflight.failure.kind)
-            )
+        preflight = _safe_preflight(context)
+        if preflight is not None:
+            return IdentityAttemptResult.failed(preflight)
         try:
             addresses = _validated_addresses(
                 self._resolver(HARDCOVER_IDENTITY_HOST, 443)
@@ -201,7 +245,13 @@ class HardcoverIdentityProvider:
             return IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.INCOMPATIBLE
             )
+        preflight = _safe_preflight(context)
+        if preflight is not None:
+            return IdentityAttemptResult.failed(preflight)
         request = _build_request(query, addresses[0])
+        preflight = _safe_preflight(context)
+        if preflight is not None:
+            return IdentityAttemptResult.failed(preflight)
         authorized = authorize_identity_request(request, query, self._token)
         if authorized is None:
             return IdentityAttemptResult.failed(
@@ -215,21 +265,24 @@ class HardcoverIdentityProvider:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
         except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
-        if type(response) is not RawIdentityResponse:
+        if type(response) is not RawIdentityResponseHead:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.MALFORMED)
         if not _peer_equal(response.connected_peer_address, addresses[0]):
+            _close_body(response.body_reader)
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
-        if context.cancelled:
-            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
-        if context.expired:
-            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.TIMEOUT)
+        preflight = _safe_preflight(context)
+        if preflight is not None:
+            _close_body(response.body_reader)
+            return IdentityAttemptResult.failed(preflight)
         status = _parse_status(response.status_line)
         if status is None:
+            _close_body(response.body_reader)
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.MALFORMED)
         mapped = _status_failure(status)
         if mapped is not None:
+            _close_body(response.body_reader)
             return IdentityAttemptResult.failed(mapped)
-        payload = _bounded_body(response.header_lines, response.body_chunks)
+        payload = _bounded_body(response.header_lines, response.body_reader)
         if isinstance(payload, IdentityAttemptFailureKind):
             return IdentityAttemptResult.failed(payload)
         observations = _parse_observations(payload)
@@ -257,7 +310,7 @@ class StructuralIdentityByteChannel:
         address_policy_capability: str,
         actual_network: bool,
         byte_channel: str,
-        response: RawIdentityResponse,
+        response: RawIdentityResponseHead,
     ) -> None:
         self._expected = (expected_method, expected_url, expected_body)
         self._transport = (
@@ -285,7 +338,7 @@ class StructuralIdentityByteChannel:
 
     def exchange(
         self, request: AuthorizedIdentityRequest, context: OperationContext
-    ) -> RawIdentityResponse:
+    ) -> RawIdentityResponseHead:
         if self._called or type(context) is not OperationContext:
             raise IdentityChannelFailure(IdentityAttemptFailureKind.UNAVAILABLE)
         frozen = request.request if type(request) is AuthorizedIdentityRequest else None
@@ -309,8 +362,173 @@ class StructuralIdentityByteChannel:
         )
         if not transport_valid or not request_valid:
             raise IdentityChannelFailure(IdentityAttemptFailureKind.UNAVAILABLE)
+        preflight = _safe_preflight(context)
+        if preflight is not None:
+            raise IdentityChannelFailure(preflight)
         self._called = True
         return self._response
+
+
+class StructuralHardcoverIdentityPreview:
+    """Decode and run the fixed contributor fixture behind the adapter seam."""
+
+    def run(self, source: Mapping[str, object]) -> FixedAdapterAttemptEvidence:
+        if (
+            not isinstance(source, Mapping)
+            or set(source) != {"schema", "scenario", "request", "response", "transport"}
+            or source.get("schema") != "hardcover-synthetic-input-v3"
+            or source.get("scenario") != "fixed-adapter-v3"
+            or not isinstance(source.get("request"), Mapping)
+            or not isinstance(source.get("response"), Mapping)
+            or not isinstance(source.get("transport"), Mapping)
+        ):
+            raise ValueError("synthetic input is invalid")
+        request = source["request"]
+        response = source["response"]
+        transport = source["transport"]
+        if (
+            set(request) != {"method", "url", "body_bytes_utf8"}
+            or request.get("method") != "POST"
+            or request.get("url") != HARDCOVER_IDENTITY_URL
+            or type(request.get("body_bytes_utf8")) is not str
+            or set(response)
+            != {
+                "raw_status_line_bytes_utf8",
+                "raw_header_lines_bytes_utf8",
+                "raw_body_bytes_utf8",
+            }
+            or type(response.get("raw_status_line_bytes_utf8")) is not str
+            or type(response.get("raw_header_lines_bytes_utf8")) is not list
+            or any(
+                type(line) is not str
+                for line in response.get("raw_header_lines_bytes_utf8", [])
+            )
+            or type(response.get("raw_body_bytes_utf8")) is not str
+            or set(transport)
+            != {
+                "attempt_started_wall",
+                "attempt_cutoff_wall",
+                "hostname",
+                "selected_address",
+                "connected_peer_address",
+                "resolution_count",
+                "sni",
+                "tls_peer_name",
+                "proxy_mode",
+                "address_policy_capability",
+                "actual_network",
+                "byte_channel",
+            }
+            or transport.get("hostname") != HARDCOVER_IDENTITY_HOST
+            or type(transport.get("selected_address")) is not str
+            or type(transport.get("connected_peer_address")) is not str
+            or type(transport.get("resolution_count")) is not int
+            or transport.get("resolution_count") != 1
+            or transport.get("sni") != HARDCOVER_IDENTITY_HOST
+            or transport.get("tls_peer_name") != HARDCOVER_IDENTITY_HOST
+            or transport.get("proxy_mode") != "disabled"
+            or transport.get("address_policy_capability")
+            != "validated-public-address"
+            or transport.get("actual_network") is not False
+            or transport.get("byte_channel") != "post-policy-in-memory"
+        ):
+            raise ValueError("synthetic input is invalid")
+        try:
+            request_body = request["body_bytes_utf8"].encode("utf-8", "strict")
+            status_line = response["raw_status_line_bytes_utf8"].encode(
+                "utf-8", "strict"
+            )
+            header_lines = tuple(
+                line.encode("utf-8", "strict")
+                for line in response["raw_header_lines_bytes_utf8"]
+            )
+            response_body = response["raw_body_bytes_utf8"].encode(
+                "utf-8", "strict"
+            )
+            started = _strict_preview_time(transport.get("attempt_started_wall"))
+            cutoff = _strict_preview_time(transport.get("attempt_cutoff_wall"))
+        except (UnicodeError, ValueError, TypeError):
+            raise ValueError("synthetic input is invalid") from None
+        if (
+            len(request_body) > MAX_REQUEST_BYTES
+            or len(status_line) > 128
+            or len(header_lines) > 16
+            or any(len(line) > 256 for line in header_lines)
+            or len(response_body) > MAX_RESPONSE_BYTES
+            or cutoff <= started
+            or cutoff - started > timedelta(seconds=30)
+        ):
+            raise ValueError("synthetic input is invalid")
+
+        query = identity_query_from_canonical_body(request_body)
+        selected = transport["selected_address"]
+        peer = transport["connected_peer_address"]
+        body_reader = StructuralIdentityBodyReader(iter((response_body,)))
+        raw_response = RawIdentityResponseHead(
+            status_line,
+            header_lines,
+            body_reader,
+            peer,
+        )
+        channel = StructuralIdentityByteChannel(
+            expected_method=request["method"],
+            expected_url=request["url"],
+            expected_body=request_body,
+            selected_address=selected,
+            connected_peer_address=peer,
+            hostname=transport["hostname"],
+            resolution_count=transport["resolution_count"],
+            tls_sni=transport["sni"],
+            tls_peer_name=transport["tls_peer_name"],
+            proxy_mode=transport["proxy_mode"],
+            address_policy_capability=transport["address_policy_capability"],
+            actual_network=transport["actual_network"],
+            byte_channel=transport["byte_channel"],
+            response=raw_response,
+        )
+
+        def structural_resolver(host: str, port: int) -> tuple[str, ...]:
+            if host != HARDCOVER_IDENTITY_HOST or port != 443:
+                raise ValueError("synthetic resolver invocation is invalid")
+            return (selected,)
+
+        provider = HardcoverIdentityProvider(
+            structural_resolver,
+            channel,
+            b"structural-preview-noncredential",
+        )
+        context = OperationContext(
+            Deadline(cutoff),
+            CancellationProbe(
+                CancellationId("hardcover-fixed-adapter"), lambda: False
+            ),
+            ResourceBounds(4, MAX_RESPONSE_BYTES),
+            TimeProbe(lambda: started),
+        )
+        policy = (
+            AddressPolicyOutcome.ACCEPTED
+            if address_is_public(selected)
+            else AddressPolicyOutcome.REJECTED
+        )
+        result = provider.lookup(query, context)
+        if not channel.called:
+            body_reader.close()
+        return FixedAdapterAttemptEvidence(
+            result,
+            query,
+            channel.peer_equal if policy is AddressPolicyOutcome.ACCEPTED else False,
+            policy,
+        )
+
+
+def _strict_preview_time(value: object) -> datetime:
+    if type(value) is not str or not value.endswith("Z"):
+        raise ValueError("synthetic time is invalid")
+    parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    canonical = parsed.astimezone(timezone.utc).isoformat(timespec="microseconds")
+    if canonical.replace("+00:00", "Z") != value:
+        raise ValueError("synthetic time is invalid")
+    return parsed
 
 
 def identity_query_from_canonical_body(body: bytes) -> IsbnIdentityQuery:
@@ -500,6 +718,30 @@ def _context_failure(kind: FailureKind) -> IdentityAttemptFailureKind:
     return IdentityAttemptFailureKind.INCOMPATIBLE
 
 
+def _safe_preflight(context: OperationContext) -> IdentityAttemptFailureKind | None:
+    try:
+        result = context.preflight_result(
+            item_count=MAX_JSON_LIST_ELEMENTS,
+            serialized_bytes=MAX_RESPONSE_BYTES,
+        )
+    except KeyboardInterrupt:
+        return IdentityAttemptFailureKind.CANCELLED
+    except Exception:
+        return IdentityAttemptFailureKind.UNAVAILABLE
+    if result.failure is None:
+        return None
+    return _context_failure(result.failure.kind)
+
+
+def _close_body(reader: object) -> None:
+    close = getattr(reader, "close", None)
+    if callable(close):
+        try:
+            close()
+        except BaseException:
+            pass
+
+
 def _parse_status(line: object) -> int | None:
     if type(line) is not bytes:
         return None
@@ -523,23 +765,26 @@ def _status_failure(status: int) -> IdentityAttemptFailureKind | None:
     return IdentityAttemptFailureKind.INCOMPATIBLE
 
 
-def _bounded_body(
-    lines: object, chunks: object
-) -> bytes | IdentityAttemptFailureKind:
+def _bounded_body(lines: object, reader: object) -> bytes | IdentityAttemptFailureKind:
+    read_chunk = getattr(reader, "read_chunk", None)
+    close = getattr(reader, "close", None)
     if (
         type(lines) is not tuple
         or len(lines) > 16
         or any(type(line) is not bytes or len(line) > 256 for line in lines)
-        or type(chunks) is not tuple
-        or any(type(chunk) is not bytes for chunk in chunks)
+        or not callable(read_chunk)
+        or not callable(close)
     ):
+        _close_body(reader)
         return IdentityAttemptFailureKind.MALFORMED
     headers: dict[bytes, list[bytes]] = {}
     for line in lines:
         if not line.endswith(b"\r\n") or line.count(b":") < 1:
+            _close_body(reader)
             return IdentityAttemptFailureKind.MALFORMED
         name, value = line[:-2].split(b":", 1)
         if _HEADER_NAME.fullmatch(name) is None:
+            _close_body(reader)
             return IdentityAttemptFailureKind.MALFORMED
         if value.startswith(b" "):
             value = value[1:]
@@ -550,6 +795,7 @@ def _bounded_body(
         or content_type[0].strip(b" \t") != content_type[0]
         or _CONTENT_TYPE.fullmatch(content_type[0]) is None
     ):
+        _close_body(reader)
         return IdentityAttemptFailureKind.MALFORMED
     encoding = headers.get(b"content-encoding", [])
     if len(encoding) > 1 or (
@@ -559,23 +805,39 @@ def _bounded_body(
             or encoding[0].lower() != b"identity"
         )
     ):
+        _close_body(reader)
         return IdentityAttemptFailureKind.MALFORMED
     declared = headers.get(b"content-length", [])
     if len(declared) > 1:
+        _close_body(reader)
         return IdentityAttemptFailureKind.MALFORMED
     declared_length: int | None = None
     if declared:
         raw = declared[0]
         if raw.strip(b" \t") != raw or not _canonical_decimal(raw):
+            _close_body(reader)
             return IdentityAttemptFailureKind.MALFORMED
         if len(raw) > 5 or (len(raw) == 5 and raw > b"65536"):
+            _close_body(reader)
             return IdentityAttemptFailureKind.OVERSIZED
         declared_length = int(raw)
     payload = bytearray()
-    for chunk in chunks:
-        payload.extend(chunk)
-        if len(payload) > MAX_RESPONSE_BYTES:
-            return IdentityAttemptFailureKind.OVERSIZED
+    try:
+        while True:
+            chunk = read_chunk()
+            if chunk is None:
+                break
+            if type(chunk) is not bytes:
+                return IdentityAttemptFailureKind.MALFORMED
+            payload.extend(chunk)
+            if len(payload) > MAX_RESPONSE_BYTES:
+                return IdentityAttemptFailureKind.OVERSIZED
+    except KeyboardInterrupt:
+        return IdentityAttemptFailureKind.CANCELLED
+    except Exception:
+        return IdentityAttemptFailureKind.UNAVAILABLE
+    finally:
+        _close_body(reader)
     if declared_length is not None and declared_length != len(payload):
         return IdentityAttemptFailureKind.MALFORMED
     if not payload:
@@ -776,7 +1038,9 @@ __all__ = [
     "HARDCOVER_IDENTITY_URL",
     "HardcoverIdentityProvider",
     "IdentityChannelFailure",
-    "RawIdentityResponse",
+    "RawIdentityResponseHead",
+    "StructuralHardcoverIdentityPreview",
+    "StructuralIdentityBodyReader",
     "StructuralIdentityByteChannel",
     "address_is_public",
     "authorize_identity_request",

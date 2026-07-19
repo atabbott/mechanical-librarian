@@ -4,6 +4,7 @@ import json
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from mechanical_librarian.adapters.providers import hardcover_identity as adapter
 from mechanical_librarian.adapters.providers.hardcover_identity import (
@@ -11,7 +12,8 @@ from mechanical_librarian.adapters.providers.hardcover_identity import (
     HARDCOVER_IDENTITY_QUERY,
     HARDCOVER_IDENTITY_URL,
     HardcoverIdentityProvider,
-    RawIdentityResponse,
+    RawIdentityResponseHead,
+    StructuralIdentityBodyReader,
     StructuralIdentityByteChannel,
     address_is_public,
     authorize_identity_request,
@@ -119,7 +121,9 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 b"Content-Encoding: identity\r\n",
                 f"Content-Length: {len(payload)}\r\n".encode(),
             )
-        response = RawIdentityResponse(status, headers, (payload,), peer)
+        response = RawIdentityResponseHead(
+            status, headers, StructuralIdentityBodyReader(iter((payload,))), peer
+        )
         return StructuralIdentityByteChannel(
             expected_method="POST",
             expected_url=HARDCOVER_IDENTITY_URL,
@@ -303,6 +307,120 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                         lambda host, port: ("1.1.1.1",), self.channel(), token
                     )
 
+    def test_resolver_observations_revalidate_before_authorization(self) -> None:
+        now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        for transition, expected in (
+            ("cancelled", IdentityAttemptFailureKind.CANCELLED),
+            ("expired", IdentityAttemptFailureKind.TIMEOUT),
+        ):
+            with self.subTest(transition=transition):
+                state = {"cancelled": False, "now": now}
+                context = OperationContext(
+                    Deadline(now + timedelta(seconds=5)),
+                    CancellationProbe(
+                        CancellationId("hardcover-c3-transition"),
+                        lambda: state["cancelled"],
+                    ),
+                    ResourceBounds(4, 65_536),
+                    TimeProbe(lambda: state["now"]),
+                )
+                channel = self.channel()
+
+                def resolver(host: str, port: int) -> tuple[str, ...]:
+                    if transition == "cancelled":
+                        state["cancelled"] = True
+                    else:
+                        state["now"] = now + timedelta(seconds=6)
+                    return ("1.1.1.1",)
+
+                with patch.object(
+                    adapter,
+                    "authorize_identity_request",
+                    wraps=authorize_identity_request,
+                ) as authorize:
+                    result = HardcoverIdentityProvider(
+                        resolver, channel, b"synthetic-noncredential"
+                    ).lookup(self.query(), context)
+                self.assertEqual(result.failure.kind, expected)
+                authorize.assert_not_called()
+                self.assertFalse(channel.called)
+
+    def test_channel_revalidates_context_before_consuming_attempt(self) -> None:
+        state = {"cancelled": False}
+        now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        context = OperationContext(
+            Deadline(now + timedelta(seconds=5)),
+            CancellationProbe(
+                CancellationId("hardcover-c3-channel"),
+                lambda: state["cancelled"],
+            ),
+            ResourceBounds(4, 65_536),
+            TimeProbe(lambda: now),
+        )
+        channel = self.channel()
+        real_authorize = authorize_identity_request
+
+        def cancel_after_authorization(*args: object) -> object:
+            authorized = real_authorize(*args)
+            state["cancelled"] = True
+            return authorized
+
+        with patch.object(
+            adapter,
+            "authorize_identity_request",
+            side_effect=cancel_after_authorization,
+        ):
+            result = self.provider(channel).lookup(self.query(), context)
+        self.assertEqual(
+            result.failure.kind, IdentityAttemptFailureKind.CANCELLED
+        )
+        self.assertFalse(channel.called)
+
+    def test_time_and_cancellation_probe_failures_are_value_free(self) -> None:
+        now = datetime(2030, 1, 1, tzinfo=timezone.utc)
+
+        failed_calls = 0
+
+        def fail_probe() -> bool:
+            nonlocal failed_calls
+            failed_calls += 1
+            if failed_calls <= 2:
+                return False
+            raise RuntimeError("private-probe-detail")
+
+        unavailable = OperationContext(
+            Deadline(now + timedelta(seconds=5)),
+            CancellationProbe(CancellationId("hardcover-c3-failed"), fail_probe),
+            ResourceBounds(4, 65_536),
+            TimeProbe(lambda: now),
+        )
+        result = self.provider(self.channel()).lookup(self.query(), unavailable)
+        self.assertEqual(
+            result.failure.kind, IdentityAttemptFailureKind.UNAVAILABLE
+        )
+        self.assertNotIn("private-probe-detail", repr(result))
+
+        interrupted_calls = 0
+
+        def interrupt_probe() -> bool:
+            nonlocal interrupted_calls
+            interrupted_calls += 1
+            if interrupted_calls <= 2:
+                return False
+            raise KeyboardInterrupt("private-interrupt-detail")
+
+        cancelled = OperationContext(
+            Deadline(now + timedelta(seconds=5)),
+            CancellationProbe(
+                CancellationId("hardcover-c3-interrupted"), interrupt_probe
+            ),
+            ResourceBounds(4, 65_536),
+            TimeProbe(lambda: now),
+        )
+        result = self.provider(self.channel()).lookup(self.query(), cancelled)
+        self.assertEqual(result.failure.kind, IdentityAttemptFailureKind.CANCELLED)
+        self.assertNotIn("private-interrupt-detail", repr(result))
+
     def test_sensitive_request_response_and_result_representations_are_redacted(
         self,
     ) -> None:
@@ -311,10 +429,10 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         authorized = authorize_identity_request(
             request, query, b"synthetic-noncredential"
         )
-        response = RawIdentityResponse(
+        response = RawIdentityResponseHead(
             b"HTTP/1.1 200 OK\r\n",
             (),
-            (self.response_body(),),
+            StructuralIdentityBodyReader(iter((self.response_body(),))),
             "1.1.1.1",
         )
         for value in (request, authorized, response):

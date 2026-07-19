@@ -8,6 +8,15 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from mechanical_librarian.adapters.providers import hardcover_identity as adapter
+from mechanical_librarian.adapters.providers.hardcover_identity import (
+    StructuralHardcoverIdentityPreview,
+)
+from mechanical_librarian.application.hardcover_identity import (
+    AddressPolicyOutcome,
+    FixedAdapterOutcome,
+    FixedAdapterPreviewReport,
+)
 from mechanical_librarian.bootstrap.composition import (
     _run_hardcover_fixed_adapter_preview,
 )
@@ -204,6 +213,87 @@ class HardcoverFixedAdapterCliTests(unittest.TestCase):
             self.assertEqual(code, 2)
             self.assertEqual(output, "")
             self.assertEqual(errors, "Hardcover identity report failed safely.\n")
+
+    def test_fixed_transport_text_boundaries_are_exact(self) -> None:
+        for size, accepted in ((127, True), (128, True), (129, False)):
+            with self.subTest(status_line_bytes=size):
+                source = self.source()
+                prefix = "HTTP/1.1 200 "
+                source["response"]["raw_status_line_bytes_utf8"] = (
+                    prefix + "A" * (size - len(prefix) - 2) + "\r\n"
+                )
+                code, output, errors = self.run_preview(source)
+                self.assertEqual(code, 0 if accepted else 2)
+                self.assertEqual(bool(output), accepted)
+                self.assertEqual(errors, "" if accepted else "Hardcover identity report failed safely.\n")
+
+        for count, accepted in ((15, True), (16, True), (17, False)):
+            with self.subTest(header_count=count):
+                source = self.source()
+                headers = source["response"]["raw_header_lines_bytes_utf8"]
+                headers[:0] = [
+                    f"X-Synthetic-{index}: A\r\n"
+                    for index in range(count - len(headers))
+                ]
+                code, output, _ = self.run_preview(source)
+                self.assertEqual(code, 0 if accepted else 2)
+                self.assertEqual(bool(output), accepted)
+
+        for size, accepted in ((255, True), (256, True), (257, False)):
+            with self.subTest(header_line_bytes=size):
+                source = self.source()
+                prefix = "X-Synthetic-Padding: "
+                source["response"]["raw_header_lines_bytes_utf8"].insert(
+                    0, prefix + "A" * (size - len(prefix) - 2) + "\r\n"
+                )
+                code, output, _ = self.run_preview(source)
+                self.assertEqual(code, 0 if accepted else 2)
+                self.assertEqual(bool(output), accepted)
+
+    def test_request_body_limit_rejects_before_canonical_decode_above_cap(self) -> None:
+        for size, parser_called in ((8_191, True), (8_192, True), (8_193, False)):
+            with self.subTest(request_body_bytes=size):
+                source = self.source()
+                source["request"]["body_bytes_utf8"] = "A" * size
+                with patch.object(
+                    adapter,
+                    "identity_query_from_canonical_body",
+                    side_effect=ValueError("synthetic input is invalid"),
+                ) as parser:
+                    with self.assertRaisesRegex(ValueError, "synthetic input is invalid"):
+                        StructuralHardcoverIdentityPreview().run(source)
+                self.assertEqual(parser.called, parser_called)
+
+    def test_report_enforces_only_reachable_public_states(self) -> None:
+        valid = (
+            (FixedAdapterOutcome.MATCHED, 1, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.MATCHED, 3, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.NO_MATCH, 0, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.AMBIGUOUS, 2, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.AMBIGUOUS, 4, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.INCOMPATIBLE, 4, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.INCOMPATIBLE, 0, False, False, AddressPolicyOutcome.REJECTED),
+        )
+        for values in valid:
+            with self.subTest(valid=values):
+                FixedAdapterPreviewReport(*values).validate()
+
+        invalid = (
+            (FixedAdapterOutcome.MATCHED, 0, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.MATCHED, 4, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.NO_MATCH, 1, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.AMBIGUOUS, 1, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.MATCHED, 1, False, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.MATCHED, 1, True, True, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.INCOMPATIBLE, 1, False, False, AddressPolicyOutcome.REJECTED),
+            (FixedAdapterOutcome.NO_MATCH, 0, False, False, AddressPolicyOutcome.REJECTED),
+            ("matched", 1, True, False, AddressPolicyOutcome.ACCEPTED),
+            (FixedAdapterOutcome.MATCHED, True, True, False, AddressPolicyOutcome.ACCEPTED),
+        )
+        for values in invalid:
+            with self.subTest(invalid=values):
+                with self.assertRaises(TypeError):
+                    FixedAdapterPreviewReport(*values).to_json()
 
 
 if __name__ == "__main__":
