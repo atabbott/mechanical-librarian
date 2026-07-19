@@ -5,9 +5,26 @@ import os
 import stat
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+from mechanical_librarian.application.hardcover_identity import (
+    IdentityAttemptFailureKind,
+    IdentityAttemptResult,
+    IdentityDecisionPreviewReport,
+    IdentityReportError,
+    IsbnIdentityQuery,
+    RunHardcoverIdentityReport,
+)
+from mechanical_librarian.application.ports import (
+    CancellationId,
+    CancellationProbe,
+    Deadline,
+    OperationContext,
+    ResourceBounds,
+    TimeProbe,
+)
 from mechanical_librarian.domain.hardcover_identity import (
     IdentityDecisionOutcome,
     PrivateIdentityQuery,
@@ -348,6 +365,127 @@ class BookIdentityDecisionTests(unittest.TestCase):
         self.assertEqual(equal.identity, different.identity)
         self.assertEqual(equal.comparison, TitleComparison.EQUAL)
         self.assertEqual(different.comparison, TitleComparison.DIFFERENT)
+
+
+class RunHardcoverIdentityReportTests(unittest.TestCase):
+    def query(self) -> PrivateIdentityQuery:
+        return validate_private_query(
+            {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+        )
+
+    def row(self) -> ProviderIdentityObservation:
+        return BookIdentityDecisionTests().row()
+
+    def context(self) -> OperationContext:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        return OperationContext(
+            Deadline(now + timedelta(seconds=5)),
+            CancellationProbe(CancellationId("hardcover-preview"), lambda: False),
+            ResourceBounds(4, 65_536),
+            TimeProbe(lambda: now),
+        )
+
+    def test_structural_provider_is_called_once_with_typed_query_and_context(
+        self,
+    ) -> None:
+        observation = self.row()
+
+        class Provider:
+            def __init__(self) -> None:
+                self.calls: list[tuple[IsbnIdentityQuery, OperationContext]] = []
+
+            def lookup(
+                self, query: IsbnIdentityQuery, context: OperationContext
+            ) -> IdentityAttemptResult:
+                self.calls.append((query, context))
+                return IdentityAttemptResult.success((observation,))
+
+        provider = Provider()
+        context = self.context()
+        report = RunHardcoverIdentityReport().run(
+            provider, self.query(), context
+        )
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(
+            provider.calls[0][0], IsbnIdentityQuery("9780000000019", "0000000019")
+        )
+        self.assertIs(provider.calls[0][1], context)
+        self.assertIs(type(report), IdentityDecisionPreviewReport)
+        self.assertEqual(report.outcome, IdentityDecisionOutcome.MATCHED)
+        rendered = report.to_json()
+        self.assertNotIn("978", rendered)
+        self.assertNotIn("Synthetic", rendered)
+        self.assertEqual(
+            json.loads(rendered)["result"],
+            {
+                "outcome": "matched",
+                "rows_validated": 1,
+                "aliases_collapsed": 0,
+                "comparison": "equal",
+            },
+        )
+
+    def test_attempt_result_is_a_closed_success_or_failure_union(self) -> None:
+        with self.assertRaises(ValueError):
+            IdentityAttemptResult()
+        with self.assertRaises(ValueError):
+            IdentityAttemptResult(
+                observations=(),
+                failure=IdentityAttemptResult.failed(
+                    IdentityAttemptFailureKind.MALFORMED
+                ).failure,
+            )
+        self.assertEqual(IdentityAttemptResult.success(()).observations, ())
+        self.assertEqual(
+            IdentityAttemptResult.failed(
+                IdentityAttemptFailureKind.INCOMPATIBLE
+            ).failure.kind,
+            IdentityAttemptFailureKind.INCOMPATIBLE,
+        )
+
+    def test_deterministic_provider_failures_map_without_private_values(self) -> None:
+        class Provider:
+            def __init__(self, kind: IdentityAttemptFailureKind) -> None:
+                self.kind = kind
+
+            def lookup(
+                self, query: IsbnIdentityQuery, context: OperationContext
+            ) -> IdentityAttemptResult:
+                return IdentityAttemptResult.failed(self.kind)
+
+        for kind, outcome in (
+            (IdentityAttemptFailureKind.MALFORMED, IdentityDecisionOutcome.MALFORMED),
+            (IdentityAttemptFailureKind.OVERSIZED, IdentityDecisionOutcome.MALFORMED),
+            (
+                IdentityAttemptFailureKind.INCOMPATIBLE,
+                IdentityDecisionOutcome.INCOMPATIBLE,
+            ),
+        ):
+            with self.subTest(kind=kind):
+                report = RunHardcoverIdentityReport().run(
+                    Provider(kind), self.query(), self.context()
+                )
+                self.assertEqual(report.outcome, outcome)
+                self.assertNotIn("978", report.to_json())
+
+    def test_transient_failures_and_malformed_providers_fail_value_free(self) -> None:
+        class TransientProvider:
+            def lookup(
+                self, query: IsbnIdentityQuery, context: OperationContext
+            ) -> IdentityAttemptResult:
+                return IdentityAttemptResult.failed(IdentityAttemptFailureKind.TIMEOUT)
+
+        with self.assertRaisesRegex(
+            IdentityReportError, "attempt did not produce a decision"
+        ) as failure:
+            RunHardcoverIdentityReport().run(
+                TransientProvider(), self.query(), self.context()
+            )
+        self.assertNotIn("978", str(failure.exception))
+        with self.assertRaises(TypeError):
+            RunHardcoverIdentityReport().run(
+                object(), self.query(), self.context()
+            )
 
 
 if __name__ == "__main__":
