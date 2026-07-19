@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import json
 import os
+import sqlite3
 import socket
 import stat
 import tempfile
@@ -108,6 +110,39 @@ class HardcoverDurableWorkCliTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(self.database.stat().st_mode), 0o600)
         self.assertNotIn("sha", output.casefold())
         self.assertNotIn("database", output.casefold())
+
+    def test_published_preview_contains_no_schema_oracle_sentinel_identity(self) -> None:
+        code, _, errors = self.run_preview()
+        self.assertEqual((code, errors), (0, ""))
+        sentinel_key = "synthetic_schema8_sentinel"
+        sentinel_value = "fixture-v1"
+        forbidden = {
+            sentinel_key,
+            sentinel_value,
+            hashlib.sha256(sentinel_key.encode("utf-8")).hexdigest(),
+            hashlib.sha256(sentinel_value.encode("utf-8")).hexdigest(),
+            hashlib.sha256(
+                f"{sentinel_key}:{sentinel_value}".encode("utf-8")
+            ).hexdigest(),
+        }
+        connection = sqlite3.connect(self.database)
+        try:
+            tables = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchall()
+            for (table,) in tables:
+                with self.subTest(table=table):
+                    rows = connection.execute(f'SELECT * FROM "{table}"').fetchall()
+                    self.assertFalse(
+                        forbidden.intersection(
+                            value
+                            for row in rows
+                            for value in row
+                            if type(value) is str
+                        )
+                    )
+        finally:
+            connection.close()
 
     def test_canonical_preview_persists_only_bounded_public_structural_values(self) -> None:
         code, output, errors = self.run_preview()

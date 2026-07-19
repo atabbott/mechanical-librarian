@@ -199,7 +199,16 @@ class SQLiteHardcoverIdentityWorkRepository:
         try:
             with _transaction(self._connection):
                 row = self._generation(claim.reference)
-                self._assert_claim(row, claim, owner, now, lease="live")
+                current_lease, already_started = self._assert_claim(
+                    row, claim, owner, now, lease="start"
+                )
+                if already_started:
+                    return IdentityWorkClaim(
+                        claim.reference,
+                        claim.candidate,
+                        claim.fence,
+                        current_lease,
+                    )
                 if row[7] is None or _parse_time(str(row[7])) - now < MINIMUM_START_LEASE:
                     self._terminal_failure(
                         claim.reference, claim.fence, timestamp, resolve_attempt=False
@@ -450,7 +459,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                 row = self._generation(claim.reference)
                 state = _state(row[0])
                 validate_transition(state, IdentityWorkState.CANCELLED)
-                self._assert_claim(row, claim, owner, now, lease="current")
+                self._assert_claim(row, claim, owner, now, lease="strict_live")
                 fence = claim.fence
                 self._connection.execute(
                     "UPDATE hardcover_identity_attempts SET resolved_at=?,outcome='cancelled' WHERE work_key=? AND generation=? AND resolved_at IS NULL",
@@ -909,7 +918,7 @@ class SQLiteHardcoverIdentityWorkRepository:
         now: datetime,
         *,
         lease: str,
-    ) -> None:
+    ) -> tuple[datetime, bool]:
         persisted = self._connection.execute(
             "SELECT candidate,owner,claimed_at,lease_expires_at FROM hardcover_identity_claims "
             "WHERE work_key=? AND generation=? AND fence=?",
@@ -919,39 +928,67 @@ class SQLiteHardcoverIdentityWorkRepository:
             raise StaleIdentityWorkFence("identity work fence is stale")
         persisted_candidate, persisted_owner, raw_claimed, raw_initial_lease = persisted[0]
         try:
+            persisted_candidate_number = _positive_int(
+                persisted_candidate, "candidate"
+            )
+            _candidate(persisted_candidate_number)
+        except (IdentityWorkPersistenceError, TypeError, ValueError):
+            raise StaleIdentityWorkFence("identity work fence is stale") from None
+        try:
             claimed_at = _parse_time(str(raw_claimed))
             initial_lease = _parse_time(str(raw_initial_lease))
             current_lease = _parse_time(str(row[4]))
         except IdentityWorkPersistenceError:
             raise StaleIdentityWorkFence("identity work fence is stale") from None
         attempts = self._connection.execute(
-            "SELECT started_at,resolved_at,outcome FROM hardcover_identity_attempts "
+            "SELECT attempt,candidate,started_at,resolved_at,outcome FROM hardcover_identity_attempts "
             "WHERE work_key=? AND generation=? AND fence=?",
             (claim.reference.work_key, claim.reference.generation, claim.fence),
         ).fetchall()
+        started_events = self._connection.execute(
+            "SELECT from_state,to_state,occurred_at FROM hardcover_identity_events "
+            "WHERE work_key=? AND generation=? AND fence=? AND kind='started'",
+            (claim.reference.work_key, claim.reference.generation, claim.fence),
+        ).fetchall()
+        attempt_count = _nonnegative_int(row[2], "attempt count")
         if not attempts:
-            coherent_current_lease = current_lease == initial_lease
+            coherent_current_lease = (
+                attempt_count == persisted_candidate_number - 1
+                and current_lease == initial_lease
+                and not started_events
+            )
+            already_started = False
         elif len(attempts) == 1:
-            started_at, resolved_at, outcome = attempts[0]
+            attempt, candidate, started_at, resolved_at, outcome = attempts[0]
             try:
                 expected_lease = _parse_time(str(started_at)) + LEASE_DURATION
             except IdentityWorkPersistenceError:
                 raise StaleIdentityWorkFence("identity work fence is stale") from None
             coherent_current_lease = (
-                resolved_at is None
+                attempt == attempt_count
+                and attempt_count >= 1
+                and candidate == persisted_candidate_number
+                and attempt == persisted_candidate_number
+                and resolved_at is None
                 and outcome is None
                 and current_lease == expected_lease
+                and started_events == [("claimed", "claimed", started_at)]
             )
+            already_started = True
         else:
             coherent_current_lease = False
+            already_started = False
         expected_owner = persisted_owner if owner is None else owner
+        exact_lease = claim.lease_expires_at == current_lease
+        if lease == "start" and already_started:
+            exact_lease = claim.lease_expires_at in {initial_lease, current_lease}
         if (
             _state(row[0]) is not IdentityWorkState.CLAIMED
             or _nonnegative_int(row[1], "fence") != claim.fence
             or persisted_candidate != claim.candidate
             or persisted_owner != expected_owner
             or row[3] != persisted_owner
-            or claim.lease_expires_at != current_lease
+            or not exact_lease
             or claimed_at > initial_lease
             or initial_lease > current_lease
             or not coherent_current_lease
@@ -960,10 +997,15 @@ class SQLiteHardcoverIdentityWorkRepository:
             raise StaleIdentityWorkFence("identity work fence is stale")
         if lease == "live" and now > current_lease:
             raise StaleIdentityWorkFence("identity work fence is stale")
+        if lease == "start" and now > current_lease:
+            raise StaleIdentityWorkFence("identity work fence is stale")
+        if lease == "strict_live" and now >= current_lease:
+            raise StaleIdentityWorkFence("identity work fence is stale")
         if lease == "expired" and now <= current_lease:
             raise IdentityWorkPersistenceError("identity work lease has not expired")
-        if lease not in {"live", "expired", "current"}:
+        if lease not in {"live", "expired", "current", "start", "strict_live"}:
             raise TypeError("identity work lease assertion is malformed")
+        return current_lease, already_started
 
     def _event(
         self,

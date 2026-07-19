@@ -1625,6 +1625,7 @@ _DURABLE_WORK_OPERATIONS = (
 )
 
 _SCHEMA8_SNAPSHOT_SHA256 = "1040b8eefc8703503a9f515543c3618908bd7af0d08fae7700806b37a48811ed"
+_SCHEMA8_SENTINEL = ("synthetic_schema8_sentinel", "fixture-v1")
 
 
 def _validate_durable_work_preview_input(source: Mapping[str, object]) -> None:
@@ -1671,7 +1672,8 @@ def _run_hardcover_durable_work_preview(
             if migrate_to_version(connection, 8) != 8:
                 raise SchemaError("schema-eight preview could not be regenerated")
             connection.execute(
-                "INSERT INTO instance_metadata(key,value) VALUES('synthetic_schema8_sentinel','fixture-v1')"
+                "INSERT INTO instance_metadata(key,value) VALUES(?,?)",
+                _SCHEMA8_SENTINEL,
             )
             staged.persist(connection)
             snapshot = "\n".join(connection.iterdump()) + "\n"
@@ -1684,6 +1686,18 @@ def _run_hardcover_durable_work_preview(
                 raise SchemaError("schema-eight ledger is inconsistent")
             if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)] or connection.execute("PRAGMA foreign_key_check").fetchall():
                 raise SchemaError("schema-eight preview is inconsistent")
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                removed = connection.execute(
+                    "DELETE FROM instance_metadata WHERE key=? AND value=?",
+                    _SCHEMA8_SENTINEL,
+                ).rowcount
+                if removed != 1:
+                    raise SchemaError("schema-eight sentinel cleanup failed")
+                connection.commit()
+            except (sqlite3.Error, SchemaError):
+                connection.rollback()
+                raise
 
             migration_rollback_verified = False
             try:

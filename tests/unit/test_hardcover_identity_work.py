@@ -378,6 +378,146 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             [(1, 1, 1, None)],
         )
 
+    def test_start_replay_returns_the_exact_started_claim_without_mutation(self) -> None:
+        accepted = self.accept()
+        claimed = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        started = self.repository.renew_and_start(
+            claimed,
+            "worker-a",
+            ORIGIN + timedelta(seconds=2),
+            gate_owned=True,
+        )
+        before_dump = tuple(self.connection.iterdump())
+        changes = self.connection.total_changes
+
+        replayed_from_request = self.repository.renew_and_start(
+            claimed,
+            "worker-a",
+            ORIGIN + timedelta(seconds=2, microseconds=1),
+            gate_owned=True,
+        )
+        replayed_from_result = self.repository.renew_and_start(
+            started,
+            "worker-a",
+            ORIGIN + timedelta(seconds=2, microseconds=2),
+            gate_owned=True,
+        )
+
+        self.assertEqual(replayed_from_request, started)
+        self.assertEqual(replayed_from_result, started)
+        self.assertEqual(self.connection.total_changes, changes)
+        self.assertEqual(tuple(self.connection.iterdump()), before_dump)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_attempts"
+            ).fetchone(),
+            (1,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_events WHERE kind='started'"
+            ).fetchone(),
+            (1,),
+        )
+
+    def test_start_replay_survives_restart_without_duplicate_rows_or_events(self) -> None:
+        accepted = self.accept()
+        claimed = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        started = self.repository.renew_and_start(
+            claimed,
+            "worker-a",
+            ORIGIN + timedelta(seconds=2),
+            gate_owned=True,
+        )
+        before_dump = tuple(self.connection.iterdump())
+        restarted_connection = connect(self.path)
+        self.addCleanup(restarted_connection.close)
+        restarted = SQLiteHardcoverIdentityWorkRepository(restarted_connection)
+        changes = restarted_connection.total_changes
+
+        replayed = restarted.renew_and_start(
+            started,
+            "worker-a",
+            ORIGIN + timedelta(seconds=3),
+            gate_owned=True,
+        )
+
+        self.assertEqual(replayed, started)
+        self.assertEqual(restarted_connection.total_changes, changes)
+        self.assertEqual(tuple(restarted_connection.iterdump()), before_dump)
+        self.assertEqual(
+            restarted_connection.execute(
+                "SELECT "
+                "(SELECT COUNT(*) FROM hardcover_identity_attempts),"
+                "(SELECT COUNT(*) FROM hardcover_identity_events WHERE kind='started')"
+            ).fetchone(),
+            (1, 1),
+        )
+
+    def test_start_replay_rejects_different_stale_and_corrupt_claims_value_free(self) -> None:
+        for case in ("different", "stale", "corrupt"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                connection = connect(Path(directory) / "state.sqlite")
+                try:
+                    migrate(connection)
+                    repository = SQLiteHardcoverIdentityWorkRepository(connection)
+                    accepted = repository.accept(WORK_KEY, ORIGIN)
+                    claimed = repository.claim(
+                        accepted.reference,
+                        "worker-a",
+                        ORIGIN + timedelta(seconds=1),
+                        gate_owned=True,
+                    )
+                    started = repository.renew_and_start(
+                        claimed,
+                        "worker-a",
+                        ORIGIN + timedelta(seconds=2),
+                        gate_owned=True,
+                    )
+                    owner = "worker-a"
+                    replayed_at = ORIGIN + timedelta(seconds=3)
+                    if case == "different":
+                        owner = "worker-b"
+                    elif case == "stale":
+                        replayed_at = started.lease_expires_at + timedelta(
+                            microseconds=1
+                        )
+                    else:
+                        connection.execute(
+                            "DROP TRIGGER hardcover_identity_events_no_update"
+                        )
+                        connection.execute(
+                            "UPDATE hardcover_identity_events SET occurred_at=? "
+                            "WHERE work_key=? AND generation=1 AND kind='started'",
+                            (
+                                "2026-01-01T00:00:02.000001Z",
+                                WORK_KEY,
+                            ),
+                        )
+                    before_dump = tuple(connection.iterdump())
+                    changes = connection.total_changes
+                    with self.assertRaises(StaleIdentityWorkFence):
+                        repository.renew_and_start(
+                            started,
+                            owner,
+                            replayed_at,
+                            gate_owned=True,
+                        )
+                    self.assertEqual(connection.total_changes, changes)
+                    self.assertEqual(tuple(connection.iterdump()), before_dump)
+                finally:
+                    connection.close()
+
     def test_start_rejects_less_than_six_seconds_and_requires_gate(self) -> None:
         accepted = self.accept()
         with self.assertRaisesRegex(IdentityWorkPersistenceError, "gate"):
@@ -873,10 +1013,14 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             ORIGIN + timedelta(seconds=17),
             gate_owned=True,
         )
+        before_dump = tuple(self.connection.iterdump())
+        changes = self.connection.total_changes
         with self.assertRaises(StaleIdentityWorkFence):
             self.repository.cancel(
                 old, "worker-a", ORIGIN + timedelta(seconds=18), gate_owned=True
             )
+        self.assertEqual(self.connection.total_changes, changes)
+        self.assertEqual(tuple(self.connection.iterdump()), before_dump)
         self.assertEqual(
             self.connection.execute(
                 "SELECT state,fence,lease_owner FROM hardcover_identity_generations"
@@ -886,6 +1030,53 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.repository.cancel(
             current, "worker-b", ORIGIN + timedelta(seconds=18), gate_owned=True
         )
+
+    def test_cancel_requires_a_strictly_live_exact_lease_boundary(self) -> None:
+        for offset, cancelled in (
+            (timedelta(microseconds=-1), True),
+            (timedelta(), False),
+            (timedelta(microseconds=1), False),
+        ):
+            with self.subTest(offset=offset):
+                with tempfile.TemporaryDirectory() as directory:
+                    connection = connect(Path(directory) / "state.sqlite")
+                    try:
+                        migrate(connection)
+                        repository = SQLiteHardcoverIdentityWorkRepository(connection)
+                        accepted = repository.accept(WORK_KEY, ORIGIN)
+                        claim = repository.claim(
+                            accepted.reference,
+                            "worker-a",
+                            ORIGIN + timedelta(seconds=1),
+                            gate_owned=True,
+                        )
+                        before_dump = tuple(connection.iterdump())
+                        changes = connection.total_changes
+                        if cancelled:
+                            repository.cancel(
+                                claim,
+                                "worker-a",
+                                claim.lease_expires_at + offset,
+                                gate_owned=True,
+                            )
+                            self.assertEqual(
+                                connection.execute(
+                                    "SELECT state FROM hardcover_identity_generations"
+                                ).fetchone(),
+                                ("cancelled",),
+                            )
+                        else:
+                            with self.assertRaises(StaleIdentityWorkFence):
+                                repository.cancel(
+                                    claim,
+                                    "worker-a",
+                                    claim.lease_expires_at + offset,
+                                    gate_owned=True,
+                                )
+                            self.assertEqual(connection.total_changes, changes)
+                            self.assertEqual(tuple(connection.iterdump()), before_dump)
+                    finally:
+                        connection.close()
 
     def test_retry_claim_requires_the_unique_current_due_schedule(self) -> None:
         accepted = self.accept()
