@@ -202,6 +202,25 @@ freshness/reuse, retry/restart, or ISBN-backed identity, nor F09g's live-target
 binding, and adds no AI, human decision, cover, rich-field, multi-provider, or
 apply compatibility promise.
 
+F09f increment 3 now installs `hardcover-isbn-identity-v1` as a dormant
+production-capable adapter through the application-owned ISBN identity port.
+Its compatibility identity fixes the query and operation bytes, canonical ISBN
+array and body, HTTPS destination, public-address and Host/SNI/peer policy,
+authentication revalidation, status mapping, hostile header/body parser bounds,
+complete row validation, and `hardcover-ebook-compatibility-v1` decision. The
+supported `fixed-adapter-v3` demonstration uses only the built-in post-policy
+in-memory byte channel and exports `actual_network:false`; it proves no live
+credential, egress, production configuration, target join, persistence,
+lifecycle, retry, proposal, or write compatibility. Enabled production remains
+`provider_not_activated`.
+
+The exact cumulative compatibility registry is
+`preview-registry-c3-v6.json` / SHA-256
+`b6676d94c889a579ef96b821fb3e9d9be780eb4aad791572cf5d326f08849577`.
+It derives from installed C2 and contains exactly the inert, identity-decision,
+and fixed-adapter scenarios; future durable-work and executor definitions are
+not current compatibility data.
+
 Schema 7 adds only the F10a synthetic case, current-or-retired state, and
 append-only attributable transitions. It remains forward-only and does not
 reclassify schema-6 `synthetic_preview` history. F09f configured Hardcover
@@ -219,9 +238,11 @@ separate current configured Hardcover lineage containing a bounded title and
 strict ISBN-backed book and compatible ebook-edition identity. The provider
 query, configuration, authentication, parser, response/error shape,
 cardinality, compatibility policy, bounds, fixtures, and live-qualification
-versions will be compatibility dimensions; F09f remains Triaged until those
-exact external contracts are frozen. F09f will remain target-independent and
-will claim no target join or proposal compatibility.
+versions are compatibility dimensions. The request, adapter, parser, and
+identity-decision dimensions are frozen and structurally supported through
+increment 3; durable work, retry/restart, production activation, and the single
+authorized live aggregate remain pending later F09f increments. F09f remains
+target-independent and claims no target join or proposal compatibility.
 
 F09g will bind the current target, snapshot, source/file identity, F07b
 evidence, F09f observation, comparison policy, and proposal policy. Exactly one

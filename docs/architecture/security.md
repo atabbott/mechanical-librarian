@@ -183,6 +183,40 @@ exported, reported, audited, traced, or emitted as a metric. The contributor
 preview uses the same validation seams but has no production composition and
 emits only its closed typed schema-v5 zero-access result.
 
+Increment 3 installs the fixed `hardcover-isbn-identity-v1` adapter behind the
+application-owned identity port, but does not compose it into enabled
+production mode. Its installed demonstration injects a
+`validated-public-address` capability and a post-policy in-memory byte channel;
+the channel is structurally unable to resolve, connect, open a socket, inherit
+a proxy, or read a credential, and the report always records
+`actual_network:false`. The synthetic policy corpus separates acceptance of a
+public address from rejection of private, loopback, documentation, link-local,
+reserved, multicast, unspecified, scoped, and IPv4-mapped addresses before the
+channel is opened.
+
+The adapter constructs only the frozen canonical ISBN GraphQL body. It resolves
+once, selects one validated public address deterministically, preserves the
+Hardcover hostname for Host and TLS SNI/certificate verification, forbids
+re-resolution, and requires the connected peer to equal the selected address.
+Bearer authentication is attached only after exact method, HTTPS origin/path,
+empty query/fragment, Host, SNI, operation, query bytes, variables, canonical
+body, contract identity, selected address, and peer plan are revalidated. Any
+near miss receives neither authorization nor send authority. A future network
+channel must retain dedicated TLS-client, no-redirect, no-environment-proxy,
+no-cookie, no-ambient-credential, no-compression, no-HTTP/2, and connection-
+close behavior; this increment intentionally provides no network channel.
+
+HTTP response bytes remain hostile. Non-200 bodies are closed without parsing.
+HTTP 200 enforces exact header cardinality and grammar, 65,536 streamed bytes,
+strict UTF-8 once without BOM, string-aware depth 8, 128 value nodes, 96
+members, four cumulative list elements, per-string and cumulative Unicode/byte
+bounds, signed-int32 tokens only, duplicate/unknown-key rejection, and exact
+GraphQL, edition, and book shapes. All rows, including the four-row ambiguity
+sentinel, are validated before selection. Raw request, response, headers,
+addresses, token, ISBN, title, provider identity, exception text, and derived
+digests or correlations are forbidden from every runtime channel. Only the
+coarse fixed-adapter result fields are exportable.
+
 F10a consumes only an already-persisted current F09a lineage selected by the
 closed scenario vocabulary. `synthetic-title-review-binding-v1` binds closed
 synthetic target constants to the validated manifest-derived item, snapshot,

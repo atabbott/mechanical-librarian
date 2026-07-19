@@ -57,6 +57,14 @@ from mechanical_librarian.adapters.providers.synthetic_title import (
 from mechanical_librarian.adapters.providers.synthetic_hardcover_identity import (
     SyntheticBookIdentityProvider,
 )
+from mechanical_librarian.adapters.providers.hardcover_identity import (
+    HARDCOVER_IDENTITY_URL,
+    HardcoverIdentityProvider,
+    RawIdentityResponse,
+    StructuralIdentityByteChannel,
+    address_is_public,
+    identity_query_from_canonical_body,
+)
 from mechanical_librarian.adapters.providers.hardcover_title import (
     AddressResolver,
     HardcoverTitleProvider,
@@ -68,11 +76,14 @@ from mechanical_librarian.application.connection_probe import (
 )
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.hardcover_identity import (
+    AddressPolicyOutcome,
+    FixedAdapterPreviewReport,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
     InertPreviewReport,
     IsbnIdentityQuery,
     RunHardcoverIdentityReport,
+    fixed_adapter_preview_report,
     inert_preview,
     preactivation_report,
 )
@@ -1578,6 +1589,157 @@ def _run_hardcover_identity_decision_preview(
     )
 
 
+def _run_hardcover_fixed_adapter_preview(
+    source: Mapping[str, object],
+) -> FixedAdapterPreviewReport:
+    if (
+        set(source) != {"schema", "scenario", "request", "response", "transport"}
+        or source.get("schema") != "hardcover-synthetic-input-v3"
+        or source.get("scenario") != "fixed-adapter-v3"
+        or not isinstance(source.get("request"), Mapping)
+        or not isinstance(source.get("response"), Mapping)
+        or not isinstance(source.get("transport"), Mapping)
+    ):
+        raise ValueError("synthetic input is invalid")
+    request = source["request"]
+    response = source["response"]
+    transport = source["transport"]
+    if (
+        set(request) != {"method", "url", "body_bytes_utf8"}
+        or request.get("method") != "POST"
+        or request.get("url") != HARDCOVER_IDENTITY_URL
+        or type(request.get("body_bytes_utf8")) is not str
+        or set(response)
+        != {
+            "raw_status_line_bytes_utf8",
+            "raw_header_lines_bytes_utf8",
+            "raw_body_bytes_utf8",
+        }
+        or type(response.get("raw_status_line_bytes_utf8")) is not str
+        or type(response.get("raw_header_lines_bytes_utf8")) is not list
+        or any(
+            type(line) is not str
+            for line in response.get("raw_header_lines_bytes_utf8", [])
+        )
+        or type(response.get("raw_body_bytes_utf8")) is not str
+        or set(transport)
+        != {
+            "attempt_started_wall",
+            "attempt_cutoff_wall",
+            "hostname",
+            "selected_address",
+            "connected_peer_address",
+            "resolution_count",
+            "sni",
+            "tls_peer_name",
+            "proxy_mode",
+            "address_policy_capability",
+            "actual_network",
+            "byte_channel",
+        }
+        or transport.get("hostname") != "api.hardcover.app"
+        or type(transport.get("selected_address")) is not str
+        or type(transport.get("connected_peer_address")) is not str
+        or transport.get("resolution_count") != 1
+        or type(transport.get("resolution_count")) is not int
+        or transport.get("sni") != "api.hardcover.app"
+        or transport.get("tls_peer_name") != "api.hardcover.app"
+        or transport.get("proxy_mode") != "disabled"
+        or transport.get("address_policy_capability") != "validated-public-address"
+        or transport.get("actual_network") is not False
+        or transport.get("byte_channel") != "post-policy-in-memory"
+    ):
+        raise ValueError("synthetic input is invalid")
+    try:
+        request_body = request["body_bytes_utf8"].encode("utf-8", "strict")
+        status_line = response["raw_status_line_bytes_utf8"].encode(
+            "utf-8", "strict"
+        )
+        header_lines = tuple(
+            line.encode("utf-8", "strict")
+            for line in response["raw_header_lines_bytes_utf8"]
+        )
+        response_body = response["raw_body_bytes_utf8"].encode("utf-8", "strict")
+        started = _strict_preview_time(transport.get("attempt_started_wall"))
+        cutoff = _strict_preview_time(transport.get("attempt_cutoff_wall"))
+    except (UnicodeError, ValueError, TypeError):
+        raise ValueError("synthetic input is invalid") from None
+    if (
+        len(request_body) > 8_192
+        or len(status_line) > 128
+        or len(header_lines) > 16
+        or any(len(line) > 256 for line in header_lines)
+        or len(response_body) > 65_536
+        or cutoff <= started
+        or cutoff - started > timedelta(seconds=30)
+    ):
+        raise ValueError("synthetic input is invalid")
+    query = identity_query_from_canonical_body(request_body)
+    selected = transport["selected_address"]
+    peer = transport["connected_peer_address"]
+    raw_response = RawIdentityResponse(
+        status_line,
+        header_lines,
+        (response_body,),
+        peer,
+    )
+    channel = StructuralIdentityByteChannel(
+        expected_method=request["method"],
+        expected_url=request["url"],
+        expected_body=request_body,
+        selected_address=selected,
+        connected_peer_address=peer,
+        hostname=transport["hostname"],
+        resolution_count=transport["resolution_count"],
+        tls_sni=transport["sni"],
+        tls_peer_name=transport["tls_peer_name"],
+        proxy_mode=transport["proxy_mode"],
+        address_policy_capability=transport["address_policy_capability"],
+        actual_network=transport["actual_network"],
+        byte_channel=transport["byte_channel"],
+        response=raw_response,
+    )
+
+    def structural_resolver(host: str, port: int) -> tuple[str, ...]:
+        if host != "api.hardcover.app" or port != 443:
+            raise ValueError("synthetic resolver invocation is invalid")
+        return (selected,)
+
+    provider = HardcoverIdentityProvider(
+        structural_resolver,
+        channel,
+        b"structural-preview-noncredential",
+    )
+    context = OperationContext(
+        Deadline(cutoff),
+        CancellationProbe(CancellationId("hardcover-fixed-adapter"), lambda: False),
+        ResourceBounds(4, 65_536),
+        TimeProbe(lambda: started),
+    )
+    policy = (
+        AddressPolicyOutcome.ACCEPTED
+        if address_is_public(selected)
+        else AddressPolicyOutcome.REJECTED
+    )
+    result = provider.lookup(query, context)
+    return fixed_adapter_preview_report(
+        result,
+        query,
+        peer_equal=channel.peer_equal if policy is AddressPolicyOutcome.ACCEPTED else False,
+        address_policy=policy,
+    )
+
+
+def _strict_preview_time(value: object) -> datetime:
+    if type(value) is not str or not value.endswith("Z"):
+        raise ValueError("synthetic time is invalid")
+    parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    canonical = parsed.astimezone(timezone.utc).isoformat(timespec="microseconds")
+    if canonical.replace("+00:00", "Z") != value:
+        raise ValueError("synthetic time is invalid")
+    return parsed
+
+
 def _synthetic_identity_row(source: object) -> ProviderIdentityObservation:
     if not isinstance(source, Mapping) or set(source) != {
         "id",
@@ -1701,6 +1863,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         hardcover_identity_decision_preview_runner=(
             _run_hardcover_identity_decision_preview
         ),
+        hardcover_fixed_adapter_preview_runner=_run_hardcover_fixed_adapter_preview,
     )
 
 

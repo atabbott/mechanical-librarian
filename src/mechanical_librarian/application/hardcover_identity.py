@@ -19,6 +19,7 @@ from mechanical_librarian.domain.hardcover_identity import (
     TitleComparison,
     decide_book_identity,
     isbn_identity,
+    validate_private_query,
 )
 
 
@@ -40,6 +41,7 @@ class IdentityAttemptFailureKind(StrEnum):
     CANCELLED = "cancelled"
     MALFORMED = "malformed"
     OVERSIZED = "oversized"
+    EMPTY = "empty"
     INCOMPATIBLE = "incompatible"
 
 
@@ -121,6 +123,118 @@ class BookIdentityProvider(Protocol):
     def lookup(
         self, query: IsbnIdentityQuery, context: OperationContext
     ) -> IdentityAttemptResult: ...
+
+
+class FixedAdapterOutcome(StrEnum):
+    MATCHED = "matched"
+    AUTHENTICATION = "authentication"
+    AUTHORIZATION = "authorization"
+    MALFORMED = "malformed"
+    OVERSIZED = "oversized"
+    EMPTY = "empty"
+    NO_MATCH = "no_match"
+    AMBIGUOUS = "ambiguous"
+    INCOMPATIBLE = "incompatible"
+
+
+class AddressPolicyOutcome(StrEnum):
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
+@dataclass(frozen=True, slots=True)
+class FixedAdapterPreviewReport:
+    outcome: FixedAdapterOutcome
+    row_count: int
+    peer_equal: bool
+    actual_network: bool
+    address_policy: AddressPolicyOutcome
+
+    def validate(self) -> None:
+        if (
+            type(self.outcome) is not FixedAdapterOutcome
+            or type(self.row_count) is not int
+            or not 0 <= self.row_count <= 4
+            or type(self.peer_equal) is not bool
+            or type(self.actual_network) is not bool
+            or self.actual_network is not False
+            or type(self.address_policy) is not AddressPolicyOutcome
+        ):
+            raise TypeError("Hardcover fixed adapter preview report is malformed")
+
+    def to_json(self) -> str:
+        self.validate()
+        return json.dumps(
+            {
+                "schema": "hardcover-synthetic-output-v5",
+                "scenario": "fixed-adapter-v3",
+                "result": {
+                    "outcome": self.outcome.value,
+                    "row_count": self.row_count,
+                    "peer_equal": self.peer_equal,
+                    "actual_network": self.actual_network,
+                    "address_policy": self.address_policy.value,
+                },
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
+def fixed_adapter_preview_report(
+    result: IdentityAttemptResult,
+    query: IsbnIdentityQuery,
+    *,
+    peer_equal: bool,
+    address_policy: AddressPolicyOutcome,
+) -> FixedAdapterPreviewReport:
+    """Map one adapter attempt to the fixed public structural preview."""
+
+    if (
+        type(result) is not IdentityAttemptResult
+        or type(query) is not IsbnIdentityQuery
+        or type(peer_equal) is not bool
+        or type(address_policy) is not AddressPolicyOutcome
+    ):
+        raise TypeError("Hardcover fixed adapter preview input is malformed")
+    row_count = 0
+    if result.failure is not None:
+        public = {
+            IdentityAttemptFailureKind.AUTHENTICATION: FixedAdapterOutcome.AUTHENTICATION,
+            IdentityAttemptFailureKind.AUTHORIZATION: FixedAdapterOutcome.AUTHORIZATION,
+            IdentityAttemptFailureKind.MALFORMED: FixedAdapterOutcome.MALFORMED,
+            IdentityAttemptFailureKind.OVERSIZED: FixedAdapterOutcome.OVERSIZED,
+            IdentityAttemptFailureKind.EMPTY: FixedAdapterOutcome.EMPTY,
+            IdentityAttemptFailureKind.INCOMPATIBLE: FixedAdapterOutcome.INCOMPATIBLE,
+        }.get(result.failure.kind)
+        if public is None:
+            raise IdentityReportError(
+                "Hardcover fixed adapter attempt is internal-only"
+            )
+    else:
+        observations = result.observations
+        if observations is None:
+            raise IdentityReportError("Hardcover fixed adapter result is malformed")
+        row_count = len(observations)
+        private_query = validate_private_query(
+            {
+                "isbn": query.canonical_isbn_13,
+                "title": "Structural Preview",
+            }
+        )
+        public = FixedAdapterOutcome(
+            decide_book_identity(private_query, observations).outcome.value
+        )
+    report = FixedAdapterPreviewReport(
+        public,
+        row_count,
+        peer_equal,
+        False,
+        address_policy,
+    )
+    report.validate()
+    return report
 
 
 @dataclass(frozen=True)
@@ -385,7 +499,10 @@ def render_report_text(report: HardcoverIdentityReport) -> str:
 
 
 __all__ = [
+    "AddressPolicyOutcome",
     "BookIdentityProvider",
+    "FixedAdapterOutcome",
+    "FixedAdapterPreviewReport",
     "HardcoverIdentityOutcome",
     "HardcoverIdentityReport",
     "IdentityAttemptFailure",
@@ -396,6 +513,7 @@ __all__ = [
     "InertPreviewReport",
     "IsbnIdentityQuery",
     "RunHardcoverIdentityReport",
+    "fixed_adapter_preview_report",
     "inert_preview",
     "preactivation_report",
     "render_report_text",

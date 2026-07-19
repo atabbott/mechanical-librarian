@@ -62,6 +62,7 @@ from mechanical_librarian.application.title_review_cases import (
     render_title_review_case_text,
 )
 from mechanical_librarian.application.hardcover_identity import (
+    FixedAdapterPreviewReport,
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
@@ -93,6 +94,9 @@ HardcoverIdentityRunner = Callable[[Path], HardcoverIdentityReport]
 HardcoverInertPreviewRunner = Callable[[Mapping[str, object]], InertPreviewReport]
 HardcoverIdentityDecisionPreviewRunner = Callable[
     [Mapping[str, object]], IdentityDecisionPreviewReport
+]
+HardcoverFixedAdapterPreviewRunner = Callable[
+    [Mapping[str, object]], FixedAdapterPreviewReport
 ]
 
 _FAILURE_MESSAGES = {
@@ -182,7 +186,8 @@ def _hardcover_identity_parser() -> argparse.ArgumentParser:
     parser.add_argument("--query-file", metavar="PATH", type=Path)
     parser.add_argument("--mode", choices=("synthetic-preview",))
     parser.add_argument(
-        "--scenario", choices=("inert-report-v3", "identity-decision-v3")
+        "--scenario",
+        choices=("inert-report-v3", "identity-decision-v3", "fixed-adapter-v3"),
     )
     parser.add_argument("--input")
     parser.add_argument("--format", choices=("json", "text"), default="json")
@@ -525,6 +530,9 @@ def main(
     hardcover_identity_decision_preview_runner: (
         HardcoverIdentityDecisionPreviewRunner | None
     ) = None,
+    hardcover_fixed_adapter_preview_runner: (
+        HardcoverFixedAdapterPreviewRunner | None
+    ) = None,
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
@@ -546,7 +554,7 @@ def main(
         if synthetic:
             exact = (
                 hardcover_arguments.scenario
-                in {"inert-report-v3", "identity-decision-v3"}
+                in {"inert-report-v3", "identity-decision-v3", "fixed-adapter-v3"}
                 and hardcover_arguments.input == "-"
                 and hardcover_arguments.format == "json"
                 and hardcover_arguments.config is None
@@ -564,10 +572,14 @@ def main(
                         if hardcover_inert_preview_runner is None
                         else hardcover_inert_preview_runner(source)
                     )
-                else:
+                elif hardcover_arguments.scenario == "identity-decision-v3":
                     if hardcover_identity_decision_preview_runner is None:
                         raise ValueError("identity decision preview is unavailable")
                     report = hardcover_identity_decision_preview_runner(source)
+                else:
+                    if hardcover_fixed_adapter_preview_runner is None:
+                        raise ValueError("fixed adapter preview is unavailable")
+                    report = hardcover_fixed_adapter_preview_runner(source)
             except (KeyboardInterrupt, Exception):
                 if hardcover_arguments.scenario == "inert-report-v3":
                     report = InertPreviewReport(HardcoverIdentityOutcome.INVALID_INPUT)
@@ -578,7 +590,11 @@ def main(
                 if type(report) is not InertPreviewReport:
                     errors.write(_HARDCOVER_IDENTITY_FAILURE)
                     return 2
-            elif type(report) is not IdentityDecisionPreviewReport:
+            elif hardcover_arguments.scenario == "identity-decision-v3":
+                if type(report) is not IdentityDecisionPreviewReport:
+                    errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                    return 2
+            elif type(report) is not FixedAdapterPreviewReport:
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
             try:
@@ -588,7 +604,10 @@ def main(
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
             output.write(rendered + "\n")
-            if type(report) is IdentityDecisionPreviewReport:
+            if type(report) in {
+                IdentityDecisionPreviewReport,
+                FixedAdapterPreviewReport,
+            }:
                 return 0
             return 0 if report.outcome is HardcoverIdentityOutcome.DISABLED else 2
         exact = (
