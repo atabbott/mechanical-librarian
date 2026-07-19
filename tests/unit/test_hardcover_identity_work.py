@@ -156,7 +156,63 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
         return accepted
 
-    def assert_candidate_three_history_rejected(self, reference) -> None:
+    def same_timestamp_stale_candidate_three_retry_wait(self):
+        accepted, first = self.started_claim()
+        self.repository.publish_matched(
+            first,
+            "worker-a",
+            ORIGIN + timedelta(seconds=3),
+            MATCHED,
+            gate_owned=True,
+        )
+        stale_time = ORIGIN + timedelta(days=1, seconds=4)
+        stale = self.repository.accept(WORK_KEY, stale_time)
+        self.assertIsNone(stale.candidate)
+        reserved = self.repository.accept(WORK_KEY, stale_time)
+        self.assertEqual((reserved.reference.generation, reserved.candidate), (2, 1))
+        first_retry = self.repository.claim(
+            reserved.reference,
+            "worker-b",
+            stale_time + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        first_retry = self.repository.renew_and_start(
+            first_retry,
+            "worker-b",
+            stale_time + timedelta(seconds=2),
+            gate_owned=True,
+        )
+        self.repository.publish_failed(
+            first_retry,
+            "worker-b",
+            stale_time + timedelta(seconds=3),
+            retryable=True,
+            gate_owned=True,
+        )
+        second_retry = self.repository.claim(
+            reserved.reference,
+            "worker-c",
+            stale_time + timedelta(seconds=4),
+            gate_owned=True,
+        )
+        second_retry = self.repository.renew_and_start(
+            second_retry,
+            "worker-c",
+            stale_time + timedelta(seconds=5),
+            gate_owned=True,
+        )
+        self.repository.publish_failed(
+            second_retry,
+            "worker-c",
+            stale_time + timedelta(seconds=6),
+            retryable=True,
+            gate_owned=True,
+        )
+        return reserved, stale_time
+
+    def assert_candidate_three_history_rejected(
+        self, reference, *, when: datetime = ORIGIN + timedelta(seconds=7)
+    ) -> None:
         before = self.connection.execute(
             "SELECT state,fence,attempt_count,lease_owner,lease_expires_at,updated_at "
             "FROM hardcover_identity_generations WHERE work_key=? AND generation=?",
@@ -171,7 +227,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             self.repository.claim(
                 reference,
                 "worker-c",
-                ORIGIN + timedelta(seconds=7),
+                when,
                 gate_owned=True,
             )
         self.assertEqual(self.connection.total_changes, changes)
@@ -1054,6 +1110,77 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                 "SELECT attempt,fence,candidate,outcome FROM hardcover_identity_attempts ORDER BY attempt"
             ).fetchall(),
             [(1, 1, 1, "failed"), (2, 2, 2, "failed")],
+        )
+
+    def test_candidate_three_accepts_equal_time_deferred_reservation_prefix(
+        self,
+    ) -> None:
+        reserved, stale_time = self.same_timestamp_stale_candidate_three_retry_wait()
+        third = self.repository.claim(
+            reserved.reference,
+            "worker-d",
+            stale_time + timedelta(seconds=7),
+            gate_owned=True,
+        )
+        self.assertEqual(
+            (third.reference.generation, third.candidate, third.fence), (2, 3, 3)
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT kind,from_state,to_state,fence,occurred_at "
+                "FROM hardcover_identity_events WHERE work_key=? AND generation=2 "
+                "ORDER BY sequence LIMIT 2",
+                (WORK_KEY,),
+            ).fetchall(),
+            [
+                ("expired", None, "pending", 0, "2026-01-02T00:00:04.000000Z"),
+                (
+                    "accepted",
+                    "pending",
+                    "pending",
+                    0,
+                    "2026-01-02T00:00:04.000000Z",
+                ),
+            ],
+        )
+
+    def test_candidate_three_rejects_mixed_equal_time_deferred_prefix(self) -> None:
+        reserved, stale_time = self.same_timestamp_stale_candidate_three_retry_wait()
+        self.connection.execute("DROP TRIGGER hardcover_identity_events_no_update")
+        self.connection.execute(
+            "UPDATE hardcover_identity_events SET from_state=NULL "
+            "WHERE work_key=? AND generation=2 AND kind='accepted'",
+            (WORK_KEY,),
+        )
+        self.assert_candidate_three_history_rejected(
+            reserved.reference, when=stale_time + timedelta(seconds=7)
+        )
+
+    def test_candidate_three_rejects_duplicate_equal_time_deferred_prefix(self) -> None:
+        reserved, stale_time = self.same_timestamp_stale_candidate_three_retry_wait()
+        self.connection.execute("DROP TRIGGER hardcover_identity_events_no_update")
+        self.connection.execute(
+            "UPDATE hardcover_identity_events SET sequence=sequence+100 "
+            "WHERE work_key=? AND generation=2",
+            (WORK_KEY,),
+        )
+        self.connection.execute(
+            "UPDATE hardcover_identity_events SET sequence=1 "
+            "WHERE work_key=? AND generation=2 AND kind='expired'",
+            (WORK_KEY,),
+        )
+        self.connection.execute(
+            "UPDATE hardcover_identity_events SET sequence=sequence-99 "
+            "WHERE work_key=? AND generation=2 AND sequence>=102",
+            (WORK_KEY,),
+        )
+        self.connection.execute(
+            "INSERT INTO hardcover_identity_events(work_key,generation,sequence,kind,from_state,to_state,fence,occurred_at) "
+            "VALUES(?,2,2,'accepted','pending','pending',0,?)",
+            (WORK_KEY, "2026-01-02T00:00:04.000000Z"),
+        )
+        self.assert_candidate_three_history_rejected(
+            reserved.reference, when=stale_time + timedelta(seconds=7)
         )
 
     def test_candidate_three_claim_rejects_missing_accepted_event(self) -> None:

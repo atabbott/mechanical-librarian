@@ -578,21 +578,24 @@ class SQLiteHardcoverIdentityWorkRepository:
             (reference.work_key, reference.generation),
         ).fetchall()
         expected_events: list[tuple[int, str, str | None, str, int, str]] = []
-        if generation_created < aggregate_started:
-            expected_events.append(
-                (1, "expired", None, "pending", 0, _time(generation_created))
-            )
-            expected_events.append(
-                (2, "accepted", "pending", "pending", 0, _time(aggregate_started))
-            )
+        standard_prefix = (
+            1,
+            "accepted",
+            None,
+            "pending",
+            0,
+            _time(aggregate_started),
+        )
+        deferred_prefix = [
+            (1, "expired", None, "pending", 0, _time(generation_created)),
+            (2, "accepted", "pending", "pending", 0, _time(aggregate_started)),
+        ]
+        if events[:1] == [standard_prefix] and generation_created == aggregate_started:
+            expected_events.append(standard_prefix)
+        elif events[:2] == deferred_prefix:
+            expected_events.extend(deferred_prefix)
         else:
-            if generation_created != aggregate_started:
-                raise IdentityWorkPersistenceError(
-                    "identity work retry history is corrupt"
-                )
-            expected_events.append(
-                (1, "accepted", None, "pending", 0, _time(aggregate_started))
-            )
+            raise IdentityWorkPersistenceError("identity work retry history is corrupt")
 
         claims = self._connection.execute(
             "SELECT fence,candidate,owner,claimed_at,lease_expires_at FROM hardcover_identity_claims "
