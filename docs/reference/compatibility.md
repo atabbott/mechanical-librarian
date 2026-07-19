@@ -224,7 +224,7 @@ post-construction mutation, forged-exception, traceback-local, `SystemExit`, or
 
 The exact cumulative compatibility registry is
 `preview-registry-c3-v6.json` / SHA-256
-`95d971c2d6e689044320512f415caa38b6c944cab2ec91132669523f16ab2fed`.
+`ff6c3c68fee3cb4f7712bdb650e0685c8fc4b4d345a573c195e7904863f65943`.
 It derives from installed C2 and contains exactly the inert, identity-decision,
 and fixed-adapter scenarios; future durable-work and executor definitions are
 not current compatibility data.

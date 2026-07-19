@@ -195,6 +195,73 @@ class HardcoverIdentityBoundaryTests(unittest.TestCase):
         self.assertTrue(reader.closed)
         self.assertTrue(finalized)
 
+    def test_structural_reader_eof_closes_owned_iterator(self) -> None:
+        finalized = False
+
+        def chunks() -> object:
+            nonlocal finalized
+            try:
+                yield b"{}"
+            finally:
+                finalized = True
+
+        reader = adapter.StructuralIdentityBodyReader(chunks())
+        self.assertEqual(reader.read_chunk(3), b"{}")
+        self.assertIsNone(reader.read_chunk(3))
+        self.assertTrue(reader.closed)
+        self.assertTrue(reader.finalization_attempted)
+        self.assertTrue(finalized)
+
+    def test_structural_reader_eof_close_failure_uses_transport_fallback(self) -> None:
+        class ClosingIterator:
+            def __init__(self) -> None:
+                self._chunks = iter((b"{}",))
+
+            def __iter__(self) -> ClosingIterator:
+                return self
+
+            def __next__(self) -> bytes:
+                return next(self._chunks)
+
+            def close(self) -> None:
+                raise RuntimeError("synthetic close failure")
+
+        class Channel:
+            release_calls = 0
+
+            def release(self, response: object) -> bool:
+                self.release_calls += 1
+                return True
+
+        reader = adapter.StructuralIdentityBodyReader(ClosingIterator())
+        self.assertEqual(reader.read_chunk(3), b"{}")
+        self.assertIsNone(reader.read_chunk(3))
+        self.assertFalse(reader.closed)
+        channel = Channel()
+        self.assertTrue(adapter._release_response(channel, object(), reader))
+        self.assertEqual(channel.release_calls, 1)
+
+    def test_editions_count_three_four_and_five_has_explicit_boundary(self) -> None:
+        for count, expected in (
+            (3, tuple),
+            (4, tuple),
+            (5, IdentityAttemptFailureKind.OVERSIZED),
+        ):
+            with self.subTest(count=count):
+                rows = [self.row() for _ in range(count)]
+                payload = json.dumps(
+                    {"data": {"editions": rows}},
+                    ensure_ascii=True,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+                result = adapter._parse_observations(payload)
+                if expected is tuple:
+                    self.assertIs(type(result), tuple)
+                    self.assertEqual(len(result), count)
+                else:
+                    self.assertIs(result, expected)
+
     def test_raw_header_field_values_reject_every_control_injection(self) -> None:
         valid = adapter._parse_headers(
             (

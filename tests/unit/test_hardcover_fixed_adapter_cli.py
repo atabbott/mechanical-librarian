@@ -218,6 +218,22 @@ class HardcoverFixedAdapterCliTests(unittest.TestCase):
         self.assertEqual(json.loads(output)["result"]["outcome"], "incompatible")
         self.assertEqual(json.loads(output)["result"]["row_count"], 4)
 
+        five = copy.deepcopy(four)
+        document["data"]["editions"].append(copy.deepcopy(rows[-1]))
+        five_body = json.dumps(
+            document,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        five["response"]["raw_body_bytes_utf8"] = five_body
+        five["response"]["raw_header_lines_bytes_utf8"][-1] = (
+            f"Content-Length: {len(five_body.encode())}\r\n"
+        )
+        _, output, _ = self.run_preview(five)
+        self.assertEqual(json.loads(output)["result"]["outcome"], "oversized")
+        self.assertEqual(json.loads(output)["result"]["row_count"], 0)
+
     def test_closed_input_failures_are_value_free(self) -> None:
         cases: list[tuple[object, str | None]] = []
         extra = self.source()

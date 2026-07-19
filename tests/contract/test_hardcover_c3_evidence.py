@@ -4,6 +4,21 @@ import hashlib
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from mechanical_librarian.adapters.providers import hardcover_identity as adapter
+from mechanical_librarian.adapters.providers.hardcover_identity import (
+    StructuralHardcoverIdentityPreview,
+)
+from mechanical_librarian.application.hardcover_identity import (
+    IdentityAttemptFailureKind,
+    IdentityAttemptResult,
+    IsbnIdentityQuery,
+)
+from mechanical_librarian.application.schema_validation import (
+    UTF8_BYTE_LENGTH_VOCABULARY,
+    validates_utf8_byte_limits,
+)
 
 
 ROOT = Path(__file__).parents[2]
@@ -11,6 +26,56 @@ FIXTURES = ROOT / "tests/fixtures/hardcover_identity"
 
 
 class HardcoverC3EvidenceTests(unittest.TestCase):
+    def test_c3_byte_vocabulary_matches_runtime_multibyte_boundaries(self) -> None:
+        schema = json.loads(
+            (FIXTURES / "c3-fixed-adapter-input-schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIs(schema["$vocabulary"][UTF8_BYTE_LENGTH_VOCABULARY], True)
+        canonical = json.loads(
+            (FIXTURES / "c3-fixed-adapter-input.json").read_text(encoding="utf-8")
+        )
+        locations = (
+            (("request", "body_bytes_utf8"), 8_192),
+            (("response", "raw_status_line_bytes_utf8"), 128),
+            (("response", "raw_header_lines_bytes_utf8", 0), 256),
+            (("response", "raw_body_bytes_utf8"), 65_536),
+        )
+        query = IsbnIdentityQuery("9780000000019", "0000000019")
+
+        for path, limit in locations:
+            for delta in (-1, 0, 1):
+                byte_count = limit + delta
+                value = "é" * (byte_count // 2) + ("A" if byte_count % 2 else "")
+                source = json.loads(json.dumps(canonical))
+                target = source
+                for part in path[:-1]:
+                    target = target[part]
+                target[path[-1]] = value
+                schema_valid = validates_utf8_byte_limits(schema, source)
+                with patch.object(
+                    adapter,
+                    "identity_query_from_canonical_body",
+                    return_value=query,
+                ), patch.object(
+                    adapter.HardcoverIdentityProvider,
+                    "lookup",
+                    return_value=IdentityAttemptResult.failed(
+                        IdentityAttemptFailureKind.MALFORMED
+                    ),
+                ) as lookup:
+                    try:
+                        StructuralHardcoverIdentityPreview().run(source)
+                        runtime_valid = True
+                    except ValueError:
+                        runtime_valid = False
+                expected = delta <= 0
+                with self.subTest(path=path, delta=delta):
+                    self.assertEqual(schema_valid, expected)
+                    self.assertEqual(runtime_valid, expected)
+                    self.assertEqual(lookup.called, expected)
+
     def test_c3_registry_has_exact_installed_predecessor_and_scope(self) -> None:
         expected = {
             "c3-fixed-adapter-input.json": (
@@ -22,8 +87,8 @@ class HardcoverC3EvidenceTests(unittest.TestCase):
                 "09bbf56b45a896c1a4a8ec0ef2ac45a3863d2e55370e901693677de7209baa40",
             ),
             "c3-fixed-adapter-input-schema.json": (
-                1766,
-                "4c17b1aaab8ec8796c0981c022ef249a780f03a3ee7296480271cc0bcbb9582a",
+                1951,
+                "0cfb8b483f62bb410a47cb88a7e5b2b4785f339df65a03c3f7706167dd633f42",
             ),
             "c3-fixed-adapter-variant-matrix.json": (
                 987,
@@ -43,7 +108,7 @@ class HardcoverC3EvidenceTests(unittest.TestCase):
             ),
             "preview-registry-c3-v6.json": (
                 5881,
-                "95d971c2d6e689044320512f415caa38b6c944cab2ec91132669523f16ab2fed",
+                "ff6c3c68fee3cb4f7712bdb650e0685c8fc4b4d345a573c195e7904863f65943",
             ),
         }
         for name, (size, digest) in expected.items():

@@ -102,7 +102,7 @@ _CONTENT_TYPE = re.compile(
     rb"application/json(?:[ \t]*;[ \t]*charset[ \t]*=[ \t]*utf-8)?",
     re.IGNORECASE,
 )
-_STATUS_LINE = re.compile(rb"HTTP/1\.1 ([0-9]{3}) [\x20-\x7e]+\r\n")
+_STATUS_LINE = re.compile(rb"HTTP/1\.1 ([0-9]{3}) [\x20-\x7e]*\r\n")
 _BIDI_CONTROLS = frozenset(
     {0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)}
 )
@@ -202,8 +202,7 @@ class StructuralIdentityBodyReader:
             chunk = next(self._chunks)
         except StopIteration:
             self._read_disabled = True
-            self._finalization_attempted = True
-            self._release_confirmed = True
+            self.close()
             return None
         self._read_count += 1
         if chunk == b"":
@@ -1029,6 +1028,15 @@ def _parse_observations(
             parse_float=_reject_number,
             parse_constant=_reject_number,
         )
+        if (
+            type(value) is dict
+            and set(value) == {"data"}
+            and type(value["data"]) is dict
+            and set(value["data"]) == {"editions"}
+            and type(value["data"]["editions"]) is list
+            and len(value["data"]["editions"]) > 4
+        ):
+            return IdentityAttemptFailureKind.OVERSIZED
         if not _structure_allowed(value):
             raise ValueError
     except (

@@ -524,6 +524,21 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 self.assertEqual(channel.release_calls, release_calls)
                 self.assertNotIn("private-", repr(result))
 
+    def test_empty_http_reason_phrase_retains_status_mapping_and_release(self) -> None:
+        payload = self.response_body()
+        for status, expected in (
+            (b"HTTP/1.1 200 \r\n", None),
+            (b"HTTP/1.1 401 \r\n", IdentityAttemptFailureKind.AUTHENTICATION),
+        ):
+            with self.subTest(status=status):
+                channel = self.channel(status=status, body=payload)
+                result = self.provider(channel).lookup(self.query(), self.context())
+                if expected is None:
+                    self.assertIsNone(result.failure)
+                else:
+                    self.assertIs(result.failure.kind, expected)
+                self.assertTrue(channel._response.body_reader.closed)
+
     def test_keyboard_interrupt_releases_response_and_propagates(self) -> None:
         state = {"interrupt_after_exchange": False}
         payload = self.response_body()
