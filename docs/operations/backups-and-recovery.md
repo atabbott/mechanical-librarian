@@ -69,7 +69,11 @@ Started identity attempts are recoverable state, not permission to repeat
 network work. After restart, only a later owner holding the external execution
 gate may recover an expired 15-second lease; recovery finalizes the old attempt
 as interrupted and advances the fence before a retry can be claimed. Stale
-owners cannot publish. Terminal publication and current-pointer advancement are
+owners cannot cancel or publish. An expired pre-start claim retains its
+candidate; retry claims require the unique current schedule to be due. The
+third interrupted attempt or insufficient aggregate time commits terminal
+failed evidence instead of leaving an expired active claim. Terminal
+publication and current-pointer advancement are
 one transaction, so interruption preserves the earlier pointer and leaves the
 started claim recoverable.
 

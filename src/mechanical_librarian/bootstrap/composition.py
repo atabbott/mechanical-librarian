@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import os
 import sqlite3
+import stat
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -29,9 +30,7 @@ from mechanical_librarian.adapters.persistence.epub_opening_evidence import (
     SQLiteEpubOpeningEvidenceRepository,
 )
 from mechanical_librarian.adapters.persistence.hardcover_identity_work import (
-    IdentityWorkPersistenceError,
     SQLiteHardcoverIdentityWorkRepository,
-    StaleIdentityWorkFence,
 )
 from mechanical_librarian.adapters.library_services.synthetic import (
     SyntheticLibraryReader,
@@ -82,6 +81,7 @@ from mechanical_librarian.application.hardcover_identity import (
     IdentityDecisionPreviewReport,
     InertPreviewReport,
     IsbnIdentityQuery,
+    ManageHardcoverIdentityWork,
     RunHardcoverFixedAdapterPreview,
     RunHardcoverIdentityReport,
     inert_preview,
@@ -1623,6 +1623,25 @@ _DURABLE_WORK_OPERATIONS = (
     ("expire_current", "api", "stale", 86_418_200_001, None, None),
 )
 
+_SCHEMA8_SNAPSHOT_SHA256 = "1040b8eefc8703503a9f515543c3618908bd7af0d08fae7700806b37a48811ed"
+
+
+def _validate_durable_preview_database(database: Path) -> None:
+    try:
+        parent_status = database.parent.lstat()
+        entries = tuple(database.parent.iterdir())
+    except OSError:
+        raise SchemaError("durable work preview path is unavailable") from None
+    if (
+        not database.is_absolute()
+        or os.path.lexists(database)
+        or not stat.S_ISDIR(parent_status.st_mode)
+        or stat.S_IMODE(parent_status.st_mode) != 0o700
+        or parent_status.st_uid != os.geteuid()
+        or entries
+    ):
+        raise SchemaError("durable work preview path is invalid")
+
 
 def _validate_durable_work_preview_input(source: Mapping[str, object]) -> None:
     if set(source) != {"schema", "scenario", "failure_points", "script"}:
@@ -1659,18 +1678,23 @@ def _run_hardcover_durable_work_preview(
     """Exercise migration and repository recovery without provider authority."""
 
     _validate_durable_work_preview_input(source)
+    _validate_durable_preview_database(database)
     preflight(database)
-    if path_entry_exists(database):
-        raise SchemaError("durable work preview requires an absent database")
     work_key = hashlib.sha256(b"public-synthetic-hardcover-work-v3").hexdigest()
     origin = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    at = lambda microseconds: origin + timedelta(microseconds=microseconds)
 
     with staged_state(database) as staged:
         connection = connect(staged)
         try:
             if migrate_to_version(connection, 8) != 8:
                 raise SchemaError("schema-eight preview could not be regenerated")
+            connection.execute(
+                "INSERT INTO instance_metadata(key,value) VALUES('synthetic_schema8_sentinel','fixture-v1')"
+            )
+            finalize_staged_state(connection)
+            snapshot = "\n".join(connection.iterdump()) + "\n"
+            if hashlib.sha256(snapshot.encode("utf-8")).hexdigest() != _SCHEMA8_SNAPSHOT_SHA256:
+                raise SchemaError("schema-eight logical snapshot is inconsistent")
             ledger = connection.execute(
                 "SELECT version,checksum FROM schema_migrations ORDER BY version"
             ).fetchall()
@@ -1695,25 +1719,10 @@ def _run_hardcover_durable_work_preview(
                 "SELECT COUNT(*) FROM schema_migrations WHERE version=9"
             ).fetchone() == (1,)
 
-            repository = SQLiteHardcoverIdentityWorkRepository(connection)
-            accepted = repository.accept(work_key, at(500_000))
-            claim = repository.claim(
-                accepted.reference, 1, "worker-a", at(1_600_000), gate_owned=True
+            service = ManageHardcoverIdentityWork(
+                SQLiteHardcoverIdentityWorkRepository(connection)
             )
-            claim = repository.renew_and_start(
-                claim, "worker-a", at(1_700_000), gate_owned=True
-            )
-            try:
-                repository.publish_matched(
-                    claim,
-                    "worker-a",
-                    at(2_800_000),
-                    {"outcome": "matched", "rows": 2},
-                    gate_owned=True,
-                    fail_before_commit=True,
-                )
-            except IdentityWorkPersistenceError:
-                pass
+            checkpoint = service.begin_preview(work_key, origin)
             publication_rollback_verified = (
                 connection.execute(
                     "SELECT COUNT(*) FROM hardcover_identity_results WHERE work_key=?",
@@ -1733,39 +1742,10 @@ def _run_hardcover_durable_work_preview(
 
         connection = connect_existing(staged)
         try:
-            repository = SQLiteHardcoverIdentityWorkRepository(connection)
-            next_fence = repository.recover_interrupted(
-                claim, at(16_900_000), gate_owned=True
+            service = ManageHardcoverIdentityWork(
+                SQLiteHardcoverIdentityWorkRepository(connection)
             )
-            if next_fence != 2:
-                raise SchemaError("identity recovery fence is inconsistent")
-            try:
-                repository.publish_matched(
-                    claim,
-                    "worker-a",
-                    at(17_000_000),
-                    {"outcome": "matched"},
-                    gate_owned=True,
-                )
-            except StaleIdentityWorkFence:
-                pass
-            else:
-                raise SchemaError("stale identity fence was accepted")
-            retry = repository.claim(
-                accepted.reference, 2, "worker-b", at(17_000_000), gate_owned=True
-            )
-            retry = repository.renew_and_start(
-                retry, "worker-b", at(17_100_000), gate_owned=True
-            )
-            repository.publish_matched(
-                retry,
-                "worker-b",
-                at(18_200_000),
-                {"outcome": "matched", "rows": 2},
-                gate_owned=True,
-            )
-            exact = repository.accept(work_key, at(86_418_200_000))
-            stale = repository.accept(work_key, at(86_418_200_001))
+            exact, stale = service.resume_preview(checkpoint, origin)
             if exact.outcome.value != "matched" or stale.outcome.value != "stale" or stale.reference.generation != 2:
                 raise SchemaError("identity currentness boundary proof failed")
             finalize_staged_state(connection)

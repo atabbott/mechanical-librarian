@@ -116,8 +116,11 @@ mechanical-librarian hardcover-identity-report \
   --input - --database ABSENT_DISPOSABLE_PATH --format json
 ```
 
-The path must be absent beneath a disposable directory. The command builds an
-owner-only staged database, regenerates the genuine schema-8 migration prefix,
+The path must be absolute and absent beneath a newly prepared empty directory
+owned by the invoking user with mode `0700`; relative paths, existing entries,
+permissive parents, and nonempty parents are rejected before mutation. The
+command builds an owner-only staged database, regenerates the genuine schema-8
+migration prefix plus sentinel, compares its canonical logical snapshot digest,
 checks its recorded checksums, integrity, and foreign keys, then proves the
 additive schema-9 migration and publishes the completed database without
 replacing a competing entry. Existing databases are rejected unchanged.

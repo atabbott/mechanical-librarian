@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -346,6 +348,26 @@ def _database_path(value: str) -> Path:
     return path
 
 
+def _durable_preview_database_path(path: Path) -> None:
+    """Require an absent canonical path in one empty owner-only directory."""
+
+    try:
+        parent_status = path.parent.lstat()
+        entries = tuple(path.parent.iterdir())
+    except (OSError, RuntimeError):
+        raise ValueError("durable work preview database path is invalid") from None
+    if (
+        not path.is_absolute()
+        or len(os.fsencode(path)) > 4096
+        or os.path.lexists(path)
+        or not stat.S_ISDIR(parent_status.st_mode)
+        or stat.S_IMODE(parent_status.st_mode) != 0o700
+        or parent_status.st_uid != os.geteuid()
+        or entries
+    ):
+        raise ValueError("durable work preview database path is invalid")
+
+
 def _provider_secret_reference(value: str) -> Path:
     try:
         reference = SecretReference(value)
@@ -586,6 +608,8 @@ def main(
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
             try:
+                if durable:
+                    _durable_preview_database_path(hardcover_arguments.database)
                 source = _read_synthetic_input(stdin)
                 if hardcover_arguments.scenario == "inert-report-v3":
                     report = (

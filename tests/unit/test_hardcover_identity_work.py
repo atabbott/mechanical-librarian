@@ -11,6 +11,10 @@ from mechanical_librarian.adapters.persistence.hardcover_identity_work import (
     SQLiteHardcoverIdentityWorkRepository,
     StaleIdentityWorkFence,
 )
+from mechanical_librarian.application.hardcover_identity import (
+    HardcoverIdentityWorkPersistence,
+    ManageHardcoverIdentityWork,
+)
 from mechanical_librarian.domain.hardcover_identity_work import (
     LEGAL_TRANSITIONS,
     IdentityWorkOutcome,
@@ -49,7 +53,6 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         accepted = self.accept(key=key)
         claim = self.repository.claim(
             accepted.reference,
-            1,
             "worker-a",
             ORIGIN + timedelta(seconds=1),
             gate_owned=True,
@@ -123,7 +126,6 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         accepted = self.accept()
         claim = self.repository.claim(
             accepted.reference,
-            1,
             "worker-a",
             ORIGIN + timedelta(seconds=1),
             gate_owned=True,
@@ -156,30 +158,44 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         with self.assertRaisesRegex(IdentityWorkPersistenceError, "gate"):
             self.repository.claim(
                 accepted.reference,
-                1,
                 "worker-a",
                 ORIGIN,
                 gate_owned=False,
             )
         claim = self.repository.claim(
             accepted.reference,
-            1,
             "worker-a",
             ORIGIN + timedelta(seconds=1),
             gate_owned=True,
         )
-        with self.assertRaisesRegex(IdentityWorkPersistenceError, "too short"):
-            self.repository.renew_and_start(
-                claim,
-                "worker-a",
-                ORIGIN + timedelta(seconds=10, microseconds=1),
-                gate_owned=True,
-            )
+        started = self.repository.renew_and_start(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=10, microseconds=1),
+            gate_owned=True,
+        )
+        self.assertEqual(started.lease_expires_at, ORIGIN + timedelta(seconds=25, microseconds=1))
+
+        late = self.accept(key=OTHER_WORK_KEY)
+        late_claim = self.repository.claim(
+            late.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=20),
+            gate_owned=True,
+        )
+        exhausted = self.repository.renew_and_start(
+            late_claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=24, microseconds=1),
+            gate_owned=True,
+        )
+        self.assertEqual(exhausted.outcome, IdentityWorkOutcome.RETRY_EXHAUSTED)
         self.assertEqual(
             self.connection.execute(
-                "SELECT attempt_count FROM hardcover_identity_generations"
+                "SELECT attempt_count,state FROM hardcover_identity_generations WHERE work_key=?",
+                (OTHER_WORK_KEY,),
             ).fetchone(),
-            (0,),
+            (0, "failed"),
         )
 
     def test_publication_failure_rolls_back_attempt_result_observation_and_pointer(self) -> None:
@@ -237,7 +253,6 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             )
         retry = self.repository.claim(
             accepted.reference,
-            2,
             "worker-b",
             ORIGIN + timedelta(seconds=19),
             gate_owned=True,
@@ -250,11 +265,10 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             [(1, 1, "interrupted")],
         )
 
-    def test_recovery_rejects_live_lease_and_missing_started_attempt(self) -> None:
+    def test_recovery_rejects_live_lease_and_reclaims_prestart_candidate(self) -> None:
         accepted = self.accept()
         claim = self.repository.claim(
             accepted.reference,
-            1,
             "worker-a",
             ORIGIN + timedelta(seconds=1),
             gate_owned=True,
@@ -263,10 +277,19 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             self.repository.recover_interrupted(
                 claim, ORIGIN + timedelta(seconds=2), gate_owned=True
             )
-        with self.assertRaisesRegex(IdentityWorkPersistenceError, "started"):
+        self.assertEqual(
             self.repository.recover_interrupted(
                 claim, ORIGIN + timedelta(seconds=17), gate_owned=True
-            )
+            ),
+            2,
+        )
+        reclaimed = self.repository.claim(
+            accepted.reference,
+            "worker-b",
+            ORIGIN + timedelta(seconds=17),
+            gate_owned=True,
+        )
+        self.assertEqual((reclaimed.candidate, reclaimed.fence), (1, 2))
 
     def test_matched_currentness_includes_exact_24_hour_boundary(self) -> None:
         _, claim = self.started_claim()
@@ -292,10 +315,13 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             WORK_KEY, published_at + timedelta(hours=24, microseconds=2)
         )
         self.assertEqual(
-            (stale.outcome, stale.reference.generation),
-            (IdentityWorkOutcome.STALE, 2),
+            (stale.outcome, stale.reference.generation, stale.candidate),
+            (IdentityWorkOutcome.STALE, 2, None),
         )
-        self.assertEqual(repeated.reference.generation, 2)
+        self.assertEqual(
+            (repeated.outcome, repeated.reference.generation, repeated.candidate),
+            (IdentityWorkOutcome.STALE, 2, 1),
+        )
         self.assertEqual(
             self.connection.execute(
                 "SELECT generation,status FROM current_hardcover_identity"
@@ -304,9 +330,13 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
         self.assertEqual(
             self.connection.execute(
-                "SELECT COUNT(*) FROM hardcover_identity_generations WHERE state='pending'"
+                "SELECT COUNT(*),MIN(aggregate_started_at),MAX(aggregate_deadline) FROM hardcover_identity_generations WHERE state='pending'"
             ).fetchone(),
-            (1,),
+            (
+                1,
+                "2026-01-02T00:00:03.000002Z",
+                "2026-01-02T00:00:33.000002Z",
+            ),
         )
 
     def test_append_only_records_and_finalized_attempts_cannot_be_rewritten(self) -> None:
@@ -330,8 +360,14 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
 
     def test_cancel_is_terminal_and_preserves_no_current_pointer(self) -> None:
         accepted = self.accept()
+        claim = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(microseconds=1),
+            gate_owned=True,
+        )
         self.repository.cancel(
-            accepted.reference, ORIGIN + timedelta(seconds=1), gate_owned=True
+            claim, "worker-a", ORIGIN + timedelta(seconds=1), gate_owned=True
         )
         self.assertEqual(
             self.connection.execute(
@@ -347,13 +383,13 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             self.repository.cancel(
-                accepted.reference, ORIGIN + timedelta(seconds=2), gate_owned=True
+                claim, "worker-a", ORIGIN + timedelta(seconds=2), gate_owned=True
             )
 
     def test_cancel_finalizes_a_started_attempt_once(self) -> None:
         accepted, claim = self.started_claim()
         self.repository.cancel(
-            accepted.reference, ORIGIN + timedelta(seconds=3), gate_owned=True
+            claim, "worker-a", ORIGIN + timedelta(seconds=3), gate_owned=True
         )
         self.assertEqual(
             self.connection.execute(
@@ -386,7 +422,6 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         with self.assertRaisesRegex(IdentityWorkPersistenceError, "chronology"):
             self.repository.claim(
                 accepted.reference,
-                1,
                 "worker-a",
                 ORIGIN + timedelta(seconds=9),
                 gate_owned=True,
@@ -411,7 +446,6 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         with self.assertRaisesRegex(IdentityWorkPersistenceError, "corrupt"):
             self.repository.claim(
                 accepted.reference,
-                1,
                 "worker-a",
                 ORIGIN + timedelta(seconds=1),
                 gate_owned=True,
@@ -430,6 +464,230 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             ).fetchone(),
             (1,),
         )
+
+    def test_stale_claim_cannot_cancel_a_newer_owner_fence(self) -> None:
+        accepted = self.accept()
+        old = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        self.repository.recover_interrupted(
+            old, ORIGIN + timedelta(seconds=17), gate_owned=True
+        )
+        current = self.repository.claim(
+            accepted.reference,
+            "worker-b",
+            ORIGIN + timedelta(seconds=17),
+            gate_owned=True,
+        )
+        with self.assertRaises(StaleIdentityWorkFence):
+            self.repository.cancel(
+                old, "worker-a", ORIGIN + timedelta(seconds=18), gate_owned=True
+            )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,fence,lease_owner FROM hardcover_identity_generations"
+            ).fetchone(),
+            ("claimed", 2, "worker-b"),
+        )
+        self.repository.cancel(
+            current, "worker-b", ORIGIN + timedelta(seconds=18), gate_owned=True
+        )
+
+    def test_retry_claim_requires_the_unique_current_due_schedule(self) -> None:
+        accepted = self.accept()
+        self.connection.execute(
+            "UPDATE hardcover_identity_generations SET state='retry_wait',fence=1 WHERE work_key=?",
+            (WORK_KEY,),
+        )
+        before = self.connection.total_changes
+        with self.assertRaisesRegex(IdentityWorkPersistenceError, "schedule"):
+            self.repository.claim(
+                accepted.reference,
+                "worker-a",
+                ORIGIN + timedelta(seconds=1),
+                gate_owned=True,
+            )
+        self.assertEqual(self.connection.total_changes, before)
+        self.connection.execute(
+            "INSERT INTO hardcover_identity_retry_schedules(work_key,generation,fence,candidate,due_at,reason,created_at) VALUES(?,?,1,1,?,'retryable',?)",
+            (
+                WORK_KEY,
+                1,
+                "2026-01-01T00:00:10.000000Z",
+                "2026-01-01T00:00:01.000000Z",
+            ),
+        )
+        before = self.connection.total_changes
+        with self.assertRaisesRegex(IdentityWorkPersistenceError, "not due"):
+            self.repository.claim(
+                accepted.reference,
+                "worker-a",
+                ORIGIN + timedelta(seconds=9, microseconds=999_999),
+                gate_owned=True,
+            )
+        self.assertEqual(self.connection.total_changes, before)
+        due = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=10),
+            gate_owned=True,
+        )
+        self.assertEqual((due.candidate, due.fence), (1, 1))
+
+    def test_retryable_failure_publication_rolls_back_or_schedules_exact_next(self) -> None:
+        accepted, claim = self.started_claim()
+        with self.assertRaisesRegex(IdentityWorkPersistenceError, "injected"):
+            self.repository.publish_failed(
+                claim,
+                "worker-a",
+                ORIGIN + timedelta(seconds=3),
+                retryable=True,
+                gate_owned=True,
+                fail_before_commit=True,
+            )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,fence,attempt_count FROM hardcover_identity_generations"
+            ).fetchone(),
+            ("claimed", 1, 1),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT resolved_at,outcome FROM hardcover_identity_attempts"
+            ).fetchone(),
+            (None, None),
+        )
+        status = self.repository.publish_failed(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=3),
+            retryable=True,
+            gate_owned=True,
+        )
+        self.assertEqual(
+            (status.outcome, status.candidate),
+            (IdentityWorkOutcome.IN_PROGRESS, 2),
+        )
+        retry = self.repository.claim(
+            accepted.reference,
+            "worker-b",
+            ORIGIN + timedelta(seconds=3),
+            gate_owned=True,
+        )
+        self.assertEqual((retry.candidate, retry.fence), (2, 2))
+
+    def test_third_interrupted_attempt_commits_terminal_failed_result(self) -> None:
+        accepted, first = self.started_claim()
+        self.repository.publish_failed(
+            first,
+            "worker-a",
+            ORIGIN + timedelta(seconds=3),
+            retryable=True,
+            gate_owned=True,
+        )
+        second = self.repository.claim(
+            accepted.reference,
+            "worker-b",
+            ORIGIN + timedelta(seconds=4),
+            gate_owned=True,
+        )
+        second = self.repository.renew_and_start(
+            second,
+            "worker-b",
+            ORIGIN + timedelta(seconds=5),
+            gate_owned=True,
+        )
+        self.repository.publish_failed(
+            second,
+            "worker-b",
+            ORIGIN + timedelta(seconds=6),
+            retryable=True,
+            gate_owned=True,
+        )
+        third = self.repository.claim(
+            accepted.reference,
+            "worker-c",
+            ORIGIN + timedelta(seconds=7),
+            gate_owned=True,
+        )
+        third = self.repository.renew_and_start(
+            third,
+            "worker-c",
+            ORIGIN + timedelta(seconds=8),
+            gate_owned=True,
+        )
+        exhausted = self.repository.recover_interrupted(
+            third, ORIGIN + timedelta(seconds=24), gate_owned=True
+        )
+        self.assertEqual(exhausted.outcome, IdentityWorkOutcome.RETRY_EXHAUSTED)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,fence,attempt_count FROM hardcover_identity_generations"
+            ).fetchone(),
+            ("failed", 3, 3),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT outcome FROM hardcover_identity_results"
+            ).fetchone(),
+            ("failed",),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT outcome FROM hardcover_identity_attempts WHERE attempt=3"
+            ).fetchone(),
+            ("interrupted",),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_retry_schedules WHERE candidate=3"
+            ).fetchone(),
+            (1,),
+        )
+
+    def test_publication_after_aggregate_deadline_fails_terminally(self) -> None:
+        accepted = self.accept()
+        claim = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=20),
+            gate_owned=True,
+        )
+        claim = self.repository.renew_and_start(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=20),
+            gate_owned=True,
+        )
+        result = self.repository.publish_matched(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=30, microseconds=1),
+            {"outcome": "matched"},
+            gate_owned=True,
+        )
+        self.assertEqual(result.outcome, IdentityWorkOutcome.PERSISTENCE_FAILURE)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state FROM hardcover_identity_generations"
+            ).fetchone(),
+            ("failed",),
+        )
+
+    def test_application_service_uses_the_application_owned_protocol(self) -> None:
+        self.assertIsInstance(self.repository, HardcoverIdentityWorkPersistence)
+        service = ManageHardcoverIdentityWork(self.repository)
+        status = service.accept(WORK_KEY, ORIGIN)
+        claim = service.claim(
+            status.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        self.assertEqual((claim.candidate, claim.fence), (1, 1))
 
 
 class HardcoverIdentityMigrationTests(unittest.TestCase):

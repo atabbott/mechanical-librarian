@@ -11,10 +11,13 @@ versioning after the first public release.
   9 adds bounded immutable generations, candidates, claims, attempts, retry
   schedules, events, results, observations, and exact currentness with atomic
   acceptance/publication, 15-second leases, monotonic fences, restart recovery,
-  stale-owner rejection, and exact 24-hour matched reuse. The installed
+  due-schedule-derived retries, terminal exhaustion, stale-owner cancellation
+  rejection, and exact 24-hour matched reuse with unreserved stale refresh. The installed
   `durable-work-v3` preview proves schema-8 migration rollback, schema-9
   idempotence, publication rollback, restart, recovery, and expiry using an
-  absent disposable database. It adds no live provider, credential, network,
+  absolute absent database beneath an empty owner-only disposable directory.
+  It reconstructs and compares the schema-8 sentinel/logical snapshot before
+  migration and adds no live provider, credential, network,
   proposal, review, or write authority; production remains preactivated.
 
 - Added the first inert F09f increment: additive disabled-by-default

@@ -207,20 +207,27 @@ The application derives an opaque 64-hex work key before persistence. The
 repository never accepts or stores a raw ISBN, local title, provider payload,
 credential, query, or path. One work key has monotonically increasing
 generations and at most one `pending`, `claimed`, or `retry_wait` generation.
-Acceptance atomically creates generation, candidate 1, aggregate start, exact
-30-second deadline, and its event.
+Initial acceptance atomically creates generation, candidate 1, aggregate start,
+exact 30-second deadline, and its event. Expiring a greater-than-24-hour match
+instead creates one unreserved pending generation; the next invocation reserves
+candidate 1 and starts its aggregate atomically.
 
 A gate-held claim reserves a candidate under a monotonically increasing fence
 and 15-second lease without consuming an attempt. `renew_and_start` requires
-the exact owner and fence and at least six seconds remaining, renews the lease
+the exact owner and fence and at least six seconds of aggregate time remaining,
+regardless of whether the old live lease has less than six seconds, renews the lease
 to wall-now plus 15 seconds, and commits the started attempt before a later
 transport could be allowed. At most three attempts exist. This increment does
 not compose a gate or transport into production.
 
-After the lease of a started attempt expires, a later injected gate owner may
-finalize it once as interrupted, advance the fence, and append the next
-candidate and retry schedule. Earlier fences cannot start, recover, cancel, or
-publish. Terminal publication finalizes the attempt, appends result and bounded
+After an unstarted claim expires, recovery advances the fence and schedules the
+same candidate. After a started attempt expires, recovery finalizes it once as
+interrupted and schedules the next candidate. A retry claim derives its
+candidate and fence from the unique current due schedule; callers cannot select
+one. Aggregate exhaustion or a third interrupted attempt commits terminal
+`failed` evidence. Earlier fences cannot start, recover, cancel, or publish,
+and cancellation requires the exact current claim owner and fence. Terminal
+publication finalizes the attempt, appends result and bounded
 canonical observation, updates matched currentness, transitions the generation,
 and appends its event in one transaction. Failure before commit leaves all
 those records and the previous current pointer unchanged.
@@ -232,11 +239,13 @@ records plus finalize-once attempts preserve restart evidence. Mutable
 generation and current-pointer rows are constrained to the closed state model.
 
 Migration 9 is additive and forward-only from the genuine schema-8 prefix.
-The `durable-work-v3` preview reconstructs migrations 1–8, verifies their
-checksum ledger and database integrity, injects a migration-statement rollback,
+The `durable-work-v3` preview reconstructs migrations 1–8 plus the synthetic
+sentinel, compares the canonical logical snapshot digest, verifies the checksum
+ledger and database integrity, injects a migration-statement rollback,
 applies migration 9 twice, and runs publication rollback, restart, recovery,
 stale-fence, retry, and currentness proofs on an initially absent disposable
-database. Production still returns `provider_not_activated` before this
+database beneath an empty owner-only disposable directory. Production still
+returns `provider_not_activated` before this
 repository, a private query, credential, adapter, or network is opened.
 
 The exact current-head registry is `preview-registry-c4-v6.json`, SHA-256

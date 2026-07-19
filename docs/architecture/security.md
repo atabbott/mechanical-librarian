@@ -512,12 +512,16 @@ of scope for unattended operation and must never be hidden configuration.
 ## Security testing requirements
 
 F09f durable Hardcover identity work treats contributor preview JSON,
-disposable database identity, persisted rows, process interruption, wall-clock
-chronology, and competing lease owners as hostile boundaries. Atomic
+disposable database identity and parent ownership/mode/emptiness, persisted
+rows and retry schedules, process interruption, wall-clock chronology, and
+competing lease owners as hostile boundaries. Atomic
 acceptance prevents partial generations. A claim reserves without consuming;
 gate-held start records consumption before later transport could be permitted.
-Monotonic fences prevent stale or ABA publication, and currentness expiry and
-next-generation creation share one transaction. Append-only records and
+Monotonic fences plus exact owner checks prevent stale or ABA cancellation or
+publication. Retry claims derive their candidate/fence from one current due
+schedule. Aggregate/attempt exhaustion commits terminal evidence, while
+currentness expiry and unreserved next-generation creation share one
+transaction and repeated readers retain stale status. Append-only records and
 finalize-once attempts make restart and corruption visible.
 
 The installed preview injects gate ownership structurally and has no provider
@@ -525,8 +529,9 @@ secret, query-file, DNS, socket, HTTP, process loop, signal, proposal, review,
 or production-write authority. It persists no ISBN, title, provider payload,
 path, credential, or contributor script. Production remains preactivated and
 returns before opening this repository. Tests trap all egress and secret seams,
-inject migration and publication failures, reopen after a started attempt, and
-prove stale fences leave state unchanged.
+compare the reconstructed schema-8 sentinel/logical snapshot, inject migration
+and publication failures, reopen before and after starts, and prove stale
+fences leave state unchanged.
 
 F07b treats the service path projection, private logical binding, EPUB archive,
 and persisted canonical report as hostile inputs. Callers can supply only

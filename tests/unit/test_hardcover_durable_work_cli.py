@@ -175,6 +175,40 @@ class HardcoverDurableWorkCliTests(unittest.TestCase):
         self.assertEqual(errors, "Hardcover identity report failed safely.\n")
         self.assertEqual(self.database.read_bytes(), before)
 
+    def test_database_path_must_be_absolute_absent_and_under_empty_owner_only_parent(self) -> None:
+        runner = Mock(side_effect=_AuthorityTrap("runner reached"))
+        relative = Path("relative-preview.sqlite")
+        with tempfile.TemporaryDirectory() as permissive_name, tempfile.TemporaryDirectory() as nonempty_name:
+            permissive = Path(permissive_name)
+            permissive.chmod(0o755)
+            nonempty = Path(nonempty_name)
+            (nonempty / "marker").write_text("public", encoding="utf-8")
+            for database in (
+                relative,
+                permissive / "state.sqlite",
+                nonempty / "state.sqlite",
+            ):
+                with self.subTest(database=database):
+                    code, output, errors = self.run_preview(
+                        database=database, runner=runner
+                    )
+                    self.assertEqual((code, output), (2, ""))
+                    self.assertEqual(
+                        errors, "Hardcover identity report failed safely.\n"
+                    )
+                    self.assertFalse(os.path.lexists(database))
+        runner.assert_not_called()
+
+    def test_schema_eight_logical_snapshot_mismatch_fails_before_publication(self) -> None:
+        with patch(
+            "mechanical_librarian.bootstrap.composition._SCHEMA8_SNAPSHOT_SHA256",
+            "0" * 64,
+        ):
+            code, output, errors = self.run_preview()
+        self.assertEqual((code, output), (2, ""))
+        self.assertEqual(errors, "Hardcover identity report failed safely.\n")
+        self.assertFalse(os.path.lexists(self.database))
+
     def test_durable_scenario_requires_database_and_other_scenarios_reject_it(self) -> None:
         output = io.StringIO()
         errors = io.StringIO()

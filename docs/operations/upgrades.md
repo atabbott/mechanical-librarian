@@ -148,7 +148,9 @@ pre-schema-9 curator-data copy. Downgrade requires stopping the newer process
 and restoring that whole copy. Never delete schema-9 objects or edit the
 migration ledger. After upgrade, run `state-check`, inspect pending/claimed work
 while stopped, and execute `durable-work-v3` using a separate initially absent
-disposable database. The scenario proves migration, restart, recovery,
+database beneath an empty owner-owned mode-`0700` disposable directory. The
+scenario proves the schema-8 sentinel and canonical snapshot before migration,
+then migration, restart, recovery,
 publication rollback, stale-fence rejection, and currentness without live
 provider or production-database authority.
 

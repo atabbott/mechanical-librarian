@@ -21,6 +21,7 @@ class IdentityWorkOutcome(StrEnum):
     STALE = "stale"
     PERSISTENCE_FAILURE = "persistence_failure"
     IN_PROGRESS = "in_progress"
+    RETRY_EXHAUSTED = "retry_exhausted"
 
 
 ACTIVE_STATES = frozenset(

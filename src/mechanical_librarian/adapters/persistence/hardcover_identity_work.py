@@ -9,6 +9,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
+from mechanical_librarian.application.hardcover_identity import (
+    IdentityWorkPersistenceError,
+    StaleIdentityWorkFence,
+)
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkClaim,
     IdentityWorkOutcome,
@@ -24,14 +28,6 @@ MINIMUM_START_LEASE = timedelta(seconds=6)
 AGGREGATE_WINDOW = timedelta(seconds=30)
 CURRENTNESS_WINDOW = timedelta(hours=24)
 MAX_ATTEMPTS = 3
-
-
-class IdentityWorkPersistenceError(RuntimeError):
-    """Value-free durable-work failure."""
-
-
-class StaleIdentityWorkFence(IdentityWorkPersistenceError):
-    """The caller no longer owns the claimed generation."""
 
 
 class SQLiteHardcoverIdentityWorkRepository:
@@ -65,18 +61,24 @@ class SQLiteHardcoverIdentityWorkRepository:
                             (work_key,),
                         )
                         expired = True
+                    elif status == "expired":
+                        expired = True
 
                 active = self._connection.execute(
-                    "SELECT generation,created_at FROM hardcover_identity_generations WHERE work_key=? AND state IN ('pending','claimed','retry_wait')",
+                    "SELECT generation,created_at,state,aggregate_started_at FROM hardcover_identity_generations WHERE work_key=? AND state IN ('pending','claimed','retry_wait')",
                     (work_key,),
                 ).fetchone()
                 if active is not None:
                     generation = _positive_int(active[0], "generation")
                     if type(active[1]) is not str or now < _parse_time(active[1]):
                         raise IdentityWorkPersistenceError("identity work chronology is invalid")
+                    candidate = None
+                    if active[2] == "pending" and active[3] is None:
+                        candidate = self._reserve_pending(work_key, generation, timestamp, now)
                     return IdentityWorkStatus(
                         IdentityWorkOutcome.STALE if expired else IdentityWorkOutcome.IN_PROGRESS,
                         IdentityWorkReference(work_key, generation),
+                        candidate,
                     )
 
                 row = self._connection.execute(
@@ -84,20 +86,29 @@ class SQLiteHardcoverIdentityWorkRepository:
                     (work_key,),
                 ).fetchone()
                 generation = _positive_int(row[0] if row else None, "generation")
-                deadline = _time(now + AGGREGATE_WINDOW)
-                self._connection.execute(
-                    "INSERT INTO hardcover_identity_generations(work_key,generation,state,fence,attempt_count,aggregate_started_at,aggregate_deadline,created_at,updated_at) VALUES(?,?,'pending',0,0,?,?,?,?)",
-                    (work_key, generation, timestamp, deadline, timestamp, timestamp),
-                )
-                self._connection.execute(
-                    "INSERT INTO hardcover_identity_candidates(work_key,generation,candidate,created_at) VALUES(?,?,1,?)",
-                    (work_key, generation, timestamp),
-                )
-                self._event(work_key, generation, "accepted", None, "pending", 0, timestamp)
+                if expired:
+                    self._connection.execute(
+                        "INSERT INTO hardcover_identity_generations(work_key,generation,state,fence,attempt_count,aggregate_started_at,aggregate_deadline,created_at,updated_at) VALUES(?,?,'pending',0,0,NULL,NULL,?,?)",
+                        (work_key, generation, timestamp, timestamp),
+                    )
+                    self._event(work_key, generation, "expired", None, "pending", 0, timestamp)
+                    candidate = None
+                else:
+                    deadline = _time(now + AGGREGATE_WINDOW)
+                    self._connection.execute(
+                        "INSERT INTO hardcover_identity_generations(work_key,generation,state,fence,attempt_count,aggregate_started_at,aggregate_deadline,created_at,updated_at) VALUES(?,?,'pending',0,0,?,?,?,?)",
+                        (work_key, generation, timestamp, deadline, timestamp, timestamp),
+                    )
+                    self._connection.execute(
+                        "INSERT INTO hardcover_identity_candidates(work_key,generation,candidate,created_at) VALUES(?,?,1,?)",
+                        (work_key, generation, timestamp),
+                    )
+                    self._event(work_key, generation, "accepted", None, "pending", 0, timestamp)
+                    candidate = 1
                 return IdentityWorkStatus(
                     IdentityWorkOutcome.STALE if expired else IdentityWorkOutcome.IN_PROGRESS,
                     IdentityWorkReference(work_key, generation),
-                    1,
+                    candidate,
                 )
         except (IdentityWorkPersistenceError, ValueError, TypeError):
             raise
@@ -107,14 +118,12 @@ class SQLiteHardcoverIdentityWorkRepository:
     def claim(
         self,
         reference: IdentityWorkReference,
-        candidate: int,
         owner: str,
         now: datetime,
         *,
         gate_owned: bool,
-    ) -> IdentityWorkClaim:
+    ) -> IdentityWorkClaim | IdentityWorkStatus:
         _require_reference(reference)
-        _candidate(candidate)
         _owner(owner)
         _require_gate(gate_owned)
         timestamp = _time(now)
@@ -129,17 +138,36 @@ class SQLiteHardcoverIdentityWorkRepository:
                     raise IdentityWorkPersistenceError("identity work is not claimable")
                 fence = _nonnegative_int(row[1], "fence")
                 if state is IdentityWorkState.PENDING:
+                    if row[6] is None:
+                        self._reserve_pending(
+                            reference.work_key, reference.generation, timestamp, now
+                        )
+                        row = self._generation(reference)
                     fence += 1
-                elif self._connection.execute(
-                    "SELECT 1 FROM hardcover_identity_claims WHERE work_key=? AND generation=? AND fence=?",
-                    (reference.work_key, reference.generation, fence),
-                ).fetchone() is not None:
-                    fence += 1
+                    candidates = self._connection.execute(
+                        "SELECT candidate FROM hardcover_identity_candidates WHERE work_key=? AND generation=? ORDER BY candidate",
+                        (reference.work_key, reference.generation),
+                    ).fetchall()
+                    if candidates != [(1,)]:
+                        raise IdentityWorkPersistenceError("identity work candidate is corrupt")
+                    candidate = 1
+                else:
+                    schedules = self._connection.execute(
+                        "SELECT candidate,due_at FROM hardcover_identity_retry_schedules WHERE work_key=? AND generation=? AND fence=?",
+                        (reference.work_key, reference.generation, fence),
+                    ).fetchall()
+                    if len(schedules) != 1:
+                        raise IdentityWorkPersistenceError("identity work retry schedule is unavailable")
+                    candidate = _positive_int(schedules[0][0], "candidate")
+                    due_at = schedules[0][1]
+                    if type(due_at) is not str or now < _parse_time(due_at):
+                        raise IdentityWorkPersistenceError("identity work retry is not due")
+                    if self._connection.execute(
+                        "SELECT 1 FROM hardcover_identity_claims WHERE work_key=? AND generation=? AND fence=?",
+                        (reference.work_key, reference.generation, fence),
+                    ).fetchone() is not None:
+                        raise IdentityWorkPersistenceError("identity work retry was already claimed")
                 validate_transition(state, IdentityWorkState.CLAIMED)
-                self._connection.execute(
-                    "INSERT OR IGNORE INTO hardcover_identity_candidates(work_key,generation,candidate,created_at) VALUES(?,?,?,?)",
-                    (reference.work_key, reference.generation, candidate, timestamp),
-                )
                 self._connection.execute(
                     "INSERT INTO hardcover_identity_claims(work_key,generation,fence,candidate,owner,claimed_at,lease_expires_at) VALUES(?,?,?,?,?,?,?)",
                     (reference.work_key, reference.generation, fence, candidate, owner, timestamp, lease),
@@ -170,28 +198,42 @@ class SQLiteHardcoverIdentityWorkRepository:
         _require_gate(gate_owned)
         timestamp = _time(now)
         lease = _time(now + LEASE_DURATION)
+        exhausted = False
         try:
             with _transaction(self._connection):
                 row = self._generation(claim.reference)
                 self._assert_claim(row, claim.fence, owner, now)
-                if _parse_time(str(row[4])) - now < MINIMUM_START_LEASE:
-                    raise IdentityWorkPersistenceError("identity work lease is too short to start")
-                attempts = _nonnegative_int(row[2], "attempt count")
-                if attempts >= MAX_ATTEMPTS:
-                    raise IdentityWorkPersistenceError("identity work attempts are exhausted")
-                attempt = attempts + 1
-                self._connection.execute(
-                    "INSERT INTO hardcover_identity_attempts(work_key,generation,attempt,fence,candidate,started_at) VALUES(?,?,?,?,?,?)",
-                    (claim.reference.work_key, claim.reference.generation, attempt, claim.fence, claim.candidate, timestamp),
+                if row[7] is None or _parse_time(str(row[7])) - now < MINIMUM_START_LEASE:
+                    self._terminal_failure(
+                        claim.reference, claim.fence, timestamp, resolve_attempt=False
+                    )
+                    exhausted = True
+                if exhausted:
+                    started = claim
+                else:
+                    attempts = _nonnegative_int(row[2], "attempt count")
+                    if attempts >= MAX_ATTEMPTS:
+                        raise IdentityWorkPersistenceError("identity work attempts are exhausted")
+                    attempt = attempts + 1
+                    self._connection.execute(
+                        "INSERT INTO hardcover_identity_attempts(work_key,generation,attempt,fence,candidate,started_at) VALUES(?,?,?,?,?,?)",
+                        (claim.reference.work_key, claim.reference.generation, attempt, claim.fence, claim.candidate, timestamp),
+                    )
+                    changed = self._connection.execute(
+                        "UPDATE hardcover_identity_generations SET attempt_count=?,lease_expires_at=?,updated_at=? WHERE work_key=? AND generation=? AND state='claimed' AND fence=? AND lease_owner=?",
+                        (attempt, lease, timestamp, claim.reference.work_key, claim.reference.generation, claim.fence, owner),
+                    ).rowcount
+                    if changed != 1:
+                        raise StaleIdentityWorkFence("identity work fence is stale")
+                    self._event(claim.reference.work_key, claim.reference.generation, "started", "claimed", "claimed", claim.fence, timestamp)
+                    started = IdentityWorkClaim(claim.reference, claim.candidate, claim.fence, _parse_time(lease))
+            if exhausted:
+                return IdentityWorkStatus(
+                    IdentityWorkOutcome.RETRY_EXHAUSTED,
+                    claim.reference,
+                    claim.candidate,
                 )
-                changed = self._connection.execute(
-                    "UPDATE hardcover_identity_generations SET attempt_count=?,lease_expires_at=?,updated_at=? WHERE work_key=? AND generation=? AND state='claimed' AND fence=? AND lease_owner=?",
-                    (attempt, lease, timestamp, claim.reference.work_key, claim.reference.generation, claim.fence, owner),
-                ).rowcount
-                if changed != 1:
-                    raise StaleIdentityWorkFence("identity work fence is stale")
-                self._event(claim.reference.work_key, claim.reference.generation, "started", "claimed", "claimed", claim.fence, timestamp)
-                return IdentityWorkClaim(claim.reference, claim.candidate, claim.fence, _parse_time(lease))
+            return started
         except (IdentityWorkPersistenceError, ValueError, TypeError):
             raise
         except (sqlite3.Error, OSError):
@@ -203,7 +245,7 @@ class SQLiteHardcoverIdentityWorkRepository:
         now: datetime,
         *,
         gate_owned: bool,
-    ) -> int:
+    ) -> int | IdentityWorkStatus:
         _require_claim(claim)
         _require_gate(gate_owned)
         timestamp = _time(now)
@@ -218,19 +260,36 @@ class SQLiteHardcoverIdentityWorkRepository:
                 if now <= lease:
                     raise IdentityWorkPersistenceError("identity work lease has not expired")
                 attempt = _nonnegative_int(row[2], "attempt count")
-                changed = self._connection.execute(
-                    "UPDATE hardcover_identity_attempts SET resolved_at=?,outcome='interrupted' WHERE work_key=? AND generation=? AND fence=? AND resolved_at IS NULL",
-                    (timestamp, claim.reference.work_key, claim.reference.generation, claim.fence),
-                ).rowcount
-                if changed != 1:
-                    raise IdentityWorkPersistenceError("identity work has no started attempt")
-                next_candidate = attempt + 1
-                if next_candidate > MAX_ATTEMPTS:
-                    raise IdentityWorkPersistenceError("identity work attempts are exhausted")
+                unresolved = self._connection.execute(
+                    "SELECT attempt,candidate FROM hardcover_identity_attempts WHERE work_key=? AND generation=? AND fence=? AND resolved_at IS NULL",
+                    (claim.reference.work_key, claim.reference.generation, claim.fence),
+                ).fetchall()
+                if len(unresolved) > 1:
+                    raise IdentityWorkPersistenceError("identity work attempts are corrupt")
+                if unresolved:
+                    if unresolved != [(attempt, claim.candidate)]:
+                        raise IdentityWorkPersistenceError("identity work attempt is corrupt")
+                    self._connection.execute(
+                        "UPDATE hardcover_identity_attempts SET resolved_at=?,outcome='interrupted' WHERE work_key=? AND generation=? AND fence=? AND resolved_at IS NULL",
+                        (timestamp, claim.reference.work_key, claim.reference.generation, claim.fence),
+                    )
+                    next_candidate = attempt + 1
+                else:
+                    next_candidate = claim.candidate
+                deadline = _parse_time(str(row[7])) if row[7] is not None else None
+                if next_candidate > MAX_ATTEMPTS or deadline is None or deadline - now < MINIMUM_START_LEASE:
+                    self._terminal_failure(
+                        claim.reference, claim.fence, timestamp, resolve_attempt=False
+                    )
+                    return IdentityWorkStatus(
+                        IdentityWorkOutcome.RETRY_EXHAUSTED,
+                        claim.reference,
+                        claim.candidate,
+                    )
                 next_fence = fence + 1
                 validate_transition(state, IdentityWorkState.RETRY_WAIT)
                 self._connection.execute(
-                    "INSERT INTO hardcover_identity_candidates(work_key,generation,candidate,created_at) VALUES(?,?,?,?)",
+                    "INSERT OR IGNORE INTO hardcover_identity_candidates(work_key,generation,candidate,created_at) VALUES(?,?,?,?)",
                     (claim.reference.work_key, claim.reference.generation, next_candidate, timestamp),
                 )
                 self._connection.execute(
@@ -274,6 +333,14 @@ class SQLiteHardcoverIdentityWorkRepository:
             with _transaction(self._connection):
                 row = self._generation(claim.reference)
                 self._assert_claim(row, claim.fence, owner, now)
+                deadline = _parse_time(str(row[7])) if row[7] is not None else None
+                if deadline is None or now > deadline:
+                    self._terminal_failure(
+                        claim.reference, claim.fence, timestamp, resolve_attempt=True
+                    )
+                    return IdentityWorkStatus(
+                        IdentityWorkOutcome.PERSISTENCE_FAILURE, claim.reference
+                    )
                 attempt = _nonnegative_int(row[2], "attempt count")
                 changed = self._connection.execute(
                     "UPDATE hardcover_identity_attempts SET resolved_at=?,outcome='matched' WHERE work_key=? AND generation=? AND attempt=? AND fence=? AND resolved_at IS NULL",
@@ -307,33 +374,113 @@ class SQLiteHardcoverIdentityWorkRepository:
         except (sqlite3.Error, OSError):
             raise IdentityWorkPersistenceError("identity work could not be published") from None
 
+    def publish_failed(
+        self,
+        claim: IdentityWorkClaim,
+        owner: str,
+        now: datetime,
+        *,
+        retryable: bool,
+        gate_owned: bool,
+        fail_before_commit: bool = False,
+    ) -> IdentityWorkStatus:
+        """Finalize one started attempt and atomically retry or fail the generation."""
+
+        _require_claim(claim)
+        _owner(owner)
+        _require_gate(gate_owned)
+        if type(retryable) is not bool or type(fail_before_commit) is not bool:
+            raise TypeError("identity work failure publication is malformed")
+        timestamp = _time(now)
+        try:
+            with _transaction(self._connection):
+                row = self._generation(claim.reference)
+                self._assert_claim(row, claim.fence, owner, now)
+                attempt = _nonnegative_int(row[2], "attempt count")
+                changed = self._connection.execute(
+                    "UPDATE hardcover_identity_attempts SET resolved_at=?,outcome='failed' WHERE work_key=? AND generation=? AND attempt=? AND fence=? AND resolved_at IS NULL",
+                    (timestamp, claim.reference.work_key, claim.reference.generation, attempt, claim.fence),
+                ).rowcount
+                if changed != 1:
+                    raise IdentityWorkPersistenceError("identity work has no started attempt")
+                deadline = _parse_time(str(row[7])) if row[7] is not None else None
+                if retryable and attempt < MAX_ATTEMPTS and deadline is not None and deadline - now >= MINIMUM_START_LEASE:
+                    candidate = attempt + 1
+                    next_fence = claim.fence + 1
+                    self._connection.execute(
+                        "INSERT INTO hardcover_identity_candidates(work_key,generation,candidate,created_at) VALUES(?,?,?,?)",
+                        (claim.reference.work_key, claim.reference.generation, candidate, timestamp),
+                    )
+                    self._connection.execute(
+                        "INSERT INTO hardcover_identity_retry_schedules(work_key,generation,fence,candidate,due_at,reason,created_at) VALUES(?,?,?,?,?,'retryable',?)",
+                        (claim.reference.work_key, claim.reference.generation, next_fence, candidate, timestamp, timestamp),
+                    )
+                    changed = self._connection.execute(
+                        "UPDATE hardcover_identity_generations SET state='retry_wait',fence=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE work_key=? AND generation=? AND state='claimed' AND fence=? AND lease_owner=?",
+                        (next_fence, timestamp, claim.reference.work_key, claim.reference.generation, claim.fence, owner),
+                    ).rowcount
+                    if changed != 1:
+                        raise StaleIdentityWorkFence("identity work fence is stale")
+                    self._event(claim.reference.work_key, claim.reference.generation, "retry_scheduled", "claimed", "retry_wait", next_fence, timestamp)
+                    result = IdentityWorkStatus(
+                        IdentityWorkOutcome.IN_PROGRESS, claim.reference, candidate
+                    )
+                else:
+                    self._terminal_failure(
+                        claim.reference, claim.fence, timestamp, resolve_attempt=False
+                    )
+                    result = IdentityWorkStatus(
+                        IdentityWorkOutcome.PERSISTENCE_FAILURE, claim.reference
+                    )
+                if fail_before_commit:
+                    raise IdentityWorkPersistenceError("injected identity failure publication")
+                return result
+        except (IdentityWorkPersistenceError, ValueError, TypeError):
+            raise
+        except (sqlite3.Error, OSError):
+            raise IdentityWorkPersistenceError("identity work failure could not be published") from None
+
     def cancel(
-        self, reference: IdentityWorkReference, now: datetime, *, gate_owned: bool
+        self,
+        claim: IdentityWorkClaim,
+        owner: str,
+        now: datetime,
+        *,
+        gate_owned: bool,
     ) -> None:
-        _require_reference(reference)
+        _require_claim(claim)
+        _owner(owner)
         _require_gate(gate_owned)
         timestamp = _time(now)
         try:
             with _transaction(self._connection):
-                row = self._generation(reference)
+                row = self._generation(claim.reference)
                 state = _state(row[0])
                 validate_transition(state, IdentityWorkState.CANCELLED)
                 fence = _nonnegative_int(row[1], "fence")
+                if (
+                    state is not IdentityWorkState.CLAIMED
+                    or fence != claim.fence
+                    or row[3] != owner
+                ):
+                    raise StaleIdentityWorkFence("identity work fence is stale")
                 if now < _parse_time(str(row[5])):
                     raise IdentityWorkPersistenceError("identity work chronology is invalid")
                 self._connection.execute(
                     "UPDATE hardcover_identity_attempts SET resolved_at=?,outcome='cancelled' WHERE work_key=? AND generation=? AND resolved_at IS NULL",
-                    (timestamp, reference.work_key, reference.generation),
+                    (timestamp, claim.reference.work_key, claim.reference.generation),
                 )
-                self._connection.execute(
-                    "UPDATE hardcover_identity_generations SET state='cancelled',lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE work_key=? AND generation=? AND state=? AND fence=?",
-                    (timestamp, reference.work_key, reference.generation, state.value, fence),
-                )
+                changed = self._connection.execute(
+                    "UPDATE hardcover_identity_generations SET state='cancelled',lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE work_key=? AND generation=? AND state='claimed' AND fence=? AND lease_owner=?",
+                    (timestamp, claim.reference.work_key, claim.reference.generation, fence, owner),
+                ).rowcount
+                if changed != 1:
+                    raise StaleIdentityWorkFence("identity work fence is stale")
                 self._connection.execute(
                     "INSERT INTO hardcover_identity_results(work_key,generation,fence,outcome,published_at) VALUES(?,?,?,'cancelled',?)",
-                    (reference.work_key, reference.generation, fence, timestamp),
+                    (claim.reference.work_key, claim.reference.generation, fence, timestamp),
                 )
-                self._event(reference.work_key, reference.generation, "cancelled", state.value, "cancelled", fence, timestamp)
+                self._event(claim.reference.work_key, claim.reference.generation, "cancelled", state.value, "cancelled", fence, timestamp)
         except (IdentityWorkPersistenceError, ValueError, TypeError):
             raise
         except (sqlite3.Error, OSError):
@@ -341,12 +488,65 @@ class SQLiteHardcoverIdentityWorkRepository:
 
     def _generation(self, reference: IdentityWorkReference) -> tuple[object, ...]:
         row = self._connection.execute(
-            "SELECT state,fence,attempt_count,lease_owner,lease_expires_at,updated_at FROM hardcover_identity_generations WHERE work_key=? AND generation=?",
+            "SELECT state,fence,attempt_count,lease_owner,lease_expires_at,updated_at,aggregate_started_at,aggregate_deadline FROM hardcover_identity_generations WHERE work_key=? AND generation=?",
             (reference.work_key, reference.generation),
         ).fetchone()
-        if row is None or len(row) != 6:
+        if row is None or len(row) != 8:
             raise IdentityWorkPersistenceError("identity work generation is unavailable")
         return row
+
+    def _reserve_pending(
+        self, work_key: str, generation: int, timestamp: str, now: datetime
+    ) -> int:
+        deadline = _time(now + AGGREGATE_WINDOW)
+        changed = self._connection.execute(
+            "UPDATE hardcover_identity_generations SET aggregate_started_at=?,aggregate_deadline=?,updated_at=? WHERE work_key=? AND generation=? AND state='pending' AND aggregate_started_at IS NULL AND aggregate_deadline IS NULL",
+            (timestamp, deadline, timestamp, work_key, generation),
+        ).rowcount
+        if changed != 1:
+            raise IdentityWorkPersistenceError("identity work reservation raced")
+        self._connection.execute(
+            "INSERT INTO hardcover_identity_candidates(work_key,generation,candidate,created_at) VALUES(?,?,1,?)",
+            (work_key, generation, timestamp),
+        )
+        self._event(work_key, generation, "accepted", "pending", "pending", 0, timestamp)
+        return 1
+
+    def _terminal_failure(
+        self,
+        reference: IdentityWorkReference,
+        fence: int,
+        timestamp: str,
+        *,
+        resolve_attempt: bool,
+    ) -> None:
+        if resolve_attempt:
+            changed = self._connection.execute(
+                "UPDATE hardcover_identity_attempts SET resolved_at=?,outcome='failed' WHERE work_key=? AND generation=? AND fence=? AND resolved_at IS NULL",
+                (timestamp, reference.work_key, reference.generation, fence),
+            ).rowcount
+            if changed != 1:
+                raise IdentityWorkPersistenceError("identity work has no started attempt")
+        validate_transition(IdentityWorkState.CLAIMED, IdentityWorkState.FAILED)
+        changed = self._connection.execute(
+            "UPDATE hardcover_identity_generations SET state='failed',lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE work_key=? AND generation=? AND state='claimed' AND fence=?",
+            (timestamp, reference.work_key, reference.generation, fence),
+        ).rowcount
+        if changed != 1:
+            raise StaleIdentityWorkFence("identity work fence is stale")
+        self._connection.execute(
+            "INSERT INTO hardcover_identity_results(work_key,generation,fence,outcome,published_at) VALUES(?,?,?,'failed',?)",
+            (reference.work_key, reference.generation, fence, timestamp),
+        )
+        self._event(
+            reference.work_key,
+            reference.generation,
+            "failed",
+            "claimed",
+            "failed",
+            fence,
+            timestamp,
+        )
 
     def _assert_claim(
         self, row: tuple[object, ...], fence: int, owner: str, now: datetime
