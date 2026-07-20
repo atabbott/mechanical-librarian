@@ -250,6 +250,43 @@ class HardcoverIdentityOrchestrationTests(unittest.TestCase):
             (2,),
         )
 
+    def test_reserved_lifecycle_refresh_resumes_after_gate_contention(self) -> None:
+        seed_provider = _SequenceProvider(self.matched())
+        seed_lifecycle = self.lifecycle(seed_provider, _Wait(self.clock))
+        request = self.request("lifecycle-stale-gate-contention")
+
+        initial = seed_lifecycle.run(request, self.context())
+        self.clock.now += timedelta(hours=24, microseconds=1)
+        provider = _SequenceProvider(self.matched())
+        lifecycle = self.lifecycle(provider, _Wait(self.clock))
+        refresh_context = self.context(
+            deadline=self.clock.now + timedelta(seconds=29)
+        )
+        stale = lifecycle.run(request, refresh_context)
+        held = self.gate.try_acquire()
+        self.assertIsNotNone(held)
+        try:
+            busy = lifecycle.run(request, refresh_context)
+        finally:
+            held.release()
+        refreshed = lifecycle.run(request, refresh_context)
+
+        self.assertEqual(initial.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(stale.outcome, HardcoverIdentityOutcome.STALE)
+        self.assertEqual(busy.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(refreshed.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(seed_provider.starts, 1)
+        self.assertEqual(provider.starts, 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT generation,state,attempt_count FROM "
+                "hardcover_identity_generations WHERE work_key=? "
+                "ORDER BY generation",
+                (request.work_key,),
+            ).fetchall(),
+            [(1, "succeeded", 1), (2, "succeeded", 1)],
+        )
+
     def test_competing_post_gate_retry_does_not_authorize_local_wait(self) -> None:
         request = self.request("competing-post-gate-retry")
         provider = _SequenceProvider(self.matched())

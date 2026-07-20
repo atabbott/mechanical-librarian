@@ -44,6 +44,7 @@ ACTIVATION_REGISTRY = (
     ROOT / "docs/reference/hardcover-f09f-activation-registry-v1.json"
 )
 EXAMPLE_CONFIG = ROOT / "docs/examples/synthetic-config.json"
+OPERATOR_GUIDE = ROOT / "docs/operations/hardcover-identity-report.md"
 
 
 class HardcoverActivationTests(unittest.TestCase):
@@ -85,6 +86,28 @@ class HardcoverActivationTests(unittest.TestCase):
             hardcover_identity_work_key(query, 1),
             hardcover_identity_work_key(query, 2),
         )
+
+    def test_one_shot_operator_procedure_uses_valid_json_configuration(self) -> None:
+        documentation = OPERATOR_GUIDE.read_text(encoding="utf-8")
+        procedure = documentation.split(
+            "### Authorized production one-shot procedure", 1
+        )[1].split("## Private query contract", 1)[0]
+        encoded = procedure.split("```json\n", 1)[1].split("\n```", 1)[0]
+        self.assertEqual(
+            json.loads(encoded),
+            {
+                "hardcover_provider": {
+                    "enabled": True,
+                    "secret_reference": (
+                        "/run/mechanical-librarian/secrets/hardcover-token"
+                    ),
+                    "authority_revision": 1,
+                }
+            },
+        )
+        self.assertIn("complete valid `config-v1` JSON document", procedure)
+        self.assertIn("--config /etc/mechanical-librarian/config.json", procedure)
+        self.assertNotIn("config.yml", procedure)
 
     def test_activation_registry_binds_c6_privacy_and_authority_contracts(
         self,

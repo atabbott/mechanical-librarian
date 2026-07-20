@@ -112,7 +112,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                             )
                         return IdentityWorkStatus(
                             IdentityWorkOutcome.STALE
-                            if expired
+                            if expired and candidate is not None
                             else IdentityWorkOutcome.IN_PROGRESS,
                             IdentityWorkReference(work_key, active_generation),
                             candidate,
@@ -172,7 +172,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                         )
                     return IdentityWorkStatus(
                         IdentityWorkOutcome.STALE
-                        if expired
+                        if expired and candidate is not None
                         else IdentityWorkOutcome.IN_PROGRESS,
                         IdentityWorkReference(work_key, active_generation),
                         candidate,

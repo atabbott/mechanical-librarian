@@ -1237,6 +1237,9 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         repeated = self.repository.accept(
             WORK_KEY, published_at + timedelta(hours=24, microseconds=2)
         )
+        active = self.repository.accept(
+            WORK_KEY, published_at + timedelta(hours=24, microseconds=3)
+        )
         self.assertEqual(
             (stale.outcome, stale.reference.generation, stale.candidate),
             (IdentityWorkOutcome.STALE, 2, None),
@@ -1244,6 +1247,10 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.assertEqual(
             (repeated.outcome, repeated.reference.generation, repeated.candidate),
             (IdentityWorkOutcome.STALE, 2, 1),
+        )
+        self.assertEqual(
+            (active.outcome, active.reference.generation, active.candidate),
+            (IdentityWorkOutcome.IN_PROGRESS, 2, None),
         )
         self.assertEqual(
             self.connection.execute(

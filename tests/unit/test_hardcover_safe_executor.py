@@ -849,6 +849,54 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             (2,),
         )
 
+    def test_reserved_stale_refresh_resumes_after_gate_contention(self) -> None:
+        request = self.request("stale-gate-contention")
+        accepted = self.work.accept(request.work_key, self.clock.now)
+        claim = self.work.claim(
+            accepted.reference,
+            request.owner,
+            self.clock.now,
+            gate_owned=True,
+        )
+        started = self.work.start(
+            claim,
+            request.owner,
+            self.clock.now,
+            gate_owned=True,
+        )
+        self.work.publish_matched(
+            started,
+            request.owner,
+            self.clock.now,
+            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+            gate_owned=True,
+        )
+        self.clock.now += timedelta(hours=24, microseconds=1)
+        provider = _Provider(self.matched(), self.clock)
+
+        stale = self.execute(request, provider)
+        held = self.gate.try_acquire()
+        self.assertIsNotNone(held)
+        try:
+            busy = self.execute(request, provider)
+        finally:
+            held.release()
+        refreshed = self.execute(request, provider)
+
+        self.assertEqual(stale.outcome, HardcoverIdentityOutcome.STALE)
+        self.assertEqual(busy.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(refreshed.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(provider.starts, 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT generation,state,attempt_count FROM "
+                "hardcover_identity_generations WHERE work_key=? "
+                "ORDER BY generation",
+                (request.work_key,),
+            ).fetchall(),
+            [(1, "succeeded", 1), (2, "succeeded", 1)],
+        )
+
     def test_caller_deadline_is_preserved_for_attempt(self) -> None:
         caller_deadline = ORIGIN + timedelta(seconds=2)
         provider = _Provider(self.matched(), self.clock)

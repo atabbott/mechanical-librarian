@@ -52,22 +52,26 @@ have link count one, be owner-readable with no group or other permission bits,
 and contain 1–2,048 bytes. Every byte must be ASCII `0x21`–`0x7e`: no
 whitespace, scheme, or `Bearer` prefix is allowed. Deliver the raw token with a
 secret-management mechanism that does not place it in command history, logs,
-or this document. The production configuration contains the exact block below;
-the query file contains exactly the accepted `isbn` and `title` members
-described in the private-query contract.
+or this document. The enabled provider member below is valid JSON and must be
+incorporated into a complete valid `config-v1` JSON document. The query file
+contains exactly the accepted `isbn` and `title` members described in the
+private-query contract.
 
-```yaml
-hardcover_provider:
-  enabled: true
-  secret_reference: /run/mechanical-librarian/secrets/hardcover-token
-  authority_revision: 1
+```json
+{
+  "hardcover_provider": {
+    "enabled": true,
+    "secret_reference": "/run/mechanical-librarian/secrets/hardcover-token",
+    "authority_revision": 1
+  }
+}
 ```
 
 Run exactly the installed production command once:
 
 ```sh
 mechanical-librarian hardcover-identity-report \
-  --config /etc/mechanical-librarian/config.yml \
+  --config /etc/mechanical-librarian/config.json \
   --database /data/qualification/f09f-one-shot/state.sqlite \
   --query-file /run/mechanical-librarian/f09f-query.json \
   --format json \
