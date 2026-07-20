@@ -84,9 +84,26 @@ class _SequenceProvider:
         self.results = list(results)
         self.starts = 0
 
-    def lookup(self, query: object, context: OperationContext) -> IdentityAttemptResult:
+    def lookup(
+        self,
+        query: object,
+        context: OperationContext,
+    ) -> IdentityAttemptResult:
         self.starts += 1
         return self.results.pop(0)
+
+
+class _ProcessDeath(BaseException):
+    pass
+
+
+class _DyingProvider:
+    def __init__(self) -> None:
+        self.starts = 0
+
+    def lookup(self, query: object, context: OperationContext) -> IdentityAttemptResult:
+        self.starts += 1
+        raise _ProcessDeath()
 
 
 class HardcoverIdentityOrchestrationTests(unittest.TestCase):
@@ -210,6 +227,41 @@ class HardcoverIdentityOrchestrationTests(unittest.TestCase):
         self.assertEqual(second.outcome, HardcoverIdentityOutcome.RETRY_EXHAUSTED)
         self.assertEqual(provider.starts, 1)
         self.assertEqual(retry_wait.timeouts, [])
+
+    def test_one_shot_post_start_death_recovers_terminally_after_restart(
+        self,
+    ) -> None:
+        request = self.request("one-shot-post-start-death", egress_limit=1)
+        dying = _DyingProvider()
+        with self.assertRaises(_ProcessDeath):
+            self.lifecycle(dying, _Wait(self.clock)).run(request, self.context())
+        self.assertEqual(dying.starts, 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("claimed", 1),
+        )
+
+        self.clock.now += timedelta(seconds=16)
+        restarted_provider = _SequenceProvider(self.matched())
+        restarted = self.lifecycle(restarted_provider, _Wait(self.clock)).run(
+            request,
+            self.context(),
+        )
+
+        self.assertEqual(restarted.outcome, HardcoverIdentityOutcome.RETRY_EXHAUSTED)
+        self.assertEqual(restarted_provider.starts, 0)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("failed", 1),
+        )
 
     def test_restart_before_due_returns_without_waiting_or_sending(self) -> None:
         provider = _SequenceProvider(self.unavailable(), self.matched())

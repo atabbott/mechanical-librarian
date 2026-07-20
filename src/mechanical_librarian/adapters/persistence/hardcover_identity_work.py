@@ -82,6 +82,41 @@ class SQLiteHardcoverIdentityWorkRepository:
                         expired = True
                         expired_generation = generation
 
+                active = self._connection.execute(
+                    "SELECT g.generation,g.created_at,g.state,g.aggregate_started_at,"
+                    "p.max_starts,g.attempt_count "
+                    "FROM hardcover_identity_generations AS g "
+                    "LEFT JOIN hardcover_identity_egress_policies AS p "
+                    "ON p.work_key=g.work_key AND p.generation=g.generation "
+                    "WHERE g.work_key=? AND g.state IN ('pending','claimed','retry_wait')",
+                    (work_key,),
+                ).fetchone()
+                if active is not None:
+                    active_generation = _positive_int(active[0], "generation")
+                    if type(active[1]) is not str or now < _parse_time(active[1]):
+                        raise IdentityWorkPersistenceError("identity work chronology is invalid")
+                    max_starts = (
+                        None
+                        if active[4] is None
+                        else _positive_int(active[4], "egress limit")
+                    )
+                    attempts = _nonnegative_int(active[5], "attempt count")
+                    if egress_limit == MAX_ATTEMPTS or (
+                        max_starts == 1 and attempts >= 1
+                    ):
+                        candidate = None
+                        if active[2] == "pending" and active[3] is None:
+                            candidate = self._reserve_pending(
+                                work_key, active_generation, timestamp, now
+                            )
+                        return IdentityWorkStatus(
+                            IdentityWorkOutcome.STALE
+                            if expired
+                            else IdentityWorkOutcome.IN_PROGRESS,
+                            IdentityWorkReference(work_key, active_generation),
+                            candidate,
+                        )
+
                 one_shot = self._connection.execute(
                     "SELECT g.generation,g.state,g.fence,g.attempt_count,g.updated_at "
                     "FROM hardcover_identity_generations AS g "
@@ -121,27 +156,24 @@ class SQLiteHardcoverIdentityWorkRepository:
                         )
                     if egress_limit == 1 or not (
                         state is IdentityWorkState.SUCCEEDED
-                        and expired_generation == generation
+                        and expired_generation is not None
                     ):
                         return IdentityWorkStatus(
                             IdentityWorkOutcome.RETRY_EXHAUSTED,
                             IdentityWorkReference(work_key, generation),
                         )
 
-                active = self._connection.execute(
-                    "SELECT generation,created_at,state,aggregate_started_at FROM hardcover_identity_generations WHERE work_key=? AND state IN ('pending','claimed','retry_wait')",
-                    (work_key,),
-                ).fetchone()
                 if active is not None:
-                    generation = _positive_int(active[0], "generation")
-                    if type(active[1]) is not str or now < _parse_time(active[1]):
-                        raise IdentityWorkPersistenceError("identity work chronology is invalid")
                     candidate = None
                     if active[2] == "pending" and active[3] is None:
-                        candidate = self._reserve_pending(work_key, generation, timestamp, now)
+                        candidate = self._reserve_pending(
+                            work_key, active_generation, timestamp, now
+                        )
                     return IdentityWorkStatus(
-                        IdentityWorkOutcome.STALE if expired else IdentityWorkOutcome.IN_PROGRESS,
-                        IdentityWorkReference(work_key, generation),
+                        IdentityWorkOutcome.STALE
+                        if expired
+                        else IdentityWorkOutcome.IN_PROGRESS,
+                        IdentityWorkReference(work_key, active_generation),
                         candidate,
                     )
 

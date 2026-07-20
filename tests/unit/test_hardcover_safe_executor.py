@@ -914,6 +914,14 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             HardcoverIdentityOutcome.MATCHED,
         )
         self.assertEqual(refreshed.starts, 1)
+
+        self.clock.now += timedelta(hours=24, microseconds=1)
+        third = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(normal, third).outcome,
+            HardcoverIdentityOutcome.MATCHED,
+        )
+        self.assertEqual(third.starts, 1)
         self.assertEqual(
             self.connection.execute(
                 "SELECT generation,attempt_count,state FROM "
@@ -921,7 +929,11 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                 "ORDER BY generation",
                 (one_shot.work_key,),
             ).fetchall(),
-            [(1, 1, "succeeded"), (2, 1, "succeeded")],
+            [
+                (1, 1, "succeeded"),
+                (2, 1, "succeeded"),
+                (3, 1, "succeeded"),
+            ],
         )
 
     def test_gate_acquisition_and_release_fail_closed(self) -> None:
