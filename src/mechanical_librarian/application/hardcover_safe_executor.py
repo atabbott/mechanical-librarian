@@ -29,6 +29,7 @@ from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkObservation,
     IdentityWorkOutcome,
     IdentityWorkReference,
+    IdentityWorkRetryToken,
     IdentityWorkState,
 )
 
@@ -70,14 +71,17 @@ class HardcoverIdentityInvocationResult:
     """Public report plus retry authority owned by this invocation."""
 
     report: HardcoverIdentityReport
-    retry_scheduled: bool = False
+    retry_token: IdentityWorkRetryToken | None = None
 
     def __post_init__(self) -> None:
         if (
             type(self.report) is not HardcoverIdentityReport
-            or type(self.retry_scheduled) is not bool
             or (
-                self.retry_scheduled
+                self.retry_token is not None
+                and type(self.retry_token) is not IdentityWorkRetryToken
+            )
+            or (
+                self.retry_token is not None
                 and self.report.outcome is not HardcoverIdentityOutcome.IN_PROGRESS
             )
         ):
@@ -376,9 +380,21 @@ class RunSafeHardcoverIdentity:
                     HardcoverIdentityOutcome.PERSISTENCE_FAILURE
                 ),
             }.get(status.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+            retry_token = None
+            if status.outcome is IdentityWorkOutcome.IN_PROGRESS:
+                if status.candidate is None:
+                    raise IdentityReportError(
+                        "identity retry publication returned no candidate"
+                    )
+                retry_token = IdentityWorkRetryToken(
+                    claim.reference,
+                    status.candidate,
+                    claim.fence + 1,
+                    now + timedelta(seconds=retry_delay),
+                )
             return _report(
                 outcome,
-                retry_scheduled=status.outcome is IdentityWorkOutcome.IN_PROGRESS,
+                retry_token=retry_token,
             )
 
         if failure is IdentityAttemptFailureKind.INVALID_RETRY_AFTER:
@@ -426,11 +442,11 @@ class RunSafeHardcoverIdentity:
 def _report(
     outcome: HardcoverIdentityOutcome,
     *,
-    retry_scheduled: bool = False,
+    retry_token: IdentityWorkRetryToken | None = None,
 ) -> HardcoverIdentityInvocationResult:
     return HardcoverIdentityInvocationResult(
         HardcoverIdentityReport(outcome),
-        retry_scheduled,
+        retry_token,
     )
 
 

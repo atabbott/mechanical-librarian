@@ -274,6 +274,71 @@ class HardcoverIdentityOrchestrationTests(unittest.TestCase):
             [(2,)],
         )
 
+    def test_owned_retry_replacement_before_refresh_does_not_wait_or_start(
+        self,
+    ) -> None:
+        request = self.request("owned-retry-replaced-before-refresh")
+        provider = _SequenceProvider(self.unavailable(), self.matched())
+        retry_wait = _Wait(self.clock)
+        real_inspect = self.work.inspect
+        replaced = False
+        competing_snapshot: tuple[str, ...] | None = None
+
+        def inspect_after_competing_replacement(reference, now):
+            nonlocal competing_snapshot, replaced
+            observed = real_inspect(reference, now)
+            retry = observed.retry_token
+            if not replaced and retry is not None and retry.candidate == 2:
+                self.clock.now = retry.due_at
+                competing = self.work.claim(
+                    reference,
+                    "competing-worker",
+                    self.clock.now,
+                    gate_owned=True,
+                )
+                competing_started = self.work.start(
+                    competing,
+                    "competing-worker",
+                    self.clock.now,
+                    gate_owned=True,
+                )
+                self.work.publish_failed(
+                    competing_started,
+                    "competing-worker",
+                    self.clock.now,
+                    retryable=True,
+                    retry_delay_seconds=2,
+                    gate_owned=True,
+                )
+                competing_snapshot = tuple(self.connection.iterdump())
+                replaced = True
+                return real_inspect(reference, self.clock.now)
+            return observed
+
+        with patch.object(
+            self.work,
+            "inspect",
+            side_effect=inspect_after_competing_replacement,
+        ):
+            report = self.lifecycle(provider, retry_wait).run(
+                request,
+                self.context(),
+            )
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(provider.starts, 1)
+        self.assertEqual(retry_wait.timeouts, [])
+        self.assertIsNotNone(competing_snapshot)
+        self.assertEqual(tuple(self.connection.iterdump()), competing_snapshot)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count,fence FROM "
+                "hardcover_identity_generations WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("retry_wait", 2, 3),
+        )
+
     def test_three_retryable_failures_exhaust_without_fourth_start(self) -> None:
         provider = _SequenceProvider(
             self.unavailable(), self.unavailable(), self.unavailable()
@@ -509,6 +574,88 @@ class HardcoverIdentityOrchestrationTests(unittest.TestCase):
                 (request.work_key,),
             ).fetchone(),
             ("retry_wait", 2),
+        )
+
+    def test_owned_claim_recovery_replacement_does_not_wait_or_start(self) -> None:
+        request = self.request("owned-claim-recovery-replacement")
+        provider = _SequenceProvider(self.unavailable(), self.matched())
+        retry_wait = _Wait(self.clock)
+        real_inspect = self.work.inspect
+        real_acquire = self.gate.try_acquire
+        first_owned_observation = False
+        competing_started = None
+        competing_snapshot: tuple[str, ...] | None = None
+
+        def inspect_after_competing_claim(reference, now):
+            nonlocal competing_started, first_owned_observation
+            observed = real_inspect(reference, now)
+            retry = observed.retry_token
+            if retry is None or retry.candidate != 2:
+                return observed
+            if not first_owned_observation:
+                first_owned_observation = True
+                return observed
+            if competing_started is None:
+                self.clock.now = retry.due_at
+                competing = self.work.claim(
+                    reference,
+                    "competing-worker",
+                    self.clock.now,
+                    gate_owned=True,
+                )
+                competing_started = self.work.start(
+                    competing,
+                    "competing-worker",
+                    self.clock.now,
+                    gate_owned=True,
+                )
+                self.clock.now = (
+                    competing_started.lease_expires_at + timedelta(microseconds=1)
+                )
+                return real_inspect(reference, self.clock.now)
+            return observed
+
+        def acquire_after_competing_recovery():
+            nonlocal competing_snapshot
+            if competing_started is not None and competing_snapshot is None:
+                recovered = self.work.recover(
+                    competing_started,
+                    self.clock.now,
+                    gate_owned=True,
+                )
+                self.assertIsInstance(recovered, int)
+                competing_snapshot = tuple(self.connection.iterdump())
+            return real_acquire()
+
+        with (
+            patch.object(
+                self.work,
+                "inspect",
+                side_effect=inspect_after_competing_claim,
+            ),
+            patch.object(
+                self.gate,
+                "try_acquire",
+                side_effect=acquire_after_competing_recovery,
+            ),
+        ):
+            report = self.lifecycle(provider, retry_wait).run(
+                request,
+                self.context(),
+            )
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(provider.starts, 1)
+        self.assertEqual(retry_wait.timeouts, [])
+        self.assertIsNotNone(competing_snapshot)
+        self.assertEqual(tuple(self.connection.iterdump()), competing_snapshot)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count,fence FROM "
+                "hardcover_identity_generations WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("retry_wait", 2, 3),
         )
 
     def test_expired_claim_gate_contention_returns_without_recovery(self) -> None:

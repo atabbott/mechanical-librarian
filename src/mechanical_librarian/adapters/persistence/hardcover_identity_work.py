@@ -18,6 +18,7 @@ from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkObservation,
     IdentityWorkOutcome,
     IdentityWorkReference,
+    IdentityWorkRetryToken,
     IdentityWorkState,
     IdentityWorkStatus,
     TERMINAL_STATES,
@@ -317,7 +318,12 @@ class SQLiteHardcoverIdentityWorkRepository:
                         reference,
                         state,
                         deadline,
-                        retry_due_at=due,
+                        retry_token=IdentityWorkRetryToken(
+                            reference,
+                            candidate,
+                            fence,
+                            due,
+                        ),
                     )
                 claim_rows = self._connection.execute(
                     "SELECT candidate,lease_expires_at FROM hardcover_identity_claims WHERE work_key=? AND generation=? AND fence=?",

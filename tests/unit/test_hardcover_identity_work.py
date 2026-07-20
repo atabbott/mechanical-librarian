@@ -2102,6 +2102,15 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             (readiness.state, readiness.retry_due_at, readiness.active_claim),
             (IdentityWorkState.RETRY_WAIT, due, None),
         )
+        self.assertEqual(
+            (
+                readiness.retry_token.reference,
+                readiness.retry_token.candidate,
+                readiness.retry_token.fence,
+                readiness.retry_token.due_at,
+            ),
+            (accepted.reference, 2, 2, due),
+        )
         with self.assertRaisesRegex(IdentityWorkPersistenceError, "not due"):
             self.repository.claim(
                 accepted.reference,

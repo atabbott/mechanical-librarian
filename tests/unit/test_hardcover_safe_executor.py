@@ -223,9 +223,28 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE),
             self.clock,
         )
-        report = self.execute(request, provider)
-        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        invocation = RunSafeHardcoverIdentity(
+            self.work,
+            provider,
+            self.gate,
+        ).run_invocation(request, self.context())
+        self.assertEqual(
+            invocation.report.outcome,
+            HardcoverIdentityOutcome.IN_PROGRESS,
+        )
         self.assertEqual(provider.starts, 1)
+        token = invocation.retry_token
+        self.assertIsNotNone(token)
+        readiness = self.work.inspect(token.reference, self.clock.now)
+        self.assertEqual(token, readiness.retry_token)
+        self.assertEqual(
+            (
+                token.candidate,
+                token.fence,
+                token.due_at,
+            ),
+            (2, 2, ORIGIN + timedelta(seconds=1)),
+        )
         self.assertEqual(
             self.connection.execute(
                 "SELECT state,attempt_count FROM hardcover_identity_generations WHERE work_key=?",

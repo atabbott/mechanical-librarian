@@ -22,6 +22,7 @@ from mechanical_librarian.application.ports import OperationContext
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkOutcome,
     IdentityWorkReadiness,
+    IdentityWorkRetryToken,
     IdentityWorkState,
 )
 
@@ -66,7 +67,7 @@ class RunHardcoverIdentityLifecycle:
         ):
             raise TypeError("Hardcover identity execution input is malformed")
 
-        wait_for_retry = False
+        owned_retry: IdentityWorkRetryToken | None = None
         for _ in range(8):
             now = context.observed_at
             try:
@@ -103,9 +104,13 @@ class RunHardcoverIdentityLifecycle:
                 return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
 
             if active.state is IdentityWorkState.CLAIMED:
+                retry_was_owned = owned_retry is not None
+                owned_retry = None
                 recovered = self._recover_claim(active, context)
                 if recovered is not None:
                     return recovered
+                if retry_was_owned:
+                    return _report(HardcoverIdentityOutcome.IN_PROGRESS)
                 continue
 
             if context.cancelled:
@@ -116,19 +121,26 @@ class RunHardcoverIdentityLifecycle:
                 return _report(HardcoverIdentityOutcome.CANCELLED)
 
             if active.state is IdentityWorkState.RETRY_WAIT:
-                due = active.retry_due_at
-                if due is None:
+                retry = active.retry_token
+                if retry is None:
                     return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+                if owned_retry is not None and retry != owned_retry:
+                    owned_retry = None
+                    return _report(HardcoverIdentityOutcome.IN_PROGRESS)
+                due = retry.due_at
                 if now < due:
-                    if not wait_for_retry:
+                    if owned_retry is None:
                         return _report(HardcoverIdentityOutcome.IN_PROGRESS)
                     waited = self._wait_until(
                         due, active.aggregate_deadline, now, context
                     )
                     if waited is not None:
                         return waited
-                    wait_for_retry = False
                     continue
+                owned_retry = None
+            elif owned_retry is not None:
+                owned_retry = None
+                return _report(HardcoverIdentityOutcome.IN_PROGRESS)
 
             invocation = self._attempt.run_invocation(request, context)
             if type(invocation) is not HardcoverIdentityInvocationResult:
@@ -136,8 +148,9 @@ class RunHardcoverIdentityLifecycle:
             report = invocation.report
             if report.outcome is not HardcoverIdentityOutcome.IN_PROGRESS:
                 return report
-            if not invocation.retry_scheduled:
+            if invocation.retry_token is None:
                 return report
+            owned_retry = invocation.retry_token
             try:
                 refreshed = self._work.inspect(
                     active.reference, context.observed_at
@@ -146,13 +159,16 @@ class RunHardcoverIdentityLifecycle:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
             except Exception:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+            terminal = _terminal_report(refreshed)
+            if terminal is not None:
+                owned_retry = None
+                return terminal
             if (
                 refreshed.state is IdentityWorkState.RETRY_WAIT
-                and refreshed.retry_due_at is not None
-                and context.observed_at < refreshed.retry_due_at
+                and refreshed.retry_token == owned_retry
             ):
-                wait_for_retry = True
                 continue
+            owned_retry = None
             return report
 
         return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
