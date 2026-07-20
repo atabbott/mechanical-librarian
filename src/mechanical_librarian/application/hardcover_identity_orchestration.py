@@ -106,7 +106,6 @@ class RunHardcoverIdentityLifecycle:
                 recovered = self._recover_claim(active, context)
                 if recovered is not None:
                     return recovered
-                wait_for_retry = True
                 continue
 
             if context.cancelled:

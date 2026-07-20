@@ -435,6 +435,82 @@ class HardcoverIdentityOrchestrationTests(unittest.TestCase):
         ).fetchall()
         self.assertEqual(attempts, [(1, "interrupted"), (2, "matched")])
 
+    def test_competing_recovery_retry_does_not_authorize_local_wait(self) -> None:
+        request = self.request("competing-recovery-retry")
+        accepted = self.work.accept(request.work_key, self.clock.now)
+        claim = self.work.claim(
+            accepted.reference,
+            request.owner,
+            self.clock.now,
+            gate_owned=True,
+        )
+        started = self.work.start(
+            claim,
+            request.owner,
+            self.clock.now,
+            gate_owned=True,
+        )
+        self.clock.now = started.lease_expires_at + timedelta(microseconds=1)
+        provider = _SequenceProvider(self.matched())
+        retry_wait = _Wait(self.clock)
+        acquire = self.gate.try_acquire
+        competing_snapshot: tuple[str, ...] | None = None
+
+        def acquire_after_competing_retry():
+            nonlocal competing_snapshot
+            recovered = self.work.recover(
+                started,
+                self.clock.now,
+                gate_owned=True,
+            )
+            self.assertIsInstance(recovered, int)
+            competing = self.work.claim(
+                accepted.reference,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            competing_started = self.work.start(
+                competing,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            self.work.publish_failed(
+                competing_started,
+                "competing-worker",
+                self.clock.now,
+                retryable=True,
+                retry_delay_seconds=2,
+                gate_owned=True,
+            )
+            competing_snapshot = tuple(self.connection.iterdump())
+            return acquire()
+
+        with patch.object(
+            self.gate,
+            "try_acquire",
+            side_effect=acquire_after_competing_retry,
+        ):
+            report = self.lifecycle(provider, retry_wait).run(
+                request,
+                self.context(),
+            )
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(provider.starts, 0)
+        self.assertEqual(retry_wait.timeouts, [])
+        self.assertIsNotNone(competing_snapshot)
+        self.assertEqual(tuple(self.connection.iterdump()), competing_snapshot)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("retry_wait", 2),
+        )
+
     def test_expired_claim_gate_contention_returns_without_recovery(self) -> None:
         request = self.request("recovery-contention")
         accepted = self.work.accept(request.work_key, self.clock.now)
