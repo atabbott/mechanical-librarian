@@ -39,7 +39,9 @@ TERMINAL_STATES = frozenset(
 LEGAL_TRANSITIONS = frozenset(
     {
         (IdentityWorkState.PENDING, IdentityWorkState.CLAIMED),
+        (IdentityWorkState.PENDING, IdentityWorkState.CANCELLED),
         (IdentityWorkState.RETRY_WAIT, IdentityWorkState.CLAIMED),
+        (IdentityWorkState.RETRY_WAIT, IdentityWorkState.CANCELLED),
         (IdentityWorkState.CLAIMED, IdentityWorkState.RETRY_WAIT),
         (IdentityWorkState.CLAIMED, IdentityWorkState.SUCCEEDED),
         (IdentityWorkState.CLAIMED, IdentityWorkState.FAILED),
@@ -91,6 +93,8 @@ class IdentityWorkReadiness:
     reference: IdentityWorkReference
     state: IdentityWorkState
     aggregate_deadline: datetime
+    retry_due_at: datetime | None = None
+    active_claim: IdentityWorkClaim | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -99,6 +103,23 @@ class IdentityWorkReadiness:
         ):
             raise ValueError("identity work readiness is malformed")
         _require_time(self.aggregate_deadline)
+        if (self.retry_due_at is not None) != (
+            self.state is IdentityWorkState.RETRY_WAIT
+        ):
+            raise ValueError("identity work readiness is malformed")
+        if self.retry_due_at is not None:
+            _require_time(self.retry_due_at)
+            if self.retry_due_at > self.aggregate_deadline:
+                raise ValueError("identity work readiness is malformed")
+        if (self.active_claim is not None) != (
+            self.state is IdentityWorkState.CLAIMED
+        ):
+            raise ValueError("identity work readiness is malformed")
+        if (
+            self.active_claim is not None
+            and self.active_claim.reference != self.reference
+        ):
+            raise ValueError("identity work readiness is malformed")
 
 
 @dataclass(frozen=True, slots=True)

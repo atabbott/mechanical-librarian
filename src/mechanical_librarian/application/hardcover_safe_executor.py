@@ -43,6 +43,7 @@ class HardcoverIdentityExecutionRequest:
     work_key: str
     owner: str
     query: PrivateIdentityQuery
+    egress_limit: int = 3
 
     def __post_init__(self) -> None:
         if (
@@ -55,6 +56,8 @@ class HardcoverIdentityExecutionRequest:
             or set(self.owner)
             - set("abcdefghijklmnopqrstuvwxyz0123456789_-")
             or type(self.query) is not PrivateIdentityQuery
+            or type(self.egress_limit) is not int
+            or self.egress_limit not in {1, 3}
         ):
             raise ValueError("Hardcover identity execution request is malformed")
 
@@ -110,11 +113,25 @@ class RunSafeHardcoverIdentity:
                 return _report(HardcoverIdentityOutcome.MATCHED)
             if accepted.outcome is IdentityWorkOutcome.PERSISTENCE_FAILURE:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+            if accepted.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED:
+                return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
             if accepted.outcome is IdentityWorkOutcome.STALE and accepted.candidate is None:
                 accepted = self._work.accept(request.work_key, accepted_at)
             active = self._work.inspect(accepted.reference, accepted_at)
-            if active.state is not IdentityWorkState.PENDING:
+            if active.state not in {
+                IdentityWorkState.PENDING,
+                IdentityWorkState.RETRY_WAIT,
+            }:
                 return _report(HardcoverIdentityOutcome.IN_PROGRESS)
+            if (
+                active.state is IdentityWorkState.RETRY_WAIT
+                and active.retry_due_at is not None
+                and accepted_at < active.retry_due_at
+            ):
+                return _report(HardcoverIdentityOutcome.IN_PROGRESS)
+            if context.cancelled:
+                self._work.cancel_available(accepted.reference, accepted_at)
+                return _report(HardcoverIdentityOutcome.CANCELLED)
         except IdentityWorkPersistenceError:
             return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
 
@@ -127,6 +144,12 @@ class RunSafeHardcoverIdentity:
         except Exception:
             return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
         if lease is None:
+            if context.cancelled:
+                try:
+                    self._work.cancel_available(accepted.reference, context.observed_at)
+                except IdentityWorkPersistenceError:
+                    return _report(HardcoverIdentityOutcome.IN_PROGRESS)
+                return _report(HardcoverIdentityOutcome.CANCELLED)
             return _report(HardcoverIdentityOutcome.IN_PROGRESS)
 
         result: HardcoverIdentityReport | None = None
@@ -168,10 +191,7 @@ class RunSafeHardcoverIdentity:
     ) -> HardcoverIdentityReport:
         now = context.observed_at
         active = self._work.inspect(reference, now)
-        if active.state in {
-            IdentityWorkState.CLAIMED,
-            IdentityWorkState.RETRY_WAIT,
-        }:
+        if active.state is IdentityWorkState.CLAIMED:
             return _report(HardcoverIdentityOutcome.IN_PROGRESS)
         if active.state is IdentityWorkState.SUCCEEDED:
             return _report(HardcoverIdentityOutcome.MATCHED)
@@ -183,17 +203,40 @@ class RunSafeHardcoverIdentity:
         aggregate_deadline = active.aggregate_deadline
         if now >= aggregate_deadline or context.deadline.expired_at(now):
             return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
+        if context.cancelled:
+            self._work.cancel_available(reference, now)
+            return _report(HardcoverIdentityOutcome.CANCELLED)
         claim = self._work.claim(
             reference, request.owner, now, gate_owned=True
         )
         started_at = context.observed_at
+        if context.cancelled:
+            self._work.cancel(
+                claim,
+                request.owner,
+                started_at,
+                gate_owned=True,
+            )
+            return _report(HardcoverIdentityOutcome.CANCELLED)
         if context.deadline.expired_at(started_at):
             return _report(HardcoverIdentityOutcome.IN_PROGRESS)
         started = self._work.start(
-            claim, request.owner, started_at, gate_owned=True
+            claim,
+            request.owner,
+            started_at,
+            gate_owned=True,
+            egress_limit=request.egress_limit,
         )
         if type(started) is not IdentityWorkClaim:
             return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
+        if context.cancelled:
+            self._work.cancel(
+                started,
+                request.owner,
+                context.observed_at,
+                gate_owned=True,
+            )
+            return _report(HardcoverIdentityOutcome.CANCELLED)
         lease.validate_for_send()
 
         attempt_deadline = min(
@@ -220,7 +263,9 @@ class RunSafeHardcoverIdentity:
                 "identity provider returned a malformed result"
             )
         published_at = context.observed_at
-        if published_at >= attempt_deadline:
+        if context.cancelled:
+            attempt = IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
+        elif published_at >= attempt_deadline:
             attempt = IdentityAttemptResult.failed(IdentityAttemptFailureKind.TIMEOUT)
         return self._publish_attempt(request, started, attempt, published_at)
 
@@ -269,11 +314,17 @@ class RunSafeHardcoverIdentity:
             IdentityAttemptFailureKind.TIMEOUT,
             IdentityAttemptFailureKind.UNAVAILABLE,
         }:
+            retry_after = attempt.failure.retry_after_seconds
+            retry_delay = max(
+                1 if claim.candidate == 1 else 2,
+                0 if retry_after is None else retry_after,
+            )
             status = self._work.publish_failed(
                 claim,
                 request.owner,
                 now,
                 retryable=True,
+                retry_delay_seconds=retry_delay,
                 gate_owned=True,
             )
             outcome = {
@@ -287,10 +338,33 @@ class RunSafeHardcoverIdentity:
             }.get(status.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
             return _report(outcome)
 
+        if failure is IdentityAttemptFailureKind.INVALID_RETRY_AFTER:
+            status = self._work.publish_failed(
+                claim,
+                request.owner,
+                now,
+                retryable=True,
+                retry_delay_seconds=None,
+                gate_owned=True,
+            )
+            return _report(
+                HardcoverIdentityOutcome.RETRY_EXHAUSTED
+                if status.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED
+                else HardcoverIdentityOutcome.PERSISTENCE_FAILURE
+            )
+
+        if failure is IdentityAttemptFailureKind.CANCELLED:
+            self._work.cancel(
+                claim,
+                request.owner,
+                now,
+                gate_owned=True,
+            )
+            return _report(HardcoverIdentityOutcome.CANCELLED)
+
         terminal = {
             IdentityAttemptFailureKind.AUTHENTICATION: HardcoverIdentityOutcome.AUTHENTICATION,
             IdentityAttemptFailureKind.AUTHORIZATION: HardcoverIdentityOutcome.AUTHORIZATION,
-            IdentityAttemptFailureKind.CANCELLED: HardcoverIdentityOutcome.CANCELLED,
             IdentityAttemptFailureKind.MALFORMED: HardcoverIdentityOutcome.MALFORMED,
             IdentityAttemptFailureKind.OVERSIZED: HardcoverIdentityOutcome.OVERSIZED,
             IdentityAttemptFailureKind.EMPTY: HardcoverIdentityOutcome.EMPTY,

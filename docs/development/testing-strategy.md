@@ -362,6 +362,18 @@ can collide. Exact/raw values, full encodings and collision-resistant digests,
 hash/fingerprint spies, causal poison, and all non-persistence channels retain
 the complete projection corpus.
 
+F09f increment 6 tests the new boundary through the existing manager,
+`RunHardcoverIdentityLifecycle`, and installed CLI without replaying the
+qualified #276/#277 internal matrices. Focused tests use disposable SQLite,
+structural providers, an injected clock, and a deterministic Event-compatible
+waiter. The cumulative scenario varies case order, contributor controls,
+retryable result sequences, and Retry-After choices. Signal tests exercise both
+SIGINT and SIGTERM before start and during transport, prove set-only local
+cancellation and exact handler restoration, and preserve BaseException control
+flow. C6 privacy extends the shared projection oracle to 21 channels—including
+file-name/path observations and retained runtime evidence—and poisons every
+channel with every one of seven forbidden-source classes.
+
 F09g tests first reject a stale or mismatched target, snapshot, source, file, or
 F07b evidence before provider disclosure or scheduling/binding new F09f work;
 F09f durable retry/restart remains target-independent after that handoff. The

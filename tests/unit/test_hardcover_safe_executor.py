@@ -143,11 +143,14 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             TimeProbe(lambda: self.clock.now),
         )
 
-    def request(self, label: str) -> HardcoverIdentityExecutionRequest:
+    def request(
+        self, label: str, *, egress_limit: int = 3
+    ) -> HardcoverIdentityExecutionRequest:
         return HardcoverIdentityExecutionRequest(
             hashlib.sha256(label.encode("ascii")).hexdigest(),
             "synthetic-worker",
             self.query,
+            egress_limit,
         )
 
     def matched(self) -> IdentityAttemptResult:
@@ -278,12 +281,6 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                 HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
                 "cancelled",
                 0,
-            ),
-            (
-                "retry_wait",
-                HardcoverIdentityOutcome.IN_PROGRESS,
-                "retry_wait",
-                1,
             ),
         ):
             with self.subTest(transition=transition):
@@ -541,12 +538,12 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
     def test_late_result_respects_exact_six_second_retry_reserve(self) -> None:
         for offset, outcome, state in (
             (
-                timedelta(seconds=24),
+                timedelta(seconds=23),
                 HardcoverIdentityOutcome.IN_PROGRESS,
                 "retry_wait",
             ),
             (
-                timedelta(seconds=24, microseconds=1),
+                timedelta(seconds=23, microseconds=1),
                 HardcoverIdentityOutcome.RETRY_EXHAUSTED,
                 "failed",
             ),
@@ -574,6 +571,188 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                     (state,),
                 )
                 self.clock.now = ORIGIN
+
+    def test_due_retry_reuses_the_one_attempt_ordering_without_early_send(self) -> None:
+        request = self.request("due-retry")
+        first = _Provider(
+            IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE),
+            self.clock,
+        )
+        self.assertEqual(
+            self.execute(request, first).outcome,
+            HardcoverIdentityOutcome.IN_PROGRESS,
+        )
+        due = ORIGIN + timedelta(seconds=1)
+        self.assertEqual(
+            self.work.inspect(
+                self.work.accept(request.work_key, ORIGIN).reference,
+                ORIGIN,
+            ).retry_due_at,
+            due,
+        )
+        early = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(request, early).outcome,
+            HardcoverIdentityOutcome.IN_PROGRESS,
+        )
+        self.assertEqual(early.starts, 0)
+        self.clock.now = due
+        retry = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(request, retry).outcome,
+            HardcoverIdentityOutcome.MATCHED,
+        )
+        self.assertEqual(retry.starts, 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT attempt_count,state FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (2, "succeeded"),
+        )
+
+    def test_retry_after_controls_due_or_exhausts_without_another_send(self) -> None:
+        valid = self.request("retry-after-valid")
+        rate_limited = _Provider(
+            IdentityAttemptResult.failed(
+                IdentityAttemptFailureKind.RATE_LIMITED,
+                retry_after_seconds=10,
+            ),
+            self.clock,
+        )
+        self.assertEqual(
+            self.execute(valid, rate_limited).outcome,
+            HardcoverIdentityOutcome.IN_PROGRESS,
+        )
+        self.assertEqual(
+            self.work.inspect(
+                self.work.accept(valid.work_key, ORIGIN).reference,
+                ORIGIN,
+            ).retry_due_at,
+            ORIGIN + timedelta(seconds=10),
+        )
+
+        invalid = self.request("retry-after-invalid")
+        rejected = _Provider(
+            IdentityAttemptResult.failed(
+                IdentityAttemptFailureKind.INVALID_RETRY_AFTER
+            ),
+            self.clock,
+        )
+        self.assertEqual(
+            self.execute(invalid, rejected).outcome,
+            HardcoverIdentityOutcome.RETRY_EXHAUSTED,
+        )
+        self.assertEqual(rejected.starts, 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state FROM hardcover_identity_generations WHERE work_key=?",
+                (invalid.work_key,),
+            ).fetchone(),
+            ("failed",),
+        )
+        second = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(invalid, second).outcome,
+            HardcoverIdentityOutcome.MATCHED,
+        )
+        self.assertEqual(second.starts, 1)
+
+    def test_cancellation_before_start_and_after_provider_return_is_durable(self) -> None:
+        before = self.request("cancel-before")
+        self.cancelled.set()
+        provider = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(before, provider).outcome,
+            HardcoverIdentityOutcome.CANCELLED,
+        )
+        self.assertEqual(provider.starts, 0)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (before.work_key,),
+            ).fetchone(),
+            ("cancelled", 0),
+        )
+
+        self.cancelled.clear()
+        after = self.request("cancel-after")
+        cancelled = self.cancelled
+
+        class CancellingProvider(_Provider):
+            def lookup(self, query: object, context: OperationContext) -> object:
+                result = super().lookup(query, context)
+                cancelled.set()
+                return result
+
+        returning = CancellingProvider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(after, returning).outcome,
+            HardcoverIdentityOutcome.CANCELLED,
+        )
+        self.assertEqual(returning.starts, 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT g.state,g.attempt_count,a.outcome "
+                "FROM hardcover_identity_generations AS g "
+                "JOIN hardcover_identity_attempts AS a USING(work_key,generation) "
+                "WHERE g.work_key=?",
+                (after.work_key,),
+            ).fetchone(),
+            ("cancelled", 1, "cancelled"),
+        )
+
+    def test_limit_one_survives_restart_repetition_and_limit_switch(self) -> None:
+        request = self.request("one-shot", egress_limit=1)
+        first = _Provider(
+            IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE),
+            self.clock,
+        )
+        self.assertEqual(
+            self.execute(request, first).outcome,
+            HardcoverIdentityOutcome.RETRY_EXHAUSTED,
+        )
+        self.assertEqual(first.starts, 1)
+        for repeated in (
+            request,
+            HardcoverIdentityExecutionRequest(
+                request.work_key,
+                request.owner,
+                request.query,
+                3,
+            ),
+        ):
+            provider = _Provider(self.matched(), self.clock)
+            self.assertEqual(
+                self.execute(repeated, provider).outcome,
+                HardcoverIdentityOutcome.RETRY_EXHAUSTED,
+            )
+            self.assertEqual(provider.starts, 0)
+
+        self.connection.close()
+        self.connection = sqlite3.connect(self.database)
+        self.addCleanup(self.connection.close)
+        migrate(self.connection)
+        self.work = ManageHardcoverIdentityWork(
+            SQLiteHardcoverIdentityWorkRepository(self.connection)
+        )
+        after_restart = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(request, after_restart).outcome,
+            HardcoverIdentityOutcome.RETRY_EXHAUSTED,
+        )
+        self.assertEqual(after_restart.starts, 0)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT "
+                "(SELECT COUNT(*) FROM hardcover_identity_generations WHERE work_key=?),"
+                "(SELECT COUNT(*) FROM hardcover_identity_attempts WHERE work_key=?)",
+                (request.work_key, request.work_key),
+            ).fetchone(),
+            (1, 1),
+        )
 
     def test_gate_acquisition_and_release_fail_closed(self) -> None:
         for gate in (_FailingGate(), _ReleaseFailureGate()):

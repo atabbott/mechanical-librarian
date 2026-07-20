@@ -247,6 +247,58 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         result = self.provider(no_match).lookup(self.query(), self.context())
         self.assertEqual(result.observations, ())
 
+    def test_rate_limit_retry_after_is_exact_bounded_and_value_typed(self) -> None:
+        absent = self.provider(
+            self.channel(
+                status=b"HTTP/1.1 429 Synthetic\r\n",
+                headers=(),
+                body=b"must-not-be-read",
+            )
+        ).lookup(self.query(), self.context())
+        self.assertEqual(
+            (absent.failure.kind, absent.failure.retry_after_seconds),
+            (IdentityAttemptFailureKind.RATE_LIMITED, None),
+        )
+
+        for seconds in (0, 1, 9, 10, 30):
+            with self.subTest(seconds=seconds):
+                result = self.provider(
+                    self.channel(
+                        status=b"HTTP/1.1 429 Synthetic\r\n",
+                        headers=(f"Retry-After: {seconds}\r\n".encode("ascii"),),
+                        body=b"must-not-be-read",
+                    )
+                ).lookup(self.query(), self.context())
+                self.assertEqual(
+                    (result.failure.kind, result.failure.retry_after_seconds),
+                    (IdentityAttemptFailureKind.RATE_LIMITED, seconds),
+                )
+
+        invalid = (
+            (b"Retry-After: 31\r\n",),
+            (b"Retry-After: 00\r\n",),
+            (b"Retry-After: +1\r\n",),
+            (b"Retry-After: 1 \r\n",),
+            (b"Retry-After:  1\r\n",),
+            (b"Retry-After:\t1\r\n",),
+            (b"Retry-After: \xff\r\n",),
+            (b"Retry-After: 1\r\n", b"retry-after: 2\r\n"),
+            (b"Retry-After: 1\n",),
+        )
+        for headers in invalid:
+            with self.subTest(headers=headers):
+                result = self.provider(
+                    self.channel(
+                        status=b"HTTP/1.1 429 Synthetic\r\n",
+                        headers=headers,
+                        body=b"must-not-be-read",
+                    )
+                ).lookup(self.query(), self.context())
+                self.assertEqual(
+                    (result.failure.kind, result.failure.retry_after_seconds),
+                    (IdentityAttemptFailureKind.INVALID_RETRY_AFTER, None),
+                )
+
     def test_hostile_parser_rejects_headers_json_and_peer_mismatches(self) -> None:
         malformed_headers = (
             (b"Content-Type: application/json\r\n",) * 2,

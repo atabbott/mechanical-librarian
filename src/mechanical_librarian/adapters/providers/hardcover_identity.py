@@ -103,6 +103,7 @@ _CONTENT_TYPE = re.compile(
     re.IGNORECASE,
 )
 _STATUS_LINE = re.compile(rb"HTTP/1\.1 ([0-9]{3}) [\x20-\x7e]*\r\n")
+_RETRY_AFTER = re.compile(rb"(?:0|[1-9][0-9]?)")
 _BIDI_CONTROLS = frozenset(
     {0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)}
 )
@@ -307,7 +308,9 @@ class HardcoverIdentityProvider:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         body_reader = response.body_reader
         candidate: (
-            tuple[ProviderIdentityObservation, ...] | IdentityAttemptFailureKind
+            tuple[ProviderIdentityObservation, ...]
+            | IdentityAttemptFailureKind
+            | IdentityAttemptResult
         )
         try:
             if not _peer_equal(response.connected_peer_address, addresses[0]):
@@ -323,7 +326,9 @@ class HardcoverIdentityProvider:
                     else:
                         mapped = _status_failure(status)
                         payload = (
-                            mapped
+                            _rate_limited_result(response.header_lines)
+                            if mapped is IdentityAttemptFailureKind.RATE_LIMITED
+                            else mapped
                             if mapped is not None
                             else _bounded_body(
                                 response.header_lines,
@@ -333,13 +338,18 @@ class HardcoverIdentityProvider:
                         )
                         candidate = (
                             payload
-                            if isinstance(payload, IdentityAttemptFailureKind)
+                            if isinstance(
+                                payload,
+                                (IdentityAttemptFailureKind, IdentityAttemptResult),
+                            )
                             else _parse_observations(payload)
                         )
         finally:
             released = _release_response(self._channel, response, body_reader)
         if not released:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
+        if type(candidate) is IdentityAttemptResult:
+            return candidate
         if isinstance(candidate, IdentityAttemptFailureKind):
             return IdentityAttemptResult.failed(candidate)
         return IdentityAttemptResult.success(candidate)
@@ -890,6 +900,29 @@ def _status_failure(status: int) -> IdentityAttemptFailureKind | None:
     if 500 <= status <= 599:
         return IdentityAttemptFailureKind.UNAVAILABLE
     return IdentityAttemptFailureKind.INCOMPATIBLE
+
+
+def _rate_limited_result(lines: object) -> IdentityAttemptResult:
+    parsed = _parse_headers(lines)
+    if isinstance(parsed, IdentityAttemptFailureKind):
+        return IdentityAttemptResult.failed(
+            IdentityAttemptFailureKind.INVALID_RETRY_AFTER
+        )
+    values = parsed.get(b"retry-after", [])
+    if not values:
+        return IdentityAttemptResult.failed(IdentityAttemptFailureKind.RATE_LIMITED)
+    if (
+        len(values) != 1
+        or _RETRY_AFTER.fullmatch(values[0]) is None
+        or int(values[0]) > 30
+    ):
+        return IdentityAttemptResult.failed(
+            IdentityAttemptFailureKind.INVALID_RETRY_AFTER
+        )
+    return IdentityAttemptResult.failed(
+        IdentityAttemptFailureKind.RATE_LIMITED,
+        retry_after_seconds=int(values[0]),
+    )
 
 
 def _release_response(channel: object, response: object, reader: object) -> bool:

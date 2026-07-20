@@ -249,7 +249,9 @@ attempt and increments the bounded attempt count. It requires at least six
 seconds remaining on the aggregate deadline—not the old live lease—and renews
 the lease to wall-now plus 15 seconds.
 
-Only the exact current fence and lease owner can start, cancel, or publish.
+Only the exact current fence and lease owner can start, cancel, or publish
+claimed work. Pending and retry-waiting work may transition directly to durable
+`cancelled` without inventing a claim.
 Expired pre-start recovery preserves the candidate; expired post-start recovery
 finalizes the attempt as `interrupted`. Both advance the fence and append one
 retry schedule, and a retry claim is permitted only when that unique current
@@ -279,8 +281,14 @@ timeout, and unavailability publish retry-wait evidence and return
 `in_progress` when the persisted aggregate window retains at least the exact
 six-second retry reserve. If retryable publication commits terminal failure
 because less reserve remains, the public result is `retry_exhausted`; that
-successful durable terminal is not a persistence failure. This executor does
-not wait or start the next candidate.
-The repository's retry, interruption, cancellation, and recovery transitions
-remain durable state-machine capabilities for later orchestration rather than
-behavior of this executor increment.
+successful durable terminal is not a persistence failure. The one-attempt
+executor does not itself loop.
+
+The increment-6 lifecycle owner may wait only after an attempt made by the
+current invocation; restart before a future due returns `in_progress`. At/after
+due it delegates through the same gate/claim/start path. Expired pre-start work
+reuses its candidate; expired post-start work records internal `interrupted`
+and consumes that attempt. Retry waits are exactly 1s then 2s, extended by a
+valid Retry-After. Three consumed starts or insufficient reserve become durable
+`failed`/public `retry_exhausted`. The immutable generation egress limit is 1
+or 3 and cannot be widened after its first atomic start.

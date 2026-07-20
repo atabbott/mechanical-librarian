@@ -230,6 +230,36 @@ The cumulative C5 registry is `preview-registry-c5-v6.json`, SHA-256
 `0f0ae4c1284af4562d8c2c90c0626d47dfbbe927c10400c3e8849bd3d4c33a3a`.
 It derives from the merged C4 registry and adds only `safe-executor-v3`.
 
+### Lifecycle orchestration preview
+
+F09f increment 6 adds the cumulative credential-free
+`lifecycle-orchestration-v3` scenario. It drives the same manager, SQLite
+repository, descriptor gate, and one-attempt executor through persisted retry,
+restart, interruption recovery, cancellation, and durable one-shot exhaustion:
+
+```sh
+preview_dir="$(mktemp -d)"
+uv run --frozen --no-editable --reinstall-package mechanical-librarian \
+  mechanical-librarian hardcover-identity-report \
+  --mode synthetic-preview --scenario lifecycle-orchestration-v3 --input - \
+  --database "$preview_dir/state.sqlite" --format json \
+  < tests/fixtures/hardcover_identity/c6-lifecycle-orchestration-input.json
+```
+
+One foreground invocation may wait after its own retryable attempt; a restarted
+invocation returns `in_progress` before the persisted due time. Backoff is
+exactly one second after start 1 and two seconds after start 2, extended by a
+valid bounded Retry-After. No generation consumes more than three starts, and a
+limit-1 generation cannot send again after restart. Temporary main-thread
+SIGINT/SIGTERM handlers set only the local cancellation event and are restored
+on every exit. Production remains `disabled` or `provider_not_activated`; this
+scenario composes no credentials, DNS, sockets, HTTP, proposal, or write
+authority.
+
+Stdout must match `c6-lifecycle-orchestration-example-output.json`. The
+cumulative registry is `preview-registry-c6-v1.json`, SHA-256
+`0fb285a1eda9546c1f9958f80c8a8e5690d7ff887adee2067e385a4d227756e4`.
+
 The gate is deployment-scoped, not credential-scoped. Operators must not reuse
 one Hardcover credential across independently configured deployments. The
 lock file is never individually removed or replaced while a deployment may be
@@ -238,7 +268,7 @@ root under the stopped-state procedure.
 
 ### Durable data lifecycle
 
-Schema 9 stores only an opaque work key and bounded structural state:
+Schema 10 stores only an opaque work key and bounded structural state:
 generations, candidates, claims, attempts, retry schedules, events, terminal
 results, observations, and the currentness pointer. Candidates, claims,
 schedules, events, results, and observations are append-only. Attempts can be
@@ -247,6 +277,8 @@ No query ISBN, local title, credential, provider payload, path, or contributor
 script is stored. The observation is a closed provider-neutral value serialized
 only as `{"outcome":"matched","row_count":N}` with `N` from 1 through 4;
 arbitrary maps and provider fields cannot enter the persistence adapter.
+Schema 10 adds one immutable per-generation egress limit of 1 or 3, bound
+atomically with the first start so a later caller cannot widen it.
 
 This increment deliberately has no row-level retention or deletion executor.
 Keep the work history with the curator database under the configured curator

@@ -89,6 +89,48 @@ class SQLiteHardcoverIdentityWorkRepository:
                         candidate,
                     )
 
+                one_shot = self._connection.execute(
+                    "SELECT g.generation,g.state,g.fence,g.attempt_count,g.updated_at "
+                    "FROM hardcover_identity_generations AS g "
+                    "JOIN hardcover_identity_egress_policies AS p "
+                    "ON p.work_key=g.work_key AND p.generation=g.generation "
+                    "WHERE g.work_key=? AND p.max_starts=1 AND g.attempt_count>=1 "
+                    "ORDER BY g.generation DESC LIMIT 1",
+                    (work_key,),
+                ).fetchone()
+                if one_shot is not None:
+                    generation = _positive_int(one_shot[0], "generation")
+                    state = _state(one_shot[1])
+                    fence = _positive_int(one_shot[2], "fence")
+                    attempts = _positive_int(one_shot[3], "attempt count")
+                    if (
+                        state not in TERMINAL_STATES
+                        or attempts != 1
+                        or type(one_shot[4]) is not str
+                        or now < _parse_time(one_shot[4])
+                    ):
+                        raise IdentityWorkPersistenceError(
+                            "identity work one-shot authority is inconsistent"
+                        )
+                    outcome = {
+                        IdentityWorkState.SUCCEEDED: "matched",
+                        IdentityWorkState.FAILED: "failed",
+                        IdentityWorkState.CANCELLED: "cancelled",
+                    }[state]
+                    result = self._connection.execute(
+                        "SELECT fence,outcome,published_at FROM hardcover_identity_results "
+                        "WHERE work_key=? AND generation=?",
+                        (work_key, generation),
+                    ).fetchall()
+                    if result != [(fence, outcome, one_shot[4])]:
+                        raise IdentityWorkPersistenceError(
+                            "identity work one-shot authority is inconsistent"
+                        )
+                    return IdentityWorkStatus(
+                        IdentityWorkOutcome.RETRY_EXHAUSTED,
+                        IdentityWorkReference(work_key, generation),
+                    )
+
                 row = self._connection.execute(
                     "SELECT COALESCE(MAX(generation),0)+1 FROM hardcover_identity_generations WHERE work_key=?",
                     (work_key,),
@@ -225,7 +267,12 @@ class SQLiteHardcoverIdentityWorkRepository:
                         raise IdentityWorkPersistenceError(
                             "identity work retry schedule is corrupt"
                         )
-                    return IdentityWorkReadiness(reference, state, deadline)
+                    return IdentityWorkReadiness(
+                        reference,
+                        state,
+                        deadline,
+                        retry_due_at=due,
+                    )
                 claim_rows = self._connection.execute(
                     "SELECT candidate,lease_expires_at FROM hardcover_identity_claims WHERE work_key=? AND generation=? AND fence=?",
                     (reference.work_key, reference.generation, fence),
@@ -235,10 +282,15 @@ class SQLiteHardcoverIdentityWorkRepository:
                         "identity work claim is unavailable"
                     )
                 candidate = _positive_int(claim_rows[0][0], "candidate")
-                IdentityWorkClaim(
+                active_claim = IdentityWorkClaim(
                     reference, candidate, fence, _parse_time(claim_rows[0][1])
                 )
-                return IdentityWorkReadiness(reference, state, deadline)
+                return IdentityWorkReadiness(
+                    reference,
+                    state,
+                    deadline,
+                    active_claim=active_claim,
+                )
         except (IdentityWorkPersistenceError, ValueError, TypeError):
             raise
         except (sqlite3.Error, OSError):
@@ -314,10 +366,13 @@ class SQLiteHardcoverIdentityWorkRepository:
         now: datetime,
         *,
         gate_owned: bool,
+        egress_limit: int = MAX_ATTEMPTS,
     ) -> IdentityWorkClaim | IdentityWorkStatus:
         _require_claim(claim)
         _owner(owner)
         _require_gate(gate_owned)
+        if type(egress_limit) is not int or egress_limit not in {1, MAX_ATTEMPTS}:
+            raise TypeError("identity work egress limit is malformed")
         timestamp = _time(now)
         lease = _time(now + LEASE_DURATION)
         exhausted = False
@@ -326,6 +381,11 @@ class SQLiteHardcoverIdentityWorkRepository:
                 row = self._generation(claim.reference)
                 current_lease, already_started = self._assert_claim(
                     row, claim, owner, now, lease="start"
+                )
+                self._bind_egress_limit(
+                    claim.reference,
+                    egress_limit,
+                    timestamp,
                 )
                 if already_started:
                     return IdentityWorkClaim(
@@ -343,7 +403,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                     started = claim
                 else:
                     attempts = _nonnegative_int(row[2], "attempt count")
-                    if attempts >= MAX_ATTEMPTS:
+                    if attempts >= egress_limit:
                         raise IdentityWorkPersistenceError("identity work attempts are exhausted")
                     attempt = attempts + 1
                     self._connection.execute(
@@ -508,6 +568,7 @@ class SQLiteHardcoverIdentityWorkRepository:
         now: datetime,
         *,
         retryable: bool,
+        retry_delay_seconds: int | None = 0,
         gate_owned: bool,
         fail_before_commit: bool = False,
     ) -> IdentityWorkStatus:
@@ -516,7 +577,18 @@ class SQLiteHardcoverIdentityWorkRepository:
         _require_claim(claim)
         _owner(owner)
         _require_gate(gate_owned)
-        if type(retryable) is not bool or type(fail_before_commit) is not bool:
+        if (
+            type(retryable) is not bool
+            or type(fail_before_commit) is not bool
+            or (
+                retry_delay_seconds is not None
+                and (
+                    type(retry_delay_seconds) is not int
+                    or not 0 <= retry_delay_seconds <= 30
+                )
+            )
+            or (not retryable and retry_delay_seconds not in {0, None})
+        ):
             raise TypeError("identity work failure publication is malformed")
         timestamp = _time(now)
         try:
@@ -531,11 +603,18 @@ class SQLiteHardcoverIdentityWorkRepository:
                 if changed != 1:
                     raise IdentityWorkPersistenceError("identity work has no started attempt")
                 deadline = _parse_time(str(row[7])) if row[7] is not None else None
+                egress_limit = self._read_egress_limit(claim.reference)
+                due = (
+                    now + timedelta(seconds=retry_delay_seconds)
+                    if retry_delay_seconds is not None
+                    else None
+                )
                 if (
                     retryable
-                    and attempt < MAX_ATTEMPTS
+                    and due is not None
+                    and attempt < egress_limit
                     and deadline is not None
-                    and deadline - now >= MINIMUM_START_LEASE
+                    and deadline - due >= MINIMUM_START_LEASE
                 ):
                     candidate = attempt + 1
                     next_fence = claim.fence + 1
@@ -550,7 +629,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                             claim.reference.generation,
                             next_fence,
                             candidate,
-                            timestamp,
+                            _time(due),
                             timestamp,
                         ),
                     )
@@ -581,6 +660,76 @@ class SQLiteHardcoverIdentityWorkRepository:
             raise
         except (sqlite3.Error, OSError):
             raise IdentityWorkPersistenceError("identity work failure could not be published") from None
+
+    def cancel_available(
+        self,
+        reference: IdentityWorkReference,
+        now: datetime,
+    ) -> None:
+        """Atomically cancel pending or retry-wait work without inventing a claim."""
+
+        _require_reference(reference)
+        timestamp = _time(now)
+        try:
+            with _transaction(self._connection):
+                row = self._generation(reference)
+                state = _state(row[0])
+                if state not in {
+                    IdentityWorkState.PENDING,
+                    IdentityWorkState.RETRY_WAIT,
+                }:
+                    raise IdentityWorkPersistenceError(
+                        "identity work is not directly cancellable"
+                    )
+                if now < _parse_time(str(row[5])):
+                    raise IdentityWorkPersistenceError(
+                        "identity work chronology is invalid"
+                    )
+                validate_transition(state, IdentityWorkState.CANCELLED)
+                fence = _nonnegative_int(row[1], "fence")
+                terminal_fence = max(fence, 1)
+                changed = self._connection.execute(
+                    "UPDATE hardcover_identity_generations "
+                    "SET state='cancelled',fence=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=? "
+                    "WHERE work_key=? AND generation=? AND state=? AND fence=?",
+                    (
+                        terminal_fence,
+                        timestamp,
+                        reference.work_key,
+                        reference.generation,
+                        state.value,
+                        fence,
+                    ),
+                ).rowcount
+                if changed != 1:
+                    raise IdentityWorkPersistenceError(
+                        "identity work cancellation raced"
+                    )
+                self._connection.execute(
+                    "INSERT INTO hardcover_identity_results(work_key,generation,fence,outcome,published_at) "
+                    "VALUES(?,?,?,'cancelled',?)",
+                    (
+                        reference.work_key,
+                        reference.generation,
+                        terminal_fence,
+                        timestamp,
+                    ),
+                )
+                self._event(
+                    reference.work_key,
+                    reference.generation,
+                    "cancelled",
+                    state.value,
+                    "cancelled",
+                    terminal_fence,
+                    timestamp,
+                )
+        except (IdentityWorkPersistenceError, ValueError, TypeError):
+            raise
+        except (sqlite3.Error, OSError):
+            raise IdentityWorkPersistenceError(
+                "identity work could not be cancelled"
+            ) from None
 
     def cancel(
         self,
@@ -629,6 +778,51 @@ class SQLiteHardcoverIdentityWorkRepository:
         if row is None or len(row) != 8:
             raise IdentityWorkPersistenceError("identity work generation is unavailable")
         return row
+
+    def _bind_egress_limit(
+        self,
+        reference: IdentityWorkReference,
+        egress_limit: int,
+        timestamp: str,
+    ) -> None:
+        rows = self._connection.execute(
+            "SELECT max_starts FROM hardcover_identity_egress_policies "
+            "WHERE work_key=? AND generation=?",
+            (reference.work_key, reference.generation),
+        ).fetchall()
+        if not rows:
+            self._connection.execute(
+                "INSERT INTO hardcover_identity_egress_policies("
+                "work_key,generation,max_starts,created_at) VALUES(?,?,?,?)",
+                (
+                    reference.work_key,
+                    reference.generation,
+                    egress_limit,
+                    timestamp,
+                ),
+            )
+            return
+        if rows != [(egress_limit,)]:
+            raise IdentityWorkPersistenceError(
+                "identity work egress authority changed"
+            )
+
+    def _read_egress_limit(self, reference: IdentityWorkReference) -> int:
+        rows = self._connection.execute(
+            "SELECT max_starts FROM hardcover_identity_egress_policies "
+            "WHERE work_key=? AND generation=?",
+            (reference.work_key, reference.generation),
+        ).fetchall()
+        if len(rows) != 1:
+            raise IdentityWorkPersistenceError(
+                "identity work egress authority is unavailable"
+            )
+        limit = _positive_int(rows[0][0], "egress limit")
+        if limit not in {1, MAX_ATTEMPTS}:
+            raise IdentityWorkPersistenceError(
+                "identity work egress authority is corrupt"
+            )
+        return limit
 
     def _retry_candidate(
         self,
