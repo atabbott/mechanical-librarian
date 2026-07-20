@@ -768,7 +768,13 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                         started,
                         "competing-worker",
                         self.clock.now,
-                        IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+                        IdentityWorkObservation(
+                            IdentityMatchOutcome.MATCHED,
+                            1,
+                            1001,
+                            2001,
+                            "Synthetic Ebook Alpha",
+                        ),
                         gate_owned=True,
                     )
 
@@ -842,7 +848,13 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             started,
             request.owner,
             self.clock.now,
-            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+            IdentityWorkObservation(
+                IdentityMatchOutcome.MATCHED,
+                1,
+                1001,
+                2001,
+                "Synthetic Ebook Alpha",
+            ),
             gate_owned=True,
         )
         self.clock.now += timedelta(hours=24, microseconds=1)
@@ -883,7 +895,13 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             started,
             request.owner,
             self.clock.now,
-            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+            IdentityWorkObservation(
+                IdentityMatchOutcome.MATCHED,
+                1,
+                1001,
+                2001,
+                "Synthetic Ebook Alpha",
+            ),
             gate_owned=True,
         )
         self.clock.now += timedelta(hours=24, microseconds=1)
@@ -1366,6 +1384,12 @@ class HardcoverIdentityGateTests(unittest.TestCase):
         gate.bind_connection(connection)
 
         self.assertEqual(connection.execute("PRAGMA application_id").fetchone(), (0,))
+        self.assertIsNone(
+            connection.execute(
+                "SELECT value FROM instance_metadata "
+                "WHERE key='hardcover-identity-binding-recovery-v1'"
+            ).fetchone()
+        )
         with self.database.open("rb") as database_file:
             database_file.seek(68)
             self.assertEqual(database_file.read(4), b"\x00\x00\x00\x00")
@@ -1375,6 +1399,12 @@ class HardcoverIdentityGateTests(unittest.TestCase):
         gate.bind_connection(connection)
         self.assertEqual(
             connection.execute("PRAGMA application_id").fetchone(), (123456,)
+        )
+        self.assertIsNone(
+            connection.execute(
+                "SELECT value FROM instance_metadata "
+                "WHERE key='hardcover-identity-binding-recovery-v1'"
+            ).fetchone()
         )
 
     def test_connection_binding_serializes_marker_and_preserves_original_value(
@@ -1454,7 +1484,7 @@ class HardcoverIdentityGateTests(unittest.TestCase):
         finally:
             second.close()
 
-    def test_connection_binding_repairs_crash_marker_and_rejects_inode_aba(
+    def test_connection_binding_preserves_marker_valued_original_and_rejects_inode_aba(
         self,
     ) -> None:
         self.database.unlink()
@@ -1471,7 +1501,17 @@ class HardcoverIdentityGateTests(unittest.TestCase):
         repaired = sqlite3.connect(self.database, isolation_level=None)
         self.addCleanup(repaired.close)
         gate.bind_connection(repaired)
-        self.assertEqual(repaired.execute("PRAGMA application_id").fetchone(), (0,))
+        self.assertEqual(
+            repaired.execute("PRAGMA application_id").fetchone(), (1296843265,)
+        )
+        repaired.execute("PRAGMA application_id=1296843266")
+        repaired.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        gate.bind_connection(repaired)
+        self.assertEqual(
+            repaired.execute("PRAGMA application_id").fetchone(), (1296843266,)
+        )
+        repaired.execute("PRAGMA application_id=1296843265")
+        repaired.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         repaired.close()
 
         original = self.root / "original.sqlite"
@@ -1486,7 +1526,8 @@ class HardcoverIdentityGateTests(unittest.TestCase):
         original.rename(self.database)
 
         with self.assertRaisesRegex(
-            HardcoverIdentityGateError, "connection identity changed"
+            HardcoverIdentityGateError,
+            "connection identity changed|binding marker was not removed",
         ):
             gate.bind_connection(replacement_connection)
         self.assertEqual(
@@ -1497,10 +1538,104 @@ class HardcoverIdentityGateTests(unittest.TestCase):
         try:
             self.assertEqual(
                 restored.execute("PRAGMA application_id").fetchone(),
-                (0,),
+                (1296843265,),
             )
         finally:
             restored.close()
+
+    def test_connection_binding_recovers_committed_interruption_record(self) -> None:
+        self.database.unlink()
+        interrupted = sqlite3.connect(self.database, isolation_level=None)
+        migrate(interrupted)
+        interrupted.execute("PRAGMA application_id=123456")
+        interrupted.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        identity = self.database.stat()
+        gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+        lease = gate.try_acquire()
+        self.assertIsNotNone(lease)
+        assert lease is not None
+        gate._publish_binding(
+            interrupted,
+            lease.database_identity,
+            0x4D4C4201,
+            123456,
+        )
+        self.assertEqual(
+            interrupted.execute("PRAGMA application_id").fetchone(),
+            (0x4D4C4201,),
+        )
+        self.assertIsNotNone(
+            interrupted.execute(
+                "SELECT value FROM instance_metadata "
+                "WHERE key='hardcover-identity-binding-recovery-v1'"
+            ).fetchone()
+        )
+        lease.release()
+        interrupted.close()
+
+        restarted = sqlite3.connect(self.database, isolation_level=None)
+        self.addCleanup(restarted.close)
+        gate.bind_connection(restarted)
+
+        self.assertEqual(
+            restarted.execute("PRAGMA application_id").fetchone(), (123456,)
+        )
+        self.assertIsNone(
+            restarted.execute(
+                "SELECT value FROM instance_metadata "
+                "WHERE key='hardcover-identity-binding-recovery-v1'"
+            ).fetchone()
+        )
+
+    def test_connection_binding_rejects_corrupt_or_mismatched_recovery(self) -> None:
+        self.database.unlink()
+        connection = sqlite3.connect(self.database, isolation_level=None)
+        self.addCleanup(connection.close)
+        migrate(connection)
+        identity = self.database.stat()
+        gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+        for value in (
+            "malformed",
+            "v1:" + "9" * 100 + ":1:1296843265:1",
+            f"v1:{identity.st_dev}:{identity.st_ino}:1296843265:001",
+            f"v1:{identity.st_dev}:{identity.st_ino + 1}:1296843265:1",
+            f"v1:{identity.st_dev}:{identity.st_ino}:1296843265:1",
+        ):
+            with self.subTest(value=value):
+                connection.execute(
+                    "INSERT OR REPLACE INTO instance_metadata(key,value) VALUES(?,?)",
+                    ("hardcover-identity-binding-recovery-v1", value),
+                )
+                connection.execute("PRAGMA application_id=1296843265")
+                if value.endswith(":1") and value.count(":") == 4:
+                    connection.execute("PRAGMA application_id=0")
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                before = connection.execute(
+                    "SELECT value FROM instance_metadata "
+                    "WHERE key='hardcover-identity-binding-recovery-v1'"
+                ).fetchone()
+                with self.assertRaisesRegex(
+                    HardcoverIdentityGateError,
+                    "recovery is (invalid|inconsistent)",
+                ):
+                    gate.bind_connection(connection)
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT value FROM instance_metadata "
+                        "WHERE key='hardcover-identity-binding-recovery-v1'"
+                    ).fetchone(),
+                    before,
+                )
+                connection.execute(
+                    "DELETE FROM instance_metadata "
+                    "WHERE key='hardcover-identity-binding-recovery-v1'"
+                )
 
     def test_final_symlink_hardlink_nonregular_and_lock_replacement_are_rejected(self) -> None:
         real = self.database

@@ -2257,7 +2257,13 @@ def _run_hardcover_safe_executor_preview(
                             started,
                             request.owner,
                             clock.now,
-                            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+                            IdentityWorkObservation(
+                                IdentityMatchOutcome.MATCHED,
+                                1,
+                                1001,
+                                2001,
+                                "Remote Volume Zeta",
+                            ),
                             gate_owned=True,
                         )
                     finally:

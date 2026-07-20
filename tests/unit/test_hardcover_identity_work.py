@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import tempfile
 import unittest
@@ -322,6 +323,10 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             '{"outcome":"provider","row_count":2}',
             '{"outcome":"matched","row_count":"2"}',
             '{"row_count":2,"outcome":"matched"}',
+            '{"book_id":2001,"edition_id":1001,"outcome":"matched",'
+            '"provider_title":" Synthetic Ebook Alpha","row_count":2}',
+            '{"book_id":2001,"edition_id":1001,"outcome":"matched",'
+            '"provider_title":"Synthe\\u0301tic Ebook Alpha","row_count":2}',
         ):
             with self.subTest(malformed=malformed), self.assertRaises(ValueError):
                 IdentityWorkObservation.from_canonical_json(malformed)
@@ -341,6 +346,43 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM hardcover_identity_results"
             ).fetchone(),
             (0,),
+        )
+
+    def test_repository_rejects_legacy_observation_before_any_publication(self) -> None:
+        _, claim = self.started_claim()
+        legacy = IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 2)
+        before = {
+            table: self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            for table in (
+                "hardcover_identity_results",
+                "hardcover_identity_observations",
+                "current_hardcover_identity",
+            )
+        }
+
+        with self.assertRaisesRegex(ValueError, "not reusable"):
+            self.repository.publish_matched(
+                claim,
+                "worker-a",
+                ORIGIN + timedelta(seconds=3),
+                legacy,
+                gate_owned=True,
+            )
+
+        self.assertEqual(
+            {
+                table: self.connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()
+                for table in before
+            },
+            before,
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations"
+            ).fetchone(),
+            ("claimed", 1),
         )
 
     def test_domain_transition_graph_is_closed(self) -> None:
@@ -1322,6 +1364,112 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             ).fetchall(),
             before,
         )
+
+    def test_matched_reuse_rejects_schema_valid_observation_substitution(self) -> None:
+        _, claim = self.started_claim()
+        self.repository.publish_matched(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=3),
+            MATCHED,
+            gate_owned=True,
+        )
+        before = self.connection.execute(
+            "SELECT observation_id,canonical_observation FROM hardcover_identity_observations"
+        ).fetchone()
+        self.connection.execute(
+            "DROP TRIGGER hardcover_identity_observations_no_update"
+        )
+        self.connection.execute(
+            "UPDATE hardcover_identity_observations SET canonical_observation=?",
+            (
+                IdentityWorkObservation(
+                    IdentityMatchOutcome.MATCHED,
+                    2,
+                    1002,
+                    2001,
+                    "Synthetic Ebook Alpha",
+                ).to_canonical_json(),
+            ),
+        )
+
+        with self.assertRaisesRegex(IdentityWorkPersistenceError, "inconsistent"):
+            self.repository.accept(WORK_KEY, ORIGIN + timedelta(seconds=4))
+
+        after = self.connection.execute(
+            "SELECT observation_id,canonical_observation FROM hardcover_identity_observations"
+        ).fetchone()
+        self.assertEqual(after[0], before[0])
+        self.assertNotEqual(after[1], before[1])
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT generation,status FROM current_hardcover_identity"
+            ).fetchone(),
+            (1, "matched"),
+        )
+
+    def test_schema_ten_legacy_current_pointer_expires_and_refetches(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "legacy.sqlite")
+            self.addCleanup(connection.close)
+            migrate_to_version(connection, 10)
+            work_key = "8" * 64
+            created = "2026-01-01T00:00:00.000000Z"
+            published = "2026-01-01T00:00:03.000000Z"
+            expires = "2026-01-02T00:00:03.000000Z"
+            canonical = '{"outcome":"matched","row_count":2}'
+            observation_id = hashlib.sha256(
+                f"{work_key}:1:matched-observation-v2".encode("ascii")
+            ).hexdigest()
+            connection.execute(
+                "INSERT INTO hardcover_identity_generations("
+                "work_key,generation,state,fence,attempt_count,aggregate_started_at,"
+                "aggregate_deadline,created_at,updated_at) VALUES(?,1,'succeeded',1,1,?,?,?,?)",
+                (work_key, created, expires, created, published),
+            )
+            connection.execute(
+                "INSERT INTO hardcover_identity_results VALUES(?,1,1,'matched',?)",
+                (work_key, published),
+            )
+            connection.execute(
+                "INSERT INTO hardcover_identity_observations VALUES(?,?,1,?,?)",
+                (observation_id, work_key, canonical, published),
+            )
+            connection.execute(
+                "INSERT INTO current_hardcover_identity VALUES(?,1,?,'matched',?,?)",
+                (work_key, observation_id, published, expires),
+            )
+
+            migrate(connection)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM current_hardcover_identity"
+                ).fetchone(),
+                ("expired",),
+            )
+            repository = SQLiteHardcoverIdentityWorkRepository(connection)
+            accepted = repository.accept(
+                work_key, ORIGIN + timedelta(seconds=4)
+            )
+            reserved = repository.accept(
+                work_key, ORIGIN + timedelta(seconds=4, microseconds=1)
+            )
+
+            self.assertEqual(
+                (accepted.outcome, accepted.reference.generation, accepted.candidate),
+                (IdentityWorkOutcome.STALE, 2, None),
+            )
+            self.assertIsNone(accepted.observation)
+            self.assertEqual(
+                (reserved.outcome, reserved.reference.generation, reserved.candidate),
+                (IdentityWorkOutcome.STALE, 2, 1),
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT canonical_observation FROM hardcover_identity_observations"
+                ).fetchone(),
+                (canonical,),
+            )
 
     def test_matched_reuse_reconciles_terminal_generation_timestamp(self) -> None:
         _, claim = self.started_claim()

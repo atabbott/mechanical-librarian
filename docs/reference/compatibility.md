@@ -223,12 +223,15 @@ structural fakes are trusted; arbitrary same-process descriptor, subclass,
 post-construction mutation, forged-exception, traceback-local, `SystemExit`, or
 `GeneratorExit` sabotage is not a supported compatibility boundary.
 
-The exact cumulative compatibility registry is
+The historical increment-3 compatibility registry is
 `preview-registry-c3-v6.json` / SHA-256
 `394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02`.
 It derives from installed C2 and contains exactly the inert, identity-decision,
-and fixed-adapter scenarios; future durable-work and executor definitions are
-not current compatibility data.
+and fixed-adapter scenarios. The current F09f compatibility evidence root is
+`hardcover-f09f-activation-registry-v1.json` / SHA-256
+`4893badcf9cb91fedd0aded8a0b852bb48868443772be6fd57fb89c843806bc7`.
+It binds the merged C6 registry, all six retained contributor scenarios, and
+the activated production contracts; the historical C3 scope remains unchanged.
 
 The fixed-adapter schema uses the project-owned UTF-8 byte-length meta-schema,
 digest `6e661639a611c463c65303efc2c83f97e9b522d23ee30c2e4e78f0d4c4e703b1`,

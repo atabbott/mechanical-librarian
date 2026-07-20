@@ -31,16 +31,55 @@ second request. It is reserved for exact-head installed-wheel qualification.
 ### Authorized production one-shot procedure
 
 Use this procedure only for the separately authorized final request at an
-exact reviewed and qualified head. Build the wheel at that head, record both
-identities, and install that exact wheel before creating any provider authority:
+exact reviewed and qualified head. Start with no tracked worktree changes,
+build into a fresh empty output directory, require exactly one wheel, and prove
+that its packaged product files are byte-identical to the exact HEAD tree before
+installing it or creating any provider authority:
 
 ```sh
 qualification_head="$(git rev-parse HEAD)"
-wheel_path="$(find dist -maxdepth 1 -type f -name 'mechanical_librarian-*.whl' -print -quit)"
-test -n "$wheel_path"
+qualification_tree="$(git rev-parse "${qualification_head}^{tree}")"
+test -z "$(git status --porcelain=v1 --untracked-files=no)"
+umask 077
+wheel_output="$(mktemp -d)"
+test -z "$(find "$wheel_output" -mindepth 1 -maxdepth 1 -print -quit)"
+uv build --out-dir "$wheel_output"
+wheel_count="$(find "$wheel_output" -maxdepth 1 -type f \
+  -name 'mechanical_librarian-*.whl' | wc -l | tr -d ' ')"
+test "$wheel_count" -eq 1
+wheel_path="$(find "$wheel_output" -maxdepth 1 -type f \
+  -name 'mechanical_librarian-*.whl' -print)"
+python - "$qualification_head" "$wheel_path" <<'PY'
+import subprocess
+import sys
+import zipfile
+
+head, wheel_path = sys.argv[1:]
+source_paths = subprocess.check_output(
+    ["git", "ls-tree", "-r", "--name-only", head, "--", "src/mechanical_librarian"],
+    text=True,
+).splitlines()
+expected = {
+    path.removeprefix("src/"): subprocess.check_output(
+        ["git", "show", f"{head}:{path}"]
+    )
+    for path in source_paths
+}
+with zipfile.ZipFile(wheel_path) as wheel:
+    packaged = {
+        path: wheel.read(path)
+        for path in wheel.namelist()
+        if path.startswith("mechanical_librarian/")
+    }
+assert packaged == expected
+PY
 wheel_sha256="$(shasum -a 256 "$wheel_path" | awk '{print $1}')"
 python -m pip install --force-reinstall --no-deps "$wheel_path"
 ```
+
+Retain `qualification_head`, `qualification_tree`, and `wheel_sha256` as the
+artifact provenance. Do not use or clean a shared `dist` directory for this
+procedure; the fresh output directory prevents a stale wheel from qualifying.
 
 Prepare a new owner-only empty stopped-state root and keep its database path
 absent. `mktemp -d` is mandatory here so a previous qualification root cannot
@@ -223,10 +262,14 @@ uv run --frozen --no-editable --reinstall-package mechanical-librarian \
 
 Its stdout must be byte-identical to
 `tests/fixtures/hardcover_identity/c2-identity-decision-example-output.json`.
-The current cumulative registry is `preview-registry-c2-v6.json`, SHA-256
+The historical increment-2 registry is `preview-registry-c2-v6.json`, SHA-256
 `557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11`.
 It contains only the C1 inert and C2 identity scenarios and binds the C2-scoped
-output schema, privacy contract, and privacy scan. See the
+output schema, privacy contract, and privacy scan. The current F09f evidence
+root is `hardcover-f09f-activation-registry-v1.json`, SHA-256
+`4893badcf9cb91fedd0aded8a0b852bb48868443772be6fd57fb89c843806bc7`;
+it binds the merged C6 registry, all six retained contributor scenarios, and
+the activated production contracts. See the
 [F09f identity contract](../reference/hardcover-f09f-contract.md) for exact
 compatibility, alias, precedence, and privacy rules.
 

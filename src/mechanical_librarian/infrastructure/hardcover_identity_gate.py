@@ -12,12 +12,21 @@ from pathlib import Path
 
 
 LOCK_NAME = ".mechanical-librarian-hardcover-identity.lock"
-_RUNTIME_BINDING_APPLICATION_ID = 0x4D4C4201
+_RUNTIME_BINDING_APPLICATION_IDS = (0x4D4C4201, 0x4D4C4202)
+_RUNTIME_BINDING_RECOVERY_KEY = "hardcover-identity-binding-recovery-v1"
 _SQLITE_APPLICATION_ID_OFFSET = 68
 
 
 class HardcoverIdentityGateError(RuntimeError):
     """Public-value-free failure to establish stable deployment identity."""
+
+
+@dataclass(frozen=True, slots=True)
+class _BindingRecovery:
+    database_identity: tuple[int, int]
+    marker: int
+    original: int
+    canonical: str
 
 
 @dataclass(slots=True)
@@ -178,8 +187,8 @@ class DescriptorHardcoverIdentityGate:
         """Prove the writable SQLite connection owns the gate's exact inode.
 
         The normal deployment flock serializes the complete marker transaction.
-        The value-independent marker is restored before release and is also
-        repaired if a prior process died during this proof.
+        A private durable recovery record preserves every original application
+        ID across interruption and is removed atomically with restoration.
         """
 
         if type(connection) is not sqlite3.Connection or connection.in_transaction:
@@ -194,30 +203,41 @@ class DescriptorHardcoverIdentityGate:
         failure: BaseException | None = None
         try:
             lease.validate_for_send()
-            current = connection.execute("PRAGMA application_id").fetchone()
-            if (
-                type(current) is not tuple
-                or len(current) != 1
-                or type(current[0]) is not int
-                or not 0 <= current[0] <= 2_147_483_647
-            ):
-                raise HardcoverIdentityGateError(
-                    "Hardcover database binding marker is invalid"
-                )
-            original_application_id = current[0]
-            if original_application_id == _RUNTIME_BINDING_APPLICATION_ID:
-                self._set_application_id(connection, 0)
-                original_application_id = 0
-            self._set_application_id(connection, _RUNTIME_BINDING_APPLICATION_ID)
+            recovery = self._load_recovery(
+                connection, lease.database_identity
+            )
+            if recovery is not None:
+                self._restore_binding(connection, recovery)
+                if (
+                    self._read_application_id(lease.database_descriptor)
+                    != recovery.original
+                ):
+                    raise HardcoverIdentityGateError(
+                        "Hardcover database binding recovery was not synchronized"
+                    )
+                original_application_id = recovery.original
+            else:
+                original_application_id = self._connection_application_id(connection)
+            marker = (
+                _RUNTIME_BINDING_APPLICATION_IDS[1]
+                if original_application_id == _RUNTIME_BINDING_APPLICATION_IDS[0]
+                else _RUNTIME_BINDING_APPLICATION_IDS[0]
+            )
+            recovery = self._publish_binding(
+                connection,
+                lease.database_identity,
+                marker,
+                original_application_id,
+            )
             marked = True
             if (
                 self._read_application_id(lease.database_descriptor)
-                != _RUNTIME_BINDING_APPLICATION_ID
+                != marker
             ):
                 raise HardcoverIdentityGateError(
                     "Hardcover database connection identity changed"
                 )
-            self._set_application_id(connection, original_application_id)
+            self._restore_binding(connection, recovery)
             marked = False
             if (
                 self._read_application_id(lease.database_descriptor)
@@ -243,7 +263,14 @@ class DescriptorHardcoverIdentityGate:
             cleanup_failure: HardcoverIdentityGateError | None = None
             if marked:
                 try:
-                    self._set_application_id(connection, original_application_id)
+                    recovery = self._load_recovery(
+                        connection, lease.database_identity
+                    )
+                    if recovery is None:
+                        raise HardcoverIdentityGateError(
+                            "Hardcover database binding recovery is unavailable"
+                        )
+                    self._restore_binding(connection, recovery)
                     if (
                         self._read_application_id(lease.database_descriptor)
                         != original_application_id
@@ -273,14 +300,175 @@ class DescriptorHardcoverIdentityGate:
                 else:
                     raise cleanup_failure
 
+    @classmethod
+    def _publish_binding(
+        cls,
+        connection: sqlite3.Connection,
+        database_identity: tuple[int, int],
+        marker: int,
+        original: int,
+    ) -> _BindingRecovery:
+        canonical = cls._encode_recovery(database_identity, marker, original)
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            if cls._recovery_value(connection) is not None:
+                raise HardcoverIdentityGateError(
+                    "Hardcover database binding recovery already exists"
+                )
+            if cls._connection_application_id(connection) != original:
+                raise HardcoverIdentityGateError(
+                    "Hardcover database binding marker changed"
+                )
+            connection.execute(
+                "INSERT INTO instance_metadata(key,value) VALUES(?,?)",
+                (_RUNTIME_BINDING_RECOVERY_KEY, canonical),
+            )
+            connection.execute(f"PRAGMA application_id={marker}")
+            connection.commit()
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        cls._checkpoint(connection)
+        return _BindingRecovery(database_identity, marker, original, canonical)
+
+    @classmethod
+    def _restore_binding(
+        cls,
+        connection: sqlite3.Connection,
+        recovery: _BindingRecovery,
+    ) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            if cls._recovery_value(connection) != recovery.canonical:
+                raise HardcoverIdentityGateError(
+                    "Hardcover database binding recovery changed"
+                )
+            if cls._connection_application_id(connection) != recovery.marker:
+                raise HardcoverIdentityGateError(
+                    "Hardcover database binding marker changed"
+                )
+            connection.execute(f"PRAGMA application_id={recovery.original}")
+            changed = connection.execute(
+                "DELETE FROM instance_metadata WHERE key=? AND value=?",
+                (_RUNTIME_BINDING_RECOVERY_KEY, recovery.canonical),
+            ).rowcount
+            if changed != 1:
+                raise HardcoverIdentityGateError(
+                    "Hardcover database binding recovery changed"
+                )
+            connection.commit()
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        cls._checkpoint(connection)
+
     @staticmethod
-    def _set_application_id(connection: sqlite3.Connection, value: int) -> None:
-        connection.execute(f"PRAGMA application_id={value}")
+    def _checkpoint(connection: sqlite3.Connection) -> None:
         checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
         if checkpoint is None or len(checkpoint) != 3 or checkpoint[0] != 0:
             raise HardcoverIdentityGateError(
                 "Hardcover database binding marker could not be synchronized"
             )
+
+    @classmethod
+    def _load_recovery(
+        cls,
+        connection: sqlite3.Connection,
+        database_identity: tuple[int, int],
+    ) -> _BindingRecovery | None:
+        value = cls._recovery_value(connection)
+        if value is None:
+            return None
+        parts = value.split(":")
+        if len(parts) != 5 or parts[0] != "v1":
+            raise HardcoverIdentityGateError(
+                "Hardcover database binding recovery is invalid"
+            )
+        values = parts[1:]
+        if any(
+            not item
+            or len(item) > 20
+            or not item.isascii()
+            or not item.isdecimal()
+            for item in values
+        ):
+            raise HardcoverIdentityGateError(
+                "Hardcover database binding recovery is invalid"
+            )
+        device, inode, marker, original = (int(item) for item in values)
+        if (
+            any(
+                str(number) != item
+                for number, item in zip(
+                    (device, inode, marker, original), values, strict=True
+                )
+            )
+            or device < 0
+            or inode < 1
+            or marker not in _RUNTIME_BINDING_APPLICATION_IDS
+            or not 0 <= original <= 2_147_483_647
+            or (device, inode) != database_identity
+        ):
+            raise HardcoverIdentityGateError(
+                "Hardcover database binding recovery is invalid"
+            )
+        recovery = _BindingRecovery(
+            (device, inode), marker, original, value
+        )
+        if cls._connection_application_id(connection) != marker:
+            raise HardcoverIdentityGateError(
+                "Hardcover database binding recovery is inconsistent"
+            )
+        return recovery
+
+    @staticmethod
+    def _recovery_value(connection: sqlite3.Connection) -> str | None:
+        row = connection.execute(
+            "SELECT value FROM instance_metadata WHERE key=?",
+            (_RUNTIME_BINDING_RECOVERY_KEY,),
+        ).fetchone()
+        if row is None:
+            return None
+        if type(row) is not tuple or len(row) != 1 or type(row[0]) is not str:
+            raise HardcoverIdentityGateError(
+                "Hardcover database binding recovery is invalid"
+            )
+        return row[0]
+
+    @staticmethod
+    def _connection_application_id(connection: sqlite3.Connection) -> int:
+        current = connection.execute("PRAGMA application_id").fetchone()
+        if (
+            type(current) is not tuple
+            or len(current) != 1
+            or type(current[0]) is not int
+            or not 0 <= current[0] <= 2_147_483_647
+        ):
+            raise HardcoverIdentityGateError(
+                "Hardcover database binding marker is invalid"
+            )
+        return current[0]
+
+    @staticmethod
+    def _encode_recovery(
+        database_identity: tuple[int, int], marker: int, original: int
+    ) -> str:
+        device, inode = database_identity
+        if (
+            type(device) is not int
+            or device < 0
+            or type(inode) is not int
+            or inode < 1
+            or marker not in _RUNTIME_BINDING_APPLICATION_IDS
+            or type(original) is not int
+            or not 0 <= original <= 2_147_483_647
+        ):
+            raise HardcoverIdentityGateError(
+                "Hardcover database binding recovery is invalid"
+            )
+        return f"v1:{device}:{inode}:{marker}:{original}"
 
     @staticmethod
     def _read_application_id(descriptor: int) -> int:

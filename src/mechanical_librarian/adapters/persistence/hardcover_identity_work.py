@@ -31,6 +31,7 @@ MINIMUM_START_LEASE = timedelta(seconds=6)
 AGGREGATE_WINDOW = timedelta(seconds=30)
 CURRENTNESS_WINDOW = timedelta(hours=24)
 MAX_ATTEMPTS = 3
+_OBSERVATION_ID_DOMAIN = b"mechanical-librarian:hardcover-matched-observation:v3\x00"
 
 
 class SQLiteHardcoverIdentityWorkRepository:
@@ -587,12 +588,13 @@ class SQLiteHardcoverIdentityWorkRepository:
         if type(fail_before_commit) is not bool:
             raise TypeError("identity work failure injection is malformed")
         canonical = _canonical_observation(observation)
-        observation_id = hashlib.sha256(
-            (
-                f"{claim.reference.work_key}:{claim.reference.generation}:"
-                "matched-observation-v2"
-            ).encode("ascii")
-        ).hexdigest()
+        if not observation.reusable:
+            raise ValueError("identity work observation is not reusable")
+        observation_id = _observation_id(
+            claim.reference.work_key,
+            claim.reference.generation,
+            canonical,
+        )
         timestamp = _time(now)
         expires = _time(now + CURRENTNESS_WINDOW)
         try:
@@ -1248,12 +1250,11 @@ class SQLiteHardcoverIdentityWorkRepository:
             observation = IdentityWorkObservation.from_canonical_json(canonical)
         except ValueError:
             raise IdentityWorkPersistenceError("current identity work is inconsistent") from None
-        expected_id = hashlib.sha256(
-            (
-                f"{reference.work_key}:{reference.generation}:"
-                "matched-observation-v2"
-            ).encode("ascii")
-        ).hexdigest()
+        expected_id = (
+            _observation_id(reference.work_key, reference.generation, canonical)
+            if observation.reusable
+            else _legacy_observation_id(reference.work_key, reference.generation)
+        )
         terminal_updated = row[2]
         published = row[5]
         try:
@@ -1620,6 +1621,23 @@ def _canonical_observation(value: object) -> str:
     if type(value) is not IdentityWorkObservation:
         raise TypeError("identity work observation is malformed")
     return value.to_canonical_json()
+
+
+def _observation_id(work_key: str, generation: int, canonical: str) -> str:
+    digest = hashlib.sha256()
+    digest.update(_OBSERVATION_ID_DOMAIN)
+    digest.update(work_key.encode("ascii"))
+    digest.update(b"\x00")
+    digest.update(str(generation).encode("ascii"))
+    digest.update(b"\x00")
+    digest.update(canonical.encode("ascii"))
+    return digest.hexdigest()
+
+
+def _legacy_observation_id(work_key: str, generation: int) -> str:
+    return hashlib.sha256(
+        f"{work_key}:{generation}:matched-observation-v2".encode("ascii")
+    ).hexdigest()
 
 
 @contextmanager

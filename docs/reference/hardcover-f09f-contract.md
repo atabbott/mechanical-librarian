@@ -194,13 +194,15 @@ digests, fingerprints, stable correlations, raw input/response, paths,
 addresses, and secrets are forbidden from stdout, stderr, exceptions, logs,
 traces/spans, metrics, persistence, exports, reports, and audit records.
 
-The exact current-head registry is `preview-registry-c3-v6.json`, SHA-256
+The historical increment-3 registry is `preview-registry-c3-v6.json`, SHA-256
 `394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02`.
 It derives from installed C2
 `557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11`
 and includes exactly `inert-report-v3`, `identity-decision-v3`, and
-`fixed-adapter-v3`. The C3-scoped output schema, privacy contract, and privacy
-scan exclude every future durable-work and executor scenario.
+`fixed-adapter-v3`. Its C3-scoped output schema, privacy contract, and privacy
+scan intentionally exclude the later durable-work, executor, lifecycle, and
+activation scenarios. The exact current F09f evidence root is the activation
+registry identified under [Production activation](#production-activation).
 
 The fixed-adapter input schema resolves the project meta-schema
 `https://mechanical-librarian.github.io/schemas/utf8-byte-length-meta-v1`,

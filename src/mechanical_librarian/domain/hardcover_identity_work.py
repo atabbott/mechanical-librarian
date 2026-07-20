@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -272,7 +273,12 @@ def _positive_int32(value: object) -> bool:
 
 
 def _valid_provider_title(value: object) -> bool:
-    return valid_identity_title(value)
+    return (
+        type(value) is str
+        and valid_identity_title(value)
+        and value.strip() == value
+        and unicodedata.normalize("NFC", value) == value
+    )
 
 
 def _digest(value: object) -> bool:
