@@ -183,20 +183,25 @@ F09a supplies a deterministic fake candidate through the application-owned
 provider port. The closed `synthetic_preview` mode and derived false production
 applicability are part of compatibility identity. No live snapshot/media join,
 configuration, production review, or apply compatibility is claimed; that
-binding is deferred. F09b implements the same port for one generated
-`agree-empty` case through `hardcover-title-proposal-report`. It is disabled by
-omitting `--secret-reference`, adds no `config-v1` field, and fixes the HTTPS
-endpoint and read-only query. Only bounded canonical title evidence and minimal
-provenance are compatibility data. Raw provider traffic, credentials, secret
-paths, upstream identifiers, and caches are not retained artifacts.
+binding is deferred. F09b historically implemented the same port for one
+generated `agree-empty` case through `hardcover-title-proposal-report`. It was
+disabled by omitting `--secret-reference`, added no `config-v1` field, and
+fixed the HTTPS endpoint and read-only query. Its credentialed command is now
+retired; the activated F09f `hardcover-identity-report` surface owns current
+Hardcover operation and its
+[one-shot guidance](../operations/hardcover-identity-report.md#authorized-production-one-shot-procedure).
+Only bounded canonical title evidence and minimal provenance were compatibility
+data. Raw provider traffic, credentials, secret paths, upstream identifiers,
+and caches were not retained artifacts.
 
-Ordinary CI is fake-based and credential-free against the sanitized live key,
-type, count, and resource shape. F09b completion additionally requires the
-exact installed artifact to pass a bounded read-only run against the fixed
-endpoint with a dedicated non-production account and disposable state. Only a
-redacted aggregate result is retained. This proves the narrow F09b request,
-authentication, parser, and canonical title seam described by the
-[F09b Hardcover proof-of-concept contract](hardcover-f09b-contract.md). It does
+Ordinary F09b CI was fake-based and credential-free against the sanitized live
+key, type, count, and resource shape. Its exact installed artifact completed one
+bounded read-only qualification against the fixed endpoint with a dedicated
+non-production account and disposable state; that credentialed qualification
+is historical evidence and must not be repeated through the retired command.
+Only a redacted aggregate result was retained. This proved the narrow F09b
+request, authentication, parser, and canonical title seam described by the
+[F09b Hardcover proof-of-concept contract](hardcover-f09b-contract.md). It did
 not provide F09f's configured production operation, durable provider work,
 freshness/reuse, retry/restart, or ISBN-backed identity, nor F09g's live-target
 binding, and adds no AI, human decision, cover, rich-field, multi-provider, or
@@ -229,7 +234,7 @@ The historical increment-3 compatibility registry is
 It derives from installed C2 and contains exactly the inert, identity-decision,
 and fixed-adapter scenarios. The current F09f compatibility evidence root is
 `hardcover-f09f-activation-registry-v1.json` / SHA-256
-`4893badcf9cb91fedd0aded8a0b852bb48868443772be6fd57fb89c843806bc7`.
+`9bbd44bf5ac6ba1950cedbf491dd3f9ad9b4b14664dd0ca8d5323fd2edc8c21f`.
 It binds the merged C6 registry, all six retained contributor scenarios, and
 the activated production contracts; the historical C3 scope remains unchanged.
 

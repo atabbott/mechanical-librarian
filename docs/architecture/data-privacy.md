@@ -91,6 +91,17 @@ and audit. The production HTTP boundary also suppresses dependency transport
 records, so selected addresses, URLs, headers, bodies, and failures cannot
 escape through `httpx` or `httpcore` logging.
 
+Activated F09f additionally permits two narrowly closed private schema-11
+records. The matched observation has a content-integrity SHA-256 derived only
+from its fixed domain, opaque work key, generation, and canonical validated
+observation; local title, raw ISBN, and serialized query are excluded. A
+crash-recovery record temporarily retains only database device, inode, binding
+marker, and original SQLite application ID. It is removed after normal binding
+or completed recovery. Neither record permits a path, credential, user value,
+or provider data outside the closed matched observation, and neither may enter
+runtime output, logs, audit, traces, metrics, exports, reports, or review
+evidence.
+
 F09f/F09g provider observations and report results use documented provider-data
 retention and deletion classes and are included in project-owned export and
 deletion behavior without implying deletion at Hardcover, Audiobookshelf, or

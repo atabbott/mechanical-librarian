@@ -232,12 +232,12 @@ class HardcoverIdentityLifecycleCliTests(unittest.TestCase):
         payload = registry_path.read_bytes()
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "398479df75c97d92b2e5a329397ab2df4c0efc098a6343a702d8c7dc92687e2c",
+            "bf4d38fe8165c9ee4284758cc17ae4ee811336775569f7bd7f1e5cae58607afa",
         )
         registry = json.loads(payload)
         self.assertEqual(
             registry["predecessor_registry_sha256"],
-            "1ca4ff13721a040bae2794032db84beaebd7e80288d8fb02d645bae046bc525d",
+            "5d2d10ac20276834f148aee72282ee87b5f972fea0fb1dedbde2bc8e46e3b735",
         )
         self.assertEqual(
             [scenario["scenario"] for scenario in registry["scenarios"]][-2:],

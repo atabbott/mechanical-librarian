@@ -237,6 +237,13 @@ private matched observation so restart reuse can reconstruct the identity and
 recompute title comparison. The provider title is never a runtime output, log,
 audit, trace, metric, export, support report, or review-evidence value; the IDs
 are permitted only in that private observation and the direct matched report.
+The observation's private integrity digest binds a fixed domain, opaque work
+key, generation, and exact canonical observation; it excludes local title, raw
+ISBN, and serialized query. Database binding may transiently commit one closed
+crash-recovery row containing only device, inode, binding marker, and original
+SQLite application ID. Recovery validates and deletes that row before provider
+or work authority; normal binding leaves no row. Paths, provider/user data, and
+credentials are forbidden from it.
 Schema 11 expires legacy current pointers that cannot supply those fields.
 
 F10a consumes only an already-persisted current F09a lineage selected by the

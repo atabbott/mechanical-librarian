@@ -3,9 +3,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
+import shutil
 import sqlite3
+import subprocess
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -50,6 +54,66 @@ OPERATOR_GUIDE = ROOT / "docs/operations/hardcover-identity-report.md"
 
 
 class HardcoverActivationTests(unittest.TestCase):
+    def _one_shot_provenance_script(self) -> str:
+        documentation = OPERATOR_GUIDE.read_text(encoding="utf-8")
+        procedure = documentation.split(
+            "### Authorized production one-shot procedure", 1
+        )[1].split("## Private query contract", 1)[0]
+        return procedure.split("```sh\n", 1)[1].split("\n```", 1)[0]
+
+    def _one_shot_test_repository(self, root: Path) -> Path:
+        repository = root / "repository"
+        source = repository / "src" / "mechanical_librarian"
+        shutil.copytree(ROOT / "src" / "mechanical_librarian", source)
+        subprocess.run(["git", "init", "-q"], cwd=repository, check=True)
+        subprocess.run(["git", "add", "src"], cwd=repository, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Documentation Test",
+                "-c",
+                "user.email=documentation-test@example.invalid",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            cwd=repository,
+            check=True,
+        )
+        return repository
+
+    def _one_shot_test_wheel(self, repository: Path, wheel: Path) -> None:
+        with zipfile.ZipFile(wheel, "w") as archive:
+            source = repository / "src" / "mechanical_librarian"
+            for path in sorted(source.rglob("*")):
+                if path.is_file():
+                    archive.write(path, path.relative_to(repository / "src"))
+
+    def _run_one_shot_provenance_script(
+        self, repository: Path, wheel: Path, sentinel: Path
+    ) -> subprocess.CompletedProcess[str]:
+        script = self._one_shot_provenance_script().replace(
+            'uv build --out-dir "$wheel_output"',
+            'cp "$TEST_WHEEL" '
+            '"$wheel_output/mechanical_librarian-0.0.0-py3-none-any.whl"',
+        ).replace(
+            'python3 -m pip install --force-reinstall --no-deps "$wheel_path"',
+            'printf "installed\\n" >"$INSTALL_SENTINEL"',
+        )
+        environment = os.environ.copy()
+        environment.update(
+            {"TEST_WHEEL": str(wheel), "INSTALL_SENTINEL": str(sentinel)}
+        )
+        return subprocess.run(
+            ["/bin/sh", "-c", script],
+            cwd=repository,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
     def _enabled_config(self, root: Path) -> Path:
         source = json.loads(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
         source["hardcover_provider"] = {
@@ -111,6 +175,32 @@ class HardcoverActivationTests(unittest.TestCase):
         self.assertIn("--config /etc/mechanical-librarian/config.json", procedure)
         self.assertNotIn("config.yml", procedure)
 
+    def test_one_shot_provenance_procedure_succeeds_and_short_circuits(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = self._one_shot_test_repository(root)
+            valid_wheel = root / "valid.whl"
+            self._one_shot_test_wheel(repository, valid_wheel)
+            installed = root / "installed"
+
+            success = self._run_one_shot_provenance_script(
+                repository, valid_wheel, installed
+            )
+            self.assertEqual(success.returncode, 0, success.stderr)
+            self.assertEqual(installed.read_text(encoding="utf-8"), "installed\n")
+
+            installed.unlink()
+            invalid_wheel = root / "invalid.whl"
+            with zipfile.ZipFile(invalid_wheel, "w") as archive:
+                archive.writestr("mechanical_librarian/__init__.py", b"")
+            failure = self._run_one_shot_provenance_script(
+                repository, invalid_wheel, installed
+            )
+            self.assertNotEqual(failure.returncode, 0)
+            self.assertFalse(installed.exists())
+
     def test_activation_registry_binds_c6_privacy_and_authority_contracts(
         self,
     ) -> None:
@@ -118,7 +208,7 @@ class HardcoverActivationTests(unittest.TestCase):
         self.assertEqual(len(payload), 2_120)
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "4893badcf9cb91fedd0aded8a0b852bb48868443772be6fd57fb89c843806bc7",
+            "9bbd44bf5ac6ba1950cedbf491dd3f9ad9b4b14664dd0ca8d5323fd2edc8c21f",
         )
         registry = json.loads(payload)
         self.assertEqual(registry["closes"], [239, 242])
@@ -169,6 +259,21 @@ class HardcoverActivationTests(unittest.TestCase):
         self.assertNotIn(
             "provider_title", privacy["allowed_runtime"]["matched"]
         )
+        private = privacy["allowed_private_persistence"]
+        self.assertEqual(
+            private["observation_integrity_digest"]["inputs"],
+            ["domain", "work_key", "generation", "canonical_matched_observation"],
+        )
+        self.assertEqual(
+            private["observation_integrity_digest"]["excludes"],
+            ["local_title", "raw_isbn", "serialized_private_query"],
+        )
+        self.assertEqual(
+            private["binding_recovery_record"]["fields"],
+            ["device", "inode", "marker", "original_application_id"],
+        )
+        for forbidden in ("path", "credential", "user_value"):
+            self.assertIn(forbidden, privacy["forbidden_persistence"])
 
     def test_enabled_invalid_query_returns_before_state_secret_dns_or_network(
         self,

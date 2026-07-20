@@ -37,19 +37,19 @@ that its packaged product files are byte-identical to the exact HEAD tree before
 installing it or creating any provider authority:
 
 ```sh
+set -eu
 qualification_head="$(git rev-parse HEAD)"
 qualification_tree="$(git rev-parse "${qualification_head}^{tree}")"
-test -z "$(git status --porcelain=v1 --untracked-files=no)"
+test -z "$(git status --porcelain=v1 --untracked-files=all)"
 umask 077
 wheel_output="$(mktemp -d)"
 test -z "$(find "$wheel_output" -mindepth 1 -maxdepth 1 -print -quit)"
 uv build --out-dir "$wheel_output"
-wheel_count="$(find "$wheel_output" -maxdepth 1 -type f \
-  -name 'mechanical_librarian-*.whl' | wc -l | tr -d ' ')"
-test "$wheel_count" -eq 1
-wheel_path="$(find "$wheel_output" -maxdepth 1 -type f \
-  -name 'mechanical_librarian-*.whl' -print)"
-python - "$qualification_head" "$wheel_path" <<'PY'
+set -- "$wheel_output"/mechanical_librarian-*.whl
+test "$#" -eq 1
+test -f "$1"
+wheel_path="$1"
+python3 - "$qualification_head" "$wheel_path" <<'PY'
 import subprocess
 import sys
 import zipfile
@@ -73,8 +73,22 @@ with zipfile.ZipFile(wheel_path) as wheel:
     }
 assert packaged == expected
 PY
-wheel_sha256="$(shasum -a 256 "$wheel_path" | awk '{print $1}')"
-python -m pip install --force-reinstall --no-deps "$wheel_path"
+wheel_identity="$(shasum -a 256 "$wheel_path")"
+wheel_sha256="${wheel_identity%% *}"
+test "${#wheel_sha256}" -eq 64
+
+# Final fail-fast provenance boundary immediately before installation.
+test "$(git rev-parse HEAD)" = "$qualification_head"
+test "$(git rev-parse HEAD^{tree})" = "$qualification_tree"
+test -z "$(git status --porcelain=v1 --untracked-files=all)"
+set -- "$wheel_output"/mechanical_librarian-*.whl
+test "$#" -eq 1
+test "$1" = "$wheel_path"
+test -f "$1"
+current_wheel_identity="$(shasum -a 256 "$wheel_path")"
+current_wheel_sha256="${current_wheel_identity%% *}"
+test "$current_wheel_sha256" = "$wheel_sha256"
+python3 -m pip install --force-reinstall --no-deps "$wheel_path"
 ```
 
 Retain `qualification_head`, `qualification_tree`, and `wheel_sha256` as the
@@ -144,7 +158,7 @@ private identifiers, count the durable attempted egress, and derive a sanitized
 evidence digest from only the head, wheel digest, count, and result digest:
 
 ```sh
-python - "$result_path" <<'PY'
+python3 - "$result_path" <<'PY'
 import json, pathlib, sys
 report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert set(report) == {"schema", "outcome", "edition_id", "book_id", "comparison"}
@@ -154,7 +168,7 @@ assert type(report["edition_id"]) is int and 1 <= report["edition_id"] <= 2_147_
 assert type(report["book_id"]) is int and 1 <= report["book_id"] <= 2_147_483_647
 assert report["comparison"] in {"equal", "different"}
 PY
-attempted_egress="$(python - "$database_path" <<'PY'
+attempted_egress="$(python3 - "$database_path" <<'PY'
 import sqlite3, sys
 connection = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
 rows = connection.execute(
@@ -185,6 +199,16 @@ delete or edit individual state rows while a process is running.
 The accepted configuration and redacted export are documented in the
 [configuration contract](../reference/configuration.md). Configuration changes
 require restart plus candidate and review re-evaluation.
+
+Schema 11 privately retains only the closed matched observation, its
+content-integrity digest, and the opaque work key needed for currentness. The
+digest binds its fixed domain, work key, generation, and canonical observation;
+it excludes local title, raw ISBN, and serialized query. The descriptor gate
+may briefly commit one crash-recovery row containing only device, inode,
+binding marker, and original SQLite application ID. Recovery deletes it before
+work or provider authority, and normal binding leaves no row. Neither record
+permits paths, credentials, user values, or provider data outside the closed
+matched observation, and neither is runtime or retained review evidence.
 
 ## Private query contract
 
@@ -267,7 +291,7 @@ The historical increment-2 registry is `preview-registry-c2-v6.json`, SHA-256
 It contains only the C1 inert and C2 identity scenarios and binds the C2-scoped
 output schema, privacy contract, and privacy scan. The current F09f evidence
 root is `hardcover-f09f-activation-registry-v1.json`, SHA-256
-`4893badcf9cb91fedd0aded8a0b852bb48868443772be6fd57fb89c843806bc7`;
+`9bbd44bf5ac6ba1950cedbf491dd3f9ad9b4b14664dd0ca8d5323fd2edc8c21f`;
 it binds the merged C6 registry, all six retained contributor scenarios, and
 the activated production contracts. See the
 [F09f identity contract](../reference/hardcover-f09f-contract.md) for exact
@@ -393,7 +417,7 @@ uv run --frozen --no-editable --reinstall-package mechanical-librarian \
 Stdout must be byte-identical to
 `tests/fixtures/hardcover_identity/c5-safe-executor-example-output.json`.
 The cumulative C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`1ca4ff13721a040bae2794032db84beaebd7e80288d8fb02d645bae046bc525d`.
+`5d2d10ac20276834f148aee72282ee87b5f972fea0fb1dedbde2bc8e46e3b735`.
 It derives from the merged C4 registry and adds only `safe-executor-v3`.
 
 ### Lifecycle orchestration preview
@@ -426,7 +450,7 @@ request described above.
 
 Stdout must match `c6-lifecycle-orchestration-example-output.json`. The
 cumulative registry is `preview-registry-c6-v1.json`, SHA-256
-`398479df75c97d92b2e5a329397ab2df4c0efc098a6343a702d8c7dc92687e2c`.
+`bf4d38fe8165c9ee4284758cc17ae4ee811336775569f7bd7f1e5cae58607afa`.
 
 The gate is deployment-scoped, not credential-scoped. Operators must not reuse
 one Hardcover credential across independently configured deployments. The

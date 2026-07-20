@@ -1,21 +1,21 @@
 {
   "available_through_increment": "Orchestrate durable Hardcover identity retries, cancellation, and restart",
   "output_privacy_contract": {
-    "bytes": 4948,
+    "bytes": 5167,
     "path": "preview-output-privacy-contract-c6-v1.json",
-    "sha256": "06957b86d1f0febbd211b26ecf92f1f33d1e3357386137e4176b1285f9d768f0"
+    "sha256": "4e0bc9e75134319c034975db9fffb60098d8ce57974e859d402159c12d7a3c8c"
   },
   "output_privacy_scan": {
-    "bytes": 2407,
+    "bytes": 2631,
     "path": "preview-output-privacy-scan-c6-v1.json",
-    "sha256": "42b13990ad4102778bc711adea92750a80292c0da6f3dcce80281e005aba170d"
+    "sha256": "e5a71bdf048c6bdd23b3e7ed02fe0b953d68bd01b4e6e07db458c88a6a79b7af"
   },
   "output_schema": {
     "bytes": 5093,
     "path": "preview-output-schema-c6-v1.json",
     "sha256": "33ca530b75336de072946ad57ccc79840b725ff8eca988b13cb9fc66b5a9dd18"
   },
-  "predecessor_registry_sha256": "1ca4ff13721a040bae2794032db84beaebd7e80288d8fb02d645bae046bc525d",
+  "predecessor_registry_sha256": "5d2d10ac20276834f148aee72282ee87b5f972fea0fb1dedbde2bc8e46e3b735",
   "runtime_contract": {
     "anti_noop": "compare allowlisted derived typed fields across golden, alternate-valid, single-field mutation, title-only metamorphic, boundary, invalid-extra, and differing-output cases without computing or exporting an input digest; require zero production composition/egress",
     "authority": "no secret lookup, DNS, socket, real provider, production database, target join, proposal, review, or write authority",
@@ -27,9 +27,9 @@
     "expected_output_rule": "canonical example outputs are qualification oracles only and must never be loaded by runtime before emission",
     "input_limit_bytes": 65536,
     "input_source": "contributor-supplied stdin only; --input - is mandatory",
-    "privacy_qualification": "capture all v2 channels with hashing, exception, trace/span, metrics, persistence, export, reporting, and audit spies; injected raw/projected/digested forbidden forms must fail",
-    "resource_identity_boundary": "immutable public schema/build resource lengths and digests exist only in contributor-independent registry, build, review, and qualification evidence; runtime stdout, stderr, exceptions, logs, trace/span data, metric names/labels/values/exemplars, exports, reports, persistence, and audit records never contain them",
-    "runtime_output_privacy": "v2 channel-complete capture: only scenario-allowlisted typed redacted fields; no raw/projected/encoded/hashed/digested/fingerprinted title, private-query, ISBN, provider/resource identity, stable correlation, or substitute in stdout/stderr/exceptions/logs/traces/metrics/persistence/exports/reports/audit",
+    "privacy_qualification": "channel-complete capture plus executable closed-exception proof observes digest inputs/content binding and the committed recovery row/cleanup; undeclared raw, projected, or digested forms fail",
+    "resource_identity_boundary": "public resource digests remain qualification-only; private persistence permits only the declared work key, matched-observation integrity digest, and temporary device/inode binding-recovery row, never runtime or retained evidence",
+    "runtime_output_privacy": "channel-complete capture permits only scenario-allowlisted public fields; matched observation, integrity digest, work key, and recovery row are closed private persistence only; all other projections are forbidden",
     "schema8": "c4 runtime regenerates schema 8 through exact migration prefix 1..8 and verifies contributor-independent public registry bindings; contributor stdin contains no schema/build digest and runtime channels emit none"
   },
   "scenarios": [

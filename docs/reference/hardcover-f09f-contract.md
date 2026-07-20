@@ -271,6 +271,16 @@ Immutable candidate, claim, retry, event, result, and observation
 records plus finalize-once attempts preserve restart evidence. Mutable
 generation and current-pointer rows are constrained to the closed state model.
 
+The private observation digest is SHA-256 over exactly the fixed
+`hardcover-matched-observation:v3` domain separator, opaque work key,
+generation, and canonical matched observation. It is an integrity binding, not
+a runtime input digest, and excludes local title, raw ISBN, and the serialized
+private query. The descriptor gate's only other private persistence exception
+is a crash-recovery row containing the database device, inode, binding marker,
+and original SQLite application ID. That closed row contains no path,
+provider/user data, query, or credential and is validated and deleted before
+work or provider authority; a normal binding completes with no recovery row.
+
 Migration 9 is additive and forward-only from the genuine schema-8 prefix.
 The `durable-work-v3` preview reconstructs migrations 1–8 plus the synthetic
 sentinel, compares the canonical logical snapshot digest, verifies the checksum
@@ -306,7 +316,7 @@ does not wait, loop, recover, cancel, install signal handlers, or start a later
 candidate; those lifecycle responsibilities remain separately tracked.
 
 The exact C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`1ca4ff13721a040bae2794032db84beaebd7e80288d8fb02d645bae046bc525d`.
+`5d2d10ac20276834f148aee72282ee87b5f972fea0fb1dedbde2bc8e46e3b735`.
 It derives from the exact C4 registry and binds a separate cumulative C5 output
 schema, privacy contract, privacy scan, and strict semantic fixture set without
 modifying predecessor evidence. Contributor labels and process names are
@@ -352,6 +362,9 @@ the comparison against the new transient local title without another provider
 request. Every non-matched report contains only `schema` and `outcome`.
 Provider title is private durable comparison input only; it is never emitted,
 logged, audited, traced, metered, exported, or retained in review evidence.
+The content-bound observation digest and gate recovery row remain private under
+the exact closed derivation and lifetime above; neither expands a runtime,
+evidence, or export surface.
 
 The public outcomes are exactly `matched`, `disabled`, `invalid_input`,
 `in_progress`, `credential_unavailable`, `authentication`, `authorization`,
@@ -362,7 +375,7 @@ and never become terminal public reports.
 
 The exact activation registry is
 [`hardcover-f09f-activation-registry-v1.json`](hardcover-f09f-activation-registry-v1.json),
-SHA-256 `4893badcf9cb91fedd0aded8a0b852bb48868443772be6fd57fb89c843806bc7`.
+SHA-256 `9bbd44bf5ac6ba1950cedbf491dd3f9ad9b4b14664dd0ca8d5323fd2edc8c21f`.
 It derives from and binds the merged C6 registry, all six retained contributor
 scenarios, the unchanged cumulative output schema and privacy contract/scan,
 the work-key contract, the exact one-shot authority contract, and production
@@ -371,5 +384,5 @@ output schema v6
 SHA-256 `f9ac215d22e2f9e67f9d8d028fde5ba9738933ec74f3a80fc71242c42b97de98`,
 and production privacy contract
 [`hardcover-identity-report-output-privacy-v1.json`](hardcover-identity-report-output-privacy-v1.json),
-SHA-256 `fc3b9f0d75eb3bebc3cfc7a656076f99fd9cbf076627c7328882b56fc8ee4fcb`.
+SHA-256 `1038172cf3902e562c14502192559b74445455ae789ffff121152c3358a9333c`.
 Synthetic runtime remains credential-free after activation.
