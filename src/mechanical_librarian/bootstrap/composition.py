@@ -67,6 +67,7 @@ from mechanical_librarian.adapters.providers.synthetic_hardcover_identity import
     SyntheticBookIdentityProvider,
 )
 from mechanical_librarian.adapters.providers.hardcover_identity import (
+    LiveHardcoverIdentityProvider,
     StructuralHardcoverIdentityPreview,
 )
 from mechanical_librarian.adapters.providers.hardcover_title import (
@@ -82,6 +83,7 @@ from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.hardcover_identity import (
     DurableWorkPreviewReport,
     FixedAdapterPreviewReport,
+    HardcoverIdentityOutcome,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
     IdentityLifecyclePreviewReport,
@@ -94,7 +96,6 @@ from mechanical_librarian.application.hardcover_identity import (
     RunHardcoverIdentityReport,
     SafeExecutorPreviewReport,
     inert_preview,
-    preactivation_report,
 )
 from mechanical_librarian.application.hardcover_identity_orchestration import (
     RunHardcoverIdentityLifecycle,
@@ -102,6 +103,7 @@ from mechanical_librarian.application.hardcover_identity_orchestration import (
 from mechanical_librarian.application.hardcover_safe_executor import (
     HardcoverIdentityExecutionRequest,
     RunSafeHardcoverIdentity,
+    hardcover_identity_work_key,
 )
 from mechanical_librarian.application.job_heartbeat import (
     HeartbeatOutcome,
@@ -194,6 +196,7 @@ from mechanical_librarian.domain.inventory import (
 from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanState, ScanUsage
 from mechanical_librarian.domain.inventory_polling import PollPolicy, PollRequest
 from mechanical_librarian.domain.hardcover_identity import (
+    PrivateQueryError,
     ProviderBookObservation,
     ProviderIdentityObservation,
     isbn_identity,
@@ -226,6 +229,9 @@ from mechanical_librarian.infrastructure.security.target_secrets import (
 from mechanical_librarian.infrastructure.security.provider_secrets import (
     PrivateFileProviderCredentials,
     ProviderSecretUnavailable,
+)
+from mechanical_librarian.infrastructure.security.private_query import (
+    read_private_query,
 )
 from mechanical_librarian.infrastructure.persistence.sqlite import (
     MIGRATIONS,
@@ -1540,9 +1546,99 @@ def _run_synthetic_title_review_case_report(
             connection.close()
 
 
-def _run_hardcover_identity_report(configuration_path: Path) -> HardcoverIdentityReport:
+def _run_hardcover_identity_report(
+    configuration_path: Path,
+    database: Path,
+    query_path: Path,
+    qualification_one_shot: bool,
+) -> HardcoverIdentityReport:
+    """Run the installed F09f boundary with authority acquired in safe order."""
+
     configuration = load_configuration_file(configuration_path)
-    return preactivation_report(configuration.hardcover_provider)
+    provider_configuration = configuration.hardcover_provider
+    if not provider_configuration.enabled:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.DISABLED)
+    try:
+        query = read_private_query(query_path)
+    except PrivateQueryError:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
+    if qualification_one_shot and not _qualification_state_is_disposable(database):
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
+    state = _run_state_check(database)
+    if not state.succeeded:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+
+    reference = provider_configuration.secret_reference
+    if reference is None:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.CREDENTIAL_UNAVAILABLE)
+    handle = SecretHandle(
+        SecretReference(reference),
+        SecretScope.METADATA_PROVIDER,
+    )
+    provider = LiveHardcoverIdentityProvider(
+        lambda: PrivateFileProviderCredentials().hardcover_identity_token(handle)
+    )
+    connection = None
+    cancellation = threading.Event()
+    try:
+        connection = connect_existing(database)
+        migrate(connection)
+        work = ManageHardcoverIdentityWork(
+            SQLiteHardcoverIdentityWorkRepository(connection)
+        )
+        gate = DescriptorHardcoverIdentityGate(database)
+        lifecycle = RunHardcoverIdentityLifecycle(
+            work,
+            RunSafeHardcoverIdentity(work, provider, gate),
+            gate,
+            cancellation,
+        )
+        now = lambda: datetime.now(timezone.utc)
+        context = OperationContext(
+            Deadline(now() + timedelta(seconds=30)),
+            CancellationProbe(
+                CancellationId("hardcover-identity-report"),
+                cancellation.is_set,
+            ),
+            ResourceBounds(4, 65_536),
+            TimeProbe(now),
+        )
+        request = HardcoverIdentityExecutionRequest(
+            hardcover_identity_work_key(
+                query, provider_configuration.authority_revision
+            ),
+            _C5_INTERNAL_OWNER,
+            query,
+            1 if qualification_one_shot else 3,
+        )
+        with _temporary_identity_cancellation_signals(cancellation):
+            report = RunHardcoverIdentityReport(lifecycle).run(request, context)
+        if type(report) is not HardcoverIdentityReport:
+            raise TypeError("Hardcover identity report is malformed")
+        return report
+    except Exception:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _qualification_state_is_disposable(database: Path) -> bool:
+    """Require one absent target in an empty owner-only state directory."""
+
+    try:
+        parent = database.parent.resolve(strict=True)
+        status = parent.stat()
+        return bool(
+            database.is_absolute()
+            and not path_entry_exists(database)
+            and stat.S_ISDIR(status.st_mode)
+            and status.st_uid == os.geteuid()
+            and stat.S_IMODE(status.st_mode) == 0o700
+            and not tuple(parent.iterdir())
+        )
+    except (OSError, RuntimeError, SchemaError):
+        return False
 
 
 def _run_hardcover_inert_preview(

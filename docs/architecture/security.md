@@ -160,20 +160,19 @@ the exact installed artifact to parse one bounded real-endpoint result with a
 dedicated non-production account and disposable state; only a redacted
 aggregate result may be retained. This proves no production configuration,
 provider-work persistence, freshness/reuse, restart, identity, or live-target
-behavior. F09f later owns the configured target-independent provider lane;
+behavior. F09f owns the configured target-independent provider lane;
 F09g owns the live join. Nothing in the preview invokes AI,
 records a human decision, handles covers or rich
 fields, fuses multiple providers, or authorizes a production write.
 
-### F09f preactivation identity boundary
+### F09f configured identity boundary
 
-The first F09f increment adds only strict configuration, private-query parsing,
-and an inert report. A missing or disabled `hardcover_provider` block returns
-`disabled`; valid enabled configuration returns `provider_not_activated`.
-Both outcomes occur before query-file, database, credential, provider/client,
-DNS, proxy, socket, or network access. The optional block is the sole future
-enablement source; the legacy `providers` list remains inert and no ambient or
-inline token is accepted.
+The first F09f increment added strict configuration, private-query parsing, and
+an inert report. After activation a missing or disabled `hardcover_provider`
+block still returns `disabled` before query-file, database, credential,
+provider/client, DNS, proxy, socket, or network access. Enabled configuration
+uses only that optional block; the legacy `providers` list remains inert and no
+ambient or inline token is accepted.
 
 The private-query reader uses a canonical parent directory descriptor and a
 no-follow final-component open, verifies effective-user ownership, regular
@@ -203,10 +202,10 @@ re-resolution, and requires the connected peer to equal the selected address.
 Bearer authentication is attached only after exact method, HTTPS origin/path,
 empty query/fragment, Host, SNI, operation, query bytes, variables, canonical
 body, contract identity, selected address, and peer plan are revalidated. Any
-near miss receives neither authorization nor send authority. A future network
-channel must retain dedicated TLS-client, no-redirect, no-environment-proxy,
+near miss receives neither authorization nor send authority. The production network
+channel retains dedicated TLS-client, no-redirect, no-environment-proxy,
 no-cookie, no-ambient-credential, no-compression, no-HTTP/2, and connection-
-close behavior; this increment intentionally provides no network channel.
+close behavior.
 
 HTTP response bytes remain hostile. Status lines are capped at 128 bytes before
 parsing. Non-200 bodies are released without parsing. Every post-exchange path
@@ -532,11 +531,11 @@ currentness expiry and unreserved next-generation creation share one
 transaction and repeated readers retain stale status. Append-only records and
 finalize-once attempts make restart and corruption visible.
 
-The installed preview injects gate ownership structurally and has no provider
+The installed durable-work preview injects gate ownership structurally and has no provider
 secret, query-file, DNS, socket, HTTP, process loop, signal, proposal, review,
 or production-write authority. It persists no ISBN, title, provider payload,
-path, credential, or contributor script. Production remains preactivated and
-returns before opening this repository. Tests trap all egress and secret seams,
+path, credential, or contributor script. Activated production reuses this
+repository before credential or network authority. Tests trap all egress and secret seams,
 compare the reconstructed schema-8 sentinel/logical snapshot, inject migration
 and publication failures, reopen before and after starts, and prove stale
 fences leave state unchanged. Disposable preview publication retains one
@@ -552,7 +551,7 @@ claim/fence, atomic start accounting, one typed provider attempt, and durable
 publication. The provider port owns exactly one attempt and cannot claim,
 retry, wait, recover, or publish. Durable retry state remains available for a
 later orchestrator, but this executor never waits, retries, recovers, installs
-signal handlers, or loops. Production composition remains absent.
+signal handlers, or loops in this synthetic scenario.
 
 The deployment gate canonicalizes the state parent and binds its directory,
 database, and exact `.mechanical-librarian-hardcover-identity.lock` entries to
@@ -604,8 +603,9 @@ cancellation is durable; provider-time cancellation publishes only through the
 current fence after provider return. Main-thread-only temporary SIGINT/SIGTERM
 handlers set a local Event and restore prior handlers in `finally`; they add no
 cross-process cancellation channel and do not translate interpreter control
-flow. C6 remains credential-free and production composition remains
-`provider_not_activated`.
+flow. C6 remains credential-free after activation. Production composition wraps
+the same lifecycle in main-thread cancellation handling and lazily constructs
+credential and network capabilities only after its durable gate-held start.
 
 F07b treats the service path projection, private logical binding, EPUB archive,
 and persisted canonical report as hostile inputs. Callers can supply only

@@ -61,21 +61,23 @@ request or response, provider upstream identifier, or fabricated ordinary
 evidence-reference record. The supported report uses the same bounded local
 projection and never sends it to a provider or reviewer.
 
-F09f preactivation discloses nothing: disabled and not-activated outcomes return
-before private-query access. After activation, only canonical ISBN is later
-disclosed and local title comparison remains transient.
-The activated integration otherwise sends only the minimum allowlisted data
-needed for its bounded Hardcover lookup.
+Disabled F09f discloses nothing and returns before private-query access.
+Enabled activation durably accepts work before disclosing only canonical
+ISBN-13 and, for 978 identities, its exact equivalent ISBN-10. Local title is
+never sent and its comparison remains transient. The integration otherwise
+sends only the fixed GraphQL operation and minimum allowlisted data needed for
+its bounded Hardcover lookup.
 It does not send a target-service identifier, library or connection identity,
 filename, media or database path, excerpt, cover, rich metadata, raw provider
 payload, or unrelated library field. The account credential remains a secret
 reference resolved only when the provider is enabled and is never shared with
 the target service or another consumer.
 
-Durable F09f state contains only the bounded canonical provider title, minimum
-provider-scoped book and compatible ebook-edition identity, query and
-configuration identity, outcome, and provenance needed to explain freshness,
-replay, or invalidation. Raw requests, responses, headers, tokens, secret
+Durable F09f state contains only an opaque contract-bound work key, closed
+workflow/attempt evidence, structural matched outcome and bounded row count,
+and provenance needed to explain freshness, replay, or invalidation. It stores
+no ISBN, title, provider book/edition identifier, or provider payload. Raw
+requests, responses, headers, tokens, secret
 reference values, paths, unrestricted upstream identifiers, traffic captures,
 and provider caches are not retained. F09g retains the minimum bounded local,
 target, and provider projections needed to explain its proposal or exact typed

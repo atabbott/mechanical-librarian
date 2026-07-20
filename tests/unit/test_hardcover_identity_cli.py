@@ -669,7 +669,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         with self.assertRaises(PrivacyEvidenceError):
             assert_c2_channels_private(poisoned, corpus)
 
-    def test_production_disabled_and_enabled_short_circuit_before_private_authority(
+    def test_production_disabled_short_circuits_before_private_authority(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -677,32 +677,20 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             disabled = root / "disabled.json"
             source = json.loads(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
             disabled.write_text(json.dumps(source), encoding="utf-8")
-            enabled = root / "enabled.json"
-            source["hardcover_provider"] = {
-                "enabled": True,
-                "secret_reference": "/must-not-open/hardcover-token",
-                "authority_revision": 1,
-            }
-            enabled.write_text(json.dumps(source), encoding="utf-8")
-
-            for config, outcome in (
-                (disabled, "disabled"),
-                (enabled, "provider_not_activated"),
-            ):
-                with self.subTest(outcome=outcome), _zero_authority():
-                    output = io.StringIO()
-                    errors = io.StringIO()
-                    exit_code = main(
-                        self.production_argv(config),
-                        state_check_runner=Mock(),
-                        hardcover_identity_runner=_run_hardcover_identity_report,
-                        stdout=output,
-                        stderr=errors,
-                    )
-                    self.assertEqual(exit_code, 0)
-                    self.assertEqual(errors.getvalue(), "")
-                    self.assertEqual(json.loads(output.getvalue())["outcome"], outcome)
-                    self.assertNotIn("must-not-open", output.getvalue())
+            with _zero_authority():
+                output = io.StringIO()
+                errors = io.StringIO()
+                exit_code = main(
+                    self.production_argv(disabled),
+                    state_check_runner=Mock(),
+                    hardcover_identity_runner=_run_hardcover_identity_report,
+                    stdout=output,
+                    stderr=errors,
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(errors.getvalue(), "")
+            self.assertEqual(json.loads(output.getvalue())["outcome"], "disabled")
+            self.assertNotIn("must-not-open", output.getvalue())
 
     def test_real_sigint_while_production_config_read_blocks_propagates(self) -> None:
         script = textwrap.dedent(
@@ -715,7 +703,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
 
             from mechanical_librarian.interfaces.cli import main
 
-            def blocking_config_runner(config):
+            def blocking_config_runner(config, database, query_file, one_shot):
                 descriptor = os.open(config, os.O_RDONLY | os.O_NONBLOCK)
                 try:
                     while True:
@@ -1600,7 +1588,9 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         output = io.StringIO()
         errors = io.StringIO()
         runner = Mock(
-            return_value=HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
+            return_value=HardcoverIdentityReport(
+                "provider_not_activated"  # type: ignore[arg-type]
+            )
         )
         exit_code = main(
             self.production_argv(EXAMPLE_CONFIG),
@@ -1629,7 +1619,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         ]
         malformed = [
             InertPreviewReport("disabled"),  # type: ignore[arg-type]
-            InertPreviewReport(HardcoverIdentityOutcome.PROVIDER_NOT_ACTIVATED),
+            InertPreviewReport("provider_not_activated"),  # type: ignore[arg-type]
         ]
         for counter in (
             "private_file_opened",

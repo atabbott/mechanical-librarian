@@ -11,12 +11,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
+
 from mechanical_librarian.adapters.providers import hardcover_identity as adapter
 from mechanical_librarian.adapters.providers.hardcover_identity import (
     AuthorizedIdentityRequest,
     HARDCOVER_IDENTITY_OPERATION,
     HARDCOVER_IDENTITY_QUERY,
     HARDCOVER_IDENTITY_URL,
+    HttpxIdentityByteChannel,
     HardcoverIdentityProvider,
     IdentityChannelFailure,
     RawIdentityResponseHead,
@@ -196,6 +199,57 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                         near_miss, query, b"synthetic-noncredential"
                     )
                 )
+
+    def test_production_channel_uses_selected_ip_fixed_host_sni_and_closed_body(
+        self,
+    ) -> None:
+        captured: list[httpx.Request] = []
+
+        class _NetworkStream:
+            def get_extra_info(self, name: str) -> tuple[str, int] | None:
+                return ("1.1.1.1", 443) if name == "server_addr" else None
+
+        class _Body(httpx.AsyncByteStream):
+            def __init__(self, payload: bytes) -> None:
+                self.payload = payload
+
+            async def __aiter__(self):
+                yield self.payload
+
+        async def respond(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            payload = self.response_body()
+            return httpx.Response(
+                200,
+                headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Content-Encoding": "identity",
+                    "Content-Length": str(len(payload)),
+                },
+                stream=_Body(payload),
+                extensions={"network_stream": _NetworkStream()},
+            )
+
+        channel = HttpxIdentityByteChannel(
+            transport=httpx.MockTransport(respond)
+        )
+        result = HardcoverIdentityProvider(
+            lambda host, port: ("1.1.1.1",),
+            channel,
+            b"synthetic-noncredential",
+        ).lookup(self.query(), self.context())
+
+        self.assertIsNone(result.failure)
+        self.assertEqual(len(result.observations or ()), 1)
+        self.assertEqual(len(captured), 1)
+        request = captured[0]
+        self.assertEqual(str(request.url), "https://1.1.1.1/v1/graphql")
+        self.assertEqual(request.headers["host"], "api.hardcover.app")
+        self.assertEqual(
+            request.headers["authorization"], "Bearer synthetic-noncredential"
+        )
+        self.assertEqual(request.headers["accept-encoding"], "identity")
+        self.assertEqual(request.extensions["sni_hostname"], "api.hardcover.app")
 
     def test_address_policy_rejects_nonpublic_before_channel_open(self) -> None:
         self.assertTrue(address_is_public("1.1.1.1"))

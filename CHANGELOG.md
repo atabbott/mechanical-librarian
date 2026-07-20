@@ -7,6 +7,15 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Activated the disabled-by-default F09f configured Hardcover identity report.
+  Enabled operation now validates one owner-only ISBN/title query, persists
+  schema-10 work before lazily reading its provider token or starting DNS/HTTPS,
+  executes the fixed selected-public-IP Hardcover operation under the stable
+  deployment gate, and emits only a closed redacted outcome. Added exact
+  one-request qualification authority for disposable zero-start state and
+  retired the credentialed F09b title-preview path. The operation remains
+  target-independent, proposal-free, report-only, and write-free.
+
 - Added the report-only F09f durable Hardcover identity-work increment. Schema
   9 adds bounded immutable generations, candidates, claims, attempts, retry
   schedules, events, results, observations, and exact currentness with atomic
@@ -17,13 +26,13 @@ versioning after the first public release.
   idempotence, publication rollback, restart, recovery, and expiry using an
   absolute absent database beneath an empty owner-only disposable directory.
   It reconstructs and compares the schema-8 sentinel/logical snapshot before
-  migration and adds no live provider, credential, network,
-  proposal, review, or write authority; production remains preactivated.
+  migration and added no live provider, credential, network,
+  proposal, review, or write authority at that historical increment.
 
 - Added the first inert F09f increment: additive disabled-by-default
   `hardcover_provider` configuration, a strict owner-only private ISBN/title
   query reader, and the installed `hardcover-identity-report`. Production
-  returns `disabled` or `provider_not_activated` before private input,
+  returned `disabled` or `provider_not_activated` before private input,
   database, credential, client, DNS, or network access. The retained
   contributor-driven `inert-report-v3` preview exercises the real validation
   seams while emitting only the schema-v5 privacy allowlist and no input
@@ -33,10 +42,9 @@ versioning after the first public release.
   preview to the installed `hardcover-identity-report`. It evaluates one
   bounded, structurally supplied ISBN/title observation set through the
   provider-neutral decision seam and emits only the redacted schema-v5 result.
-  This is synthetic-preview behavior only: production remains report-only and
-  returns `provider_not_activated` before provider credentials, clients, DNS,
-  network access, proposals, or writes; no production provider lookup is
-  activated by this increment.
+  This remains a credential-free synthetic-preview behavior after production
+  activation and grants no provider credentials, network, proposal, or write
+  authority.
 
 - Adopted bounded `Deliver slice` transactions for new functionality. A slice
   may now merge through sequential, independently safe vertical increments;

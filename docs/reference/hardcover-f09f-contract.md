@@ -1,10 +1,9 @@
 # Hardcover F09f Identity Contract
 
 This reference defines the provider-neutral identity decision, the fixed,
-bounded Hardcover ISBN adapter, and durable work repository installed through
-F09f increment 4. The adapter
-is proved only through a credential-free structural byte channel and is not
-composed into production.
+bounded Hardcover ISBN adapter, schema-10 durable lifecycle, and installed
+production command boundary. The command is disabled by default and remains
+target-independent, report-only, proposal-free, and write-free.
 
 ## Application port
 
@@ -25,8 +24,8 @@ redact private values from `repr` and diagnostics.
 production-capable adapter implements the same port and contains no identity
 decision logic. `fixed-adapter-v3` injects a post-policy in-memory byte channel
 into that real adapter. The channel cannot resolve, connect, open a socket, or
-read a credential. Production composition remains absent, so valid enabled
-configuration continues to return `provider_not_activated`.
+read a credential. Enabled production composes the same fixed adapter through a
+dedicated selected-IP HTTPS channel only after durable start authority.
 
 ## Fixed operation and authentication
 
@@ -54,7 +53,7 @@ after revalidating the complete method, destination, query bytes, operation,
 variables, canonical body, contract identity, selected public address, Host,
 SNI, and peer plan. A near miss receives no authorization and no send.
 
-The future network channel must use one dedicated TLS client with environment
+The production network channel uses one dedicated TLS client with environment
 trust, redirects, cookies, ambient credentials, HTTP/2, compression, and
 keep-alive disabled. Increment 3 intentionally supplies no such channel.
 
@@ -256,9 +255,9 @@ sentinel, compares the canonical logical snapshot digest, verifies the checksum
 ledger and database integrity, injects a migration-statement rollback,
 applies migration 9 twice, and runs publication rollback, restart, recovery,
 stale-fence, retry, and currentness proofs on an initially absent disposable
-database beneath an empty owner-only disposable directory. Production still
-returns `provider_not_activated` before this
-repository, a private query, credential, adapter, or network is opened.
+database beneath an empty owner-only disposable directory. At that historical
+increment production returned `provider_not_activated` before this repository,
+a private query, credential, adapter, or network was opened.
 The preview opens the directory once with no-follow directory semantics,
 captures device, inode, owner, and mode, and retains that descriptor through
 descriptor-relative serialized staging and no-replace publication without
@@ -300,3 +299,30 @@ exactly. It scans nonempty main, WAL, and SHM while present and main after close
 For arbitrary SQLite binary/text/hex, only eight-hex 32-bit digest prefixes are
 excluded as collision-prone substring evidence; exact/raw values, full
 encodings, full collision-resistant digests, and causal poison remain forbidden.
+
+## Installed activation
+
+Enabled production validates the private query before opening state. It derives
+the opaque work key from the exact public
+[`hardcover-isbn-work-key-v1`](hardcover-work-key-contract-v1.json) fields,
+including canonical ISBN-13 and authority revision but excluding title, paths,
+credential, traffic, and the qualification flag. It then initializes or opens
+schema-10 state, accepts durable work, and acquires the descriptor-bound gate.
+Only the gate-held atomic start permits lazy credential read, isolated bounded
+resolution, and one selected-public-IP HTTPS request with the Hardcover Host and
+TLS SNI preserved.
+
+The public outcomes are exactly `matched`, `disabled`, `invalid_input`,
+`in_progress`, `credential_unavailable`, `authentication`, `authorization`,
+`cancelled`, `malformed`, `oversized`, `empty`, `no_match`, `ambiguous`,
+`incompatible`, `stale`, `persistence_failure`, and `retry_exhausted`.
+`provider_not_activated` is unreachable. Internal retry causes remain durable
+and never become terminal public reports.
+
+The exact activation registry is
+[`hardcover-f09f-activation-registry-v1.json`](hardcover-f09f-activation-registry-v1.json),
+SHA-256 `c5d0f8eeaa0af820f4a94dd59aa81ad870644fb58f8b29e0c32562bad4bc604f`.
+It derives from and binds the merged C6 registry, all six retained contributor
+scenarios, the unchanged cumulative output schema and privacy contract/scan,
+the work-key contract, and the exact one-shot authority contract. Synthetic
+runtime remains credential-free after activation.

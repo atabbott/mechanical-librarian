@@ -43,8 +43,8 @@ MAX_IDENTITY_OBSERVATIONS = 4
 
 class HardcoverIdentityOutcome(StrEnum):
     DISABLED = "disabled"
-    PROVIDER_NOT_ACTIVATED = "provider_not_activated"
     INVALID_INPUT = "invalid_input"
+    CREDENTIAL_UNAVAILABLE = "credential_unavailable"
     MATCHED = "matched"
     AUTHENTICATION = "authentication"
     AUTHORIZATION = "authorization"
@@ -54,6 +54,7 @@ class HardcoverIdentityOutcome(StrEnum):
     NO_MATCH = "no_match"
     AMBIGUOUS = "ambiguous"
     INCOMPATIBLE = "incompatible"
+    STALE = "stale"
     CANCELLED = "cancelled"
     IN_PROGRESS = "in_progress"
     PERSISTENCE_FAILURE = "persistence_failure"
@@ -61,6 +62,7 @@ class HardcoverIdentityOutcome(StrEnum):
 
 
 class IdentityAttemptFailureKind(StrEnum):
+    CREDENTIAL_UNAVAILABLE = "credential_unavailable"
     AUTHENTICATION = "authentication"
     AUTHORIZATION = "authorization"
     UNAVAILABLE = "unavailable"
@@ -899,20 +901,6 @@ def _notify_observer(
     return None
 
 
-def preactivation_report(
-    configuration: HardcoverProviderConfiguration,
-) -> HardcoverIdentityReport:
-    """Return before private query, database, credential, or network authority."""
-
-    if type(configuration) is not HardcoverProviderConfiguration:
-        raise TypeError("Hardcover provider configuration is malformed")
-    return HardcoverIdentityReport(
-        HardcoverIdentityOutcome.PROVIDER_NOT_ACTIVATED
-        if configuration.enabled
-        else HardcoverIdentityOutcome.DISABLED
-    )
-
-
 def inert_preview(
     configuration: HardcoverProviderConfiguration,
     query: PrivateIdentityQuery,
@@ -1377,6 +1365,5 @@ __all__ = [
     "StaleIdentityWorkFence",
     "fixed_adapter_preview_report",
     "inert_preview",
-    "preactivation_report",
     "render_report_text",
 ]

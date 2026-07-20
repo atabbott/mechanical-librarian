@@ -428,7 +428,9 @@ class HardcoverTitleProposalIntegrationTests(unittest.TestCase):
                 )
             self.assertFalse(database.exists())
 
-    def test_supported_command_uses_production_composition_fake_seam_and_replays(self) -> None:
+    def test_credentialed_command_is_retired_and_noncredentialed_preview_remains(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             database = root / "state.sqlite"
@@ -466,26 +468,25 @@ class HardcoverTitleProposalIntegrationTests(unittest.TestCase):
 
             first = invoke(database, secret)
             replay = invoke(database, secret)
-            self.assertEqual(first[0], 0)
-            self.assertEqual(replay[0], 0)
-            self.assertEqual(first[2], "")
-            self.assertEqual(replay[2], "")
-            self.assertEqual(json.loads(first[1])["result"], "needs_review")
-            self.assertFalse(json.loads(first[1])["persistence"]["replayed"])
-            self.assertTrue(json.loads(replay[1])["persistence"]["replayed"])
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(first[0], 2)
+            self.assertEqual(replay[0], 2)
+            self.assertEqual(first[1], "")
+            self.assertEqual(replay[1], "")
+            self.assertIn("hardcover-identity-report", first[2])
+            self.assertIn("hardcover-identity-report", replay[2])
+            self.assertEqual(len(calls), 0)
 
             disabled = invoke(root / "disabled.sqlite", None)
             self.assertEqual(disabled[0], 0)
             self.assertEqual(json.loads(disabled[1])["result"], "provider_disabled")
             self.assertEqual(disabled[2], "")
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(len(calls), 0)
 
             failed = invoke(root / "failed.sqlite", root / "missing-token")
-            self.assertEqual(failed[0], 0)
-            self.assertEqual(json.loads(failed[1])["result"], "provider_failed")
-            self.assertEqual(failed[2], "")
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(failed[0], 2)
+            self.assertEqual(failed[1], "")
+            self.assertIn("hardcover-identity-report", failed[2])
+            self.assertEqual(len(calls), 0)
 
 
 if __name__ == "__main__":

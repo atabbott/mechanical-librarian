@@ -910,7 +910,8 @@ class CliTests(unittest.TestCase):
                     self.assertEqual(output.getvalue(), "")
                     self.assertEqual(
                         errors.getvalue(),
-                        "Hardcover title preview invocation is invalid.\n",
+                        "Credentialed Hardcover title preview is unsupported; use "
+                        "hardcover-identity-report with configured provider authority.\n",
                     )
                     runner.assert_not_called()
                     self.assertFalse(database.exists())
@@ -920,7 +921,6 @@ class CliTests(unittest.TestCase):
             root = Path(directory)
             source = root / "source.sqlite"
             report = _run_hardcover_title_proposal_report(source, None)
-            secret = root / "missing-provider-token"
             for output_format in ("json", "text"):
                 with self.subTest(output_format=output_format):
                     output = io.StringIO()
@@ -931,7 +931,6 @@ class CliTests(unittest.TestCase):
                         [
                             "hardcover-title-proposal-report",
                             "--database", str(target),
-                            "--secret-reference", str(secret),
                             "--format", output_format,
                         ],
                         state_check_runner=lambda _path: StateCheckResult(
@@ -943,9 +942,8 @@ class CliTests(unittest.TestCase):
                     )
                     self.assertEqual(exit_code, 0)
                     self.assertEqual(errors.getvalue(), "")
-                    runner.assert_called_once_with(target, secret)
+                    runner.assert_called_once_with(target, None)
                     self.assertNotIn(str(target), output.getvalue())
-                    self.assertNotIn(str(secret), output.getvalue())
                     if output_format == "json":
                         self.assertEqual(json.loads(output.getvalue()), report.to_data())
                     else:

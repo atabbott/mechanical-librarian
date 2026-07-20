@@ -202,8 +202,9 @@ freshness/reuse, retry/restart, or ISBN-backed identity, nor F09g's live-target
 binding, and adds no AI, human decision, cover, rich-field, multi-provider, or
 apply compatibility promise.
 
-F09f increment 3 now installs `hardcover-isbn-identity-v1` as a dormant
-production-capable adapter through the application-owned ISBN identity port.
+F09f increment 3 installed `hardcover-isbn-identity-v1` through the
+application-owned ISBN identity port; activation now composes it at the
+installed command boundary.
 Its compatibility identity fixes the query and operation bytes, canonical ISBN
 array and body, HTTPS destination, public-address and Host/SNI/peer policy,
 authentication revalidation, status mapping, hostile header/body parser bounds,
@@ -211,8 +212,8 @@ complete row validation, and `hardcover-ebook-compatibility-v1` decision. The
 supported `fixed-adapter-v3` demonstration uses only the built-in post-policy
 in-memory byte channel and exports `actual_network:false`; it proves no live
 credential, egress, production configuration, target join, persistence,
-lifecycle, retry, proposal, or write compatibility. Enabled production remains
-`provider_not_activated`.
+lifecycle, retry, proposal, or write compatibility. The retained demonstration
+remains credential-free after activation.
 
 This compatibility claim treats contributor and network bytes/metadata,
 credentials, DNS/address/peer/TLS data, real external service `Exception`
@@ -237,10 +238,11 @@ byte keyword rather than silently treating it as an annotation.
 Schema 7 adds only the F10a synthetic case, current-or-retired state, and
 append-only attributable transitions. It remains forward-only and does not
 reclassify schema-6 `synthetic_preview` history. F09f configured Hardcover
-title/identity and F09g live report-only proposals are separate planned 0.3
+title/identity and F09g live report-only proposals are separate 0.3
 compatibility boundaries and must not reclassify F09a, F09b, or F10a preview
-history. They create no tested or supported compatibility claim until their
-slices qualify and merge. F09c fallback identity and F10b production case
+history. F09f's activated boundary is tested and supported by its exact
+activation registry; F09g creates no claim until its slice qualifies and
+merges. F09c fallback identity and F10b production case
 admission remain separate planned 1.0 compatibility claims. F11 is an
 independent synthetic reviewer path; F17 is their convergence gate.
 
@@ -251,10 +253,10 @@ separate current configured Hardcover lineage containing a bounded title and
 strict ISBN-backed book and compatible ebook-edition identity. The provider
 query, configuration, authentication, parser, response/error shape,
 cardinality, compatibility policy, bounds, fixtures, and live-qualification
-versions are compatibility dimensions. The request, adapter, parser, and
-identity-decision dimensions are frozen and structurally supported through
-increment 3; durable work, retry/restart, production activation, and the single
-authorized live aggregate remain pending later F09f increments. F09f remains
+versions are compatibility dimensions. The request, adapter, parser,
+identity-decision, durable work, retry/restart, and production activation
+dimensions are frozen and structurally supported. The separately authorized
+one-request live aggregate is exact-head qualification evidence only. F09f remains
 target-independent and claims no target join or proposal compatibility.
 
 F09g will bind the current target, snapshot, source/file identity, F07b
@@ -635,7 +637,8 @@ never authorize a write.
 
 ## Durable Hardcover identity compatibility
 
-Schema 9 adds Hardcover identity work without transforming schema-8 rows. A
+Schemas 9 and 10 add Hardcover identity work and lifecycle state without
+transforming schema-8 rows. A
 work generation is compatible for matched-current reuse only when its opaque
 application-derived work key denotes the same validated identity inputs and
 its matched pointer is no older than exactly 24 hours. Generation number,
@@ -647,7 +650,7 @@ The state values `pending`, `claimed`, `retry_wait`, `succeeded`, `failed`, and
 15-second lease, six-second start threshold, three-attempt bound, and exact
 24-hour matched-currentness boundary are compatibility semantics. Changing a
 meaning or bound requires a new application contract and a documented durable
-migration; an older binary must not open schema 9. Append-only history remains
+migration; an older binary must not open schema 10. Append-only history remains
 attributable to its original contract rather than being reinterpreted.
 
 The installed `durable-work-v3` input is a closed qualification DSL, not a

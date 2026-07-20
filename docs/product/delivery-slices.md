@@ -210,14 +210,15 @@ completed F09b #204/#223 -> F09f #239/#242
 F07b + F09f -> F09g #238/#243 -> 0.3.0 checkpoint exit
 ```
 
-F09f is the target-independent configured provider lane. Increment 1 installs
-its strict disabled-by-default configuration, private-query parser, and inert
-identity report; enabled configuration remains `provider_not_activated` and
-cannot construct provider authority. The slice owns the bounded
+F09f is the target-independent configured provider lane. Its completed
+preactivation increments install strict disabled-by-default configuration,
+private-query parsing, the fixed adapter, schema-10 work, and its durable
+lifecycle. Activation composes provider authority only after durable start.
+The slice owns the bounded
 Hardcover title and strict ISBN-backed book/compatible ebook-edition
 observation, including its durable provider work, restart, reuse, freshness,
 invalidation, disabled and failure behavior, and live compatibility
-qualification. The book, edition, and title are one Hardcover provider lineage;
+qualification. Disabled mode retains zero authority. The book, edition, and title are one Hardcover provider lineage;
 they are not independent provider votes. Its exact external contracts and
 qualification are frozen in the Ready slice train. It does not inspect or join
 a live target and cannot decide proposal eligibility.

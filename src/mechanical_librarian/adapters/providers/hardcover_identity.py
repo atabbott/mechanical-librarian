@@ -8,14 +8,20 @@ response parsing stay behind the application-owned provider port.
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
 import re
+import subprocess
+import sys
+import time
 import unicodedata
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Coroutine, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Protocol
+from typing import Any, Protocol, TypeVar
+
+import httpx
 
 from mechanical_librarian.application.hardcover_identity import (
     AddressPolicyOutcome,
@@ -107,6 +113,21 @@ _RETRY_AFTER = re.compile(rb"(?:0|[1-9][0-9]?)")
 _BIDI_CONTROLS = frozenset(
     {0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)}
 )
+_ASYNC_RESULT = TypeVar("_ASYNC_RESULT")
+_RESOLVER_SCRIPT = """\
+import json
+import socket
+import sys
+
+answers = socket.getaddrinfo(
+    sys.argv[1],
+    int(sys.argv[2]),
+    family=socket.AF_UNSPEC,
+    type=socket.SOCK_STREAM,
+    proto=socket.IPPROTO_TCP,
+)
+sys.stdout.write(json.dumps([answer[4][0] for answer in answers]))
+"""
 
 
 class IdentityAddressResolver(Protocol):
@@ -240,6 +261,246 @@ class IdentityChannelFailure(RuntimeError):
         self.kind = kind
 
 
+class BoundedIdentityAddressResolver:
+    """Resolve once in an isolated process under the attempt context budget."""
+
+    def __init__(self, context: OperationContext) -> None:
+        if type(context) is not OperationContext:
+            raise TypeError("identity resolver context is malformed")
+        self._context = context
+        self._wall_deadline = time.monotonic() + _logical_remaining(context)
+
+    def __call__(self, host: str, port: int) -> tuple[str, ...]:
+        if host != HARDCOVER_IDENTITY_HOST or port != 443:
+            raise IdentityChannelFailure(IdentityAttemptFailureKind.INCOMPATIBLE)
+        process = subprocess.Popen(
+            [sys.executable, "-I", "-c", _RESOLVER_SCRIPT, host, str(port)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            cwd="/",
+            env={},
+        )
+        try:
+            while process.poll() is None:
+                failure = _bounded_context_failure(self._context, self._wall_deadline)
+                if failure is not None:
+                    _terminate_resolver(process)
+                    raise IdentityChannelFailure(failure)
+                time.sleep(min(0.01, _remaining(self._context, self._wall_deadline)))
+            output, _ = process.communicate(timeout=0.1)
+        finally:
+            if process.poll() is None:
+                _terminate_resolver(process)
+        if process.returncode != 0 or not 1 <= len(output) <= 8_192:
+            raise IdentityChannelFailure(IdentityAttemptFailureKind.UNAVAILABLE)
+        try:
+            values = json.loads(output.decode("ascii", "strict"))
+        except (UnicodeError, ValueError, json.JSONDecodeError):
+            raise IdentityChannelFailure(
+                IdentityAttemptFailureKind.UNAVAILABLE
+            ) from None
+        if type(values) is not list or any(type(value) is not str for value in values):
+            raise IdentityChannelFailure(IdentityAttemptFailureKind.UNAVAILABLE)
+        return tuple(values)
+
+
+class HttpxIdentityByteChannel:
+    """Perform one selected-IP request and return a closed bounded raw response."""
+
+    def __init__(
+        self, *, transport: httpx.AsyncBaseTransport | None = None
+    ) -> None:
+        if transport is not None and not isinstance(
+            transport, httpx.AsyncBaseTransport
+        ):
+            raise TypeError("identity transport is malformed")
+        self._transport = transport
+        self._called = False
+
+    def exchange(
+        self, request: AuthorizedIdentityRequest, context: OperationContext
+    ) -> RawIdentityResponseHead:
+        if self._called or type(request) is not AuthorizedIdentityRequest or type(
+            context
+        ) is not OperationContext:
+            raise IdentityChannelFailure(IdentityAttemptFailureKind.UNAVAILABLE)
+        self._called = True
+        wall_deadline = time.monotonic() + _logical_remaining(context)
+        return _run_identity_async(
+            self._exchange_bounded(request, context, wall_deadline)
+        )
+
+    def release(self, response: object) -> bool:
+        if type(response) is not RawIdentityResponseHead:
+            return False
+        try:
+            return response.body_reader.close() is True
+        except Exception:
+            return False
+
+    async def _exchange_bounded(
+        self,
+        request: AuthorizedIdentityRequest,
+        context: OperationContext,
+        wall_deadline: float,
+    ) -> RawIdentityResponseHead:
+        task = asyncio.create_task(self._perform(request, context, wall_deadline))
+        try:
+            while not task.done():
+                failure = _bounded_context_failure(context, wall_deadline)
+                if failure is not None:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                    raise IdentityChannelFailure(failure)
+                await asyncio.wait(
+                    (task,), timeout=min(0.01, _remaining(context, wall_deadline))
+                )
+            return task.result()
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _perform(
+        self,
+        request: AuthorizedIdentityRequest,
+        context: OperationContext,
+        wall_deadline: float,
+    ) -> RawIdentityResponseHead:
+        frozen = request.request
+        if (
+            frozen.method != "POST"
+            or frozen.scheme != "https"
+            or frozen.host != HARDCOVER_IDENTITY_HOST
+            or frozen.port != 443
+            or frozen.path != HARDCOVER_IDENTITY_PATH
+            or frozen.query_string
+            or frozen.fragment
+            or frozen.host_header != HARDCOVER_IDENTITY_HOST
+            or frozen.tls_sni != HARDCOVER_IDENTITY_HOST
+            or not _public_address(frozen.selected_address)
+        ):
+            raise IdentityChannelFailure(IdentityAttemptFailureKind.INCOMPATIBLE)
+        remaining = _remaining(context, wall_deadline)
+        if remaining <= 0:
+            raise IdentityChannelFailure(IdentityAttemptFailureKind.TIMEOUT)
+        endpoint = _ip_endpoint(frozen.selected_address)
+        timeout = httpx.Timeout(
+            remaining,
+            connect=remaining,
+            read=remaining,
+            write=remaining,
+            pool=remaining,
+        )
+        try:
+            async with httpx.AsyncClient(
+                cookies=None,
+                follow_redirects=False,
+                http2=False,
+                limits=httpx.Limits(
+                    max_connections=1,
+                    max_keepalive_connections=0,
+                    keepalive_expiry=0.0,
+                ),
+                timeout=timeout,
+                transport=self._transport,
+                trust_env=False,
+                verify=True,
+            ) as client:
+                outbound = client.build_request(
+                    "POST",
+                    endpoint,
+                    headers=request.headers,
+                    content=frozen.body,
+                    extensions={
+                        "sni_hostname": HARDCOVER_IDENTITY_HOST,
+                        "timeout": {
+                            "connect": remaining,
+                            "read": remaining,
+                            "write": remaining,
+                            "pool": remaining,
+                        },
+                    },
+                )
+                response = await client.send(outbound, stream=True)
+                try:
+                    peer = _response_peer(response)
+                    status_line = (
+                        f"HTTP/1.1 {response.status_code} {response.reason_phrase}\r\n"
+                    ).encode("ascii", "strict")
+                    header_lines = tuple(
+                        name + b": " + value + b"\r\n"
+                        for name, value in response.headers.raw
+                    )
+                    payload = bytearray()
+                    async for chunk in response.aiter_raw():
+                        failure = _bounded_context_failure(context, wall_deadline)
+                        if failure is not None:
+                            raise IdentityChannelFailure(failure)
+                        needed = MAX_RESPONSE_BYTES + 1 - len(payload)
+                        payload.extend(chunk[:needed])
+                        if len(payload) > MAX_RESPONSE_BYTES:
+                            break
+                    return RawIdentityResponseHead(
+                        status_line,
+                        header_lines,
+                        StructuralIdentityBodyReader((bytes(payload),)),
+                        peer,
+                    )
+                finally:
+                    await response.aclose()
+        except IdentityChannelFailure:
+            raise
+        except httpx.TimeoutException:
+            raise IdentityChannelFailure(IdentityAttemptFailureKind.TIMEOUT) from None
+        except (httpx.HTTPError, OSError, UnicodeError, ValueError):
+            raise IdentityChannelFailure(
+                IdentityAttemptFailureKind.UNAVAILABLE
+            ) from None
+
+
+class LiveHardcoverIdentityProvider:
+    """Load credential and network capabilities only after durable start."""
+
+    def __init__(
+        self,
+        token_reader: Callable[[], bytes],
+        *,
+        channel_factory: Callable[[], IdentityByteChannel] = HttpxIdentityByteChannel,
+    ) -> None:
+        if not callable(token_reader) or not callable(channel_factory):
+            raise TypeError("live identity provider construction is malformed")
+        self._token_reader = token_reader
+        self._channel_factory = channel_factory
+
+    def lookup(
+        self, query: IsbnIdentityQuery, context: OperationContext
+    ) -> IdentityAttemptResult:
+        try:
+            token = self._token_reader()
+        except Exception:
+            return IdentityAttemptResult.failed(
+                IdentityAttemptFailureKind.CREDENTIAL_UNAVAILABLE
+            )
+        if not _valid_token(token):
+            token = b""
+            return IdentityAttemptResult.failed(
+                IdentityAttemptFailureKind.CREDENTIAL_UNAVAILABLE
+            )
+        try:
+            return HardcoverIdentityProvider(
+                BoundedIdentityAddressResolver(context),
+                self._channel_factory(),
+                token,
+            ).lookup(query, context)
+        except Exception:
+            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
+        finally:
+            token = b""
+
+
 class HardcoverIdentityProvider:
     """Implement one fixed read-only ISBN attempt through injected capabilities."""
 
@@ -278,6 +539,8 @@ class HardcoverIdentityProvider:
             return IdentityAttemptResult.failed(preflight)
         try:
             resolved = self._resolver(HARDCOVER_IDENTITY_HOST, 443)
+        except IdentityChannelFailure as error:
+            return IdentityAttemptResult.failed(error.kind)
         except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         addresses = _validated_addresses(resolved)
@@ -817,6 +1080,69 @@ def _bounded_ip_text(value: object) -> bool:
         return False
 
 
+def _ip_endpoint(value: str) -> str:
+    address = ipaddress.ip_address(value)
+    host = f"[{address}]" if isinstance(address, ipaddress.IPv6Address) else str(address)
+    return f"https://{host}{HARDCOVER_IDENTITY_PATH}"
+
+
+def _response_peer(response: httpx.Response) -> str:
+    stream = response.extensions.get("network_stream")
+    if stream is None or not hasattr(stream, "get_extra_info"):
+        return ""
+    try:
+        peer = stream.get_extra_info("server_addr")
+    except Exception:
+        return ""
+    return peer[0] if type(peer) is tuple and peer and type(peer[0]) is str else ""
+
+
+def _logical_remaining(context: OperationContext) -> float:
+    try:
+        return max(0.0, (context.deadline.at - context.time.now()).total_seconds())
+    except Exception:
+        return 0.0
+
+
+def _remaining(context: OperationContext, wall_deadline: float) -> float:
+    return max(
+        0.0,
+        min(_logical_remaining(context), wall_deadline - time.monotonic()),
+    )
+
+
+def _bounded_context_failure(
+    context: OperationContext, wall_deadline: float
+) -> IdentityAttemptFailureKind | None:
+    try:
+        if context.cancellation.is_cancelled():
+            return IdentityAttemptFailureKind.CANCELLED
+    except Exception:
+        return IdentityAttemptFailureKind.UNAVAILABLE
+    if _remaining(context, wall_deadline) <= 0:
+        return IdentityAttemptFailureKind.TIMEOUT
+    return None
+
+
+def _terminate_resolver(process: subprocess.Popen[bytes]) -> None:
+    process.kill()
+    try:
+        process.wait(timeout=0.1)
+    except subprocess.TimeoutExpired:
+        process.wait()
+
+
+def _run_identity_async(
+    awaitable: Coroutine[Any, Any, _ASYNC_RESULT],
+) -> _ASYNC_RESULT:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+    awaitable.close()
+    raise IdentityChannelFailure(IdentityAttemptFailureKind.UNAVAILABLE)
+
+
 def _peer_equal(observed: object, expected: object) -> bool:
     if not _bounded_ip_text(observed) or not _bounded_ip_text(expected):
         return False
@@ -1236,13 +1562,16 @@ def _reject_number(_: str) -> int:
 
 __all__ = [
     "AuthorizedIdentityRequest",
+    "BoundedIdentityAddressResolver",
     "FrozenIdentityRequest",
     "HARDCOVER_IDENTITY_HOST",
     "HARDCOVER_IDENTITY_OPERATION",
     "HARDCOVER_IDENTITY_QUERY",
     "HARDCOVER_IDENTITY_URL",
+    "HttpxIdentityByteChannel",
     "HardcoverIdentityProvider",
     "IdentityChannelFailure",
+    "LiveHardcoverIdentityProvider",
     "RawIdentityResponseHead",
     "StructuralHardcoverIdentityPreview",
     "StructuralIdentityBodyReader",

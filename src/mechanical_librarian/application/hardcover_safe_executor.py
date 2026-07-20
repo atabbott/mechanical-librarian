@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol
@@ -32,9 +33,72 @@ from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkRetryToken,
     IdentityWorkState,
 )
+from mechanical_librarian.domain.identifiers import canonical_json
 
 
 TRANSPORT_WINDOW = timedelta(seconds=5)
+_WORK_KEY_CONTRACT = {
+    "auth-contract-sha256": (
+        "404a55fb404e9dc0ddfbe3ef7fd416862ee99627d10eeeeeb7d2402f39042b7b"
+    ),
+    "compatibility-contract-sha256": (
+        "1a824e7610c4e46ed096131f077275f3ec152ab8fbb0ab8e0fca492da2c6d6dd"
+    ),
+    "config-contract-sha256": (
+        "5d21d05239ba3d83e03d06a9e0ac1949adee5e0333b9311fc3c7fef67194db89"
+    ),
+    "deployment-gate-sha256": (
+        "bd57e213f41d711d8ac5f0a5fa71a629e87a0496bc0c90aa9781d14acfaabb31"
+    ),
+    "identity-policy-version": "hardcover-identity-decision-v1",
+    "lifecycle-contract-sha256": (
+        "30f1aea2880ddf0bc81a2ad937076b996efe46248d9bdb97ac5dfd06d7a9474e"
+    ),
+    "operation-contract-sha256": (
+        "218aedb44bab603697bdb51dfab9ede9f6530a6031af6d992f9f8b10b99bf2ce"
+    ),
+    "parser-limits-sha256": (
+        "08d70bdc87eeac7b1c716ab160a40305af47b600c22fc91e4cf173353e7a0011"
+    ),
+    "private-query-schema-sha256": (
+        "05637dcf584f527468f96c59244bf371b0b8ab09379accf54b78af124cd2f765"
+    ),
+    "provider-contract-version": "hardcover-isbn-identity-v1",
+    "query-file-contract-sha256": (
+        "7a04acca26307529d5e9caeaa5b66f438214046d5418614f89b2e78595cfcd6c"
+    ),
+    "query-sha256": (
+        "309af66157939f2d817680cd8f10b58d27c58f3b3a4f3da7b6b0ee66c61d706b"
+    ),
+    "status-map-sha256": (
+        "8b1add0470b53fa57b17cd43750351f0788a5607fc53cc45d9fd0d05636d4971"
+    ),
+    "unicode-comparison-version": "unicode-title-comparison-v1",
+    "upstream-commit": "2b11c689e4bd5b91e8039ffbb6d4285248569ff3",
+    "upstream-schema-sha256": (
+        "a6a23ab56873e54946f265440a7e4b7199757b8116534793e2b141b7e3829dca"
+    ),
+}
+
+
+def hardcover_identity_work_key(
+    query: PrivateIdentityQuery, authority_revision: int
+) -> str:
+    """Derive the private-value-free durable identity for one ISBN authority."""
+
+    if (
+        type(query) is not PrivateIdentityQuery
+        or type(authority_revision) is not int
+        or not 1 <= authority_revision <= 2_147_483_647
+    ):
+        raise ValueError("Hardcover identity work-key input is malformed")
+    source = {
+        **_WORK_KEY_CONTRACT,
+        "authority-revision": authority_revision,
+        "canonical-isbn13": query.canonical_isbn,
+    }
+    encoded = canonical_json(source).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True, repr=False, slots=True)
@@ -422,6 +486,9 @@ class RunSafeHardcoverIdentity:
             return _report(HardcoverIdentityOutcome.CANCELLED)
 
         terminal = {
+            IdentityAttemptFailureKind.CREDENTIAL_UNAVAILABLE: (
+                HardcoverIdentityOutcome.CREDENTIAL_UNAVAILABLE
+            ),
             IdentityAttemptFailureKind.AUTHENTICATION: HardcoverIdentityOutcome.AUTHENTICATION,
             IdentityAttemptFailureKind.AUTHORIZATION: HardcoverIdentityOutcome.AUTHORIZATION,
             IdentityAttemptFailureKind.MALFORMED: HardcoverIdentityOutcome.MALFORMED,
@@ -457,4 +524,5 @@ __all__ = [
     "IdentityDeploymentGateLease",
     "RunSafeHardcoverIdentity",
     "TRANSPORT_WINDOW",
+    "hardcover_identity_work_key",
 ]

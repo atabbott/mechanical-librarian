@@ -98,13 +98,14 @@ being partially implemented inside it.
 - F07a extracts one bounded opening-matter title and edition-applicable ISBN
   report from a safely readable EPUB; F07b binds that evidence durably to one
   current isolated target and snapshot with restart, reuse, and invalidation.
-- F09f follows completed F09b and adds the disabled-by-default configured
+- F09f follows completed F09b and installs the disabled-by-default configured
   Hardcover lane. It persists one bounded title plus strict ISBN-backed book
   and compatible ebook-edition identity as one provider lineage, but remains
   target-independent and has no proposal authority. Its first increment ships
-  only strict inert configuration/query/report seams: disabled returns before
-  private input, while enabled returns `provider_not_activated`. Later
-  increments implement the already-frozen external and durable contracts.
+  strict inert configuration/query/report seams were followed by the bounded
+  fixed adapter, schema-10 durable lifecycle, and configured activation.
+  Disabled returns before private input; enabled persists before lazy provider
+  authority and emits only closed redacted outcomes.
 - F09g follows F07b and F09f and owns the current Audiobookshelf target/source
   join. One usable current F07 title, exactly one distinct canonical
   checksum-valid edition-applicable local ISBN, one unique compatible

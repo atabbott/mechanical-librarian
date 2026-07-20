@@ -1,10 +1,11 @@
 # Hardcover Identity Report
 
-`hardcover-identity-report` is the installed, report-only F09f surface.
-Production remains preactivated: it cannot contact Hardcover or open a private
-query, database, or provider secret. Contributor synthetic scenarios may open
-only an explicitly supplied absent disposable database and never compose a
-provider credential or network client.
+`hardcover-identity-report` is the installed, disabled-by-default report-only
+F09f surface. Enabled operation reads one strict private query, persists bounded
+schema-10 work, acquires the deployment gate, and only then lazily reads the
+provider token and performs the fixed read-only Hardcover ISBN request.
+Contributor synthetic scenarios remain credential-free and cannot construct
+production provider or network authority.
 
 ## Production syntax
 
@@ -13,12 +14,18 @@ mechanical-librarian hardcover-identity-report \
   --config PATH --database PATH --query-file PATH [--format json|text]
 ```
 
-An absent or explicitly disabled `hardcover_provider` block returns
-`disabled`. A valid enabled block returns `provider_not_activated`. Both are
-successful, versioned, proposal-free reports and both return before the query
-file, database, secret, provider/client construction, DNS, proxy, socket, or
-network access. Syntax or configuration failure emits only a fixed path-free
-diagnostic. No live Hardcover qualification is supported by this increment.
+An absent or explicitly disabled `hardcover_provider` block returns `disabled`
+before query, state, secret, DNS, or network access. Enabled operation validates
+the query before state and returns `invalid_input` with exit 2 for invalid or
+unsafe query files. It durably accepts work before secret/client/DNS/network,
+uses at most three starts, and emits only the closed public outcomes in the
+[F09f contract](../reference/hardcover-f09f-contract.md). Syntax or
+configuration failure emits only a fixed path-free diagnostic.
+
+The production-only `--qualification-one-shot` flag requires an absent state
+path in an empty owner-only `0700` directory. It durably limits the aggregate
+to one start; a retryable response becomes `retry_exhausted` and never sends a
+second request. It is reserved for exact-head installed-wheel qualification.
 
 The accepted configuration and redacted export are documented in the
 [configuration contract](../reference/configuration.md). Configuration changes
@@ -26,7 +33,7 @@ require restart plus candidate and review re-evaluation.
 
 ## Private query contract
 
-The future enabled path accepts an owner-only regular file of 1–4,096 bytes.
+The enabled path accepts an owner-only regular file of 1–4,096 bytes.
 The reader canonicalizes and opens its parent directory, opens the final
 component without following symlinks, requires effective-user ownership,
 owner-read with no group/other bits, link count one, and stable device, inode,
@@ -86,7 +93,7 @@ validated-row count, collapsed-alias count, and coarse title comparison.
 The fake performs no decision and grants no file, secret, DNS, socket, network,
 database, proposal, review, or write authority. Expected output and registry
 resources are qualification oracles and are not read before runtime emission.
-Production mode remains `disabled` or `provider_not_activated`.
+Synthetic preview remains credential-free after production activation.
 
 From the repository root, the canonical demonstration is:
 
@@ -134,7 +141,7 @@ currentness boundary. Gate ownership is an injected structural fact; this
 increment installs no deployment gate, process loop, query-file read, secret
 lookup, DNS, socket, HTTP, live Hardcover access, proposal, review, or write
 authority. Production mode still returns `disabled` or
-`provider_not_activated` before opening durable identity work.
+At that historical increment production remained preactivated.
 
 From the repository root, the canonical demonstration is:
 
@@ -252,7 +259,7 @@ exactly one second after start 1 and two seconds after start 2, extended by a
 valid bounded Retry-After. No generation consumes more than three starts, and a
 limit-1 generation cannot send again after restart. Temporary main-thread
 SIGINT/SIGTERM handlers set only the local cancellation event and are restored
-on every exit. Production remains `disabled` or `provider_not_activated`; this
+on every exit. This contributor scenario remains credential-free; production
 scenario composes no credentials, DNS, sockets, HTTP, proposal, or write
 authority.
 
