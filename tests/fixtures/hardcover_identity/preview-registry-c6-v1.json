@@ -1,21 +1,21 @@
 {
   "available_through_increment": "Orchestrate durable Hardcover identity retries, cancellation, and restart",
   "output_privacy_contract": {
-    "bytes": 4275,
+    "bytes": 4948,
     "path": "preview-output-privacy-contract-c6-v1.json",
-    "sha256": "4fabd7a36607cce882a2598953e06a2d719cb3f193e369c2581994a7a3a19c25"
+    "sha256": "06957b86d1f0febbd211b26ecf92f1f33d1e3357386137e4176b1285f9d768f0"
   },
   "output_privacy_scan": {
-    "bytes": 2384,
+    "bytes": 2407,
     "path": "preview-output-privacy-scan-c6-v1.json",
-    "sha256": "8324cdd858765bf134788a5aed3b2786b3ffe5500db1826772afbd14765b5000"
+    "sha256": "42b13990ad4102778bc711adea92750a80292c0da6f3dcce80281e005aba170d"
   },
   "output_schema": {
     "bytes": 5093,
     "path": "preview-output-schema-c6-v1.json",
-    "sha256": "4812ffa3e665775c490a4b4ddc134780542c607de412443b878dd56fe1dc5e9c"
+    "sha256": "33ca530b75336de072946ad57ccc79840b725ff8eca988b13cb9fc66b5a9dd18"
   },
-  "predecessor_registry_sha256": "9699e563a3212885167f6a407867057e99958d2309b9bf1cf7adbc2de7cde777",
+  "predecessor_registry_sha256": "1ca4ff13721a040bae2794032db84beaebd7e80288d8fb02d645bae046bc525d",
   "runtime_contract": {
     "anti_noop": "compare allowlisted derived typed fields across golden, alternate-valid, single-field mutation, title-only metamorphic, boundary, invalid-extra, and differing-output cases without computing or exporting an input digest; require zero production composition/egress",
     "authority": "no secret lookup, DNS, socket, real provider, production database, target join, proposal, review, or write authority",
@@ -200,7 +200,7 @@
         "canonical_example_output": {
           "bytes": 281,
           "path": "c4-durable-work-example-output.json",
-          "sha256": "9c9b7370081a4833f26851de78cced52faace737faa953bd1acf19ca6cb99388"
+          "sha256": "476bbbde0a44f863260e6ab9eac95a02c255098dc587df1859a08b0096448b32"
         },
         "input_schema": {
           "bytes": 1098,

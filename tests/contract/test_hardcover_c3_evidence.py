@@ -104,11 +104,11 @@ class HardcoverC3EvidenceTests(unittest.TestCase):
                     return_value=query,
                 ), patch.object(
                     adapter.HardcoverIdentityProvider,
-                    "lookup",
+                    "prepare",
                     return_value=IdentityAttemptResult.failed(
                         IdentityAttemptFailureKind.MALFORMED
                     ),
-                ) as lookup:
+                ) as prepare:
                     try:
                         StructuralHardcoverIdentityPreview().run(source)
                         runtime_valid = True
@@ -118,7 +118,7 @@ class HardcoverC3EvidenceTests(unittest.TestCase):
                 with self.subTest(path=path, delta=delta):
                     self.assertEqual(schema_valid, expected)
                     self.assertEqual(runtime_valid, expected)
-                    self.assertEqual(lookup.called, expected)
+                    self.assertEqual(prepare.called, expected)
 
     def test_c3_registry_has_exact_installed_predecessor_and_scope(self) -> None:
         expected = {

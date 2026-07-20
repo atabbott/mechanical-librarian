@@ -33,6 +33,7 @@ from mechanical_librarian.adapters.providers.hardcover_identity import (
 )
 from mechanical_librarian.application.hardcover_identity import (
     IdentityAttemptFailureKind,
+    IdentityAttemptResult,
     IdentityExchangeGuardError,
     IsbnIdentityQuery,
 )
@@ -47,6 +48,32 @@ from mechanical_librarian.application.ports import (
 
 
 ROOT = Path(__file__).parents[2]
+
+
+def _run_prepared(provider, query, context, *, before_exchange=None):
+    prepared = provider.prepare(query, context)
+    if type(prepared) is IdentityAttemptResult:
+        return prepared
+
+    def begin_transport():
+        if before_exchange is not None:
+            before_exchange()
+        return context
+
+    return prepared.exchange(context, begin_transport=begin_transport)
+
+
+class _PreparedProviderHarness:
+    def __init__(self, provider) -> None:
+        self._provider = provider
+
+    def lookup(self, query, context, *, before_exchange=None):
+        return _run_prepared(
+            self._provider,
+            query,
+            context,
+            before_exchange=before_exchange,
+        )
 
 
 class HardcoverIdentityProviderContractTests(unittest.TestCase):
@@ -163,11 +190,13 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         channel: StructuralIdentityByteChannel,
         *,
         address: str = "1.1.1.1",
-    ) -> HardcoverIdentityProvider:
-        return HardcoverIdentityProvider(
-            lambda host, port: (address,),
-            channel,
-            b"synthetic-noncredential",
+    ) -> _PreparedProviderHarness:
+        return _PreparedProviderHarness(
+            HardcoverIdentityProvider(
+                lambda host, port: (address,),
+                channel,
+                b"synthetic-noncredential",
+            )
         )
 
     def test_frozen_request_auth_and_structural_success(self) -> None:
@@ -236,11 +265,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         channel = HttpxIdentityByteChannel(
             transport=httpx.MockTransport(respond)
         )
-        result = HardcoverIdentityProvider(
-            lambda host, port: ("1.1.1.1",),
-            channel,
-            b"synthetic-noncredential",
-        ).lookup(self.query(), self.context())
+        result = _run_prepared(
+            HardcoverIdentityProvider(
+                lambda host, port: ("1.1.1.1",),
+                channel,
+                b"synthetic-noncredential",
+            ),
+            self.query(),
+            self.context(),
+        )
 
         self.assertIsNone(result.failure)
         self.assertEqual(len(result.observations or ()), 1)
@@ -344,11 +377,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                         extensions={"network_stream": _NetworkStream()},
                     )
 
-                result = HardcoverIdentityProvider(
-                    lambda host, port: ("1.1.1.1",),
-                    HttpxIdentityByteChannel(transport=httpx.MockTransport(respond)),
-                    b"synthetic-noncredential",
-                ).lookup(self.query(), self.context())
+                result = _run_prepared(
+                    HardcoverIdentityProvider(
+                        lambda host, port: ("1.1.1.1",),
+                        HttpxIdentityByteChannel(transport=httpx.MockTransport(respond)),
+                        b"synthetic-noncredential",
+                    ),
+                    self.query(),
+                    self.context(),
+                )
                 self.assertIs(result.failure.kind, expected)
                 self.assertEqual(body_iterations, 0)
                 self.assertTrue(closed)
@@ -366,8 +403,10 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             (self.context(expired=True), IdentityAttemptFailureKind.TIMEOUT),
         ):
             with self.subTest(expected=expected):
-                result = LiveHardcoverIdentityProvider(token_reader).lookup(
-                    self.query(), context
+                result = _run_prepared(
+                    LiveHardcoverIdentityProvider(token_reader),
+                    self.query(),
+                    context,
                 )
                 self.assertIs(result.failure.kind, expected)
         self.assertEqual(token_reads, 0)
@@ -429,11 +468,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         root.addHandler(handler)
         root.setLevel(logging.DEBUG)
         try:
-            result = HardcoverIdentityProvider(
-                lambda host, port: ("1.1.1.1",),
-                HttpxIdentityByteChannel(transport=httpx.MockTransport(respond)),
-                b"synthetic-noncredential",
-            ).lookup(self.query(), self.context())
+            result = _run_prepared(
+                HardcoverIdentityProvider(
+                    lambda host, port: ("1.1.1.1",),
+                    HttpxIdentityByteChannel(transport=httpx.MockTransport(respond)),
+                    b"synthetic-noncredential",
+                ),
+                self.query(),
+                self.context(),
+            )
         finally:
             root.removeHandler(handler)
             root.setLevel(original_level)
@@ -605,9 +648,13 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     resolver_calls.append((host, port))
                     return ("1.1.1.1",)
 
-                result = HardcoverIdentityProvider(
-                    resolver, channel, b"synthetic-noncredential"
-                ).lookup(self.query(), context)
+                result = _run_prepared(
+                    HardcoverIdentityProvider(
+                        resolver, channel, b"synthetic-noncredential"
+                    ),
+                    self.query(),
+                    context,
+                )
                 self.assertEqual(result.failure.kind, expected)
                 self.assertEqual(resolver_calls, [])
                 self.assertFalse(channel.called)
@@ -650,9 +697,13 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     "authorize_identity_request",
                     wraps=authorize_identity_request,
                 ) as authorize:
-                    result = HardcoverIdentityProvider(
-                        resolver, channel, b"synthetic-noncredential"
-                    ).lookup(self.query(), context)
+                    result = _run_prepared(
+                        HardcoverIdentityProvider(
+                            resolver, channel, b"synthetic-noncredential"
+                        ),
+                        self.query(),
+                        context,
+                    )
                 self.assertEqual(result.failure.kind, expected)
                 authorize.assert_not_called()
                 self.assertFalse(channel.called)
@@ -714,7 +765,8 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             return_value=lambda host, port: ("1.1.1.1",),
         ):
             with self.assertRaises(IdentityExchangeGuardError):
-                live.lookup(
+                _run_prepared(
+                    live,
                     self.query(),
                     self.context(),
                     before_exchange=reject_exchange,
@@ -782,7 +834,9 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     )
                 )
                 with patcher:
-                    result = provider.lookup(self.query(), self.context())
+                    result = _run_prepared(
+                        provider, self.query(), self.context()
+                    )
                 self.assertEqual(
                     result.failure.kind, IdentityAttemptFailureKind.UNAVAILABLE
                 )
@@ -843,11 +897,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     "1.1.1.1",
                 )
                 channel = Channel(response, fallback)
-                result = HardcoverIdentityProvider(
-                    lambda host, port: ("1.1.1.1",),
-                    channel,
-                    b"synthetic-noncredential",
-                ).lookup(self.query(), self.context())
+                result = _run_prepared(
+                    HardcoverIdentityProvider(
+                        lambda host, port: ("1.1.1.1",),
+                        channel,
+                        b"synthetic-noncredential",
+                    ),
+                    self.query(),
+                    self.context(),
+                )
                 if available:
                     self.assertIsNone(result.failure)
                 else:
@@ -953,11 +1011,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     )
                 )
                 with parse_patch, self.assertRaises(KeyboardInterrupt):
-                    HardcoverIdentityProvider(
-                        lambda host, port: ("1.1.1.1",),
-                        channel,
-                        b"synthetic-noncredential",
-                    ).lookup(self.query(), operation_context)
+                    _run_prepared(
+                        HardcoverIdentityProvider(
+                            lambda host, port: ("1.1.1.1",),
+                            channel,
+                            b"synthetic-noncredential",
+                        ),
+                        self.query(),
+                        operation_context,
+                    )
                 self.assertEqual(reader.close_calls, 1)
                 self.assertEqual(
                     channel.release_calls, 1 if phase == "read_fallback" else 0
@@ -1006,11 +1068,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 TimeProbe(lambda: now),
             )
             reader = Reader()
-            HardcoverIdentityProvider(
+            provider = HardcoverIdentityProvider(
                 lambda host, port: ("1.1.1.1",),
                 Channel(reader),
                 b"synthetic-noncredential",
-            ).lookup(IsbnIdentityQuery("9780000000019", "0000000019"), context)
+            )
+            prepared = provider.prepare(
+                IsbnIdentityQuery("9780000000019", "0000000019"), context
+            )
+            prepared.exchange(context, begin_transport=lambda: context)
             '''
         )
         process = subprocess.Popen(
@@ -1046,11 +1112,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             IdentityAttemptFailureKind.UNAVAILABLE,
         ):
             with self.subTest(kind=kind):
-                result = HardcoverIdentityProvider(
-                    lambda host, port: ("1.1.1.1",),
-                    RaisingChannel(kind),
-                    b"synthetic-noncredential",
-                ).lookup(self.query(), self.context())
+                result = _run_prepared(
+                    HardcoverIdentityProvider(
+                        lambda host, port: ("1.1.1.1",),
+                        RaisingChannel(kind),
+                        b"synthetic-noncredential",
+                    ),
+                    self.query(),
+                    self.context(),
+                )
                 self.assertEqual(result.failure.kind, kind)
 
     def test_structural_channel_requires_the_exact_ordered_header_tuple(self) -> None:

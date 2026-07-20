@@ -9,13 +9,16 @@ versioning after the first public release.
 
 - Activated the disabled-by-default F09f configured Hardcover identity report.
   Enabled operation now validates one owner-only ISBN/title query, persists
-  schema-10 work before lazily reading its provider token or starting DNS/HTTPS,
-  executes the fixed selected-public-IP Hardcover operation under the stable
-  deployment gate, and emits only a closed redacted outcome. Added exact
+  schema-11 work, prepares the fixed selected-public-IP Hardcover operation,
+  and claims plus durably starts the attempt under the stable deployment gate
+  immediately before HTTPS exchange. A match privately persists the bounded
+  provider title and selected edition/book IDs for truthful restart reuse and
+  emits those IDs plus transient title comparison; every non-match remains a
+  closed outcome-only report. Added exact
   one-request qualification authority for disposable zero-start state and
   retired the credentialed F09b title-preview path. The operation remains
   target-independent, proposal-free, report-only, and write-free. Production
-  output is bound to redacted schema v5; greater-than-24-hour currentness first
+  output is bound to redacted schema v6; greater-than-24-hour currentness first
   reports `stale`; one-shot rejects non-JSON and every non-matched result; and
   database identity plus dependency-log suppression are revalidated at the
   exact transport boundary.

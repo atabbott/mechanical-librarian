@@ -5,12 +5,15 @@ from __future__ import annotations
 import errno
 import fcntl
 import os
+import sqlite3
 import stat
 from dataclasses import dataclass
 from pathlib import Path
 
 
 LOCK_NAME = ".mechanical-librarian-hardcover-identity.lock"
+_RUNTIME_BINDING_APPLICATION_ID = 0x4D4C4201
+_SQLITE_APPLICATION_ID_OFFSET = 68
 
 
 class HardcoverIdentityGateError(RuntimeError):
@@ -170,6 +173,123 @@ class DescriptorHardcoverIdentityGate:
             if expected_database_identity is not None
             else database_identity
         )
+
+    def bind_connection(self, connection: sqlite3.Connection) -> None:
+        """Prove the writable SQLite connection owns the gate's exact inode.
+
+        The normal deployment flock serializes the complete marker transaction.
+        The value-independent marker is restored before release and is also
+        repaired if a prior process died during this proof.
+        """
+
+        if type(connection) is not sqlite3.Connection or connection.in_transaction:
+            raise HardcoverIdentityGateError(
+                "Hardcover database connection is not bindable"
+            )
+        lease = self.try_acquire()
+        if lease is None:
+            raise HardcoverIdentityGateError("Hardcover deployment gate is busy")
+        marked = False
+        original_application_id = 0
+        failure: BaseException | None = None
+        try:
+            lease.validate_for_send()
+            current = connection.execute("PRAGMA application_id").fetchone()
+            if (
+                type(current) is not tuple
+                or len(current) != 1
+                or type(current[0]) is not int
+                or not 0 <= current[0] <= 2_147_483_647
+            ):
+                raise HardcoverIdentityGateError(
+                    "Hardcover database binding marker is invalid"
+                )
+            original_application_id = current[0]
+            if original_application_id == _RUNTIME_BINDING_APPLICATION_ID:
+                self._set_application_id(connection, 0)
+                original_application_id = 0
+            self._set_application_id(connection, _RUNTIME_BINDING_APPLICATION_ID)
+            marked = True
+            if (
+                self._read_application_id(lease.database_descriptor)
+                != _RUNTIME_BINDING_APPLICATION_ID
+            ):
+                raise HardcoverIdentityGateError(
+                    "Hardcover database connection identity changed"
+                )
+            self._set_application_id(connection, original_application_id)
+            marked = False
+            if (
+                self._read_application_id(lease.database_descriptor)
+                != original_application_id
+            ):
+                raise HardcoverIdentityGateError(
+                    "Hardcover database binding marker was not removed"
+                )
+            lease.validate_for_send()
+        except HardcoverIdentityGateError as error:
+            failure = error
+            raise
+        except (OSError, sqlite3.Error, RuntimeError):
+            translated = HardcoverIdentityGateError(
+                "Hardcover database connection could not be bound"
+            )
+            failure = translated
+            raise translated from None
+        except BaseException as error:
+            failure = error
+            raise
+        finally:
+            cleanup_failure: HardcoverIdentityGateError | None = None
+            if marked:
+                try:
+                    self._set_application_id(connection, original_application_id)
+                    if (
+                        self._read_application_id(lease.database_descriptor)
+                        != original_application_id
+                    ):
+                        raise HardcoverIdentityGateError(
+                            "Hardcover database binding marker cleanup failed"
+                        )
+                except (HardcoverIdentityGateError, sqlite3.Error, RuntimeError):
+                    cleanup_failure = HardcoverIdentityGateError(
+                        "Hardcover database binding marker cleanup failed"
+                    )
+            try:
+                lease.validate_for_send()
+            except HardcoverIdentityGateError:
+                cleanup_failure = cleanup_failure or HardcoverIdentityGateError(
+                    "Hardcover database binding cleanup validation failed"
+                )
+            try:
+                lease.release()
+            except HardcoverIdentityGateError:
+                cleanup_failure = cleanup_failure or HardcoverIdentityGateError(
+                    "Hardcover database binding lease release failed"
+                )
+            if cleanup_failure is not None:
+                if failure is not None:
+                    failure.add_note(str(cleanup_failure))
+                else:
+                    raise cleanup_failure
+
+    @staticmethod
+    def _set_application_id(connection: sqlite3.Connection, value: int) -> None:
+        connection.execute(f"PRAGMA application_id={value}")
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if checkpoint is None or len(checkpoint) != 3 or checkpoint[0] != 0:
+            raise HardcoverIdentityGateError(
+                "Hardcover database binding marker could not be synchronized"
+            )
+
+    @staticmethod
+    def _read_application_id(descriptor: int) -> int:
+        value = os.pread(descriptor, 4, _SQLITE_APPLICATION_ID_OFFSET)
+        if len(value) != 4:
+            raise HardcoverIdentityGateError(
+                "Hardcover database binding marker is unavailable"
+            )
+        return int.from_bytes(value, "big")
 
     def try_acquire(self) -> _DescriptorGateLease | None:
         directory_descriptor: int | None = None

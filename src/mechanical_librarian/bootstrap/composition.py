@@ -95,7 +95,6 @@ from mechanical_librarian.application.hardcover_identity import (
     RunHardcoverFixedAdapterPreview,
     RunHardcoverIdentityReport,
     SafeExecutorPreviewReport,
-    allow_identity_send,
     inert_preview,
 )
 from mechanical_librarian.application.hardcover_identity_orchestration import (
@@ -1661,6 +1660,7 @@ def _run_hardcover_identity_report(
     try:
         connection = connect_existing(database)
         migrate(connection)
+        gate.bind_connection(connection)
         work = ManageHardcoverIdentityWork(
             SQLiteHardcoverIdentityWorkRepository(connection)
         )
@@ -1908,14 +1908,14 @@ def _run_hardcover_durable_work_preview(
                 ).fetchone() is None
             if (
                 not migration_rollback_verified
-                or migrate(connection) != 10
-                or migrate(connection) != 10
+                or migrate(connection) != 11
+                or migrate(connection) != 11
             ):
                 raise SchemaError("current schema migration proof failed")
             migration_idempotence_verified = connection.execute(
-                "SELECT version FROM schema_migrations WHERE version IN (9,10) "
+                "SELECT version FROM schema_migrations WHERE version IN (9,10,11) "
                 "ORDER BY version"
-            ).fetchall() == [(9,), (10,)]
+            ).fetchall() == [(9,), (10,), (11,)]
 
             service = ManageHardcoverIdentityWork(
                 SQLiteHardcoverIdentityWorkRepository(connection)
@@ -1956,7 +1956,7 @@ def _run_hardcover_durable_work_preview(
     return DurableWorkPreviewReport(
         outcome="stale",
         schema_from=8,
-        schema_to=10,
+        schema_to=11,
         migration_rollback_verified=migration_rollback_verified,
         migration_idempotence_verified=migration_idempotence_verified,
         publication_rollback_verified=publication_rollback_verified,
@@ -2018,14 +2018,20 @@ class _SyntheticExecutorProvider:
         self.starts = 0
         self.deadlines: list[datetime] = []
 
-    def lookup(
+    def prepare(
         self,
         query: IsbnIdentityQuery,
         context: OperationContext,
+    ) -> _SyntheticExecutorProvider:
+        return self
+
+    def exchange(
+        self,
+        context: OperationContext,
         *,
-        before_exchange=allow_identity_send,
+        begin_transport,
     ) -> IdentityAttemptResult:
-        before_exchange()
+        context = begin_transport()
         self.starts += 1
         self.deadlines.append(context.deadline.at)
         self._clock.now += self._duration
@@ -2081,7 +2087,7 @@ def _safe_executor_match() -> IdentityAttemptResult:
             canonical_id=None,
             book_status_id=1,
             state="processed",
-            title="Synthetic Ebook Alpha",
+            title="Remote Volume Zeta",
             parent_book_id=None,
             compilation=False,
             is_partial_book=False,
@@ -2422,14 +2428,20 @@ class _SyntheticLifecycleProvider:
         self._raised_signal = raised_signal
         self.starts = 0
 
-    def lookup(
+    def prepare(
         self,
         query: object,
         context: OperationContext,
+    ) -> _SyntheticLifecycleProvider:
+        return self
+
+    def exchange(
+        self,
+        context: OperationContext,
         *,
-        before_exchange=allow_identity_send,
+        begin_transport,
     ) -> IdentityAttemptResult:
-        before_exchange()
+        begin_transport()
         self.starts += 1
         if self._raised_signal is not None:
             signal.raise_signal(self._raised_signal)

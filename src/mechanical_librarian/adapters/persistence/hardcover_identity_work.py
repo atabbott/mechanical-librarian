@@ -65,10 +65,21 @@ class SQLiteHardcoverIdentityWorkRepository:
                     if now < _parse_time(current_since):
                         raise IdentityWorkPersistenceError("identity work chronology is invalid")
                     if status == "matched" and now <= _parse_time(expires_at):
-                        self._validate_current_match(
+                        observation = self._validate_current_match(
                             reference, observation_id, current_since, expires_at
                         )
-                        return IdentityWorkStatus(IdentityWorkOutcome.MATCHED, reference)
+                        if observation.reusable:
+                            return IdentityWorkStatus(
+                                IdentityWorkOutcome.MATCHED,
+                                reference,
+                                observation=observation,
+                            )
+                        self._connection.execute(
+                            "UPDATE current_hardcover_identity SET status='expired' WHERE work_key=? AND status='matched'",
+                            (work_key,),
+                        )
+                        expired = True
+                        expired_generation = generation
                     if status == "matched":
                         self._validate_current_match(
                             reference, observation_id, current_since, expires_at
@@ -261,13 +272,19 @@ class SQLiteHardcoverIdentityWorkRepository:
                         raise IdentityWorkPersistenceError(
                             "current identity work is inconsistent"
                         )
-                    self._validate_current_match(
+                    observation = self._validate_current_match(
                         reference,
                         observation_id,
                         current_since,
                         expires_at,
                     )
-                    return IdentityWorkReadiness(reference, state, deadline)
+                    if not observation.reusable:
+                        raise IdentityWorkPersistenceError(
+                            "current identity work requires refresh"
+                        )
+                    return IdentityWorkReadiness(
+                        reference, state, deadline, observation=observation
+                    )
                 if state in TERMINAL_STATES:
                     results = self._connection.execute(
                         "SELECT outcome,fence,published_at "
@@ -571,8 +588,10 @@ class SQLiteHardcoverIdentityWorkRepository:
             raise TypeError("identity work failure injection is malformed")
         canonical = _canonical_observation(observation)
         observation_id = hashlib.sha256(
-            f"{claim.reference.work_key}:{claim.reference.generation}:".encode("ascii")
-            + canonical.encode("utf-8")
+            (
+                f"{claim.reference.work_key}:{claim.reference.generation}:"
+                "matched-observation-v2"
+            ).encode("ascii")
         ).hexdigest()
         timestamp = _time(now)
         expires = _time(now + CURRENTNESS_WINDOW)
@@ -615,7 +634,12 @@ class SQLiteHardcoverIdentityWorkRepository:
                 self._event(claim.reference.work_key, claim.reference.generation, "published", "claimed", "succeeded", claim.fence, timestamp)
                 if fail_before_commit:
                     raise IdentityWorkPersistenceError("injected identity publication failure")
-                return IdentityWorkStatus(IdentityWorkOutcome.MATCHED, claim.reference, claim.candidate)
+                return IdentityWorkStatus(
+                    IdentityWorkOutcome.MATCHED,
+                    claim.reference,
+                    claim.candidate,
+                    observation,
+                )
         except (IdentityWorkPersistenceError, ValueError, TypeError):
             raise
         except (sqlite3.Error, OSError):
@@ -1221,12 +1245,14 @@ class SQLiteHardcoverIdentityWorkRepository:
         if type(canonical) is not str:
             raise IdentityWorkPersistenceError("current identity work is inconsistent")
         try:
-            IdentityWorkObservation.from_canonical_json(canonical)
+            observation = IdentityWorkObservation.from_canonical_json(canonical)
         except ValueError:
             raise IdentityWorkPersistenceError("current identity work is inconsistent") from None
         expected_id = hashlib.sha256(
-            f"{reference.work_key}:{reference.generation}:".encode("ascii")
-            + canonical.encode("utf-8")
+            (
+                f"{reference.work_key}:{reference.generation}:"
+                "matched-observation-v2"
+            ).encode("ascii")
         ).hexdigest()
         terminal_updated = row[2]
         published = row[5]
@@ -1250,6 +1276,7 @@ class SQLiteHardcoverIdentityWorkRepository:
             or expiry_time != published_time + CURRENTNESS_WINDOW
         ):
             raise IdentityWorkPersistenceError("current identity work is inconsistent")
+        return observation
 
     def _reserve_pending(
         self, work_key: str, generation: int, timestamp: str, now: datetime

@@ -138,7 +138,7 @@ def c6_forbidden_corpus(
             _blob_projections(value.encode("ascii"), persistence_safe)
         )
     provider_identity = set()
-    for value in (b"Synthetic Ebook Alpha", b'"id":1001', b'"book_id":2001'):
+    for value in (b"Remote Volume Zeta", b'"id":1001', b'"book_id":2001'):
         provider_identity.update(_blob_projections(value, persistence_safe))
     database_identity = set(
         _text_projections("private-c6-sentinel.sqlite", persistence_safe)
@@ -185,6 +185,10 @@ def assert_c6_channels_private(
 ) -> None:
     if persistence_corpus is None:
         persistence_corpus = corpus
+    persistence_corpus = {
+        **persistence_corpus,
+        "provider_identity": frozenset(),
+    }
     runtime_channels = {
         channel: ([] if channel == "persistence" else values)
         for channel, values in channels.items()

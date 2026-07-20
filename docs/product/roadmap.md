@@ -103,7 +103,7 @@ being partially implemented inside it.
   and compatible ebook-edition identity as one provider lineage, but remains
   target-independent and has no proposal authority. Its first increment ships
   strict inert configuration/query/report seams were followed by the bounded
-  fixed adapter, schema-10 durable lifecycle, and configured activation.
+  fixed adapter, schema-11 durable lifecycle, and configured activation.
   Disabled returns before private input; enabled persists before lazy provider
   authority and emits only closed redacted outcomes.
 - F09g follows F07b and F09f and owns the current Audiobookshelf target/source

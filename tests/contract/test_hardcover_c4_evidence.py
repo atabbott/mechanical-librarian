@@ -22,13 +22,13 @@ class HardcoverC4EvidenceTests(unittest.TestCase):
     def test_c4_registry_binds_exact_installed_resources_and_predecessor(self) -> None:
         expected = {
             "c4-durable-work-input.json": (1844, "983ae3fbd9cb394772389e99dc722c81066e0d1ed268be7adc9623fdaf6c991e"),
-            "c4-durable-work-example-output.json": (281, "9c9b7370081a4833f26851de78cced52faace737faa953bd1acf19ca6cb99388"),
+            "c4-durable-work-example-output.json": (281, "476bbbde0a44f863260e6ab9eac95a02c255098dc587df1859a08b0096448b32"),
             "c4-durable-work-input-schema.json": (1098, "f1d5c475af492c36469bb222b622afe232aebd5d0956d3b2afcd2f54b64c50a2"),
             "c4-durable-work-variant-matrix.json": (966, "5e1c6aedc4f322b7d6d979853a50913e5373cd97e695f4c1dc8a832eaba5a002"),
-            "preview-output-schema-v5.json": (3911, "db6b3dd4b7dbd96e27dc9433b75f4b86ef2af482f92aef20b680c05a800c47a5"),
+            "preview-output-schema-v5.json": (3911, "fbdbaf1913e57b5effbea024f8d57ece60aca7d06f1521ac2734209cf75efdbb"),
             "preview-output-privacy-contract-v2.json": (3613, "02a897d7f3c997cc1c99b5f3ad808f3e636f704305cefa13ea44c8c5fb0c18e3"),
             "preview-output-privacy-scan-v2.json": (3644, "81aa8c3db583bdd326ccda572dcb510060bb1868e93b449737d71adef7bee7bc"),
-            "preview-registry-c4-v6.json": (8327, "9f49679ac4dad1f2a4e1755d08cf5844ba66f42abdde08437633ca863a483823"),
+            "preview-registry-c4-v6.json": (8327, "94380cffa51cd0bb843eafa5aa8edb39e14bc7c254c90b9feb8d08b497ac2d22"),
             "schema8-logical-snapshot.sql": (53233, "1040b8eefc8703503a9f515543c3618908bd7af0d08fae7700806b37a48811ed"),
             "schema8-logical-snapshot-ledger.json": (70843, "140d3d17ad743f8860ff216052976344ff2f7258096f45765d286b9b4887508c"),
         }
@@ -114,7 +114,7 @@ class HardcoverC4EvidenceTests(unittest.TestCase):
         )
         durable = output_schema["$defs"]["durable_work_result"]
         self.assertEqual(durable["properties"]["schema_from"], {"const": 8})
-        self.assertEqual(durable["properties"]["schema_to"], {"const": 10})
+        self.assertEqual(durable["properties"]["schema_to"], {"const": 11})
         self.assertEqual(
             durable["properties"]["outcome"]["enum"],
             ["matched", "stale", "persistence_failure", "in_progress"],

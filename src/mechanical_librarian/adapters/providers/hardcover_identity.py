@@ -33,7 +33,7 @@ from mechanical_librarian.application.hardcover_identity import (
     IdentityAttemptResult,
     IdentityExchangeGuardError,
     IsbnIdentityQuery,
-    allow_identity_send,
+    PreparedIdentityExchange,
 )
 from mechanical_librarian.application.ports import (
     CancellationId,
@@ -533,7 +533,7 @@ class HttpxIdentityByteChannel:
 
 
 class LiveHardcoverIdentityProvider:
-    """Load credential and network capabilities only after durable start."""
+    """Prepare credential and network capabilities before durable start."""
 
     def __init__(
         self,
@@ -546,13 +546,11 @@ class LiveHardcoverIdentityProvider:
         self._token_reader = token_reader
         self._channel_factory = channel_factory
 
-    def lookup(
+    def prepare(
         self,
         query: IsbnIdentityQuery,
         context: OperationContext,
-        *,
-        before_exchange: Callable[[], None] = allow_identity_send,
-    ) -> IdentityAttemptResult:
+    ) -> PreparedIdentityExchange | IdentityAttemptResult:
         preflight = _safe_preflight(context)
         if preflight is not None:
             return IdentityAttemptResult.failed(preflight)
@@ -576,9 +574,7 @@ class LiveHardcoverIdentityProvider:
                 BoundedIdentityAddressResolver(context),
                 self._channel_factory(),
                 token,
-            ).lookup(query, context, before_exchange=before_exchange)
-        except IdentityExchangeGuardError:
-            raise
+            ).prepare(query, context)
         except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         finally:
@@ -611,13 +607,11 @@ class HardcoverIdentityProvider:
         self._channel = channel
         self._token = token
 
-    def lookup(
+    def prepare(
         self,
         query: IsbnIdentityQuery,
         context: OperationContext,
-        *,
-        before_exchange: Callable[[], None] = allow_identity_send,
-    ) -> IdentityAttemptResult:
+    ) -> PreparedIdentityExchange | IdentityAttemptResult:
         if type(query) is not IsbnIdentityQuery or type(context) is not OperationContext:
             return IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.INCOMPATIBLE
@@ -651,9 +645,47 @@ class HardcoverIdentityProvider:
             return IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.INCOMPATIBLE
             )
+        return _PreparedHardcoverIdentityExchange(
+            self._channel,
+            authorized,
+            addresses[0],
+        )
+
+
+class _PreparedHardcoverIdentityExchange:
+    """Single-use prepared request whose first action is durable start."""
+
+    def __init__(
+        self,
+        channel: IdentityByteChannel,
+        authorized: AuthorizedIdentityRequest,
+        selected_address: str,
+    ) -> None:
+        self._channel = channel
+        self._authorized = authorized
+        self._selected_address = selected_address
+        self._used = False
+
+    def exchange(
+        self,
+        context: OperationContext,
+        *,
+        begin_transport: Callable[[], OperationContext],
+    ) -> IdentityAttemptResult:
+        if (
+            self._used
+            or type(context) is not OperationContext
+            or not callable(begin_transport)
+        ):
+            return IdentityAttemptResult.failed(IdentityAttemptFailureKind.INCOMPATIBLE)
+        self._used = True
         try:
-            before_exchange()
-            response = self._channel.exchange(authorized, context)
+            context = begin_transport()
+            if type(context) is not OperationContext:
+                raise IdentityExchangeGuardError(
+                    "Hardcover exchange authority is unavailable"
+                )
+            response = self._channel.exchange(self._authorized, context)
         except IdentityExchangeGuardError:
             raise
         except IdentityChannelFailure as error:
@@ -667,7 +699,7 @@ class HardcoverIdentityProvider:
             | IdentityAttemptResult
         )
         try:
-            if not _peer_equal(response.connected_peer_address, addresses[0]):
+            if not _peer_equal(response.connected_peer_address, self._selected_address):
                 candidate = IdentityAttemptFailureKind.UNAVAILABLE
             else:
                 preflight = _safe_preflight(context)
@@ -961,7 +993,12 @@ class StructuralHardcoverIdentityPreview:
             if address_is_public(selected)
             else AddressPolicyOutcome.REJECTED
         )
-        result = provider.lookup(query, context)
+        prepared = provider.prepare(query, context)
+        result = (
+            prepared
+            if type(prepared) is IdentityAttemptResult
+            else prepared.exchange(context, begin_transport=lambda: context)
+        )
         if not channel.called:
             channel.release(raw_response)
         return FixedAdapterAttemptEvidence(

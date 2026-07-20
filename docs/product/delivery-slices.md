@@ -212,8 +212,9 @@ F07b + F09f -> F09g #238/#243 -> 0.3.0 checkpoint exit
 
 F09f is the target-independent configured provider lane. Its completed
 preactivation increments install strict disabled-by-default configuration,
-private-query parsing, the fixed adapter, schema-10 work, and its durable
-lifecycle. Activation composes provider authority only after durable start.
+private-query parsing, the fixed adapter, schema-11 work, and its durable
+lifecycle. Activation completes provider preparation before claiming and
+durably starting the attempt at the final transport boundary.
 The slice owns the bounded
 Hardcover title and strict ISBN-backed book/compatible ebook-edition
 observation, including its durable provider work, restart, reuse, freshness,

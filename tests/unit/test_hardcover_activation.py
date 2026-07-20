@@ -26,6 +26,7 @@ from mechanical_librarian.bootstrap.composition import (
 from mechanical_librarian.domain.hardcover_identity import (
     ProviderBookObservation,
     ProviderIdentityObservation,
+    TitleComparison,
     validate_private_query,
 )
 from mechanical_librarian.domain.inventory import SecretReference
@@ -114,10 +115,10 @@ class HardcoverActivationTests(unittest.TestCase):
         self,
     ) -> None:
         payload = ACTIVATION_REGISTRY.read_bytes()
-        self.assertEqual(len(payload), 1_928)
+        self.assertEqual(len(payload), 2_120)
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "66bb9e2047bfd21aa42d1802cf14b26f43f49dd98b8896c99f4d50e23d820bd0",
+            "4893badcf9cb91fedd0aded8a0b852bb48868443772be6fd57fb89c843806bc7",
         )
         registry = json.loads(payload)
         self.assertEqual(registry["closes"], [239, 242])
@@ -136,7 +137,7 @@ class HardcoverActivationTests(unittest.TestCase):
         )
         self.assertEqual(
             production_schema["properties"]["schema"]["const"],
-            "hardcover-identity-report-v5",
+            "hardcover-identity-report-v6",
         )
         self.assertEqual(
             set(production_schema["properties"]["outcome"]["enum"]),
@@ -144,9 +145,29 @@ class HardcoverActivationTests(unittest.TestCase):
         )
         self.assertEqual(
             json.loads(
-                HardcoverIdentityReport(HardcoverIdentityOutcome.MATCHED).to_json()
+                HardcoverIdentityReport(
+                    HardcoverIdentityOutcome.MATCHED,
+                    1001,
+                    2001,
+                    TitleComparison.EQUAL,
+                ).to_json()
             )["schema"],
-            "hardcover-identity-report-v5",
+            "hardcover-identity-report-v6",
+        )
+        privacy = json.loads(
+            (
+                ROOT
+                / registry["bindings"]["production-output-privacy"]["path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            privacy["allowed_runtime"]["matched"],
+            ["schema", "outcome", "edition_id", "book_id", "comparison"],
+        )
+        self.assertIn("local_title", privacy["forbidden_persistence"])
+        self.assertIn("raw_isbn", privacy["forbidden_persistence"])
+        self.assertNotIn(
+            "provider_title", privacy["allowed_runtime"]["matched"]
         )
 
     def test_enabled_invalid_query_returns_before_state_secret_dns_or_network(
@@ -238,10 +259,11 @@ class HardcoverActivationTests(unittest.TestCase):
             database = root / "state.sqlite"
 
             class _Provider:
-                def lookup(
-                    self, _query, _context, *, before_exchange=lambda: None
-                ):
-                    before_exchange()
+                def prepare(self, _query, _context):
+                    return self
+
+                def exchange(self, _context, *, begin_transport):
+                    begin_transport()
                     connection = sqlite3.connect(database)
                     try:
                         started = connection.execute(
@@ -290,11 +312,16 @@ class HardcoverActivationTests(unittest.TestCase):
             self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
             persisted = database.read_bytes()
             self.assertNotIn(b"9780000000019", persisted)
-            self.assertNotIn(b"Synthetic Ebook Alpha", persisted)
+            self.assertIn(b"Synthetic Ebook Alpha", persisted)
 
     def test_cli_passes_one_shot_only_to_installed_production_runner(self) -> None:
         runner = Mock(
-            return_value=HardcoverIdentityReport(HardcoverIdentityOutcome.MATCHED)
+            return_value=HardcoverIdentityReport(
+                HardcoverIdentityOutcome.MATCHED,
+                1001,
+                2001,
+                TitleComparison.EQUAL,
+            )
         )
         output = io.StringIO()
         errors = io.StringIO()
@@ -332,7 +359,17 @@ class HardcoverActivationTests(unittest.TestCase):
             (("--format", "json"), HardcoverIdentityOutcome.RETRY_EXHAUSTED),
         ):
             with self.subTest(arguments=arguments, outcome=outcome):
-                runner = Mock(return_value=HardcoverIdentityReport(outcome))
+                report = (
+                    HardcoverIdentityReport(
+                        outcome,
+                        1001,
+                        2001,
+                        TitleComparison.EQUAL,
+                    )
+                    if outcome is HardcoverIdentityOutcome.MATCHED
+                    else HardcoverIdentityReport(outcome)
+                )
+                runner = Mock(return_value=report)
                 code = main(
                     [
                         "hardcover-identity-report",

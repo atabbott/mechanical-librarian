@@ -177,7 +177,7 @@ ambient or inline token is accepted.
 The private-query reader uses a canonical parent directory descriptor and a
 no-follow final-component open, verifies effective-user ownership, regular
 type, owner-only mode, link count one, bounded size, and stable identity around
-one exact read. Its title is transient and never hashed, persisted, logged,
+one exact read. The local title is transient and never hashed, persisted, logged,
 exported, reported, audited, traced, or emitted as a metric. The contributor
 preview uses the same validation seams but has no production composition and
 emits only its closed typed schema-v5 zero-access result.
@@ -231,7 +231,13 @@ GraphQL, edition, and book shapes. All rows, including the four-row ambiguity
 sentinel, are validated before selection. Raw request, response, headers,
 addresses, token, ISBN, title, provider identity, exception text, and derived
 digests or correlations are forbidden from every runtime channel. Only the
-coarse fixed-adapter result fields are exportable.
+coarse fixed-adapter result fields are exportable. Activated production stores
+only the validated bounded provider title and positive edition/book IDs in its
+private matched observation so restart reuse can reconstruct the identity and
+recompute title comparison. The provider title is never a runtime output, log,
+audit, trace, metric, export, support report, or review-evidence value; the IDs
+are permitted only in that private observation and the direct matched report.
+Schema 11 expires legacy current pointers that cannot supply those fields.
 
 F10a consumes only an already-persisted current F09a lineage selected by the
 closed scenario vocabulary. `synthetic-title-review-binding-v1` binds closed

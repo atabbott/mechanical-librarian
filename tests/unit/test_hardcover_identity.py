@@ -415,10 +415,16 @@ class RunHardcoverIdentityReportTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls: list[tuple[IsbnIdentityQuery, OperationContext]] = []
 
-            def lookup(
+            def prepare(
                 self, query: IsbnIdentityQuery, context: OperationContext
-            ) -> IdentityAttemptResult:
+            ) -> Provider:
                 self.calls.append((query, context))
+                return self
+
+            def exchange(
+                self, context: OperationContext, *, begin_transport
+            ) -> IdentityAttemptResult:
+                begin_transport()
                 return IdentityAttemptResult.success((observation,))
 
         provider = Provider()
@@ -531,13 +537,15 @@ class RunHardcoverIdentityReportTests(unittest.TestCase):
             type(adapter).__module__,
             "mechanical_librarian.adapters.providers.synthetic_hardcover_identity",
         )
-        result = adapter.lookup(query, self.context())
+        context = self.context()
+        prepared = adapter.prepare(query, context)
+        result = prepared.exchange(context, begin_transport=lambda: context)
         self.assertEqual(result.observations, (self.row(),))
         with self.assertRaisesRegex(ValueError, "invocation is invalid"):
-            adapter.lookup(query, self.context())
+            adapter.prepare(query, self.context())
         fresh = SyntheticBookIdentityProvider(query, ())
         with self.assertRaisesRegex(ValueError, "invocation is invalid"):
-            fresh.lookup(
+            fresh.prepare(
                 IsbnIdentityQuery("9780306406157", "0306406152"), self.context()
             )
 
@@ -546,7 +554,7 @@ class RunHardcoverIdentityReportTests(unittest.TestCase):
             def __init__(self, kind: IdentityAttemptFailureKind) -> None:
                 self.kind = kind
 
-            def lookup(
+            def prepare(
                 self, query: IsbnIdentityQuery, context: OperationContext
             ) -> IdentityAttemptResult:
                 return IdentityAttemptResult.failed(self.kind)
@@ -568,7 +576,7 @@ class RunHardcoverIdentityReportTests(unittest.TestCase):
 
     def test_transient_failures_and_malformed_providers_fail_value_free(self) -> None:
         class TransientProvider:
-            def lookup(
+            def prepare(
                 self, query: IsbnIdentityQuery, context: OperationContext
             ) -> IdentityAttemptResult:
                 return IdentityAttemptResult.failed(IdentityAttemptFailureKind.TIMEOUT)

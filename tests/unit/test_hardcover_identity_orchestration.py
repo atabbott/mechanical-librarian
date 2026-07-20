@@ -86,14 +86,20 @@ class _SequenceProvider:
         self.results = list(results)
         self.starts = 0
 
-    def lookup(
+    def prepare(
         self,
         query: object,
         context: OperationContext,
+    ) -> _SequenceProvider:
+        return self
+
+    def exchange(
+        self,
+        context: OperationContext,
         *,
-        before_exchange=lambda: None,
+        begin_transport,
     ) -> IdentityAttemptResult:
-        before_exchange()
+        begin_transport()
         self.starts += 1
         return self.results.pop(0)
 
@@ -106,14 +112,20 @@ class _DyingProvider:
     def __init__(self) -> None:
         self.starts = 0
 
-    def lookup(
+    def prepare(
         self,
         query: object,
         context: OperationContext,
+    ) -> _DyingProvider:
+        return self
+
+    def exchange(
+        self,
+        context: OperationContext,
         *,
-        before_exchange=lambda: None,
+        begin_transport,
     ) -> IdentityAttemptResult:
-        before_exchange()
+        begin_transport()
         self.starts += 1
         raise _ProcessDeath()
 

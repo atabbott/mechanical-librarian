@@ -23,6 +23,7 @@ from mechanical_librarian.application.ports import Deadline, OperationContext
 from mechanical_librarian.domain.hardcover_identity import (
     IdentityDecisionOutcome,
     PrivateIdentityQuery,
+    compare_identity_titles,
     decide_book_identity,
 )
 from mechanical_librarian.domain.hardcover_identity_work import (
@@ -177,7 +178,7 @@ class RunSafeHardcoverIdentity:
     ) -> None:
         if type(work) is not ManageHardcoverIdentityWork:
             raise TypeError("Hardcover identity work manager is malformed")
-        if not callable(getattr(provider, "lookup", None)):
+        if not callable(getattr(provider, "prepare", None)):
             raise TypeError("book identity provider is malformed")
         if not callable(getattr(gate, "try_acquire", None)):
             raise TypeError("Hardcover deployment gate is malformed")
@@ -220,7 +221,7 @@ class RunSafeHardcoverIdentity:
                     egress_limit=request.egress_limit,
                 )
             if accepted.outcome is IdentityWorkOutcome.MATCHED:
-                return _report(HardcoverIdentityOutcome.MATCHED)
+                return _matched_report(request.query, accepted.observation)
             if accepted.outcome is IdentityWorkOutcome.PERSISTENCE_FAILURE:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
             if accepted.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED:
@@ -307,7 +308,7 @@ class RunSafeHardcoverIdentity:
         if active.state is IdentityWorkState.CLAIMED:
             return _report(HardcoverIdentityOutcome.IN_PROGRESS)
         if active.state is IdentityWorkState.SUCCEEDED:
-            return _report(HardcoverIdentityOutcome.MATCHED)
+            return _matched_report(request.query, active.observation)
         if active.state in {
             IdentityWorkState.FAILED,
             IdentityWorkState.CANCELLED,
@@ -325,73 +326,130 @@ class RunSafeHardcoverIdentity:
             and now < active.retry_due_at
         ):
             return _report(HardcoverIdentityOutcome.IN_PROGRESS)
-        claim = self._work.claim(
-            reference, request.owner, now, gate_owned=True
-        )
-        started_at = context.observed_at
-        if context.cancelled:
-            self._work.cancel(
-                claim,
-                request.owner,
-                started_at,
-                gate_owned=True,
-            )
-            return _report(HardcoverIdentityOutcome.CANCELLED)
-        if context.deadline.expired_at(started_at):
-            return _report(HardcoverIdentityOutcome.IN_PROGRESS)
-        started = self._work.start(
-            claim,
-            request.owner,
-            started_at,
-            gate_owned=True,
-            egress_limit=request.egress_limit,
-        )
-        if type(started) is not IdentityWorkClaim:
-            return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
-        if context.cancelled:
-            self._work.cancel(
-                started,
-                request.owner,
-                context.observed_at,
-                gate_owned=True,
-            )
-            return _report(HardcoverIdentityOutcome.CANCELLED)
-        lease.validate_for_send()
-
-        attempt_deadline = min(
-            context.deadline.at,
-            started_at + TRANSPORT_WINDOW,
-        )
-        attempt_context = OperationContext(
-            Deadline(attempt_deadline),
+        query = IsbnIdentityQuery.from_private(request.query)
+        preparation_context = OperationContext(
+            Deadline(min(context.deadline.at, aggregate_deadline)),
             context.cancellation,
             context.resources,
             context.time,
         )
-        query = IsbnIdentityQuery.from_private(request.query)
+        try:
+            prepared = self._provider.prepare(query, preparation_context)
+        except Exception:
+            prepared = IdentityAttemptResult.failed(
+                IdentityAttemptFailureKind.UNAVAILABLE
+            )
+        if type(prepared) is IdentityAttemptResult:
+            query = None
+            return self._preparation_result(reference, prepared, context)
+        exchange = getattr(prepared, "exchange", None)
+        if not callable(exchange):
+            raise IdentityReportError(
+                "identity provider returned a malformed preparation"
+            )
 
-        def validate_exchange_authority() -> None:
+        started: IdentityWorkClaim | None = None
+        attempt_deadline: datetime | None = None
+        callback_used = False
+        rejected: HardcoverIdentityInvocationResult | None = None
+
+        def begin_transport() -> OperationContext:
+            nonlocal started, attempt_deadline, callback_used, rejected
+            if callback_used:
+                raise IdentityExchangeGuardError(
+                    "Hardcover exchange authority is unavailable"
+                )
+            callback_used = True
+            started_at = context.observed_at
+            if (
+                context.cancelled
+                or started_at >= aggregate_deadline
+                or context.deadline.expired_at(started_at)
+            ):
+                if context.cancelled:
+                    self._work.cancel_available(reference, started_at)
+                    rejected = _report(HardcoverIdentityOutcome.CANCELLED)
+                else:
+                    rejected = _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
+                raise IdentityExchangeGuardError(
+                    "Hardcover exchange authority is unavailable"
+                )
             try:
                 lease.validate_for_send()
             except Exception:
                 raise IdentityExchangeGuardError(
                     "Hardcover exchange authority is unavailable"
                 ) from None
+            claim = self._work.claim(
+                reference, request.owner, started_at, gate_owned=True
+            )
+            started_at = context.observed_at
+            if (
+                context.cancelled
+                or started_at >= aggregate_deadline
+                or context.deadline.expired_at(started_at)
+            ):
+                if context.cancelled:
+                    self._work.cancel(
+                        claim,
+                        request.owner,
+                        started_at,
+                        gate_owned=True,
+                    )
+                    rejected = _report(HardcoverIdentityOutcome.CANCELLED)
+                else:
+                    rejected = _report(HardcoverIdentityOutcome.IN_PROGRESS)
+                raise IdentityExchangeGuardError(
+                    "Hardcover exchange authority is unavailable"
+                )
+            started_result = self._work.start(
+                claim,
+                request.owner,
+                started_at,
+                gate_owned=True,
+                egress_limit=request.egress_limit,
+            )
+            if type(started_result) is not IdentityWorkClaim:
+                rejected = _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
+                raise IdentityExchangeGuardError(
+                    "Hardcover exchange authority is unavailable"
+                )
+            try:
+                lease.validate_for_send()
+            except Exception:
+                raise IdentityExchangeGuardError(
+                    "Hardcover exchange authority is unavailable"
+                ) from None
+            started = started_result
+            attempt_deadline = min(
+                context.deadline.at,
+                aggregate_deadline,
+                started_at + TRANSPORT_WINDOW,
+            )
+            return OperationContext(
+                Deadline(attempt_deadline),
+                context.cancellation,
+                context.resources,
+                context.time,
+            )
 
         try:
-            attempt = self._provider.lookup(
-                query,
-                attempt_context,
-                before_exchange=validate_exchange_authority,
+            attempt = exchange(
+                preparation_context,
+                begin_transport=begin_transport,
             )
         except IdentityExchangeGuardError:
             query = None
-            return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+            return rejected or _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
         except Exception:
             attempt = IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.UNAVAILABLE
             )
         query = None
+        if started is None or attempt_deadline is None:
+            if type(attempt) is IdentityAttemptResult:
+                return self._preparation_result(reference, attempt, context)
+            raise IdentityReportError("identity provider did not start transport")
         if type(attempt) is not IdentityAttemptResult:
             attempt = None
             raise IdentityReportError(
@@ -404,6 +462,29 @@ class RunSafeHardcoverIdentity:
             attempt = IdentityAttemptResult.failed(IdentityAttemptFailureKind.TIMEOUT)
         lease.validate_for_send()
         return self._publish_attempt(request, started, attempt, published_at)
+
+    def _preparation_result(
+        self,
+        reference: IdentityWorkReference,
+        attempt: IdentityAttemptResult,
+        context: OperationContext,
+    ) -> HardcoverIdentityInvocationResult:
+        if attempt.failure is None:
+            return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+        failure = attempt.failure.kind
+        if failure is IdentityAttemptFailureKind.CANCELLED or context.cancelled:
+            self._work.cancel_available(reference, context.observed_at)
+            return _report(HardcoverIdentityOutcome.CANCELLED)
+        outcome = {
+            IdentityAttemptFailureKind.CREDENTIAL_UNAVAILABLE: (
+                HardcoverIdentityOutcome.CREDENTIAL_UNAVAILABLE
+            ),
+            IdentityAttemptFailureKind.MALFORMED: HardcoverIdentityOutcome.MALFORMED,
+            IdentityAttemptFailureKind.OVERSIZED: HardcoverIdentityOutcome.OVERSIZED,
+            IdentityAttemptFailureKind.EMPTY: HardcoverIdentityOutcome.EMPTY,
+            IdentityAttemptFailureKind.INCOMPATIBLE: HardcoverIdentityOutcome.INCOMPATIBLE,
+        }.get(failure, HardcoverIdentityOutcome.IN_PROGRESS)
+        return _report(outcome)
 
     def _publish_attempt(
         self,
@@ -420,15 +501,17 @@ class RunSafeHardcoverIdentity:
                     request.owner,
                     now,
                     IdentityWorkObservation(
-                        IdentityMatchOutcome.MATCHED, decision.rows_validated
+                        IdentityMatchOutcome.MATCHED,
+                        decision.rows_validated,
+                        decision.identity.edition_id,
+                        decision.identity.book_id,
+                        decision.identity.provider_title,
                     ),
                     gate_owned=True,
                 )
-                return _report(
-                    HardcoverIdentityOutcome.MATCHED
-                    if status.outcome is IdentityWorkOutcome.MATCHED
-                    else HardcoverIdentityOutcome.PERSISTENCE_FAILURE
-                )
+                if status.outcome is not IdentityWorkOutcome.MATCHED:
+                    return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+                return _matched_report(request.query, status.observation)
             terminal = {
                 IdentityDecisionOutcome.NO_MATCH: HardcoverIdentityOutcome.NO_MATCH,
                 IdentityDecisionOutcome.AMBIGUOUS: HardcoverIdentityOutcome.AMBIGUOUS,
@@ -542,6 +625,29 @@ def _report(
     return HardcoverIdentityInvocationResult(
         HardcoverIdentityReport(outcome),
         retry_token,
+    )
+
+
+def _matched_report(
+    query: PrivateIdentityQuery,
+    observation: IdentityWorkObservation | None,
+) -> HardcoverIdentityInvocationResult:
+    if (
+        type(query) is not PrivateIdentityQuery
+        or type(observation) is not IdentityWorkObservation
+        or not observation.reusable
+        or observation.edition_id is None
+        or observation.book_id is None
+        or observation.provider_title is None
+    ):
+        return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+    return HardcoverIdentityInvocationResult(
+        HardcoverIdentityReport(
+            HardcoverIdentityOutcome.MATCHED,
+            observation.edition_id,
+            observation.book_id,
+            compare_identity_titles(query.title, observation.provider_title),
+        )
     )
 
 

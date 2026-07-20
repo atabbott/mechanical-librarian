@@ -21,6 +21,23 @@ CURRENT_VERSION_ROWS = [(version,) for version in range(1, CURRENT_VERSION + 1)]
 
 
 class SqliteFoundationTests(unittest.TestCase):
+    def test_bound_existing_state_accepts_convergent_parent_symlink_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "private-state"
+            root.mkdir(mode=0o700)
+            target = root / "state.sqlite"
+            connection = sqlite3.connect(target)
+            migrate(connection)
+            connection.close()
+            target.chmod(0o600)
+            alias = root.parent / "private-state-alias"
+            alias.symlink_to(root, target_is_directory=True)
+
+            with sqlite.bound_existing_state(alias / target.name) as bound:
+                self.assertEqual(bound.identity, (target.stat().st_dev, target.stat().st_ino))
+
+            alias.unlink()
+
     def test_bound_publication_rejects_target_replacement_before_staged_unlink(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory) / "disposable"

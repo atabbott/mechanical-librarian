@@ -983,6 +983,14 @@ MIGRATIONS = (
         ),
         frozenset({"hardcover_identity_egress_policies"}),
     ),
+    Migration(
+        11,
+        (
+            "UPDATE current_hardcover_identity SET status='expired' WHERE status='matched'",
+            "CREATE INDEX hardcover_identity_observations_by_work ON hardcover_identity_observations(work_key,generation)",
+        ),
+        frozenset(),
+    ),
 )
 
 
@@ -1712,14 +1720,16 @@ def bound_existing_state(target: Path) -> Iterator[BoundStagedState]:
     descriptor: int | None = None
     failure: BaseException | None = None
     try:
+        supplied_parent = target.parent
+        canonical_parent = supplied_parent.resolve(strict=True)
         descriptor = os.open(
-            target.parent,
+            canonical_parent,
             os.O_RDONLY
             | getattr(os, "O_DIRECTORY", 0)
             | getattr(os, "O_NOFOLLOW", 0),
         )
         descriptor_status = os.fstat(descriptor)
-        path_status = target.parent.lstat()
+        path_status = canonical_parent.lstat()
         directory_identity = _directory_identity(descriptor_status)
         target_status = os.stat(
             target.name,
@@ -1752,7 +1762,13 @@ def bound_existing_state(target: Path) -> Iterator[BoundStagedState]:
             or sidecars_present
         ):
             raise SchemaError("durable state identity is invalid")
-        parent = BoundDisposableState(target, descriptor, directory_identity)
+        if supplied_parent.resolve(strict=True) != canonical_parent:
+            raise SchemaError("durable state identity is invalid")
+        parent = BoundDisposableState(
+            canonical_parent / target.name,
+            descriptor,
+            directory_identity,
+        )
         bound = BoundStagedState(
             parent,
             target.name,
@@ -1760,6 +1776,8 @@ def bound_existing_state(target: Path) -> Iterator[BoundStagedState]:
             wal_snapshot=True,
         )
         yield bound
+        if supplied_parent.resolve(strict=True) != canonical_parent:
+            raise SchemaError("durable state identity changed")
         parent._revalidate_directory()
         final_status = os.stat(
             target.name,

@@ -150,7 +150,7 @@ def c5_forbidden_corpus(
             _blob_projections(value.encode("ascii"), persistence_safe)
         )
     provider_identity = set(
-        _blob_projections(b"Synthetic Ebook Alpha", persistence_safe)
+        _blob_projections(b"Remote Volume Zeta", persistence_safe)
         | _blob_projections(b'"id":1001', persistence_safe)
         | _blob_projections(b'"book_id":2001', persistence_safe)
     )
@@ -199,6 +199,10 @@ def assert_c5_channels_private(
 ) -> None:
     if persistence_corpus is None:
         persistence_corpus = corpus
+    persistence_corpus = {
+        **persistence_corpus,
+        "provider_identity": frozenset(),
+    }
     runtime_channels = {
         channel: ([] if channel == "persistence" else values)
         for channel, values in channels.items()

@@ -638,7 +638,10 @@ never authorize a write.
 ## Durable Hardcover identity compatibility
 
 Schemas 9 and 10 add Hardcover identity work and lifecycle state without
-transforming schema-8 rows. A
+transforming schema-8 rows. Schema 11 adds no table column; it marks every
+legacy matched-current pointer expired so only a complete v2 private matched
+observation can be reused while preserving the old immutable observation as
+history. A
 work generation is compatible for matched-current reuse only when its opaque
 application-derived work key denotes the same validated identity inputs and
 its matched pointer is no older than exactly 24 hours. Generation number,
@@ -649,15 +652,17 @@ That opaque work key is the sole ISBN-derived persisted identifier permitted by
 the F09f privacy contract. Its exact derivation is a currentness compatibility
 boundary; it excludes title and raw/reversible input and is never a runtime
 output, log, export, report, or audit value. Installed production JSON conforms
-to `hardcover-identity-report-output-v5`; changing its schema marker or closed
-outcome enum requires a new versioned output contract.
+to `hardcover-identity-report-output-v6`. A matched report additionally carries
+positive edition/book IDs and `equal` or `different`; a non-matched report
+carries only the schema marker and closed outcome. Changing that shape or the
+closed outcome enum requires a new versioned output contract.
 
 The state values `pending`, `claimed`, `retry_wait`, `succeeded`, `failed`, and
 `cancelled`, the terminal result meanings, the 30-second aggregate window,
 15-second lease, six-second start threshold, three-attempt bound, and exact
 24-hour matched-currentness boundary are compatibility semantics. Changing a
 meaning or bound requires a new application contract and a documented durable
-migration; an older binary must not open schema 10. Append-only history remains
+migration; an older binary must not open schema 11. Append-only history remains
 attributable to its original contract rather than being reinterpreted.
 
 The installed `durable-work-v3` input is a closed qualification DSL, not a

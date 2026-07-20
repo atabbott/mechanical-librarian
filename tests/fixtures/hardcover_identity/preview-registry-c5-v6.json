@@ -1,21 +1,21 @@
 {
   "available_through_increment": "Execute one bounded Hardcover identity attempt with durable authority",
   "output_privacy_contract": {
-    "bytes": 3225,
+    "bytes": 3523,
     "path": "preview-output-privacy-contract-c5-v3.json",
-    "sha256": "b7b6fb5e8f7cf33a3b4df5747aa937fd2861b4af1e25a89d97c55ae4b21870b3"
+    "sha256": "2fe65433fc20a46a634602341ca222f4fcbb74867dc314fa30f397b1e1f5f571"
   },
   "output_privacy_scan": {
-    "bytes": 2478,
+    "bytes": 2437,
     "path": "preview-output-privacy-scan-c5-v3.json",
-    "sha256": "f9fa12bd11c5d270aa26a6adaec1162e21818323ddc12bc52a44c1fa266ba713"
+    "sha256": "0ff1d8f41081dbc79224b10a7c14f2d7565d9e8aa7278143e38e044f08ac07f6"
   },
   "output_schema": {
     "bytes": 3980,
     "path": "preview-output-schema-c5-v6.json",
-    "sha256": "930f62a1218e37ef5de91bdc1b543176e84c6a65f1202d44998e25aa73edacc2"
+    "sha256": "0d5f470fc530a62a8931d0b625ebe008a259044699cdde2e4625ebabebdaaa51"
   },
-  "predecessor_registry_sha256": "9f49679ac4dad1f2a4e1755d08cf5844ba66f42abdde08437633ca863a483823",
+  "predecessor_registry_sha256": "94380cffa51cd0bb843eafa5aa8edb39e14bc7c254c90b9feb8d08b497ac2d22",
   "runtime_contract": {
     "anti_noop": "compare allowlisted derived typed fields across golden, alternate-valid, single-field mutation, title-only metamorphic, boundary, invalid-extra, and differing-output cases without computing or exporting an input digest; require zero production composition/egress",
     "authority": "no secret lookup, DNS, socket, real provider, production database, target join, proposal, review, or write authority",
@@ -200,7 +200,7 @@
         "canonical_example_output": {
           "bytes": 281,
           "path": "c4-durable-work-example-output.json",
-          "sha256": "9c9b7370081a4833f26851de78cced52faace737faa953bd1acf19ca6cb99388"
+          "sha256": "476bbbde0a44f863260e6ab9eac95a02c255098dc587df1859a08b0096448b32"
         },
         "input_schema": {
           "bytes": 1098,

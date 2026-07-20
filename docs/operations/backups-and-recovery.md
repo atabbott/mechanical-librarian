@@ -58,12 +58,14 @@ the verified copy, run `state-check`, run a new read-only inventory
 reconciliation, confirm selectors with `inventory-inspect`, and execute one
 `epub-opening-evidence` canary against isolated fixtures.
 
-Before the forward-only F09f schema-9 and schema-10 migrations of important
+Before the forward-only F09f schema-9, schema-10, and schema-11 migrations of important
 state, stop identity workers and retain a verified pre-F09f curator-data copy.
 The migrations are additive from the genuine schema-8 prefix and transform no
-existing row. Interruption at any migration statement rolls the identity-work
-objects and version row back together; retry applies each migration once. An
-older binary must not open schema 10.
+existing row through schema 10. Schema 11 preserves all immutable history but
+expires legacy matched-current pointers whose observations lack the provider
+identity needed for truthful reuse. Interruption at any migration statement
+rolls its changes and version row back together; retry applies each migration
+once. An older binary must not open schema 11.
 
 Started identity attempts are recoverable state, not permission to repeat
 network work. After restart, only a later owner holding the external execution
@@ -86,7 +88,7 @@ started claim recoverable.
 Downgrade is restore-only: stop every newer process, restore the complete
 verified pre-F09f database, run `state-check`, and exercise
 `durable-work-v3` against a separate absent disposable path. Do not delete
-schema-9/schema-10 tables, claims, events, observations, or current pointers, and do not
+schema-9/schema-10/schema-11 tables, claims, events, observations, or current pointers, and do not
 edit `schema_migrations`. There is no supported selected-row restore; use the
 whole stopped curator-data backup so generation and fence history cannot be
 split.

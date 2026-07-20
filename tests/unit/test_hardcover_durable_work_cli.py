@@ -285,7 +285,7 @@ class HardcoverDurableWorkCliTests(unittest.TestCase):
 
     def test_report_validation_is_closed(self) -> None:
         valid = DurableWorkPreviewReport(
-            "stale", 8, 10, True, True, True, True
+            "stale", 8, 11, True, True, True, True
         )
         valid.validate()
         self.assertEqual(
@@ -295,7 +295,7 @@ class HardcoverDurableWorkCliTests(unittest.TestCase):
             ),
         )
         invalid = DurableWorkPreviewReport(
-            "stale", 8, 10, True, True, True, False
+            "stale", 8, 11, True, True, True, False
         )
         with self.assertRaisesRegex(TypeError, "malformed"):
             invalid.validate()

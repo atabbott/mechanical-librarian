@@ -2,8 +2,9 @@
 
 `hardcover-identity-report` is the installed, disabled-by-default report-only
 F09f surface. Enabled operation reads one strict private query, persists bounded
-schema-10 work, acquires the deployment gate, and only then lazily reads the
-provider token and performs the fixed read-only Hardcover ISBN request.
+schema-11 work, acquires the deployment gate, prepares the fixed read-only
+Hardcover ISBN request, and claims plus durably starts the attempt immediately
+before the selected-address HTTPS exchange.
 Contributor synthetic scenarios remain credential-free and cannot construct
 production provider or network authority.
 
@@ -30,17 +31,32 @@ second request. It is reserved for exact-head installed-wheel qualification.
 ### Authorized production one-shot procedure
 
 Use this procedure only for the separately authorized final request at an
-exact reviewed and qualified head. Prepare a new stopped-state root and keep
-the database path absent:
+exact reviewed and qualified head. Build the wheel at that head, record both
+identities, and install that exact wheel before creating any provider authority:
 
 ```sh
-install -d -m 0700 /data/qualification/f09f-one-shot
+qualification_head="$(git rev-parse HEAD)"
+wheel_path="$(find dist -maxdepth 1 -type f -name 'mechanical_librarian-*.whl' -print -quit)"
+test -n "$wheel_path"
+wheel_sha256="$(shasum -a 256 "$wheel_path" | awk '{print $1}')"
+python -m pip install --force-reinstall --no-deps "$wheel_path"
+```
+
+Prepare a new owner-only empty stopped-state root and keep its database path
+absent. `mktemp -d` is mandatory here so a previous qualification root cannot
+silently be reused:
+
+```sh
+umask 077
+qualification_root="$(mktemp -d /data/qualification/f09f-one-shot.XXXXXX)"
+test -z "$(find "$qualification_root" -mindepth 1 -maxdepth 1 -print -quit)"
+database_path="$qualification_root/state.sqlite"
 install -d -m 0700 /run/mechanical-librarian /run/mechanical-librarian/secrets
 install -m 0600 /secure-input/f09f-query.json \
   /run/mechanical-librarian/f09f-query.json
 install -m 0600 /secure-input/hardcover-token \
   /run/mechanical-librarian/secrets/hardcover-token
-test ! -e /data/qualification/f09f-one-shot/state.sqlite
+test ! -e "$database_path"
 ```
 
 Prepare the strict private query as a regular, current-effective-user-owned,
@@ -67,28 +83,65 @@ private-query contract.
 }
 ```
 
-Run exactly the installed production command once:
+Run exactly the installed production command once, capturing the private
+matched report only inside the disposable root:
 
 ```sh
+result_path="$qualification_root/result.json"
 mechanical-librarian hardcover-identity-report \
   --config /etc/mechanical-librarian/config.json \
-  --database /data/qualification/f09f-one-shot/state.sqlite \
+  --database "$database_path" \
   --query-file /run/mechanical-librarian/f09f-query.json \
   --format json \
-  --qualification-one-shot
+  --qualification-one-shot >"$result_path"
 ```
 
 `matched` is the only qualifying outcome and exits 0. Every other closed
 outcome exits 2 for this flag. The durable one-start budget is consumed at the
 final gate-held start boundary: a non-match, retryable failure, or ambiguous
 transport result does not authorize a second request, and retryable results
-close as `retry_exhausted`. Retain only the exact head/wheel identity and
-aggregate attempted-egress and result digests; do not retain the query,
-credential, provider response, paths, or unrestricted output. After capturing
-that aggregate evidence, stop every Mechanical Librarian process using the
-root, retain any required whole-state audit/backup evidence, and remove the
-entire disposable state root plus the private query and credential through the
-approved secret-disposal process. Never delete or edit individual state rows.
+close as `retry_exhausted`. Verify the closed matched shape without printing its
+private identifiers, count the durable attempted egress, and derive a sanitized
+evidence digest from only the head, wheel digest, count, and result digest:
+
+```sh
+python - "$result_path" <<'PY'
+import json, pathlib, sys
+report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert set(report) == {"schema", "outcome", "edition_id", "book_id", "comparison"}
+assert report["schema"] == "hardcover-identity-report-v6"
+assert report["outcome"] == "matched"
+assert type(report["edition_id"]) is int and 1 <= report["edition_id"] <= 2_147_483_647
+assert type(report["book_id"]) is int and 1 <= report["book_id"] <= 2_147_483_647
+assert report["comparison"] in {"equal", "different"}
+PY
+attempted_egress="$(python - "$database_path" <<'PY'
+import sqlite3, sys
+connection = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+rows = connection.execute(
+    "SELECT g.attempt_count FROM hardcover_identity_generations g "
+    "JOIN hardcover_identity_egress_policies p USING(work_key,generation) "
+    "WHERE p.max_starts=1"
+).fetchall()
+assert len(rows) == 1 and rows[0] == (1,)
+print(1)
+PY
+)"
+result_sha256="$(shasum -a 256 "$result_path" | awk '{print $1}')"
+evidence_sha256="$(printf '%s\n' \
+  "$qualification_head" "$wheel_sha256" "$attempted_egress" "$result_sha256" \
+  | shasum -a 256 | awk '{print $1}')"
+printf 'head=%s\nwheel_sha256=%s\nattempted_egress=%s\nresult_sha256=%s\nevidence_sha256=%s\n' \
+  "$qualification_head" "$wheel_sha256" "$attempted_egress" \
+  "$result_sha256" "$evidence_sha256"
+```
+
+Retain only those five aggregate lines. Do not retain the query, credential,
+provider response, paths, unrestricted output, database, or private matched
+observation. Stop every Mechanical Librarian process using the root, then
+remove the entire disposable root plus the private query and credential through
+the approved secret-disposal process. Verify all three paths are absent. Never
+delete or edit individual state rows while a process is running.
 
 The accepted configuration and redacted export are documented in the
 [configuration contract](../reference/configuration.md). Configuration changes
@@ -220,7 +273,7 @@ uv run --frozen --no-editable --reinstall-package mechanical-librarian \
 Stdout must be byte-identical to
 `tests/fixtures/hardcover_identity/c4-durable-work-example-output.json`.
 The cumulative C4 registry is `preview-registry-c4-v6.json`, SHA-256
-`3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81`.
+`94380cffa51cd0bb843eafa5aa8edb39e14bc7c254c90b9feb8d08b497ac2d22`.
 The registry also binds contributor-independent schema-8 logical snapshot and
 ledger resources used only for qualification; runtime reconstructs and
 validates the prefix and never loads the expected output before emission.
@@ -297,7 +350,7 @@ uv run --frozen --no-editable --reinstall-package mechanical-librarian \
 Stdout must be byte-identical to
 `tests/fixtures/hardcover_identity/c5-safe-executor-example-output.json`.
 The cumulative C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`0f0ae4c1284af4562d8c2c90c0626d47dfbbe927c10400c3e8849bd3d4c33a3a`.
+`1ca4ff13721a040bae2794032db84beaebd7e80288d8fb02d645bae046bc525d`.
 It derives from the merged C4 registry and adds only `safe-executor-v3`.
 
 ### Lifecycle orchestration preview
@@ -330,7 +383,7 @@ request described above.
 
 Stdout must match `c6-lifecycle-orchestration-example-output.json`. The
 cumulative registry is `preview-registry-c6-v1.json`, SHA-256
-`eea646f35a20280a38149b1a437bb9833bee23d4b5b9e79b1a36a2c0e49ae1d8`.
+`398479df75c97d92b2e5a329397ab2df4c0efc098a6343a702d8c7dc92687e2c`.
 
 The gate is deployment-scoped, not credential-scoped. Operators must not reuse
 one Hardcover credential across independently configured deployments. The
@@ -340,16 +393,19 @@ root under the stopped-state procedure.
 
 ### Durable data lifecycle
 
-Schema 10 stores only an opaque work key and bounded structural state:
+Schema 11 stores an opaque work key and bounded durable lifecycle state:
 generations, candidates, claims, attempts, retry schedules, events, terminal
 results, observations, and the currentness pointer. Candidates, claims,
 schedules, events, results, and observations are append-only. Attempts can be
 finalized once; generation and current-pointer changes are fenced transactions.
-No query ISBN, local title, credential, provider payload, path, or contributor
-script is stored. The observation is a closed provider-neutral value serialized
-only as `{"outcome":"matched","row_count":N}` with `N` from 1 through 4;
-arbitrary maps and provider fields cannot enter the persistence adapter.
-Schema 10 adds one immutable per-generation egress limit of 1 or 3, bound
+No query ISBN, local title, credential, raw provider payload, path, or
+contributor script is stored. A current matched observation privately stores
+only outcome, row count, positive edition ID, positive book ID, and the exact
+bounded validated provider title needed for truthful reuse and title
+comparison. Arbitrary maps and other provider fields cannot enter the
+persistence adapter. Legacy two-field observations remain immutable history
+but are non-reusable, and migration 11 expires their current pointers.
+Schema 10 added one immutable per-generation egress limit of 1 or 3, bound
 atomically with the first start so a later caller cannot widen it.
 
 This increment deliberately has no row-level retention or deletion executor.

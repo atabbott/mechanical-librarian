@@ -66,14 +66,20 @@ class _Provider:
         self.starts = 0
         self.deadlines: list[datetime] = []
 
-    def lookup(
+    def prepare(
         self,
         query: object,
         context: OperationContext,
+    ) -> _Provider:
+        return self
+
+    def exchange(
+        self,
+        context: OperationContext,
         *,
-        before_exchange=lambda: None,
+        begin_transport,
     ) -> object:
-        before_exchange()
+        context = begin_transport()
         self.starts += 1
         self.deadlines.append(context.deadline.at)
         if isinstance(self.result, BaseException):
@@ -82,9 +88,15 @@ class _Provider:
 
 
 class _LateProvider(_Provider):
-    def lookup(self, query: object, context: OperationContext, **kwargs) -> object:
-        self.clock.now = context.deadline.at
-        return super().lookup(query, context, **kwargs)
+    def exchange(self, context: OperationContext, **kwargs) -> object:
+        begin_transport = kwargs.pop("begin_transport")
+        transport_context = begin_transport()
+        self.clock.now = transport_context.deadline.at
+        return super().exchange(
+            transport_context,
+            begin_transport=lambda: transport_context,
+            **kwargs,
+        )
 
 
 class _PublishAtProvider(_Provider):
@@ -94,9 +106,9 @@ class _PublishAtProvider(_Provider):
         super().__init__(result, clock)
         self.published_at = published_at
 
-    def lookup(self, query: object, context: OperationContext, **kwargs) -> object:
+    def exchange(self, context: OperationContext, **kwargs) -> object:
         self.clock.now = self.published_at
-        return super().lookup(query, context, **kwargs)
+        return super().exchange(context, **kwargs)
 
 
 class _FailingGate:
@@ -336,14 +348,13 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         replacement_connection.close()
 
         class ReplacingProvider(_Provider):
-            def lookup(
+            def exchange(
                 provider_self,
-                query: object,
                 context: OperationContext,
                 *,
-                before_exchange=lambda: None,
+                begin_transport,
             ) -> object:
-                before_exchange()
+                begin_transport()
                 provider_self.starts += 1
                 self.database.rename(saved_database)
                 replacement_database.rename(self.database)
@@ -557,7 +568,11 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                                 "competing-worker",
                                 self.clock.now,
                                 IdentityWorkObservation(
-                                    IdentityMatchOutcome.MATCHED, 1
+                                    IdentityMatchOutcome.MATCHED,
+                                    1,
+                                    1001,
+                                    2001,
+                                    "Synthetic Ebook Alpha",
                                 ),
                                 gate_owned=True,
                             )
@@ -1106,8 +1121,8 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         cancelled = self.cancelled
 
         class CancellingProvider(_Provider):
-            def lookup(self, query: object, context: OperationContext, **kwargs) -> object:
-                result = super().lookup(query, context, **kwargs)
+            def exchange(self, context: OperationContext, **kwargs) -> object:
+                result = super().exchange(context, **kwargs)
                 cancelled.set()
                 return result
 
@@ -1334,6 +1349,158 @@ class HardcoverIdentityGateTests(unittest.TestCase):
             alias.symlink_to(replacement, target_is_directory=True)
             with self.assertRaises(HardcoverIdentityGateError):
                 aliased_gate.try_acquire()
+
+    def test_connection_binding_marks_exact_inode_and_cleans_before_authority(
+        self,
+    ) -> None:
+        self.database.unlink()
+        connection = sqlite3.connect(self.database, isolation_level=None)
+        self.addCleanup(connection.close)
+        migrate(connection)
+        identity = self.database.stat()
+        gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+
+        gate.bind_connection(connection)
+
+        self.assertEqual(connection.execute("PRAGMA application_id").fetchone(), (0,))
+        with self.database.open("rb") as database_file:
+            database_file.seek(68)
+            self.assertEqual(database_file.read(4), b"\x00\x00\x00\x00")
+
+        connection.execute("PRAGMA application_id=123456")
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        gate.bind_connection(connection)
+        self.assertEqual(
+            connection.execute("PRAGMA application_id").fetchone(), (123456,)
+        )
+
+    def test_connection_binding_serializes_marker_and_preserves_original_value(
+        self,
+    ) -> None:
+        self.database.unlink()
+        setup = sqlite3.connect(self.database, isolation_level=None)
+        migrate(setup)
+        setup.execute("PRAGMA application_id=123456")
+        setup.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        setup.close()
+        identity = self.database.stat()
+        first_gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+        second_gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+        marker_installed = threading.Event()
+        allow_restore = threading.Event()
+        failures: list[BaseException] = []
+        original_read = DescriptorHardcoverIdentityGate._read_application_id
+
+        def pause_after_marker(descriptor: int) -> int:
+            value = original_read(descriptor)
+            if value == 0x4D4C4201 and not marker_installed.is_set():
+                marker_installed.set()
+                if not allow_restore.wait(timeout=5):
+                    raise AssertionError("binding interleave was not released")
+            return value
+
+        def bind_first() -> None:
+            connection = sqlite3.connect(self.database, isolation_level=None)
+            try:
+                first_gate.bind_connection(connection)
+            except BaseException as error:
+                failures.append(error)
+            finally:
+                connection.close()
+
+        with patch.object(
+            DescriptorHardcoverIdentityGate,
+            "_read_application_id",
+            side_effect=pause_after_marker,
+        ):
+            first = threading.Thread(target=bind_first)
+            first.start()
+            try:
+                self.assertTrue(marker_installed.wait(timeout=5))
+                contender = sqlite3.connect(self.database, isolation_level=None)
+                try:
+                    with self.assertRaisesRegex(
+                        HardcoverIdentityGateError,
+                        "deployment gate is busy",
+                    ):
+                        second_gate.bind_connection(contender)
+                finally:
+                    contender.close()
+                descriptor = os.open(self.database, os.O_RDONLY)
+                try:
+                    self.assertEqual(original_read(descriptor), 0x4D4C4201)
+                finally:
+                    os.close(descriptor)
+            finally:
+                allow_restore.set()
+                first.join(timeout=5)
+            self.assertFalse(first.is_alive())
+            self.assertEqual(failures, [])
+
+        second = sqlite3.connect(self.database, isolation_level=None)
+        try:
+            self.assertEqual(second.execute("PRAGMA application_id").fetchone(), (123456,))
+            second_gate.bind_connection(second)
+            self.assertEqual(second.execute("PRAGMA application_id").fetchone(), (123456,))
+        finally:
+            second.close()
+
+    def test_connection_binding_repairs_crash_marker_and_rejects_inode_aba(
+        self,
+    ) -> None:
+        self.database.unlink()
+        original_connection = sqlite3.connect(self.database, isolation_level=None)
+        migrate(original_connection)
+        original_connection.execute("PRAGMA application_id=1296843265")
+        original_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        original_connection.close()
+        identity = self.database.stat()
+        gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+        repaired = sqlite3.connect(self.database, isolation_level=None)
+        self.addCleanup(repaired.close)
+        gate.bind_connection(repaired)
+        self.assertEqual(repaired.execute("PRAGMA application_id").fetchone(), (0,))
+        repaired.close()
+
+        original = self.root / "original.sqlite"
+        self.database.rename(original)
+        replacement_connection = sqlite3.connect(
+            self.database, isolation_level=None
+        )
+        self.addCleanup(replacement_connection.close)
+        migrate(replacement_connection)
+        replacement = self.root / "replacement.sqlite"
+        self.database.rename(replacement)
+        original.rename(self.database)
+
+        with self.assertRaisesRegex(
+            HardcoverIdentityGateError, "connection identity changed"
+        ):
+            gate.bind_connection(replacement_connection)
+        self.assertEqual(
+            replacement_connection.execute("PRAGMA application_id").fetchone(),
+            (0,),
+        )
+        restored = sqlite3.connect(self.database)
+        try:
+            self.assertEqual(
+                restored.execute("PRAGMA application_id").fetchone(),
+                (0,),
+            )
+        finally:
+            restored.close()
 
     def test_final_symlink_hardlink_nonregular_and_lock_replacement_are_rejected(self) -> None:
         real = self.database

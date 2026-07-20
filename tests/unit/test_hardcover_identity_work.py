@@ -41,7 +41,13 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
 WORK_KEY = "1" * 64
 OTHER_WORK_KEY = "2" * 64
 ORIGIN = datetime(2026, 1, 1, tzinfo=timezone.utc)
-MATCHED = IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 2)
+MATCHED = IdentityWorkObservation(
+    IdentityMatchOutcome.MATCHED,
+    2,
+    1001,
+    2001,
+    "Synthetic Ebook Alpha",
+)
 
 
 class ProtocolPersistenceCollaborator:
@@ -118,7 +124,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.path = Path(self.directory.name) / "state.sqlite"
         self.connection = connect(self.path)
         self.addCleanup(self.connection.close)
-        self.assertEqual(migrate(self.connection), 10)
+        self.assertEqual(migrate(self.connection), 11)
         self.repository = SQLiteHardcoverIdentityWorkRepository(self.connection)
 
     def accept(self, *, key: str = WORK_KEY, when: datetime = ORIGIN):
@@ -300,9 +306,16 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
 
     def test_closed_observation_has_one_exact_canonical_shape(self) -> None:
-        canonical = '{"outcome":"matched","row_count":2}'
+        canonical = (
+            '{"book_id":2001,"edition_id":1001,"outcome":"matched",'
+            '"provider_title":"Synthetic Ebook Alpha","row_count":2}'
+        )
         self.assertEqual(MATCHED.to_canonical_json(), canonical)
         self.assertEqual(IdentityWorkObservation.from_canonical_json(canonical), MATCHED)
+        legacy = IdentityWorkObservation.from_canonical_json(
+            '{"outcome":"matched","row_count":2}'
+        )
+        self.assertFalse(legacy.reusable)
         for malformed in (
             '{}',
             '{"outcome":"matched","row_count":2,"title":"private"}',
@@ -410,6 +423,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                         accepted.reference,
                         expected,
                         ORIGIN + timedelta(seconds=30),
+                        observation=MATCHED if terminal == "matched" else None,
                     ),
                 )
                 self.assertEqual(self.connection.total_changes, changes)
@@ -2152,7 +2166,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.connection.close()
         self.connection = connect(self.path)
         self.addCleanup(self.connection.close)
-        self.assertEqual(migrate(self.connection), 10)
+        self.assertEqual(migrate(self.connection), 11)
         self.repository = SQLiteHardcoverIdentityWorkRepository(self.connection)
         with self.assertRaisesRegex(
             IdentityWorkPersistenceError, "egress authority changed"
@@ -2193,7 +2207,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
         contender_connection = connect(self.path)
         self.addCleanup(contender_connection.close)
-        self.assertEqual(migrate(contender_connection), 10)
+        self.assertEqual(migrate(contender_connection), 11)
         contender = SQLiteHardcoverIdentityWorkRepository(contender_connection)
         direct = self.repository.accept(WORK_KEY, ORIGIN + timedelta(seconds=4))
         managed = ManageHardcoverIdentityWork(contender).accept(
@@ -2528,7 +2542,7 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
                 "VALUES(?,?,?,?,?,?)",
                 (WORK_KEY, 1, 1, 1, 1, timestamp),
             )
-            self.assertEqual(migrate(connection), 10)
+            self.assertEqual(migrate(connection), 11)
             self.assertEqual(
                 connection.execute(
                     "SELECT work_key,generation,max_starts,created_at "
@@ -2536,7 +2550,7 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
                 ).fetchall(),
                 [(WORK_KEY, 1, 3, timestamp)],
             )
-            self.assertEqual(migrate(connection), 10)
+            self.assertEqual(migrate(connection), 11)
 
     def test_schema_eight_upgrades_additively_and_idempotently(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2546,8 +2560,8 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
             connection.execute(
                 "INSERT INTO instance_metadata(key,value) VALUES('schema-eight-sentinel','preserved')"
             )
-            self.assertEqual(migrate(connection), 10)
-            self.assertEqual(migrate(connection), 10)
+            self.assertEqual(migrate(connection), 11)
+            self.assertEqual(migrate(connection), 11)
             self.assertEqual(
                 connection.execute(
                     "SELECT value FROM instance_metadata WHERE key='schema-eight-sentinel'"
@@ -2600,7 +2614,7 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
                             ).fetchone(),
                             (0,),
                         )
-                        self.assertEqual(migrate(connection), 10)
+                        self.assertEqual(migrate(connection), 11)
                     finally:
                         connection.close()
 

@@ -464,6 +464,8 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
             }
             for channel in C5_CAPTURE_CHANNELS:
                 for source_class in C5_FORBIDDEN_SOURCE_CLASSES:
+                    if channel == "persistence" and source_class == "provider_identity":
+                        continue
                     active_corpus = (
                         persistence_probe_corpus
                         if channel == "persistence"

@@ -876,30 +876,30 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c3-preview-output-privacy-scan-v1.json": "bedc4f12909da3b255a81e83537bf0019859f393fb9c460085411f9e30df021b",
             "preview-registry-c3-v6.json": "394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02",
             "c4-durable-work-input.json": "983ae3fbd9cb394772389e99dc722c81066e0d1ed268be7adc9623fdaf6c991e",
-            "c4-durable-work-example-output.json": "9c9b7370081a4833f26851de78cced52faace737faa953bd1acf19ca6cb99388",
+            "c4-durable-work-example-output.json": "476bbbde0a44f863260e6ab9eac95a02c255098dc587df1859a08b0096448b32",
             "c4-durable-work-input-schema.json": "f1d5c475af492c36469bb222b622afe232aebd5d0956d3b2afcd2f54b64c50a2",
             "c4-durable-work-variant-matrix.json": "5e1c6aedc4f322b7d6d979853a50913e5373cd97e695f4c1dc8a832eaba5a002",
-            "preview-output-schema-v5.json": "db6b3dd4b7dbd96e27dc9433b75f4b86ef2af482f92aef20b680c05a800c47a5",
+            "preview-output-schema-v5.json": "fbdbaf1913e57b5effbea024f8d57ece60aca7d06f1521ac2734209cf75efdbb",
             "preview-output-privacy-contract-v2.json": "02a897d7f3c997cc1c99b5f3ad808f3e636f704305cefa13ea44c8c5fb0c18e3",
             "preview-output-privacy-scan-v2.json": "81aa8c3db583bdd326ccda572dcb510060bb1868e93b449737d71adef7bee7bc",
-            "preview-registry-c4-v6.json": "9f49679ac4dad1f2a4e1755d08cf5844ba66f42abdde08437633ca863a483823",
+            "preview-registry-c4-v6.json": "94380cffa51cd0bb843eafa5aa8edb39e14bc7c254c90b9feb8d08b497ac2d22",
             "schema8-logical-snapshot-ledger.json": "140d3d17ad743f8860ff216052976344ff2f7258096f45765d286b9b4887508c",
             "c5-safe-executor-input.json": "6cbc58460ab2f1fdd9540b87ed91ae8ba858442e2f995bac248e03e4750ece4b",
             "c5-safe-executor-input-schema.json": "7b0c0a34f9994364b32a32f3b23ba0b4242c6944cd73c47abdc65385e4be9846",
             "c5-safe-executor-example-output.json": "9686ac45ad83d43861fa869ef81dea2cf175de36b7076baa52d2f84a2f5f27c6",
             "c5-safe-executor-variant-matrix.json": "4e5d5515ddd8ae9a6eda77917a591447d88eed3167b6bf53e779a81e48c04ada",
-            "preview-output-schema-c5-v6.json": "930f62a1218e37ef5de91bdc1b543176e84c6a65f1202d44998e25aa73edacc2",
-            "preview-output-privacy-contract-c5-v3.json": "b7b6fb5e8f7cf33a3b4df5747aa937fd2861b4af1e25a89d97c55ae4b21870b3",
-            "preview-output-privacy-scan-c5-v3.json": "f9fa12bd11c5d270aa26a6adaec1162e21818323ddc12bc52a44c1fa266ba713",
-            "preview-registry-c5-v6.json": "9699e563a3212885167f6a407867057e99958d2309b9bf1cf7adbc2de7cde777",
+            "preview-output-schema-c5-v6.json": "0d5f470fc530a62a8931d0b625ebe008a259044699cdde2e4625ebabebdaaa51",
+            "preview-output-privacy-contract-c5-v3.json": "2fe65433fc20a46a634602341ca222f4fcbb74867dc314fa30f397b1e1f5f571",
+            "preview-output-privacy-scan-c5-v3.json": "0ff1d8f41081dbc79224b10a7c14f2d7565d9e8aa7278143e38e044f08ac07f6",
+            "preview-registry-c5-v6.json": "1ca4ff13721a040bae2794032db84beaebd7e80288d8fb02d645bae046bc525d",
             "c6-lifecycle-orchestration-input.json": "e764e534ac31f0212beddce8237ece3ce8a80599b58192dad4cc854a51ed3c2d",
             "c6-lifecycle-orchestration-input-schema.json": "22ef83f88625c9525bd81751c75b30f8455135414450897cf280abfb15af0e4a",
             "c6-lifecycle-orchestration-variant-matrix.json": "b81a8239e67049b15e2ee66f4c20b49426c545731b281f2e1f0bbcc0d8e8ca6b",
             "c6-lifecycle-orchestration-example-output.json": "ff02d438b04e6b57fad997dc977d641e1769c70d5a00995ebd4959fb99cfcb0a",
-            "preview-output-schema-c6-v1.json": "4812ffa3e665775c490a4b4ddc134780542c607de412443b878dd56fe1dc5e9c",
-            "preview-output-privacy-contract-c6-v1.json": "4fabd7a36607cce882a2598953e06a2d719cb3f193e369c2581994a7a3a19c25",
-            "preview-output-privacy-scan-c6-v1.json": "8324cdd858765bf134788a5aed3b2786b3ffe5500db1826772afbd14765b5000",
-            "preview-registry-c6-v1.json": "eea646f35a20280a38149b1a437bb9833bee23d4b5b9e79b1a36a2c0e49ae1d8",
+            "preview-output-schema-c6-v1.json": "33ca530b75336de072946ad57ccc79840b725ff8eca988b13cb9fc66b5a9dd18",
+            "preview-output-privacy-contract-c6-v1.json": "06957b86d1f0febbd211b26ecf92f1f33d1e3357386137e4176b1285f9d768f0",
+            "preview-output-privacy-scan-c6-v1.json": "42b13990ad4102778bc711adea92750a80292c0da6f3dcce80281e005aba170d",
+            "preview-registry-c6-v1.json": "398479df75c97d92b2e5a329397ab2df4c0efc098a6343a702d8c7dc92687e2c",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)
@@ -1587,11 +1587,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
     def test_unknown_production_result_fails_closed(self) -> None:
         output = io.StringIO()
         errors = io.StringIO()
-        runner = Mock(
-            return_value=HardcoverIdentityReport(
-                "provider_not_activated"  # type: ignore[arg-type]
-            )
-        )
+        runner = Mock(return_value=object())
         exit_code = main(
             self.production_argv(EXAMPLE_CONFIG),
             state_check_runner=Mock(),

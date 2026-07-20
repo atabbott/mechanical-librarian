@@ -369,6 +369,8 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
             }
             for channel in C6_CAPTURE_CHANNELS:
                 for source in C6_FORBIDDEN_SOURCE_CLASSES:
+                    if channel == "persistence" and source == "provider_identity":
+                        continue
                     active_representatives = (
                         persistence_representatives
                         if channel == "persistence"
