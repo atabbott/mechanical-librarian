@@ -40,8 +40,15 @@ class SQLiteHardcoverIdentityWorkRepository:
             raise TypeError("identity work connection is malformed")
         self._connection = connection
 
-    def accept(self, work_key: str, now: datetime) -> IdentityWorkStatus:
+    def accept(
+        self,
+        work_key: str,
+        now: datetime,
+        *,
+        egress_limit: int = MAX_ATTEMPTS,
+    ) -> IdentityWorkStatus:
         _require_work_key(work_key)
+        _require_egress_limit(egress_limit)
         timestamp = _time(now)
         try:
             with _transaction(self._connection):
@@ -74,23 +81,6 @@ class SQLiteHardcoverIdentityWorkRepository:
                     elif status == "expired":
                         expired = True
                         expired_generation = generation
-
-                active = self._connection.execute(
-                    "SELECT generation,created_at,state,aggregate_started_at FROM hardcover_identity_generations WHERE work_key=? AND state IN ('pending','claimed','retry_wait')",
-                    (work_key,),
-                ).fetchone()
-                if active is not None:
-                    generation = _positive_int(active[0], "generation")
-                    if type(active[1]) is not str or now < _parse_time(active[1]):
-                        raise IdentityWorkPersistenceError("identity work chronology is invalid")
-                    candidate = None
-                    if active[2] == "pending" and active[3] is None:
-                        candidate = self._reserve_pending(work_key, generation, timestamp, now)
-                    return IdentityWorkStatus(
-                        IdentityWorkOutcome.STALE if expired else IdentityWorkOutcome.IN_PROGRESS,
-                        IdentityWorkReference(work_key, generation),
-                        candidate,
-                    )
 
                 one_shot = self._connection.execute(
                     "SELECT g.generation,g.state,g.fence,g.attempt_count,g.updated_at "
@@ -129,7 +119,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                         raise IdentityWorkPersistenceError(
                             "identity work one-shot authority is inconsistent"
                         )
-                    if not (
+                    if egress_limit == 1 or not (
                         state is IdentityWorkState.SUCCEEDED
                         and expired_generation == generation
                     ):
@@ -137,6 +127,23 @@ class SQLiteHardcoverIdentityWorkRepository:
                             IdentityWorkOutcome.RETRY_EXHAUSTED,
                             IdentityWorkReference(work_key, generation),
                         )
+
+                active = self._connection.execute(
+                    "SELECT generation,created_at,state,aggregate_started_at FROM hardcover_identity_generations WHERE work_key=? AND state IN ('pending','claimed','retry_wait')",
+                    (work_key,),
+                ).fetchone()
+                if active is not None:
+                    generation = _positive_int(active[0], "generation")
+                    if type(active[1]) is not str or now < _parse_time(active[1]):
+                        raise IdentityWorkPersistenceError("identity work chronology is invalid")
+                    candidate = None
+                    if active[2] == "pending" and active[3] is None:
+                        candidate = self._reserve_pending(work_key, generation, timestamp, now)
+                    return IdentityWorkStatus(
+                        IdentityWorkOutcome.STALE if expired else IdentityWorkOutcome.IN_PROGRESS,
+                        IdentityWorkReference(work_key, generation),
+                        candidate,
+                    )
 
                 row = self._connection.execute(
                     "SELECT COALESCE(MAX(generation),0)+1 FROM hardcover_identity_generations WHERE work_key=?",
@@ -1483,6 +1490,11 @@ def _owner(value: object) -> None:
 def _require_gate(value: object) -> None:
     if value is not True:
         raise IdentityWorkPersistenceError("identity work gate ownership is required")
+
+
+def _require_egress_limit(value: object) -> None:
+    if type(value) is not int or value not in {1, MAX_ATTEMPTS}:
+        raise ValueError("identity work egress limit is malformed")
 
 
 def _time(value: object) -> str:

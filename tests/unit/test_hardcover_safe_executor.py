@@ -391,6 +391,93 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         self.assertEqual(self._work_counts(request.work_key), competing_snapshot)
         self.assertEqual(competing_snapshot, (1, 1, 1, "retry_wait"))
 
+    def test_post_gate_cancellation_cancels_future_retry_wait(self) -> None:
+        request = self.request("post-gate-cancel-future-retry")
+        provider = _Provider(self.matched(), self.clock)
+        accepted = self.work.accept(request.work_key, self.clock.now)
+        acquire = self.gate.try_acquire
+
+        def acquire_after_retry_schedule():
+            competing = self.work.claim(
+                accepted.reference,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            started = self.work.start(
+                competing,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            self.work.publish_failed(
+                started,
+                "competing-worker",
+                self.clock.now,
+                retryable=True,
+                retry_delay_seconds=10,
+                gate_owned=True,
+            )
+            self.cancelled.set()
+            return acquire()
+
+        with patch.object(
+            self.gate,
+            "try_acquire",
+            side_effect=acquire_after_retry_schedule,
+        ):
+            report = self.execute(request, provider)
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.CANCELLED)
+        self.assertEqual(provider.starts, 0)
+        self.assertEqual(self._work_counts(request.work_key), (1, 1, 1, "cancelled"))
+
+    def test_post_gate_deadline_expiry_stops_future_retry_wait(self) -> None:
+        request = self.request("post-gate-deadline-future-retry")
+        provider = _Provider(self.matched(), self.clock)
+        accepted = self.work.accept(request.work_key, self.clock.now)
+        acquire = self.gate.try_acquire
+        caller_deadline = ORIGIN + timedelta(seconds=5)
+
+        def acquire_after_retry_schedule():
+            competing = self.work.claim(
+                accepted.reference,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            started = self.work.start(
+                competing,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            self.work.publish_failed(
+                started,
+                "competing-worker",
+                self.clock.now,
+                retryable=True,
+                retry_delay_seconds=10,
+                gate_owned=True,
+            )
+            self.clock.now = caller_deadline
+            return acquire()
+
+        with patch.object(
+            self.gate,
+            "try_acquire",
+            side_effect=acquire_after_retry_schedule,
+        ):
+            report = self.execute(
+                request,
+                provider,
+                context=self.context(caller_deadline),
+            )
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.RETRY_EXHAUSTED)
+        self.assertEqual(provider.starts, 0)
+        self.assertEqual(self._work_counts(request.work_key), (1, 1, 1, "retry_wait"))
+
     def test_rejects_inconsistent_post_gate_current_match_without_local_mutation(
         self,
     ) -> None:
@@ -796,6 +883,45 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                 (request.work_key, request.work_key),
             ).fetchone(),
             (1, 1),
+        )
+
+    def test_successful_one_shot_refresh_requires_normal_request(self) -> None:
+        one_shot = self.request("successful-one-shot-refresh", egress_limit=1)
+        first = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(one_shot, first).outcome,
+            HardcoverIdentityOutcome.MATCHED,
+        )
+        self.assertEqual(first.starts, 1)
+
+        self.clock.now += timedelta(hours=24, microseconds=1)
+        repeated = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(one_shot, repeated).outcome,
+            HardcoverIdentityOutcome.RETRY_EXHAUSTED,
+        )
+        self.assertEqual(repeated.starts, 0)
+
+        normal = HardcoverIdentityExecutionRequest(
+            one_shot.work_key,
+            one_shot.owner,
+            one_shot.query,
+            3,
+        )
+        refreshed = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(normal, refreshed).outcome,
+            HardcoverIdentityOutcome.MATCHED,
+        )
+        self.assertEqual(refreshed.starts, 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT generation,attempt_count,state FROM "
+                "hardcover_identity_generations WHERE work_key=? "
+                "ORDER BY generation",
+                (one_shot.work_key,),
+            ).fetchall(),
+            [(1, 1, "succeeded"), (2, 1, "succeeded")],
         )
 
     def test_gate_acquisition_and_release_fail_closed(self) -> None:

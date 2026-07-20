@@ -983,7 +983,13 @@ def render_report_text(report: HardcoverIdentityReport) -> str:
 class HardcoverIdentityWorkPersistence(Protocol):
     """Application-owned durable identity-work transaction contract."""
 
-    def accept(self, work_key: str, now: datetime) -> IdentityWorkStatus: ...
+    def accept(
+        self,
+        work_key: str,
+        now: datetime,
+        *,
+        egress_limit: int = 3,
+    ) -> IdentityWorkStatus: ...
 
     def inspect(
         self, reference: IdentityWorkReference, now: datetime
@@ -1080,8 +1086,20 @@ class ManageHardcoverIdentityWork:
             raise TypeError("Hardcover identity work persistence is malformed")
         self._persistence = persistence
 
-    def accept(self, work_key: str, now: datetime) -> IdentityWorkStatus:
-        result = self._persistence.accept(work_key, now)
+    def accept(
+        self,
+        work_key: str,
+        now: datetime,
+        *,
+        egress_limit: int = 3,
+    ) -> IdentityWorkStatus:
+        if type(egress_limit) is not int or egress_limit not in {1, 3}:
+            raise ValueError("Hardcover identity work egress limit is malformed")
+        result = self._persistence.accept(
+            work_key,
+            now,
+            egress_limit=egress_limit,
+        )
         if (
             type(result) is not IdentityWorkStatus
             or result.reference.work_key != work_key

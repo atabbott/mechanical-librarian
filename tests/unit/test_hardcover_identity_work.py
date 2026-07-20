@@ -59,7 +59,7 @@ class ProtocolPersistenceCollaborator:
         self.start_result: object = self.claim_result
         self.cancel_result: object = None
 
-    def accept(self, work_key: str, now: datetime):
+    def accept(self, work_key: str, now: datetime, *, egress_limit: int = 3):
         return self.accept_result
 
     def inspect(self, reference, now):
@@ -2259,7 +2259,9 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             (0,),
         )
 
-    def test_successful_one_shot_refreshes_only_after_currentness_expiry(self) -> None:
+    def test_successful_one_shot_refresh_requires_explicit_normal_authority(
+        self,
+    ) -> None:
         accepted = self.accept()
         claim = self.repository.claim(
             accepted.reference,
@@ -2284,19 +2286,39 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         exact = self.repository.accept(
             WORK_KEY, ORIGIN + timedelta(hours=24, seconds=3)
         )
-        stale = self.repository.accept(
+        exhausted = self.repository.accept(
             WORK_KEY,
             ORIGIN + timedelta(hours=24, seconds=3, microseconds=1),
+            egress_limit=1,
+        )
+        stale = self.repository.accept(
+            WORK_KEY,
+            ORIGIN + timedelta(hours=24, seconds=3, microseconds=2),
+            egress_limit=3,
+        )
+        repeated = self.repository.accept(
+            WORK_KEY,
+            ORIGIN + timedelta(hours=24, seconds=3, microseconds=3),
+            egress_limit=1,
         )
         reserved = self.repository.accept(
             WORK_KEY,
-            ORIGIN + timedelta(hours=24, seconds=3, microseconds=2),
+            ORIGIN + timedelta(hours=24, seconds=3, microseconds=4),
+            egress_limit=3,
         )
 
         self.assertEqual(exact.outcome, IdentityWorkOutcome.MATCHED)
         self.assertEqual(
+            (exhausted.outcome, exhausted.reference.generation),
+            (IdentityWorkOutcome.RETRY_EXHAUSTED, 1),
+        )
+        self.assertEqual(
             (stale.outcome, stale.reference.generation, stale.candidate),
             (IdentityWorkOutcome.STALE, 2, None),
+        )
+        self.assertEqual(
+            (repeated.outcome, repeated.reference.generation),
+            (IdentityWorkOutcome.RETRY_EXHAUSTED, 1),
         )
         self.assertEqual(
             (reserved.outcome, reserved.reference.generation, reserved.candidate),

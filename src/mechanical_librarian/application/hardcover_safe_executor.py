@@ -108,7 +108,11 @@ class RunSafeHardcoverIdentity:
             raise TypeError("Hardcover identity execution input is malformed")
         accepted_at = context.observed_at
         try:
-            accepted = self._work.accept(request.work_key, accepted_at)
+            accepted = self._work.accept(
+                request.work_key,
+                accepted_at,
+                egress_limit=request.egress_limit,
+            )
             if accepted.outcome is IdentityWorkOutcome.MATCHED:
                 return _report(HardcoverIdentityOutcome.MATCHED)
             if accepted.outcome is IdentityWorkOutcome.PERSISTENCE_FAILURE:
@@ -116,7 +120,11 @@ class RunSafeHardcoverIdentity:
             if accepted.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED:
                 return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
             if accepted.outcome is IdentityWorkOutcome.STALE and accepted.candidate is None:
-                accepted = self._work.accept(request.work_key, accepted_at)
+                accepted = self._work.accept(
+                    request.work_key,
+                    accepted_at,
+                    egress_limit=request.egress_limit,
+                )
             active = self._work.inspect(accepted.reference, accepted_at)
             if active.state not in {
                 IdentityWorkState.PENDING,
@@ -193,12 +201,6 @@ class RunSafeHardcoverIdentity:
         active = self._work.inspect(reference, now)
         if active.state is IdentityWorkState.CLAIMED:
             return _report(HardcoverIdentityOutcome.IN_PROGRESS)
-        if (
-            active.state is IdentityWorkState.RETRY_WAIT
-            and active.retry_due_at is not None
-            and now < active.retry_due_at
-        ):
-            return _report(HardcoverIdentityOutcome.IN_PROGRESS)
         if active.state is IdentityWorkState.SUCCEEDED:
             return _report(HardcoverIdentityOutcome.MATCHED)
         if active.state in {
@@ -212,6 +214,12 @@ class RunSafeHardcoverIdentity:
         if context.cancelled:
             self._work.cancel_available(reference, now)
             return _report(HardcoverIdentityOutcome.CANCELLED)
+        if (
+            active.state is IdentityWorkState.RETRY_WAIT
+            and active.retry_due_at is not None
+            and now < active.retry_due_at
+        ):
+            return _report(HardcoverIdentityOutcome.IN_PROGRESS)
         claim = self._work.claim(
             reference, request.owner, now, gate_owned=True
         )

@@ -69,7 +69,11 @@ class RunHardcoverIdentityLifecycle:
         for _ in range(8):
             now = context.observed_at
             try:
-                accepted = self._work.accept(request.work_key, now)
+                accepted = self._work.accept(
+                    request.work_key,
+                    now,
+                    egress_limit=request.egress_limit,
+                )
                 if accepted.outcome is IdentityWorkOutcome.MATCHED:
                     return _report(HardcoverIdentityOutcome.MATCHED)
                 if accepted.outcome is IdentityWorkOutcome.PERSISTENCE_FAILURE:
@@ -80,7 +84,11 @@ class RunHardcoverIdentityLifecycle:
                     accepted.outcome is IdentityWorkOutcome.STALE
                     and accepted.candidate is None
                 ):
-                    accepted = self._work.accept(request.work_key, now)
+                    accepted = self._work.accept(
+                        request.work_key,
+                        now,
+                        egress_limit=request.egress_limit,
+                    )
                 active = self._work.inspect(accepted.reference, now)
             except (IdentityWorkPersistenceError, TypeError, ValueError):
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
