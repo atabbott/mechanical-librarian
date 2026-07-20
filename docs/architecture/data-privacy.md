@@ -83,6 +83,14 @@ and provider caches are not retained. F09g retains the minimum bounded local,
 target, and provider projections needed to explain its proposal or exact typed
 zero-proposal result; valid local evidence survives provider failure.
 
+The opaque work key is the sole persistence-only exception to the ban on
+ISBN-derived stable values: its exact public contract derives it from canonical
+ISBN plus authority identity for currentness and idempotency, excludes title and
+raw/reversible input, and forbids it from runtime output, logs, exports, reports,
+and audit. The production HTTP boundary also suppresses dependency transport
+records, so selected addresses, URLs, headers, bodies, and failures cannot
+escape through `httpx` or `httpcore` logging.
+
 F09f/F09g provider observations and report results use documented provider-data
 retention and deletion classes and are included in project-owned export and
 deletion behavior without implying deletion at Hardcover, Audiobookshelf, or

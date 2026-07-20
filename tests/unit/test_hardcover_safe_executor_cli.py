@@ -186,8 +186,8 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         ]
 
         class MismatchedCallerProofProvider(_SyntheticExecutorProvider):
-            def lookup(self, query, context):
-                result = super().lookup(query, context)
+            def lookup(self, query, context, **kwargs):
+                result = super().lookup(query, context, **kwargs)
                 self.deadlines[:] = [context.deadline.at + timedelta(microseconds=1)]
                 return result
 

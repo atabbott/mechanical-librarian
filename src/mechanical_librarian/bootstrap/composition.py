@@ -95,6 +95,7 @@ from mechanical_librarian.application.hardcover_identity import (
     RunHardcoverFixedAdapterPreview,
     RunHardcoverIdentityReport,
     SafeExecutorPreviewReport,
+    allow_identity_send,
     inert_preview,
 )
 from mechanical_librarian.application.hardcover_identity_orchestration import (
@@ -305,6 +306,34 @@ def _run_state_check(database: Path) -> StateCheckResult:
         return _run_existing_state_check(database)
     except SchemaError:
         return StateCheckResult(StateCheckOutcome.SETUP_FAILURE)
+
+
+def _run_new_qualification_state_check(
+    database: Path,
+) -> tuple[StateCheckResult, tuple[int, int] | None]:
+    """Publish one new disposable state and retain its exact inode identity."""
+
+    failed = StateCheckResult(StateCheckOutcome.SETUP_FAILURE)
+    try:
+        with bound_disposable_state(database) as bound, bound.staged_state() as staged:
+            connection = staged.connect()
+            try:
+                migrate(connection)
+                result = CheckDurableState(
+                    SQLiteAuditRepository(connection)
+                ).run()
+                if result.succeeded:
+                    staged.persist(connection)
+            finally:
+                connection.close()
+            if not result.succeeded:
+                return result, None
+            identity = staged.identity
+            if not bound.publish(staged):
+                return failed, None
+        return result, identity
+    except (OSError, SchemaError):
+        return failed, None
 
 
 def _run_existing_operation(
@@ -1564,8 +1593,25 @@ def _run_hardcover_identity_report(
         return HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
     if qualification_one_shot and not _qualification_state_is_disposable(database):
         return HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
-    state = _run_state_check(database)
+    try:
+        DescriptorHardcoverIdentityGate(database)
+    except Exception:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+    expected_database_identity = None
+    if qualification_one_shot:
+        state, expected_database_identity = _run_new_qualification_state_check(
+            database
+        )
+    else:
+        state = _run_state_check(database)
     if not state.succeeded:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+    try:
+        gate = DescriptorHardcoverIdentityGate(
+            database,
+            expected_database_identity=expected_database_identity,
+        )
+    except Exception:
         return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
 
     reference = provider_configuration.secret_reference
@@ -1586,7 +1632,6 @@ def _run_hardcover_identity_report(
         work = ManageHardcoverIdentityWork(
             SQLiteHardcoverIdentityWorkRepository(connection)
         )
-        gate = DescriptorHardcoverIdentityGate(database)
         lifecycle = RunHardcoverIdentityLifecycle(
             work,
             RunSafeHardcoverIdentity(work, provider, gate),
@@ -1942,8 +1987,13 @@ class _SyntheticExecutorProvider:
         self.deadlines: list[datetime] = []
 
     def lookup(
-        self, query: IsbnIdentityQuery, context: OperationContext
+        self,
+        query: IsbnIdentityQuery,
+        context: OperationContext,
+        *,
+        before_exchange=allow_identity_send,
     ) -> IdentityAttemptResult:
+        before_exchange()
         self.starts += 1
         self.deadlines.append(context.deadline.at)
         self._clock.now += self._duration
@@ -2189,6 +2239,15 @@ def _run_hardcover_safe_executor_preview(
                 )
                 try:
                     report = runner.run(request, context)
+                    if operation == "stale_refresh":
+                        if (
+                            report.outcome is not HardcoverIdentityOutcome.STALE
+                            or provider.starts != 0
+                        ):
+                            raise SchemaError(
+                                "safe executor stale report case failed"
+                            )
+                        report = runner.run(request, context)
                 finally:
                     if held is not None:
                         held.release()
@@ -2285,7 +2344,7 @@ def _run_hardcover_safe_executor_preview(
         cases_executed=len(cases),
         attempts_started=starts,
         gate_order_verified=(
-            gate.send_validations == starts
+            gate.send_validations == starts * 2
             and gate.acquisitions == gate.releases
             and not gate.held
         ),
@@ -2332,8 +2391,13 @@ class _SyntheticLifecycleProvider:
         self.starts = 0
 
     def lookup(
-        self, query: object, context: OperationContext
+        self,
+        query: object,
+        context: OperationContext,
+        *,
+        before_exchange=allow_identity_send,
     ) -> IdentityAttemptResult:
+        before_exchange()
         self.starts += 1
         if self._raised_signal is not None:
             signal.raise_signal(self._raised_signal)

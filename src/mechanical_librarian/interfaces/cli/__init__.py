@@ -729,6 +729,10 @@ def main(
             and hardcover_arguments.config is not None
             and hardcover_arguments.database is not None
             and hardcover_arguments.query_file is not None
+            and (
+                not hardcover_arguments.qualification_one_shot
+                or hardcover_arguments.format == "json"
+            )
         )
         if not exact or hardcover_identity_runner is None:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
@@ -750,6 +754,8 @@ def main(
                 if hardcover_arguments.format == "json"
                 else render_hardcover_identity_text(report)
             )
+            if hardcover_arguments.qualification_one_shot:
+                return 0 if report.outcome is HardcoverIdentityOutcome.MATCHED else 2
             return 2 if report.outcome is HardcoverIdentityOutcome.INVALID_INPUT else 0
         except Exception:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
@@ -907,6 +913,9 @@ def main(
             )
         except _TitleArgumentError:
             errors.write(_HARDCOVER_TITLE_PROPOSAL_INVALID)
+            return 2
+        if title_arguments.secret_reference is not None:
+            errors.write(_HARDCOVER_TITLE_RETIRED)
             return 2
         if hardcover_title_proposal_runner is None:
             errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)

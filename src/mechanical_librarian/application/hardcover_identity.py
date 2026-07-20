@@ -195,9 +195,17 @@ class IdentityAttemptResult:
         return "IdentityAttemptResult(<redacted>)"
 
 
+def allow_identity_send() -> None:
+    """Default send guard for already-structural provider calls."""
+
+
 class BookIdentityProvider(Protocol):
     def lookup(
-        self, query: IsbnIdentityQuery, context: OperationContext
+        self,
+        query: IsbnIdentityQuery,
+        context: OperationContext,
+        *,
+        before_exchange: Callable[[], None] = allow_identity_send,
     ) -> IdentityAttemptResult: ...
 
 
@@ -564,7 +572,7 @@ class HardcoverIdentityReport:
 
     def to_json(self) -> str:
         return json.dumps(
-            {"schema": "hardcover-identity-report-v1", "outcome": self.outcome.value},
+            {"schema": "hardcover-identity-report-v5", "outcome": self.outcome.value},
             ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
@@ -961,7 +969,7 @@ def render_report_text(report: HardcoverIdentityReport) -> str:
         raise TypeError("Hardcover identity report is malformed")
     return (
         "Hardcover identity report\n"
-        "schema=hardcover-identity-report-v1\n"
+        "schema=hardcover-identity-report-v5\n"
         f"outcome={report.outcome.value}\n"
         "proposal=false write=false\n"
     )
@@ -1363,6 +1371,7 @@ __all__ = [
     "RunHardcoverFixedAdapterPreview",
     "SafeExecutorPreviewReport",
     "StaleIdentityWorkFence",
+    "allow_identity_send",
     "fixed_adapter_preview_report",
     "inert_preview",
     "render_report_text",

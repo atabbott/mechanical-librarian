@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import signal
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from mechanical_librarian.adapters.providers.hardcover_identity import (
     HttpxIdentityByteChannel,
     HardcoverIdentityProvider,
     IdentityChannelFailure,
+    LiveHardcoverIdentityProvider,
     RawIdentityResponseHead,
     StructuralIdentityBodyReader,
     StructuralIdentityByteChannel,
@@ -250,6 +252,84 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         )
         self.assertEqual(request.headers["accept-encoding"], "identity")
         self.assertEqual(request.extensions["sni_hostname"], "api.hardcover.app")
+
+    def test_live_provider_checks_context_before_private_token(self) -> None:
+        token_reads = 0
+
+        def token_reader() -> bytes:
+            nonlocal token_reads
+            token_reads += 1
+            return b"synthetic-noncredential"
+
+        for context, expected in (
+            (self.context(cancelled=True), IdentityAttemptFailureKind.CANCELLED),
+            (self.context(expired=True), IdentityAttemptFailureKind.TIMEOUT),
+        ):
+            with self.subTest(expected=expected):
+                result = LiveHardcoverIdentityProvider(token_reader).lookup(
+                    self.query(), context
+                )
+                self.assertIs(result.failure.kind, expected)
+        self.assertEqual(token_reads, 0)
+
+    def test_non_success_body_is_not_drained_and_transport_logs_are_suppressed(
+        self,
+    ) -> None:
+        body_iterations = 0
+        closed = False
+        records: list[str] = []
+
+        class _NetworkStream:
+            def get_extra_info(self, name: str) -> tuple[str, int] | None:
+                return ("1.1.1.1", 443) if name == "server_addr" else None
+
+        class _HostileBody(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                nonlocal body_iterations
+                body_iterations += 1
+                yield b'private-isbn-and-provider-metadata'
+
+            async def aclose(self) -> None:
+                nonlocal closed
+                closed = True
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record.getMessage())
+
+        async def respond(request: httpx.Request) -> httpx.Response:
+            logging.getLogger("httpcore.connection").warning(
+                "private-address-and-header"
+            )
+            return httpx.Response(
+                401,
+                headers={"X-Private": "private-isbn-and-provider-metadata"},
+                stream=_HostileBody(),
+                extensions={"network_stream": _NetworkStream()},
+            )
+
+        root = logging.getLogger()
+        handler = _Capture()
+        original_level = root.level
+        root.addHandler(handler)
+        root.setLevel(logging.DEBUG)
+        try:
+            result = HardcoverIdentityProvider(
+                lambda host, port: ("1.1.1.1",),
+                HttpxIdentityByteChannel(transport=httpx.MockTransport(respond)),
+                b"synthetic-noncredential",
+            ).lookup(self.query(), self.context())
+        finally:
+            root.removeHandler(handler)
+            root.setLevel(original_level)
+        self.assertIs(
+            result.failure.kind, IdentityAttemptFailureKind.AUTHENTICATION
+        )
+        self.assertEqual(body_iterations, 0)
+        self.assertTrue(closed)
+        self.assertFalse(
+            any("private-" in message or "1.1.1.1" in message for message in records)
+        )
 
     def test_address_policy_rejects_nonpublic_before_channel_open(self) -> None:
         self.assertTrue(address_is_public("1.1.1.1"))

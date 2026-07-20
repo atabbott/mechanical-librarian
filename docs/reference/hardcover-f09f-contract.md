@@ -10,11 +10,16 @@ target-independent, report-only, proposal-free, and write-free.
 The application owns this interface:
 
 ```text
-BookIdentityProvider.lookup(IsbnIdentityQuery, OperationContext)
+BookIdentityProvider.lookup(
+  IsbnIdentityQuery, OperationContext, before_exchange: IdentitySendGuard
+)
   -> IdentityAttemptResult
 ```
 
-One call is one attempt. The port has no persistence, lock, retry, wait,
+One call is one attempt. The application supplies the held deployment lease's
+value-free send guard; the production adapter invokes it immediately before
+exchange, after credential, DNS, address, request, and authorization work. The
+port has no persistence, lock, retry, wait,
 credential-discovery, public lifecycle, proposal, review, or write behavior.
 `IdentityAttemptResult` contains exactly one typed observation tuple or one
 typed failure. Query, result, observation, identity, and decision representations
@@ -55,7 +60,10 @@ SNI, and peer plan. A near miss receives no authorization and no send.
 
 The production network channel uses one dedicated TLS client with environment
 trust, redirects, cookies, ambient credentials, HTTP/2, compression, and
-keep-alive disabled. Increment 3 intentionally supplies no such channel.
+keep-alive disabled. Its request boundary suppresses `httpx` and `httpcore`
+records so URL, selected address, headers, body, and dependency failure values
+cannot enter application logging. Increment 3 intentionally supplies no such
+channel.
 
 ## Hostile response boundary
 
@@ -310,7 +318,14 @@ credential, traffic, and the qualification flag. It then initializes or opens
 schema-10 state, accepts durable work, and acquires the descriptor-bound gate.
 Only the gate-held atomic start permits lazy credential read, isolated bounded
 resolution, and one selected-public-IP HTTPS request with the Hardcover Host and
-TLS SNI preserved.
+TLS SNI preserved. The exact database identity published for qualification is
+bound into the gate before state is reopened; replacement fails before secret
+or send. The lease is revalidated again at the exchange boundary.
+
+The opaque work key is the sole persistence-only exception to the general ban
+on ISBN-derived stable values. It is required for durable currentness and
+idempotency, excludes title and raw/reversible input, and is never emitted,
+logged, exported, reported, or audited.
 
 The public outcomes are exactly `matched`, `disabled`, `invalid_input`,
 `in_progress`, `credential_unavailable`, `authentication`, `authorization`,
@@ -321,8 +336,11 @@ and never become terminal public reports.
 
 The exact activation registry is
 [`hardcover-f09f-activation-registry-v1.json`](hardcover-f09f-activation-registry-v1.json),
-SHA-256 `c5d0f8eeaa0af820f4a94dd59aa81ad870644fb58f8b29e0c32562bad4bc604f`.
+SHA-256 `66bb9e2047bfd21aa42d1802cf14b26f43f49dd98b8896c99f4d50e23d820bd0`.
 It derives from and binds the merged C6 registry, all six retained contributor
 scenarios, the unchanged cumulative output schema and privacy contract/scan,
-the work-key contract, and the exact one-shot authority contract. Synthetic
-runtime remains credential-free after activation.
+the work-key contract, the exact one-shot authority contract, and production
+output schema v5
+[`hardcover-identity-report-output-schema-v5.json`](hardcover-identity-report-output-schema-v5.json),
+SHA-256 `590ac39bc81dd695d23f1031f2cfb0610be107be98ce15e7b2f0514a42e6bb06`.
+Synthetic runtime remains credential-free after activation.

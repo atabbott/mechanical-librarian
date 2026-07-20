@@ -14,7 +14,11 @@ versioning after the first public release.
   deployment gate, and emits only a closed redacted outcome. Added exact
   one-request qualification authority for disposable zero-start state and
   retired the credentialed F09b title-preview path. The operation remains
-  target-independent, proposal-free, report-only, and write-free.
+  target-independent, proposal-free, report-only, and write-free. Production
+  output is bound to redacted schema v5; greater-than-24-hour currentness first
+  reports `stale`; one-shot rejects non-JSON and every non-matched result; and
+  database identity plus dependency-log suppression are revalidated at the
+  exact transport boundary.
 
 - Added the report-only F09f durable Hardcover identity-work increment. Schema
   9 adds bounded immutable generations, candidates, claims, attempts, retry

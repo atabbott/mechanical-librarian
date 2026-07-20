@@ -213,12 +213,8 @@ class RunSafeHardcoverIdentity:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
             if accepted.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED:
                 return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
-            if accepted.outcome is IdentityWorkOutcome.STALE and accepted.candidate is None:
-                accepted = self._work.accept(
-                    request.work_key,
-                    accepted_at,
-                    egress_limit=request.egress_limit,
-                )
+            if accepted.outcome is IdentityWorkOutcome.STALE:
+                return _report(HardcoverIdentityOutcome.STALE)
             active = self._work.inspect(accepted.reference, accepted_at)
             if active.state not in {
                 IdentityWorkState.PENDING,
@@ -359,7 +355,11 @@ class RunSafeHardcoverIdentity:
         )
         query = IsbnIdentityQuery.from_private(request.query)
         try:
-            attempt = self._provider.lookup(query, attempt_context)
+            attempt = self._provider.lookup(
+                query,
+                attempt_context,
+                before_exchange=lease.validate_for_send,
+            )
         except Exception:
             attempt = IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.UNAVAILABLE

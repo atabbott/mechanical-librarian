@@ -528,7 +528,8 @@ timestamp, exact fence/timestamps,
 observation digest, and closed structural observation. Aggregate/attempt
 exhaustion commits terminal evidence, while
 currentness expiry and unreserved next-generation creation share one
-transaction and repeated readers retain stale status. Append-only records and
+transaction; the first reader reports `stale` without egress and a later
+invocation may reserve the refresh. Append-only records and
 finalize-once attempts make restart and corruption visible.
 
 The installed durable-work preview injects gate ownership structurally and has no provider
@@ -564,6 +565,16 @@ converge on the same device/inode and lock. Dot/dotdot, nonconverging or changed
 identity, final symlink, hardlink, nonregular database, permissive root, and
 lock/database replacement fail closed. The lock is stable and never unlinked
 during operation.
+
+Qualification publication retains the exact descriptor-observed database inode
+and binds it into the production gate before reopening state. Replacement after
+publication therefore fails before credential or send. After durable start,
+the held lease is carried through the application-owned provider port and
+revalidated at the exact exchange boundary after token read, DNS, address
+selection, request construction, and authorization. The HTTP dependency logging
+boundary suppresses `httpx`/`httpcore` records for that exchange and restores
+prior logger configuration afterward; adversarial URL, address, response-header,
+body, and failure values never reach application log capture.
 
 The persisted 30-second aggregate window is inspected before gate acquisition,
 and the caller deadline is checked at the same boundary. A busy gate returns

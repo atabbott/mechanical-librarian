@@ -19,6 +19,8 @@ from mechanical_librarian.application.hardcover_safe_executor import (
 )
 from mechanical_librarian.bootstrap.composition import (
     _run_hardcover_identity_report,
+    _run_new_qualification_state_check,
+    _run_state_check,
 )
 from mechanical_librarian.domain.hardcover_identity import (
     ProviderBookObservation,
@@ -88,10 +90,10 @@ class HardcoverActivationTests(unittest.TestCase):
         self,
     ) -> None:
         payload = ACTIVATION_REGISTRY.read_bytes()
-        self.assertEqual(len(payload), 1_739)
+        self.assertEqual(len(payload), 1_928)
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "c5d0f8eeaa0af820f4a94dd59aa81ad870644fb58f8b29e0c32562bad4bc604f",
+            "66bb9e2047bfd21aa42d1802cf14b26f43f49dd98b8896c99f4d50e23d820bd0",
         )
         registry = json.loads(payload)
         self.assertEqual(registry["closes"], [239, 242])
@@ -102,6 +104,26 @@ class HardcoverActivationTests(unittest.TestCase):
             bound = resource.read_bytes()
             self.assertEqual(len(bound), binding["bytes"])
             self.assertEqual(hashlib.sha256(bound).hexdigest(), binding["sha256"])
+        production_schema = json.loads(
+            (
+                ROOT
+                / registry["bindings"]["production-output-schema"]["path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            production_schema["properties"]["schema"]["const"],
+            "hardcover-identity-report-v5",
+        )
+        self.assertEqual(
+            set(production_schema["properties"]["outcome"]["enum"]),
+            {outcome.value for outcome in HardcoverIdentityOutcome},
+        )
+        self.assertEqual(
+            json.loads(
+                HardcoverIdentityReport(HardcoverIdentityOutcome.MATCHED).to_json()
+            )["schema"],
+            "hardcover-identity-report-v5",
+        )
 
     def test_enabled_invalid_query_returns_before_state_secret_dns_or_network(
         self,
@@ -134,6 +156,30 @@ class HardcoverActivationTests(unittest.TestCase):
                     config, root / "state.sqlite", query, False
                 )
         self.assertEqual(report.outcome, HardcoverIdentityOutcome.INVALID_INPUT)
+
+    def test_gate_invalid_relative_database_fails_before_state_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            config = self._enabled_config(root)
+            query = root / "query.json"
+            query.write_text(
+                json.dumps(
+                    {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+                ),
+                encoding="utf-8",
+            )
+            query.chmod(0o600)
+            with patch(
+                "mechanical_librarian.bootstrap.composition._run_state_check",
+                side_effect=AssertionError("state mutated"),
+            ):
+                report = _run_hardcover_identity_report(
+                    config, Path("relative-state.sqlite"), query, False
+                )
+        self.assertEqual(
+            report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE
+        )
 
     def test_identity_token_reader_is_strict_and_rejects_bearer_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -168,7 +214,10 @@ class HardcoverActivationTests(unittest.TestCase):
             database = root / "state.sqlite"
 
             class _Provider:
-                def lookup(self, _query, _context):
+                def lookup(
+                    self, _query, _context, *, before_exchange=lambda: None
+                ):
+                    before_exchange()
                     connection = sqlite3.connect(database)
                     try:
                         started = connection.execute(
@@ -252,6 +301,97 @@ class HardcoverActivationTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(output.getvalue())["outcome"], "matched")
 
+    def test_one_shot_requires_json_and_fails_every_non_match(self) -> None:
+        for arguments, outcome in (
+            (("--format", "text"), HardcoverIdentityOutcome.MATCHED),
+            (("--format", "json"), HardcoverIdentityOutcome.NO_MATCH),
+            (("--format", "json"), HardcoverIdentityOutcome.RETRY_EXHAUSTED),
+        ):
+            with self.subTest(arguments=arguments, outcome=outcome):
+                runner = Mock(return_value=HardcoverIdentityReport(outcome))
+                code = main(
+                    [
+                        "hardcover-identity-report",
+                        "--config",
+                        "/configuration.json",
+                        "--database",
+                        "/state.sqlite",
+                        "--query-file",
+                        "/query.json",
+                        *arguments,
+                        "--qualification-one-shot",
+                    ],
+                    state_check_runner=Mock(),
+                    hardcover_identity_runner=runner,
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+                self.assertEqual(code, 2)
+                if arguments == ("--format", "text"):
+                    runner.assert_not_called()
+                else:
+                    runner.assert_called_once()
+
+    def test_one_shot_rejects_publication_loss_and_database_replacement(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            database = root / "state.sqlite"
+            with patch(
+                "mechanical_librarian.infrastructure.persistence.sqlite.BoundDisposableState.publish",
+                return_value=False,
+            ):
+                state, identity = _run_new_qualification_state_check(database)
+            self.assertFalse(state.succeeded)
+            self.assertIsNone(identity)
+            self.assertFalse(database.exists())
+
+        with (
+            tempfile.TemporaryDirectory() as input_directory,
+            tempfile.TemporaryDirectory() as state_directory,
+        ):
+            inputs = Path(input_directory)
+            inputs.chmod(0o700)
+            state_root = Path(state_directory)
+            state_root.chmod(0o700)
+            config = self._enabled_config(inputs)
+            query = inputs / "query.json"
+            query.write_text(
+                json.dumps(
+                    {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+                ),
+                encoding="utf-8",
+            )
+            query.chmod(0o600)
+            database = state_root / "state.sqlite"
+
+            def replaced_state(_database: Path):
+                result = _run_state_check(database)
+                original = database.stat(follow_symlinks=False)
+                replacement = state_root / "replacement.sqlite"
+                self.assertTrue(_run_state_check(replacement).succeeded)
+                replacement.replace(database)
+                return result, (original.st_dev, original.st_ino)
+
+            with (
+                patch(
+                    "mechanical_librarian.bootstrap.composition._run_new_qualification_state_check",
+                    side_effect=replaced_state,
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.PrivateFileProviderCredentials",
+                    side_effect=AssertionError("secret reached"),
+                ),
+            ):
+                report = _run_hardcover_identity_report(
+                    config, database, query, True
+                )
+            self.assertEqual(
+                report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE
+            )
+
     def test_credentialed_f09b_command_is_retired_before_runner(self) -> None:
         runner = Mock()
         errors = io.StringIO()
@@ -271,6 +411,28 @@ class HardcoverActivationTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("hardcover-identity-report", errors.getvalue())
         runner.assert_not_called()
+
+    def test_credentialed_f09b_abbreviations_are_retired_before_runner(self) -> None:
+        for spelling in ("--secret-ref", "--secret-r", "--secret"):
+            with self.subTest(spelling=spelling):
+                runner = Mock()
+                errors = io.StringIO()
+                code = main(
+                    [
+                        "hardcover-title-proposal-report",
+                        "--database",
+                        "/state.sqlite",
+                        spelling,
+                        "/provider-token",
+                    ],
+                    state_check_runner=Mock(),
+                    hardcover_title_proposal_runner=runner,
+                    stdout=io.StringIO(),
+                    stderr=errors,
+                )
+                self.assertEqual(code, 2)
+                self.assertIn("hardcover-identity-report", errors.getvalue())
+                runner.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -140,8 +140,8 @@ stale-fence rejection, retry, matched publication, and the exact 24-hour
 currentness boundary. Gate ownership is an injected structural fact; this
 increment installs no deployment gate, process loop, query-file read, secret
 lookup, DNS, socket, HTTP, live Hardcover access, proposal, review, or write
-authority. Production mode still returns `disabled` or
-At that historical increment production remained preactivated.
+authority. At that historical increment, production remained preactivated and
+returned only the disabled report.
 
 From the repository root, the canonical demonstration is:
 

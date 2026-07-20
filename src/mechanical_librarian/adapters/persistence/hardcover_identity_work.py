@@ -58,6 +58,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                     (work_key,),
                 ).fetchone()
                 expired = False
+                report_stale = False
                 expired_generation: int | None = None
                 if current is not None:
                     generation, observation_id, status, current_since, expires_at = _current_row(current)
@@ -78,6 +79,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                             (work_key,),
                         )
                         expired = True
+                        report_stale = True
                         expired_generation = generation
                     elif status == "expired":
                         expired = True
@@ -112,7 +114,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                             )
                         return IdentityWorkStatus(
                             IdentityWorkOutcome.STALE
-                            if expired
+                            if report_stale
                             else IdentityWorkOutcome.IN_PROGRESS,
                             IdentityWorkReference(work_key, active_generation),
                             candidate,
@@ -172,7 +174,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                         )
                     return IdentityWorkStatus(
                         IdentityWorkOutcome.STALE
-                        if expired
+                        if report_stale
                         else IdentityWorkOutcome.IN_PROGRESS,
                         IdentityWorkReference(work_key, active_generation),
                         candidate,
@@ -184,6 +186,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                 ).fetchone()
                 generation = _positive_int(row[0] if row else None, "generation")
                 if expired:
+                    report_stale = True
                     self._connection.execute(
                         "INSERT INTO hardcover_identity_generations(work_key,generation,state,fence,attempt_count,aggregate_started_at,aggregate_deadline,created_at,updated_at) VALUES(?,?,'pending',0,0,NULL,NULL,?,?)",
                         (work_key, generation, timestamp, timestamp),
@@ -203,7 +206,9 @@ class SQLiteHardcoverIdentityWorkRepository:
                     self._event(work_key, generation, "accepted", None, "pending", 0, timestamp)
                     candidate = 1
                 return IdentityWorkStatus(
-                    IdentityWorkOutcome.STALE if expired else IdentityWorkOutcome.IN_PROGRESS,
+                    IdentityWorkOutcome.STALE
+                    if report_stale
+                    else IdentityWorkOutcome.IN_PROGRESS,
                     IdentityWorkReference(work_key, generation),
                     candidate,
                 )

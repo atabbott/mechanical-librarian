@@ -95,7 +95,12 @@ class _DescriptorGateLease:
 class DescriptorHardcoverIdentityGate:
     """Converge canonical parent aliases on one stable flock entry."""
 
-    def __init__(self, database: Path) -> None:
+    def __init__(
+        self,
+        database: Path,
+        *,
+        expected_database_identity: tuple[int, int] | None = None,
+    ) -> None:
         if not isinstance(database, Path) or not database.is_absolute():
             raise ValueError("Hardcover deployment database path is invalid")
         if database.name in {"", ".", ".."} or any(
@@ -112,9 +117,59 @@ class DescriptorHardcoverIdentityGate:
             raise HardcoverIdentityGateError(
                 "Hardcover deployment state root is unavailable"
             )
+        try:
+            root = canonical_parent.stat()
+            root_entry = canonical_parent.lstat()
+        except OSError:
+            raise HardcoverIdentityGateError(
+                "Hardcover deployment state root is unavailable"
+            ) from None
+        if (
+            not stat.S_ISDIR(root.st_mode)
+            or not stat.S_ISDIR(root_entry.st_mode)
+            or _directory_identity(root) != _directory_identity(root_entry)
+            or root.st_uid != os.geteuid()
+            or stat.S_IMODE(root.st_mode) & 0o077
+        ):
+            raise HardcoverIdentityGateError(
+                "Hardcover deployment state root is invalid"
+            )
+        if expected_database_identity is not None and (
+            type(expected_database_identity) is not tuple
+            or len(expected_database_identity) != 2
+            or any(type(value) is not int or value < 0 for value in expected_database_identity)
+        ):
+            raise ValueError("Hardcover deployment database identity is invalid")
+        try:
+            database_entry = database.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            database_identity = None
+        except OSError:
+            raise HardcoverIdentityGateError(
+                "Hardcover deployment database identity is unavailable"
+            ) from None
+        else:
+            database_identity = (database_entry.st_dev, database_entry.st_ino)
+            if not _valid_regular(
+                database_entry, database_identity, private=False
+            ):
+                raise HardcoverIdentityGateError(
+                    "Hardcover deployment database identity is invalid"
+                )
+        if expected_database_identity is not None and (
+            database_identity != expected_database_identity
+        ):
+            raise HardcoverIdentityGateError(
+                "Hardcover deployment database identity changed"
+            )
         self._parent = canonical_parent
         self._supplied_parent = database.parent
         self._database_name = database.name
+        self._expected_database_identity = (
+            expected_database_identity
+            if expected_database_identity is not None
+            else database_identity
+        )
 
     def try_acquire(self) -> _DescriptorGateLease | None:
         directory_descriptor: int | None = None
@@ -155,7 +210,13 @@ class DescriptorHardcoverIdentityGate:
             )
             database = os.fstat(database_descriptor)
             database_identity = (database.st_dev, database.st_ino)
-            if not _valid_regular(database, database_identity, private=False):
+            if (
+                not _valid_regular(database, database_identity, private=False)
+                or (
+                    self._expected_database_identity is not None
+                    and database_identity != self._expected_database_identity
+                )
+            ):
                 raise HardcoverIdentityGateError(
                     "Hardcover deployment database identity is invalid"
                 )

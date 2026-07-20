@@ -65,7 +65,14 @@ class _Provider:
         self.starts = 0
         self.deadlines: list[datetime] = []
 
-    def lookup(self, query: object, context: OperationContext) -> object:
+    def lookup(
+        self,
+        query: object,
+        context: OperationContext,
+        *,
+        before_exchange=lambda: None,
+    ) -> object:
+        before_exchange()
         self.starts += 1
         self.deadlines.append(context.deadline.at)
         if isinstance(self.result, BaseException):
@@ -74,9 +81,9 @@ class _Provider:
 
 
 class _LateProvider(_Provider):
-    def lookup(self, query: object, context: OperationContext) -> object:
+    def lookup(self, query: object, context: OperationContext, **kwargs) -> object:
         self.clock.now = context.deadline.at
-        return super().lookup(query, context)
+        return super().lookup(query, context, **kwargs)
 
 
 class _PublishAtProvider(_Provider):
@@ -86,9 +93,9 @@ class _PublishAtProvider(_Provider):
         super().__init__(result, clock)
         self.published_at = published_at
 
-    def lookup(self, query: object, context: OperationContext) -> object:
+    def lookup(self, query: object, context: OperationContext, **kwargs) -> object:
         self.clock.now = self.published_at
-        return super().lookup(query, context)
+        return super().lookup(query, context, **kwargs)
 
 
 class _FailingGate:
@@ -216,6 +223,31 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         contender = self.gate.try_acquire()
         self.assertIsNotNone(contender)
         contender.release()
+
+    def test_held_gate_is_revalidated_at_the_provider_exchange_boundary(self) -> None:
+        class Lease:
+            def __init__(self) -> None:
+                self.validations = 0
+                self.released = False
+
+            def validate_for_send(self) -> None:
+                self.validations += 1
+
+            def release(self) -> None:
+                self.released = True
+
+        lease = Lease()
+
+        class Gate:
+            def try_acquire(self):
+                return lease
+
+        provider = _Provider(self.matched(), self.clock)
+        report = self.execute(self.request("send-revalidation"), provider, gate=Gate())
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(provider.starts, 1)
+        self.assertEqual(lease.validations, 2)
+        self.assertTrue(lease.released)
 
     def test_retryable_attempt_publishes_retry_wait_without_retrying(self) -> None:
         request = self.request("unavailable")
@@ -588,7 +620,7 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                 )
                 self.assertEqual(competing_snapshot, (1, 1, 1, "succeeded"))
 
-    def test_stale_current_is_reserved_before_inspection_and_attempt(self) -> None:
+    def test_stale_current_reports_before_a_later_refresh_attempt(self) -> None:
         request = self.request("stale")
         accepted = self.work.accept(request.work_key, self.clock.now)
         claim = self.work.claim(
@@ -613,8 +645,14 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         self.clock.now += timedelta(hours=24, microseconds=1)
         provider = _Provider(self.matched(), self.clock)
         report = self.execute(request, provider)
-        self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
-        self.assertEqual(provider.starts, 1)
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.STALE)
+        self.assertEqual(provider.starts, 0)
+        refreshed = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(request, refreshed).outcome,
+            HardcoverIdentityOutcome.MATCHED,
+        )
+        self.assertEqual(refreshed.starts, 1)
         self.assertEqual(
             self.connection.execute(
                 "SELECT COUNT(*) FROM hardcover_identity_generations WHERE work_key=?",
@@ -832,8 +870,8 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         cancelled = self.cancelled
 
         class CancellingProvider(_Provider):
-            def lookup(self, query: object, context: OperationContext) -> object:
-                result = super().lookup(query, context)
+            def lookup(self, query: object, context: OperationContext, **kwargs) -> object:
+                result = super().lookup(query, context, **kwargs)
                 cancelled.set()
                 return result
 
@@ -930,17 +968,29 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         refreshed = _Provider(self.matched(), self.clock)
         self.assertEqual(
             self.execute(normal, refreshed).outcome,
+            HardcoverIdentityOutcome.STALE,
+        )
+        self.assertEqual(refreshed.starts, 0)
+        refresh_attempt = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(normal, refresh_attempt).outcome,
             HardcoverIdentityOutcome.MATCHED,
         )
-        self.assertEqual(refreshed.starts, 1)
+        self.assertEqual(refresh_attempt.starts, 1)
 
         self.clock.now += timedelta(hours=24, microseconds=1)
         third = _Provider(self.matched(), self.clock)
         self.assertEqual(
             self.execute(normal, third).outcome,
+            HardcoverIdentityOutcome.STALE,
+        )
+        self.assertEqual(third.starts, 0)
+        third_attempt = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(normal, third_attempt).outcome,
             HardcoverIdentityOutcome.MATCHED,
         )
-        self.assertEqual(third.starts, 1)
+        self.assertEqual(third_attempt.starts, 1)
         self.assertEqual(
             self.connection.execute(
                 "SELECT generation,attempt_count,state FROM "

@@ -11,12 +11,15 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
 import re
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 from collections.abc import Callable, Coroutine, Iterable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, TypeVar
@@ -29,6 +32,7 @@ from mechanical_librarian.application.hardcover_identity import (
     IdentityAttemptFailureKind,
     IdentityAttemptResult,
     IsbnIdentityQuery,
+    allow_identity_send,
 )
 from mechanical_librarian.application.ports import (
     CancellationId,
@@ -78,6 +82,7 @@ MAX_TOTAL_STRING_SCALARS = 4_096
 MAX_TOTAL_STRING_BYTES = 16_384
 MIN_INT32 = -2_147_483_648
 MAX_INT32 = 2_147_483_647
+_TRANSPORT_LOG_LOCK = threading.RLock()
 
 _EDITION_KEYS = {
     "id",
@@ -306,6 +311,49 @@ class BoundedIdentityAddressResolver:
         return tuple(values)
 
 
+@contextmanager
+def _transport_logging_boundary():
+    """Prevent the HTTP dependency from exporting transport-derived values."""
+
+    with _TRANSPORT_LOG_LOCK:
+        names = {"httpx", "httpcore"}
+        names.update(
+            name
+            for name in logging.root.manager.loggerDict
+            if name == "httpx"
+            or name.startswith("httpx.")
+            or name == "httpcore"
+            or name.startswith("httpcore.")
+        )
+        states: list[
+            tuple[logging.Logger, int, bool, bool, list[logging.Handler]]
+        ] = []
+        sink = logging.NullHandler()
+        try:
+            for name in sorted(names):
+                logger = logging.getLogger(name)
+                states.append(
+                    (
+                        logger,
+                        logger.level,
+                        logger.propagate,
+                        logger.disabled,
+                        list(logger.handlers),
+                    )
+                )
+                logger.setLevel(logging.CRITICAL + 1)
+                logger.propagate = False
+                logger.disabled = False
+                logger.handlers[:] = [sink]
+            yield
+        finally:
+            for logger, level, propagate, disabled, handlers in reversed(states):
+                logger.handlers[:] = handlers
+                logger.disabled = disabled
+                logger.propagate = propagate
+                logger.setLevel(level)
+
+
 class HttpxIdentityByteChannel:
     """Perform one selected-IP request and return a closed bounded raw response."""
 
@@ -364,6 +412,17 @@ class HttpxIdentityByteChannel:
             await asyncio.gather(task, return_exceptions=True)
 
     async def _perform(
+        self,
+        request: AuthorizedIdentityRequest,
+        context: OperationContext,
+        wall_deadline: float,
+    ) -> RawIdentityResponseHead:
+        with _transport_logging_boundary():
+            return await self._perform_without_transport_logs(
+                request, context, wall_deadline
+            )
+
+    async def _perform_without_transport_logs(
         self,
         request: AuthorizedIdentityRequest,
         context: OperationContext,
@@ -435,14 +494,17 @@ class HttpxIdentityByteChannel:
                         for name, value in response.headers.raw
                     )
                     payload = bytearray()
-                    async for chunk in response.aiter_raw():
-                        failure = _bounded_context_failure(context, wall_deadline)
-                        if failure is not None:
-                            raise IdentityChannelFailure(failure)
-                        needed = MAX_RESPONSE_BYTES + 1 - len(payload)
-                        payload.extend(chunk[:needed])
-                        if len(payload) > MAX_RESPONSE_BYTES:
-                            break
+                    if response.status_code == 200:
+                        async for chunk in response.aiter_raw():
+                            failure = _bounded_context_failure(
+                                context, wall_deadline
+                            )
+                            if failure is not None:
+                                raise IdentityChannelFailure(failure)
+                            needed = MAX_RESPONSE_BYTES + 1 - len(payload)
+                            payload.extend(chunk[:needed])
+                            if len(payload) > MAX_RESPONSE_BYTES:
+                                break
                     return RawIdentityResponseHead(
                         status_line,
                         header_lines,
@@ -476,8 +538,15 @@ class LiveHardcoverIdentityProvider:
         self._channel_factory = channel_factory
 
     def lookup(
-        self, query: IsbnIdentityQuery, context: OperationContext
+        self,
+        query: IsbnIdentityQuery,
+        context: OperationContext,
+        *,
+        before_exchange: Callable[[], None] = allow_identity_send,
     ) -> IdentityAttemptResult:
+        preflight = _safe_preflight(context)
+        if preflight is not None:
+            return IdentityAttemptResult.failed(preflight)
         try:
             token = self._token_reader()
         except Exception:
@@ -489,12 +558,16 @@ class LiveHardcoverIdentityProvider:
             return IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.CREDENTIAL_UNAVAILABLE
             )
+        preflight = _safe_preflight(context)
+        if preflight is not None:
+            token = b""
+            return IdentityAttemptResult.failed(preflight)
         try:
             return HardcoverIdentityProvider(
                 BoundedIdentityAddressResolver(context),
                 self._channel_factory(),
                 token,
-            ).lookup(query, context)
+            ).lookup(query, context, before_exchange=before_exchange)
         except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         finally:
@@ -528,7 +601,11 @@ class HardcoverIdentityProvider:
         self._token = token
 
     def lookup(
-        self, query: IsbnIdentityQuery, context: OperationContext
+        self,
+        query: IsbnIdentityQuery,
+        context: OperationContext,
+        *,
+        before_exchange: Callable[[], None] = allow_identity_send,
     ) -> IdentityAttemptResult:
         if type(query) is not IsbnIdentityQuery or type(context) is not OperationContext:
             return IdentityAttemptResult.failed(
@@ -564,6 +641,7 @@ class HardcoverIdentityProvider:
                 IdentityAttemptFailureKind.INCOMPATIBLE
             )
         try:
+            before_exchange()
             response = self._channel.exchange(authorized, context)
         except IdentityChannelFailure as error:
             return IdentityAttemptResult.failed(error.kind)

@@ -645,6 +645,13 @@ its matched pointer is no older than exactly 24 hours. Generation number,
 candidate number, attempt number, and fence are monotonic within that work-key
 namespace and are never reset or inferred after restart.
 
+That opaque work key is the sole ISBN-derived persisted identifier permitted by
+the F09f privacy contract. Its exact derivation is a currentness compatibility
+boundary; it excludes title and raw/reversible input and is never a runtime
+output, log, export, report, or audit value. Installed production JSON conforms
+to `hardcover-identity-report-output-v5`; changing its schema marker or closed
+outcome enum requires a new versioned output contract.
+
 The state values `pending`, `claimed`, `retry_wait`, `succeeded`, `failed`, and
 `cancelled`, the terminal result meanings, the 30-second aggregate window,
 15-second lease, six-second start threshold, three-attempt bound, and exact

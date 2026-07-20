@@ -90,7 +90,10 @@ class _SequenceProvider:
         self,
         query: object,
         context: OperationContext,
+        *,
+        before_exchange=lambda: None,
     ) -> IdentityAttemptResult:
+        before_exchange()
         self.starts += 1
         return self.results.pop(0)
 
@@ -103,7 +106,14 @@ class _DyingProvider:
     def __init__(self) -> None:
         self.starts = 0
 
-    def lookup(self, query: object, context: OperationContext) -> IdentityAttemptResult:
+    def lookup(
+        self,
+        query: object,
+        context: OperationContext,
+        *,
+        before_exchange=lambda: None,
+    ) -> IdentityAttemptResult:
+        before_exchange()
         self.starts += 1
         raise _ProcessDeath()
 
