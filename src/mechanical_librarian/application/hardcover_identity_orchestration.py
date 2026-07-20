@@ -13,6 +13,7 @@ from mechanical_librarian.application.hardcover_identity import (
 )
 from mechanical_librarian.application.hardcover_safe_executor import (
     HardcoverIdentityExecutionRequest,
+    HardcoverIdentityInvocationResult,
     IdentityDeploymentGate,
     IdentityDeploymentGateLease,
     RunSafeHardcoverIdentity,
@@ -130,10 +131,13 @@ class RunHardcoverIdentityLifecycle:
                     wait_for_retry = False
                     continue
 
-            report = self._attempt.run(request, context)
-            if type(report) is not HardcoverIdentityReport:
+            invocation = self._attempt.run_invocation(request, context)
+            if type(invocation) is not HardcoverIdentityInvocationResult:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+            report = invocation.report
             if report.outcome is not HardcoverIdentityOutcome.IN_PROGRESS:
+                return report
+            if not invocation.retry_scheduled:
                 return report
             try:
                 refreshed = self._work.inspect(
@@ -214,18 +218,23 @@ class RunHardcoverIdentityLifecycle:
             now = context.observed_at
             refreshed = self._work.inspect(active.reference, now)
             if refreshed.state is not IdentityWorkState.CLAIMED:
-                return None
-            claim = refreshed.active_claim
-            if claim is None:
-                return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
-            if now <= claim.lease_expires_at:
-                return _report(HardcoverIdentityOutcome.IN_PROGRESS)
-            recovered = self._work.recover(claim, now, gate_owned=True)
-            if type(recovered) is not int:
-                result = _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
-            elif context.cancelled:
-                self._work.cancel_available(active.reference, context.observed_at)
-                result = _report(HardcoverIdentityOutcome.CANCELLED)
+                result = None
+            else:
+                claim = refreshed.active_claim
+                if claim is None:
+                    result = _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+                elif now <= claim.lease_expires_at:
+                    result = _report(HardcoverIdentityOutcome.IN_PROGRESS)
+                else:
+                    recovered = self._work.recover(claim, now, gate_owned=True)
+                    if type(recovered) is not int:
+                        result = _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
+                    elif context.cancelled:
+                        self._work.cancel_available(
+                            active.reference,
+                            context.observed_at,
+                        )
+                        result = _report(HardcoverIdentityOutcome.CANCELLED)
         except (IdentityWorkPersistenceError, TypeError, ValueError):
             result = _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
         except Exception:

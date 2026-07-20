@@ -65,6 +65,25 @@ class HardcoverIdentityExecutionRequest:
         return "HardcoverIdentityExecutionRequest(<redacted>)"
 
 
+@dataclass(frozen=True, slots=True)
+class HardcoverIdentityInvocationResult:
+    """Public report plus retry authority owned by this invocation."""
+
+    report: HardcoverIdentityReport
+    retry_scheduled: bool = False
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.report) is not HardcoverIdentityReport
+            or type(self.retry_scheduled) is not bool
+            or (
+                self.retry_scheduled
+                and self.report.outcome is not HardcoverIdentityOutcome.IN_PROGRESS
+            )
+        ):
+            raise ValueError("Hardcover identity invocation result is malformed")
+
+
 class IdentityDeploymentGateLease(Protocol):
     """Held deployment-scoped send authority."""
 
@@ -101,6 +120,13 @@ class RunSafeHardcoverIdentity:
         request: HardcoverIdentityExecutionRequest,
         context: OperationContext,
     ) -> HardcoverIdentityReport:
+        return self.run_invocation(request, context).report
+
+    def run_invocation(
+        self,
+        request: HardcoverIdentityExecutionRequest,
+        context: OperationContext,
+    ) -> HardcoverIdentityInvocationResult:
         if (
             type(request) is not HardcoverIdentityExecutionRequest
             or type(context) is not OperationContext
@@ -160,7 +186,7 @@ class RunSafeHardcoverIdentity:
                 return _report(HardcoverIdentityOutcome.CANCELLED)
             return _report(HardcoverIdentityOutcome.IN_PROGRESS)
 
-        result: HardcoverIdentityReport | None = None
+        result: HardcoverIdentityInvocationResult | None = None
         failure: BaseException | None = None
         try:
             result = self._run_under_gate(
@@ -196,7 +222,7 @@ class RunSafeHardcoverIdentity:
         reference: IdentityWorkReference,
         aggregate_deadline: datetime,
         lease: IdentityDeploymentGateLease,
-    ) -> HardcoverIdentityReport:
+    ) -> HardcoverIdentityInvocationResult:
         now = context.observed_at
         active = self._work.inspect(reference, now)
         if active.state is IdentityWorkState.CLAIMED:
@@ -289,7 +315,7 @@ class RunSafeHardcoverIdentity:
         claim: IdentityWorkClaim,
         attempt: IdentityAttemptResult,
         now: datetime,
-    ) -> HardcoverIdentityReport:
+    ) -> HardcoverIdentityInvocationResult:
         if attempt.failure is None:
             decision = decide_book_identity(request.query, attempt.observations)
             if decision.outcome is IdentityDecisionOutcome.MATCHED:
@@ -350,7 +376,10 @@ class RunSafeHardcoverIdentity:
                     HardcoverIdentityOutcome.PERSISTENCE_FAILURE
                 ),
             }.get(status.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
-            return _report(outcome)
+            return _report(
+                outcome,
+                retry_scheduled=status.outcome is IdentityWorkOutcome.IN_PROGRESS,
+            )
 
         if failure is IdentityAttemptFailureKind.INVALID_RETRY_AFTER:
             status = self._work.publish_failed(
@@ -394,12 +423,20 @@ class RunSafeHardcoverIdentity:
         return _report(terminal)
 
 
-def _report(outcome: HardcoverIdentityOutcome) -> HardcoverIdentityReport:
-    return HardcoverIdentityReport(outcome)
+def _report(
+    outcome: HardcoverIdentityOutcome,
+    *,
+    retry_scheduled: bool = False,
+) -> HardcoverIdentityInvocationResult:
+    return HardcoverIdentityInvocationResult(
+        HardcoverIdentityReport(outcome),
+        retry_scheduled,
+    )
 
 
 __all__ = [
     "HardcoverIdentityExecutionRequest",
+    "HardcoverIdentityInvocationResult",
     "IdentityDeploymentGate",
     "IdentityDeploymentGateLease",
     "RunSafeHardcoverIdentity",

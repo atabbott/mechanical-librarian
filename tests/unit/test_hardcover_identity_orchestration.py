@@ -7,6 +7,7 @@ import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from mechanical_librarian.adapters.persistence.hardcover_identity_work import (
     SQLiteHardcoverIdentityWorkRepository,
@@ -39,6 +40,7 @@ from mechanical_librarian.domain.hardcover_identity import (
     ProviderIdentityObservation,
     validate_private_query,
 )
+from mechanical_librarian.domain.hardcover_identity_work import IdentityWorkState
 from mechanical_librarian.infrastructure.hardcover_identity_gate import (
     DescriptorHardcoverIdentityGate,
 )
@@ -104,6 +106,18 @@ class _DyingProvider:
     def lookup(self, query: object, context: OperationContext) -> IdentityAttemptResult:
         self.starts += 1
         raise _ProcessDeath()
+
+
+class _FailingReleaseLease:
+    def __init__(self) -> None:
+        self.releases = 0
+
+    def validate_for_send(self) -> None:
+        pass
+
+    def release(self) -> None:
+        self.releases += 1
+        raise RuntimeError("synthetic release failure")
 
 
 class HardcoverIdentityOrchestrationTests(unittest.TestCase):
@@ -199,6 +213,66 @@ class HardcoverIdentityOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
         self.assertEqual(provider.starts, 3)
         self.assertEqual(retry_wait.timeouts, [1.0, 2.0])
+
+    def test_competing_post_gate_retry_does_not_authorize_local_wait(self) -> None:
+        request = self.request("competing-post-gate-retry")
+        provider = _SequenceProvider(self.matched())
+        retry_wait = _Wait(self.clock)
+        accepted = self.work.accept(request.work_key, self.clock.now)
+        acquire = self.gate.try_acquire
+
+        def acquire_after_competing_retry():
+            competing = self.work.claim(
+                accepted.reference,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            started = self.work.start(
+                competing,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            self.work.publish_failed(
+                started,
+                "competing-worker",
+                self.clock.now,
+                retryable=True,
+                retry_delay_seconds=10,
+                gate_owned=True,
+            )
+            return acquire()
+
+        with patch.object(
+            self.gate,
+            "try_acquire",
+            side_effect=acquire_after_competing_retry,
+        ):
+            report = self.lifecycle(provider, retry_wait).run(
+                request,
+                self.context(),
+            )
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(provider.starts, 0)
+        self.assertEqual(retry_wait.timeouts, [])
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("retry_wait", 1),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT candidate FROM hardcover_identity_retry_schedules "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchall(),
+            [(2,)],
+        )
 
     def test_three_retryable_failures_exhaust_without_fourth_start(self) -> None:
         provider = _SequenceProvider(
@@ -386,6 +460,68 @@ class HardcoverIdentityOrchestrationTests(unittest.TestCase):
             (request.work_key,),
         ).fetchone()
         self.assertEqual(state, ("claimed",))
+
+    def test_recovery_branch_results_are_overridden_by_release_failure(self) -> None:
+        lifecycle = self.lifecycle(_SequenceProvider(self.matched()), _Wait(self.clock))
+
+        pending_request = self.request("recovery-race-release-failure")
+        pending_status = self.work.accept(pending_request.work_key, self.clock.now)
+        pending = self.work.inspect(pending_status.reference, self.clock.now)
+        pending_lease = _FailingReleaseLease()
+        pending_result = lifecycle._recover_under_gate(
+            pending,
+            self.context(),
+            pending_lease,
+        )
+
+        missing_request = self.request("recovery-missing-claim-release-failure")
+        missing_status = self.work.accept(missing_request.work_key, self.clock.now)
+        missing_claim = self.work.claim(
+            missing_status.reference,
+            missing_request.owner,
+            self.clock.now,
+            gate_owned=True,
+        )
+        missing = self.work.inspect(missing_claim.reference, self.clock.now)
+        missing_lease = _FailingReleaseLease()
+        malformed_claimed = Mock(
+            state=IdentityWorkState.CLAIMED,
+            active_claim=None,
+        )
+        with patch.object(self.work, "inspect", return_value=malformed_claimed):
+            missing_result = lifecycle._recover_under_gate(
+                missing,
+                self.context(),
+                missing_lease,
+            )
+
+        live_request = self.request("recovery-live-claim-release-failure")
+        live_status = self.work.accept(live_request.work_key, self.clock.now)
+        live_claim = self.work.claim(
+            live_status.reference,
+            live_request.owner,
+            self.clock.now,
+            gate_owned=True,
+        )
+        live = self.work.inspect(live_claim.reference, self.clock.now)
+        live_lease = _FailingReleaseLease()
+        live_result = lifecycle._recover_under_gate(
+            live,
+            self.context(),
+            live_lease,
+        )
+
+        for result, lease in (
+            (pending_result, pending_lease),
+            (missing_result, missing_lease),
+            (live_result, live_lease),
+        ):
+            self.assertIsNotNone(result)
+            self.assertEqual(
+                result.outcome,
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+            )
+            self.assertEqual(lease.releases, 1)
 
     def test_report_boundary_accepts_both_executors_and_rejects_bad_result(
         self,
