@@ -14,6 +14,7 @@ from mechanical_librarian.application.hardcover_identity import (
     HardcoverIdentityReport,
     IdentityAttemptResult,
 )
+from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.application.hardcover_safe_executor import (
     hardcover_identity_work_key,
 )
@@ -413,6 +414,133 @@ class HardcoverActivationTests(unittest.TestCase):
                 )
             self.assertEqual(
                 report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE
+            )
+
+    def test_normal_mode_binds_existing_state_check_to_final_gate_identity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            config = self._enabled_config(root)
+            query = root / "query.json"
+            query.write_text(
+                json.dumps(
+                    {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+                ),
+                encoding="utf-8",
+            )
+            query.chmod(0o600)
+            database = root / "state.sqlite"
+            self.assertTrue(_run_state_check(database).succeeded)
+
+            real_bound_check = composition._run_bound_existing_state_check
+
+            def replace_after_check(_database: Path):
+                result = real_bound_check(database)
+                replacement = root / "replacement.sqlite"
+                self.assertTrue(_run_state_check(replacement).succeeded)
+                replacement.replace(database)
+                return result
+
+            with (
+                patch(
+                    "mechanical_librarian.bootstrap.composition._run_bound_existing_state_check",
+                    side_effect=replace_after_check,
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.PrivateFileProviderCredentials",
+                    side_effect=AssertionError("secret reached"),
+                ),
+            ):
+                report = _run_hardcover_identity_report(
+                    config, database, query, False
+                )
+            self.assertEqual(
+                report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE
+            )
+
+    def test_normal_mode_revalidates_newly_published_state_as_existing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            config = self._enabled_config(root)
+            query = root / "query.json"
+            query.write_text(
+                json.dumps(
+                    {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+                ),
+                encoding="utf-8",
+            )
+            query.chmod(0o600)
+            database = root / "state.sqlite"
+            with (
+                patch(
+                    "mechanical_librarian.bootstrap.composition._run_state_check",
+                    wraps=_run_state_check,
+                ) as state_check,
+                patch(
+                    "mechanical_librarian.bootstrap.composition._run_bound_existing_state_check",
+                    wraps=composition._run_bound_existing_state_check,
+                ) as bound_check,
+            ):
+                report = _run_hardcover_identity_report(
+                    config, database, query, False
+                )
+            self.assertEqual(state_check.call_count, 1)
+            self.assertEqual(bound_check.call_count, 1)
+            self.assertTrue(database.is_file())
+            self.assertEqual(
+                report.outcome, HardcoverIdentityOutcome.CREDENTIAL_UNAVAILABLE
+            )
+
+    def test_normal_mode_revalidates_concurrent_initializer_winner(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            config = self._enabled_config(root)
+            query = root / "query.json"
+            query.write_text(
+                json.dumps(
+                    {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+                ),
+                encoding="utf-8",
+            )
+            query.chmod(0o600)
+            database = root / "state.sqlite"
+            competitor = root / "competitor.sqlite"
+            self.assertTrue(_run_state_check(competitor).succeeded)
+            competitor_identity = competitor.stat()
+            real_publish = composition.publish_staged_state
+
+            def publish_after_competitor(staged: Path, target: Path) -> bool:
+                competitor.replace(target)
+                return real_publish(staged, target)
+
+            with (
+                patch(
+                    "mechanical_librarian.bootstrap.composition.publish_staged_state",
+                    side_effect=publish_after_competitor,
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition._run_state_check",
+                    wraps=_run_state_check,
+                ) as state_check,
+            ):
+                report = _run_hardcover_identity_report(
+                    config, database, query, False
+                )
+            self.assertEqual(state_check.call_count, 1)
+            self.assertEqual(
+                (database.stat().st_dev, database.stat().st_ino),
+                (competitor_identity.st_dev, competitor_identity.st_ino),
+            )
+            self.assertEqual(
+                report.outcome, HardcoverIdentityOutcome.CREDENTIAL_UNAVAILABLE
             )
 
     def test_credentialed_f09b_command_is_retired_before_runner(self) -> None:

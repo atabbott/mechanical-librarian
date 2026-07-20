@@ -254,6 +254,105 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         self.assertEqual(request.headers["accept-encoding"], "identity")
         self.assertEqual(request.extensions["sni_hostname"], "api.hardcover.app")
 
+    def test_production_channel_rejects_invalid_200_headers_before_stream(
+        self,
+    ) -> None:
+        class _NetworkStream:
+            def get_extra_info(self, name: str) -> tuple[str, int] | None:
+                return ("1.1.1.1", 443) if name == "server_addr" else None
+
+        cases = (
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"Content-Length", b"65537"),
+                ),
+                IdentityAttemptFailureKind.OVERSIZED,
+            ),
+            ((), IdentityAttemptFailureKind.MALFORMED),
+            (
+                ((b"Content-Type", b"application/json"),) * 2,
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                ((b"Content-Type", b"text/plain"),),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"Content-Encoding", b"identity"),
+                    (b"Content-Encoding", b"identity"),
+                ),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"Content-Encoding", b"gzip"),
+                ),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"Content-Length", b"1"),
+                    (b"Content-Length", b"1"),
+                ),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"Content-Length", b"01"),
+                ),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                ((b"Content-Type", b"application/json"),)
+                + tuple((b"X-Bounded", str(index).encode()) for index in range(16)),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"X-Bounded", b"x" * 246),
+                ),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+        )
+        for headers, expected in cases:
+            with self.subTest(headers=headers, expected=expected):
+                body_iterations = 0
+                closed = False
+
+                class _HostileBody(httpx.AsyncByteStream):
+                    async def __aiter__(self):
+                        nonlocal body_iterations
+                        body_iterations += 1
+                        yield b"hostile-body-must-not-be-read"
+
+                    async def aclose(self) -> None:
+                        nonlocal closed
+                        closed = True
+
+                async def respond(request: httpx.Request) -> httpx.Response:
+                    return httpx.Response(
+                        200,
+                        headers=headers,
+                        stream=_HostileBody(),
+                        extensions={"network_stream": _NetworkStream()},
+                    )
+
+                result = HardcoverIdentityProvider(
+                    lambda host, port: ("1.1.1.1",),
+                    HttpxIdentityByteChannel(transport=httpx.MockTransport(respond)),
+                    b"synthetic-noncredential",
+                ).lookup(self.query(), self.context())
+                self.assertIs(result.failure.kind, expected)
+                self.assertEqual(body_iterations, 0)
+                self.assertTrue(closed)
+
     def test_live_provider_checks_context_before_private_token(self) -> None:
         token_reads = 0
 
@@ -272,6 +371,21 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 )
                 self.assertIs(result.failure.kind, expected)
         self.assertEqual(token_reads, 0)
+
+    def test_bounded_resolver_checks_context_before_spawning_dns(self) -> None:
+        for context, expected in (
+            (self.context(cancelled=True), IdentityAttemptFailureKind.CANCELLED),
+            (self.context(expired=True), IdentityAttemptFailureKind.TIMEOUT),
+        ):
+            with self.subTest(expected=expected):
+                resolver = adapter.BoundedIdentityAddressResolver(context)
+                with (
+                    patch.object(adapter.subprocess, "Popen") as popen,
+                    self.assertRaises(IdentityChannelFailure) as raised,
+                ):
+                    resolver("api.hardcover.app", 443)
+                self.assertIs(raised.exception.kind, expected)
+                popen.assert_not_called()
 
     def test_non_success_body_is_not_drained_and_transport_logs_are_suppressed(
         self,

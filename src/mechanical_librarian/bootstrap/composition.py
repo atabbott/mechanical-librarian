@@ -238,6 +238,7 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
     MIGRATIONS,
     SchemaError,
     bound_disposable_state,
+    bound_existing_state,
     connect,
     connect_existing,
     finalize_staged_state,
@@ -247,6 +248,7 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
     preflight,
     publish_staged_state,
     staged_state,
+    validate_current_schema,
 )
 from mechanical_librarian.infrastructure.hardcover_identity_gate import (
     DescriptorHardcoverIdentityGate,
@@ -334,6 +336,28 @@ def _run_new_qualification_state_check(
         return result, identity
     except (OSError, SchemaError):
         return failed, None
+
+
+def _run_bound_existing_state_check(
+    database: Path,
+) -> tuple[StateCheckResult, tuple[int, int] | None]:
+    """Validate the exact existing inode that the final gate must accept."""
+
+    failed = StateCheckResult(StateCheckOutcome.SETUP_FAILURE)
+    connection = None
+    try:
+        with bound_existing_state(database) as bound:
+            connection = bound.connect_existing()
+            validate_current_schema(connection)
+            result = CheckDurableState(SQLiteAuditRepository(connection)).run()
+            connection.close()
+            connection = None
+            return result, bound.identity if result.succeeded else None
+    except (OSError, SchemaError):
+        return failed, None
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def _run_existing_operation(
@@ -1604,6 +1628,14 @@ def _run_hardcover_identity_report(
         )
     else:
         state = _run_state_check(database)
+        if state.succeeded:
+            # Ordinary migration/check can begin from existing state, publish
+            # this process's staged state, or converge on a concurrent winner.
+            # Revalidate the result through a descriptor-backed snapshot and
+            # carry that exact inode into the final deployment gate.
+            state, expected_database_identity = _run_bound_existing_state_check(
+                database
+            )
     if not state.succeeded:
         return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
     try:

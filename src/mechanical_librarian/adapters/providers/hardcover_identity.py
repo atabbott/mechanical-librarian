@@ -279,6 +279,9 @@ class BoundedIdentityAddressResolver:
     def __call__(self, host: str, port: int) -> tuple[str, ...]:
         if host != HARDCOVER_IDENTITY_HOST or port != 443:
             raise IdentityChannelFailure(IdentityAttemptFailureKind.INCOMPATIBLE)
+        failure = _bounded_context_failure(self._context, self._wall_deadline)
+        if failure is not None:
+            raise IdentityChannelFailure(failure)
         process = subprocess.Popen(
             [sys.executable, "-I", "-c", _RESOLVER_SCRIPT, host, str(port)],
             stdin=subprocess.DEVNULL,
@@ -495,7 +498,12 @@ class HttpxIdentityByteChannel:
                         for name, value in response.headers.raw
                     )
                     payload = bytearray()
-                    if response.status_code == 200:
+                    header_failure = (
+                        _bounded_body_header_failure(header_lines)
+                        if response.status_code == 200
+                        else None
+                    )
+                    if response.status_code == 200 and header_failure is None:
                         async for chunk in response.aiter_raw():
                             failure = _bounded_context_failure(
                                 context, wall_deadline
@@ -1360,38 +1368,10 @@ def _bounded_body(
         if _close_after:
             _close_body(reader)
         return value
-    parsed_headers = _parse_headers(lines)
-    if isinstance(parsed_headers, IdentityAttemptFailureKind):
-        return finish(parsed_headers)
-    headers = parsed_headers
-
-    content_type = headers.get(b"content-type", [])
-    if (
-        len(content_type) != 1
-        or content_type[0].strip(b" \t") != content_type[0]
-        or _CONTENT_TYPE.fullmatch(content_type[0]) is None
-    ):
-        return finish(IdentityAttemptFailureKind.MALFORMED)
-    encoding = headers.get(b"content-encoding", [])
-    if len(encoding) > 1 or (
-        encoding
-        and (
-            encoding[0].strip(b" \t") != encoding[0]
-            or encoding[0].lower() != b"identity"
-        )
-    ):
-        return finish(IdentityAttemptFailureKind.MALFORMED)
-    declared = headers.get(b"content-length", [])
-    if len(declared) > 1:
-        return finish(IdentityAttemptFailureKind.MALFORMED)
-    declared_length: int | None = None
-    if declared:
-        raw = declared[0]
-        if raw.strip(b" \t") != raw or not _canonical_decimal(raw):
-            return finish(IdentityAttemptFailureKind.MALFORMED)
-        if len(raw) > 5 or (len(raw) == 5 and raw > b"65536"):
-            return finish(IdentityAttemptFailureKind.OVERSIZED)
-        declared_length = int(raw)
+    header_result = _bounded_body_headers(lines)
+    if isinstance(header_result, IdentityAttemptFailureKind):
+        return finish(header_result)
+    declared_length = header_result
     payload = bytearray()
     try:
         while True:
@@ -1414,6 +1394,50 @@ def _bounded_body(
     if not payload:
         return IdentityAttemptFailureKind.EMPTY
     return bytes(payload)
+
+
+def _bounded_body_header_failure(
+    lines: object,
+) -> IdentityAttemptFailureKind | None:
+    """Classify hostile 200 response headers without consuming body bytes."""
+
+    result = _bounded_body_headers(lines)
+    return result if isinstance(result, IdentityAttemptFailureKind) else None
+
+
+def _bounded_body_headers(
+    lines: object,
+) -> int | None | IdentityAttemptFailureKind:
+    parsed_headers = _parse_headers(lines)
+    if isinstance(parsed_headers, IdentityAttemptFailureKind):
+        return parsed_headers
+    content_type = parsed_headers.get(b"content-type", [])
+    if (
+        len(content_type) != 1
+        or content_type[0].strip(b" \t") != content_type[0]
+        or _CONTENT_TYPE.fullmatch(content_type[0]) is None
+    ):
+        return IdentityAttemptFailureKind.MALFORMED
+    encoding = parsed_headers.get(b"content-encoding", [])
+    if len(encoding) > 1 or (
+        encoding
+        and (
+            encoding[0].strip(b" \t") != encoding[0]
+            or encoding[0].lower() != b"identity"
+        )
+    ):
+        return IdentityAttemptFailureKind.MALFORMED
+    declared = parsed_headers.get(b"content-length", [])
+    if len(declared) > 1:
+        return IdentityAttemptFailureKind.MALFORMED
+    if not declared:
+        return None
+    raw = declared[0]
+    if raw.strip(b" \t") != raw or not _canonical_decimal(raw):
+        return IdentityAttemptFailureKind.MALFORMED
+    if len(raw) > 5 or (len(raw) == 5 and raw > b"65536"):
+        return IdentityAttemptFailureKind.OVERSIZED
+    return int(raw)
 
 
 def _parse_headers(
