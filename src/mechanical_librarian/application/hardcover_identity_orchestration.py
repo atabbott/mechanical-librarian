@@ -86,11 +86,7 @@ class RunHardcoverIdentityLifecycle:
                     accepted.outcome is IdentityWorkOutcome.STALE
                     and accepted.candidate is None
                 ):
-                    accepted = self._work.accept(
-                        request.work_key,
-                        now,
-                        egress_limit=request.egress_limit,
-                    )
+                    return _report(HardcoverIdentityOutcome.STALE)
                 active = self._work.inspect(accepted.reference, now)
             except (IdentityWorkPersistenceError, TypeError, ValueError):
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
@@ -142,7 +138,11 @@ class RunHardcoverIdentityLifecycle:
                 owned_retry = None
                 return _report(HardcoverIdentityOutcome.IN_PROGRESS)
 
-            invocation = self._attempt.run_invocation(request, context)
+            invocation = self._attempt.run_invocation(
+                request,
+                context,
+                accepted=accepted,
+            )
             if type(invocation) is not HardcoverIdentityInvocationResult:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
             report = invocation.report

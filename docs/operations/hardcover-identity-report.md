@@ -27,6 +27,65 @@ path in an empty owner-only `0700` directory. It durably limits the aggregate
 to one start; a retryable response becomes `retry_exhausted` and never sends a
 second request. It is reserved for exact-head installed-wheel qualification.
 
+### Authorized production one-shot procedure
+
+Use this procedure only for the separately authorized final request at an
+exact reviewed and qualified head. Prepare a new stopped-state root and keep
+the database path absent:
+
+```sh
+install -d -m 0700 /data/qualification/f09f-one-shot
+install -d -m 0700 /run/mechanical-librarian /run/mechanical-librarian/secrets
+install -m 0600 /secure-input/f09f-query.json \
+  /run/mechanical-librarian/f09f-query.json
+install -m 0600 /secure-input/hardcover-token \
+  /run/mechanical-librarian/secrets/hardcover-token
+test ! -e /data/qualification/f09f-one-shot/state.sqlite
+```
+
+Prepare the strict private query as a regular, current-effective-user-owned,
+link-count-one file with owner read permission and no group or other permission
+bits. Configure `hardcover_provider.enabled: true`, the accepted positive
+`authority_revision`, and an absolute `secret_reference`. The referenced
+credential must itself be a regular file owned by the current effective user,
+have link count one, be owner-readable with no group or other permission bits,
+and contain 1–2,048 bytes. Every byte must be ASCII `0x21`–`0x7e`: no
+whitespace, scheme, or `Bearer` prefix is allowed. Deliver the raw token with a
+secret-management mechanism that does not place it in command history, logs,
+or this document. The production configuration contains the exact block below;
+the query file contains exactly the accepted `isbn` and `title` members
+described in the private-query contract.
+
+```yaml
+hardcover_provider:
+  enabled: true
+  secret_reference: /run/mechanical-librarian/secrets/hardcover-token
+  authority_revision: 1
+```
+
+Run exactly the installed production command once:
+
+```sh
+mechanical-librarian hardcover-identity-report \
+  --config /etc/mechanical-librarian/config.yml \
+  --database /data/qualification/f09f-one-shot/state.sqlite \
+  --query-file /run/mechanical-librarian/f09f-query.json \
+  --format json \
+  --qualification-one-shot
+```
+
+`matched` is the only qualifying outcome and exits 0. Every other closed
+outcome exits 2 for this flag. The durable one-start budget is consumed at the
+final gate-held start boundary: a non-match, retryable failure, or ambiguous
+transport result does not authorize a second request, and retryable results
+close as `retry_exhausted`. Retain only the exact head/wheel identity and
+aggregate attempted-egress and result digests; do not retain the query,
+credential, provider response, paths, or unrestricted output. After capturing
+that aggregate evidence, stop every Mechanical Librarian process using the
+root, retain any required whole-state audit/backup evidence, and remove the
+entire disposable state root plus the private query and credential through the
+approved secret-disposal process. Never delete or edit individual state rows.
+
 The accepted configuration and redacted export are documented in the
 [configuration contract](../reference/configuration.md). Configuration changes
 require restart plus candidate and review re-evaluation.
@@ -259,9 +318,11 @@ exactly one second after start 1 and two seconds after start 2, extended by a
 valid bounded Retry-After. No generation consumes more than three starts, and a
 limit-1 generation cannot send again after restart. Temporary main-thread
 SIGINT/SIGTERM handlers set only the local cancellation event and are restored
-on every exit. This contributor scenario remains credential-free; production
-scenario composes no credentials, DNS, sockets, HTTP, proposal, or write
-authority.
+on every exit. This contributor synthetic-preview scenario composes no
+credentials, DNS, sockets, HTTP, proposal, or write authority. The activated
+production command is a separate surface and, only after durable authority is
+established, reads the configured credential and may perform the fixed HTTPS
+request described above.
 
 Stdout must match `c6-lifecycle-orchestration-example-output.json`. The
 cumulative registry is `preview-registry-c6-v1.json`, SHA-256

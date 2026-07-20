@@ -224,6 +224,32 @@ class HardcoverIdentityOrchestrationTests(unittest.TestCase):
         self.assertEqual(provider.starts, 3)
         self.assertEqual(retry_wait.timeouts, [1.0, 2.0])
 
+    def test_first_expired_lifecycle_invocation_is_stale_before_refresh(self) -> None:
+        provider = _SequenceProvider(self.matched(), self.matched())
+        lifecycle = self.lifecycle(provider, _Wait(self.clock))
+        request = self.request("lifecycle-stale-refresh")
+
+        initial = lifecycle.run(request, self.context())
+        self.clock.now += timedelta(hours=24, microseconds=1)
+        stale_context = self.context(
+            deadline=self.clock.now + timedelta(seconds=29)
+        )
+        stale = lifecycle.run(request, stale_context)
+        refreshed = lifecycle.run(request, stale_context)
+
+        self.assertEqual(initial.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(stale.outcome, HardcoverIdentityOutcome.STALE)
+        self.assertEqual(refreshed.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(provider.starts, 2)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (2,),
+        )
+
     def test_competing_post_gate_retry_does_not_authorize_local_wait(self) -> None:
         request = self.request("competing-post-gate-retry")
         provider = _SequenceProvider(self.matched())

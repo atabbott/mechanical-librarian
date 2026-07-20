@@ -31,6 +31,7 @@ from mechanical_librarian.application.hardcover_identity import (
     FixedAdapterAttemptEvidence,
     IdentityAttemptFailureKind,
     IdentityAttemptResult,
+    IdentityExchangeGuardError,
     IsbnIdentityQuery,
     allow_identity_send,
 )
@@ -568,6 +569,8 @@ class LiveHardcoverIdentityProvider:
                 self._channel_factory(),
                 token,
             ).lookup(query, context, before_exchange=before_exchange)
+        except IdentityExchangeGuardError:
+            raise
         except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         finally:
@@ -643,6 +646,8 @@ class HardcoverIdentityProvider:
         try:
             before_exchange()
             response = self._channel.exchange(authorized, context)
+        except IdentityExchangeGuardError:
+            raise
         except IdentityChannelFailure as error:
             return IdentityAttemptResult.failed(error.kind)
         except Exception:

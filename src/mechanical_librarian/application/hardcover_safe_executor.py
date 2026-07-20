@@ -13,6 +13,7 @@ from mechanical_librarian.application.hardcover_identity import (
     HardcoverIdentityReport,
     IdentityAttemptFailureKind,
     IdentityAttemptResult,
+    IdentityExchangeGuardError,
     IdentityReportError,
     IdentityWorkPersistenceError,
     IsbnIdentityQuery,
@@ -32,6 +33,7 @@ from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkReference,
     IdentityWorkRetryToken,
     IdentityWorkState,
+    IdentityWorkStatus,
 )
 from mechanical_librarian.domain.identifiers import canonical_json
 
@@ -194,26 +196,39 @@ class RunSafeHardcoverIdentity:
         self,
         request: HardcoverIdentityExecutionRequest,
         context: OperationContext,
+        *,
+        accepted: IdentityWorkStatus | None = None,
     ) -> HardcoverIdentityInvocationResult:
         if (
             type(request) is not HardcoverIdentityExecutionRequest
             or type(context) is not OperationContext
+            or (
+                accepted is not None
+                and (
+                    type(accepted) is not IdentityWorkStatus
+                    or accepted.reference.work_key != request.work_key
+                )
+            )
         ):
             raise TypeError("Hardcover identity execution input is malformed")
         accepted_at = context.observed_at
         try:
-            accepted = self._work.accept(
-                request.work_key,
-                accepted_at,
-                egress_limit=request.egress_limit,
-            )
+            if accepted is None:
+                accepted = self._work.accept(
+                    request.work_key,
+                    accepted_at,
+                    egress_limit=request.egress_limit,
+                )
             if accepted.outcome is IdentityWorkOutcome.MATCHED:
                 return _report(HardcoverIdentityOutcome.MATCHED)
             if accepted.outcome is IdentityWorkOutcome.PERSISTENCE_FAILURE:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
             if accepted.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED:
                 return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
-            if accepted.outcome is IdentityWorkOutcome.STALE:
+            if (
+                accepted.outcome is IdentityWorkOutcome.STALE
+                and accepted.candidate is None
+            ):
                 return _report(HardcoverIdentityOutcome.STALE)
             active = self._work.inspect(accepted.reference, accepted_at)
             if active.state not in {
@@ -354,12 +369,24 @@ class RunSafeHardcoverIdentity:
             context.time,
         )
         query = IsbnIdentityQuery.from_private(request.query)
+
+        def validate_exchange_authority() -> None:
+            try:
+                lease.validate_for_send()
+            except Exception:
+                raise IdentityExchangeGuardError(
+                    "Hardcover exchange authority is unavailable"
+                ) from None
+
         try:
             attempt = self._provider.lookup(
                 query,
                 attempt_context,
-                before_exchange=lease.validate_for_send,
+                before_exchange=validate_exchange_authority,
             )
+        except IdentityExchangeGuardError:
+            query = None
+            return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
         except Exception:
             attempt = IdentityAttemptResult.failed(
                 IdentityAttemptFailureKind.UNAVAILABLE
@@ -375,6 +402,7 @@ class RunSafeHardcoverIdentity:
             attempt = IdentityAttemptResult.failed(IdentityAttemptFailureKind.CANCELLED)
         elif published_at >= attempt_deadline:
             attempt = IdentityAttemptResult.failed(IdentityAttemptFailureKind.TIMEOUT)
+        lease.validate_for_send()
         return self._publish_attempt(request, started, attempt, published_at)
 
     def _publish_attempt(

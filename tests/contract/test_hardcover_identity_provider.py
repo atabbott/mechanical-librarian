@@ -33,6 +33,7 @@ from mechanical_librarian.adapters.providers.hardcover_identity import (
 )
 from mechanical_librarian.application.hardcover_identity import (
     IdentityAttemptFailureKind,
+    IdentityExchangeGuardError,
     IsbnIdentityQuery,
 )
 from mechanical_librarian.application.ports import (
@@ -572,6 +573,39 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             result.failure.kind, IdentityAttemptFailureKind.CANCELLED
         )
         self.assertFalse(channel.called)
+
+    def test_production_providers_preserve_exchange_guard_failure(self) -> None:
+        def reject_exchange() -> None:
+            raise IdentityExchangeGuardError(
+                "Hardcover exchange authority is unavailable"
+            )
+
+        structural_channel = self.channel()
+        with self.assertRaises(IdentityExchangeGuardError):
+            self.provider(structural_channel).lookup(
+                self.query(),
+                self.context(),
+                before_exchange=reject_exchange,
+            )
+        self.assertFalse(structural_channel.called)
+
+        live_channel = self.channel()
+        live = LiveHardcoverIdentityProvider(
+            lambda: b"synthetic-noncredential",
+            channel_factory=lambda: live_channel,
+        )
+        with patch.object(
+            adapter,
+            "BoundedIdentityAddressResolver",
+            return_value=lambda host, port: ("1.1.1.1",),
+        ):
+            with self.assertRaises(IdentityExchangeGuardError):
+                live.lookup(
+                    self.query(),
+                    self.context(),
+                    before_exchange=reject_exchange,
+                )
+        self.assertFalse(live_channel.called)
 
     def test_time_and_cancellation_probe_failures_are_value_free(self) -> None:
         now = datetime(2030, 1, 1, tzinfo=timezone.utc)

@@ -41,6 +41,7 @@ from mechanical_librarian.domain.hardcover_identity import (
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityMatchOutcome,
     IdentityWorkObservation,
+    IdentityWorkOutcome,
 )
 from mechanical_librarian.infrastructure.hardcover_identity_gate import (
     LOCK_NAME,
@@ -246,8 +247,195 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         report = self.execute(self.request("send-revalidation"), provider, gate=Gate())
         self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
         self.assertEqual(provider.starts, 1)
+        self.assertEqual(lease.validations, 3)
+        self.assertTrue(lease.released)
+
+    def test_exchange_guard_failure_is_closed_without_retry_or_exchange(self) -> None:
+        class Lease:
+            def __init__(self) -> None:
+                self.validations = 0
+                self.released = False
+
+            def validate_for_send(self) -> None:
+                self.validations += 1
+                if self.validations == 2:
+                    raise HardcoverIdentityGateError("synthetic identity loss")
+
+            def release(self) -> None:
+                self.released = True
+
+        lease = Lease()
+
+        class Gate:
+            def try_acquire(self):
+                return lease
+
+        request = self.request("exchange-guard-loss", egress_limit=1)
+        provider = _Provider(self.matched(), self.clock)
+        report = self.execute(request, provider, gate=Gate())
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+        self.assertEqual(provider.starts, 0)
         self.assertEqual(lease.validations, 2)
         self.assertTrue(lease.released)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("claimed", 1),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT outcome FROM hardcover_identity_attempts WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (None,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_retry_schedules "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (0,),
+        )
+
+        self.clock.now += timedelta(seconds=16)
+        reference = self.work.accept(
+            request.work_key,
+            self.clock.now,
+            egress_limit=1,
+        ).reference
+        active = self.work.inspect(reference, self.clock.now)
+        self.assertIsNotNone(active.active_claim)
+        recovered = self.work.recover(
+            active.active_claim,
+            self.clock.now,
+            gate_owned=True,
+        )
+        self.assertEqual(recovered.outcome, IdentityWorkOutcome.RETRY_EXHAUSTED)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("failed", 1),
+        )
+
+    def test_database_replacement_after_exchange_guard_fails_before_publication(
+        self,
+    ) -> None:
+        request = self.request("post-exchange-database-loss", egress_limit=1)
+        saved_database = self.root / "authorized-state.sqlite"
+        replacement_database = self.root / "replacement-state.sqlite"
+        replacement_connection = sqlite3.connect(replacement_database)
+        migrate(replacement_connection)
+        replacement_connection.close()
+
+        class ReplacingProvider(_Provider):
+            def lookup(
+                provider_self,
+                query: object,
+                context: OperationContext,
+                *,
+                before_exchange=lambda: None,
+            ) -> object:
+                before_exchange()
+                provider_self.starts += 1
+                self.database.rename(saved_database)
+                replacement_database.rename(self.database)
+                return provider_self.result
+
+        provider = ReplacingProvider(self.matched(), self.clock)
+        report = self.execute(request, provider)
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+        self.assertEqual(provider.starts, 1)
+        original_identity = saved_database.stat()
+        replacement_identity = self.database.stat()
+        self.assertNotEqual(
+            (original_identity.st_dev, original_identity.st_ino),
+            (replacement_identity.st_dev, replacement_identity.st_ino),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("claimed", 1),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_results WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM current_hardcover_identity WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (0,),
+        )
+        displaced_database = self.root / "rejected-state.sqlite"
+        self.database.rename(displaced_database)
+        saved_database.rename(self.database)
+        visible_replacement = sqlite3.connect(displaced_database)
+        try:
+            self.assertEqual(
+                visible_replacement.execute(
+                    "SELECT COUNT(*) FROM hardcover_identity_generations"
+                ).fetchone(),
+                (0,),
+            )
+            self.assertEqual(
+                visible_replacement.execute(
+                    "SELECT COUNT(*) FROM current_hardcover_identity"
+                ).fetchone(),
+                (0,),
+            )
+        finally:
+            visible_replacement.close()
+
+        self.clock.now += timedelta(seconds=16)
+        reference = self.work.accept(
+            request.work_key,
+            self.clock.now,
+            egress_limit=1,
+        ).reference
+        active = self.work.inspect(reference, self.clock.now)
+        self.assertIsNotNone(active.active_claim)
+        lease = self.gate.try_acquire()
+        self.assertIsNotNone(lease)
+        try:
+            recovered = self.work.recover(
+                active.active_claim,
+                self.clock.now,
+                gate_owned=True,
+            )
+        finally:
+            lease.release()
+        self.assertEqual(recovered.outcome, IdentityWorkOutcome.RETRY_EXHAUSTED)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("failed", 1),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT outcome FROM hardcover_identity_attempts WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("interrupted",),
+        )
 
     def test_retryable_attempt_publishes_retry_wait_without_retrying(self) -> None:
         request = self.request("unavailable")

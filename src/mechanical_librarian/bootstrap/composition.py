@@ -2344,7 +2344,7 @@ def _run_hardcover_safe_executor_preview(
         cases_executed=len(cases),
         attempts_started=starts,
         gate_order_verified=(
-            gate.send_validations == starts * 2
+            gate.send_validations == starts * 3
             and gate.acquisitions == gate.releases
             and not gate.held
         ),

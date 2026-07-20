@@ -88,6 +88,10 @@ class IdentityReportError(RuntimeError):
         self.kind = kind
 
 
+class IdentityExchangeGuardError(RuntimeError):
+    """Value-free application signal that final send authority was lost."""
+
+
 @dataclass(frozen=True, repr=False, slots=True)
 class IsbnIdentityQuery:
     canonical_isbn_13: str
@@ -1360,6 +1364,7 @@ __all__ = [
     "IdentityAttemptFailureKind",
     "IdentityAttemptResult",
     "IdentityDecisionPreviewReport",
+    "IdentityExchangeGuardError",
     "IdentityLifecyclePreviewReport",
     "IdentityReportError",
     "IdentityWorkPersistenceError",
