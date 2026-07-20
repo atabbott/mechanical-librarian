@@ -174,6 +174,13 @@ class HardcoverActivationTests(unittest.TestCase):
         self.assertIn("complete valid `config-v1` JSON document", procedure)
         self.assertIn("--config /etc/mechanical-librarian/config.json", procedure)
         self.assertNotIn("config.yml", procedure)
+        self.assertNotIn("result_sha256", procedure)
+        self.assertNotIn("evidence_sha256", procedure)
+        self.assertIn('rm -- "$result_path"', procedure)
+        self.assertIn('test ! -e "$result_path"', procedure)
+        self.assertIn("schema=", procedure)
+        self.assertIn("outcome=", procedure)
+        self.assertIn("tree=%s", procedure)
 
     def test_one_shot_provenance_procedure_succeeds_and_short_circuits(
         self,
@@ -205,10 +212,10 @@ class HardcoverActivationTests(unittest.TestCase):
         self,
     ) -> None:
         payload = ACTIVATION_REGISTRY.read_bytes()
-        self.assertEqual(len(payload), 2_120)
+        self.assertEqual(len(payload), 2_121)
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "9bbd44bf5ac6ba1950cedbf491dd3f9ad9b4b14664dd0ca8d5323fd2edc8c21f",
+            "552fb260d15f0e81a9ac4f64e926897513d698ecfd3857d303b0328356ea88b0",
         )
         registry = json.loads(payload)
         self.assertEqual(registry["closes"], [239, 242])
@@ -219,6 +226,20 @@ class HardcoverActivationTests(unittest.TestCase):
             bound = resource.read_bytes()
             self.assertEqual(len(bound), binding["bytes"])
             self.assertEqual(hashlib.sha256(bound).hexdigest(), binding["sha256"])
+        one_shot = json.loads(
+            (
+                ROOT
+                / registry["bindings"]["live-one-shot-contract"]["path"]
+            ).read_text(encoding="utf-8")
+        )
+        self.assertIn(
+            "before provider preparation",
+            one_shot["egress_budget"]["acceptance_binding"],
+        )
+        self.assertIn(
+            "cannot widen authority",
+            one_shot["egress_budget"]["mode_switch"],
+        )
         production_schema = json.loads(
             (
                 ROOT

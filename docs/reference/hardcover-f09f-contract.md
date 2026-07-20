@@ -316,7 +316,7 @@ does not wait, loop, recover, cancel, install signal handlers, or start a later
 candidate; those lifecycle responsibilities remain separately tracked.
 
 The exact C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`5d2d10ac20276834f148aee72282ee87b5f972fea0fb1dedbde2bc8e46e3b735`.
+`bbaa89174d682be79e4e0b42f1fe0fc8a1643201bbc7b090bf926cba421e5c39`.
 It derives from the exact C4 registry and binds a separate cumulative C5 output
 schema, privacy contract, privacy scan, and strict semantic fixture set without
 modifying predecessor evidence. Contributor labels and process names are
@@ -327,10 +327,12 @@ flow without treating equal incidental text as a leak. The exact serialized
 stdin is absent from every SQLite database-prefix channel.
 Privacy qualification materializes disposable-state WAL frames only through a
 test-only observer transaction whose timestamp value is restored and read back
-exactly. It scans nonempty main, WAL, and SHM while present and main after close.
-For arbitrary SQLite binary/text/hex, only eight-hex 32-bit digest prefixes are
-excluded as collision-prone substring evidence; exact/raw values, full
-encodings, full collision-resistant digests, and causal poison remain forbidden.
+exactly. It proves nonempty main, WAL, and SHM while present, then enumerates
+logical table/column values. Exact private observation/current-pointer/work-key/
+recovery cells are validated before exemption. Elsewhere, only eight-hex 32-bit
+digest prefixes are excluded as collision-prone substring evidence; exact/raw
+values, full encodings, full collision-resistant digests, and causal poison
+remain forbidden.
 
 ## Installed activation
 
@@ -340,6 +342,9 @@ the opaque work key from the exact public
 including canonical ISBN-13 and authority revision but excluding title, paths,
 credential, traffic, and the qualification flag. It then initializes or opens
 schema-11 state, accepts durable work, and acquires the descriptor-bound gate.
+Acceptance creates or reconciles the exact per-generation one-or-three egress
+policy before provider preparation. A later request must match it and cannot
+widen one-shot authority after a zero-start failure, cancellation, or restart.
 The runtime connection is challenged against the gate's exact database inode
 before work acceptance or provider authority. Provider preparation may then
 read the credential and complete isolated bounded resolution, request
@@ -375,14 +380,14 @@ and never become terminal public reports.
 
 The exact activation registry is
 [`hardcover-f09f-activation-registry-v1.json`](hardcover-f09f-activation-registry-v1.json),
-SHA-256 `9bbd44bf5ac6ba1950cedbf491dd3f9ad9b4b14664dd0ca8d5323fd2edc8c21f`.
+SHA-256 `552fb260d15f0e81a9ac4f64e926897513d698ecfd3857d303b0328356ea88b0`.
 It derives from and binds the merged C6 registry, all six retained contributor
-scenarios, the unchanged cumulative output schema and privacy contract/scan,
+scenarios, the cumulative output schema and exact privacy contract/scan,
 the work-key contract, the exact one-shot authority contract, and production
 output schema v6
 [`hardcover-identity-report-output-schema-v6.json`](hardcover-identity-report-output-schema-v6.json),
 SHA-256 `f9ac215d22e2f9e67f9d8d028fde5ba9738933ec74f3a80fc71242c42b97de98`,
 and production privacy contract
 [`hardcover-identity-report-output-privacy-v1.json`](hardcover-identity-report-output-privacy-v1.json),
-SHA-256 `1038172cf3902e562c14502192559b74445455ae789ffff121152c3358a9333c`.
+SHA-256 `21321ec555526c43b657d9f5a85775cd194f17d123bea426ee9c6d407aac8260`.
 Synthetic runtime remains credential-free after activation.

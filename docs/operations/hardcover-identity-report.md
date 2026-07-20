@@ -153,12 +153,16 @@ mechanical-librarian hardcover-identity-report \
 outcome exits 2 for this flag. The durable one-start budget is consumed at the
 final gate-held start boundary: a non-match, retryable failure, or ambiguous
 transport result does not authorize a second request, and retryable results
-close as `retry_exhausted`. Verify the closed matched shape without printing its
-private identifiers, count the durable attempted egress, and derive a sanitized
-evidence digest from only the head, wheel digest, count, and result digest:
+close as `retry_exhausted`. The exact limit of one is created or reconciled in
+the acceptance transaction before provider preparation; a restart or later
+normal-mode request cannot widen that generation to three starts. Verify the
+closed matched shape without printing its
+private identifiers, retain only its public schema and outcome, count the
+durable attempted egress, and then delete the private report. Do not derive or
+retain any digest from the private matched identifiers:
 
 ```sh
-python3 - "$result_path" <<'PY'
+validated_result="$(python3 - "$result_path" <<'PY'
 import json, pathlib, sys
 report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert set(report) == {"schema", "outcome", "edition_id", "book_id", "comparison"}
@@ -167,7 +171,10 @@ assert report["outcome"] == "matched"
 assert type(report["edition_id"]) is int and 1 <= report["edition_id"] <= 2_147_483_647
 assert type(report["book_id"]) is int and 1 <= report["book_id"] <= 2_147_483_647
 assert report["comparison"] in {"equal", "different"}
+print(f'schema={report["schema"]}')
+print(f'outcome={report["outcome"]}')
 PY
+)"
 attempted_egress="$(python3 - "$database_path" <<'PY'
 import sqlite3, sys
 connection = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
@@ -180,18 +187,17 @@ assert len(rows) == 1 and rows[0] == (1,)
 print(1)
 PY
 )"
-result_sha256="$(shasum -a 256 "$result_path" | awk '{print $1}')"
-evidence_sha256="$(printf '%s\n' \
-  "$qualification_head" "$wheel_sha256" "$attempted_egress" "$result_sha256" \
-  | shasum -a 256 | awk '{print $1}')"
-printf 'head=%s\nwheel_sha256=%s\nattempted_egress=%s\nresult_sha256=%s\nevidence_sha256=%s\n' \
-  "$qualification_head" "$wheel_sha256" "$attempted_egress" \
-  "$result_sha256" "$evidence_sha256"
+rm -- "$result_path"
+test ! -e "$result_path"
+printf 'head=%s\ntree=%s\nwheel_sha256=%s\nattempted_egress=%s\n%s\n' \
+  "$qualification_head" "$qualification_tree" "$wheel_sha256" \
+  "$attempted_egress" "$validated_result"
 ```
 
-Retain only those five aggregate lines. Do not retain the query, credential,
-provider response, paths, unrestricted output, database, or private matched
-observation. Stop every Mechanical Librarian process using the root, then
+Retain only those six public fact lines: exact head, exact tree, wheel digest,
+attempted egress, schema, and outcome. Do not retain the query, credential,
+provider response, paths, unrestricted output, its digest, the database, or the
+private matched observation. Stop every Mechanical Librarian process using the root, then
 remove the entire disposable root plus the private query and credential through
 the approved secret-disposal process. Verify all three paths are absent. Never
 delete or edit individual state rows while a process is running.
@@ -291,7 +297,7 @@ The historical increment-2 registry is `preview-registry-c2-v6.json`, SHA-256
 It contains only the C1 inert and C2 identity scenarios and binds the C2-scoped
 output schema, privacy contract, and privacy scan. The current F09f evidence
 root is `hardcover-f09f-activation-registry-v1.json`, SHA-256
-`9bbd44bf5ac6ba1950cedbf491dd3f9ad9b4b14664dd0ca8d5323fd2edc8c21f`;
+`552fb260d15f0e81a9ac4f64e926897513d698ecfd3857d303b0328356ea88b0`;
 it binds the merged C6 registry, all six retained contributor scenarios, and
 the activated production contracts. See the
 [F09f identity contract](../reference/hardcover-f09f-contract.md) for exact
@@ -417,7 +423,7 @@ uv run --frozen --no-editable --reinstall-package mechanical-librarian \
 Stdout must be byte-identical to
 `tests/fixtures/hardcover_identity/c5-safe-executor-example-output.json`.
 The cumulative C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`5d2d10ac20276834f148aee72282ee87b5f972fea0fb1dedbde2bc8e46e3b735`.
+`bbaa89174d682be79e4e0b42f1fe0fc8a1643201bbc7b090bf926cba421e5c39`.
 It derives from the merged C4 registry and adds only `safe-executor-v3`.
 
 ### Lifecycle orchestration preview
@@ -450,7 +456,7 @@ request described above.
 
 Stdout must match `c6-lifecycle-orchestration-example-output.json`. The
 cumulative registry is `preview-registry-c6-v1.json`, SHA-256
-`bf4d38fe8165c9ee4284758cc17ae4ee811336775569f7bd7f1e5cae58607afa`.
+`2f2076dab597501583607b0022add479c236568aa7961a27214a906c95c0d060`.
 
 The gate is deployment-scoped, not credential-scoped. Operators must not reuse
 one Hardcover credential across independently configured deployments. The

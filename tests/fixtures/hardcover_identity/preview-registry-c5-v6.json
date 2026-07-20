@@ -1,14 +1,14 @@
 {
   "available_through_increment": "Execute one bounded Hardcover identity attempt with durable authority",
   "output_privacy_contract": {
-    "bytes": 3924,
+    "bytes": 4046,
     "path": "preview-output-privacy-contract-c5-v3.json",
-    "sha256": "84f75a2a691aa306eda677e2a06a5549dc60252b226c421636a07ef374baedf4"
+    "sha256": "4f849d54f9dd33a89b209198d0563e38fb5a584e2896e3d434994388ddf2b90a"
   },
   "output_privacy_scan": {
-    "bytes": 2801,
+    "bytes": 2736,
     "path": "preview-output-privacy-scan-c5-v3.json",
-    "sha256": "63792b4105638ff9d1b0efadf26a3057f2d905e1f7997fb495f5ab2e8a985cc5"
+    "sha256": "30ac9ea4f2ccec1054b619c047344005ed2e0fe40ef252f6b8101950bae74742"
   },
   "output_schema": {
     "bytes": 3980,
@@ -27,9 +27,9 @@
     "expected_output_rule": "canonical example outputs are qualification oracles only and must never be loaded by runtime before emission",
     "input_limit_bytes": 65536,
     "input_source": "contributor-supplied stdin only; --input - is mandatory",
-    "privacy_qualification": "channel-complete capture plus executable closed-exception proof observes observation-digest inputs/content binding and the actual committed recovery row/cleanup; all undeclared raw, projected, or digested forms fail",
-    "resource_identity_boundary": "public resource digests remain qualification-only; private persistence permits only the declared work key, matched-observation integrity digest, and temporary device/inode binding-recovery row, never runtime or retained evidence",
-    "runtime_output_privacy": "channel-complete capture permits only scenario-allowlisted public fields; the closed matched observation, its integrity digest, work key, and recovery row are private persistence only; every title/query/ISBN/provider/resource projection remains forbidden elsewhere",
+    "privacy_qualification": "channel-complete capture plus exact logical table/column/canonical-shape validation and recovery cleanup; undeclared raw ISBN/provider persistence and every other raw, projected, or digested form fail",
+    "resource_identity_boundary": "public resource digests remain qualification-only; exact validated work-key, matched-observation/current-pointer, and binding-recovery cells are private persistence only, never runtime or retained evidence",
+    "runtime_output_privacy": "channel-complete capture permits only scenario-allowlisted public fields; exact validated matched observation/current pointer, work key, and recovery row are private persistence only; every title/query/ISBN/provider/resource projection remains forbidden elsewhere",
     "schema8": "c4 runtime regenerates schema 8 through exact migration prefix 1..8 and verifies contributor-independent public registry bindings; contributor stdin contains no schema/build digest and runtime channels emit none"
   },
   "scenarios": [

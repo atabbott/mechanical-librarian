@@ -16,6 +16,10 @@ from mechanical_librarian.infrastructure.hardcover_identity_gate import (
     DescriptorHardcoverIdentityGate,
 )
 from mechanical_librarian.infrastructure.persistence.sqlite import migrate
+from tests.support.hardcover_c1_privacy import PrivacyEvidenceError
+from tests.support.hardcover_private_persistence import (
+    logical_private_persistence_records,
+)
 
 
 class _ObservedDigest:
@@ -32,6 +36,32 @@ class _ObservedDigest:
 
 
 class HardcoverPrivatePersistenceExceptionsTests(unittest.TestCase):
+    def test_matched_observation_exception_requires_exact_canonical_shape(
+        self,
+    ) -> None:
+        connection = sqlite3.connect(":memory:")
+        self.addCleanup(connection.close)
+        connection.execute(
+            "CREATE TABLE hardcover_identity_observations("
+            "observation_id TEXT,work_key TEXT,generation INTEGER,"
+            "canonical_observation TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO hardcover_identity_observations VALUES(?,?,?,?)",
+            (
+                "a" * 64,
+                "b" * 64,
+                1,
+                '{"book_id":2001,"edition_id":1001,"outcome":"matched",'
+                '"provider_title":"Remote Volume Zeta","row_count":1,'
+                '"unexpected":"9780000000019"}',
+            ),
+        )
+        with self.assertRaisesRegex(
+            PrivacyEvidenceError, "private matched observation is malformed"
+        ):
+            logical_private_persistence_records(connection)
+
     def test_observation_integrity_digest_has_one_closed_private_input_shape(
         self,
     ) -> None:

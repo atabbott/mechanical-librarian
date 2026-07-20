@@ -263,10 +263,10 @@ provenance may persist; raw traffic, credentials, secret paths, upstream
 identifiers, and caches must not persist.
 
 A bounded real-endpoint qualification with a dedicated non-production account,
-the exact installed artifact, fixed generated query, and disposable database is
-required for F09b. It must produce a parsed canonical candidate or evidence-
-supported typed no-proposal result without parser/compatibility failure and may
-retain only a redacted aggregate result. Negative spies prove the preview
+the exact installed artifact, fixed generated query, and disposable database
+was completed while F09b was active. Its credentialed command is retired, the
+request must not be repeated, and only its redacted aggregate is historical
+evidence. Negative spies prove the preview
 invokes no AI, human-decision, approval, apply, cover, rich-field, multi-
 provider-fusion, or production-write path.
 
@@ -279,8 +279,10 @@ to one isolated current target, snapshot, and source, then cover durable work,
 restart, compatible reuse, changed-source invalidation, supersession, stale
 applicability, and inspectability without retaining decoded content.
 
-F09f ordinary automation is credential-free and fake-based through the same
-target-independent configured provider seam. Tests freeze and exercise the
+F09f ordinary automation remains credential-free and fake-based through the
+same target-independent configured provider seam. The activated installed
+operation now performs provider preparation and exchange through the durable
+lifecycle when enabled and explicitly authorized. Tests freeze and exercise the
 exact ISBN/title query and authentication contract, sanitized response and
 error shapes, ISBN-10/ISBN-13 equivalence, compatible ebook-edition and book
 cardinality, semantically duplicate versus genuinely ambiguous results,
@@ -346,8 +348,11 @@ contributor-stdin, contributor-label, private-value persistence/output,
 malformed schedule, clock regression, stale fence, and production-composition
 traps remain active. Under the existing synthetic privacy observer, a test-only
 connection commits and exactly restores one timestamp solely to materialize WAL
-frames. Qualification asserts and scans nonempty SQLite main, WAL, and SHM while
-present, verifies exact pre/post readback, then scans main again after close.
+frames. Qualification asserts nonempty SQLite main, WAL, and SHM while present,
+verifies exact pre/post readback, then enumerates logical tables, columns, and
+values. Exact schema-11 matched-observation cells, opaque work keys, and the
+closed descriptor-recovery row are validated before exemption; every other
+persistence cell remains in the projection scan.
 
 The C5 privacy contract reuses the shared projection scanner across 17 capture
 channels and seven source classes. Canonical, taint-sentinel, and ordinary-word
@@ -356,11 +361,11 @@ corpus scan, completeness failures, and representative poison for every
 channel/source pair make that boundary executable. The immutable predecessor
 title-only proof remains bound by issue #276 and the exact C4 registry rather
 than being duplicated in C5.
-Arbitrary SQLite binary, Latin-1, and hexadecimal capture omits only eight-hex
-32-bit digest prefixes from substring matching because unrelated work-key bytes
-can collide. Exact/raw values, full encodings and collision-resistant digests,
-hash/fingerprint spies, causal poison, and all non-persistence channels retain
-the complete projection corpus.
+Logical persistence matching omits only eight-hex 32-bit digest prefixes because
+unrelated opaque work-key bytes can collide. Exact/raw values, full encodings
+and collision-resistant digests, hash/fingerprint spies, causal poison, and all
+non-persistence channels retain the complete projection corpus. Raw ISBN and
+provider values are poisoned outside every exact allowed private cell shape.
 
 F09f increment 6 tests the new boundary through the existing manager,
 `RunHardcoverIdentityLifecycle`, and installed CLI without replaying the
@@ -373,6 +378,14 @@ cancellation and exact handler restoration, and preserve BaseException control
 flow. C6 privacy extends the shared projection oracle to 21 channels—including
 file-name/path observations and retained runtime evidence—and poisons every
 channel with every one of seven forbidden-source classes.
+
+F09f activation tests the installed production preparation/exchange path, exact
+acceptance-time one-versus-three egress authority, zero-start credential,
+resolver, deadline, and cancellation failures, restart and inverse mode
+switches, and durable no-widening behavior. The current operator evidence keeps
+only public schema, outcome, exact head/tree, wheel digest, and attempted-egress
+facts; the private matched report is validated locally and deleted without a
+retained identifier-derived digest.
 
 F09g tests first reject a stale or mismatched target, snapshot, source, file, or
 F07b evidence before provider disclosure or scheduling/binding new F09f work;

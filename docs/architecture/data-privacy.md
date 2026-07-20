@@ -74,9 +74,10 @@ reference resolved only when the provider is enabled and is never shared with
 the target service or another consumer.
 
 Durable F09f state contains only an opaque contract-bound work key, closed
-workflow/attempt evidence, structural matched outcome and bounded row count,
-and provenance needed to explain freshness, replay, or invalidation. It stores
-no ISBN, title, provider book/edition identifier, or provider payload. Raw
+workflow/attempt evidence, and the exact validated matched observation needed
+for truthful currentness and reuse: outcome, bounded row count, edition ID,
+book ID, and provider title. It stores no local title, raw ISBN, serialized
+private query, or provider data outside that closed observation. Raw
 requests, responses, headers, tokens, secret
 reference values, paths, unrestricted upstream identifiers, traffic captures,
 and provider caches are not retained. F09g retains the minimum bounded local,
@@ -100,13 +101,17 @@ marker, and original SQLite application ID. It is removed after normal binding
 or completed recovery. Neither record permits a path, credential, user value,
 or provider data outside the closed matched observation, and neither may enter
 runtime output, logs, audit, traces, metrics, exports, reports, or review
-evidence.
+evidence. The logical persistence scanner validates the exact table, column,
+canonical shape, observation content binding, and current-pointer relationship
+before exempting these cells; every other persistence cell remains forbidden.
 
 F09f/F09g provider observations and report results use documented provider-data
 retention and deletion classes and are included in project-owned export and
 deletion behavior without implying deletion at Hardcover, Audiobookshelf, or
 the filesystem. Private live qualification uses disposable state and may
-retain only a redacted aggregate result; it retains no library field values,
+retain only public schema/outcome, exact head/tree, wheel digest, and attempted
+egress facts. It validates and deletes the private report without retaining a
+digest derived from provider identifiers, and retains no library field values,
 ISBN, provider identity, raw traffic, secret, path, or private report.
 
 A planned post-foundation capability may derive evidence from bounded audiobook

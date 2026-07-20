@@ -99,6 +99,16 @@ class _LateProvider(_Provider):
         )
 
 
+class _PreparationFailureProvider(_Provider):
+    def prepare(
+        self,
+        query: object,
+        context: OperationContext,
+    ) -> IdentityAttemptResult:
+        assert type(self.result) is IdentityAttemptResult
+        return self.result
+
+
 class _PublishAtProvider(_Provider):
     def __init__(
         self, result: object, clock: _Clock, published_at: datetime
@@ -1209,6 +1219,140 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                 (request.work_key, request.work_key),
             ).fetchone(),
             (1, 1),
+        )
+
+    def test_prestart_one_shot_authority_survives_every_failure_and_mode_switch(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "credential",
+                _PreparationFailureProvider(
+                    IdentityAttemptResult.failed(
+                        IdentityAttemptFailureKind.CREDENTIAL_UNAVAILABLE
+                    ),
+                    self.clock,
+                ),
+                HardcoverIdentityOutcome.CREDENTIAL_UNAVAILABLE,
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+                False,
+                False,
+            ),
+            (
+                "resolver",
+                _PreparationFailureProvider(
+                    IdentityAttemptResult.failed(
+                        IdentityAttemptFailureKind.UNAVAILABLE
+                    ),
+                    self.clock,
+                ),
+                HardcoverIdentityOutcome.IN_PROGRESS,
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+                False,
+                False,
+            ),
+            (
+                "deadline",
+                _Provider(self.matched(), self.clock),
+                HardcoverIdentityOutcome.RETRY_EXHAUSTED,
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+                False,
+                True,
+            ),
+            (
+                "cancellation",
+                _Provider(self.matched(), self.clock),
+                HardcoverIdentityOutcome.CANCELLED,
+                HardcoverIdentityOutcome.RETRY_EXHAUSTED,
+                True,
+                False,
+            ),
+        )
+        for (
+            label,
+            provider,
+            outcome,
+            restart_outcome,
+            cancelled,
+            expired_deadline,
+        ) in cases:
+            with self.subTest(label=label):
+                request = self.request(
+                    f"prestart-one-shot-{label}", egress_limit=1
+                )
+                if cancelled:
+                    self.cancelled.set()
+                context = self.context(ORIGIN if expired_deadline else None)
+                report = self.execute(request, provider, context=context)
+                self.cancelled.clear()
+
+                self.assertEqual(report.outcome, outcome)
+                self.assertEqual(provider.starts, 0)
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT p.max_starts,g.attempt_count "
+                        "FROM hardcover_identity_egress_policies AS p "
+                        "JOIN hardcover_identity_generations AS g "
+                        "USING(work_key,generation) WHERE p.work_key=?",
+                        (request.work_key,),
+                    ).fetchall(),
+                    [(1, 0)],
+                )
+
+                normal = HardcoverIdentityExecutionRequest(
+                    request.work_key,
+                    request.owner,
+                    request.query,
+                    3,
+                )
+                restarted = _Provider(self.matched(), self.clock)
+                self.assertEqual(
+                    self.execute(normal, restarted).outcome,
+                    restart_outcome,
+                )
+                self.assertEqual(restarted.starts, 0)
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT COUNT(*),SUM(attempt_count) "
+                        "FROM hardcover_identity_generations WHERE work_key=?",
+                        (request.work_key,),
+                    ).fetchone(),
+                    (1, 0),
+                )
+
+    def test_normal_prestart_authority_rejects_one_shot_mode_switch(self) -> None:
+        normal = self.request("prestart-normal-to-one-shot", egress_limit=3)
+        preparation = _PreparationFailureProvider(
+            IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE),
+            self.clock,
+        )
+        self.assertEqual(
+            self.execute(normal, preparation).outcome,
+            HardcoverIdentityOutcome.IN_PROGRESS,
+        )
+        self.assertEqual(preparation.starts, 0)
+
+        one_shot = HardcoverIdentityExecutionRequest(
+            normal.work_key,
+            normal.owner,
+            normal.query,
+            1,
+        )
+        restarted = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(one_shot, restarted).outcome,
+            HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+        )
+        self.assertEqual(restarted.starts, 0)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT p.max_starts,g.attempt_count "
+                "FROM hardcover_identity_egress_policies AS p "
+                "JOIN hardcover_identity_generations AS g "
+                "USING(work_key,generation) WHERE p.work_key=?",
+                (normal.work_key,),
+            ).fetchall(),
+            [(3, 0)],
         )
 
     def test_successful_one_shot_refresh_requires_normal_request(self) -> None:

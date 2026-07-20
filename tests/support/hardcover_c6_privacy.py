@@ -185,10 +185,6 @@ def assert_c6_channels_private(
 ) -> None:
     if persistence_corpus is None:
         persistence_corpus = corpus
-    persistence_corpus = {
-        **persistence_corpus,
-        "provider_identity": frozenset(),
-    }
     runtime_channels = {
         channel: ([] if channel == "persistence" else values)
         for channel, values in channels.items()

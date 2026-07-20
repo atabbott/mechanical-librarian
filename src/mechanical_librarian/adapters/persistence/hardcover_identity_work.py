@@ -114,28 +114,41 @@ class SQLiteHardcoverIdentityWorkRepository:
                         else _positive_int(active[4], "egress limit")
                     )
                     attempts = _nonnegative_int(active[5], "attempt count")
-                    if egress_limit == MAX_ATTEMPTS or (
-                        max_starts == 1 and attempts >= 1
-                    ):
-                        candidate = None
-                        if active[2] == "pending" and active[3] is None:
-                            candidate = self._reserve_pending(
-                                work_key, active_generation, timestamp, now
+                    reference = IdentityWorkReference(work_key, active_generation)
+                    if max_starts is None:
+                        if attempts != 0:
+                            raise IdentityWorkPersistenceError(
+                                "identity work egress authority is unavailable"
                             )
-                        return IdentityWorkStatus(
-                            IdentityWorkOutcome.STALE
-                            if expired and candidate is not None
-                            else IdentityWorkOutcome.IN_PROGRESS,
-                            IdentityWorkReference(work_key, active_generation),
-                            candidate,
+                        self._bind_egress_limit(reference, egress_limit, timestamp)
+                        max_starts = egress_limit
+                    if max_starts not in {1, MAX_ATTEMPTS}:
+                        raise IdentityWorkPersistenceError(
+                            "identity work egress authority is corrupt"
                         )
+                    if max_starts != egress_limit:
+                        raise IdentityWorkPersistenceError(
+                            "identity work egress authority changed"
+                        )
+                    candidate = None
+                    if active[2] == "pending" and active[3] is None:
+                        candidate = self._reserve_pending(
+                            work_key, active_generation, timestamp, now
+                        )
+                    return IdentityWorkStatus(
+                        IdentityWorkOutcome.STALE
+                        if expired and candidate is not None
+                        else IdentityWorkOutcome.IN_PROGRESS,
+                        reference,
+                        candidate,
+                    )
 
                 one_shot = self._connection.execute(
                     "SELECT g.generation,g.state,g.fence,g.attempt_count,g.updated_at "
                     "FROM hardcover_identity_generations AS g "
                     "JOIN hardcover_identity_egress_policies AS p "
                     "ON p.work_key=g.work_key AND p.generation=g.generation "
-                    "WHERE g.work_key=? AND p.max_starts=1 AND g.attempt_count>=1 "
+                    "WHERE g.work_key=? AND p.max_starts=1 "
                     "ORDER BY g.generation DESC LIMIT 1",
                     (work_key,),
                 ).fetchone()
@@ -143,10 +156,14 @@ class SQLiteHardcoverIdentityWorkRepository:
                     generation = _positive_int(one_shot[0], "generation")
                     state = _state(one_shot[1])
                     fence = _positive_int(one_shot[2], "fence")
-                    attempts = _positive_int(one_shot[3], "attempt count")
+                    attempts = _nonnegative_int(one_shot[3], "attempt count")
                     if (
                         state not in TERMINAL_STATES
-                        or attempts != 1
+                        or attempts not in {0, 1}
+                        or (
+                            state is IdentityWorkState.SUCCEEDED
+                            and attempts != 1
+                        )
                         or type(one_shot[4]) is not str
                         or now < _parse_time(one_shot[4])
                     ):
@@ -176,20 +193,6 @@ class SQLiteHardcoverIdentityWorkRepository:
                             IdentityWorkReference(work_key, generation),
                         )
 
-                if active is not None:
-                    candidate = None
-                    if active[2] == "pending" and active[3] is None:
-                        candidate = self._reserve_pending(
-                            work_key, active_generation, timestamp, now
-                        )
-                    return IdentityWorkStatus(
-                        IdentityWorkOutcome.STALE
-                        if expired and candidate is not None
-                        else IdentityWorkOutcome.IN_PROGRESS,
-                        IdentityWorkReference(work_key, active_generation),
-                        candidate,
-                    )
-
                 row = self._connection.execute(
                     "SELECT COALESCE(MAX(generation),0)+1 FROM hardcover_identity_generations WHERE work_key=?",
                     (work_key,),
@@ -214,11 +217,13 @@ class SQLiteHardcoverIdentityWorkRepository:
                     )
                     self._event(work_key, generation, "accepted", None, "pending", 0, timestamp)
                     candidate = 1
+                reference = IdentityWorkReference(work_key, generation)
+                self._bind_egress_limit(reference, egress_limit, timestamp)
                 return IdentityWorkStatus(
                     IdentityWorkOutcome.STALE
                     if expired
                     else IdentityWorkOutcome.IN_PROGRESS,
-                    IdentityWorkReference(work_key, generation),
+                    reference,
                     candidate,
                 )
         except (IdentityWorkPersistenceError, ValueError, TypeError):
@@ -525,6 +530,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                 ).fetchall()
                 if len(unresolved) > 1:
                     raise IdentityWorkPersistenceError("identity work attempts are corrupt")
+                egress_limit = self._read_egress_limit(claim.reference)
                 if unresolved:
                     if unresolved != [(attempt, claim.candidate)]:
                         raise IdentityWorkPersistenceError("identity work attempt is corrupt")
@@ -533,10 +539,8 @@ class SQLiteHardcoverIdentityWorkRepository:
                         (timestamp, claim.reference.work_key, claim.reference.generation, claim.fence),
                     )
                     next_candidate = attempt + 1
-                    egress_limit = self._read_egress_limit(claim.reference)
                 else:
                     next_candidate = claim.candidate
-                    egress_limit = MAX_ATTEMPTS
                 deadline = _parse_time(str(row[7])) if row[7] is not None else None
                 if (
                     next_candidate > egress_limit

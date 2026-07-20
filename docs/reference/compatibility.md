@@ -234,7 +234,7 @@ The historical increment-3 compatibility registry is
 It derives from installed C2 and contains exactly the inert, identity-decision,
 and fixed-adapter scenarios. The current F09f compatibility evidence root is
 `hardcover-f09f-activation-registry-v1.json` / SHA-256
-`9bbd44bf5ac6ba1950cedbf491dd3f9ad9b4b14664dd0ca8d5323fd2edc8c21f`.
+`552fb260d15f0e81a9ac4f64e926897513d698ecfd3857d303b0328356ea88b0`.
 It binds the merged C6 registry, all six retained contributor scenarios, and
 the activated production contracts; the historical C3 scope remains unchanged.
 
@@ -254,9 +254,9 @@ merges. F09c fallback identity and F10b production case
 admission remain separate planned 1.0 compatibility claims. F11 is an
 independent synthetic reviewer path; F17 is their convergence gate.
 
-## Planned 0.3 live title-report compatibility contract
+## Current 0.3 live title-report compatibility contract
 
-F07b will supply one current durable local evidence lineage. F09f will supply a
+F07b supplies one current durable local evidence lineage. F09f supplies a
 separate current configured Hardcover lineage containing a bounded title and
 strict ISBN-backed book and compatible ebook-edition identity. The provider
 query, configuration, authentication, parser, response/error shape,
@@ -264,7 +264,9 @@ cardinality, compatibility policy, bounds, fixtures, and live-qualification
 versions are compatibility dimensions. The request, adapter, parser,
 identity-decision, durable work, retry/restart, and production activation
 dimensions are frozen and structurally supported. The separately authorized
-one-request live aggregate is exact-head qualification evidence only. F09f remains
+one-request live aggregate is exact-head qualification evidence only. Its
+private matched report is validated and deleted without retaining an
+identifier-derived digest. F09f remains
 target-independent and claims no target join or proposal compatibility.
 
 F09g will bind the current target, snapshot, source/file identity, F07b

@@ -119,12 +119,12 @@ Raw vendor semantics stay inside the owning adapter. An external item value may
 cross only as an uninterpreted `ExternalItemId` member of its fully scoped
 canonical `TargetId`, never as a free or unscoped identifier.
 
-At the current F09f head, only a structural in-memory fake implements the book
-identity port. It is assembled for `identity-decision-v3`, returns typed
-contributor-supplied observations, and has no transport, credential, database,
-target, proposal, review, or write authority. A future Hardcover adapter must
-implement the same application port without moving its payload or lifecycle
-rules into the domain.
+The activated F09f operation implements the book identity port with the bounded
+Hardcover adapter and composes provider preparation and exchange through the
+durable application lifecycle. Credential-free structural fakes still qualify
+the same port in ordinary automation and have no transport, credential, target,
+proposal, review, or write authority. Provider payload and lifecycle rules stay
+outside the domain.
 
 ### Infrastructure
 
@@ -201,10 +201,11 @@ no review or apply adapter. Connecting a configured media item and current live
 snapshot to local evidence is a later application use case, not an implicit
 adapter hidden inside F09a.
 
-F09b ordinary automation uses a credential-free structural fake through the
-same adapter seam. Completion also requires the exact installed artifact to
-parse one bounded real-endpoint result without a parser or compatibility
-failure, retaining only redacted aggregate evidence.
+F09b ordinary automation used a credential-free structural fake through the
+same adapter seam. Its exact installed artifact completed one bounded
+real-endpoint parse without a parser or compatibility failure. That
+credentialed command is retired, the request must not be repeated, and only
+redacted aggregate evidence remains.
 
 The 0.3 title-report path introduces two production-report-only lanes without
 changing these authority boundaries. F09f is a target-independent configured

@@ -29,6 +29,9 @@ from tests.support.hardcover_c6_privacy import (
     c6_input_variants,
     resource_digests,
 )
+from tests.support.hardcover_private_persistence import (
+    logical_private_persistence_records,
+)
 
 
 ROOT = Path(__file__).parents[2]
@@ -183,13 +186,8 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
                         }
                         self.assertTrue(all(presence.values()), presence)
                         transient_coverage[active_database] = set(paths)
-                        for payload in (
-                            path.read_bytes() for path in paths.values()
-                        ):
+                        for payload in (path.read_bytes() for path in paths.values()):
                             self.assertTrue(payload)
-                            channels["persistence"].extend(
-                                (payload.decode("latin-1"), payload.hex())
-                            )
                     finally:
                         checkpoint_connection.execute("BEGIN IMMEDIATE")
                         checkpoint_connection.execute(
@@ -324,6 +322,9 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
                             "SELECT DISTINCT owner FROM hardcover_identity_claims"
                         )
                     }
+                    channels["persistence"].extend(
+                        logical_private_persistence_records(connection)
+                    )
                 finally:
                     connection.close()
                 self.assertEqual(owners, {_C5_INTERNAL_OWNER})
@@ -336,11 +337,6 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
                 for path in database.parent.iterdir():
                     channels["file_names"].append(path.name)
                     channels["file_paths"].append(str(path))
-                    if path.is_file():
-                        payload = path.read_bytes()
-                        channels["persistence"].extend(
-                            (payload.decode("latin-1"), payload.hex())
-                        )
             channels["text_stdout"].append("")
             channels["audit_logs"].append("")
 
@@ -352,6 +348,40 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
                 )
             except PrivacyEvidenceError as failure:
                 self.fail(str(failure))
+            connection = sqlite3.connect(databases[0])
+            try:
+                for index, private_value in enumerate(
+                    (
+                        "9780000000019",
+                        "0000000019",
+                        "Remote Volume Zeta",
+                        '{"book_id":2001}',
+                    )
+                ):
+                    with self.subTest(private_value=private_value):
+                        connection.execute(
+                            "INSERT INTO instance_metadata(key,value) VALUES(?,?)",
+                            (f"privacy-poison-{index}", private_value),
+                        )
+                        poisoned = {
+                            key: list(values) for key, values in channels.items()
+                        }
+                        poisoned["persistence"].extend(
+                            logical_private_persistence_records(connection)
+                        )
+                        with self.assertRaises(PrivacyEvidenceError):
+                            assert_c6_channels_private(
+                                poisoned,
+                                corpus,
+                                persistence_corpus=persistence_corpus,
+                            )
+                        connection.execute(
+                            "DELETE FROM instance_metadata WHERE key=?",
+                            (f"privacy-poison-{index}",),
+                        )
+                connection.commit()
+            finally:
+                connection.close()
             self.assertEqual(len(resource_digests(ROOT)), 8)
             self.assertTrue(all(corpus[source] for source in C6_FORBIDDEN_SOURCE_CLASSES))
 
@@ -369,8 +399,6 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
             }
             for channel in C6_CAPTURE_CHANNELS:
                 for source in C6_FORBIDDEN_SOURCE_CLASSES:
-                    if channel == "persistence" and source == "provider_identity":
-                        continue
                     active_representatives = (
                         persistence_representatives
                         if channel == "persistence"

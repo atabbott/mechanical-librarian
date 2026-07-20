@@ -155,10 +155,11 @@ Identical replay does not duplicate state, while changed inputs supersede
 current applicability without rewriting history.
 
 Ordinary CI and automated tests use an irreversibly synthetic structural fake
-through the same adapter seam and no provider credential. F09b also requires
-the exact installed artifact to parse one bounded real-endpoint result with a
-dedicated non-production account and disposable state; only a redacted
-aggregate result may be retained. This proves no production configuration,
+through the same adapter seam and no provider credential. F09b historically
+completed one exact-installed-artifact qualification against a bounded real
+endpoint with a dedicated non-production account and disposable state; its
+credentialed command is retired and that request must not be repeated. Only a
+redacted aggregate result was retained. This proves no production configuration,
 provider-work persistence, freshness/reuse, restart, identity, or live-target
 behavior. F09f owns the configured target-independent provider lane;
 F09g owns the live join. Nothing in the preview invokes AI,
@@ -182,9 +183,11 @@ exported, reported, audited, traced, or emitted as a metric. The contributor
 preview uses the same validation seams but has no production composition and
 emits only its closed typed schema-v5 zero-access result.
 
-Increment 3 installs the fixed `hardcover-isbn-identity-v1` adapter behind the
-application-owned identity port, but does not compose it into enabled
-production mode. Its installed demonstration injects a
+Increment 3 installed the fixed `hardcover-isbn-identity-v1` adapter behind the
+application-owned identity port without composing it into enabled production
+mode. F09f activation now composes provider preparation and exchange through
+the durable lifecycle at the installed production boundary. The retained
+increment-3 demonstration injects a
 `validated-public-address` capability and a post-policy in-memory byte channel;
 the channel is structurally unable to resolve, connect, open a socket, inherit
 a proxy, or read a credential, and the report always records
@@ -607,10 +610,11 @@ identity. The executor uses one fixed 55-character internal owner outside the
 complete label and process syntax domains. Qualification uses sentinel-bearing
 controls, owner readback, and an internal-vocabulary collision variant, so an
 equal word such as `pending` is not confused with contributor-derived flow.
-The persistence scanner likewise ignores only eight-hex 32-bit digest prefixes
-inside arbitrary SQLite bytes/text/hex because unrelated durable identities can
-collide. It still rejects exact/raw contributor values, full encodings and
-collision-resistant digests, and causal poison. A synthetic-only observer
+The persistence scanner validates exact private table/column/canonical shapes,
+then ignores only eight-hex 32-bit digest prefixes in every other logical value
+because unrelated durable identities can collide. It still rejects exact/raw
+contributor, ISBN, and provider values, full encodings and collision-resistant
+digests, and causal poison. A synthetic-only observer
 materializes and exactly restores one timestamp transaction so qualification
 captures nonempty main, WAL, and SHM while present without changing durable
 domain state or production authority.
@@ -628,8 +632,11 @@ current fence after provider return. Main-thread-only temporary SIGINT/SIGTERM
 handlers set a local Event and restore prior handlers in `finally`; they add no
 cross-process cancellation channel and do not translate interpreter control
 flow. C6 remains credential-free after activation. Production composition wraps
-the same lifecycle in main-thread cancellation handling and lazily constructs
-credential and network capabilities only after its durable gate-held start.
+the same lifecycle in main-thread cancellation handling. The repository creates
+or reconciles the exact per-generation egress policy during acceptance before
+provider preparation; preparation may resolve the credential, but no network
+transport begins until the durable gate-held start and a later mode switch
+cannot widen that generation's authority.
 
 F07b treats the service path projection, private logical binding, EPUB archive,
 and persisted canonical report as hostile inputs. Callers can supply only

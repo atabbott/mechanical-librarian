@@ -128,8 +128,14 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.assertEqual(migrate(self.connection), 11)
         self.repository = SQLiteHardcoverIdentityWorkRepository(self.connection)
 
-    def accept(self, *, key: str = WORK_KEY, when: datetime = ORIGIN):
-        return self.repository.accept(key, when)
+    def accept(
+        self,
+        *,
+        key: str = WORK_KEY,
+        when: datetime = ORIGIN,
+        egress_limit: int = 3,
+    ):
+        return self.repository.accept(key, when, egress_limit=egress_limit)
 
     def test_transaction_cleanup_failure_never_masks_control_flow(self) -> None:
         class RollbackFailureConnection:
@@ -2296,7 +2302,13 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.assertEqual((claimed.candidate, claimed.fence), (2, 2))
 
     def test_egress_limit_is_atomic_immutable_and_restart_bound(self) -> None:
-        accepted = self.accept()
+        accepted = self.accept(egress_limit=1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT max_starts FROM hardcover_identity_egress_policies"
+            ).fetchall(),
+            [(1,)],
+        )
         claim = self.repository.claim(
             accepted.reference,
             "worker-a",
@@ -2378,8 +2390,94 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             (1,),
         )
 
-    def test_one_shot_publication_rollback_restarts_terminal_without_retry(self) -> None:
+    def test_acceptance_reconciles_egress_authority_before_any_start(self) -> None:
+        one_shot = self.accept(egress_limit=1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT p.max_starts,g.attempt_count "
+                "FROM hardcover_identity_egress_policies AS p "
+                "JOIN hardcover_identity_generations AS g USING(work_key,generation) "
+                "WHERE p.work_key=?",
+                (WORK_KEY,),
+            ).fetchall(),
+            [(1, 0)],
+        )
+        repeated = self.repository.accept(
+            WORK_KEY,
+            ORIGIN + timedelta(microseconds=1),
+            egress_limit=1,
+        )
+        self.assertEqual(repeated.reference, one_shot.reference)
+        with self.assertRaisesRegex(
+            IdentityWorkPersistenceError, "egress authority changed"
+        ):
+            self.repository.accept(
+                WORK_KEY,
+                ORIGIN + timedelta(microseconds=2),
+                egress_limit=3,
+            )
+
+        normal_key = "b" * 64
+        normal = self.repository.accept(normal_key, ORIGIN, egress_limit=3)
+        self.assertEqual(normal.reference.work_key, normal_key)
+        with self.assertRaisesRegex(
+            IdentityWorkPersistenceError, "egress authority changed"
+        ):
+            self.repository.accept(
+                normal_key,
+                ORIGIN + timedelta(microseconds=1),
+                egress_limit=1,
+            )
+
+    def test_legacy_active_generation_binds_only_before_a_start(self) -> None:
         accepted = self.accept()
+        self.connection.execute(
+            "DROP TRIGGER hardcover_identity_egress_policies_no_delete"
+        )
+        self.connection.execute(
+            "DELETE FROM hardcover_identity_egress_policies WHERE work_key=?",
+            (WORK_KEY,),
+        )
+        reconciled = self.repository.accept(
+            WORK_KEY,
+            ORIGIN + timedelta(microseconds=1),
+            egress_limit=1,
+        )
+        self.assertEqual(reconciled.reference, accepted.reference)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT max_starts FROM hardcover_identity_egress_policies"
+            ).fetchall(),
+            [(1,)],
+        )
+        claim = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        self.repository.renew_and_start(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=2),
+            gate_owned=True,
+            egress_limit=1,
+        )
+        self.connection.execute(
+            "DELETE FROM hardcover_identity_egress_policies WHERE work_key=?",
+            (WORK_KEY,),
+        )
+        with self.assertRaisesRegex(
+            IdentityWorkPersistenceError, "egress authority is unavailable"
+        ):
+            self.repository.accept(
+                WORK_KEY,
+                ORIGIN + timedelta(seconds=3),
+                egress_limit=1,
+            )
+
+    def test_one_shot_publication_rollback_restarts_terminal_without_retry(self) -> None:
+        accepted = self.accept(egress_limit=1)
         claim = self.repository.claim(
             accepted.reference,
             "worker-a",
@@ -2440,7 +2538,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
     def test_successful_one_shot_refresh_requires_explicit_normal_authority(
         self,
     ) -> None:
-        accepted = self.accept()
+        accepted = self.accept(egress_limit=1)
         claim = self.repository.claim(
             accepted.reference,
             "worker-a",
@@ -2474,11 +2572,14 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             ORIGIN + timedelta(hours=24, seconds=3, microseconds=2),
             egress_limit=3,
         )
-        repeated = self.repository.accept(
-            WORK_KEY,
-            ORIGIN + timedelta(hours=24, seconds=3, microseconds=3),
-            egress_limit=1,
-        )
+        with self.assertRaisesRegex(
+            IdentityWorkPersistenceError, "egress authority changed"
+        ):
+            self.repository.accept(
+                WORK_KEY,
+                ORIGIN + timedelta(hours=24, seconds=3, microseconds=3),
+                egress_limit=1,
+            )
         reserved = self.repository.accept(
             WORK_KEY,
             ORIGIN + timedelta(hours=24, seconds=3, microseconds=4),
@@ -2495,16 +2596,12 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             (IdentityWorkOutcome.STALE, 2, None),
         )
         self.assertEqual(
-            (repeated.outcome, repeated.reference.generation),
-            (IdentityWorkOutcome.RETRY_EXHAUSTED, 1),
-        )
-        self.assertEqual(
             (reserved.outcome, reserved.reference.generation, reserved.candidate),
             (IdentityWorkOutcome.STALE, 2, 1),
         )
 
-    def test_egress_policy_and_start_roll_back_as_one_atomic_change(self) -> None:
-        accepted = self.accept()
+    def test_start_rollback_retains_the_acceptance_egress_policy(self) -> None:
+        accepted = self.accept(egress_limit=1)
         claim = self.repository.claim(
             accepted.reference,
             "worker-a",
@@ -2529,7 +2626,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                 "(SELECT COUNT(*) FROM hardcover_identity_attempts),"
                 "(SELECT attempt_count FROM hardcover_identity_generations)"
             ).fetchone(),
-            (0, 0, 0),
+            (1, 0, 0),
         )
         self.connection.execute("DROP TRIGGER reject_identity_start")
         started = self.repository.renew_and_start(

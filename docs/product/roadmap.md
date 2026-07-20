@@ -56,13 +56,14 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
   unavailable current title, an empty or unusable F06/provider title,
   current-equivalence, disagreement, and other non-proposal paths as exact typed
   no-proposal results.
-- F09b adds `hardcover-title-proposal-report` for one fixed generated
+- F09b historically added `hardcover-title-proposal-report` for one fixed generated
   `agree-empty` case. Omitting its optional secret-file reference performs no
   secret access, DNS, or egress; it changes no `config-v1` field and cannot
   reinterpret F09a's `synthetic_preview` history as live or
   production-applicable evidence. A sanitized live-shape fake qualifies normal
-  automation, and the exact installed artifact must also parse one bounded live
-  response. F09f retains configured provider-work persistence,
+  automation, and its exact installed artifact completed one bounded live
+  response qualification. The credentialed F09b command is retired and that
+  request must not be repeated. F09f now owns configured provider-work persistence,
   freshness/reuse, restart, and strict ISBN-backed Hardcover identity; F09g
   retains the later live-target join and proposal authority.
 - F10a adds `synthetic-title-review-case-report`. It persists, restarts,
@@ -98,11 +99,11 @@ being partially implemented inside it.
 - F07a extracts one bounded opening-matter title and edition-applicable ISBN
   report from a safely readable EPUB; F07b binds that evidence durably to one
   current isolated target and snapshot with restart, reuse, and invalidation.
-- F09f follows completed F09b and installs the disabled-by-default configured
+- F09f follows completed F09b and now provides the disabled-by-default configured
   Hardcover lane. It persists one bounded title plus strict ISBN-backed book
   and compatible ebook-edition identity as one provider lineage, but remains
-  target-independent and has no proposal authority. Its first increment ships
-  strict inert configuration/query/report seams were followed by the bounded
+  target-independent and has no proposal authority. Its strict inert
+  configuration/query/report seams were followed by the bounded
   fixed adapter, schema-11 durable lifecycle, and configured activation.
   Disabled returns before private input; enabled persists before lazy provider
   authority and emits only closed redacted outcomes.
