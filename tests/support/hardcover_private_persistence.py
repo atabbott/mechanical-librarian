@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import stat
 
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityMatchOutcome,
@@ -16,9 +18,11 @@ from tests.support.hardcover_c1_privacy import PrivacyEvidenceError
 
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_RECOVERY = re.compile(r"^v1:([0-9]+):([0-9]+):([0-9]+):([0-9]+)$")
 _RECOVERY_KEY = "hardcover-identity-binding-recovery-v1"
 _RECOVERY_MARKERS = {0x4D4C4201, 0x4D4C4202}
+_MAX_RECOVERY_TOKEN_LENGTH = 20
+_MAX_APPLICATION_ID = 2_147_483_647
+_SQLITE_APPLICATION_ID_OFFSET = 68
 _OBSERVATION_DOMAIN = (
     b"mechanical-librarian:hardcover-matched-observation:v3\x00"
 )
@@ -47,7 +51,11 @@ def logical_private_persistence_records(
         columns = _columns(connection, table)
         for row in connection.execute(f'SELECT * FROM "{table}"'):
             values = dict(zip(columns, row, strict=True))
-            _validate_recovery_row(table, values)
+            recovery_row_is_valid = _valid_recovery_row(
+                connection,
+                table,
+                values,
+            )
             for column, value in values.items():
                 if _is_allowed_private_cell(
                     table,
@@ -55,6 +63,7 @@ def logical_private_persistence_records(
                     value,
                     values,
                     observations,
+                    recovery_row_is_valid,
                 ):
                     continue
                 records.append(_logical_record(table, column, value))
@@ -123,6 +132,7 @@ def _is_allowed_private_cell(
     value: object,
     row: dict[str, object],
     observations: dict[str, tuple[str, int, str]],
+    recovery_row_is_valid: bool,
 ) -> bool:
     if column == "work_key" and table in _WORK_KEY_TABLES:
         if type(value) is not str or not _HEX_64.fullmatch(value):
@@ -144,28 +154,116 @@ def _is_allowed_private_cell(
         ):
             raise PrivacyEvidenceError("private current observation is malformed")
         return True
-    if table == "instance_metadata" and row.get("key") == _RECOVERY_KEY:
+    if recovery_row_is_valid:
         return column in {"key", "value"}
     return False
 
 
-def _validate_recovery_row(table: str, row: dict[str, object]) -> None:
-    if table != "instance_metadata" or row.get("key") != _RECOVERY_KEY:
-        return
+def _valid_recovery_row(
+    connection: sqlite3.Connection,
+    table: str,
+    row: dict[str, object],
+) -> bool:
+    if (
+        table != "instance_metadata"
+        or set(row) != {"key", "value"}
+        or row.get("key") != _RECOVERY_KEY
+    ):
+        return False
     value = row.get("value")
     if type(value) is not str:
-        raise PrivacyEvidenceError("private binding recovery row is malformed")
-    match = _RECOVERY.fullmatch(value)
-    if match is None:
-        raise PrivacyEvidenceError("private binding recovery row is malformed")
-    device, inode, marker, application_id = map(int, match.groups())
+        return False
+    parts = value.split(":")
+    if len(parts) != 5 or parts[0] != "v1":
+        return False
+    tokens = parts[1:]
+    if any(
+        not token
+        or len(token) > _MAX_RECOVERY_TOKEN_LENGTH
+        or not token.isascii()
+        or not token.isdecimal()
+        for token in tokens
+    ):
+        return False
+    device, inode, marker, application_id = (int(token) for token in tokens)
     if (
-        device < 0
+        any(
+            str(number) != token
+            for number, token in zip(
+                (device, inode, marker, application_id),
+                tokens,
+                strict=True,
+            )
+        )
+        or device < 0
         or inode <= 0
         or marker not in _RECOVERY_MARKERS
-        or not 0 <= application_id <= 2_147_483_647
+        or not 0 <= application_id <= _MAX_APPLICATION_ID
     ):
-        raise PrivacyEvidenceError("private binding recovery row is malformed")
+        return False
+    provenance = _main_database_provenance(connection)
+    return provenance == (device, inode, marker)
+
+
+def _main_database_provenance(
+    connection: sqlite3.Connection,
+) -> tuple[int, int, int] | None:
+    rows = connection.execute("PRAGMA database_list").fetchall()
+    main_rows = [
+        row
+        for row in rows
+        if type(row) is tuple and len(row) == 3 and row[1] == "main"
+    ]
+    if len(main_rows) != 1:
+        return None
+    database_path = main_rows[0][2]
+    if type(database_path) is not str or not database_path:
+        return None
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    cloexec = getattr(os, "O_CLOEXEC", None)
+    if nofollow is None or cloexec is None:
+        return None
+    descriptor: int | None = None
+    close_failed = False
+    try:
+        descriptor = os.open(
+            database_path,
+            os.O_RDONLY | nofollow | cloexec,
+        )
+        opened = os.fstat(descriptor)
+        named = os.stat(database_path, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or not stat.S_ISREG(named.st_mode)
+            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+        ):
+            return None
+        header_marker = os.pread(
+            descriptor,
+            4,
+            _SQLITE_APPLICATION_ID_OFFSET,
+        )
+    except OSError:
+        return None
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                close_failed = True
+    if close_failed:
+        return None
+    current = connection.execute("PRAGMA application_id").fetchone()
+    if (
+        type(current) is not tuple
+        or len(current) != 1
+        or type(current[0]) is not int
+        or current[0] not in _RECOVERY_MARKERS
+        or len(header_marker) != 4
+        or int.from_bytes(header_marker, "big") != current[0]
+    ):
+        return None
+    return opened.st_dev, opened.st_ino, current[0]
 
 
 def _tables(connection: sqlite3.Connection) -> set[str]:
