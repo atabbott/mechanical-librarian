@@ -66,6 +66,7 @@ from mechanical_librarian.application.title_review_cases import (
 from mechanical_librarian.application.hardcover_identity import (
     DurableWorkPreviewReport,
     FixedAdapterPreviewReport,
+    HardcoverExecutionPolicy,
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
@@ -96,7 +97,7 @@ HardcoverTitleProposalRunner = Callable[[Path, Path | None], SyntheticTitlePropo
 SyntheticTitleReviewCaseRunner = Callable[[Path, str], SyntheticTitleReviewCaseReport]
 EpubOpeningEvidenceRunner = Callable[[Path, Path, str, str, int], EpubEvidenceResult]
 HardcoverIdentityRunner = Callable[
-    [Path, Path, Path, bool], HardcoverIdentityReport
+    [Path, Path, Path, HardcoverExecutionPolicy], HardcoverIdentityReport
 ]
 HardcoverInertPreviewRunner = Callable[[Mapping[str, object]], InertPreviewReport]
 HardcoverIdentityDecisionPreviewRunner = Callable[
@@ -607,6 +608,11 @@ def main(
         except _TitleArgumentError:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
             return 2
+        execution_policy = (
+            HardcoverExecutionPolicy.QUALIFICATION_ONE_SHOT
+            if hardcover_arguments.qualification_one_shot
+            else HardcoverExecutionPolicy.NORMAL
+        )
         synthetic = hardcover_arguments.mode == "synthetic-preview"
         if synthetic:
             durable = hardcover_arguments.scenario in {
@@ -628,7 +634,7 @@ def main(
                 and hardcover_arguments.format == "json"
                 and hardcover_arguments.config is None
                 and hardcover_arguments.query_file is None
-                and not hardcover_arguments.qualification_one_shot
+                and execution_policy is HardcoverExecutionPolicy.NORMAL
                 and (
                     (durable and hardcover_arguments.database is not None)
                     or (not durable and hardcover_arguments.database is None)
@@ -729,10 +735,7 @@ def main(
             and hardcover_arguments.config is not None
             and hardcover_arguments.database is not None
             and hardcover_arguments.query_file is not None
-            and (
-                not hardcover_arguments.qualification_one_shot
-                or hardcover_arguments.format == "json"
-            )
+            and execution_policy.accepts_output_format(hardcover_arguments.format)
         )
         if not exact or hardcover_identity_runner is None:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
@@ -742,7 +745,7 @@ def main(
                 hardcover_arguments.config,
                 hardcover_arguments.database,
                 hardcover_arguments.query_file,
-                hardcover_arguments.qualification_one_shot,
+                execution_policy,
             )
             if (
                 type(report) is not HardcoverIdentityReport
@@ -754,9 +757,7 @@ def main(
                 if hardcover_arguments.format == "json"
                 else render_hardcover_identity_text(report)
             )
-            if hardcover_arguments.qualification_one_shot:
-                return 0 if report.outcome is HardcoverIdentityOutcome.MATCHED else 2
-            return 2 if report.outcome is HardcoverIdentityOutcome.INVALID_INPUT else 0
+            return execution_policy.exit_code(report.outcome)
         except Exception:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
             return 2

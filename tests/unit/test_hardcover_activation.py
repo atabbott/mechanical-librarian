@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from mechanical_librarian.application.hardcover_identity import (
+    HardcoverExecutionPolicy,
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
     IdentityAttemptResult,
@@ -315,7 +316,7 @@ class HardcoverActivationTests(unittest.TestCase):
                     side_effect=AssertionError("secret reached"),
                 ),
                 patch(
-                    "mechanical_librarian.adapters.providers.hardcover_identity.subprocess.Popen",
+                    "mechanical_librarian.infrastructure.security.hardcover_transport.subprocess.Popen",
                     side_effect=AssertionError("DNS reached"),
                 ),
                 patch(
@@ -324,7 +325,10 @@ class HardcoverActivationTests(unittest.TestCase):
                 ),
             ):
                 report = _run_hardcover_identity_report(
-                    config, root / "state.sqlite", query, False
+                    config,
+                    root / "state.sqlite",
+                    query,
+                    HardcoverExecutionPolicy.NORMAL,
                 )
         self.assertEqual(report.outcome, HardcoverIdentityOutcome.INVALID_INPUT)
 
@@ -346,7 +350,10 @@ class HardcoverActivationTests(unittest.TestCase):
                 side_effect=AssertionError("state mutated"),
             ):
                 report = _run_hardcover_identity_report(
-                    config, Path("relative-state.sqlite"), query, False
+                    config,
+                    Path("relative-state.sqlite"),
+                    query,
+                    HardcoverExecutionPolicy.NORMAL,
                 )
         self.assertEqual(
             report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE
@@ -432,7 +439,7 @@ class HardcoverActivationTests(unittest.TestCase):
                 return_value=_Provider(),
             ):
                 report = _run_hardcover_identity_report(
-                    config, database, query, False
+                    config, database, query, HardcoverExecutionPolicy.NORMAL
                 )
 
             self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
@@ -474,7 +481,7 @@ class HardcoverActivationTests(unittest.TestCase):
             Path("/configuration.json"),
             Path("/state.sqlite"),
             Path("/query.json"),
-            True,
+            HardcoverExecutionPolicy.QUALIFICATION_ONE_SHOT,
         )
         self.assertEqual(json.loads(output.getvalue())["outcome"], "matched")
 
@@ -535,6 +542,63 @@ class HardcoverActivationTests(unittest.TestCase):
             self.assertIsNone(identity)
             self.assertFalse(database.exists())
 
+    def test_disposable_state_check_stops_after_first_directory_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            for index in range(32):
+                (root / f"entry-{index}").touch()
+            real_scandir = os.scandir
+            next_calls = 0
+
+            class _CountingEntries:
+                def __init__(self, descriptor: int) -> None:
+                    self._entries = real_scandir(descriptor)
+
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    nonlocal next_calls
+                    next_calls += 1
+                    return next(self._entries)
+
+                def close(self) -> None:
+                    self._entries.close()
+
+            with patch.object(
+                composition.os,
+                "scandir",
+                side_effect=lambda descriptor: _CountingEntries(descriptor),
+            ):
+                self.assertFalse(
+                    composition._qualification_state_is_disposable(
+                        root / "state.sqlite"
+                    )
+                )
+            self.assertEqual(next_calls, 1)
+
+    def test_disposable_state_check_fails_closed_when_descriptor_close_fails(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            real_close = os.close
+
+            def close_then_fail(descriptor: int) -> None:
+                real_close(descriptor)
+                raise OSError("synthetic close failure")
+
+            with patch.object(
+                composition.os, "close", side_effect=close_then_fail
+            ):
+                self.assertFalse(
+                    composition._qualification_state_is_disposable(
+                        root / "state.sqlite"
+                    )
+                )
+
         with (
             tempfile.TemporaryDirectory() as input_directory,
             tempfile.TemporaryDirectory() as state_directory,
@@ -573,7 +637,10 @@ class HardcoverActivationTests(unittest.TestCase):
                 ),
             ):
                 report = _run_hardcover_identity_report(
-                    config, database, query, True
+                    config,
+                    database,
+                    query,
+                    HardcoverExecutionPolicy.QUALIFICATION_ONE_SHOT,
                 )
             self.assertEqual(
                 report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE
@@ -617,7 +684,7 @@ class HardcoverActivationTests(unittest.TestCase):
                 ),
             ):
                 report = _run_hardcover_identity_report(
-                    config, database, query, False
+                    config, database, query, HardcoverExecutionPolicy.NORMAL
                 )
             self.assertEqual(
                 report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE
@@ -650,7 +717,7 @@ class HardcoverActivationTests(unittest.TestCase):
                 ) as bound_check,
             ):
                 report = _run_hardcover_identity_report(
-                    config, database, query, False
+                    config, database, query, HardcoverExecutionPolicy.NORMAL
                 )
             self.assertEqual(state_check.call_count, 1)
             self.assertEqual(bound_check.call_count, 1)
@@ -695,7 +762,7 @@ class HardcoverActivationTests(unittest.TestCase):
                 ) as state_check,
             ):
                 report = _run_hardcover_identity_report(
-                    config, database, query, False
+                    config, database, query, HardcoverExecutionPolicy.NORMAL
                 )
             self.assertEqual(state_check.call_count, 1)
             self.assertEqual(

@@ -5,6 +5,7 @@ import logging
 import signal
 import subprocess
 import sys
+import threading
 import textwrap
 import unittest
 from dataclasses import replace
@@ -45,9 +46,25 @@ from mechanical_librarian.application.ports import (
     ResourceBounds,
     TimeProbe,
 )
+from mechanical_librarian.application.transport_capabilities import (
+    ResolverBudget,
+    ResolverFailure,
+    ResolverFailureKind,
+)
+from mechanical_librarian.infrastructure.security.hardcover_transport import (
+    ContextTransportLogIsolation,
+    IsolatedAddressResolverFactory,
+)
 
 
 ROOT = Path(__file__).parents[2]
+
+
+def _httpx_channel(transport: httpx.AsyncBaseTransport) -> HttpxIdentityByteChannel:
+    return HttpxIdentityByteChannel(
+        log_isolation_factory=ContextTransportLogIsolation(),
+        transport=transport,
+    )
 
 
 def _run_prepared(provider, query, context, *, before_exchange=None):
@@ -262,9 +279,7 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 extensions={"network_stream": _NetworkStream()},
             )
 
-        channel = HttpxIdentityByteChannel(
-            transport=httpx.MockTransport(respond)
-        )
+        channel = _httpx_channel(httpx.MockTransport(respond))
         result = _run_prepared(
             HardcoverIdentityProvider(
                 lambda host, port: ("1.1.1.1",),
@@ -380,7 +395,7 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 result = _run_prepared(
                     HardcoverIdentityProvider(
                         lambda host, port: ("1.1.1.1",),
-                        HttpxIdentityByteChannel(transport=httpx.MockTransport(respond)),
+                        _httpx_channel(httpx.MockTransport(respond)),
                         b"synthetic-noncredential",
                     ),
                     self.query(),
@@ -404,7 +419,11 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         ):
             with self.subTest(expected=expected):
                 result = _run_prepared(
-                    LiveHardcoverIdentityProvider(token_reader),
+                    LiveHardcoverIdentityProvider(
+                        token_reader,
+                        resolver_factory=lambda budget: lambda host, port: (),
+                        channel_factory=lambda: self.channel(),
+                    ),
                     self.query(),
                     context,
                 )
@@ -417,14 +436,47 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             (self.context(expired=True), IdentityAttemptFailureKind.TIMEOUT),
         ):
             with self.subTest(expected=expected):
-                resolver = adapter.BoundedIdentityAddressResolver(context)
+                budget = ResolverBudget(
+                    remaining_seconds=lambda: max(
+                        0.0,
+                        (context.deadline.at - context.time.now()).total_seconds(),
+                    ),
+                    is_cancelled=context.cancellation.is_cancelled,
+                )
                 with (
-                    patch.object(adapter.subprocess, "Popen") as popen,
-                    self.assertRaises(IdentityChannelFailure) as raised,
+                    patch(
+                        "mechanical_librarian.infrastructure.security.hardcover_transport.subprocess.Popen"
+                    ) as popen,
+                    self.assertRaises(ResolverFailure) as raised,
                 ):
-                    resolver("api.hardcover.app", 443)
-                self.assertIs(raised.exception.kind, expected)
+                    IsolatedAddressResolverFactory()(budget)(
+                        "api.hardcover.app", 443
+                    )
+                self.assertEqual(raised.exception.kind.value, expected.value)
                 popen.assert_not_called()
+
+    def test_live_provider_preserves_resolver_cancellation_and_timeout(self) -> None:
+        for resolver_kind, expected in (
+            (ResolverFailureKind.CANCELLED, IdentityAttemptFailureKind.CANCELLED),
+            (ResolverFailureKind.TIMEOUT, IdentityAttemptFailureKind.TIMEOUT),
+        ):
+            with self.subTest(resolver_kind=resolver_kind):
+                def resolver_factory(budget: ResolverBudget):
+                    def fail(host: str, port: int) -> tuple[str, ...]:
+                        raise ResolverFailure(resolver_kind)
+
+                    return fail
+
+                result = _run_prepared(
+                    LiveHardcoverIdentityProvider(
+                        lambda: b"synthetic-noncredential",
+                        resolver_factory=resolver_factory,
+                        channel_factory=lambda: self.channel(),
+                    ),
+                    self.query(),
+                    self.context(),
+                )
+                self.assertIs(result.failure.kind, expected)
 
     def test_non_success_body_is_not_drained_and_transport_logs_are_suppressed(
         self,
@@ -455,6 +507,12 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             logging.getLogger("httpcore.connection").warning(
                 "private-address-and-header"
             )
+            unrelated = threading.Thread(
+                target=logging.getLogger("httpcore.connection").warning,
+                args=("unrelated-thread-log",),
+            )
+            unrelated.start()
+            unrelated.join()
             return httpx.Response(
                 401,
                 headers={"X-Private": "private-isbn-and-provider-metadata"},
@@ -467,11 +525,19 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         original_level = root.level
         root.addHandler(handler)
         root.setLevel(logging.DEBUG)
+        channel = _httpx_channel(httpx.MockTransport(respond))
+        transport_logger = logging.getLogger("httpcore.connection")
+        logger_configuration = (
+            transport_logger.level,
+            transport_logger.propagate,
+            transport_logger.disabled,
+            tuple(transport_logger.handlers),
+        )
         try:
             result = _run_prepared(
                 HardcoverIdentityProvider(
                     lambda host, port: ("1.1.1.1",),
-                    HttpxIdentityByteChannel(transport=httpx.MockTransport(respond)),
+                    channel,
                     b"synthetic-noncredential",
                 ),
                 self.query(),
@@ -485,6 +551,16 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         )
         self.assertEqual(body_iterations, 0)
         self.assertTrue(closed)
+        self.assertIn("unrelated-thread-log", records)
+        self.assertEqual(
+            (
+                transport_logger.level,
+                transport_logger.propagate,
+                transport_logger.disabled,
+                tuple(transport_logger.handlers),
+            ),
+            logger_configuration,
+        )
         self.assertFalse(
             any("private-" in message or "1.1.1.1" in message for message in records)
         )
@@ -757,20 +833,16 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         live_channel = self.channel()
         live = LiveHardcoverIdentityProvider(
             lambda: b"synthetic-noncredential",
+            resolver_factory=lambda budget: lambda host, port: ("1.1.1.1",),
             channel_factory=lambda: live_channel,
         )
-        with patch.object(
-            adapter,
-            "BoundedIdentityAddressResolver",
-            return_value=lambda host, port: ("1.1.1.1",),
-        ):
-            with self.assertRaises(IdentityExchangeGuardError):
-                _run_prepared(
-                    live,
-                    self.query(),
-                    self.context(),
-                    before_exchange=reject_exchange,
-                )
+        with self.assertRaises(IdentityExchangeGuardError):
+            _run_prepared(
+                live,
+                self.query(),
+                self.context(),
+                before_exchange=reject_exchange,
+            )
         self.assertFalse(live_channel.called)
 
     def test_time_and_cancellation_probe_failures_are_value_free(self) -> None:

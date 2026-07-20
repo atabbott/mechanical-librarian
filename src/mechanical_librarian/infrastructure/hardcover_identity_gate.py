@@ -21,12 +21,18 @@ class HardcoverIdentityGateError(RuntimeError):
     """Public-value-free failure to establish stable deployment identity."""
 
 
-@dataclass(frozen=True, slots=True)
-class _BindingRecovery:
+@dataclass(frozen=True, repr=False, slots=True)
+class CommittedSQLiteBindingRecovery:
+    """Exact gate-emitted evidence for one committed connection recovery row."""
+
+    connection: sqlite3.Connection
     database_identity: tuple[int, int]
     marker: int
     original: int
     canonical: str
+
+    def __repr__(self) -> str:
+        return "CommittedSQLiteBindingRecovery(<redacted>)"
 
 
 @dataclass(slots=True)
@@ -307,7 +313,7 @@ class DescriptorHardcoverIdentityGate:
         database_identity: tuple[int, int],
         marker: int,
         original: int,
-    ) -> _BindingRecovery:
+    ) -> CommittedSQLiteBindingRecovery:
         canonical = cls._encode_recovery(database_identity, marker, original)
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -330,17 +336,26 @@ class DescriptorHardcoverIdentityGate:
                 connection.rollback()
             raise
         cls._checkpoint(connection)
-        return _BindingRecovery(database_identity, marker, original, canonical)
+        return CommittedSQLiteBindingRecovery(
+            connection,
+            database_identity,
+            marker,
+            original,
+            canonical,
+        )
 
     @classmethod
     def _restore_binding(
         cls,
         connection: sqlite3.Connection,
-        recovery: _BindingRecovery,
+        recovery: CommittedSQLiteBindingRecovery,
     ) -> None:
         connection.execute("BEGIN IMMEDIATE")
         try:
-            if cls._recovery_value(connection) != recovery.canonical:
+            if (
+                recovery.connection is not connection
+                or cls._recovery_value(connection) != recovery.canonical
+            ):
                 raise HardcoverIdentityGateError(
                     "Hardcover database binding recovery changed"
                 )
@@ -377,7 +392,7 @@ class DescriptorHardcoverIdentityGate:
         cls,
         connection: sqlite3.Connection,
         database_identity: tuple[int, int],
-    ) -> _BindingRecovery | None:
+    ) -> CommittedSQLiteBindingRecovery | None:
         value = cls._recovery_value(connection)
         if value is None:
             return None
@@ -414,8 +429,12 @@ class DescriptorHardcoverIdentityGate:
             raise HardcoverIdentityGateError(
                 "Hardcover database binding recovery is invalid"
             )
-        recovery = _BindingRecovery(
-            (device, inode), marker, original, value
+        recovery = CommittedSQLiteBindingRecovery(
+            connection,
+            (device, inode),
+            marker,
+            original,
+            value,
         )
         if cls._connection_application_id(connection) != marker:
             raise HardcoverIdentityGateError(

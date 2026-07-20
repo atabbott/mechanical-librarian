@@ -177,7 +177,10 @@ class HardcoverPrivatePersistenceExceptionsTests(unittest.TestCase):
                     self.assertNotIn(forbidden, row[1])
 
                 rendered = "\n".join(
-                    logical_private_persistence_records(connection)
+                    logical_private_persistence_records(
+                        connection,
+                        recovery_observation=recovery,
+                    )
                 )
                 self.assertNotIn(row[0], rendered)
                 self.assertNotIn(row[1], rendered)
@@ -203,6 +206,87 @@ class HardcoverPrivatePersistenceExceptionsTests(unittest.TestCase):
                     "WHERE key='hardcover-identity-binding-recovery-v1'"
                 ).fetchone()
             )
+
+    def test_recovery_exception_is_bound_to_the_scanned_connection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            database = root / "state.sqlite"
+            original = sqlite3.connect(database, isolation_level=None)
+            self.addCleanup(original.close)
+            migrate(original)
+            original.execute("PRAGMA journal_mode=MEMORY")
+            original.execute("PRAGMA application_id=123456")
+            original.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+            displaced = root / "displaced.sqlite"
+            database.rename(displaced)
+            replacement = sqlite3.connect(database, isolation_level=None)
+            self.addCleanup(replacement.close)
+            migrate(replacement)
+            replacement_identity = database.stat()
+            replacement_gate = DescriptorHardcoverIdentityGate(
+                database,
+                expected_database_identity=(
+                    replacement_identity.st_dev,
+                    replacement_identity.st_ino,
+                ),
+            )
+            lease = replacement_gate.try_acquire()
+            self.assertIsNotNone(lease)
+            assert lease is not None
+            replacement_recovery = replacement_gate._publish_binding(
+                replacement,
+                lease.database_identity,
+                0x4D4C4201,
+                0,
+            )
+            lease.release()
+
+            original.execute(
+                "INSERT INTO instance_metadata(key,value) VALUES(?,?)",
+                (
+                    "hardcover-identity-binding-recovery-v1",
+                    replacement_recovery.canonical,
+                ),
+            )
+            original.execute("PRAGMA application_id=1296843265")
+
+            original_records = "\n".join(
+                logical_private_persistence_records(
+                    original,
+                    recovery_observation=replacement_recovery,
+                )
+            )
+            self.assertIn(replacement_recovery.canonical, original_records)
+
+            replacement_without_observation = "\n".join(
+                logical_private_persistence_records(replacement)
+            )
+            self.assertIn(
+                replacement_recovery.canonical,
+                replacement_without_observation,
+            )
+            replacement_with_observation = "\n".join(
+                logical_private_persistence_records(
+                    replacement,
+                    recovery_observation=replacement_recovery,
+                )
+            )
+            self.assertNotIn(
+                replacement_recovery.canonical,
+                replacement_with_observation,
+            )
+
+            replacement_gate._restore_binding(
+                replacement,
+                replacement_recovery,
+            )
+            original.execute(
+                "DELETE FROM instance_metadata WHERE key=?",
+                ("hardcover-identity-binding-recovery-v1",),
+            )
+            original.execute("PRAGMA application_id=123456")
 
     def test_recovery_exception_rejects_every_forged_location_and_field(
         self,

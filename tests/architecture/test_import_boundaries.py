@@ -320,6 +320,21 @@ class ImportBoundaryTests(unittest.TestCase):
             )
         )
 
+    def test_hardcover_provider_owns_no_process_or_global_logging_mechanism(
+        self,
+    ) -> None:
+        provider = PACKAGE_ROOT / "adapters" / "providers" / "hardcover_identity.py"
+        imported_roots = {
+            imported.split(".", 1)[0] for imported in _imports(provider)
+        }
+
+        self.assertEqual(
+            imported_roots.intersection(
+                {"logging", "subprocess", "sys", "threading"}
+            ),
+            set(),
+        )
+
     def test_infrastructure_cannot_implement_persistence_port(self) -> None:
         self.assertTrue(
             violates_boundary(

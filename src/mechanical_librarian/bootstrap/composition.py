@@ -67,6 +67,7 @@ from mechanical_librarian.adapters.providers.synthetic_hardcover_identity import
     SyntheticBookIdentityProvider,
 )
 from mechanical_librarian.adapters.providers.hardcover_identity import (
+    HttpxIdentityByteChannel,
     LiveHardcoverIdentityProvider,
     StructuralHardcoverIdentityPreview,
 )
@@ -83,6 +84,7 @@ from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.hardcover_identity import (
     DurableWorkPreviewReport,
     FixedAdapterPreviewReport,
+    HardcoverExecutionPolicy,
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
@@ -229,6 +231,10 @@ from mechanical_librarian.infrastructure.security.target_secrets import (
 from mechanical_librarian.infrastructure.security.provider_secrets import (
     PrivateFileProviderCredentials,
     ProviderSecretUnavailable,
+)
+from mechanical_librarian.infrastructure.security.hardcover_transport import (
+    ContextTransportLogIsolation,
+    IsolatedAddressResolverFactory,
 )
 from mechanical_librarian.infrastructure.security.private_query import (
     read_private_query,
@@ -1602,10 +1608,12 @@ def _run_hardcover_identity_report(
     configuration_path: Path,
     database: Path,
     query_path: Path,
-    qualification_one_shot: bool,
+    execution_policy: HardcoverExecutionPolicy,
 ) -> HardcoverIdentityReport:
     """Run the installed F09f boundary with authority acquired in safe order."""
 
+    if type(execution_policy) is not HardcoverExecutionPolicy:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
     configuration = load_configuration_file(configuration_path)
     provider_configuration = configuration.hardcover_provider
     if not provider_configuration.enabled:
@@ -1614,14 +1622,17 @@ def _run_hardcover_identity_report(
         query = read_private_query(query_path)
     except PrivateQueryError:
         return HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
-    if qualification_one_shot and not _qualification_state_is_disposable(database):
+    if (
+        execution_policy.requires_disposable_state
+        and not _qualification_state_is_disposable(database)
+    ):
         return HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
     try:
         DescriptorHardcoverIdentityGate(database)
     except Exception:
         return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
     expected_database_identity = None
-    if qualification_one_shot:
+    if execution_policy.requires_disposable_state:
         state, expected_database_identity = _run_new_qualification_state_check(
             database
         )
@@ -1652,8 +1663,13 @@ def _run_hardcover_identity_report(
         SecretReference(reference),
         SecretScope.METADATA_PROVIDER,
     )
+    log_isolation = ContextTransportLogIsolation()
     provider = LiveHardcoverIdentityProvider(
-        lambda: PrivateFileProviderCredentials().hardcover_identity_token(handle)
+        lambda: PrivateFileProviderCredentials().hardcover_identity_token(handle),
+        resolver_factory=IsolatedAddressResolverFactory(),
+        channel_factory=lambda: HttpxIdentityByteChannel(
+            log_isolation_factory=log_isolation
+        ),
     )
     connection = None
     cancellation = threading.Event()
@@ -1686,7 +1702,7 @@ def _run_hardcover_identity_report(
             ),
             _C5_INTERNAL_OWNER,
             query,
-            1 if qualification_one_shot else 3,
+            execution_policy.max_starts,
         )
         with _temporary_identity_cancellation_signals(cancellation):
             report = RunHardcoverIdentityReport(lifecycle).run(request, context)
@@ -1703,19 +1719,82 @@ def _run_hardcover_identity_report(
 def _qualification_state_is_disposable(database: Path) -> bool:
     """Require one absent target in an empty owner-only state directory."""
 
+    descriptor: int | None = None
     try:
+        if (
+            not database.is_absolute()
+            or database.name in {"", ".", ".."}
+            or any(part in {".", ".."} for part in database.parts)
+        ):
+            return False
+        supplied_parent = database.parent
         parent = database.parent.resolve(strict=True)
         status = parent.stat()
-        return bool(
-            database.is_absolute()
-            and not path_entry_exists(database)
-            and stat.S_ISDIR(status.st_mode)
-            and status.st_uid == os.geteuid()
-            and stat.S_IMODE(status.st_mode) == 0o700
-            and not tuple(parent.iterdir())
+        supplied = supplied_parent.lstat()
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        cloexec = getattr(os, "O_CLOEXEC", None)
+        directory_flag = getattr(os, "O_DIRECTORY", None)
+        if (
+            nofollow is None
+            or cloexec is None
+            or directory_flag is None
+            or not stat.S_ISDIR(status.st_mode)
+            or not stat.S_ISDIR(supplied.st_mode)
+            or (status.st_dev, status.st_ino) != (supplied.st_dev, supplied.st_ino)
+            or status.st_uid != os.geteuid()
+            or stat.S_IMODE(status.st_mode) != 0o700
+        ):
+            return False
+        descriptor = os.open(
+            parent,
+            os.O_RDONLY | nofollow | cloexec | directory_flag,
         )
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o700
+        ):
+            return False
+        try:
+            os.stat(
+                database.name,
+                dir_fd=descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            return False
+        empty = _directory_descriptor_is_empty(descriptor)
+        try:
+            os.close(descriptor)
+        except OSError:
+            descriptor = None
+            return False
+        descriptor = None
+        return empty
     except (OSError, RuntimeError, SchemaError):
         return False
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _directory_descriptor_is_empty(descriptor: int) -> bool:
+    entries = os.scandir(descriptor)
+    try:
+        try:
+            next(entries)
+        except StopIteration:
+            return True
+        return False
+    finally:
+        entries.close()
 
 
 def _run_hardcover_inert_preview(

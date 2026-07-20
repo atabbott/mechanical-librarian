@@ -11,15 +11,10 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
-import logging
 import re
-import subprocess
-import sys
-import threading
 import time
 import unicodedata
 from collections.abc import Callable, Coroutine, Iterable, Mapping
-from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, TypeVar
@@ -34,6 +29,13 @@ from mechanical_librarian.application.hardcover_identity import (
     IdentityExchangeGuardError,
     IsbnIdentityQuery,
     PreparedIdentityExchange,
+)
+from mechanical_librarian.application.transport_capabilities import (
+    AddressResolverFactory,
+    ResolverBudget,
+    ResolverFailure,
+    ResolverFailureKind,
+    TransportLogIsolationFactory,
 )
 from mechanical_librarian.application.ports import (
     CancellationId,
@@ -83,7 +85,6 @@ MAX_TOTAL_STRING_SCALARS = 4_096
 MAX_TOTAL_STRING_BYTES = 16_384
 MIN_INT32 = -2_147_483_648
 MAX_INT32 = 2_147_483_647
-_TRANSPORT_LOG_LOCK = threading.RLock()
 
 _EDITION_KEYS = {
     "id",
@@ -120,20 +121,6 @@ _BIDI_CONTROLS = frozenset(
     {0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)}
 )
 _ASYNC_RESULT = TypeVar("_ASYNC_RESULT")
-_RESOLVER_SCRIPT = """\
-import json
-import socket
-import sys
-
-answers = socket.getaddrinfo(
-    sys.argv[1],
-    int(sys.argv[2]),
-    family=socket.AF_UNSPEC,
-    type=socket.SOCK_STREAM,
-    proto=socket.IPPROTO_TCP,
-)
-sys.stdout.write(json.dumps([answer[4][0] for answer in answers]))
-"""
 
 
 class IdentityAddressResolver(Protocol):
@@ -267,108 +254,23 @@ class IdentityChannelFailure(RuntimeError):
         self.kind = kind
 
 
-class BoundedIdentityAddressResolver:
-    """Resolve once in an isolated process under the attempt context budget."""
-
-    def __init__(self, context: OperationContext) -> None:
-        if type(context) is not OperationContext:
-            raise TypeError("identity resolver context is malformed")
-        self._context = context
-        self._wall_deadline = time.monotonic() + _logical_remaining(context)
-
-    def __call__(self, host: str, port: int) -> tuple[str, ...]:
-        if host != HARDCOVER_IDENTITY_HOST or port != 443:
-            raise IdentityChannelFailure(IdentityAttemptFailureKind.INCOMPATIBLE)
-        failure = _bounded_context_failure(self._context, self._wall_deadline)
-        if failure is not None:
-            raise IdentityChannelFailure(failure)
-        process = subprocess.Popen(
-            [sys.executable, "-I", "-c", _RESOLVER_SCRIPT, host, str(port)],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-            cwd="/",
-            env={},
-        )
-        try:
-            while process.poll() is None:
-                failure = _bounded_context_failure(self._context, self._wall_deadline)
-                if failure is not None:
-                    _terminate_resolver(process)
-                    raise IdentityChannelFailure(failure)
-                time.sleep(min(0.01, _remaining(self._context, self._wall_deadline)))
-            output, _ = process.communicate(timeout=0.1)
-        finally:
-            if process.poll() is None:
-                _terminate_resolver(process)
-        if process.returncode != 0 or not 1 <= len(output) <= 8_192:
-            raise IdentityChannelFailure(IdentityAttemptFailureKind.UNAVAILABLE)
-        try:
-            values = json.loads(output.decode("ascii", "strict"))
-        except (UnicodeError, ValueError, json.JSONDecodeError):
-            raise IdentityChannelFailure(
-                IdentityAttemptFailureKind.UNAVAILABLE
-            ) from None
-        if type(values) is not list or any(type(value) is not str for value in values):
-            raise IdentityChannelFailure(IdentityAttemptFailureKind.UNAVAILABLE)
-        return tuple(values)
-
-
-@contextmanager
-def _transport_logging_boundary():
-    """Prevent the HTTP dependency from exporting transport-derived values."""
-
-    with _TRANSPORT_LOG_LOCK:
-        names = {"httpx", "httpcore"}
-        names.update(
-            name
-            for name in logging.root.manager.loggerDict
-            if name == "httpx"
-            or name.startswith("httpx.")
-            or name == "httpcore"
-            or name.startswith("httpcore.")
-        )
-        states: list[
-            tuple[logging.Logger, int, bool, bool, list[logging.Handler]]
-        ] = []
-        sink = logging.NullHandler()
-        try:
-            for name in sorted(names):
-                logger = logging.getLogger(name)
-                states.append(
-                    (
-                        logger,
-                        logger.level,
-                        logger.propagate,
-                        logger.disabled,
-                        list(logger.handlers),
-                    )
-                )
-                logger.setLevel(logging.CRITICAL + 1)
-                logger.propagate = False
-                logger.disabled = False
-                logger.handlers[:] = [sink]
-            yield
-        finally:
-            for logger, level, propagate, disabled, handlers in reversed(states):
-                logger.handlers[:] = handlers
-                logger.disabled = disabled
-                logger.propagate = propagate
-                logger.setLevel(level)
-
-
 class HttpxIdentityByteChannel:
     """Perform one selected-IP request and return a closed bounded raw response."""
 
     def __init__(
-        self, *, transport: httpx.AsyncBaseTransport | None = None
+        self,
+        *,
+        log_isolation_factory: TransportLogIsolationFactory,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         if transport is not None and not isinstance(
             transport, httpx.AsyncBaseTransport
         ):
             raise TypeError("identity transport is malformed")
+        if not callable(log_isolation_factory):
+            raise TypeError("identity log isolation is malformed")
         self._transport = transport
+        self._log_isolation_factory = log_isolation_factory
         self._called = False
 
     def exchange(
@@ -421,7 +323,7 @@ class HttpxIdentityByteChannel:
         context: OperationContext,
         wall_deadline: float,
     ) -> RawIdentityResponseHead:
-        with _transport_logging_boundary():
+        with self._log_isolation_factory():
             return await self._perform_without_transport_logs(
                 request, context, wall_deadline
             )
@@ -539,11 +441,17 @@ class LiveHardcoverIdentityProvider:
         self,
         token_reader: Callable[[], bytes],
         *,
-        channel_factory: Callable[[], IdentityByteChannel] = HttpxIdentityByteChannel,
+        resolver_factory: AddressResolverFactory,
+        channel_factory: Callable[[], IdentityByteChannel],
     ) -> None:
-        if not callable(token_reader) or not callable(channel_factory):
+        if (
+            not callable(token_reader)
+            or not callable(resolver_factory)
+            or not callable(channel_factory)
+        ):
             raise TypeError("live identity provider construction is malformed")
         self._token_reader = token_reader
+        self._resolver_factory = resolver_factory
         self._channel_factory = channel_factory
 
     def prepare(
@@ -570,11 +478,21 @@ class LiveHardcoverIdentityProvider:
             token = b""
             return IdentityAttemptResult.failed(preflight)
         try:
+            resolver = self._resolver_factory(
+                ResolverBudget(
+                    remaining_seconds=lambda: _logical_remaining(context),
+                    is_cancelled=context.cancellation.is_cancelled,
+                )
+            )
             return HardcoverIdentityProvider(
-                BoundedIdentityAddressResolver(context),
+                resolver,
                 self._channel_factory(),
                 token,
             ).prepare(query, context)
+        except ResolverFailure as error:
+            return IdentityAttemptResult.failed(
+                _identity_failure_from_resolver(error.kind)
+            )
         except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         finally:
@@ -623,6 +541,10 @@ class HardcoverIdentityProvider:
             resolved = self._resolver(HARDCOVER_IDENTITY_HOST, 443)
         except IdentityChannelFailure as error:
             return IdentityAttemptResult.failed(error.kind)
+        except ResolverFailure as error:
+            return IdentityAttemptResult.failed(
+                _identity_failure_from_resolver(error.kind)
+            )
         except Exception:
             return IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE)
         addresses = _validated_addresses(resolved)
@@ -1239,6 +1161,16 @@ def _remaining(context: OperationContext, wall_deadline: float) -> float:
     )
 
 
+def _identity_failure_from_resolver(
+    kind: ResolverFailureKind,
+) -> IdentityAttemptFailureKind:
+    return {
+        ResolverFailureKind.CANCELLED: IdentityAttemptFailureKind.CANCELLED,
+        ResolverFailureKind.TIMEOUT: IdentityAttemptFailureKind.TIMEOUT,
+        ResolverFailureKind.UNAVAILABLE: IdentityAttemptFailureKind.UNAVAILABLE,
+    }[kind]
+
+
 def _bounded_context_failure(
     context: OperationContext, wall_deadline: float
 ) -> IdentityAttemptFailureKind | None:
@@ -1250,14 +1182,6 @@ def _bounded_context_failure(
     if _remaining(context, wall_deadline) <= 0:
         return IdentityAttemptFailureKind.TIMEOUT
     return None
-
-
-def _terminate_resolver(process: subprocess.Popen[bytes]) -> None:
-    process.kill()
-    try:
-        process.wait(timeout=0.1)
-    except subprocess.TimeoutExpired:
-        process.wait()
 
 
 def _run_identity_async(
@@ -1706,7 +1630,6 @@ def _reject_number(_: str) -> int:
 
 __all__ = [
     "AuthorizedIdentityRequest",
-    "BoundedIdentityAddressResolver",
     "FrozenIdentityRequest",
     "HARDCOVER_IDENTITY_HOST",
     "HARDCOVER_IDENTITY_OPERATION",

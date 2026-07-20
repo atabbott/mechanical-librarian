@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from enum import StrEnum
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -59,6 +59,56 @@ class HardcoverIdentityOutcome(StrEnum):
     IN_PROGRESS = "in_progress"
     PERSISTENCE_FAILURE = "persistence_failure"
     RETRY_EXHAUSTED = "retry_exhausted"
+
+
+@dataclass(frozen=True, slots=True)
+class _ExecutionPolicySpec:
+    name: str
+    max_starts: int
+    requires_disposable_state: bool
+    requires_json_output: bool
+    successful_exit_outcomes: frozenset[HardcoverIdentityOutcome]
+
+
+class HardcoverExecutionPolicy(Enum):
+    """Named installed-execution authority selected once by the interface."""
+
+    NORMAL = _ExecutionPolicySpec(
+        "normal",
+        3,
+        False,
+        False,
+        frozenset(HardcoverIdentityOutcome) - {HardcoverIdentityOutcome.INVALID_INPUT},
+    )
+    QUALIFICATION_ONE_SHOT = _ExecutionPolicySpec(
+        "qualification_one_shot",
+        1,
+        True,
+        True,
+        frozenset({HardcoverIdentityOutcome.MATCHED}),
+    )
+
+    @property
+    def policy_name(self) -> str:
+        return self.value.name
+
+    @property
+    def max_starts(self) -> int:
+        return self.value.max_starts
+
+    @property
+    def requires_disposable_state(self) -> bool:
+        return self.value.requires_disposable_state
+
+    def accepts_output_format(self, output_format: object) -> bool:
+        return type(output_format) is str and (
+            output_format == "json" or not self.value.requires_json_output
+        )
+
+    def exit_code(self, outcome: object) -> int:
+        if type(outcome) is not HardcoverIdentityOutcome:
+            raise TypeError("Hardcover identity outcome is malformed")
+        return 0 if outcome in self.value.successful_exit_outcomes else 2
 
 
 class IdentityAttemptFailureKind(StrEnum):
