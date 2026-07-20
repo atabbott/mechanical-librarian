@@ -114,7 +114,9 @@ class RunHardcoverIdentityLifecycle:
                 if now < due:
                     if not wait_for_retry:
                         return _report(HardcoverIdentityOutcome.IN_PROGRESS)
-                    waited = self._wait_until(due, now, context)
+                    waited = self._wait_until(
+                        due, active.aggregate_deadline, now, context
+                    )
                     if waited is not None:
                         return waited
                     wait_for_retry = False
@@ -147,11 +149,15 @@ class RunHardcoverIdentityLifecycle:
     def _wait_until(
         self,
         due: datetime,
+        aggregate_deadline: datetime,
         before: datetime,
         context: OperationContext,
     ) -> HardcoverIdentityReport | None:
         try:
-            interrupted = self._retry_wait.wait((due - before).total_seconds())
+            wake_at = min(due, aggregate_deadline, context.deadline.at)
+            interrupted = self._retry_wait.wait(
+                (wake_at - before).total_seconds()
+            )
             if type(interrupted) is not bool:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
             after = context.observed_at
@@ -163,7 +169,7 @@ class RunHardcoverIdentityLifecycle:
             return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
         if context.cancelled:
             return None
-        if context.deadline.expired_at(after):
+        if after >= aggregate_deadline or context.deadline.expired_at(after):
             return _report(HardcoverIdentityOutcome.RETRY_EXHAUSTED)
         if after < due:
             return _report(HardcoverIdentityOutcome.IN_PROGRESS)

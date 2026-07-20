@@ -113,37 +113,54 @@ def c6_forbidden_corpus(
     database_paths: Sequence[Path],
     *,
     allowed_values: Sequence[str],
+    persistence_safe: bool = False,
 ) -> dict[str, frozenset[str]]:
     contributor = set()
     for variant in variants:
         if variant.name in {"canonical", "taint-sentinel"}:
             for value in variant.contributor_values:
-                contributor.update(text_projections(value))
+                contributor.update(_text_projections(value, persistence_safe))
     query = {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
-    private_query = set(blob_projections(json.dumps(query).encode("utf-8")))
+    private_query = set(
+        _blob_projections(json.dumps(query).encode("utf-8"), persistence_safe)
+    )
     for value in query.values():
         private_query.update(
-            text_projections(value, allow_numeric_prefix=value.isdigit())
+            _text_projections(
+                value,
+                persistence_safe,
+                allow_numeric_prefix=value.isdigit(),
+            )
         )
     isbn_identity = set()
     for value in ("9780000000019", "0000000019"):
-        isbn_identity.update(blob_projections(value.encode("ascii")))
+        isbn_identity.update(
+            _blob_projections(value.encode("ascii"), persistence_safe)
+        )
     provider_identity = set()
     for value in (b"Synthetic Ebook Alpha", b'"id":1001', b'"book_id":2001'):
-        provider_identity.update(blob_projections(value))
-    database_identity = set(text_projections("private-c6-sentinel.sqlite"))
+        provider_identity.update(_blob_projections(value, persistence_safe))
+    database_identity = set(
+        _text_projections("private-c6-sentinel.sqlite", persistence_safe)
+    )
     for path in database_paths:
         for value in (str(path), path.name, str(path.parent), path.parent.name):
-            database_identity.update(text_projections(value))
+            database_identity.update(_text_projections(value, persistence_safe))
     serialized_input = set()
     for variant in variants:
-        serialized_input.update(blob_projections(variant.payload))
+        serialized_input.update(
+            _blob_projections(variant.payload, persistence_safe)
+        )
     resource_identity = set()
     for relative in C6_RESOURCE_PATHS:
         payload = (repo_root / relative).read_bytes()
-        resource_identity.update(blob_projections(relative.as_posix().encode()))
-        resource_identity.update(blob_projections(relative.name.encode()))
-        resource_identity.update(blob_projections(payload))
+        resource_identity.update(
+            _blob_projections(relative.as_posix().encode(), persistence_safe)
+        )
+        resource_identity.update(
+            _blob_projections(relative.name.encode(), persistence_safe)
+        )
+        resource_identity.update(_blob_projections(payload, persistence_safe))
     corpus = {
         "contributor_control": contributor,
         "private_query": private_query,
@@ -163,13 +180,68 @@ def c6_forbidden_corpus(
 def assert_c6_channels_private(
     channels: Mapping[str, list[str]],
     corpus: Mapping[str, frozenset[str]],
+    *,
+    persistence_corpus: Mapping[str, frozenset[str]] | None = None,
 ) -> None:
+    if persistence_corpus is None:
+        persistence_corpus = corpus
+    runtime_channels = {
+        channel: ([] if channel == "persistence" else values)
+        for channel, values in channels.items()
+    }
     assert_projection_channels_private(
-        channels,
+        runtime_channels,
         corpus,
         expected_channels=C6_CAPTURE_CHANNELS,
         expected_source_classes=C6_FORBIDDEN_SOURCE_CLASSES,
     )
+    persistence_channels = {
+        channel: (values if channel == "persistence" else [])
+        for channel, values in channels.items()
+    }
+    assert_projection_channels_private(
+        persistence_channels,
+        persistence_corpus,
+        expected_channels=C6_CAPTURE_CHANNELS,
+        expected_source_classes=C6_FORBIDDEN_SOURCE_CLASSES,
+    )
+
+
+def _blob_projections(payload: bytes, persistence_safe: bool) -> frozenset[str]:
+    projections = blob_projections(payload)
+    if not persistence_safe:
+        return projections
+    return projections - _short_digest_prefixes(payload)
+
+
+def _text_projections(
+    value: str,
+    persistence_safe: bool,
+    *,
+    allow_numeric_prefix: bool = False,
+) -> frozenset[str]:
+    projections = text_projections(
+        value, allow_numeric_prefix=allow_numeric_prefix
+    )
+    if not persistence_safe:
+        return projections
+    return projections - _short_digest_prefixes(value.encode("utf-8"))
+
+
+def _short_digest_prefixes(payload: bytes) -> frozenset[str]:
+    digesters = (
+        hashlib.md5(payload, usedforsecurity=False),
+        hashlib.sha1(payload, usedforsecurity=False),
+        hashlib.sha224(payload),
+        hashlib.sha256(payload),
+        hashlib.sha384(payload),
+        hashlib.sha512(payload),
+        hashlib.sha3_256(payload),
+        hashlib.sha3_512(payload),
+        hashlib.blake2s(payload),
+        hashlib.blake2b(payload),
+    )
+    return frozenset(digester.hexdigest()[:8] for digester in digesters)
 
 
 def resource_digests(repo_root: Path) -> tuple[str, ...]:

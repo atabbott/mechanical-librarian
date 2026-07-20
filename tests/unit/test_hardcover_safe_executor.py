@@ -347,6 +347,50 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                 )
                 self.assertEqual(competing_snapshot, (1, 1, attempts, state))
 
+    def test_post_gate_future_retry_wait_race_remains_in_progress(self) -> None:
+        request = self.request("post-gate-future-retry")
+        provider = _Provider(self.matched(), self.clock)
+        accepted = self.work.accept(request.work_key, self.clock.now)
+        acquire = self.gate.try_acquire
+        competing_snapshot = None
+
+        def acquire_after_retry_schedule():
+            nonlocal competing_snapshot
+            competing = self.work.claim(
+                accepted.reference,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            started = self.work.start(
+                competing,
+                "competing-worker",
+                self.clock.now,
+                gate_owned=True,
+            )
+            self.work.publish_failed(
+                started,
+                "competing-worker",
+                self.clock.now,
+                retryable=True,
+                retry_delay_seconds=10,
+                gate_owned=True,
+            )
+            competing_snapshot = self._work_counts(request.work_key)
+            return acquire()
+
+        with patch.object(
+            self.gate,
+            "try_acquire",
+            side_effect=acquire_after_retry_schedule,
+        ):
+            report = self.execute(request, provider)
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(provider.starts, 0)
+        self.assertEqual(self._work_counts(request.work_key), competing_snapshot)
+        self.assertEqual(competing_snapshot, (1, 1, 1, "retry_wait"))
+
     def test_rejects_inconsistent_post_gate_current_match_without_local_mutation(
         self,
     ) -> None:

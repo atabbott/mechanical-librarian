@@ -2200,6 +2200,109 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             (1,),
         )
 
+    def test_one_shot_publication_rollback_restarts_terminal_without_retry(self) -> None:
+        accepted = self.accept()
+        claim = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        started = self.repository.renew_and_start(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=2),
+            gate_owned=True,
+            egress_limit=1,
+        )
+        self.assertIsInstance(started, IdentityWorkClaim)
+        with self.assertRaisesRegex(
+            IdentityWorkPersistenceError, "injected identity failure publication"
+        ):
+            self.repository.publish_failed(
+                started,
+                "worker-a",
+                ORIGIN + timedelta(seconds=3),
+                retryable=True,
+                retry_delay_seconds=1,
+                gate_owned=True,
+                fail_before_commit=True,
+            )
+
+        self.connection.close()
+        self.connection = connect(self.path)
+        self.addCleanup(self.connection.close)
+        self.repository = SQLiteHardcoverIdentityWorkRepository(self.connection)
+        exhausted = self.repository.recover_interrupted(
+            started,
+            ORIGIN + timedelta(seconds=18),
+            gate_owned=True,
+        )
+
+        self.assertEqual(exhausted.outcome, IdentityWorkOutcome.RETRY_EXHAUSTED)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations"
+            ).fetchone(),
+            ("failed", 1),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT outcome FROM hardcover_identity_attempts"
+            ).fetchone(),
+            ("interrupted",),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_retry_schedules"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_successful_one_shot_refreshes_only_after_currentness_expiry(self) -> None:
+        accepted = self.accept()
+        claim = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        started = self.repository.renew_and_start(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=2),
+            gate_owned=True,
+            egress_limit=1,
+        )
+        self.repository.publish_matched(
+            started,
+            "worker-a",
+            ORIGIN + timedelta(seconds=3),
+            MATCHED,
+            gate_owned=True,
+        )
+        exact = self.repository.accept(
+            WORK_KEY, ORIGIN + timedelta(hours=24, seconds=3)
+        )
+        stale = self.repository.accept(
+            WORK_KEY,
+            ORIGIN + timedelta(hours=24, seconds=3, microseconds=1),
+        )
+        reserved = self.repository.accept(
+            WORK_KEY,
+            ORIGIN + timedelta(hours=24, seconds=3, microseconds=2),
+        )
+
+        self.assertEqual(exact.outcome, IdentityWorkOutcome.MATCHED)
+        self.assertEqual(
+            (stale.outcome, stale.reference.generation, stale.candidate),
+            (IdentityWorkOutcome.STALE, 2, None),
+        )
+        self.assertEqual(
+            (reserved.outcome, reserved.reference.generation, reserved.candidate),
+            (IdentityWorkOutcome.STALE, 2, 1),
+        )
+
     def test_egress_policy_and_start_roll_back_as_one_atomic_change(self) -> None:
         accepted = self.accept()
         claim = self.repository.claim(

@@ -258,7 +258,7 @@ authority.
 
 Stdout must match `c6-lifecycle-orchestration-example-output.json`. The
 cumulative registry is `preview-registry-c6-v1.json`, SHA-256
-`0fb285a1eda9546c1f9958f80c8a8e5690d7ff887adee2067e385a4d227756e4`.
+`eea646f35a20280a38149b1a437bb9833bee23d4b5b9e79b1a36a2c0e49ae1d8`.
 
 The gate is deployment-scoped, not credential-scoped. Operators must not reuse
 one Hardcover credential across independently configured deployments. The

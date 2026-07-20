@@ -193,6 +193,12 @@ class RunSafeHardcoverIdentity:
         active = self._work.inspect(reference, now)
         if active.state is IdentityWorkState.CLAIMED:
             return _report(HardcoverIdentityOutcome.IN_PROGRESS)
+        if (
+            active.state is IdentityWorkState.RETRY_WAIT
+            and active.retry_due_at is not None
+            and now < active.retry_due_at
+        ):
+            return _report(HardcoverIdentityOutcome.IN_PROGRESS)
         if active.state is IdentityWorkState.SUCCEEDED:
             return _report(HardcoverIdentityOutcome.MATCHED)
         if active.state in {

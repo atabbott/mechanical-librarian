@@ -297,7 +297,7 @@ class DurableWorkPreviewReport:
             or type(self.schema_from) is not int
             or self.schema_from != 8
             or type(self.schema_to) is not int
-            or self.schema_to != 9
+            or self.schema_to != 10
             or self.migration_rollback_verified is not True
             or self.migration_idempotence_verified is not True
             or self.publication_rollback_verified is not True

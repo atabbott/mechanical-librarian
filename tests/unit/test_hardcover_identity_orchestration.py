@@ -266,6 +266,24 @@ class HardcoverIdentityOrchestrationTests(unittest.TestCase):
                 self.assertEqual(report.outcome, expected)
                 self.assertEqual(provider.starts, 1)
 
+    def test_retry_wait_stops_at_earliest_caller_deadline(self) -> None:
+        provider = _SequenceProvider(
+            IdentityAttemptResult.failed(
+                IdentityAttemptFailureKind.RATE_LIMITED,
+                retry_after_seconds=10,
+            )
+        )
+        retry_wait = _Wait(self.clock)
+
+        report = self.lifecycle(provider, retry_wait).run(
+            self.request("caller-capped-wait"),
+            self.context(deadline=ORIGIN + timedelta(milliseconds=500)),
+        )
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.RETRY_EXHAUSTED)
+        self.assertEqual(provider.starts, 1)
+        self.assertEqual(retry_wait.timeouts, [0.5])
+
     def test_expired_started_claim_is_recovered_then_retried(self) -> None:
         request = self.request("expired-claim")
         accepted = self.work.accept(request.work_key, self.clock.now)

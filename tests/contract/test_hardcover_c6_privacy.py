@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import os
+import sqlite3
 import tempfile
 import unittest
 from contextlib import ExitStack
@@ -15,6 +16,7 @@ from mechanical_librarian.application.hardcover_identity import (
     IdentityLifecyclePreviewReport,
 )
 from mechanical_librarian.bootstrap.composition import (
+    _C5_INTERNAL_OWNER,
     _run_hardcover_identity_lifecycle_preview,
 )
 from mechanical_librarian.interfaces.cli import main
@@ -37,6 +39,15 @@ def _render(value: object) -> str:
         return json.dumps(value, default=repr, ensure_ascii=True, sort_keys=True)
     except (TypeError, ValueError, RecursionError):
         return repr(value)
+
+
+def _assert_transient_coverage(
+    coverage: dict[Path, set[str]], databases: tuple[Path, ...]
+) -> None:
+    if set(coverage) != set(databases) or any(
+        coverage[database] != {"main", "wal", "shm"} for database in databases
+    ):
+        raise PrivacyEvidenceError("C6 SQLite transient coverage is incomplete")
 
 
 class HardcoverC6PrivacyTests(unittest.TestCase):
@@ -78,7 +89,21 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
             corpus = c6_forbidden_corpus(
                 ROOT, variants, databases, allowed_values=allowed
             )
+            persistence_corpus = c6_forbidden_corpus(
+                ROOT,
+                variants,
+                databases,
+                allowed_values=allowed,
+                persistence_safe=True,
+            )
+            transient_coverage: dict[Path, set[str]] = {}
+            active_database: Path | None = None
+            checkpoint_connection: sqlite3.Connection | None = None
             original_log = logging.Logger._log
+            original_connect_existing = __import__(
+                "mechanical_librarian.bootstrap.composition",
+                fromlist=["connect_existing"],
+            ).connect_existing
             original_hashes = {
                 algorithm: getattr(hashlib, algorithm)
                 for algorithm in (
@@ -113,8 +138,77 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
                 channels["fingerprint_inputs"].append(_render((args, kwargs)))
                 raise AssertionError("lifecycle preview reached fingerprint authority")
 
+            def connect_existing_spy(path):
+                nonlocal checkpoint_connection
+                connection = original_connect_existing(path)
+                if path == active_database:
+                    checkpoint_connection = connection
+                return connection
+
             def observer(channel: str, values: tuple[object, ...]) -> None:
-                if channel == "metrics":
+                if channel == "persistence_checkpoint":
+                    self.assertEqual(values, ("sqlite-main-wal-shm",))
+                    self.assertIsNotNone(active_database)
+                    self.assertIsNotNone(checkpoint_connection)
+                    assert active_database is not None
+                    assert checkpoint_connection is not None
+                    self.assertEqual(
+                        checkpoint_connection.execute(
+                            "PRAGMA journal_mode = WAL"
+                        ).fetchone(),
+                        ("wal",),
+                    )
+                    original_updated_at = checkpoint_connection.execute(
+                        "SELECT updated_at FROM hardcover_identity_generations "
+                        "WHERE rowid=(SELECT MIN(rowid) "
+                        "FROM hardcover_identity_generations)"
+                    ).fetchone()
+                    self.assertIsNotNone(original_updated_at)
+                    checkpoint_connection.execute("BEGIN IMMEDIATE")
+                    checkpoint_connection.execute(
+                        "UPDATE hardcover_identity_generations "
+                        "SET updated_at='2099-01-01T00:00:00.000000Z' "
+                        "WHERE rowid=(SELECT MIN(rowid) "
+                        "FROM hardcover_identity_generations)"
+                    )
+                    checkpoint_connection.commit()
+                    paths = {
+                        "main": active_database,
+                        "wal": Path(f"{active_database}-wal"),
+                        "shm": Path(f"{active_database}-shm"),
+                    }
+                    try:
+                        presence = {
+                            kind: path.is_file() for kind, path in paths.items()
+                        }
+                        self.assertTrue(all(presence.values()), presence)
+                        transient_coverage[active_database] = set(paths)
+                        for payload in (
+                            path.read_bytes() for path in paths.values()
+                        ):
+                            self.assertTrue(payload)
+                            channels["persistence"].extend(
+                                (payload.decode("latin-1"), payload.hex())
+                            )
+                    finally:
+                        checkpoint_connection.execute("BEGIN IMMEDIATE")
+                        checkpoint_connection.execute(
+                            "UPDATE hardcover_identity_generations "
+                            "SET updated_at=? WHERE rowid=(SELECT MIN(rowid) "
+                            "FROM hardcover_identity_generations)",
+                            original_updated_at,
+                        )
+                        checkpoint_connection.commit()
+                        self.assertEqual(
+                            checkpoint_connection.execute(
+                                "SELECT updated_at "
+                                "FROM hardcover_identity_generations "
+                                "WHERE rowid=(SELECT MIN(rowid) "
+                                "FROM hardcover_identity_generations)"
+                            ).fetchone(),
+                            original_updated_at,
+                        )
+                elif channel == "metrics":
                     name, labels, value, exemplar = values
                     channels["metric_names"].append(_render(name))
                     channels["metric_labels"].append(_render(labels))
@@ -124,6 +218,8 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
                     channels[channel].append(_render(values))
 
             def runner(source, database):
+                nonlocal active_database
+                active_database = database
                 try:
                     report = _run_hardcover_identity_lifecycle_preview(
                         source, database, privacy_observer=observer
@@ -148,6 +244,8 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
                         )
                     )
                     raise
+                finally:
+                    active_database = None
 
             def export_spy(report):
                 rendered = original_to_json(report)
@@ -163,6 +261,10 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
                 ),
                 patch.object(
                     IdentityLifecyclePreviewReport, "to_json", new=export_spy
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.connect_existing",
+                    new=connect_existing_spy,
                 ),
             ]
             patches.extend(
@@ -202,7 +304,35 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
                     outputs.append(stdout.getvalue())
 
             self.assertEqual(len(set(outputs)), 1)
+            _assert_transient_coverage(transient_coverage, databases)
+            with self.assertRaises(PrivacyEvidenceError):
+                _assert_transient_coverage(
+                    {
+                        database: ({"main", "wal"} if index == 0 else set(kinds))
+                        for index, (database, kinds) in enumerate(
+                            transient_coverage.items()
+                        )
+                    },
+                    databases,
+                )
             for database in databases:
+                connection = sqlite3.connect(database)
+                try:
+                    owners = {
+                        row[0]
+                        for row in connection.execute(
+                            "SELECT DISTINCT owner FROM hardcover_identity_claims"
+                        )
+                    }
+                finally:
+                    connection.close()
+                self.assertEqual(owners, {_C5_INTERNAL_OWNER})
+                self.assertTrue(
+                    all(
+                        owners.isdisjoint(variant.contributor_values)
+                        for variant in variants
+                    )
+                )
                 for path in database.parent.iterdir():
                     channels["file_names"].append(path.name)
                     channels["file_paths"].append(str(path))
@@ -215,7 +345,11 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
             channels["audit_logs"].append("")
 
             try:
-                assert_c6_channels_private(channels, corpus)
+                assert_c6_channels_private(
+                    channels,
+                    corpus,
+                    persistence_corpus=persistence_corpus,
+                )
             except PrivacyEvidenceError as failure:
                 self.fail(str(failure))
             self.assertEqual(len(resource_digests(ROOT)), 8)
@@ -225,16 +359,32 @@ class HardcoverC6PrivacyTests(unittest.TestCase):
                 source: next(iter(corpus[source]))
                 for source in C6_FORBIDDEN_SOURCE_CLASSES
             }
+            persistence_representatives = {
+                source: next(iter(persistence_corpus[source]))
+                for source in C6_FORBIDDEN_SOURCE_CLASSES
+            }
             poison_corpus = {
                 source: frozenset({representative})
                 for source, representative in representatives.items()
             }
             for channel in C6_CAPTURE_CHANNELS:
                 for source in C6_FORBIDDEN_SOURCE_CLASSES:
+                    active_representatives = (
+                        persistence_representatives
+                        if channel == "persistence"
+                        else representatives
+                    )
                     poisoned = {key: list(values) for key, values in channels.items()}
-                    poisoned[channel].append(representatives[source])
+                    poisoned[channel].append(active_representatives[source])
                     with self.assertRaises(PrivacyEvidenceError):
-                        assert_c6_channels_private(poisoned, poison_corpus)
+                        assert_c6_channels_private(
+                            poisoned,
+                            poison_corpus,
+                            persistence_corpus={
+                                key: frozenset({value})
+                                for key, value in persistence_representatives.items()
+                            },
+                        )
 
 
 if __name__ == "__main__":

@@ -1733,11 +1733,16 @@ def _run_hardcover_durable_work_preview(
                 migration_rollback_verified = connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE name='hardcover_identity_generations'"
                 ).fetchone() is None
-            if not migration_rollback_verified or migrate(connection) != 9 or migrate(connection) != 9:
-                raise SchemaError("schema-nine migration proof failed")
+            if (
+                not migration_rollback_verified
+                or migrate(connection) != 10
+                or migrate(connection) != 10
+            ):
+                raise SchemaError("current schema migration proof failed")
             migration_idempotence_verified = connection.execute(
-                "SELECT COUNT(*) FROM schema_migrations WHERE version=9"
-            ).fetchone() == (1,)
+                "SELECT version FROM schema_migrations WHERE version IN (9,10) "
+                "ORDER BY version"
+            ).fetchall() == [(9,), (10,)]
 
             service = ManageHardcoverIdentityWork(
                 SQLiteHardcoverIdentityWorkRepository(connection)
@@ -1778,7 +1783,7 @@ def _run_hardcover_durable_work_preview(
     return DurableWorkPreviewReport(
         outcome="stale",
         schema_from=8,
-        schema_to=9,
+        schema_to=10,
         migration_rollback_verified=migration_rollback_verified,
         migration_idempotence_verified=migration_idempotence_verified,
         publication_rollback_verified=publication_rollback_verified,
@@ -2623,6 +2628,15 @@ def _run_hardcover_identity_lifecycle_preview(
                     and before_restored
                     and during_restored
                 )
+            if privacy_observer is not None:
+                try:
+                    privacy_observer(
+                        "persistence_checkpoint", ("sqlite-main-wal-shm",)
+                    )
+                except Exception as exc:
+                    raise SchemaError(
+                        "identity lifecycle privacy persistence observation failed"
+                    ) from exc
         finally:
             connection.close()
 

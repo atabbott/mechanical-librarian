@@ -50,6 +50,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                     (work_key,),
                 ).fetchone()
                 expired = False
+                expired_generation: int | None = None
                 if current is not None:
                     generation, observation_id, status, current_since, expires_at = _current_row(current)
                     reference = IdentityWorkReference(work_key, generation)
@@ -69,8 +70,10 @@ class SQLiteHardcoverIdentityWorkRepository:
                             (work_key,),
                         )
                         expired = True
+                        expired_generation = generation
                     elif status == "expired":
                         expired = True
+                        expired_generation = generation
 
                 active = self._connection.execute(
                     "SELECT generation,created_at,state,aggregate_started_at FROM hardcover_identity_generations WHERE work_key=? AND state IN ('pending','claimed','retry_wait')",
@@ -126,10 +129,14 @@ class SQLiteHardcoverIdentityWorkRepository:
                         raise IdentityWorkPersistenceError(
                             "identity work one-shot authority is inconsistent"
                         )
-                    return IdentityWorkStatus(
-                        IdentityWorkOutcome.RETRY_EXHAUSTED,
-                        IdentityWorkReference(work_key, generation),
-                    )
+                    if not (
+                        state is IdentityWorkState.SUCCEEDED
+                        and expired_generation == generation
+                    ):
+                        return IdentityWorkStatus(
+                            IdentityWorkOutcome.RETRY_EXHAUSTED,
+                            IdentityWorkReference(work_key, generation),
+                        )
 
                 row = self._connection.execute(
                     "SELECT COALESCE(MAX(generation),0)+1 FROM hardcover_identity_generations WHERE work_key=?",
@@ -461,10 +468,16 @@ class SQLiteHardcoverIdentityWorkRepository:
                         (timestamp, claim.reference.work_key, claim.reference.generation, claim.fence),
                     )
                     next_candidate = attempt + 1
+                    egress_limit = self._read_egress_limit(claim.reference)
                 else:
                     next_candidate = claim.candidate
+                    egress_limit = MAX_ATTEMPTS
                 deadline = _parse_time(str(row[7])) if row[7] is not None else None
-                if next_candidate > MAX_ATTEMPTS or deadline is None or deadline - now < MINIMUM_START_LEASE:
+                if (
+                    next_candidate > egress_limit
+                    or deadline is None
+                    or deadline - now < MINIMUM_START_LEASE
+                ):
                     self._terminal_failure(
                         claim.reference, claim.fence, timestamp, resolve_attempt=False
                     )
