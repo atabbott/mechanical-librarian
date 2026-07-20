@@ -3,19 +3,19 @@
   "output_privacy_contract": {
     "bytes": 3225,
     "path": "preview-output-privacy-contract-c5-v3.json",
-    "sha256": "096238faaf64ceddbae3e94c03b246287b5e35095887d10cbb0923f865c97efc"
+    "sha256": "b7b6fb5e8f7cf33a3b4df5747aa937fd2861b4af1e25a89d97c55ae4b21870b3"
   },
   "output_privacy_scan": {
     "bytes": 2478,
     "path": "preview-output-privacy-scan-c5-v3.json",
-    "sha256": "4327999423526380770b3bec75c32940ad8e44274a0ac853e3720ee216b446b6"
+    "sha256": "f9fa12bd11c5d270aa26a6adaec1162e21818323ddc12bc52a44c1fa266ba713"
   },
   "output_schema": {
-    "bytes": 3979,
+    "bytes": 3980,
     "path": "preview-output-schema-c5-v6.json",
-    "sha256": "24a75efc9f8696c448d6d9e8597e3eb8f5aee821a5e784db8cef3b71c866da43"
+    "sha256": "930f62a1218e37ef5de91bdc1b543176e84c6a65f1202d44998e25aa73edacc2"
   },
-  "predecessor_registry_sha256": "3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81",
+  "predecessor_registry_sha256": "9f49679ac4dad1f2a4e1755d08cf5844ba66f42abdde08437633ca863a483823",
   "runtime_contract": {
     "anti_noop": "compare allowlisted derived typed fields across golden, alternate-valid, single-field mutation, title-only metamorphic, boundary, invalid-extra, and differing-output cases without computing or exporting an input digest; require zero production composition/egress",
     "authority": "no secret lookup, DNS, socket, real provider, production database, target join, proposal, review, or write authority",
@@ -198,9 +198,9 @@
           "sha256": "983ae3fbd9cb394772389e99dc722c81066e0d1ed268be7adc9623fdaf6c991e"
         },
         "canonical_example_output": {
-          "bytes": 280,
+          "bytes": 281,
           "path": "c4-durable-work-example-output.json",
-          "sha256": "d4beb29ec1542f093c6054f104ae857a86332c98dc01dc216b9072788547e949"
+          "sha256": "9c9b7370081a4833f26851de78cced52faace737faa953bd1acf19ca6cb99388"
         },
         "input_schema": {
           "bytes": 1098,

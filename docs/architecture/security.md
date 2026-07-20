@@ -594,6 +594,19 @@ domain state or production authority.
 Ordinary gate, provider, and persistence failures map to closed public outcomes,
 while interpreter control flow is re-raised after gate cleanup.
 
+F09f increment 6 composes that one-attempt authority behind a synchronous
+lifecycle orchestrator. Retry due time, attempt consumption, aggregate deadline,
+and one-shot authority remain repository-owned; the orchestrator cannot send
+without the existing atomic start. It releases transport and gate before its
+injected wait, returns before a future due time after restart, and recovers only
+an expired claim after acquiring the deployment gate. Pending/retry-wait
+cancellation is durable; provider-time cancellation publishes only through the
+current fence after provider return. Main-thread-only temporary SIGINT/SIGTERM
+handlers set a local Event and restore prior handlers in `finally`; they add no
+cross-process cancellation channel and do not translate interpreter control
+flow. C6 remains credential-free and production composition remains
+`provider_not_activated`.
+
 F07b treats the service path projection, private logical binding, EPUB archive,
 and persisted canonical report as hostile inputs. Callers can supply only
 strict opaque references and a bounded file index. Resolution requires one

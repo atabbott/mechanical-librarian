@@ -1,0 +1,313 @@
+{
+  "available_through_increment": "Orchestrate durable Hardcover identity retries, cancellation, and restart",
+  "output_privacy_contract": {
+    "bytes": 4275,
+    "path": "preview-output-privacy-contract-c6-v1.json",
+    "sha256": "4fabd7a36607cce882a2598953e06a2d719cb3f193e369c2581994a7a3a19c25"
+  },
+  "output_privacy_scan": {
+    "bytes": 2384,
+    "path": "preview-output-privacy-scan-c6-v1.json",
+    "sha256": "8324cdd858765bf134788a5aed3b2786b3ffe5500db1826772afbd14765b5000"
+  },
+  "output_schema": {
+    "bytes": 5093,
+    "path": "preview-output-schema-c6-v1.json",
+    "sha256": "4812ffa3e665775c490a4b4ddc134780542c607de412443b878dd56fe1dc5e9c"
+  },
+  "predecessor_registry_sha256": "9699e563a3212885167f6a407867057e99958d2309b9bf1cf7adbc2de7cde777",
+  "runtime_contract": {
+    "anti_noop": "compare allowlisted derived typed fields across golden, alternate-valid, single-field mutation, title-only metamorphic, boundary, invalid-extra, and differing-output cases without computing or exporting an input digest; require zero production composition/egress",
+    "authority": "no secret lookup, DNS, socket, real provider, production database, target join, proposal, review, or write authority",
+    "closed_dsl": "scenario-specific exact JSON Schema; duplicate/unknown/missing keys and out-of-bound values fail",
+    "correlation": "non-exported non-persisted non-hashed in-memory monotonic sequencing only when required",
+    "database": "c4/c5/c6 require an initially absent path under a new owner-only disposable directory; all other scenarios reject --database",
+    "determinism": "canonical JSON plus exactly one LF; alternate valid inputs and metamorphic variants produce independently derived typed outputs",
+    "execution": "derive results through the real installed domain/adapter/repository/executor/orchestrator seam available at this increment using only injected structural fakes",
+    "expected_output_rule": "canonical example outputs are qualification oracles only and must never be loaded by runtime before emission",
+    "input_limit_bytes": 65536,
+    "input_source": "contributor-supplied stdin only; --input - is mandatory",
+    "privacy_qualification": "capture all v2 channels with hashing, exception, trace/span, metrics, persistence, export, reporting, and audit spies; injected raw/projected/digested forbidden forms must fail",
+    "resource_identity_boundary": "immutable public schema/build resource lengths and digests exist only in contributor-independent registry, build, review, and qualification evidence; runtime stdout, stderr, exceptions, logs, trace/span data, metric names/labels/values/exemplars, exports, reports, persistence, and audit records never contain them",
+    "runtime_output_privacy": "v2 channel-complete capture: only scenario-allowlisted typed redacted fields; no raw/projected/encoded/hashed/digested/fingerprinted title, private-query, ISBN, provider/resource identity, stable correlation, or substitute in stdout/stderr/exceptions/logs/traces/metrics/persistence/exports/reports/audit",
+    "schema8": "c4 runtime regenerates schema 8 through exact migration prefix 1..8 and verifies contributor-independent public registry bindings; contributor stdin contains no schema/build digest and runtime channels emit none"
+  },
+  "scenarios": [
+    {
+      "argv": [
+        "mechanical-librarian",
+        "hardcover-identity-report",
+        "--mode",
+        "synthetic-preview",
+        "--scenario",
+        "inert-report-v3",
+        "--input",
+        "-",
+        "--format",
+        "json"
+      ],
+      "increment_title": "Install the inert F09f configuration and disabled identity report",
+      "resources": {
+        "canonical_example_input": {
+          "bytes": 218,
+          "path": "c1-inert-report-input.json",
+          "sha256": "f9896b56f48d99dd10be69556a95b24b4968beb07b3989517a399d981af66223"
+        },
+        "canonical_example_output": {
+          "bytes": 202,
+          "path": "c1-inert-report-example-output.json",
+          "sha256": "910bc6803bbee3c1a43dba545cd497e036ea1ac3f8c663057cb705a4a60e5479"
+        },
+        "input_schema": {
+          "bytes": 814,
+          "path": "c1-inert-report-input-schema.json",
+          "sha256": "0e275c72d40e2f7e2460d18ce572fea598d79aeff113252a135bc05e8285aa61"
+        },
+        "variant_matrix": {
+          "bytes": 925,
+          "path": "c1-inert-report-variant-matrix.json",
+          "sha256": "e18f2eb3dcd75c09cb57443da8e2bea666604813c94a922260de7e92b30b9bf4"
+        }
+      },
+      "scenario": "inert-report-v3",
+      "stdin": "one bounded strict-UTF-8 JSON document matching input_schema"
+    },
+    {
+      "argv": [
+        "mechanical-librarian",
+        "hardcover-identity-report",
+        "--mode",
+        "synthetic-preview",
+        "--scenario",
+        "identity-decision-v3",
+        "--input",
+        "-",
+        "--format",
+        "json"
+      ],
+      "increment_title": "Decide one bounded Hardcover ISBN-backed book and ebook-edition identity",
+      "resources": {
+        "canonical_example_input": {
+          "bytes": 991,
+          "path": "c2-identity-decision-input.json",
+          "sha256": "c6ed8d6ad0253af139e07164668bb49a6763d8e979dd21fcd9e638a9861129fb"
+        },
+        "canonical_example_output": {
+          "bytes": 170,
+          "path": "c2-identity-decision-example-output.json",
+          "sha256": "319744d9311c6c6b43ea104dbc90846a23be3eea53a0f9f7e6bdba1c7aaff779"
+        },
+        "input_schema": {
+          "bytes": 1800,
+          "path": "c2-identity-decision-input-schema.json",
+          "sha256": "daab0b30e32cf20ebf631e5cb97e6e94f51243867d45377882acf757cf1ea36e"
+        },
+        "variant_matrix": {
+          "bytes": 832,
+          "path": "c2-identity-decision-variant-matrix.json",
+          "sha256": "d3cb1432d994e18527fdf354a6882d6d57b92d1358f2cfd745070dbccb529359"
+        }
+      },
+      "scenario": "identity-decision-v3",
+      "stdin": "one bounded strict-UTF-8 JSON document matching input_schema"
+    },
+    {
+      "argv": [
+        "mechanical-librarian",
+        "hardcover-identity-report",
+        "--mode",
+        "synthetic-preview",
+        "--scenario",
+        "fixed-adapter-v3",
+        "--input",
+        "-",
+        "--format",
+        "json"
+      ],
+      "increment_title": "Implement the fixed bounded Hardcover ISBN identity adapter",
+      "resources": {
+        "canonical_example_input": {
+          "bytes": 2230,
+          "path": "c3-fixed-adapter-input.json",
+          "sha256": "8944fd8edda4c4e2907ddb845d1ab3ccb833bfe1016d031f0497203ac44f229a"
+        },
+        "canonical_example_output": {
+          "bytes": 187,
+          "path": "c3-fixed-adapter-example-output.json",
+          "sha256": "09bbf56b45a896c1a4a8ec0ef2ac45a3863d2e55370e901693677de7209baa40"
+        },
+        "input_meta_schema": {
+          "bytes": 842,
+          "path": "c3-utf8-byte-length-meta-schema-v1.json",
+          "sha256": "6e661639a611c463c65303efc2c83f97e9b522d23ee30c2e4e78f0d4c4e703b1"
+        },
+        "input_schema": {
+          "bytes": 1880,
+          "path": "c3-fixed-adapter-input-schema.json",
+          "sha256": "5487c3373d590ee4ed9bc35e07870f8d87356456c5683704fb6feedfebf7923b"
+        },
+        "variant_matrix": {
+          "bytes": 987,
+          "path": "c3-fixed-adapter-variant-matrix.json",
+          "sha256": "207dcef3ceccdace6addda731055b60e40d0688d0c920a703f5f828b30f472b4"
+        }
+      },
+      "scenario": "fixed-adapter-v3",
+      "stdin": "one bounded strict-UTF-8 JSON document matching input_schema"
+    },
+    {
+      "argv": [
+        "mechanical-librarian",
+        "hardcover-identity-report",
+        "--mode",
+        "synthetic-preview",
+        "--scenario",
+        "durable-work-v3",
+        "--input",
+        "-",
+        "--database",
+        "{absent_disposable_database}",
+        "--format",
+        "json"
+      ],
+      "increment_title": "Persist and recover bounded Hardcover identity work",
+      "qualification_bindings": {
+        "classification": "public contributor-independent qualification evidence; never contributor stdin or runtime output",
+        "schema8_dump": {
+          "bytes": 53233,
+          "path": "schema8-logical-snapshot.sql",
+          "sha256": "1040b8eefc8703503a9f515543c3618908bd7af0d08fae7700806b37a48811ed"
+        },
+        "schema8_generator_source": {
+          "base": "8544e42b59e055e03d6e7f52f00b5da278cb368b",
+          "bytes": 82116,
+          "classification": "public contributor-independent schema/build qualification evidence",
+          "repository_path": "src/mechanical_librarian/infrastructure/persistence/sqlite.py",
+          "sha256": "fa63e85b428ffb497118fbb05aaca2c9084773a982f6e4c6e36678af208026fb"
+        },
+        "schema8_ledger": {
+          "bytes": 70843,
+          "path": "schema8-logical-snapshot-ledger.json",
+          "sha256": "140d3d17ad743f8860ff216052976344ff2f7258096f45765d286b9b4887508c"
+        }
+      },
+      "resources": {
+        "canonical_example_input": {
+          "bytes": 1844,
+          "path": "c4-durable-work-input.json",
+          "sha256": "983ae3fbd9cb394772389e99dc722c81066e0d1ed268be7adc9623fdaf6c991e"
+        },
+        "canonical_example_output": {
+          "bytes": 281,
+          "path": "c4-durable-work-example-output.json",
+          "sha256": "9c9b7370081a4833f26851de78cced52faace737faa953bd1acf19ca6cb99388"
+        },
+        "input_schema": {
+          "bytes": 1098,
+          "path": "c4-durable-work-input-schema.json",
+          "sha256": "f1d5c475af492c36469bb222b622afe232aebd5d0956d3b2afcd2f54b64c50a2"
+        },
+        "schema8_dump": {
+          "bytes": 53233,
+          "path": "schema8-logical-snapshot.sql",
+          "sha256": "1040b8eefc8703503a9f515543c3618908bd7af0d08fae7700806b37a48811ed"
+        },
+        "schema8_ledger": {
+          "bytes": 70843,
+          "path": "schema8-logical-snapshot-ledger.json",
+          "sha256": "140d3d17ad743f8860ff216052976344ff2f7258096f45765d286b9b4887508c"
+        },
+        "variant_matrix": {
+          "bytes": 966,
+          "path": "c4-durable-work-variant-matrix.json",
+          "sha256": "5e1c6aedc4f322b7d6d979853a50913e5373cd97e695f4c1dc8a832eaba5a002"
+        }
+      },
+      "scenario": "durable-work-v3",
+      "stdin": "one bounded strict-UTF-8 JSON document matching input_schema"
+    },
+    {
+      "argv": [
+        "mechanical-librarian",
+        "hardcover-identity-report",
+        "--mode",
+        "synthetic-preview",
+        "--scenario",
+        "safe-executor-v3",
+        "--input",
+        "-",
+        "--database",
+        "{absent_disposable_database}",
+        "--format",
+        "json"
+      ],
+      "increment_title": "Execute one bounded Hardcover identity attempt with durable authority",
+      "resources": {
+        "canonical_example_input": {
+          "bytes": 1509,
+          "path": "c5-safe-executor-input.json",
+          "sha256": "6cbc58460ab2f1fdd9540b87ed91ae8ba858442e2f995bac248e03e4750ece4b"
+        },
+        "canonical_example_output": {
+          "bytes": 343,
+          "path": "c5-safe-executor-example-output.json",
+          "sha256": "9686ac45ad83d43861fa869ef81dea2cf175de36b7076baa52d2f84a2f5f27c6"
+        },
+        "input_schema": {
+          "bytes": 977,
+          "path": "c5-safe-executor-input-schema.json",
+          "sha256": "7b0c0a34f9994364b32a32f3b23ba0b4242c6944cd73c47abdc65385e4be9846"
+        },
+        "variant_matrix": {
+          "bytes": 1194,
+          "path": "c5-safe-executor-variant-matrix.json",
+          "sha256": "4e5d5515ddd8ae9a6eda77917a591447d88eed3167b6bf53e779a81e48c04ada"
+        }
+      },
+      "scenario": "safe-executor-v3",
+      "stdin": "one bounded strict-UTF-8 JSON document matching input_schema"
+    },
+    {
+      "argv": [
+        "mechanical-librarian",
+        "hardcover-identity-report",
+        "--mode",
+        "synthetic-preview",
+        "--scenario",
+        "lifecycle-orchestration-v3",
+        "--input",
+        "-",
+        "--database",
+        "{absent_disposable_database}",
+        "--format",
+        "json"
+      ],
+      "increment_title": "Orchestrate durable Hardcover identity retries, cancellation, and restart",
+      "resources": {
+        "canonical_example_input": {
+          "bytes": 1235,
+          "path": "c6-lifecycle-orchestration-input.json",
+          "sha256": "e764e534ac31f0212beddce8237ece3ce8a80599b58192dad4cc854a51ed3c2d"
+        },
+        "canonical_example_output": {
+          "bytes": 405,
+          "path": "c6-lifecycle-orchestration-example-output.json",
+          "sha256": "ff02d438b04e6b57fad997dc977d641e1769c70d5a00995ebd4959fb99cfcb0a"
+        },
+        "input_schema": {
+          "bytes": 1073,
+          "path": "c6-lifecycle-orchestration-input-schema.json",
+          "sha256": "22ef83f88625c9525bd81751c75b30f8455135414450897cf280abfb15af0e4a"
+        },
+        "variant_matrix": {
+          "bytes": 791,
+          "path": "c6-lifecycle-orchestration-variant-matrix.json",
+          "sha256": "b81a8239e67049b15e2ee66f4c20b49426c545731b281f2e1f0bbcc0d8e8ca6b"
+        }
+      },
+      "scenario": "lifecycle-orchestration-v3",
+      "stdin": "one bounded strict-UTF-8 JSON document matching input_schema"
+    }
+  ],
+  "schema": "hardcover-synthetic-preview-registry-c6-v1"
+}

@@ -7,7 +7,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from mechanical_librarian.application.hardcover_safe_executor import (
+        HardcoverIdentityExecutionRequest,
+    )
 
 from mechanical_librarian.application.configuration import (
     HardcoverProviderConfiguration,
@@ -60,6 +65,7 @@ class IdentityAttemptFailureKind(StrEnum):
     AUTHORIZATION = "authorization"
     UNAVAILABLE = "unavailable"
     RATE_LIMITED = "rate_limited"
+    INVALID_RETRY_AFTER = "invalid_retry_after"
     TIMEOUT = "timeout"
     CANCELLED = "cancelled"
     MALFORMED = "malformed"
@@ -129,9 +135,20 @@ def _isbn_identity_or_none(value: object):
 @dataclass(frozen=True, slots=True)
 class IdentityAttemptFailure:
     kind: IdentityAttemptFailureKind
+    retry_after_seconds: int | None = None
 
     def __post_init__(self) -> None:
-        if type(self.kind) is not IdentityAttemptFailureKind:
+        if (
+            type(self.kind) is not IdentityAttemptFailureKind
+            or (
+                self.retry_after_seconds is not None
+                and (
+                    self.kind is not IdentityAttemptFailureKind.RATE_LIMITED
+                    or type(self.retry_after_seconds) is not int
+                    or not 0 <= self.retry_after_seconds <= 30
+                )
+            )
+        ):
             raise ValueError("identity attempt failure is malformed")
 
 
@@ -162,8 +179,15 @@ class IdentityAttemptResult:
         return cls(observations=observations)
 
     @classmethod
-    def failed(cls, kind: IdentityAttemptFailureKind) -> IdentityAttemptResult:
-        return cls(failure=IdentityAttemptFailure(kind))
+    def failed(
+        cls,
+        kind: IdentityAttemptFailureKind,
+        *,
+        retry_after_seconds: int | None = None,
+    ) -> IdentityAttemptResult:
+        return cls(
+            failure=IdentityAttemptFailure(kind, retry_after_seconds)
+        )
 
     def __repr__(self) -> str:
         return "IdentityAttemptResult(<redacted>)"
@@ -273,7 +297,7 @@ class DurableWorkPreviewReport:
             or type(self.schema_from) is not int
             or self.schema_from != 8
             or type(self.schema_to) is not int
-            or self.schema_to != 9
+            or self.schema_to != 10
             or self.migration_rollback_verified is not True
             or self.migration_idempotence_verified is not True
             or self.publication_rollback_verified is not True
@@ -348,6 +372,66 @@ class SafeExecutorPreviewReport:
                     "late_result_rejected": self.late_result_rejected,
                     "closed_mapping_verified": self.closed_mapping_verified,
                     "contributor_labels_private": self.contributor_labels_private,
+                },
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityLifecyclePreviewReport:
+    outcome: str
+    cases_executed: int
+    attempts_started: int
+    retry_schedule_verified: bool
+    release_before_wait_verified: bool
+    restart_verified: bool
+    death_recovery_gate_owned: bool
+    cancellation_verified: bool
+    signal_handlers_restored: bool
+    one_shot_egress_count: int
+    fourth_start_forbidden: bool
+
+    def validate(self) -> None:
+        if (
+            self.outcome != "all_cases_passed"
+            or type(self.outcome) is not str
+            or type(self.cases_executed) is not int
+            or self.cases_executed != 6
+            or type(self.attempts_started) is not int
+            or not 1 <= self.attempts_started <= 16
+            or self.retry_schedule_verified is not True
+            or self.release_before_wait_verified is not True
+            or self.restart_verified is not True
+            or self.death_recovery_gate_owned is not True
+            or self.cancellation_verified is not True
+            or self.signal_handlers_restored is not True
+            or type(self.one_shot_egress_count) is not int
+            or self.one_shot_egress_count != 1
+            or self.fourth_start_forbidden is not True
+        ):
+            raise TypeError("Hardcover lifecycle preview report is malformed")
+
+    def to_json(self) -> str:
+        self.validate()
+        return json.dumps(
+            {
+                "schema": "hardcover-synthetic-output-v6",
+                "scenario": "lifecycle-orchestration-v3",
+                "result": {
+                    "outcome": self.outcome,
+                    "cases_executed": self.cases_executed,
+                    "attempts_started": self.attempts_started,
+                    "retry_schedule_verified": self.retry_schedule_verified,
+                    "release_before_wait_verified": self.release_before_wait_verified,
+                    "restart_verified": self.restart_verified,
+                    "death_recovery_gate_owned": self.death_recovery_gate_owned,
+                    "cancellation_verified": self.cancellation_verified,
+                    "signal_handlers_restored": self.signal_handlers_restored,
+                    "one_shot_egress_count": self.one_shot_egress_count,
+                    "fourth_start_forbidden": self.fourth_start_forbidden,
                 },
             },
             ensure_ascii=True,
@@ -485,6 +569,16 @@ class HardcoverIdentityReport:
         )
 
 
+class HardcoverIdentityExecutor(Protocol):
+    """One purpose seam shared by one-attempt and lifecycle execution."""
+
+    def run(
+        self,
+        request: HardcoverIdentityExecutionRequest,
+        context: OperationContext,
+    ) -> HardcoverIdentityReport: ...
+
+
 @dataclass(frozen=True, slots=True)
 class InertPreviewReport:
     outcome: HardcoverIdentityOutcome
@@ -601,7 +695,7 @@ class IdentityDecisionPreviewReport:
 class RunHardcoverIdentityReport:
     """Own the safe durable lifecycle or run the isolated decision seam."""
 
-    def __init__(self, safe_executor: object | None = None) -> None:
+    def __init__(self, safe_executor: HardcoverIdentityExecutor | None = None) -> None:
         if safe_executor is not None and not callable(
             getattr(safe_executor, "run", None)
         ):
@@ -619,17 +713,21 @@ class RunHardcoverIdentityReport:
         if context is None:
             from mechanical_librarian.application.hardcover_safe_executor import (
                 HardcoverIdentityExecutionRequest,
-                RunSafeHardcoverIdentity,
             )
 
             if (
-                type(self._safe_executor) is not RunSafeHardcoverIdentity
+                self._safe_executor is None
                 or type(provider) is not HardcoverIdentityExecutionRequest
                 or type(query) is not OperationContext
                 or privacy_observer is not None
             ):
                 raise TypeError("Hardcover identity execution input is malformed")
-            return self._safe_executor.run(provider, query)
+            report = self._safe_executor.run(provider, query)
+            if type(report) is not HardcoverIdentityReport:
+                raise IdentityReportError(
+                    "Hardcover identity execution result is malformed"
+                )
+            return report
         if type(query) is not PrivateIdentityQuery or type(context) is not OperationContext:
             provider = None
             query = None
@@ -885,7 +983,13 @@ def render_report_text(report: HardcoverIdentityReport) -> str:
 class HardcoverIdentityWorkPersistence(Protocol):
     """Application-owned durable identity-work transaction contract."""
 
-    def accept(self, work_key: str, now: datetime) -> IdentityWorkStatus: ...
+    def accept(
+        self,
+        work_key: str,
+        now: datetime,
+        *,
+        egress_limit: int = 3,
+    ) -> IdentityWorkStatus: ...
 
     def inspect(
         self, reference: IdentityWorkReference, now: datetime
@@ -907,6 +1011,7 @@ class HardcoverIdentityWorkPersistence(Protocol):
         now: datetime,
         *,
         gate_owned: bool,
+        egress_limit: int = 3,
     ) -> IdentityWorkClaim | IdentityWorkStatus: ...
 
     def recover_interrupted(
@@ -931,9 +1036,16 @@ class HardcoverIdentityWorkPersistence(Protocol):
         now: datetime,
         *,
         retryable: bool,
+        retry_delay_seconds: int | None = 0,
         gate_owned: bool,
         fail_before_commit: bool = False,
     ) -> IdentityWorkStatus: ...
+
+    def cancel_available(
+        self,
+        reference: IdentityWorkReference,
+        now: datetime,
+    ) -> None: ...
 
     def cancel(
         self,
@@ -974,8 +1086,20 @@ class ManageHardcoverIdentityWork:
             raise TypeError("Hardcover identity work persistence is malformed")
         self._persistence = persistence
 
-    def accept(self, work_key: str, now: datetime) -> IdentityWorkStatus:
-        result = self._persistence.accept(work_key, now)
+    def accept(
+        self,
+        work_key: str,
+        now: datetime,
+        *,
+        egress_limit: int = 3,
+    ) -> IdentityWorkStatus:
+        if type(egress_limit) is not int or egress_limit not in {1, 3}:
+            raise ValueError("Hardcover identity work egress limit is malformed")
+        result = self._persistence.accept(
+            work_key,
+            now,
+            egress_limit=egress_limit,
+        )
         if (
             type(result) is not IdentityWorkStatus
             or result.reference.work_key != work_key
@@ -985,6 +1109,7 @@ class ManageHardcoverIdentityWork:
                 IdentityWorkOutcome.STALE,
                 IdentityWorkOutcome.IN_PROGRESS,
                 IdentityWorkOutcome.PERSISTENCE_FAILURE,
+                IdentityWorkOutcome.RETRY_EXHAUSTED,
             }
         ):
             raise TypeError("Hardcover identity work acceptance is malformed")
@@ -1018,9 +1143,14 @@ class ManageHardcoverIdentityWork:
         now: datetime,
         *,
         gate_owned: bool,
+        egress_limit: int = 3,
     ) -> IdentityWorkClaim | IdentityWorkStatus:
         result = self._persistence.renew_and_start(
-            claim, owner, now, gate_owned=gate_owned
+            claim,
+            owner,
+            now,
+            gate_owned=gate_owned,
+            egress_limit=egress_limit,
         )
         if type(result) is IdentityWorkClaim and (
             result.reference == claim.reference
@@ -1092,6 +1222,7 @@ class ManageHardcoverIdentityWork:
         now: datetime,
         *,
         retryable: bool,
+        retry_delay_seconds: int | None = 0,
         gate_owned: bool,
         fail_before_commit: bool = False,
     ) -> IdentityWorkStatus:
@@ -1100,6 +1231,7 @@ class ManageHardcoverIdentityWork:
             owner,
             now,
             retryable=retryable,
+            retry_delay_seconds=retry_delay_seconds,
             gate_owned=gate_owned,
             fail_before_commit=fail_before_commit,
         )
@@ -1115,6 +1247,15 @@ class ManageHardcoverIdentityWork:
         ):
             raise TypeError("Hardcover identity work failure result is malformed")
         return result
+
+    def cancel_available(
+        self,
+        reference: IdentityWorkReference,
+        now: datetime,
+    ) -> None:
+        result = self._persistence.cancel_available(reference, now)
+        if result is not None:
+            raise TypeError("Hardcover identity work cancellation is malformed")
 
     def cancel(
         self,
@@ -1217,11 +1358,13 @@ __all__ = [
     "FixedAdapterPreviewReport",
     "FixedAdapterStructuralPreview",
     "HardcoverIdentityOutcome",
+    "HardcoverIdentityExecutor",
     "HardcoverIdentityReport",
     "IdentityAttemptFailure",
     "IdentityAttemptFailureKind",
     "IdentityAttemptResult",
     "IdentityDecisionPreviewReport",
+    "IdentityLifecyclePreviewReport",
     "IdentityReportError",
     "IdentityWorkPersistenceError",
     "InertPreviewReport",

@@ -39,7 +39,9 @@ TERMINAL_STATES = frozenset(
 LEGAL_TRANSITIONS = frozenset(
     {
         (IdentityWorkState.PENDING, IdentityWorkState.CLAIMED),
+        (IdentityWorkState.PENDING, IdentityWorkState.CANCELLED),
         (IdentityWorkState.RETRY_WAIT, IdentityWorkState.CLAIMED),
+        (IdentityWorkState.RETRY_WAIT, IdentityWorkState.CANCELLED),
         (IdentityWorkState.CLAIMED, IdentityWorkState.RETRY_WAIT),
         (IdentityWorkState.CLAIMED, IdentityWorkState.SUCCEEDED),
         (IdentityWorkState.CLAIMED, IdentityWorkState.FAILED),
@@ -85,12 +87,35 @@ class IdentityWorkClaim:
 
 
 @dataclass(frozen=True, slots=True)
+class IdentityWorkRetryToken:
+    """Exact immutable durable retry-schedule identity."""
+
+    reference: IdentityWorkReference
+    candidate: int
+    fence: int
+    due_at: datetime
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.reference) is not IdentityWorkReference
+            or type(self.candidate) is not int
+            or not 1 <= self.candidate <= 3
+            or type(self.fence) is not int
+            or self.fence < 2
+        ):
+            raise ValueError("identity work retry token is malformed")
+        _require_time(self.due_at)
+
+
+@dataclass(frozen=True, slots=True)
 class IdentityWorkReadiness:
     """Exact-reference lifecycle facts required around one attempt."""
 
     reference: IdentityWorkReference
     state: IdentityWorkState
     aggregate_deadline: datetime
+    retry_token: IdentityWorkRetryToken | None = None
+    active_claim: IdentityWorkClaim | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -99,6 +124,30 @@ class IdentityWorkReadiness:
         ):
             raise ValueError("identity work readiness is malformed")
         _require_time(self.aggregate_deadline)
+        if (self.retry_token is not None) != (
+            self.state is IdentityWorkState.RETRY_WAIT
+        ):
+            raise ValueError("identity work readiness is malformed")
+        if self.retry_token is not None:
+            if (
+                type(self.retry_token) is not IdentityWorkRetryToken
+                or self.retry_token.reference != self.reference
+                or self.retry_token.due_at > self.aggregate_deadline
+            ):
+                raise ValueError("identity work readiness is malformed")
+        if (self.active_claim is not None) != (
+            self.state is IdentityWorkState.CLAIMED
+        ):
+            raise ValueError("identity work readiness is malformed")
+        if (
+            self.active_claim is not None
+            and self.active_claim.reference != self.reference
+        ):
+            raise ValueError("identity work readiness is malformed")
+
+    @property
+    def retry_due_at(self) -> datetime | None:
+        return None if self.retry_token is None else self.retry_token.due_at
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +235,7 @@ __all__ = [
     "IdentityWorkObservation",
     "IdentityWorkOutcome",
     "IdentityWorkReference",
+    "IdentityWorkRetryToken",
     "IdentityWorkState",
     "IdentityWorkStatus",
     "LEGAL_TRANSITIONS",

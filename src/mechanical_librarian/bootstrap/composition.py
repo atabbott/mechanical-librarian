@@ -7,9 +7,12 @@ import hashlib
 import json
 import os
 import secrets
+import signal
 import sqlite3
 import stat
+import threading
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -81,6 +84,7 @@ from mechanical_librarian.application.hardcover_identity import (
     FixedAdapterPreviewReport,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
+    IdentityLifecyclePreviewReport,
     IdentityAttemptFailureKind,
     IdentityAttemptResult,
     InertPreviewReport,
@@ -91,6 +95,9 @@ from mechanical_librarian.application.hardcover_identity import (
     SafeExecutorPreviewReport,
     inert_preview,
     preactivation_report,
+)
+from mechanical_librarian.application.hardcover_identity_orchestration import (
+    RunHardcoverIdentityLifecycle,
 )
 from mechanical_librarian.application.hardcover_safe_executor import (
     HardcoverIdentityExecutionRequest,
@@ -1726,11 +1733,16 @@ def _run_hardcover_durable_work_preview(
                 migration_rollback_verified = connection.execute(
                     "SELECT 1 FROM sqlite_master WHERE name='hardcover_identity_generations'"
                 ).fetchone() is None
-            if not migration_rollback_verified or migrate(connection) != 9 or migrate(connection) != 9:
-                raise SchemaError("schema-nine migration proof failed")
+            if (
+                not migration_rollback_verified
+                or migrate(connection) != 10
+                or migrate(connection) != 10
+            ):
+                raise SchemaError("current schema migration proof failed")
             migration_idempotence_verified = connection.execute(
-                "SELECT COUNT(*) FROM schema_migrations WHERE version=9"
-            ).fetchone() == (1,)
+                "SELECT version FROM schema_migrations WHERE version IN (9,10) "
+                "ORDER BY version"
+            ).fetchall() == [(9,), (10,)]
 
             service = ManageHardcoverIdentityWork(
                 SQLiteHardcoverIdentityWorkRepository(connection)
@@ -1771,7 +1783,7 @@ def _run_hardcover_durable_work_preview(
     return DurableWorkPreviewReport(
         outcome="stale",
         schema_from=8,
-        schema_to=9,
+        schema_to=10,
         migration_rollback_verified=migration_rollback_verified,
         migration_idempotence_verified=migration_idempotence_verified,
         publication_rollback_verified=publication_rollback_verified,
@@ -2212,6 +2224,457 @@ def _run_hardcover_safe_executor_preview(
     return report
 
 
+class _SyntheticLifecycleProvider:
+    def __init__(
+        self,
+        results: list[IdentityAttemptResult],
+        *,
+        raised_signal: signal.Signals | None = None,
+    ) -> None:
+        self._results = results
+        self._raised_signal = raised_signal
+        self.starts = 0
+
+    def lookup(
+        self, query: object, context: OperationContext
+    ) -> IdentityAttemptResult:
+        self.starts += 1
+        if self._raised_signal is not None:
+            signal.raise_signal(self._raised_signal)
+        return self._results.pop(0)
+
+
+class _SyntheticLifecycleWait:
+    def __init__(
+        self,
+        clock: _SyntheticExecutorClock,
+        gate: _ObservedGate,
+        cancellation: threading.Event,
+    ) -> None:
+        self._clock = clock
+        self._gate = gate
+        self._cancellation = cancellation
+        self.timeouts: list[float] = []
+        self.released = True
+
+    def wait(self, timeout: float) -> bool:
+        self.released = self.released and not self._gate.held
+        self.timeouts.append(timeout)
+        self._clock.now += timedelta(seconds=timeout)
+        return self._cancellation.is_set()
+
+
+@contextmanager
+def _temporary_identity_cancellation_signals(
+    cancellation: threading.Event,
+):
+    """Make foreground SIGINT/SIGTERM observable without owning shutdown."""
+
+    if (
+        type(cancellation) is not threading.Event
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        raise SchemaError("identity lifecycle signal handling is unavailable")
+
+    installed: list[tuple[signal.Signals, object]] = []
+
+    def cancel(signum: int, frame: object) -> None:
+        cancellation.set()
+
+    try:
+        for selected in (signal.SIGINT, signal.SIGTERM):
+            previous = signal.getsignal(selected)
+            signal.signal(selected, cancel)
+            installed.append((selected, previous))
+        yield
+    finally:
+        for selected, previous in reversed(installed):
+            signal.signal(selected, previous)
+
+
+def _lifecycle_result(source: Mapping[str, object]) -> IdentityAttemptResult:
+    outcome = source["outcome"]
+    retry_after = source["retry_after_seconds"]
+    if outcome == "matched":
+        return _safe_executor_match()
+    kind = {
+        "unavailable": IdentityAttemptFailureKind.UNAVAILABLE,
+        "timeout": IdentityAttemptFailureKind.TIMEOUT,
+        "rate_limited": IdentityAttemptFailureKind.RATE_LIMITED,
+    }[outcome]
+    return IdentityAttemptResult.failed(kind, retry_after_seconds=retry_after)
+
+
+def _validate_lifecycle_preview_input(source: Mapping[str, object]) -> None:
+    if (
+        set(source) != {"schema", "scenario", "cases"}
+        or source.get("schema") != "hardcover-synthetic-input-v3"
+        or source.get("scenario") != "lifecycle-orchestration-v3"
+    ):
+        raise ValueError("identity lifecycle preview input is malformed")
+    cases = source.get("cases")
+    if type(cases) is not list or len(cases) != 6:
+        raise ValueError("identity lifecycle preview input is malformed")
+    operations: dict[str, list[Mapping[str, object]]] = {}
+    for case in cases:
+        if not isinstance(case, Mapping) or set(case) != {
+            "label",
+            "process",
+            "operation",
+            "results",
+        }:
+            raise ValueError("identity lifecycle preview input is malformed")
+        label = case.get("label")
+        process = case.get("process")
+        operation = case.get("operation")
+        results = case.get("results")
+        if (
+            type(label) is not str
+            or not 1 <= len(label) <= 48
+            or not label.isascii()
+            or not label.isprintable()
+            or label.strip() != label
+            or type(process) is not str
+            or not 1 <= len(process) <= 32
+            or not process.isascii()
+            or not process.isprintable()
+            or process.strip() != process
+            or type(operation) is not str
+            or type(results) is not list
+        ):
+            raise ValueError("identity lifecycle preview input is malformed")
+        typed_results: list[Mapping[str, object]] = []
+        for result in results:
+            if not isinstance(result, Mapping) or set(result) != {
+                "outcome",
+                "retry_after_seconds",
+            }:
+                raise ValueError("identity lifecycle preview input is malformed")
+            outcome = result.get("outcome")
+            retry_after = result.get("retry_after_seconds")
+            if (
+                outcome not in {"matched", "unavailable", "timeout", "rate_limited"}
+                or (
+                    retry_after is not None
+                    and (
+                        outcome != "rate_limited"
+                        or type(retry_after) is not int
+                        or not 0 <= retry_after <= 3
+                    )
+                )
+            ):
+                raise ValueError("identity lifecycle preview input is malformed")
+            typed_results.append(result)
+        operations[operation] = typed_results
+    if set(operations) != {
+        "retry_match",
+        "retry_exhausted",
+        "restart",
+        "death_recovery",
+        "one_shot",
+        "signals",
+    }:
+        raise ValueError("identity lifecycle preview input is malformed")
+    retryable = {"unavailable", "timeout", "rate_limited"}
+    if not (
+        2 <= len(operations["retry_match"]) <= 3
+        and operations["retry_match"][-1]["outcome"] == "matched"
+        and all(row["outcome"] in retryable for row in operations["retry_match"][:-1])
+        and len(operations["retry_exhausted"]) == 3
+        and all(row["outcome"] in retryable for row in operations["retry_exhausted"])
+        and [row["outcome"] for row in operations["restart"]]
+        == ["unavailable", "matched"]
+        and [row["outcome"] for row in operations["death_recovery"]] == ["matched"]
+        and len(operations["one_shot"]) == 1
+        and operations["one_shot"][0]["outcome"] in retryable
+        and [row["outcome"] for row in operations["signals"]] == ["matched"]
+    ):
+        raise ValueError("identity lifecycle preview input is malformed")
+
+
+def _run_hardcover_identity_lifecycle_preview(
+    source: Mapping[str, object],
+    database: Path,
+    privacy_observer: Callable[[str, tuple[object, ...]], None] | None = None,
+) -> IdentityLifecyclePreviewReport:
+    """Exercise restart-safe foreground orchestration without egress."""
+
+    _validate_lifecycle_preview_input(source)
+    if privacy_observer is not None and not callable(privacy_observer):
+        raise TypeError("identity lifecycle privacy observer must be callable")
+    query = validate_private_query(
+        {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+    )
+    by_operation = {case["operation"]: case for case in source["cases"]}
+    providers: list[_SyntheticLifecycleProvider] = []
+    waits: list[_SyntheticLifecycleWait] = []
+    retry_schedule_verified = True
+    restart_verified = False
+    death_recovery_gate_owned = False
+    cancellation_verified = True
+    signal_handlers_restored = True
+    one_shot_egress_count = 0
+    fourth_start_forbidden = False
+
+    with bound_disposable_state(database) as bound, bound.staged_state() as staged:
+        connection = staged.connect()
+        try:
+            migrate(connection)
+            staged.persist(connection)
+        finally:
+            connection.close()
+        if not bound.publish(staged):
+            raise SchemaError("identity lifecycle preview database publication raced")
+
+        connection = connect_existing(database)
+        try:
+            service = ManageHardcoverIdentityWork(
+                SQLiteHardcoverIdentityWorkRepository(connection)
+            )
+            gate = _ObservedGate(DescriptorHardcoverIdentityGate(database))
+            clock = _SyntheticExecutorClock(datetime.now(timezone.utc))
+
+            def request(operation: str, *, egress_limit: int = 3):
+                return HardcoverIdentityExecutionRequest(
+                    secrets.token_hex(32),
+                    _C5_INTERNAL_OWNER,
+                    query,
+                    egress_limit,
+                )
+
+            def execute(
+                operation: str,
+                cancellation: threading.Event,
+                *,
+                egress_limit: int = 3,
+                signal_before: signal.Signals | None = None,
+                raised_signal: signal.Signals | None = None,
+            ):
+                case = by_operation[operation]
+                provider = _SyntheticLifecycleProvider(
+                    [_lifecycle_result(row) for row in case["results"]],
+                    raised_signal=raised_signal,
+                )
+                retry_wait = _SyntheticLifecycleWait(clock, gate, cancellation)
+                providers.append(provider)
+                waits.append(retry_wait)
+                context = OperationContext(
+                    Deadline(clock.now + timedelta(seconds=29)),
+                    CancellationProbe(
+                        CancellationId("hardcover-lifecycle-preview"),
+                        cancellation.is_set,
+                    ),
+                    ResourceBounds(4, 65_536),
+                    TimeProbe(lambda: clock.now),
+                )
+                selected = request(operation, egress_limit=egress_limit)
+                lifecycle = RunHardcoverIdentityLifecycle(
+                    service,
+                    RunSafeHardcoverIdentity(service, provider, gate),
+                    gate,
+                    retry_wait,
+                )
+                runner = RunHardcoverIdentityReport(lifecycle)
+                restored = True
+                if signal_before is None and raised_signal is None:
+                    report = runner.run(selected, context)
+                else:
+                    previous = {
+                        sig: signal.getsignal(sig)
+                        for sig in (signal.SIGINT, signal.SIGTERM)
+                    }
+                    with _temporary_identity_cancellation_signals(cancellation):
+                        if signal_before is not None:
+                            signal.raise_signal(signal_before)
+                        report = runner.run(selected, context)
+                    restored = all(
+                        signal.getsignal(sig) is previous[sig]
+                        for sig in (signal.SIGINT, signal.SIGTERM)
+                    )
+                return report, selected, provider, retry_wait, context, restored
+
+            report, _, provider, retry_wait, _, _ = execute(
+                "retry_match", threading.Event()
+            )
+            expected_waits = []
+            for candidate, result in enumerate(
+                by_operation["retry_match"]["results"][:-1], start=1
+            ):
+                expected_waits.append(
+                    float(max(candidate, result["retry_after_seconds"] or 0))
+                )
+            retry_schedule_verified = (
+                report.outcome.value == "matched"
+                and retry_wait.timeouts == expected_waits
+            )
+
+            exhausted, exhausted_request, provider, _, _, _ = execute(
+                "retry_exhausted", threading.Event()
+            )
+            fourth_start_forbidden = (
+                exhausted.outcome.value == "retry_exhausted"
+                and provider.starts == 3
+                and connection.execute(
+                    "SELECT attempt_count FROM hardcover_identity_generations "
+                    "WHERE work_key=?",
+                    (exhausted_request.work_key,),
+                ).fetchone()
+                == (3,)
+            )
+
+            restart_case = by_operation["restart"]
+            restart_provider = _SyntheticLifecycleProvider(
+                [_lifecycle_result(row) for row in restart_case["results"]]
+            )
+            providers.append(restart_provider)
+            restart_request = request("restart")
+            restart_context = _safe_executor_context(clock, 29_000)
+            first = RunSafeHardcoverIdentity(
+                service, restart_provider, gate
+            ).run(restart_request, restart_context)
+            restart_wait = _SyntheticLifecycleWait(clock, gate, threading.Event())
+            waits.append(restart_wait)
+            restarted = RunHardcoverIdentityLifecycle(
+                service,
+                RunSafeHardcoverIdentity(service, restart_provider, gate),
+                gate,
+                restart_wait,
+            )
+            before_due = restarted.run(restart_request, restart_context)
+            clock.now += timedelta(seconds=1)
+            after_due = restarted.run(restart_request, restart_context)
+            restart_verified = (
+                first.outcome.value == "in_progress"
+                and before_due.outcome.value == "in_progress"
+                and after_due.outcome.value == "matched"
+                and restart_wait.timeouts == []
+                and restart_provider.starts == 2
+            )
+
+            death_case = by_operation["death_recovery"]
+            death_provider = _SyntheticLifecycleProvider(
+                [_lifecycle_result(row) for row in death_case["results"]]
+            )
+            providers.append(death_provider)
+            death_request = request("death_recovery")
+            seed_lease = gate.try_acquire()
+            if seed_lease is None:
+                raise SchemaError("identity lifecycle death seed gate failed")
+            try:
+                accepted = service.accept(death_request.work_key, clock.now)
+                claim = service.claim(
+                    accepted.reference,
+                    death_request.owner,
+                    clock.now,
+                    gate_owned=True,
+                )
+                started = service.start(
+                    claim, death_request.owner, clock.now, gate_owned=True
+                )
+            finally:
+                seed_lease.release()
+            if type(started) is not IdentityWorkClaim:
+                raise SchemaError("identity lifecycle death seed failed")
+            clock.now = started.lease_expires_at + timedelta(microseconds=1)
+            death_wait = _SyntheticLifecycleWait(clock, gate, threading.Event())
+            waits.append(death_wait)
+            recovered = RunHardcoverIdentityLifecycle(
+                service,
+                RunSafeHardcoverIdentity(service, death_provider, gate),
+                gate,
+                death_wait,
+            ).run(death_request, _safe_executor_context(clock, 14_000))
+            death_recovery_gate_owned = (
+                recovered.outcome.value == "matched"
+                and connection.execute(
+                    "SELECT outcome FROM hardcover_identity_attempts "
+                    "WHERE work_key=? ORDER BY attempt",
+                    (death_request.work_key,),
+                ).fetchall()
+                == [("interrupted",), ("matched",)]
+            )
+
+            one, one_request, one_provider, _, one_context, _ = execute(
+                "one_shot", threading.Event(), egress_limit=1
+            )
+            repeated = RunSafeHardcoverIdentity(
+                service, one_provider, gate
+            ).run(one_request, one_context)
+            one_shot_egress_count = one_provider.starts
+            cancellation_verified = cancellation_verified and (
+                one.outcome.value == "retry_exhausted"
+                and repeated.outcome.value == "retry_exhausted"
+            )
+
+            for selected_signal in (signal.SIGINT, signal.SIGTERM):
+                before_event = threading.Event()
+                before_report, _, before_provider, _, _, before_restored = execute(
+                    "signals", before_event, signal_before=selected_signal
+                )
+                during_event = threading.Event()
+                cancellation_verified = cancellation_verified and (
+                    before_report.outcome.value == "cancelled"
+                    and before_provider.starts == 0
+                )
+                during_report, _, during_provider, _, _, during_restored = execute(
+                    "signals", during_event, raised_signal=selected_signal
+                )
+                cancellation_verified = cancellation_verified and (
+                    during_report.outcome.value == "cancelled"
+                    and during_provider.starts == 1
+                )
+                signal_handlers_restored = (
+                    signal_handlers_restored
+                    and before_restored
+                    and during_restored
+                )
+            if privacy_observer is not None:
+                try:
+                    privacy_observer(
+                        "persistence_checkpoint", ("sqlite-main-wal-shm",)
+                    )
+                except Exception as exc:
+                    raise SchemaError(
+                        "identity lifecycle privacy persistence observation failed"
+                    ) from exc
+        finally:
+            connection.close()
+
+    report = IdentityLifecyclePreviewReport(
+        outcome="all_cases_passed",
+        cases_executed=6,
+        attempts_started=sum(provider.starts for provider in providers),
+        retry_schedule_verified=retry_schedule_verified,
+        release_before_wait_verified=all(wait.released for wait in waits),
+        restart_verified=restart_verified,
+        death_recovery_gate_owned=death_recovery_gate_owned,
+        cancellation_verified=cancellation_verified,
+        signal_handlers_restored=signal_handlers_restored,
+        one_shot_egress_count=one_shot_egress_count,
+        fourth_start_forbidden=fourth_start_forbidden,
+    )
+    report.validate()
+    if privacy_observer is not None:
+        for channel, values in (
+            (
+                "traces",
+                ("hardcover.synthetic.identity_lifecycle", "lifecycle-orchestration-v3"),
+            ),
+            ("spans", ("foreground-lifecycle-case-set", report.outcome)),
+            (
+                "metrics",
+                (
+                    "hardcover_identity_lifecycle_preview_total",
+                    (("outcome", report.outcome),),
+                    1,
+                    None,
+                ),
+            ),
+        ):
+            privacy_observer(channel, values)
+    return report
+
+
 def _synthetic_identity_row(source: object) -> ProviderIdentityObservation:
     if not isinstance(source, Mapping) or set(source) != {
         "id",
@@ -2338,6 +2801,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         hardcover_fixed_adapter_preview_runner=_run_hardcover_fixed_adapter_preview,
         hardcover_durable_work_preview_runner=_run_hardcover_durable_work_preview,
         hardcover_safe_executor_preview_runner=_run_hardcover_safe_executor_preview,
+        hardcover_identity_lifecycle_preview_runner=(
+            _run_hardcover_identity_lifecycle_preview
+        ),
     )
 
 

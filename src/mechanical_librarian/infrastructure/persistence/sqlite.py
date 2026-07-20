@@ -692,6 +692,24 @@ _HARDCOVER_IDENTITY_RETRIES_TABLE_SQL = (
     "created_at TEXT NOT NULL CHECK (" + _timestamp_constraint("created_at") + "), "
     "PRIMARY KEY(work_key,generation,fence), FOREIGN KEY(work_key,generation,candidate) REFERENCES hardcover_identity_candidates(work_key,generation,candidate))"
 )
+_HARDCOVER_IDENTITY_EGRESS_POLICIES_TABLE_SQL = (
+    "CREATE TABLE hardcover_identity_egress_policies ("
+    "work_key TEXT NOT NULL, generation INTEGER NOT NULL, "
+    "max_starts INTEGER NOT NULL CHECK (typeof(max_starts)='integer' AND max_starts IN (1,3)), "
+    "created_at TEXT NOT NULL CHECK (" + _timestamp_constraint("created_at") + "), "
+    "PRIMARY KEY(work_key,generation), "
+    "FOREIGN KEY(work_key,generation) REFERENCES hardcover_identity_generations(work_key,generation))"
+)
+_HARDCOVER_IDENTITY_EGRESS_POLICIES_NO_UPDATE_SQL = (
+    "CREATE TRIGGER hardcover_identity_egress_policies_no_update "
+    "BEFORE UPDATE ON hardcover_identity_egress_policies "
+    "BEGIN SELECT RAISE(ABORT,'immutable hardcover identity record'); END"
+)
+_HARDCOVER_IDENTITY_EGRESS_POLICIES_NO_DELETE_SQL = (
+    "CREATE TRIGGER hardcover_identity_egress_policies_no_delete "
+    "BEFORE DELETE ON hardcover_identity_egress_policies "
+    "BEGIN SELECT RAISE(ABORT,'immutable hardcover identity record'); END"
+)
 _HARDCOVER_IDENTITY_EVENTS_TABLE_SQL = (
     "CREATE TABLE hardcover_identity_events ("
     "work_key TEXT NOT NULL, generation INTEGER NOT NULL, sequence INTEGER NOT NULL CHECK (sequence BETWEEN 1 AND 2147483647), "
@@ -952,6 +970,18 @@ MIGRATIONS = (
                 "current_hardcover_identity",
             }
         ),
+    ),
+    Migration(
+        10,
+        (
+            _HARDCOVER_IDENTITY_EGRESS_POLICIES_TABLE_SQL,
+            "INSERT INTO hardcover_identity_egress_policies(work_key,generation,max_starts,created_at) "
+            "SELECT work_key,generation,3,updated_at FROM hardcover_identity_generations "
+            "WHERE attempt_count>0",
+            _HARDCOVER_IDENTITY_EGRESS_POLICIES_NO_UPDATE_SQL,
+            _HARDCOVER_IDENTITY_EGRESS_POLICIES_NO_DELETE_SQL,
+        ),
+        frozenset({"hardcover_identity_egress_policies"}),
     ),
 )
 

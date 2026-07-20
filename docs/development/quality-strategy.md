@@ -185,6 +185,17 @@ composition. No live Hardcover call is part of increment 5. Retry scheduling,
 waiting, cancellation, signal handling, and restart orchestration remain a
 later increment.
 
+F09f increment 6 remains Tier 2 because it exercises those synthetic lifecycle
+interactions across persistence, process restart, deployment-gate recovery, and
+OS signals. Exact-head review and qualification prove exact retry due times,
+release before wait, restart before/at due, aggregate and caller expiry, wall
+regression, cancellation at each lifecycle state, expired pre/post-start
+recovery, stale-fence rejection, three starts/no fourth, durable limit-1 replay,
+and SIGINT/SIGTERM before and during structural transport with handler
+restoration. The installed C6 preview and 21-channel/seven-source privacy poison
+matrix remain credential-free; no live request or production composition is a
+qualification step.
+
 ## Definition of done
 
 A change is done only when:

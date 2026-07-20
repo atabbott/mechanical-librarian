@@ -69,6 +69,7 @@ from mechanical_librarian.application.hardcover_identity import (
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
+    IdentityLifecyclePreviewReport,
     InertPreviewReport,
     SafeExecutorPreviewReport,
     render_report_text as render_hardcover_identity_text,
@@ -107,6 +108,9 @@ HardcoverDurableWorkPreviewRunner = Callable[
 ]
 HardcoverSafeExecutorPreviewRunner = Callable[
     [Mapping[str, object], Path], SafeExecutorPreviewReport
+]
+HardcoverIdentityLifecyclePreviewRunner = Callable[
+    [Mapping[str, object], Path], IdentityLifecyclePreviewReport
 ]
 
 _FAILURE_MESSAGES = {
@@ -203,6 +207,7 @@ def _hardcover_identity_parser() -> argparse.ArgumentParser:
             "fixed-adapter-v3",
             "durable-work-v3",
             "safe-executor-v3",
+            "lifecycle-orchestration-v3",
         ),
     )
     parser.add_argument("--input")
@@ -575,6 +580,9 @@ def main(
     hardcover_safe_executor_preview_runner: (
         HardcoverSafeExecutorPreviewRunner | None
     ) = None,
+    hardcover_identity_lifecycle_preview_runner: (
+        HardcoverIdentityLifecyclePreviewRunner | None
+    ) = None,
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
@@ -597,6 +605,7 @@ def main(
             durable = hardcover_arguments.scenario in {
                 "durable-work-v3",
                 "safe-executor-v3",
+                "lifecycle-orchestration-v3",
             }
             exact = (
                 hardcover_arguments.scenario
@@ -606,6 +615,7 @@ def main(
                     "fixed-adapter-v3",
                     "durable-work-v3",
                     "safe-executor-v3",
+                    "lifecycle-orchestration-v3",
                 }
                 and hardcover_arguments.input == "-"
                 and hardcover_arguments.format == "json"
@@ -643,10 +653,16 @@ def main(
                     report = hardcover_durable_work_preview_runner(
                         source, hardcover_arguments.database
                     )
-                else:
+                elif hardcover_arguments.scenario == "safe-executor-v3":
                     if hardcover_safe_executor_preview_runner is None:
                         raise ValueError("safe executor preview is unavailable")
                     report = hardcover_safe_executor_preview_runner(
+                        source, hardcover_arguments.database
+                    )
+                else:
+                    if hardcover_identity_lifecycle_preview_runner is None:
+                        raise ValueError("identity lifecycle preview is unavailable")
+                    report = hardcover_identity_lifecycle_preview_runner(
                         source, hardcover_arguments.database
                     )
             except Exception:
@@ -677,6 +693,11 @@ def main(
             ) is not SafeExecutorPreviewReport:
                 errors.write(_HARDCOVER_IDENTITY_FAILURE)
                 return 2
+            elif hardcover_arguments.scenario == "lifecycle-orchestration-v3" and type(
+                report
+            ) is not IdentityLifecyclePreviewReport:
+                errors.write(_HARDCOVER_IDENTITY_FAILURE)
+                return 2
             try:
                 report.validate()
                 rendered = report.to_json()
@@ -689,6 +710,7 @@ def main(
                 FixedAdapterPreviewReport,
                 DurableWorkPreviewReport,
                 SafeExecutorPreviewReport,
+                IdentityLifecyclePreviewReport,
             }:
                 return 0
             return 0 if report.outcome is HardcoverIdentityOutcome.DISABLED else 2
