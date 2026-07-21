@@ -333,6 +333,106 @@ class SqliteFoundationTests(unittest.TestCase):
             self.assertEqual(tuple(parent.iterdir()), ())
             self.assertEqual(tuple(moved.iterdir()), ())
 
+    def test_bound_disposable_state_reads_at_most_one_entry_and_closes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "disposable"
+            parent.mkdir(mode=0o700)
+            for index in range(32):
+                (parent / f"entry-{index}").touch()
+            real_scandir = os.scandir
+            next_calls = 0
+            close_calls = 0
+
+            class _CountingEntries:
+                def __init__(self, descriptor: int) -> None:
+                    self._entries = real_scandir(descriptor)
+
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    nonlocal next_calls
+                    next_calls += 1
+                    return next(self._entries)
+
+                def close(self) -> None:
+                    nonlocal close_calls
+                    close_calls += 1
+                    self._entries.close()
+
+            with (
+                patch.object(
+                    sqlite.os,
+                    "scandir",
+                    side_effect=lambda descriptor: _CountingEntries(descriptor),
+                ),
+                self.assertRaisesRegex(SchemaError, "invalid"),
+            ):
+                with sqlite.bound_disposable_state(parent / "state.sqlite"):
+                    self.fail("populated directory was admitted")
+
+            self.assertEqual(next_calls, 1)
+            self.assertEqual(close_calls, 1)
+
+    def test_bound_disposable_state_translates_scan_allocation_failure_and_cleans(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "disposable"
+            parent.mkdir(mode=0o700)
+            opened: list[int] = []
+            scan_closed = False
+            real_open = os.open
+
+            class _AllocationFailureEntries:
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    raise MemoryError("synthetic allocation failure")
+
+                def close(self) -> None:
+                    nonlocal scan_closed
+                    scan_closed = True
+
+            def capture_open(path, flags, *args, **kwargs):
+                descriptor = real_open(path, flags, *args, **kwargs)
+                if path == parent:
+                    opened.append(descriptor)
+                return descriptor
+
+            with (
+                patch.object(sqlite.os, "open", side_effect=capture_open),
+                patch.object(
+                    sqlite.os,
+                    "scandir",
+                    return_value=_AllocationFailureEntries(),
+                ),
+                self.assertRaisesRegex(SchemaError, "unavailable"),
+            ):
+                with sqlite.bound_disposable_state(parent / "state.sqlite"):
+                    self.fail("allocation failure was admitted")
+
+            self.assertTrue(scan_closed)
+            self.assertEqual(len(opened), 1)
+            with self.assertRaises(OSError):
+                os.fstat(opened[0])
+
+    def test_bound_disposable_state_translates_ordinary_scan_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "disposable"
+            parent.mkdir(mode=0o700)
+            with (
+                patch.object(
+                    sqlite.os,
+                    "scandir",
+                    side_effect=OSError("synthetic scan failure"),
+                ),
+                self.assertRaisesRegex(SchemaError, "unavailable"),
+            ):
+                with sqlite.bound_disposable_state(parent / "state.sqlite"):
+                    self.fail("scan failure was admitted")
+
     def test_bound_disposable_state_preserves_base_exception_and_cleans(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory) / "disposable"

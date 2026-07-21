@@ -145,23 +145,45 @@ class _TransportLogFilter(logging.Filter):
 class ContextTransportLogIsolation:
     """Suppress dependency logs only in the current transport context."""
 
-    _lock = threading.RLock()
-    _filter = _TransportLogFilter()
-
     def __init__(self) -> None:
-        with self._lock:
-            for name in _TRANSPORT_LOGGERS:
-                logger = logging.getLogger(name)
-                if self._filter not in logger.filters:
-                    logger.addFilter(self._filter)
+        self._lock = threading.RLock()
+        self._filter = _TransportLogFilter()
+        self._active_contexts = 0
+        self._installed_loggers: tuple[logging.Logger, ...] = ()
 
     @contextmanager
     def __call__(self) -> Iterator[None]:
-        token = _TRANSPORT_LOG_CONTEXT.set(True)
+        entered = False
+        token = None
         try:
+            with self._lock:
+                installed: list[logging.Logger] = []
+                if self._active_contexts == 0:
+                    try:
+                        for name in _TRANSPORT_LOGGERS:
+                            logger = logging.getLogger(name)
+                            logger.addFilter(self._filter)
+                            installed.append(logger)
+                    except Exception:
+                        for logger in reversed(installed):
+                            logger.removeFilter(self._filter)
+                        raise
+                    self._installed_loggers = tuple(installed)
+                self._active_contexts += 1
+                entered = True
+            token = _TRANSPORT_LOG_CONTEXT.set(True)
             yield
         finally:
-            _TRANSPORT_LOG_CONTEXT.reset(token)
+            if token is not None:
+                _TRANSPORT_LOG_CONTEXT.reset(token)
+            if entered:
+                with self._lock:
+                    self._active_contexts -= 1
+                    if self._active_contexts == 0:
+                        installed = self._installed_loggers
+                        self._installed_loggers = ()
+                        for logger in reversed(installed):
+                            logger.removeFilter(self._filter)
 
 
 __all__ = ["ContextTransportLogIsolation", "IsolatedAddressResolverFactory"]

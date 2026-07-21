@@ -576,6 +576,7 @@ class HardcoverActivationTests(unittest.TestCase):
                         root / "state.sqlite"
                     )
                 )
+
             self.assertEqual(next_calls, 1)
 
     def test_disposable_state_check_fails_closed_when_descriptor_close_fails(
@@ -644,6 +645,128 @@ class HardcoverActivationTests(unittest.TestCase):
                 )
             self.assertEqual(
                 report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE
+            )
+
+    def test_one_shot_rejects_concurrent_population_before_credentials(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as input_directory,
+            tempfile.TemporaryDirectory() as state_directory,
+        ):
+            inputs = Path(input_directory)
+            inputs.chmod(0o700)
+            state_root = Path(state_directory)
+            state_root.chmod(0o700)
+            config = self._enabled_config(inputs)
+            query = inputs / "query.json"
+            query.write_text(
+                json.dumps(
+                    {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+                ),
+                encoding="utf-8",
+            )
+            query.chmod(0o600)
+            database = state_root / "state.sqlite"
+            real_scandir = os.scandir
+            next_calls = 0
+            close_calls = 0
+
+            class _CountingEntries:
+                def __init__(self, descriptor: int) -> None:
+                    self._entries = real_scandir(descriptor)
+
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    nonlocal next_calls
+                    next_calls += 1
+                    return next(self._entries)
+
+                def close(self) -> None:
+                    nonlocal close_calls
+                    close_calls += 1
+                    self._entries.close()
+
+            def populate_after_composition_admission(_database: Path) -> bool:
+                for index in range(32):
+                    (state_root / f"concurrent-entry-{index}").touch()
+                return True
+
+            with (
+                patch.object(
+                    composition,
+                    "_qualification_state_is_disposable",
+                    side_effect=populate_after_composition_admission,
+                ),
+                patch(
+                    "mechanical_librarian.infrastructure.persistence.sqlite.os.scandir",
+                    side_effect=lambda descriptor: _CountingEntries(descriptor),
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.PrivateFileProviderCredentials",
+                    side_effect=AssertionError("credential reached"),
+                ),
+            ):
+                report = _run_hardcover_identity_report(
+                    config,
+                    database,
+                    query,
+                    HardcoverExecutionPolicy.QUALIFICATION_ONE_SHOT,
+                )
+
+            self.assertEqual(
+                report.outcome,
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+            )
+            self.assertEqual(next_calls, 1)
+            self.assertEqual(close_calls, 1)
+
+    def test_one_shot_translates_scan_allocation_failure_before_credentials(
+        self,
+    ) -> None:
+        with (
+            tempfile.TemporaryDirectory() as input_directory,
+            tempfile.TemporaryDirectory() as state_directory,
+        ):
+            inputs = Path(input_directory)
+            inputs.chmod(0o700)
+            state_root = Path(state_directory)
+            state_root.chmod(0o700)
+            config = self._enabled_config(inputs)
+            query = inputs / "query.json"
+            query.write_text(
+                json.dumps(
+                    {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+                ),
+                encoding="utf-8",
+            )
+            query.chmod(0o600)
+
+            with (
+                patch.object(
+                    composition,
+                    "_qualification_state_is_disposable",
+                    return_value=True,
+                ),
+                patch(
+                    "mechanical_librarian.infrastructure.persistence.sqlite.os.scandir",
+                    side_effect=MemoryError("synthetic allocation failure"),
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.PrivateFileProviderCredentials",
+                    side_effect=AssertionError("credential reached"),
+                ),
+            ):
+                report = _run_hardcover_identity_report(
+                    config,
+                    state_root / "state.sqlite",
+                    query,
+                    HardcoverExecutionPolicy.QUALIFICATION_ONE_SHOT,
+                )
+
+            self.assertEqual(
+                report.outcome,
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
             )
 
     def test_normal_mode_binds_existing_state_check_to_final_gate_identity(

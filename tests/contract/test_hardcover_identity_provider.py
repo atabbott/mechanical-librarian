@@ -503,7 +503,24 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             def emit(self, record: logging.LogRecord) -> None:
                 records.append(record.getMessage())
 
+        class _UnrelatedFilter(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                return True
+
+        unrelated_filter = _UnrelatedFilter()
+        unrelated_handler = logging.NullHandler()
+        during_configuration = None
+
         async def respond(request: httpx.Request) -> httpx.Response:
+            nonlocal during_configuration
+            active_logger = logging.getLogger("httpcore.connection")
+            during_configuration = (
+                active_logger.level,
+                active_logger.propagate,
+                active_logger.disabled,
+                tuple(active_logger.handlers),
+                tuple(active_logger.filters),
+            )
             logging.getLogger("httpcore.connection").warning(
                 "private-address-and-header"
             )
@@ -513,6 +530,20 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             )
             unrelated.start()
             unrelated.join()
+
+            def change_unrelated_configuration() -> None:
+                logger = logging.getLogger("httpcore.connection")
+                logger.addFilter(unrelated_filter)
+                logger.addHandler(unrelated_handler)
+                logger.setLevel(logging.ERROR)
+                logger.propagate = False
+                logger.disabled = False
+
+            configuration = threading.Thread(
+                target=change_unrelated_configuration
+            )
+            configuration.start()
+            configuration.join()
             return httpx.Response(
                 401,
                 headers={"X-Private": "private-isbn-and-provider-metadata"},
@@ -525,13 +556,23 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         original_level = root.level
         root.addHandler(handler)
         root.setLevel(logging.DEBUG)
-        channel = _httpx_channel(httpx.MockTransport(respond))
         transport_logger = logging.getLogger("httpcore.connection")
-        logger_configuration = (
-            transport_logger.level,
-            transport_logger.propagate,
-            transport_logger.disabled,
-            tuple(transport_logger.handlers),
+
+        def logger_configuration():
+            return (
+                transport_logger.level,
+                transport_logger.propagate,
+                transport_logger.disabled,
+                tuple(transport_logger.handlers),
+                tuple(transport_logger.filters),
+            )
+
+        original_configuration = logger_configuration()
+        log_isolation = ContextTransportLogIsolation()
+        self.assertEqual(logger_configuration(), original_configuration)
+        channel = HttpxIdentityByteChannel(
+            log_isolation_factory=log_isolation,
+            transport=httpx.MockTransport(respond),
         )
         try:
             result = _run_prepared(
@@ -543,26 +584,83 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 self.query(),
                 self.context(),
             )
+            self.assertIs(
+                result.failure.kind, IdentityAttemptFailureKind.AUTHENTICATION
+            )
+            self.assertEqual(body_iterations, 0)
+            self.assertTrue(closed)
+            self.assertIn("unrelated-thread-log", records)
+            self.assertIsNotNone(during_configuration)
+            assert during_configuration is not None
+            self.assertEqual(
+                during_configuration[:4],
+                original_configuration[:4],
+            )
+            self.assertEqual(
+                during_configuration[4][:-1],
+                original_configuration[4],
+            )
+            self.assertIs(during_configuration[4][-1], log_isolation._filter)
+            self.assertEqual(
+                logger_configuration(),
+                (
+                    logging.ERROR,
+                    False,
+                    False,
+                    (*original_configuration[3], unrelated_handler),
+                    (*original_configuration[4], unrelated_filter),
+                ),
+            )
+            self.assertFalse(
+                any(
+                    "private-" in message or "1.1.1.1" in message
+                    for message in records
+                )
+            )
         finally:
+            transport_logger.setLevel(original_configuration[0])
+            transport_logger.propagate = original_configuration[1]
+            transport_logger.disabled = original_configuration[2]
+            transport_logger.handlers[:] = original_configuration[3]
+            transport_logger.filters[:] = original_configuration[4]
             root.removeHandler(handler)
             root.setLevel(original_level)
-        self.assertIs(
-            result.failure.kind, IdentityAttemptFailureKind.AUTHENTICATION
+
+    def test_transport_log_isolation_restores_filters_after_failure(self) -> None:
+        logger = logging.getLogger("httpcore.connection")
+        original = (
+            logger.level,
+            logger.propagate,
+            logger.disabled,
+            tuple(logger.handlers),
+            tuple(logger.filters),
         )
-        self.assertEqual(body_iterations, 0)
-        self.assertTrue(closed)
-        self.assertIn("unrelated-thread-log", records)
+        isolation = ContextTransportLogIsolation()
         self.assertEqual(
             (
-                transport_logger.level,
-                transport_logger.propagate,
-                transport_logger.disabled,
-                tuple(transport_logger.handlers),
+                logger.level,
+                logger.propagate,
+                logger.disabled,
+                tuple(logger.handlers),
+                tuple(logger.filters),
             ),
-            logger_configuration,
+            original,
         )
-        self.assertFalse(
-            any("private-" in message or "1.1.1.1" in message for message in records)
+        with self.assertRaisesRegex(RuntimeError, "synthetic transport failure"):
+            with isolation():
+                self.assertEqual(len(logger.filters), len(original[4]) + 1)
+                with isolation():
+                    self.assertEqual(len(logger.filters), len(original[4]) + 1)
+                    raise RuntimeError("synthetic transport failure")
+        self.assertEqual(
+            (
+                logger.level,
+                logger.propagate,
+                logger.disabled,
+                tuple(logger.handlers),
+                tuple(logger.filters),
+            ),
+            original,
         )
 
     def test_address_policy_rejects_nonpublic_before_channel_open(self) -> None:

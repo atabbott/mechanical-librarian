@@ -1846,7 +1846,7 @@ def bound_disposable_state(target: Path) -> Iterator[BoundDisposableState]:
             or identity != _directory_identity(path_status)
             or identity[2] != os.geteuid()
             or identity[3] != 0o700
-            or os.listdir(descriptor)
+            or not _directory_descriptor_is_empty(descriptor)
         ):
             raise SchemaError("durable work preview path is invalid")
         try:
@@ -1862,7 +1862,7 @@ def bound_disposable_state(target: Path) -> Iterator[BoundDisposableState]:
         failure = error
         if isinstance(error, SchemaError):
             raise
-        if isinstance(error, OSError):
+        if isinstance(error, (MemoryError, OSError)):
             raise SchemaError("durable work preview path is unavailable") from None
         raise
     finally:
@@ -1875,6 +1875,36 @@ def bound_disposable_state(target: Path) -> Iterator[BoundDisposableState]:
                 else:
                     raise SchemaError(
                         "durable work preview directory cleanup failed"
+                    ) from None
+
+
+def _directory_descriptor_is_empty(descriptor: int) -> bool:
+    """Read at most one directory entry and preserve control-flow failures."""
+
+    entries = None
+    failure: BaseException | None = None
+    try:
+        entries = os.scandir(descriptor)
+        try:
+            next(entries)
+        except StopIteration:
+            return True
+        return False
+    except BaseException as error:
+        failure = error
+        if isinstance(error, (MemoryError, OSError)):
+            raise SchemaError("durable work preview path is unavailable") from None
+        raise
+    finally:
+        if entries is not None:
+            try:
+                entries.close()
+            except OSError:
+                if failure is not None:
+                    failure.add_note("durable work preview scan cleanup failed")
+                else:
+                    raise SchemaError(
+                        "durable work preview scan cleanup failed"
                     ) from None
 
 
