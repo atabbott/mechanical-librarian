@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
 
@@ -17,6 +18,7 @@ from mechanical_librarian.domain.epub_opening import EpubOpeningReport
 from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceLocator,
     EpubSourceResolution,
+    ResolvedEpubSource,
 )
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkObservation,
@@ -56,10 +58,12 @@ class SQLiteLiveTitleEvidenceReader:
         connection: sqlite3.Connection,
         source_resolver: EpubSourceResolver,
         provider_validator: HardcoverMatchValidator,
+        source_fingerprint: Callable[[ResolvedEpubSource], str],
     ) -> None:
         self._connection = connection
         self._source_resolver = source_resolver
         self._provider_validator = provider_validator
+        self._source_fingerprint = source_fingerprint
 
     def inspect_title_source(
         self, locator: EpubEvidenceLocator, mount_configuration_digest: str
@@ -136,6 +140,16 @@ class SQLiteLiveTitleEvidenceReader:
             or report.source_fingerprint.digest != evidence[1]
         ):
             raise ValueError("live local evidence is inconsistent")
+        try:
+            current_source_fingerprint = self._source_fingerprint(source)
+        except OSError:
+            return LiveSourceEvidence(
+                locator, LiveSourceState.NOT_READY, mount_configuration_digest
+            )
+        if current_source_fingerprint != evidence[1]:
+            return LiveSourceEvidence(
+                locator, LiveSourceState.NOT_READY, mount_configuration_digest
+            )
         return LiveSourceEvidence(
             locator,
             LiveSourceState.READY,

@@ -4,6 +4,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -19,13 +20,21 @@ from mechanical_librarian.adapters.persistence.title_proposals import (
     TitleProposalPersistenceError,
 )
 from mechanical_librarian.application.hardcover_safe_executor import hardcover_identity_work_key
-from mechanical_librarian.application.live_title_proposals import ProposeLiveTitle
+from mechanical_librarian.application.live_title_proposals import (
+    LiveSourceEvidence,
+    LiveSourceState,
+    ProposeLiveTitle,
+)
 from mechanical_librarian.bootstrap.composition import (
     _mount_configuration_digest,
     _run_epub_opening_report,
     _run_live_title_proposal_report,
 )
 from mechanical_librarian.domain.epub_opening_evidence import EpubEvidenceLocator
+from mechanical_librarian.domain.title_proposals import (
+    TitleProposalResult,
+    live_proposal_set_from_manifest,
+)
 from mechanical_librarian.domain.hardcover_identity import validate_private_query
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityMatchOutcome,
@@ -201,11 +210,16 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
             self.connection,
             SQLiteEpubOpeningEvidenceRepository(self.connection),
             SQLiteHardcoverIdentityWorkRepository(self.connection),
+            lambda source: hashlib.sha256(
+                (self.root / source.relative_path).read_bytes()
+            ).hexdigest(),
         )
+        publication_clock = kwargs.pop("publication_clock", lambda: self.now)
         return SQLiteTitleProposalRepository(
             self.connection,
             source_reader=reader,
             provider_reader=reader,
+            publication_clock=publication_clock,
             **kwargs,
         )
 
@@ -216,7 +230,7 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "injected"):
             ProposeLiveTitle(failing).run(
                 self.locator,
-                self.mount_digest,
+                (self.mount_digest,),
                 provider_enabled=True,
                 authority_revision=1,
                 observed_at=self.now,
@@ -238,14 +252,14 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         repository = self.repository()
         first = ProposeLiveTitle(repository).run(
             self.locator,
-            self.mount_digest,
+            (self.mount_digest,),
             provider_enabled=True,
             authority_revision=1,
             observed_at=self.now,
         )
         replay = ProposeLiveTitle(repository).run(
             self.locator,
-            self.mount_digest,
+            (self.mount_digest,),
             provider_enabled=True,
             authority_revision=1,
             observed_at=self.now,
@@ -274,6 +288,140 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(composed.proposal_set, first.proposal_set)
         self.assertTrue(composed.persistence.replayed)
+
+    def test_mounted_epub_replacement_is_rehashed_before_provider_lookup(self) -> None:
+        replacement = self.root / "replacement.epub"
+        replacement.write_bytes(b"not the evidenced epub")
+        replacement.replace(self.root / "book.epub")
+
+        repository = self.repository()
+        source = repository.inspect_source(self.locator, (self.mount_digest,))
+        self.assertEqual(source.state.value, "not_ready")
+        report = ProposeLiveTitle(repository).run(
+            self.locator,
+            (self.mount_digest,),
+            provider_enabled=True,
+            authority_revision=1,
+            observed_at=self.now,
+        )
+        self.assertEqual(report.proposal_set.result.value, "source_not_ready")
+        self.assertFalse(report.to_data()["production_applicable"])
+
+    def test_provider_expiry_is_checked_with_fresh_publication_clock(self) -> None:
+        repository = self.repository(
+            publication_clock=lambda: self.now + timedelta(days=365)
+        )
+        with self.assertRaisesRegex(
+            TitleProposalPersistenceError, "live provider evidence changed"
+        ):
+            ProposeLiveTitle(repository).run(
+                self.locator,
+                (self.mount_digest,),
+                provider_enabled=True,
+                authority_revision=1,
+                observed_at=self.now,
+            )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                "WHERE execution_mode='production_report_only'"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_exact_replay_rejects_a_concurrently_advanced_current_pointer(self) -> None:
+        repository = self.repository()
+        first = ProposeLiveTitle(repository).run(
+            self.locator,
+            (self.mount_digest,),
+            provider_enabled=True,
+            authority_revision=1,
+            observed_at=self.now,
+        )
+        manifest = dict(first.proposal_set.manifest)
+        manifest["lineage_revision"] = 2
+        manifest["previous_set_id"] = first.proposal_set.set_id
+        successor = live_proposal_set_from_manifest(
+            manifest=manifest,
+            result=TitleProposalResult.NO_CHANGE,
+            current_value=None,
+            proposed_value=None,
+        )
+        self.connection.execute(
+            "INSERT INTO synthetic_title_proposal_sets("
+            "set_id,identity_digest,lineage,lineage_revision,previous_set_id,mode,"
+            "canonical_set,execution_mode) VALUES (?,?,?,?,?,'synthetic_preview',?,?)",
+            (
+                successor.set_id,
+                successor.identity_digest,
+                successor.lineage,
+                successor.lineage_revision,
+                successor.previous_set_id,
+                successor.to_json(),
+                successor.mode.value,
+            ),
+        )
+        self.connection.execute(
+            "UPDATE current_synthetic_title_proposals SET set_id=? WHERE lineage=?",
+            (successor.set_id, successor.lineage),
+        )
+        self.connection.commit()
+        source = repository.inspect_source(self.locator, (self.mount_digest,))
+        provider = repository.inspect_provider(self.work_key, self.now)
+        with self.assertRaisesRegex(
+            TitleProposalPersistenceError, "live proposal is no longer current"
+        ):
+            repository.publish_live(
+                first.proposal_set,
+                source,
+                provider,
+                (self.mount_digest,),
+            )
+
+    def test_newly_ready_second_mount_is_rejected_at_publication(self) -> None:
+        real_reader = SQLiteLiveTitleEvidenceReader(
+            self.connection,
+            SQLiteEpubOpeningEvidenceRepository(self.connection),
+            SQLiteHardcoverIdentityWorkRepository(self.connection),
+            lambda source: hashlib.sha256(
+                (self.root / source.relative_path).read_bytes()
+            ).hexdigest(),
+        )
+        second_digest = hashlib.sha256(b"second-mount").hexdigest()
+        calls = 0
+
+        class ChangingMountReader:
+            def inspect_title_source(inner_self, locator, mount_digest):
+                nonlocal calls
+                if mount_digest == self.mount_digest:
+                    return real_reader.inspect_title_source(locator, mount_digest)
+                calls += 1
+                if calls == 1:
+                    return LiveSourceEvidence(
+                        locator, LiveSourceState.NOT_READY, mount_digest
+                    )
+                return replace(
+                    real_reader.inspect_title_source(locator, self.mount_digest),
+                    mount_configuration_digest=mount_digest,
+                )
+
+        mounts = tuple(sorted((self.mount_digest, second_digest)))
+        repository = SQLiteTitleProposalRepository(
+            self.connection,
+            source_reader=ChangingMountReader(),
+            provider_reader=real_reader,
+            publication_clock=lambda: self.now,
+        )
+        with self.assertRaisesRegex(
+            TitleProposalPersistenceError, "live proposal source is ambiguous"
+        ):
+            ProposeLiveTitle(repository).run(
+                self.locator,
+                mounts,
+                provider_enabled=True,
+                authority_revision=1,
+                observed_at=self.now,
+            )
 
 
 if __name__ == "__main__":

@@ -42,9 +42,11 @@ class _Repository:
         self.provider_reads = 0
         self.current: dict[str, LiveTitleProposalSet] = {}
 
-    def inspect_source(self, locator, mount_configuration_digest):
+    def inspect_source(self, locator, mount_configuration_digests):
         self.assert_equal(locator, self.source.locator)
-        self.assert_equal(mount_configuration_digest, self.source.mount_configuration_digest)
+        self.assert_equal(
+            mount_configuration_digests, (self.source.mount_configuration_digest,)
+        )
         return self.source
 
     def inspect_provider(self, work_key, observed_at):
@@ -59,7 +61,10 @@ class _Repository:
     def current_live(self, lineage):
         return self.current.get(lineage)
 
-    def publish_live(self, proposal_set, source, provider, observed_at):
+    def publish_live(self, proposal_set, source, provider, mount_configuration_digests):
+        self.assert_equal(
+            mount_configuration_digests, (self.source.mount_configuration_digest,)
+        )
         if source != self.source_at_publish:
             raise RuntimeError("source changed")
         existing = self.current.get(proposal_set.lineage)
@@ -133,7 +138,7 @@ class LiveTitleProposalTests(unittest.TestCase):
     def _execute(self, repository: _Repository, *, enabled: bool = True):
         return ProposeLiveTitle(repository).run(
             self.locator,
-            self.source.mount_configuration_digest,
+            (self.source.mount_configuration_digest,),
             provider_enabled=enabled,
             authority_revision=1,
             observed_at=self.now,
@@ -228,6 +233,25 @@ class LiveTitleProposalTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "source changed"):
             self._execute(repository)
         self.assertEqual(repository.current[first.proposal_set.lineage], first.proposal_set)
+
+    def test_noncurrent_positive_replay_is_never_returned_as_applicable(self) -> None:
+        repository = _Repository(self.source)
+        first = self._execute(repository)
+        successor_id = "ps-" + "a" * 60
+
+        def stale_publish(proposal_set, source, provider, mount_configuration_digests):
+            return ProposalPersistence(
+                proposal_set,
+                replayed=True,
+                current=False,
+                current_set_id=successor_id,
+                superseded_set_id=proposal_set.set_id,
+                history_count=2,
+            )
+
+        repository.publish_live = stale_publish
+        with self.assertRaisesRegex(ValueError, "no longer current"):
+            self._execute(repository)
 
     def test_cli_emits_one_canonical_report_and_rejects_bad_selector(self) -> None:
         expected = self._execute(_Repository(self.source))

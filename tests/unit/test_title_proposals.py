@@ -185,6 +185,25 @@ class TitleProposalDomainTests(unittest.TestCase):
         with self.assertRaises(TitleProposalValueError):
             TitleProposalSet.from_json(json.dumps(data, separators=(",", ":"), sort_keys=True))
 
+    def test_synthetic_result_vocabulary_rejects_live_only_values_on_hydration(self) -> None:
+        value = proposal_set_from_manifest(
+            manifest=manifest(), result=TitleProposalResult.PROVIDER_EMPTY
+        )
+        for live_only in (
+            "source_not_ready",
+            "provider_not_ready",
+            "evidence_disagreement",
+        ):
+            with self.subTest(result=live_only):
+                data = json.loads(value.to_json())
+                data["result"] = live_only
+                with self.assertRaisesRegex(
+                    TitleProposalValueError, "proposal-set result is invalid"
+                ):
+                    TitleProposalSet.from_json(
+                        json.dumps(data, separators=(",", ":"), sort_keys=True)
+                    )
+
     def test_complete_proposal_semantics_are_identity_bearing_and_exactly_projected(self) -> None:
         value = proposal_set_from_manifest(
             manifest=manifest(),

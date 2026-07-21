@@ -80,7 +80,10 @@ from mechanical_librarian.application.connection_probe import (
     ConnectionProbeResult,
     InspectLibraryConnection,
 )
-from mechanical_librarian.application.configuration import ConfigurationError
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    ConfigurationError,
+)
 from mechanical_librarian.application.hardcover_identity import (
     DurableWorkPreviewReport,
     FixedAdapterPreviewReport,
@@ -165,7 +168,6 @@ from mechanical_librarian.application.title_proposals import (
     scenario_named,
 )
 from mechanical_librarian.application.live_title_proposals import (
-    LiveSourceState,
     LiveTitleProposalReport,
     ProposeLiveTitle,
 )
@@ -186,6 +188,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceLocator,
     EpubEvidenceMode,
     EpubEvidenceResult,
+    ResolvedEpubSource,
     epub_governing_digest,
 )
 from mechanical_librarian.domain.local_evidence import (
@@ -1444,24 +1447,18 @@ def _run_live_title_proposal_report(
             connection,
             SQLiteEpubOpeningEvidenceRepository(connection),
             SQLiteHardcoverIdentityWorkRepository(connection),
+            lambda source: _fingerprint_live_epub_source(configuration, source),
         )
         repository = SQLiteTitleProposalRepository(
             connection,
             source_reader=evidence_reader,
             provider_reader=evidence_reader,
+            publication_clock=lambda: datetime.now(timezone.utc),
         )
-        ready = tuple(
-            digest
-            for digest in mount_digests
-            if repository.inspect_source(locator, digest).state is LiveSourceState.READY
-        )
-        if len(ready) > 1:
-            raise SchemaError("live title proposal source is ambiguous")
-        mount_digest = ready[0] if ready else mount_digests[0]
         provider = configuration.hardcover_provider
         return ProposeLiveTitle(repository).run(
             locator,
-            mount_digest,
+            mount_digests,
             provider_enabled=provider.enabled,
             authority_revision=provider.authority_revision,
             observed_at=datetime.now(timezone.utc),
@@ -1469,6 +1466,28 @@ def _run_live_title_proposal_report(
     finally:
         if connection is not None:
             connection.close()
+
+
+def _fingerprint_live_epub_source(
+    configuration: ApplicationConfiguration, source: ResolvedEpubSource
+) -> str:
+    mounts = tuple(
+        mount
+        for mount in configuration.media_mounts
+        if mount.name == source.mount_name
+        and _mount_configuration_digest(mount) == source.mount_configuration_digest
+    )
+    if len(mounts) != 1:
+        raise ValueError("resolved EPUB mount changed")
+    maximum = min(
+        configuration.evidence.epub_package.source_archive_bytes,
+        configuration.evidence.maximum_document_bytes,
+    )
+    opened = open_local_media(mounts[0].container_path, source.relative_path)
+    try:
+        return sha256_descriptor(opened.descriptor, opened.length, maximum=maximum)
+    finally:
+        os.close(opened.descriptor)
 
 
 def _run_synthetic_title_proposal_report(

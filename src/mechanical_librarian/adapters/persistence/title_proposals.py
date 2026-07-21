@@ -6,13 +6,16 @@ import sqlite3
 import re
 from collections.abc import Callable
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Iterator
 
 from mechanical_librarian.application.live_title_proposals import (
     LiveProviderEvidence,
     LiveTitleProviderReader,
     LiveSourceEvidence,
+    LiveSourceState,
     LiveTitleSourceReader,
+    mount_configuration_set_digest,
 )
 from mechanical_librarian.application.title_proposals import ProposalPersistence
 from mechanical_librarian.domain.epub_opening_evidence import EpubEvidenceLocator
@@ -42,6 +45,7 @@ class SQLiteTitleProposalRepository:
         before_readback: Callable[[], None] | None = None,
         source_reader: LiveTitleSourceReader | None = None,
         provider_reader: LiveTitleProviderReader | None = None,
+        publication_clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._connection = connection
         self._after_history_insert = after_history_insert
@@ -49,6 +53,7 @@ class SQLiteTitleProposalRepository:
         self._before_readback = before_readback
         self._source_reader = source_reader
         self._provider_reader = provider_reader
+        self._publication_clock = publication_clock
 
     def current(self, lineage: str) -> TitleProposalSet | None:
         try:
@@ -86,14 +91,15 @@ class SQLiteTitleProposalRepository:
             raise TitleProposalPersistenceError("proposal state could not be read") from None
 
     def inspect_source(
-        self, locator: EpubEvidenceLocator, mount_configuration_digest: str
+        self, locator: EpubEvidenceLocator, mount_configuration_digests: tuple[str, ...]
     ) -> LiveSourceEvidence:
         try:
             if self._source_reader is None:
                 raise TitleProposalPersistenceError("live proposal source is unavailable")
+            mount_configuration_set_digest(mount_configuration_digests)
             with _read_transaction(self._connection):
-                return self._source_reader.inspect_title_source(
-                    locator, mount_configuration_digest
+                return self._inspect_source_selection(
+                    locator, mount_configuration_digests
                 )
         except TitleProposalPersistenceError:
             raise
@@ -124,7 +130,7 @@ class SQLiteTitleProposalRepository:
         proposal_set: LiveTitleProposalSet,
         source: LiveSourceEvidence,
         provider: LiveProviderEvidence,
-        observed_at,
+        mount_configuration_digests: tuple[str, ...],
     ) -> ProposalPersistence:
         if (
             type(proposal_set) is not LiveTitleProposalSet
@@ -135,6 +141,9 @@ class SQLiteTitleProposalRepository:
         try:
             with _transaction(self._connection):
                 manifest = proposal_set.manifest
+                mount_set_digest = mount_configuration_set_digest(
+                    mount_configuration_digests
+                )
                 if (
                     manifest["target_reference"] != source.locator.target_reference
                     or manifest["snapshot_reference"] != source.locator.snapshot_reference
@@ -143,6 +152,8 @@ class SQLiteTitleProposalRepository:
                     or manifest["local_evidence_id"] != source.evidence_id
                     or manifest["mount_configuration_digest"]
                     != source.mount_configuration_digest
+                    or manifest["mount_configuration_set_digest"]
+                    != mount_set_digest
                     or manifest["source_fingerprint"] != source.source_fingerprint
                     or manifest["provider_evidence_id"] != provider.evidence_id
                     or manifest["provider_status"] != provider.state.value
@@ -150,24 +161,52 @@ class SQLiteTitleProposalRepository:
                     raise TitleProposalPersistenceError(
                         "live proposal evidence projection changed"
                     )
-                if self._source_reader is None or self._provider_reader is None:
+                if (
+                    self._source_reader is None
+                    or self._provider_reader is None
+                    or self._publication_clock is None
+                ):
                     raise TitleProposalPersistenceError(
                         "live proposal evidence readers are unavailable"
                     )
-                if self._source_reader.inspect_title_source(
-                    source.locator, source.mount_configuration_digest
+                if self._inspect_source_selection(
+                    source.locator, mount_configuration_digests
                 ) != source:
                     raise TitleProposalPersistenceError("live proposal source changed")
                 if provider.work_key is not None:
                     if self._provider_reader.inspect_title_provider(
-                        provider.work_key, observed_at
+                        provider.work_key, self._publication_clock()
                     ) != provider:
                         raise TitleProposalPersistenceError("live provider evidence changed")
-                return self._store(proposal_set)
+                persistence = self._store(proposal_set)
+                if (
+                    not persistence.current
+                    or persistence.current_set_id != proposal_set.set_id
+                    or persistence.proposal_set != proposal_set
+                ):
+                    raise TitleProposalPersistenceError(
+                        "live proposal is no longer current"
+                    )
+                return persistence
         except TitleProposalPersistenceError:
             raise
         except (sqlite3.Error, TitleProposalValueError, TypeError, ValueError, RecursionError):
             raise TitleProposalPersistenceError("live proposal publication failed safely") from None
+
+    def _inspect_source_selection(
+        self,
+        locator: EpubEvidenceLocator,
+        mount_configuration_digests: tuple[str, ...],
+    ) -> LiveSourceEvidence:
+        assert self._source_reader is not None
+        sources = tuple(
+            self._source_reader.inspect_title_source(locator, digest)
+            for digest in mount_configuration_digests
+        )
+        ready = tuple(source for source in sources if source.state is LiveSourceState.READY)
+        if len(ready) > 1:
+            raise TitleProposalPersistenceError("live proposal source is ambiguous")
+        return ready[0] if ready else sources[0]
 
     def _store(
         self, proposal_set: TitleProposalSet | LiveTitleProposalSet

@@ -124,8 +124,13 @@ class SyntheticTitleReviewCaseTests(unittest.TestCase):
             value.case_id = "case-changed"  # type: ignore[misc]
 
     def test_only_needs_review_with_one_current_title_proposal_creates_a_case(self) -> None:
+        live_only = {
+            TitleProposalResult.SOURCE_NOT_READY,
+            TitleProposalResult.PROVIDER_NOT_READY,
+            TitleProposalResult.EVIDENCE_DISAGREEMENT,
+        }
         for result in TitleProposalResult:
-            if result is TitleProposalResult.NEEDS_REVIEW:
+            if result is TitleProposalResult.NEEDS_REVIEW or result in live_only:
                 continue
             with self.subTest(result=result):
                 proposal_set = proposal_set_from_manifest(

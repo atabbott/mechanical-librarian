@@ -58,6 +58,25 @@ class TitleProposalResult(StrEnum):
     EVIDENCE_DISAGREEMENT = "evidence_disagreement"
 
 
+_SYNTHETIC_TITLE_RESULTS = frozenset(
+    {
+        TitleProposalResult.NEEDS_REVIEW,
+        TitleProposalResult.NO_CHANGE,
+        TitleProposalResult.CURRENT_MISSING,
+        TitleProposalResult.CURRENT_UNAVAILABLE,
+        TitleProposalResult.LOCAL_PROVIDER_CONFLICT,
+        TitleProposalResult.F06_MISSING,
+        TitleProposalResult.F06_AMBIGUOUS,
+        TitleProposalResult.F06_UNUSABLE,
+        TitleProposalResult.PROVIDER_DISABLED,
+        TitleProposalResult.PROVIDER_FAILED,
+        TitleProposalResult.PROVIDER_EMPTY,
+        TitleProposalResult.PROVIDER_NO_MATCH,
+        TitleProposalResult.STALE_INPUT,
+    }
+)
+
+
 class SyntheticTitleState(StrEnum):
     LOADED = "loaded"
     MISSING = "missing"
@@ -149,6 +168,7 @@ class LiveTitleProposalSet:
             "local_evidence_id",
             "mode",
             "mount_configuration_digest",
+            "mount_configuration_set_digest",
             "policy_version",
             "previous_set_id",
             "proposal_schema",
@@ -176,6 +196,7 @@ class LiveTitleProposalSet:
         for field in (
             "inventory_fingerprint",
             "mount_configuration_digest",
+            "mount_configuration_set_digest",
             "source_fingerprint",
         ):
             value = self.manifest[field]
@@ -336,7 +357,10 @@ class TitleProposalSet:
             raise TitleProposalValueError("proposal-set revision is invalid")
         if self.previous_set_id is not None and not _IDENTIFIER.fullmatch(self.previous_set_id):
             raise TitleProposalValueError("proposal-set predecessor is invalid")
-        if type(self.result) is not TitleProposalResult:
+        if (
+            type(self.result) is not TitleProposalResult
+            or self.result not in _SYNTHETIC_TITLE_RESULTS
+        ):
             raise TitleProposalValueError("proposal-set result is invalid")
         if type(self.mode) is not ProposalExecutionMode or self.mode is not ProposalExecutionMode.SYNTHETIC_PREVIEW:
             raise TitleProposalValueError("proposal-set mode is invalid")

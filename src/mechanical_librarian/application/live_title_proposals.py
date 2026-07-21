@@ -106,7 +106,7 @@ class LiveProviderEvidence:
 
 class LiveTitleProposalRepository(Protocol):
     def inspect_source(
-        self, locator: EpubEvidenceLocator, mount_configuration_digest: str
+        self, locator: EpubEvidenceLocator, mount_configuration_digests: tuple[str, ...]
     ) -> LiveSourceEvidence: ...
 
     def inspect_provider(
@@ -120,7 +120,7 @@ class LiveTitleProposalRepository(Protocol):
         proposal_set: LiveTitleProposalSet,
         source: LiveSourceEvidence,
         provider: LiveProviderEvidence,
-        observed_at: datetime,
+        mount_configuration_digests: tuple[str, ...],
     ) -> ProposalPersistence: ...
 
 
@@ -177,7 +177,7 @@ class LiveTitleProposalReport:
                 "superseded_set_id": self.persistence.superseded_set_id,
             },
             "previous_set_id": value.previous_set_id,
-            "production_applicable": value.production_applicable,
+            "production_applicable": value.production_applicable and self.persistence.current,
             "proposals": [proposal.to_data() for proposal in value.proposals],
             "result": value.result.value,
             "schema": LIVE_TITLE_PROPOSAL_SCHEMA,
@@ -207,13 +207,14 @@ class ProposeLiveTitle:
     def run(
         self,
         locator: EpubEvidenceLocator,
-        mount_configuration_digest: str,
+        mount_configuration_digests: tuple[str, ...],
         *,
         provider_enabled: bool,
         authority_revision: int,
         observed_at: datetime,
     ) -> LiveTitleProposalReport:
-        source = self._repository.inspect_source(locator, mount_configuration_digest)
+        mount_set_digest = mount_configuration_set_digest(mount_configuration_digests)
+        source = self._repository.inspect_source(locator, mount_configuration_digests)
         result = TitleProposalResult.SOURCE_NOT_READY
         proposed: str | None = None
         current: str | None = None
@@ -250,7 +251,7 @@ class ProposeLiveTitle:
 
         lineage = _lineage(locator)
         previous = self._repository.current_live(lineage)
-        manifest = _manifest(source, provider, lineage, previous)
+        manifest = _manifest(source, provider, lineage, previous, mount_set_digest)
         if previous is not None and _same_input(previous.manifest, manifest) and previous.result is result:
             proposal_set = previous
         else:
@@ -275,8 +276,14 @@ class ProposeLiveTitle:
         preview.to_json()
         render_live_title_proposal_text(preview)
         persistence = self._repository.publish_live(
-            proposal_set, source, provider, observed_at
+            proposal_set, source, provider, mount_configuration_digests
         )
+        if (
+            not persistence.current
+            or persistence.current_set_id != proposal_set.set_id
+            or persistence.proposal_set != proposal_set
+        ):
+            raise ValueError("published live proposal is no longer current")
         report = LiveTitleProposalReport(persistence)
         report.to_json()
         return report
@@ -330,6 +337,7 @@ def _manifest(
     provider: LiveProviderEvidence,
     lineage: str,
     previous: LiveTitleProposalSet | None,
+    mount_set_digest: str,
 ) -> dict[str, object]:
     revision = 1 if previous is None else previous.lineage_revision + 1
     return {
@@ -341,6 +349,7 @@ def _manifest(
         "local_evidence_id": source.evidence_id,
         "mode": ProposalExecutionMode.PRODUCTION_REPORT_ONLY.value,
         "mount_configuration_digest": source.mount_configuration_digest,
+        "mount_configuration_set_digest": mount_set_digest,
         "policy_version": LIVE_TITLE_PROPOSAL_POLICY_VERSION,
         "previous_set_id": None if previous is None else previous.set_id,
         "proposal_schema": LIVE_TITLE_PROPOSAL_SCHEMA,
@@ -361,6 +370,19 @@ def _same_input(old: object, new: dict[str, object]) -> bool:
     } == {key: value for key, value in new.items() if key not in ignored}
 
 
+def mount_configuration_set_digest(values: tuple[str, ...]) -> str:
+    if (
+        type(values) is not tuple
+        or not values
+        or values != tuple(sorted(set(values)))
+        or any(not _digest(value) for value in values)
+    ):
+        raise ValueError("live title proposal mount set is invalid")
+    return hashlib.sha256(
+        json.dumps(values, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def _digest(value: object) -> bool:
     return type(value) is str and len(value) == 64 and not set(value) - set("0123456789abcdef")
 
@@ -378,5 +400,6 @@ __all__ = [
     "LiveTitleProviderReader",
     "LiveTitleSourceReader",
     "ProposeLiveTitle",
+    "mount_configuration_set_digest",
     "render_live_title_proposal_text",
 ]
