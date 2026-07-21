@@ -241,6 +241,24 @@ def decide_book_identity(
     )
 
 
+def compare_identity_titles(local_title: str, provider_title: str) -> TitleComparison:
+    """Compare two already-validated titles without retaining either value."""
+
+    if not _valid_title(local_title) or not _valid_title(provider_title):
+        raise ValueError("identity title comparison is malformed")
+    return (
+        TitleComparison.EQUAL
+        if normalized_title_key(local_title) == normalized_title_key(provider_title)
+        else TitleComparison.DIFFERENT
+    )
+
+
+def valid_identity_title(value: object) -> bool:
+    """Expose the frozen provider/local title boundary to private persistence."""
+
+    return _valid_title(value)
+
+
 def _decision(outcome: IdentityDecisionOutcome, rows: int) -> IdentityDecision:
     return IdentityDecision(outcome, rows, 0, TitleComparison.NOT_COMPARED)
 
@@ -413,7 +431,9 @@ __all__ = [
     "ProviderBookObservation",
     "ProviderIdentityObservation",
     "TitleComparison",
+    "compare_identity_titles",
     "decide_book_identity",
     "isbn_identity",
     "validate_private_query",
+    "valid_identity_title",
 ]

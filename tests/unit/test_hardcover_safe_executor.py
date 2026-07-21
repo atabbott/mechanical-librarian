@@ -41,6 +41,7 @@ from mechanical_librarian.domain.hardcover_identity import (
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityMatchOutcome,
     IdentityWorkObservation,
+    IdentityWorkOutcome,
 )
 from mechanical_librarian.infrastructure.hardcover_identity_gate import (
     LOCK_NAME,
@@ -65,7 +66,20 @@ class _Provider:
         self.starts = 0
         self.deadlines: list[datetime] = []
 
-    def lookup(self, query: object, context: OperationContext) -> object:
+    def prepare(
+        self,
+        query: object,
+        context: OperationContext,
+    ) -> _Provider:
+        return self
+
+    def exchange(
+        self,
+        context: OperationContext,
+        *,
+        begin_transport,
+    ) -> object:
+        context = begin_transport()
         self.starts += 1
         self.deadlines.append(context.deadline.at)
         if isinstance(self.result, BaseException):
@@ -74,9 +88,25 @@ class _Provider:
 
 
 class _LateProvider(_Provider):
-    def lookup(self, query: object, context: OperationContext) -> object:
-        self.clock.now = context.deadline.at
-        return super().lookup(query, context)
+    def exchange(self, context: OperationContext, **kwargs) -> object:
+        begin_transport = kwargs.pop("begin_transport")
+        transport_context = begin_transport()
+        self.clock.now = transport_context.deadline.at
+        return super().exchange(
+            transport_context,
+            begin_transport=lambda: transport_context,
+            **kwargs,
+        )
+
+
+class _PreparationFailureProvider(_Provider):
+    def prepare(
+        self,
+        query: object,
+        context: OperationContext,
+    ) -> IdentityAttemptResult:
+        assert type(self.result) is IdentityAttemptResult
+        return self.result
 
 
 class _PublishAtProvider(_Provider):
@@ -86,9 +116,9 @@ class _PublishAtProvider(_Provider):
         super().__init__(result, clock)
         self.published_at = published_at
 
-    def lookup(self, query: object, context: OperationContext) -> object:
+    def exchange(self, context: OperationContext, **kwargs) -> object:
         self.clock.now = self.published_at
-        return super().lookup(query, context)
+        return super().exchange(context, **kwargs)
 
 
 class _FailingGate:
@@ -217,6 +247,217 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         self.assertIsNotNone(contender)
         contender.release()
 
+    def test_held_gate_is_revalidated_at_the_provider_exchange_boundary(self) -> None:
+        class Lease:
+            def __init__(self) -> None:
+                self.validations = 0
+                self.released = False
+
+            def validate_for_send(self) -> None:
+                self.validations += 1
+
+            def release(self) -> None:
+                self.released = True
+
+        lease = Lease()
+
+        class Gate:
+            def try_acquire(self):
+                return lease
+
+        provider = _Provider(self.matched(), self.clock)
+        report = self.execute(self.request("send-revalidation"), provider, gate=Gate())
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(provider.starts, 1)
+        self.assertEqual(lease.validations, 3)
+        self.assertTrue(lease.released)
+
+    def test_exchange_guard_failure_is_closed_without_retry_or_exchange(self) -> None:
+        class Lease:
+            def __init__(self) -> None:
+                self.validations = 0
+                self.released = False
+
+            def validate_for_send(self) -> None:
+                self.validations += 1
+                if self.validations == 2:
+                    raise HardcoverIdentityGateError("synthetic identity loss")
+
+            def release(self) -> None:
+                self.released = True
+
+        lease = Lease()
+
+        class Gate:
+            def try_acquire(self):
+                return lease
+
+        request = self.request("exchange-guard-loss", egress_limit=1)
+        provider = _Provider(self.matched(), self.clock)
+        report = self.execute(request, provider, gate=Gate())
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+        self.assertEqual(provider.starts, 0)
+        self.assertEqual(lease.validations, 2)
+        self.assertTrue(lease.released)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("claimed", 1),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT outcome FROM hardcover_identity_attempts WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (None,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_retry_schedules "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (0,),
+        )
+
+        self.clock.now += timedelta(seconds=16)
+        reference = self.work.accept(
+            request.work_key,
+            self.clock.now,
+            egress_limit=1,
+        ).reference
+        active = self.work.inspect(reference, self.clock.now)
+        self.assertIsNotNone(active.active_claim)
+        recovered = self.work.recover(
+            active.active_claim,
+            self.clock.now,
+            gate_owned=True,
+        )
+        self.assertEqual(recovered.outcome, IdentityWorkOutcome.RETRY_EXHAUSTED)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("failed", 1),
+        )
+
+    def test_database_replacement_after_exchange_guard_fails_before_publication(
+        self,
+    ) -> None:
+        request = self.request("post-exchange-database-loss", egress_limit=1)
+        saved_database = self.root / "authorized-state.sqlite"
+        replacement_database = self.root / "replacement-state.sqlite"
+        replacement_connection = sqlite3.connect(replacement_database)
+        migrate(replacement_connection)
+        replacement_connection.close()
+
+        class ReplacingProvider(_Provider):
+            def exchange(
+                provider_self,
+                context: OperationContext,
+                *,
+                begin_transport,
+            ) -> object:
+                begin_transport()
+                provider_self.starts += 1
+                self.database.rename(saved_database)
+                replacement_database.rename(self.database)
+                return provider_self.result
+
+        provider = ReplacingProvider(self.matched(), self.clock)
+        report = self.execute(request, provider)
+
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+        self.assertEqual(provider.starts, 1)
+        original_identity = saved_database.stat()
+        replacement_identity = self.database.stat()
+        self.assertNotEqual(
+            (original_identity.st_dev, original_identity.st_ino),
+            (replacement_identity.st_dev, replacement_identity.st_ino),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("claimed", 1),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_results WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM current_hardcover_identity WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (0,),
+        )
+        displaced_database = self.root / "rejected-state.sqlite"
+        self.database.rename(displaced_database)
+        saved_database.rename(self.database)
+        visible_replacement = sqlite3.connect(displaced_database)
+        try:
+            self.assertEqual(
+                visible_replacement.execute(
+                    "SELECT COUNT(*) FROM hardcover_identity_generations"
+                ).fetchone(),
+                (0,),
+            )
+            self.assertEqual(
+                visible_replacement.execute(
+                    "SELECT COUNT(*) FROM current_hardcover_identity"
+                ).fetchone(),
+                (0,),
+            )
+        finally:
+            visible_replacement.close()
+
+        self.clock.now += timedelta(seconds=16)
+        reference = self.work.accept(
+            request.work_key,
+            self.clock.now,
+            egress_limit=1,
+        ).reference
+        active = self.work.inspect(reference, self.clock.now)
+        self.assertIsNotNone(active.active_claim)
+        lease = self.gate.try_acquire()
+        self.assertIsNotNone(lease)
+        try:
+            recovered = self.work.recover(
+                active.active_claim,
+                self.clock.now,
+                gate_owned=True,
+            )
+        finally:
+            lease.release()
+        self.assertEqual(recovered.outcome, IdentityWorkOutcome.RETRY_EXHAUSTED)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("failed", 1),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT outcome FROM hardcover_identity_attempts WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            ("interrupted",),
+        )
+
     def test_retryable_attempt_publishes_retry_wait_without_retrying(self) -> None:
         request = self.request("unavailable")
         provider = _Provider(
@@ -337,7 +578,11 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                                 "competing-worker",
                                 self.clock.now,
                                 IdentityWorkObservation(
-                                    IdentityMatchOutcome.MATCHED, 1
+                                    IdentityMatchOutcome.MATCHED,
+                                    1,
+                                    1001,
+                                    2001,
+                                    "Synthetic Ebook Alpha",
                                 ),
                                 gate_owned=True,
                             )
@@ -533,7 +778,13 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                         started,
                         "competing-worker",
                         self.clock.now,
-                        IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+                        IdentityWorkObservation(
+                            IdentityMatchOutcome.MATCHED,
+                            1,
+                            1001,
+                            2001,
+                            "Synthetic Ebook Alpha",
+                        ),
                         gate_owned=True,
                     )
 
@@ -588,7 +839,7 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
                 )
                 self.assertEqual(competing_snapshot, (1, 1, 1, "succeeded"))
 
-    def test_stale_current_is_reserved_before_inspection_and_attempt(self) -> None:
+    def test_stale_current_reports_before_a_later_refresh_attempt(self) -> None:
         request = self.request("stale")
         accepted = self.work.accept(request.work_key, self.clock.now)
         claim = self.work.claim(
@@ -607,20 +858,86 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             started,
             request.owner,
             self.clock.now,
-            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+            IdentityWorkObservation(
+                IdentityMatchOutcome.MATCHED,
+                1,
+                1001,
+                2001,
+                "Synthetic Ebook Alpha",
+            ),
             gate_owned=True,
         )
         self.clock.now += timedelta(hours=24, microseconds=1)
         provider = _Provider(self.matched(), self.clock)
         report = self.execute(request, provider)
-        self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
-        self.assertEqual(provider.starts, 1)
+        self.assertEqual(report.outcome, HardcoverIdentityOutcome.STALE)
+        self.assertEqual(provider.starts, 0)
+        refreshed = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(request, refreshed).outcome,
+            HardcoverIdentityOutcome.MATCHED,
+        )
+        self.assertEqual(refreshed.starts, 1)
         self.assertEqual(
             self.connection.execute(
                 "SELECT COUNT(*) FROM hardcover_identity_generations WHERE work_key=?",
                 (request.work_key,),
             ).fetchone(),
             (2,),
+        )
+
+    def test_reserved_stale_refresh_resumes_after_gate_contention(self) -> None:
+        request = self.request("stale-gate-contention")
+        accepted = self.work.accept(request.work_key, self.clock.now)
+        claim = self.work.claim(
+            accepted.reference,
+            request.owner,
+            self.clock.now,
+            gate_owned=True,
+        )
+        started = self.work.start(
+            claim,
+            request.owner,
+            self.clock.now,
+            gate_owned=True,
+        )
+        self.work.publish_matched(
+            started,
+            request.owner,
+            self.clock.now,
+            IdentityWorkObservation(
+                IdentityMatchOutcome.MATCHED,
+                1,
+                1001,
+                2001,
+                "Synthetic Ebook Alpha",
+            ),
+            gate_owned=True,
+        )
+        self.clock.now += timedelta(hours=24, microseconds=1)
+        provider = _Provider(self.matched(), self.clock)
+
+        stale = self.execute(request, provider)
+        held = self.gate.try_acquire()
+        self.assertIsNotNone(held)
+        try:
+            busy = self.execute(request, provider)
+        finally:
+            held.release()
+        refreshed = self.execute(request, provider)
+
+        self.assertEqual(stale.outcome, HardcoverIdentityOutcome.STALE)
+        self.assertEqual(busy.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(refreshed.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(provider.starts, 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT generation,state,attempt_count FROM "
+                "hardcover_identity_generations WHERE work_key=? "
+                "ORDER BY generation",
+                (request.work_key,),
+            ).fetchall(),
+            [(1, "succeeded", 1), (2, "succeeded", 1)],
         )
 
     def test_caller_deadline_is_preserved_for_attempt(self) -> None:
@@ -832,8 +1149,8 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         cancelled = self.cancelled
 
         class CancellingProvider(_Provider):
-            def lookup(self, query: object, context: OperationContext) -> object:
-                result = super().lookup(query, context)
+            def exchange(self, context: OperationContext, **kwargs) -> object:
+                result = super().exchange(context, **kwargs)
                 cancelled.set()
                 return result
 
@@ -904,6 +1221,140 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
             (1, 1),
         )
 
+    def test_prestart_one_shot_authority_survives_every_failure_and_mode_switch(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "credential",
+                _PreparationFailureProvider(
+                    IdentityAttemptResult.failed(
+                        IdentityAttemptFailureKind.CREDENTIAL_UNAVAILABLE
+                    ),
+                    self.clock,
+                ),
+                HardcoverIdentityOutcome.CREDENTIAL_UNAVAILABLE,
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+                False,
+                False,
+            ),
+            (
+                "resolver",
+                _PreparationFailureProvider(
+                    IdentityAttemptResult.failed(
+                        IdentityAttemptFailureKind.UNAVAILABLE
+                    ),
+                    self.clock,
+                ),
+                HardcoverIdentityOutcome.IN_PROGRESS,
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+                False,
+                False,
+            ),
+            (
+                "deadline",
+                _Provider(self.matched(), self.clock),
+                HardcoverIdentityOutcome.RETRY_EXHAUSTED,
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+                False,
+                True,
+            ),
+            (
+                "cancellation",
+                _Provider(self.matched(), self.clock),
+                HardcoverIdentityOutcome.CANCELLED,
+                HardcoverIdentityOutcome.RETRY_EXHAUSTED,
+                True,
+                False,
+            ),
+        )
+        for (
+            label,
+            provider,
+            outcome,
+            restart_outcome,
+            cancelled,
+            expired_deadline,
+        ) in cases:
+            with self.subTest(label=label):
+                request = self.request(
+                    f"prestart-one-shot-{label}", egress_limit=1
+                )
+                if cancelled:
+                    self.cancelled.set()
+                context = self.context(ORIGIN if expired_deadline else None)
+                report = self.execute(request, provider, context=context)
+                self.cancelled.clear()
+
+                self.assertEqual(report.outcome, outcome)
+                self.assertEqual(provider.starts, 0)
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT p.max_starts,g.attempt_count "
+                        "FROM hardcover_identity_egress_policies AS p "
+                        "JOIN hardcover_identity_generations AS g "
+                        "USING(work_key,generation) WHERE p.work_key=?",
+                        (request.work_key,),
+                    ).fetchall(),
+                    [(1, 0)],
+                )
+
+                normal = HardcoverIdentityExecutionRequest(
+                    request.work_key,
+                    request.owner,
+                    request.query,
+                    3,
+                )
+                restarted = _Provider(self.matched(), self.clock)
+                self.assertEqual(
+                    self.execute(normal, restarted).outcome,
+                    restart_outcome,
+                )
+                self.assertEqual(restarted.starts, 0)
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT COUNT(*),SUM(attempt_count) "
+                        "FROM hardcover_identity_generations WHERE work_key=?",
+                        (request.work_key,),
+                    ).fetchone(),
+                    (1, 0),
+                )
+
+    def test_normal_prestart_authority_rejects_one_shot_mode_switch(self) -> None:
+        normal = self.request("prestart-normal-to-one-shot", egress_limit=3)
+        preparation = _PreparationFailureProvider(
+            IdentityAttemptResult.failed(IdentityAttemptFailureKind.UNAVAILABLE),
+            self.clock,
+        )
+        self.assertEqual(
+            self.execute(normal, preparation).outcome,
+            HardcoverIdentityOutcome.IN_PROGRESS,
+        )
+        self.assertEqual(preparation.starts, 0)
+
+        one_shot = HardcoverIdentityExecutionRequest(
+            normal.work_key,
+            normal.owner,
+            normal.query,
+            1,
+        )
+        restarted = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(one_shot, restarted).outcome,
+            HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+        )
+        self.assertEqual(restarted.starts, 0)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT p.max_starts,g.attempt_count "
+                "FROM hardcover_identity_egress_policies AS p "
+                "JOIN hardcover_identity_generations AS g "
+                "USING(work_key,generation) WHERE p.work_key=?",
+                (normal.work_key,),
+            ).fetchall(),
+            [(3, 0)],
+        )
+
     def test_successful_one_shot_refresh_requires_normal_request(self) -> None:
         one_shot = self.request("successful-one-shot-refresh", egress_limit=1)
         first = _Provider(self.matched(), self.clock)
@@ -930,17 +1381,29 @@ class HardcoverSafeExecutorTests(unittest.TestCase):
         refreshed = _Provider(self.matched(), self.clock)
         self.assertEqual(
             self.execute(normal, refreshed).outcome,
+            HardcoverIdentityOutcome.STALE,
+        )
+        self.assertEqual(refreshed.starts, 0)
+        refresh_attempt = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(normal, refresh_attempt).outcome,
             HardcoverIdentityOutcome.MATCHED,
         )
-        self.assertEqual(refreshed.starts, 1)
+        self.assertEqual(refresh_attempt.starts, 1)
 
         self.clock.now += timedelta(hours=24, microseconds=1)
         third = _Provider(self.matched(), self.clock)
         self.assertEqual(
             self.execute(normal, third).outcome,
+            HardcoverIdentityOutcome.STALE,
+        )
+        self.assertEqual(third.starts, 0)
+        third_attempt = _Provider(self.matched(), self.clock)
+        self.assertEqual(
+            self.execute(normal, third_attempt).outcome,
             HardcoverIdentityOutcome.MATCHED,
         )
-        self.assertEqual(third.starts, 1)
+        self.assertEqual(third_attempt.starts, 1)
         self.assertEqual(
             self.connection.execute(
                 "SELECT generation,attempt_count,state FROM "
@@ -1048,6 +1511,275 @@ class HardcoverIdentityGateTests(unittest.TestCase):
             alias.symlink_to(replacement, target_is_directory=True)
             with self.assertRaises(HardcoverIdentityGateError):
                 aliased_gate.try_acquire()
+
+    def test_connection_binding_marks_exact_inode_and_cleans_before_authority(
+        self,
+    ) -> None:
+        self.database.unlink()
+        connection = sqlite3.connect(self.database, isolation_level=None)
+        self.addCleanup(connection.close)
+        migrate(connection)
+        identity = self.database.stat()
+        gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+
+        gate.bind_connection(connection)
+
+        self.assertEqual(connection.execute("PRAGMA application_id").fetchone(), (0,))
+        self.assertIsNone(
+            connection.execute(
+                "SELECT value FROM instance_metadata "
+                "WHERE key='hardcover-identity-binding-recovery-v1'"
+            ).fetchone()
+        )
+        with self.database.open("rb") as database_file:
+            database_file.seek(68)
+            self.assertEqual(database_file.read(4), b"\x00\x00\x00\x00")
+
+        connection.execute("PRAGMA application_id=123456")
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        gate.bind_connection(connection)
+        self.assertEqual(
+            connection.execute("PRAGMA application_id").fetchone(), (123456,)
+        )
+        self.assertIsNone(
+            connection.execute(
+                "SELECT value FROM instance_metadata "
+                "WHERE key='hardcover-identity-binding-recovery-v1'"
+            ).fetchone()
+        )
+
+    def test_connection_binding_serializes_marker_and_preserves_original_value(
+        self,
+    ) -> None:
+        self.database.unlink()
+        setup = sqlite3.connect(self.database, isolation_level=None)
+        migrate(setup)
+        setup.execute("PRAGMA application_id=123456")
+        setup.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        setup.close()
+        identity = self.database.stat()
+        first_gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+        second_gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+        marker_installed = threading.Event()
+        allow_restore = threading.Event()
+        failures: list[BaseException] = []
+        original_read = DescriptorHardcoverIdentityGate._read_application_id
+
+        def pause_after_marker(descriptor: int) -> int:
+            value = original_read(descriptor)
+            if value == 0x4D4C4201 and not marker_installed.is_set():
+                marker_installed.set()
+                if not allow_restore.wait(timeout=5):
+                    raise AssertionError("binding interleave was not released")
+            return value
+
+        def bind_first() -> None:
+            connection = sqlite3.connect(self.database, isolation_level=None)
+            try:
+                first_gate.bind_connection(connection)
+            except BaseException as error:
+                failures.append(error)
+            finally:
+                connection.close()
+
+        with patch.object(
+            DescriptorHardcoverIdentityGate,
+            "_read_application_id",
+            side_effect=pause_after_marker,
+        ):
+            first = threading.Thread(target=bind_first)
+            first.start()
+            try:
+                self.assertTrue(marker_installed.wait(timeout=5))
+                contender = sqlite3.connect(self.database, isolation_level=None)
+                try:
+                    with self.assertRaisesRegex(
+                        HardcoverIdentityGateError,
+                        "deployment gate is busy",
+                    ):
+                        second_gate.bind_connection(contender)
+                finally:
+                    contender.close()
+                descriptor = os.open(self.database, os.O_RDONLY)
+                try:
+                    self.assertEqual(original_read(descriptor), 0x4D4C4201)
+                finally:
+                    os.close(descriptor)
+            finally:
+                allow_restore.set()
+                first.join(timeout=5)
+            self.assertFalse(first.is_alive())
+            self.assertEqual(failures, [])
+
+        second = sqlite3.connect(self.database, isolation_level=None)
+        try:
+            self.assertEqual(second.execute("PRAGMA application_id").fetchone(), (123456,))
+            second_gate.bind_connection(second)
+            self.assertEqual(second.execute("PRAGMA application_id").fetchone(), (123456,))
+        finally:
+            second.close()
+
+    def test_connection_binding_preserves_marker_valued_original_and_rejects_inode_aba(
+        self,
+    ) -> None:
+        self.database.unlink()
+        original_connection = sqlite3.connect(self.database, isolation_level=None)
+        migrate(original_connection)
+        original_connection.execute("PRAGMA application_id=1296843265")
+        original_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        original_connection.close()
+        identity = self.database.stat()
+        gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+        repaired = sqlite3.connect(self.database, isolation_level=None)
+        self.addCleanup(repaired.close)
+        gate.bind_connection(repaired)
+        self.assertEqual(
+            repaired.execute("PRAGMA application_id").fetchone(), (1296843265,)
+        )
+        repaired.execute("PRAGMA application_id=1296843266")
+        repaired.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        gate.bind_connection(repaired)
+        self.assertEqual(
+            repaired.execute("PRAGMA application_id").fetchone(), (1296843266,)
+        )
+        repaired.execute("PRAGMA application_id=1296843265")
+        repaired.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        repaired.close()
+
+        original = self.root / "original.sqlite"
+        self.database.rename(original)
+        replacement_connection = sqlite3.connect(
+            self.database, isolation_level=None
+        )
+        self.addCleanup(replacement_connection.close)
+        migrate(replacement_connection)
+        replacement = self.root / "replacement.sqlite"
+        self.database.rename(replacement)
+        original.rename(self.database)
+
+        with self.assertRaisesRegex(
+            HardcoverIdentityGateError,
+            "connection identity changed|binding marker was not removed",
+        ):
+            gate.bind_connection(replacement_connection)
+        self.assertEqual(
+            replacement_connection.execute("PRAGMA application_id").fetchone(),
+            (0,),
+        )
+        restored = sqlite3.connect(self.database)
+        try:
+            self.assertEqual(
+                restored.execute("PRAGMA application_id").fetchone(),
+                (1296843265,),
+            )
+        finally:
+            restored.close()
+
+    def test_connection_binding_recovers_committed_interruption_record(self) -> None:
+        self.database.unlink()
+        interrupted = sqlite3.connect(self.database, isolation_level=None)
+        migrate(interrupted)
+        interrupted.execute("PRAGMA application_id=123456")
+        interrupted.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        identity = self.database.stat()
+        gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+        lease = gate.try_acquire()
+        self.assertIsNotNone(lease)
+        assert lease is not None
+        gate._publish_binding(
+            interrupted,
+            lease.database_identity,
+            0x4D4C4201,
+            123456,
+        )
+        self.assertEqual(
+            interrupted.execute("PRAGMA application_id").fetchone(),
+            (0x4D4C4201,),
+        )
+        self.assertIsNotNone(
+            interrupted.execute(
+                "SELECT value FROM instance_metadata "
+                "WHERE key='hardcover-identity-binding-recovery-v1'"
+            ).fetchone()
+        )
+        lease.release()
+        interrupted.close()
+
+        restarted = sqlite3.connect(self.database, isolation_level=None)
+        self.addCleanup(restarted.close)
+        gate.bind_connection(restarted)
+
+        self.assertEqual(
+            restarted.execute("PRAGMA application_id").fetchone(), (123456,)
+        )
+        self.assertIsNone(
+            restarted.execute(
+                "SELECT value FROM instance_metadata "
+                "WHERE key='hardcover-identity-binding-recovery-v1'"
+            ).fetchone()
+        )
+
+    def test_connection_binding_rejects_corrupt_or_mismatched_recovery(self) -> None:
+        self.database.unlink()
+        connection = sqlite3.connect(self.database, isolation_level=None)
+        self.addCleanup(connection.close)
+        migrate(connection)
+        identity = self.database.stat()
+        gate = DescriptorHardcoverIdentityGate(
+            self.database,
+            expected_database_identity=(identity.st_dev, identity.st_ino),
+        )
+        for value in (
+            "malformed",
+            "v1:" + "9" * 100 + ":1:1296843265:1",
+            f"v1:{identity.st_dev}:{identity.st_ino}:1296843265:001",
+            f"v1:{identity.st_dev}:{identity.st_ino + 1}:1296843265:1",
+            f"v1:{identity.st_dev}:{identity.st_ino}:1296843265:1",
+        ):
+            with self.subTest(value=value):
+                connection.execute(
+                    "INSERT OR REPLACE INTO instance_metadata(key,value) VALUES(?,?)",
+                    ("hardcover-identity-binding-recovery-v1", value),
+                )
+                connection.execute("PRAGMA application_id=1296843265")
+                if value.endswith(":1") and value.count(":") == 4:
+                    connection.execute("PRAGMA application_id=0")
+                connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                before = connection.execute(
+                    "SELECT value FROM instance_metadata "
+                    "WHERE key='hardcover-identity-binding-recovery-v1'"
+                ).fetchone()
+                with self.assertRaisesRegex(
+                    HardcoverIdentityGateError,
+                    "recovery is (invalid|inconsistent)",
+                ):
+                    gate.bind_connection(connection)
+                self.assertEqual(
+                    connection.execute(
+                        "SELECT value FROM instance_metadata "
+                        "WHERE key='hardcover-identity-binding-recovery-v1'"
+                    ).fetchone(),
+                    before,
+                )
+                connection.execute(
+                    "DELETE FROM instance_metadata "
+                    "WHERE key='hardcover-identity-binding-recovery-v1'"
+                )
 
     def test_final_symlink_hardlink_nonregular_and_lock_replacement_are_rejected(self) -> None:
         real = self.database

@@ -67,6 +67,8 @@ from mechanical_librarian.adapters.providers.synthetic_hardcover_identity import
     SyntheticBookIdentityProvider,
 )
 from mechanical_librarian.adapters.providers.hardcover_identity import (
+    HttpxIdentityByteChannel,
+    LiveHardcoverIdentityProvider,
     StructuralHardcoverIdentityPreview,
 )
 from mechanical_librarian.adapters.providers.hardcover_title import (
@@ -82,6 +84,8 @@ from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.hardcover_identity import (
     DurableWorkPreviewReport,
     FixedAdapterPreviewReport,
+    HardcoverExecutionPolicy,
+    HardcoverIdentityOutcome,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
     IdentityLifecyclePreviewReport,
@@ -94,7 +98,6 @@ from mechanical_librarian.application.hardcover_identity import (
     RunHardcoverIdentityReport,
     SafeExecutorPreviewReport,
     inert_preview,
-    preactivation_report,
 )
 from mechanical_librarian.application.hardcover_identity_orchestration import (
     RunHardcoverIdentityLifecycle,
@@ -102,6 +105,7 @@ from mechanical_librarian.application.hardcover_identity_orchestration import (
 from mechanical_librarian.application.hardcover_safe_executor import (
     HardcoverIdentityExecutionRequest,
     RunSafeHardcoverIdentity,
+    hardcover_identity_work_key,
 )
 from mechanical_librarian.application.job_heartbeat import (
     HeartbeatOutcome,
@@ -194,6 +198,7 @@ from mechanical_librarian.domain.inventory import (
 from mechanical_librarian.domain.inventory_v2 import ScanBounds, ScanState, ScanUsage
 from mechanical_librarian.domain.inventory_polling import PollPolicy, PollRequest
 from mechanical_librarian.domain.hardcover_identity import (
+    PrivateQueryError,
     ProviderBookObservation,
     ProviderIdentityObservation,
     isbn_identity,
@@ -227,10 +232,18 @@ from mechanical_librarian.infrastructure.security.provider_secrets import (
     PrivateFileProviderCredentials,
     ProviderSecretUnavailable,
 )
+from mechanical_librarian.infrastructure.security.hardcover_transport import (
+    ContextTransportLogIsolation,
+    IsolatedAddressResolverFactory,
+)
+from mechanical_librarian.infrastructure.security.private_query import (
+    read_private_query,
+)
 from mechanical_librarian.infrastructure.persistence.sqlite import (
     MIGRATIONS,
     SchemaError,
     bound_disposable_state,
+    bound_existing_state,
     connect,
     connect_existing,
     finalize_staged_state,
@@ -240,6 +253,7 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
     preflight,
     publish_staged_state,
     staged_state,
+    validate_current_schema,
 )
 from mechanical_librarian.infrastructure.hardcover_identity_gate import (
     DescriptorHardcoverIdentityGate,
@@ -299,6 +313,56 @@ def _run_state_check(database: Path) -> StateCheckResult:
         return _run_existing_state_check(database)
     except SchemaError:
         return StateCheckResult(StateCheckOutcome.SETUP_FAILURE)
+
+
+def _run_new_qualification_state_check(
+    database: Path,
+) -> tuple[StateCheckResult, tuple[int, int] | None]:
+    """Publish one new disposable state and retain its exact inode identity."""
+
+    failed = StateCheckResult(StateCheckOutcome.SETUP_FAILURE)
+    try:
+        with bound_disposable_state(database) as bound, bound.staged_state() as staged:
+            connection = staged.connect()
+            try:
+                migrate(connection)
+                result = CheckDurableState(
+                    SQLiteAuditRepository(connection)
+                ).run()
+                if result.succeeded:
+                    staged.persist(connection)
+            finally:
+                connection.close()
+            if not result.succeeded:
+                return result, None
+            identity = staged.identity
+            if not bound.publish(staged):
+                return failed, None
+        return result, identity
+    except (OSError, SchemaError):
+        return failed, None
+
+
+def _run_bound_existing_state_check(
+    database: Path,
+) -> tuple[StateCheckResult, tuple[int, int] | None]:
+    """Validate the exact existing inode that the final gate must accept."""
+
+    failed = StateCheckResult(StateCheckOutcome.SETUP_FAILURE)
+    connection = None
+    try:
+        with bound_existing_state(database) as bound:
+            connection = bound.connect_existing()
+            validate_current_schema(connection)
+            result = CheckDurableState(SQLiteAuditRepository(connection)).run()
+            connection.close()
+            connection = None
+            return result, bound.identity if result.succeeded else None
+    except (OSError, SchemaError):
+        return failed, None
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def _run_existing_operation(
@@ -1540,9 +1604,197 @@ def _run_synthetic_title_review_case_report(
             connection.close()
 
 
-def _run_hardcover_identity_report(configuration_path: Path) -> HardcoverIdentityReport:
+def _run_hardcover_identity_report(
+    configuration_path: Path,
+    database: Path,
+    query_path: Path,
+    execution_policy: HardcoverExecutionPolicy,
+) -> HardcoverIdentityReport:
+    """Run the installed F09f boundary with authority acquired in safe order."""
+
+    if type(execution_policy) is not HardcoverExecutionPolicy:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
     configuration = load_configuration_file(configuration_path)
-    return preactivation_report(configuration.hardcover_provider)
+    provider_configuration = configuration.hardcover_provider
+    if not provider_configuration.enabled:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.DISABLED)
+    try:
+        query = read_private_query(query_path)
+    except PrivateQueryError:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
+    if (
+        execution_policy.requires_disposable_state
+        and not _qualification_state_is_disposable(database)
+    ):
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
+    try:
+        DescriptorHardcoverIdentityGate(database)
+    except Exception:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+    expected_database_identity = None
+    if execution_policy.requires_disposable_state:
+        state, expected_database_identity = _run_new_qualification_state_check(
+            database
+        )
+    else:
+        state = _run_state_check(database)
+        if state.succeeded:
+            # Ordinary migration/check can begin from existing state, publish
+            # this process's staged state, or converge on a concurrent winner.
+            # Revalidate the result through a descriptor-backed snapshot and
+            # carry that exact inode into the final deployment gate.
+            state, expected_database_identity = _run_bound_existing_state_check(
+                database
+            )
+    if not state.succeeded:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+    try:
+        gate = DescriptorHardcoverIdentityGate(
+            database,
+            expected_database_identity=expected_database_identity,
+        )
+    except Exception:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+
+    reference = provider_configuration.secret_reference
+    if reference is None:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.CREDENTIAL_UNAVAILABLE)
+    handle = SecretHandle(
+        SecretReference(reference),
+        SecretScope.METADATA_PROVIDER,
+    )
+    log_isolation = ContextTransportLogIsolation()
+    provider = LiveHardcoverIdentityProvider(
+        lambda: PrivateFileProviderCredentials().hardcover_identity_token(handle),
+        resolver_factory=IsolatedAddressResolverFactory(),
+        channel_factory=lambda: HttpxIdentityByteChannel(
+            log_isolation_factory=log_isolation
+        ),
+    )
+    connection = None
+    cancellation = threading.Event()
+    try:
+        connection = connect_existing(database)
+        migrate(connection)
+        gate.bind_connection(connection)
+        work = ManageHardcoverIdentityWork(
+            SQLiteHardcoverIdentityWorkRepository(connection)
+        )
+        lifecycle = RunHardcoverIdentityLifecycle(
+            work,
+            RunSafeHardcoverIdentity(work, provider, gate),
+            gate,
+            cancellation,
+        )
+        now = lambda: datetime.now(timezone.utc)
+        context = OperationContext(
+            Deadline(now() + timedelta(seconds=30)),
+            CancellationProbe(
+                CancellationId("hardcover-identity-report"),
+                cancellation.is_set,
+            ),
+            ResourceBounds(4, 65_536),
+            TimeProbe(now),
+        )
+        request = HardcoverIdentityExecutionRequest(
+            hardcover_identity_work_key(
+                query, provider_configuration.authority_revision
+            ),
+            _C5_INTERNAL_OWNER,
+            query,
+            execution_policy.max_starts,
+        )
+        with _temporary_identity_cancellation_signals(cancellation):
+            report = RunHardcoverIdentityReport(lifecycle).run(request, context)
+        if type(report) is not HardcoverIdentityReport:
+            raise TypeError("Hardcover identity report is malformed")
+        return report
+    except Exception:
+        return HardcoverIdentityReport(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _qualification_state_is_disposable(database: Path) -> bool:
+    """Require one absent target in an empty owner-only state directory."""
+
+    descriptor: int | None = None
+    try:
+        if (
+            not database.is_absolute()
+            or database.name in {"", ".", ".."}
+            or any(part in {".", ".."} for part in database.parts)
+        ):
+            return False
+        supplied_parent = database.parent
+        parent = database.parent.resolve(strict=True)
+        status = parent.stat()
+        supplied = supplied_parent.lstat()
+        nofollow = getattr(os, "O_NOFOLLOW", None)
+        cloexec = getattr(os, "O_CLOEXEC", None)
+        directory_flag = getattr(os, "O_DIRECTORY", None)
+        if (
+            nofollow is None
+            or cloexec is None
+            or directory_flag is None
+            or not stat.S_ISDIR(status.st_mode)
+            or not stat.S_ISDIR(supplied.st_mode)
+            or (status.st_dev, status.st_ino) != (supplied.st_dev, supplied.st_ino)
+            or status.st_uid != os.geteuid()
+            or stat.S_IMODE(status.st_mode) != 0o700
+        ):
+            return False
+        descriptor = os.open(
+            parent,
+            os.O_RDONLY | nofollow | cloexec | directory_flag,
+        )
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino)
+            or opened.st_uid != os.geteuid()
+            or stat.S_IMODE(opened.st_mode) != 0o700
+        ):
+            return False
+        try:
+            os.stat(
+                database.name,
+                dir_fd=descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            return False
+        empty = _directory_descriptor_is_empty(descriptor)
+        try:
+            os.close(descriptor)
+        except OSError:
+            descriptor = None
+            return False
+        descriptor = None
+        return empty
+    except (OSError, RuntimeError, SchemaError):
+        return False
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _directory_descriptor_is_empty(descriptor: int) -> bool:
+    entries = os.scandir(descriptor)
+    try:
+        try:
+            next(entries)
+        except StopIteration:
+            return True
+        return False
+    finally:
+        entries.close()
 
 
 def _run_hardcover_inert_preview(
@@ -1735,14 +1987,14 @@ def _run_hardcover_durable_work_preview(
                 ).fetchone() is None
             if (
                 not migration_rollback_verified
-                or migrate(connection) != 10
-                or migrate(connection) != 10
+                or migrate(connection) != 11
+                or migrate(connection) != 11
             ):
                 raise SchemaError("current schema migration proof failed")
             migration_idempotence_verified = connection.execute(
-                "SELECT version FROM schema_migrations WHERE version IN (9,10) "
+                "SELECT version FROM schema_migrations WHERE version IN (9,10,11) "
                 "ORDER BY version"
-            ).fetchall() == [(9,), (10,)]
+            ).fetchall() == [(9,), (10,), (11,)]
 
             service = ManageHardcoverIdentityWork(
                 SQLiteHardcoverIdentityWorkRepository(connection)
@@ -1783,7 +2035,7 @@ def _run_hardcover_durable_work_preview(
     return DurableWorkPreviewReport(
         outcome="stale",
         schema_from=8,
-        schema_to=10,
+        schema_to=11,
         migration_rollback_verified=migration_rollback_verified,
         migration_idempotence_verified=migration_idempotence_verified,
         publication_rollback_verified=publication_rollback_verified,
@@ -1845,9 +2097,20 @@ class _SyntheticExecutorProvider:
         self.starts = 0
         self.deadlines: list[datetime] = []
 
-    def lookup(
-        self, query: IsbnIdentityQuery, context: OperationContext
+    def prepare(
+        self,
+        query: IsbnIdentityQuery,
+        context: OperationContext,
+    ) -> _SyntheticExecutorProvider:
+        return self
+
+    def exchange(
+        self,
+        context: OperationContext,
+        *,
+        begin_transport,
     ) -> IdentityAttemptResult:
+        context = begin_transport()
         self.starts += 1
         self.deadlines.append(context.deadline.at)
         self._clock.now += self._duration
@@ -1903,7 +2166,7 @@ def _safe_executor_match() -> IdentityAttemptResult:
             canonical_id=None,
             book_status_id=1,
             state="processed",
-            title="Synthetic Ebook Alpha",
+            title="Remote Volume Zeta",
             parent_book_id=None,
             compilation=False,
             is_partial_book=False,
@@ -2073,7 +2336,13 @@ def _run_hardcover_safe_executor_preview(
                             started,
                             request.owner,
                             clock.now,
-                            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+                            IdentityWorkObservation(
+                                IdentityMatchOutcome.MATCHED,
+                                1,
+                                1001,
+                                2001,
+                                "Remote Volume Zeta",
+                            ),
                             gate_owned=True,
                         )
                     finally:
@@ -2093,6 +2362,15 @@ def _run_hardcover_safe_executor_preview(
                 )
                 try:
                     report = runner.run(request, context)
+                    if operation == "stale_refresh":
+                        if (
+                            report.outcome is not HardcoverIdentityOutcome.STALE
+                            or provider.starts != 0
+                        ):
+                            raise SchemaError(
+                                "safe executor stale report case failed"
+                            )
+                        report = runner.run(request, context)
                 finally:
                     if held is not None:
                         held.release()
@@ -2189,7 +2467,7 @@ def _run_hardcover_safe_executor_preview(
         cases_executed=len(cases),
         attempts_started=starts,
         gate_order_verified=(
-            gate.send_validations == starts
+            gate.send_validations == starts * 3
             and gate.acquisitions == gate.releases
             and not gate.held
         ),
@@ -2235,9 +2513,20 @@ class _SyntheticLifecycleProvider:
         self._raised_signal = raised_signal
         self.starts = 0
 
-    def lookup(
-        self, query: object, context: OperationContext
+    def prepare(
+        self,
+        query: object,
+        context: OperationContext,
+    ) -> _SyntheticLifecycleProvider:
+        return self
+
+    def exchange(
+        self,
+        context: OperationContext,
+        *,
+        begin_transport,
     ) -> IdentityAttemptResult:
+        begin_transport()
         self.starts += 1
         if self._raised_signal is not None:
             signal.raise_signal(self._raised_signal)

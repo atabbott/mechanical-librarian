@@ -1,21 +1,30 @@
 # Hardcover F09f Identity Contract
 
 This reference defines the provider-neutral identity decision, the fixed,
-bounded Hardcover ISBN adapter, and durable work repository installed through
-F09f increment 4. The adapter
-is proved only through a credential-free structural byte channel and is not
-composed into production.
+bounded Hardcover ISBN adapter, schema-11 durable lifecycle, and installed
+production command boundary. The command is disabled by default and remains
+target-independent, report-only, proposal-free, and write-free.
 
 ## Application port
 
 The application owns this interface:
 
 ```text
-BookIdentityProvider.lookup(IsbnIdentityQuery, OperationContext)
-  -> IdentityAttemptResult
+BookIdentityProvider.prepare(IsbnIdentityQuery, OperationContext)
+  -> PreparedIdentityExchange | IdentityAttemptResult
+
+PreparedIdentityExchange.exchange(
+  OperationContext, begin_transport: Callable[[], OperationContext]
+) -> IdentityAttemptResult
 ```
 
-One call is one attempt. The port has no persistence, lock, retry, wait,
+One prepared exchange can be consumed once. Preparation completes credential,
+DNS, address, request, and authorization work without consuming a durable
+start. The application supplies the value-free `begin_transport` callback;
+the production adapter invokes it exactly once at the last boundary before
+network exchange, and only that callback claims and durably starts the attempt
+under the deployment gate. A preparation failure returns a typed result with
+no claim, start, or one-shot consumption. The port has no persistence, lock, retry, wait,
 credential-discovery, public lifecycle, proposal, review, or write behavior.
 `IdentityAttemptResult` contains exactly one typed observation tuple or one
 typed failure. Query, result, observation, identity, and decision representations
@@ -25,8 +34,8 @@ redact private values from `repr` and diagnostics.
 production-capable adapter implements the same port and contains no identity
 decision logic. `fixed-adapter-v3` injects a post-policy in-memory byte channel
 into that real adapter. The channel cannot resolve, connect, open a socket, or
-read a credential. Production composition remains absent, so valid enabled
-configuration continues to return `provider_not_activated`.
+read a credential. Enabled production composes the same fixed adapter through a
+dedicated selected-IP HTTPS channel only after durable start authority.
 
 ## Fixed operation and authentication
 
@@ -54,9 +63,12 @@ after revalidating the complete method, destination, query bytes, operation,
 variables, canonical body, contract identity, selected public address, Host,
 SNI, and peer plan. A near miss receives no authorization and no send.
 
-The future network channel must use one dedicated TLS client with environment
+The production network channel uses one dedicated TLS client with environment
 trust, redirects, cookies, ambient credentials, HTTP/2, compression, and
-keep-alive disabled. Increment 3 intentionally supplies no such channel.
+keep-alive disabled. Its request boundary suppresses `httpx` and `httpcore`
+records so URL, selected address, headers, body, and dependency failure values
+cannot enter application logging. Increment 3 intentionally supplies no such
+channel.
 
 ## Hostile response boundary
 
@@ -182,13 +194,15 @@ digests, fingerprints, stable correlations, raw input/response, paths,
 addresses, and secrets are forbidden from stdout, stderr, exceptions, logs,
 traces/spans, metrics, persistence, exports, reports, and audit records.
 
-The exact current-head registry is `preview-registry-c3-v6.json`, SHA-256
+The historical increment-3 registry is `preview-registry-c3-v6.json`, SHA-256
 `394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02`.
 It derives from installed C2
 `557dfdf0300bf2d59fa5571fd3af2136fd4f6099e14b1f1d1b953b0cb56a9d11`
 and includes exactly `inert-report-v3`, `identity-decision-v3`, and
-`fixed-adapter-v3`. The C3-scoped output schema, privacy contract, and privacy
-scan exclude every future durable-work and executor scenario.
+`fixed-adapter-v3`. Its C3-scoped output schema, privacy contract, and privacy
+scan intentionally exclude the later durable-work, executor, lifecycle, and
+activation scenarios. The exact current F09f evidence root is the activation
+registry identified under [Production activation](#production-activation).
 
 The fixed-adapter input schema resolves the project meta-schema
 `https://mechanical-librarian.github.io/schemas/utf8-byte-length-meta-v1`,
@@ -204,8 +218,11 @@ digests, and correlations remain forbidden across every runtime channel.
 ## Durable identity work
 
 The application derives an opaque 64-hex work key before persistence. The
-repository never accepts or stores a raw ISBN, local title, provider payload,
-credential, query, or path. One work key has monotonically increasing
+repository never accepts or stores a raw ISBN, local title, raw provider
+payload, credential, query, or path. A successful matched publication stores
+only the bounded selected edition ID, book ID, exact validated provider title,
+row count, and outcome needed to report and compare the same current identity
+after restart. One work key has monotonically increasing
 generations and at most one `pending`, `claimed`, or `retry_wait` generation.
 Initial acceptance atomically creates generation, candidate 1, aggregate start,
 exact 30-second deadline, and its event. Expiring a greater-than-24-hour match
@@ -233,9 +250,10 @@ a third interrupted attempt commits terminal
 and cancellation is supported only for the exact current claimed work owner,
 fence, candidate, and lease identity. Pending and retry-waiting work cannot be
 cancelled through this increment. Terminal
-publication finalizes the attempt, appends result and a closed structural
-observation whose only canonical fields are `outcome:"matched"` and bounded
-`row_count`, updates matched currentness, transitions the generation,
+publication finalizes the attempt, appends result and a closed private matched
+observation whose canonical fields are `outcome:"matched"`, bounded
+`row_count`, positive signed-32-bit `edition_id` and `book_id`, and the bounded
+exact `provider_title`, updates matched currentness, transitions the generation,
 and appends its event in one transaction. Failure before commit leaves all
 those records and the previous current pointer unchanged.
 
@@ -243,12 +261,25 @@ Matched currentness is reusable through exactly 24 hours. At greater age, one
 transaction marks the old pointer expired and creates one unreserved next
 generation. Reuse first reconciles the pointer with the referenced successful
 generation, matched terminal result, exact fence/timestamps, observation digest,
-and closed canonical observation. The succeeded generation's terminal
+and closed canonical observation. Legacy two-field matched observations remain
+readable as immutable history but are non-reusable; migration 11 expires their
+current pointers so the next invocation refreshes rather than reporting an
+identity that cannot be reconstructed. The succeeded generation's terminal
 `updated_at`, result publication, observation creation, and current-pointer
 timestamp must be exactly equal; inconsistent state fails without mutation.
 Immutable candidate, claim, retry, event, result, and observation
 records plus finalize-once attempts preserve restart evidence. Mutable
 generation and current-pointer rows are constrained to the closed state model.
+
+The private observation digest is SHA-256 over exactly the fixed
+`hardcover-matched-observation:v3` domain separator, opaque work key,
+generation, and canonical matched observation. It is an integrity binding, not
+a runtime input digest, and excludes local title, raw ISBN, and the serialized
+private query. The descriptor gate's only other private persistence exception
+is a crash-recovery row containing the database device, inode, binding marker,
+and original SQLite application ID. That closed row contains no path,
+provider/user data, query, or credential and is validated and deleted before
+work or provider authority; a normal binding completes with no recovery row.
 
 Migration 9 is additive and forward-only from the genuine schema-8 prefix.
 The `durable-work-v3` preview reconstructs migrations 1–8 plus the synthetic
@@ -256,9 +287,9 @@ sentinel, compares the canonical logical snapshot digest, verifies the checksum
 ledger and database integrity, injects a migration-statement rollback,
 applies migration 9 twice, and runs publication rollback, restart, recovery,
 stale-fence, retry, and currentness proofs on an initially absent disposable
-database beneath an empty owner-only disposable directory. Production still
-returns `provider_not_activated` before this
-repository, a private query, credential, adapter, or network is opened.
+database beneath an empty owner-only disposable directory. At that historical
+increment production returned `provider_not_activated` before this repository,
+a private query, credential, adapter, or network was opened.
 The preview opens the directory once with no-follow directory semantics,
 captures device, inode, owner, and mode, and retains that descriptor through
 descriptor-relative serialized staging and no-replace publication without
@@ -266,7 +297,7 @@ changing the process working directory. Parent replacement and symlink
 swaps are rejected and private staging is removed, including on base exceptions.
 
 The exact increment-4 registry is `preview-registry-c4-v6.json`, SHA-256
-`3e5183fb4ddff6674717f870c99b82ecb24eb2d232d759cf08957d2506d93e81`.
+`94380cffa51cd0bb843eafa5aa8edb39e14bc7c254c90b9feb8d08b497ac2d22`.
 It derives from the installed C3 registry and binds the canonical C4 input,
 output, closed input schema, variant matrix, cumulative schema-v5 output,
 privacy contract/scan, and contributor-independent schema-8 dump and ledger.
@@ -285,7 +316,7 @@ does not wait, loop, recover, cancel, install signal handlers, or start a later
 candidate; those lifecycle responsibilities remain separately tracked.
 
 The exact C5 registry is `preview-registry-c5-v6.json`, SHA-256
-`0f0ae4c1284af4562d8c2c90c0626d47dfbbe927c10400c3e8849bd3d4c33a3a`.
+`bbaa89174d682be79e4e0b42f1fe0fc8a1643201bbc7b090bf926cba421e5c39`.
 It derives from the exact C4 registry and binds a separate cumulative C5 output
 schema, privacy contract, privacy scan, and strict semantic fixture set without
 modifying predecessor evidence. Contributor labels and process names are
@@ -296,7 +327,67 @@ flow without treating equal incidental text as a leak. The exact serialized
 stdin is absent from every SQLite database-prefix channel.
 Privacy qualification materializes disposable-state WAL frames only through a
 test-only observer transaction whose timestamp value is restored and read back
-exactly. It scans nonempty main, WAL, and SHM while present and main after close.
-For arbitrary SQLite binary/text/hex, only eight-hex 32-bit digest prefixes are
-excluded as collision-prone substring evidence; exact/raw values, full
-encodings, full collision-resistant digests, and causal poison remain forbidden.
+exactly. It proves nonempty main, WAL, and SHM while present, then enumerates
+logical table/column values. Exact private observation/current-pointer/work-key/
+recovery cells are validated before exemption. Elsewhere, only eight-hex 32-bit
+digest prefixes are excluded as collision-prone substring evidence; exact/raw
+values, full encodings, full collision-resistant digests, and causal poison
+remain forbidden.
+
+## Installed activation
+
+Enabled production validates the private query before opening state. It derives
+the opaque work key from the exact public
+[`hardcover-isbn-work-key-v1`](hardcover-work-key-contract-v1.json) fields,
+including canonical ISBN-13 and authority revision but excluding title, paths,
+credential, traffic, and the qualification flag. It then initializes or opens
+schema-11 state, accepts durable work, and acquires the descriptor-bound gate.
+Acceptance creates or reconciles the exact per-generation one-or-three egress
+policy before provider preparation. A later request must match it and cannot
+widen one-shot authority after a zero-start failure, cancellation, or restart.
+The runtime connection is challenged against the gate's exact database inode
+before work acceptance or provider authority. Provider preparation may then
+read the credential and complete isolated bounded resolution, request
+construction, and authorization without claiming or starting work. Immediately
+before the one selected-public-IP HTTPS exchange, the prepared exchange invokes
+the gate-held callback that claims, renews, and durably starts the attempt. The
+Hardcover Host and TLS SNI are preserved. The exact database identity published
+for qualification is bound into the gate before state is reopened; replacement
+fails before start or send.
+
+The opaque work key is the sole persistence-only exception to the general ban
+on ISBN-derived stable values. It is required for durable currentness and
+idempotency, excludes title and raw/reversible input, and is never emitted,
+logged, exported, reported, or audited.
+
+For `matched`, production schema v6 reports the positive edition ID, book ID,
+and transient `equal` or `different` comparison. Reuse obtains the IDs and
+provider title from the validated private matched observation and recomputes
+the comparison against the new transient local title without another provider
+request. Every non-matched report contains only `schema` and `outcome`.
+Provider title is private durable comparison input only; it is never emitted,
+logged, audited, traced, metered, exported, or retained in review evidence.
+The content-bound observation digest and gate recovery row remain private under
+the exact closed derivation and lifetime above; neither expands a runtime,
+evidence, or export surface.
+
+The public outcomes are exactly `matched`, `disabled`, `invalid_input`,
+`in_progress`, `credential_unavailable`, `authentication`, `authorization`,
+`cancelled`, `malformed`, `oversized`, `empty`, `no_match`, `ambiguous`,
+`incompatible`, `stale`, `persistence_failure`, and `retry_exhausted`.
+`provider_not_activated` is unreachable. Internal retry causes remain durable
+and never become terminal public reports.
+
+The exact activation registry is
+[`hardcover-f09f-activation-registry-v1.json`](hardcover-f09f-activation-registry-v1.json),
+SHA-256 `552fb260d15f0e81a9ac4f64e926897513d698ecfd3857d303b0328356ea88b0`.
+It derives from and binds the merged C6 registry, all six retained contributor
+scenarios, the cumulative output schema and exact privacy contract/scan,
+the work-key contract, the exact one-shot authority contract, and production
+output schema v6
+[`hardcover-identity-report-output-schema-v6.json`](hardcover-identity-report-output-schema-v6.json),
+SHA-256 `f9ac215d22e2f9e67f9d8d028fde5ba9738933ec74f3a80fc71242c42b97de98`,
+and production privacy contract
+[`hardcover-identity-report-output-privacy-v1.json`](hardcover-identity-report-output-privacy-v1.json),
+SHA-256 `21321ec555526c43b657d9f5a85775cd194f17d123bea426ee9c6d407aac8260`.
+Synthetic runtime remains credential-free after activation.

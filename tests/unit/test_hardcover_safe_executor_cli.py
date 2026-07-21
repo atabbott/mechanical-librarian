@@ -123,7 +123,6 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         for private in (
             b"9780000000019",
             b"0000000019",
-            b"Synthetic Ebook Alpha",
             serialized_input,
             *(
                 value.encode("ascii")
@@ -186,8 +185,8 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         ]
 
         class MismatchedCallerProofProvider(_SyntheticExecutorProvider):
-            def lookup(self, query, context):
-                result = super().lookup(query, context)
+            def exchange(self, context, **kwargs):
+                result = super().exchange(context, **kwargs)
                 self.deadlines[:] = [context.deadline.at + timedelta(microseconds=1)]
                 return result
 
@@ -271,12 +270,12 @@ class HardcoverSafeExecutorCliTests(unittest.TestCase):
         payload = registry_path.read_bytes()
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "9699e563a3212885167f6a407867057e99958d2309b9bf1cf7adbc2de7cde777",
+            "bbaa89174d682be79e4e0b42f1fe0fc8a1643201bbc7b090bf926cba421e5c39",
         )
         registry = json.loads(payload)
         self.assertEqual(
             registry["predecessor_registry_sha256"],
-            "9f49679ac4dad1f2a4e1755d08cf5844ba66f42abdde08437633ca863a483823",
+            "94380cffa51cd0bb843eafa5aa8edb39e14bc7c254c90b9feb8d08b497ac2d22",
         )
         self.assertEqual(
             [row["scenario"] for row in registry["scenarios"]],

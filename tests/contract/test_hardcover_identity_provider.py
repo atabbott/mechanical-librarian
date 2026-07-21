@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import signal
 import subprocess
 import sys
+import threading
 import textwrap
 import unittest
 from dataclasses import replace
@@ -11,14 +13,18 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
+
 from mechanical_librarian.adapters.providers import hardcover_identity as adapter
 from mechanical_librarian.adapters.providers.hardcover_identity import (
     AuthorizedIdentityRequest,
     HARDCOVER_IDENTITY_OPERATION,
     HARDCOVER_IDENTITY_QUERY,
     HARDCOVER_IDENTITY_URL,
+    HttpxIdentityByteChannel,
     HardcoverIdentityProvider,
     IdentityChannelFailure,
+    LiveHardcoverIdentityProvider,
     RawIdentityResponseHead,
     StructuralIdentityBodyReader,
     StructuralIdentityByteChannel,
@@ -28,6 +34,8 @@ from mechanical_librarian.adapters.providers.hardcover_identity import (
 )
 from mechanical_librarian.application.hardcover_identity import (
     IdentityAttemptFailureKind,
+    IdentityAttemptResult,
+    IdentityExchangeGuardError,
     IsbnIdentityQuery,
 )
 from mechanical_librarian.application.ports import (
@@ -38,9 +46,51 @@ from mechanical_librarian.application.ports import (
     ResourceBounds,
     TimeProbe,
 )
+from mechanical_librarian.application.transport_capabilities import (
+    ResolverBudget,
+    ResolverFailure,
+    ResolverFailureKind,
+)
+from mechanical_librarian.infrastructure.security.hardcover_transport import (
+    ContextTransportLogIsolation,
+    IsolatedAddressResolverFactory,
+)
 
 
 ROOT = Path(__file__).parents[2]
+
+
+def _httpx_channel(transport: httpx.AsyncBaseTransport) -> HttpxIdentityByteChannel:
+    return HttpxIdentityByteChannel(
+        log_isolation_factory=ContextTransportLogIsolation(),
+        transport=transport,
+    )
+
+
+def _run_prepared(provider, query, context, *, before_exchange=None):
+    prepared = provider.prepare(query, context)
+    if type(prepared) is IdentityAttemptResult:
+        return prepared
+
+    def begin_transport():
+        if before_exchange is not None:
+            before_exchange()
+        return context
+
+    return prepared.exchange(context, begin_transport=begin_transport)
+
+
+class _PreparedProviderHarness:
+    def __init__(self, provider) -> None:
+        self._provider = provider
+
+    def lookup(self, query, context, *, before_exchange=None):
+        return _run_prepared(
+            self._provider,
+            query,
+            context,
+            before_exchange=before_exchange,
+        )
 
 
 class HardcoverIdentityProviderContractTests(unittest.TestCase):
@@ -157,11 +207,13 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
         channel: StructuralIdentityByteChannel,
         *,
         address: str = "1.1.1.1",
-    ) -> HardcoverIdentityProvider:
-        return HardcoverIdentityProvider(
-            lambda host, port: (address,),
-            channel,
-            b"synthetic-noncredential",
+    ) -> _PreparedProviderHarness:
+        return _PreparedProviderHarness(
+            HardcoverIdentityProvider(
+                lambda host, port: (address,),
+                channel,
+                b"synthetic-noncredential",
+            )
         )
 
     def test_frozen_request_auth_and_structural_success(self) -> None:
@@ -196,6 +248,420 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                         near_miss, query, b"synthetic-noncredential"
                     )
                 )
+
+    def test_production_channel_uses_selected_ip_fixed_host_sni_and_closed_body(
+        self,
+    ) -> None:
+        captured: list[httpx.Request] = []
+
+        class _NetworkStream:
+            def get_extra_info(self, name: str) -> tuple[str, int] | None:
+                return ("1.1.1.1", 443) if name == "server_addr" else None
+
+        class _Body(httpx.AsyncByteStream):
+            def __init__(self, payload: bytes) -> None:
+                self.payload = payload
+
+            async def __aiter__(self):
+                yield self.payload
+
+        async def respond(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            payload = self.response_body()
+            return httpx.Response(
+                200,
+                headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Content-Encoding": "identity",
+                    "Content-Length": str(len(payload)),
+                },
+                stream=_Body(payload),
+                extensions={"network_stream": _NetworkStream()},
+            )
+
+        channel = _httpx_channel(httpx.MockTransport(respond))
+        result = _run_prepared(
+            HardcoverIdentityProvider(
+                lambda host, port: ("1.1.1.1",),
+                channel,
+                b"synthetic-noncredential",
+            ),
+            self.query(),
+            self.context(),
+        )
+
+        self.assertIsNone(result.failure)
+        self.assertEqual(len(result.observations or ()), 1)
+        self.assertEqual(len(captured), 1)
+        request = captured[0]
+        self.assertEqual(str(request.url), "https://1.1.1.1/v1/graphql")
+        self.assertEqual(request.headers["host"], "api.hardcover.app")
+        self.assertEqual(
+            request.headers["authorization"], "Bearer synthetic-noncredential"
+        )
+        self.assertEqual(request.headers["accept-encoding"], "identity")
+        self.assertEqual(request.extensions["sni_hostname"], "api.hardcover.app")
+
+    def test_production_channel_rejects_invalid_200_headers_before_stream(
+        self,
+    ) -> None:
+        class _NetworkStream:
+            def get_extra_info(self, name: str) -> tuple[str, int] | None:
+                return ("1.1.1.1", 443) if name == "server_addr" else None
+
+        cases = (
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"Content-Length", b"65537"),
+                ),
+                IdentityAttemptFailureKind.OVERSIZED,
+            ),
+            ((), IdentityAttemptFailureKind.MALFORMED),
+            (
+                ((b"Content-Type", b"application/json"),) * 2,
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                ((b"Content-Type", b"text/plain"),),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"Content-Encoding", b"identity"),
+                    (b"Content-Encoding", b"identity"),
+                ),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"Content-Encoding", b"gzip"),
+                ),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"Content-Length", b"1"),
+                    (b"Content-Length", b"1"),
+                ),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"Content-Length", b"01"),
+                ),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                ((b"Content-Type", b"application/json"),)
+                + tuple((b"X-Bounded", str(index).encode()) for index in range(16)),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+            (
+                (
+                    (b"Content-Type", b"application/json"),
+                    (b"X-Bounded", b"x" * 246),
+                ),
+                IdentityAttemptFailureKind.MALFORMED,
+            ),
+        )
+        for headers, expected in cases:
+            with self.subTest(headers=headers, expected=expected):
+                body_iterations = 0
+                closed = False
+
+                class _HostileBody(httpx.AsyncByteStream):
+                    async def __aiter__(self):
+                        nonlocal body_iterations
+                        body_iterations += 1
+                        yield b"hostile-body-must-not-be-read"
+
+                    async def aclose(self) -> None:
+                        nonlocal closed
+                        closed = True
+
+                async def respond(request: httpx.Request) -> httpx.Response:
+                    return httpx.Response(
+                        200,
+                        headers=headers,
+                        stream=_HostileBody(),
+                        extensions={"network_stream": _NetworkStream()},
+                    )
+
+                result = _run_prepared(
+                    HardcoverIdentityProvider(
+                        lambda host, port: ("1.1.1.1",),
+                        _httpx_channel(httpx.MockTransport(respond)),
+                        b"synthetic-noncredential",
+                    ),
+                    self.query(),
+                    self.context(),
+                )
+                self.assertIs(result.failure.kind, expected)
+                self.assertEqual(body_iterations, 0)
+                self.assertTrue(closed)
+
+    def test_live_provider_checks_context_before_private_token(self) -> None:
+        token_reads = 0
+
+        def token_reader() -> bytes:
+            nonlocal token_reads
+            token_reads += 1
+            return b"synthetic-noncredential"
+
+        for context, expected in (
+            (self.context(cancelled=True), IdentityAttemptFailureKind.CANCELLED),
+            (self.context(expired=True), IdentityAttemptFailureKind.TIMEOUT),
+        ):
+            with self.subTest(expected=expected):
+                result = _run_prepared(
+                    LiveHardcoverIdentityProvider(
+                        token_reader,
+                        resolver_factory=lambda budget: lambda host, port: (),
+                        channel_factory=lambda: self.channel(),
+                    ),
+                    self.query(),
+                    context,
+                )
+                self.assertIs(result.failure.kind, expected)
+        self.assertEqual(token_reads, 0)
+
+    def test_bounded_resolver_checks_context_before_spawning_dns(self) -> None:
+        for context, expected in (
+            (self.context(cancelled=True), IdentityAttemptFailureKind.CANCELLED),
+            (self.context(expired=True), IdentityAttemptFailureKind.TIMEOUT),
+        ):
+            with self.subTest(expected=expected):
+                budget = ResolverBudget(
+                    remaining_seconds=lambda: max(
+                        0.0,
+                        (context.deadline.at - context.time.now()).total_seconds(),
+                    ),
+                    is_cancelled=context.cancellation.is_cancelled,
+                )
+                with (
+                    patch(
+                        "mechanical_librarian.infrastructure.security.hardcover_transport.subprocess.Popen"
+                    ) as popen,
+                    self.assertRaises(ResolverFailure) as raised,
+                ):
+                    IsolatedAddressResolverFactory()(budget)(
+                        "api.hardcover.app", 443
+                    )
+                self.assertEqual(raised.exception.kind.value, expected.value)
+                popen.assert_not_called()
+
+    def test_live_provider_preserves_resolver_cancellation_and_timeout(self) -> None:
+        for resolver_kind, expected in (
+            (ResolverFailureKind.CANCELLED, IdentityAttemptFailureKind.CANCELLED),
+            (ResolverFailureKind.TIMEOUT, IdentityAttemptFailureKind.TIMEOUT),
+        ):
+            with self.subTest(resolver_kind=resolver_kind):
+                def resolver_factory(budget: ResolverBudget):
+                    def fail(host: str, port: int) -> tuple[str, ...]:
+                        raise ResolverFailure(resolver_kind)
+
+                    return fail
+
+                result = _run_prepared(
+                    LiveHardcoverIdentityProvider(
+                        lambda: b"synthetic-noncredential",
+                        resolver_factory=resolver_factory,
+                        channel_factory=lambda: self.channel(),
+                    ),
+                    self.query(),
+                    self.context(),
+                )
+                self.assertIs(result.failure.kind, expected)
+
+    def test_non_success_body_is_not_drained_and_transport_logs_are_suppressed(
+        self,
+    ) -> None:
+        body_iterations = 0
+        closed = False
+        records: list[str] = []
+
+        class _NetworkStream:
+            def get_extra_info(self, name: str) -> tuple[str, int] | None:
+                return ("1.1.1.1", 443) if name == "server_addr" else None
+
+        class _HostileBody(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                nonlocal body_iterations
+                body_iterations += 1
+                yield b'private-isbn-and-provider-metadata'
+
+            async def aclose(self) -> None:
+                nonlocal closed
+                closed = True
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record.getMessage())
+
+        class _UnrelatedFilter(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                return True
+
+        unrelated_filter = _UnrelatedFilter()
+        unrelated_handler = logging.NullHandler()
+        during_configuration = None
+
+        async def respond(request: httpx.Request) -> httpx.Response:
+            nonlocal during_configuration
+            active_logger = logging.getLogger("httpcore.connection")
+            during_configuration = (
+                active_logger.level,
+                active_logger.propagate,
+                active_logger.disabled,
+                tuple(active_logger.handlers),
+                tuple(active_logger.filters),
+            )
+            logging.getLogger("httpcore.connection").warning(
+                "private-address-and-header"
+            )
+            unrelated = threading.Thread(
+                target=logging.getLogger("httpcore.connection").warning,
+                args=("unrelated-thread-log",),
+            )
+            unrelated.start()
+            unrelated.join()
+
+            def change_unrelated_configuration() -> None:
+                logger = logging.getLogger("httpcore.connection")
+                logger.addFilter(unrelated_filter)
+                logger.addHandler(unrelated_handler)
+                logger.setLevel(logging.ERROR)
+                logger.propagate = False
+                logger.disabled = False
+
+            configuration = threading.Thread(
+                target=change_unrelated_configuration
+            )
+            configuration.start()
+            configuration.join()
+            return httpx.Response(
+                401,
+                headers={"X-Private": "private-isbn-and-provider-metadata"},
+                stream=_HostileBody(),
+                extensions={"network_stream": _NetworkStream()},
+            )
+
+        root = logging.getLogger()
+        handler = _Capture()
+        original_level = root.level
+        root.addHandler(handler)
+        root.setLevel(logging.DEBUG)
+        transport_logger = logging.getLogger("httpcore.connection")
+
+        def logger_configuration():
+            return (
+                transport_logger.level,
+                transport_logger.propagate,
+                transport_logger.disabled,
+                tuple(transport_logger.handlers),
+                tuple(transport_logger.filters),
+            )
+
+        original_configuration = logger_configuration()
+        log_isolation = ContextTransportLogIsolation()
+        self.assertEqual(logger_configuration(), original_configuration)
+        channel = HttpxIdentityByteChannel(
+            log_isolation_factory=log_isolation,
+            transport=httpx.MockTransport(respond),
+        )
+        try:
+            result = _run_prepared(
+                HardcoverIdentityProvider(
+                    lambda host, port: ("1.1.1.1",),
+                    channel,
+                    b"synthetic-noncredential",
+                ),
+                self.query(),
+                self.context(),
+            )
+            self.assertIs(
+                result.failure.kind, IdentityAttemptFailureKind.AUTHENTICATION
+            )
+            self.assertEqual(body_iterations, 0)
+            self.assertTrue(closed)
+            self.assertIn("unrelated-thread-log", records)
+            self.assertIsNotNone(during_configuration)
+            assert during_configuration is not None
+            self.assertEqual(
+                during_configuration[:4],
+                original_configuration[:4],
+            )
+            self.assertEqual(
+                during_configuration[4][:-1],
+                original_configuration[4],
+            )
+            self.assertIs(during_configuration[4][-1], log_isolation._filter)
+            self.assertEqual(
+                logger_configuration(),
+                (
+                    logging.ERROR,
+                    False,
+                    False,
+                    (*original_configuration[3], unrelated_handler),
+                    (*original_configuration[4], unrelated_filter),
+                ),
+            )
+            self.assertFalse(
+                any(
+                    "private-" in message or "1.1.1.1" in message
+                    for message in records
+                )
+            )
+        finally:
+            transport_logger.setLevel(original_configuration[0])
+            transport_logger.propagate = original_configuration[1]
+            transport_logger.disabled = original_configuration[2]
+            transport_logger.handlers[:] = original_configuration[3]
+            transport_logger.filters[:] = original_configuration[4]
+            root.removeHandler(handler)
+            root.setLevel(original_level)
+
+    def test_transport_log_isolation_restores_filters_after_failure(self) -> None:
+        logger = logging.getLogger("httpcore.connection")
+        original = (
+            logger.level,
+            logger.propagate,
+            logger.disabled,
+            tuple(logger.handlers),
+            tuple(logger.filters),
+        )
+        isolation = ContextTransportLogIsolation()
+        self.assertEqual(
+            (
+                logger.level,
+                logger.propagate,
+                logger.disabled,
+                tuple(logger.handlers),
+                tuple(logger.filters),
+            ),
+            original,
+        )
+        with self.assertRaisesRegex(RuntimeError, "synthetic transport failure"):
+            with isolation():
+                self.assertEqual(len(logger.filters), len(original[4]) + 1)
+                with isolation():
+                    self.assertEqual(len(logger.filters), len(original[4]) + 1)
+                    raise RuntimeError("synthetic transport failure")
+        self.assertEqual(
+            (
+                logger.level,
+                logger.propagate,
+                logger.disabled,
+                tuple(logger.handlers),
+                tuple(logger.filters),
+            ),
+            original,
+        )
 
     def test_address_policy_rejects_nonpublic_before_channel_open(self) -> None:
         self.assertTrue(address_is_public("1.1.1.1"))
@@ -356,9 +822,13 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     resolver_calls.append((host, port))
                     return ("1.1.1.1",)
 
-                result = HardcoverIdentityProvider(
-                    resolver, channel, b"synthetic-noncredential"
-                ).lookup(self.query(), context)
+                result = _run_prepared(
+                    HardcoverIdentityProvider(
+                        resolver, channel, b"synthetic-noncredential"
+                    ),
+                    self.query(),
+                    context,
+                )
                 self.assertEqual(result.failure.kind, expected)
                 self.assertEqual(resolver_calls, [])
                 self.assertFalse(channel.called)
@@ -401,9 +871,13 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     "authorize_identity_request",
                     wraps=authorize_identity_request,
                 ) as authorize:
-                    result = HardcoverIdentityProvider(
-                        resolver, channel, b"synthetic-noncredential"
-                    ).lookup(self.query(), context)
+                    result = _run_prepared(
+                        HardcoverIdentityProvider(
+                            resolver, channel, b"synthetic-noncredential"
+                        ),
+                        self.query(),
+                        context,
+                    )
                 self.assertEqual(result.failure.kind, expected)
                 authorize.assert_not_called()
                 self.assertFalse(channel.called)
@@ -438,6 +912,36 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             result.failure.kind, IdentityAttemptFailureKind.CANCELLED
         )
         self.assertFalse(channel.called)
+
+    def test_production_providers_preserve_exchange_guard_failure(self) -> None:
+        def reject_exchange() -> None:
+            raise IdentityExchangeGuardError(
+                "Hardcover exchange authority is unavailable"
+            )
+
+        structural_channel = self.channel()
+        with self.assertRaises(IdentityExchangeGuardError):
+            self.provider(structural_channel).lookup(
+                self.query(),
+                self.context(),
+                before_exchange=reject_exchange,
+            )
+        self.assertFalse(structural_channel.called)
+
+        live_channel = self.channel()
+        live = LiveHardcoverIdentityProvider(
+            lambda: b"synthetic-noncredential",
+            resolver_factory=lambda budget: lambda host, port: ("1.1.1.1",),
+            channel_factory=lambda: live_channel,
+        )
+        with self.assertRaises(IdentityExchangeGuardError):
+            _run_prepared(
+                live,
+                self.query(),
+                self.context(),
+                before_exchange=reject_exchange,
+            )
+        self.assertFalse(live_channel.called)
 
     def test_time_and_cancellation_probe_failures_are_value_free(self) -> None:
         now = datetime(2030, 1, 1, tzinfo=timezone.utc)
@@ -500,7 +1004,9 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     )
                 )
                 with patcher:
-                    result = provider.lookup(self.query(), self.context())
+                    result = _run_prepared(
+                        provider, self.query(), self.context()
+                    )
                 self.assertEqual(
                     result.failure.kind, IdentityAttemptFailureKind.UNAVAILABLE
                 )
@@ -561,11 +1067,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     "1.1.1.1",
                 )
                 channel = Channel(response, fallback)
-                result = HardcoverIdentityProvider(
-                    lambda host, port: ("1.1.1.1",),
-                    channel,
-                    b"synthetic-noncredential",
-                ).lookup(self.query(), self.context())
+                result = _run_prepared(
+                    HardcoverIdentityProvider(
+                        lambda host, port: ("1.1.1.1",),
+                        channel,
+                        b"synthetic-noncredential",
+                    ),
+                    self.query(),
+                    self.context(),
+                )
                 if available:
                     self.assertIsNone(result.failure)
                 else:
@@ -671,11 +1181,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                     )
                 )
                 with parse_patch, self.assertRaises(KeyboardInterrupt):
-                    HardcoverIdentityProvider(
-                        lambda host, port: ("1.1.1.1",),
-                        channel,
-                        b"synthetic-noncredential",
-                    ).lookup(self.query(), operation_context)
+                    _run_prepared(
+                        HardcoverIdentityProvider(
+                            lambda host, port: ("1.1.1.1",),
+                            channel,
+                            b"synthetic-noncredential",
+                        ),
+                        self.query(),
+                        operation_context,
+                    )
                 self.assertEqual(reader.close_calls, 1)
                 self.assertEqual(
                     channel.release_calls, 1 if phase == "read_fallback" else 0
@@ -724,11 +1238,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
                 TimeProbe(lambda: now),
             )
             reader = Reader()
-            HardcoverIdentityProvider(
+            provider = HardcoverIdentityProvider(
                 lambda host, port: ("1.1.1.1",),
                 Channel(reader),
                 b"synthetic-noncredential",
-            ).lookup(IsbnIdentityQuery("9780000000019", "0000000019"), context)
+            )
+            prepared = provider.prepare(
+                IsbnIdentityQuery("9780000000019", "0000000019"), context
+            )
+            prepared.exchange(context, begin_transport=lambda: context)
             '''
         )
         process = subprocess.Popen(
@@ -764,11 +1282,15 @@ class HardcoverIdentityProviderContractTests(unittest.TestCase):
             IdentityAttemptFailureKind.UNAVAILABLE,
         ):
             with self.subTest(kind=kind):
-                result = HardcoverIdentityProvider(
-                    lambda host, port: ("1.1.1.1",),
-                    RaisingChannel(kind),
-                    b"synthetic-noncredential",
-                ).lookup(self.query(), self.context())
+                result = _run_prepared(
+                    HardcoverIdentityProvider(
+                        lambda host, port: ("1.1.1.1",),
+                        RaisingChannel(kind),
+                        b"synthetic-noncredential",
+                    ),
+                    self.query(),
+                    self.context(),
+                )
                 self.assertEqual(result.failure.kind, kind)
 
     def test_structural_channel_requires_the_exact_ordered_header_tuple(self) -> None:

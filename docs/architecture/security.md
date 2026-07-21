@@ -155,37 +155,39 @@ Identical replay does not duplicate state, while changed inputs supersede
 current applicability without rewriting history.
 
 Ordinary CI and automated tests use an irreversibly synthetic structural fake
-through the same adapter seam and no provider credential. F09b also requires
-the exact installed artifact to parse one bounded real-endpoint result with a
-dedicated non-production account and disposable state; only a redacted
-aggregate result may be retained. This proves no production configuration,
+through the same adapter seam and no provider credential. F09b historically
+completed one exact-installed-artifact qualification against a bounded real
+endpoint with a dedicated non-production account and disposable state; its
+credentialed command is retired and that request must not be repeated. Only a
+redacted aggregate result was retained. This proves no production configuration,
 provider-work persistence, freshness/reuse, restart, identity, or live-target
-behavior. F09f later owns the configured target-independent provider lane;
+behavior. F09f owns the configured target-independent provider lane;
 F09g owns the live join. Nothing in the preview invokes AI,
 records a human decision, handles covers or rich
 fields, fuses multiple providers, or authorizes a production write.
 
-### F09f preactivation identity boundary
+### F09f configured identity boundary
 
-The first F09f increment adds only strict configuration, private-query parsing,
-and an inert report. A missing or disabled `hardcover_provider` block returns
-`disabled`; valid enabled configuration returns `provider_not_activated`.
-Both outcomes occur before query-file, database, credential, provider/client,
-DNS, proxy, socket, or network access. The optional block is the sole future
-enablement source; the legacy `providers` list remains inert and no ambient or
-inline token is accepted.
+The first F09f increment added strict configuration, private-query parsing, and
+an inert report. After activation a missing or disabled `hardcover_provider`
+block still returns `disabled` before query-file, database, credential,
+provider/client, DNS, proxy, socket, or network access. Enabled configuration
+uses only that optional block; the legacy `providers` list remains inert and no
+ambient or inline token is accepted.
 
 The private-query reader uses a canonical parent directory descriptor and a
 no-follow final-component open, verifies effective-user ownership, regular
 type, owner-only mode, link count one, bounded size, and stable identity around
-one exact read. Its title is transient and never hashed, persisted, logged,
+one exact read. The local title is transient and never hashed, persisted, logged,
 exported, reported, audited, traced, or emitted as a metric. The contributor
 preview uses the same validation seams but has no production composition and
 emits only its closed typed schema-v5 zero-access result.
 
-Increment 3 installs the fixed `hardcover-isbn-identity-v1` adapter behind the
-application-owned identity port, but does not compose it into enabled
-production mode. Its installed demonstration injects a
+Increment 3 installed the fixed `hardcover-isbn-identity-v1` adapter behind the
+application-owned identity port without composing it into enabled production
+mode. F09f activation now composes provider preparation and exchange through
+the durable lifecycle at the installed production boundary. The retained
+increment-3 demonstration injects a
 `validated-public-address` capability and a post-policy in-memory byte channel;
 the channel is structurally unable to resolve, connect, open a socket, inherit
 a proxy, or read a credential, and the report always records
@@ -203,10 +205,10 @@ re-resolution, and requires the connected peer to equal the selected address.
 Bearer authentication is attached only after exact method, HTTPS origin/path,
 empty query/fragment, Host, SNI, operation, query bytes, variables, canonical
 body, contract identity, selected address, and peer plan are revalidated. Any
-near miss receives neither authorization nor send authority. A future network
-channel must retain dedicated TLS-client, no-redirect, no-environment-proxy,
+near miss receives neither authorization nor send authority. The production network
+channel retains dedicated TLS-client, no-redirect, no-environment-proxy,
 no-cookie, no-ambient-credential, no-compression, no-HTTP/2, and connection-
-close behavior; this increment intentionally provides no network channel.
+close behavior.
 
 HTTP response bytes remain hostile. Status lines are capped at 128 bytes before
 parsing. Non-200 bodies are released without parsing. Every post-exchange path
@@ -232,7 +234,20 @@ GraphQL, edition, and book shapes. All rows, including the four-row ambiguity
 sentinel, are validated before selection. Raw request, response, headers,
 addresses, token, ISBN, title, provider identity, exception text, and derived
 digests or correlations are forbidden from every runtime channel. Only the
-coarse fixed-adapter result fields are exportable.
+coarse fixed-adapter result fields are exportable. Activated production stores
+only the validated bounded provider title and positive edition/book IDs in its
+private matched observation so restart reuse can reconstruct the identity and
+recompute title comparison. The provider title is never a runtime output, log,
+audit, trace, metric, export, support report, or review-evidence value; the IDs
+are permitted only in that private observation and the direct matched report.
+The observation's private integrity digest binds a fixed domain, opaque work
+key, generation, and exact canonical observation; it excludes local title, raw
+ISBN, and serialized query. Database binding may transiently commit one closed
+crash-recovery row containing only device, inode, binding marker, and original
+SQLite application ID. Recovery validates and deletes that row before provider
+or work authority; normal binding leaves no row. Paths, provider/user data, and
+credentials are forbidden from it.
+Schema 11 expires legacy current pointers that cannot supply those fields.
 
 F10a consumes only an already-persisted current F09a lineage selected by the
 closed scenario vocabulary. `synthetic-title-review-binding-v1` binds closed
@@ -529,14 +544,15 @@ timestamp, exact fence/timestamps,
 observation digest, and closed structural observation. Aggregate/attempt
 exhaustion commits terminal evidence, while
 currentness expiry and unreserved next-generation creation share one
-transaction and repeated readers retain stale status. Append-only records and
+transaction; the first reader reports `stale` without egress and a later
+invocation may reserve the refresh. Append-only records and
 finalize-once attempts make restart and corruption visible.
 
-The installed preview injects gate ownership structurally and has no provider
+The installed durable-work preview injects gate ownership structurally and has no provider
 secret, query-file, DNS, socket, HTTP, process loop, signal, proposal, review,
 or production-write authority. It persists no ISBN, title, provider payload,
-path, credential, or contributor script. Production remains preactivated and
-returns before opening this repository. Tests trap all egress and secret seams,
+path, credential, or contributor script. Activated production reuses this
+repository before credential or network authority. Tests trap all egress and secret seams,
 compare the reconstructed schema-8 sentinel/logical snapshot, inject migration
 and publication failures, reopen before and after starts, and prove stale
 fences leave state unchanged. Disposable preview publication retains one
@@ -552,7 +568,7 @@ claim/fence, atomic start accounting, one typed provider attempt, and durable
 publication. The provider port owns exactly one attempt and cannot claim,
 retry, wait, recover, or publish. Durable retry state remains available for a
 later orchestrator, but this executor never waits, retries, recovers, installs
-signal handlers, or loops. Production composition remains absent.
+signal handlers, or loops in this synthetic scenario.
 
 The deployment gate canonicalizes the state parent and binds its directory,
 database, and exact `.mechanical-librarian-hardcover-identity.lock` entries to
@@ -565,6 +581,16 @@ converge on the same device/inode and lock. Dot/dotdot, nonconverging or changed
 identity, final symlink, hardlink, nonregular database, permissive root, and
 lock/database replacement fail closed. The lock is stable and never unlinked
 during operation.
+
+Qualification publication retains the exact descriptor-observed database inode
+and binds it into the production gate before reopening state. Replacement after
+publication therefore fails before credential or send. After durable start,
+the held lease is carried through the application-owned provider port and
+revalidated at the exact exchange boundary after token read, DNS, address
+selection, request construction, and authorization. The HTTP dependency logging
+boundary suppresses `httpx`/`httpcore` records for that exchange and restores
+prior logger configuration afterward; adversarial URL, address, response-header,
+body, and failure values never reach application log capture.
 
 The persisted 30-second aggregate window is inspected before gate acquisition,
 and the caller deadline is checked at the same boundary. A busy gate returns
@@ -584,10 +610,11 @@ identity. The executor uses one fixed 55-character internal owner outside the
 complete label and process syntax domains. Qualification uses sentinel-bearing
 controls, owner readback, and an internal-vocabulary collision variant, so an
 equal word such as `pending` is not confused with contributor-derived flow.
-The persistence scanner likewise ignores only eight-hex 32-bit digest prefixes
-inside arbitrary SQLite bytes/text/hex because unrelated durable identities can
-collide. It still rejects exact/raw contributor values, full encodings and
-collision-resistant digests, and causal poison. A synthetic-only observer
+The persistence scanner validates exact private table/column/canonical shapes,
+then ignores only eight-hex 32-bit digest prefixes in every other logical value
+because unrelated durable identities can collide. It still rejects exact/raw
+contributor, ISBN, and provider values, full encodings and collision-resistant
+digests, and causal poison. A synthetic-only observer
 materializes and exactly restores one timestamp transaction so qualification
 captures nonempty main, WAL, and SHM while present without changing durable
 domain state or production authority.
@@ -604,8 +631,12 @@ cancellation is durable; provider-time cancellation publishes only through the
 current fence after provider return. Main-thread-only temporary SIGINT/SIGTERM
 handlers set a local Event and restore prior handlers in `finally`; they add no
 cross-process cancellation channel and do not translate interpreter control
-flow. C6 remains credential-free and production composition remains
-`provider_not_activated`.
+flow. C6 remains credential-free after activation. Production composition wraps
+the same lifecycle in main-thread cancellation handling. The repository creates
+or reconciles the exact per-generation egress policy during acceptance before
+provider preparation; preparation may resolve the credential, but no network
+transport begins until the durable gate-held start and a later mode switch
+cannot widen that generation's authority.
 
 F07b treats the service path projection, private logical binding, EPUB archive,
 and persisted canonical report as hostile inputs. Callers can supply only

@@ -41,7 +41,10 @@ trip exist, but no production image or supported release exists yet. See the
 [EPUB package report](docs/operations/epub-package-report.md), and
 [EPUB opening-matter report](docs/operations/epub-opening-report.md), and
 [durable EPUB opening evidence](docs/operations/epub-opening-evidence.md) for the current
-executable operator surface.
+executable operator surface. The disabled-by-default, report-only
+[configured Hardcover identity report](docs/operations/hardcover-identity-report.md)
+is also installed; it uses strict private input and durable bounded execution
+and has no proposal or write authority.
 
 The currently numbered delivery milestones are internal pre-release checkpoints,
 not release-publication commitments. Completing one does not create a tag,

@@ -61,31 +61,57 @@ request or response, provider upstream identifier, or fabricated ordinary
 evidence-reference record. The supported report uses the same bounded local
 projection and never sends it to a provider or reviewer.
 
-F09f preactivation discloses nothing: disabled and not-activated outcomes return
-before private-query access. After activation, only canonical ISBN is later
-disclosed and local title comparison remains transient.
-The activated integration otherwise sends only the minimum allowlisted data
-needed for its bounded Hardcover lookup.
+Disabled F09f discloses nothing and returns before private-query access.
+Enabled activation durably accepts work before disclosing only canonical
+ISBN-13 and, for 978 identities, its exact equivalent ISBN-10. Local title is
+never sent and its comparison remains transient. The integration otherwise
+sends only the fixed GraphQL operation and minimum allowlisted data needed for
+its bounded Hardcover lookup.
 It does not send a target-service identifier, library or connection identity,
 filename, media or database path, excerpt, cover, rich metadata, raw provider
 payload, or unrelated library field. The account credential remains a secret
 reference resolved only when the provider is enabled and is never shared with
 the target service or another consumer.
 
-Durable F09f state contains only the bounded canonical provider title, minimum
-provider-scoped book and compatible ebook-edition identity, query and
-configuration identity, outcome, and provenance needed to explain freshness,
-replay, or invalidation. Raw requests, responses, headers, tokens, secret
+Durable F09f state contains only an opaque contract-bound work key, closed
+workflow/attempt evidence, and the exact validated matched observation needed
+for truthful currentness and reuse: outcome, bounded row count, edition ID,
+book ID, and provider title. It stores no local title, raw ISBN, serialized
+private query, or provider data outside that closed observation. Raw
+requests, responses, headers, tokens, secret
 reference values, paths, unrestricted upstream identifiers, traffic captures,
 and provider caches are not retained. F09g retains the minimum bounded local,
 target, and provider projections needed to explain its proposal or exact typed
 zero-proposal result; valid local evidence survives provider failure.
 
+The opaque work key is the sole persistence-only exception to the ban on
+ISBN-derived stable values: its exact public contract derives it from canonical
+ISBN plus authority identity for currentness and idempotency, excludes title and
+raw/reversible input, and forbids it from runtime output, logs, exports, reports,
+and audit. The production HTTP boundary also suppresses dependency transport
+records, so selected addresses, URLs, headers, bodies, and failures cannot
+escape through `httpx` or `httpcore` logging.
+
+Activated F09f additionally permits two narrowly closed private schema-11
+records. The matched observation has a content-integrity SHA-256 derived only
+from its fixed domain, opaque work key, generation, and canonical validated
+observation; local title, raw ISBN, and serialized query are excluded. A
+crash-recovery record temporarily retains only database device, inode, binding
+marker, and original SQLite application ID. It is removed after normal binding
+or completed recovery. Neither record permits a path, credential, user value,
+or provider data outside the closed matched observation, and neither may enter
+runtime output, logs, audit, traces, metrics, exports, reports, or review
+evidence. The logical persistence scanner validates the exact table, column,
+canonical shape, observation content binding, and current-pointer relationship
+before exempting these cells; every other persistence cell remains forbidden.
+
 F09f/F09g provider observations and report results use documented provider-data
 retention and deletion classes and are included in project-owned export and
 deletion behavior without implying deletion at Hardcover, Audiobookshelf, or
 the filesystem. Private live qualification uses disposable state and may
-retain only a redacted aggregate result; it retains no library field values,
+retain only public schema/outcome, exact head/tree, wheel digest, and attempted
+egress facts. It validates and deletes the private report without retaining a
+digest derived from provider identifiers, and retains no library field values,
 ISBN, provider identity, raw traffic, secret, path, or private report.
 
 A planned post-foundation capability may derive evidence from bounded audiobook

@@ -278,10 +278,10 @@ retains no decoded or diagnostic markup artifact.
 
 ### Providers
 
-The installed F09f preactivation boundary adds only the exact optional
+The installed F09f activation uses only the exact optional
 `hardcover_provider` block documented above. The legacy aggregate `providers`
-impact path remains inert. Later activation may add separately versioned
-provider operation fields such as:
+impact path remains inert. Future providers may add separately versioned
+operation fields such as:
 
 - enabled providers and order;
 - credentials by secret reference;
@@ -303,29 +303,31 @@ operation, headers, transport bounds, and generated title are not configurable.
 Omitting the reference records `provider_disabled` without secret access, DNS,
 or egress. There is no hidden environment-variable, encrypted-store, provider
 registry, or generic egress configuration. Current `config-v1` accepts only the
-exact installed preactivation `hardcover_provider` block and rejects every
+exact installed `hardcover_provider` block and rejects every
 other detailed Hardcover or provider-secret field as unknown.
 
 The live-compatible command and transport/parser contract is
-[documented separately](hardcover-f09b-contract.md). F09f activation must add
-its own versioned operation, persisted-work, freshness/reuse, and restart
-contracts rather than turning this proof-of-concept CLI into an implicit schema
-extension.
+[documented separately](hardcover-f09b-contract.md). Its credentialed path is
+retired; configured F09f owns the versioned operation, persisted-work,
+freshness/reuse, and restart contracts without turning the proof of concept
+into an implicit schema extension.
 
-### Installed F09f preactivation boundary
+### Installed F09f activation boundary
 
 F09f increment 1 extends the documented `config-v1` contract with the exact
-optional `hardcover_provider` preactivation block. It does not reuse F09b's
+optional `hardcover_provider` block. It does not reuse F09b's
 command-only secret reference and adds no hidden environment behavior. Its
 defaults, strict validation, redacted export, and restart/candidate/review
-impacts are installed now; provider authentication, external response handling,
-and durable identity work remain future activation behavior.
+impacts are installed. Enabled operation composes the fixed authenticated
+external response boundary and durable identity lifecycle only at the command
+boundary.
 
 The installed configuration is disabled by default and identifies credentials
 only by a validated secret reference. Configuration loading validates only the
-reference shape. Increment 1 never resolves it: both disabled and enabled
-configuration return before private query, persistence, credential, provider,
-DNS, client, proxy, transport, or network authority. Tokens, secret values, and
+reference shape. Disabled operation never resolves it and returns before
+private query, persistence, credential, provider, DNS, client, proxy,
+transport, or network authority. Enabled operation persists work before
+resolving it. Tokens, secret values, and
 secret paths are never configuration exports, persisted provider observations,
 logs, diagnostics, audit fields, or report values.
 

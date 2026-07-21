@@ -1,8 +1,13 @@
 # F09b Hardcover proof-of-concept contract
 
-This is the frozen external and application contract for the live-compatible
-F09b title proof of concept. It remains intentionally narrower than the
-configured production provider planned for F09f.
+This is the frozen historical external and application contract for the
+live-compatible F09b title proof of concept. Its credentialed command and
+qualification route are retired. Activated F09f now owns configured production
+operation; use its current
+[authorized one-shot procedure](../operations/hardcover-identity-report.md#authorized-production-one-shot-procedure).
+The present tense below records the frozen historical F09b contract; it does
+not authorize the retired command, credential, endpoint request, or
+qualification.
 
 ## Upstream baseline
 
@@ -30,11 +35,11 @@ At that revision and observation:
 
 The authentication discrepancy and undocumented `jsonb` shape are recorded
 explicitly rather than allowing a fake fixture to define the contract. The API
-is beta and described as subject to change, so this narrow compatibility claim
-is versioned and must be requalified against the exact installed artifact when
-the contract changes.
+was beta and described as subject to change, so this narrow compatibility claim
+was versioned. A contract change would have required exact installed-artifact
+requalification while F09b was active; that route is now retired.
 
-## Fixed request
+## Historical fixed request
 
 The adapter owns HTTPS `POST`, the endpoint, and this exact query:
 
@@ -131,7 +136,7 @@ error, GraphQL `errors`, timeout, TLS/DNS/peer failure, oversize, malformed JSON
 shape drift, or an invalid title maps to `provider_failed`. Provider failure
 never erases local F06 evidence or becomes negative bibliographic evidence.
 
-## Secret and persistence boundary
+## Historical secret and persistence boundary
 
 Omitting `--secret-reference` constructs no adapter or client, resolves no
 secret or DNS, performs no egress, exits `0`, and persists
@@ -159,13 +164,15 @@ migration, but cannot replay as a v2 observation because the version changes
 its canonical lineage and identity. All state remains `synthetic_preview` and
 structurally derives `production_applicable=false`.
 
-F09b changes no `config-v1` field and introduces no environment secret,
+F09b changed no `config-v1` field and introduced no environment secret,
 encrypted store, provider registry, general egress broker, cache, ranking,
 live-target binding, multi-provider framework, AI, decision, or write surface.
-Credential-free fake qualification and an exact installed-wheel real-endpoint
-qualification are required. The live run uses the fixed generated query, a
-dedicated non-production token, and disposable state, and retains only a
-redacted aggregate result. F09f retains production configuration, persisted
-target-independent provider work, retry/restart, freshness,
-reusable-observation, and strict ISBN-backed book/edition identity. F09g owns
+Credential-free fake qualification and one exact installed-wheel real-endpoint
+qualification were completed for F09b. That credentialed route is retired and
+must not be rerun; the historical live run used the fixed generated query, a
+dedicated non-production token, and disposable state, and retained only a
+redacted aggregate result. Activated F09f owns current production
+configuration, persisted target-independent provider work, retry/restart,
+freshness, reusable observation, and strict ISBN-backed book/edition identity.
+F09g owns
 the later live target/source join and proposal-applicability decision.

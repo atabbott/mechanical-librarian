@@ -138,7 +138,7 @@ def c6_forbidden_corpus(
             _blob_projections(value.encode("ascii"), persistence_safe)
         )
     provider_identity = set()
-    for value in (b"Synthetic Ebook Alpha", b'"id":1001', b'"book_id":2001'):
+    for value in (b"Remote Volume Zeta", b'"id":1001', b'"book_id":2001'):
         provider_identity.update(_blob_projections(value, persistence_safe))
     database_identity = set(
         _text_projections("private-c6-sentinel.sqlite", persistence_safe)

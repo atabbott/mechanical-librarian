@@ -6,7 +6,7 @@ import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from enum import StrEnum
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -43,8 +43,8 @@ MAX_IDENTITY_OBSERVATIONS = 4
 
 class HardcoverIdentityOutcome(StrEnum):
     DISABLED = "disabled"
-    PROVIDER_NOT_ACTIVATED = "provider_not_activated"
     INVALID_INPUT = "invalid_input"
+    CREDENTIAL_UNAVAILABLE = "credential_unavailable"
     MATCHED = "matched"
     AUTHENTICATION = "authentication"
     AUTHORIZATION = "authorization"
@@ -54,13 +54,65 @@ class HardcoverIdentityOutcome(StrEnum):
     NO_MATCH = "no_match"
     AMBIGUOUS = "ambiguous"
     INCOMPATIBLE = "incompatible"
+    STALE = "stale"
     CANCELLED = "cancelled"
     IN_PROGRESS = "in_progress"
     PERSISTENCE_FAILURE = "persistence_failure"
     RETRY_EXHAUSTED = "retry_exhausted"
 
 
+@dataclass(frozen=True, slots=True)
+class _ExecutionPolicySpec:
+    name: str
+    max_starts: int
+    requires_disposable_state: bool
+    requires_json_output: bool
+    successful_exit_outcomes: frozenset[HardcoverIdentityOutcome]
+
+
+class HardcoverExecutionPolicy(Enum):
+    """Named installed-execution authority selected once by the interface."""
+
+    NORMAL = _ExecutionPolicySpec(
+        "normal",
+        3,
+        False,
+        False,
+        frozenset(HardcoverIdentityOutcome) - {HardcoverIdentityOutcome.INVALID_INPUT},
+    )
+    QUALIFICATION_ONE_SHOT = _ExecutionPolicySpec(
+        "qualification_one_shot",
+        1,
+        True,
+        True,
+        frozenset({HardcoverIdentityOutcome.MATCHED}),
+    )
+
+    @property
+    def policy_name(self) -> str:
+        return self.value.name
+
+    @property
+    def max_starts(self) -> int:
+        return self.value.max_starts
+
+    @property
+    def requires_disposable_state(self) -> bool:
+        return self.value.requires_disposable_state
+
+    def accepts_output_format(self, output_format: object) -> bool:
+        return type(output_format) is str and (
+            output_format == "json" or not self.value.requires_json_output
+        )
+
+    def exit_code(self, outcome: object) -> int:
+        if type(outcome) is not HardcoverIdentityOutcome:
+            raise TypeError("Hardcover identity outcome is malformed")
+        return 0 if outcome in self.value.successful_exit_outcomes else 2
+
+
 class IdentityAttemptFailureKind(StrEnum):
+    CREDENTIAL_UNAVAILABLE = "credential_unavailable"
     AUTHENTICATION = "authentication"
     AUTHORIZATION = "authorization"
     UNAVAILABLE = "unavailable"
@@ -84,6 +136,10 @@ class IdentityReportError(RuntimeError):
     ) -> None:
         super().__init__(message)
         self.kind = kind
+
+
+class IdentityExchangeGuardError(RuntimeError):
+    """Value-free application signal that final send authority was lost."""
 
 
 @dataclass(frozen=True, repr=False, slots=True)
@@ -193,10 +249,21 @@ class IdentityAttemptResult:
         return "IdentityAttemptResult(<redacted>)"
 
 
-class BookIdentityProvider(Protocol):
-    def lookup(
-        self, query: IsbnIdentityQuery, context: OperationContext
+class PreparedIdentityExchange(Protocol):
+    def exchange(
+        self,
+        context: OperationContext,
+        *,
+        begin_transport: Callable[[], OperationContext],
     ) -> IdentityAttemptResult: ...
+
+
+class BookIdentityProvider(Protocol):
+    def prepare(
+        self,
+        query: IsbnIdentityQuery,
+        context: OperationContext,
+    ) -> PreparedIdentityExchange | IdentityAttemptResult: ...
 
 
 class FixedAdapterOutcome(StrEnum):
@@ -297,7 +364,7 @@ class DurableWorkPreviewReport:
             or type(self.schema_from) is not int
             or self.schema_from != 8
             or type(self.schema_to) is not int
-            or self.schema_to != 10
+            or self.schema_to != 11
             or self.migration_rollback_verified is not True
             or self.migration_idempotence_verified is not True
             or self.publication_rollback_verified is not True
@@ -556,13 +623,44 @@ class RunHardcoverFixedAdapterPreview:
         return report
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HardcoverIdentityReport:
     outcome: HardcoverIdentityOutcome
+    edition_id: int | None = None
+    book_id: int | None = None
+    comparison: TitleComparison | None = None
+
+    def __post_init__(self) -> None:
+        matched = (
+            type(self.edition_id) is int
+            and 1 <= self.edition_id <= 2_147_483_647
+            and type(self.book_id) is int
+            and 1 <= self.book_id <= 2_147_483_647
+            and self.comparison in {TitleComparison.EQUAL, TitleComparison.DIFFERENT}
+        )
+        empty = (
+            self.edition_id is None
+            and self.book_id is None
+            and self.comparison is None
+        )
+        if type(self.outcome) is not HardcoverIdentityOutcome or not (
+            matched if self.outcome is HardcoverIdentityOutcome.MATCHED else empty
+        ):
+            raise ValueError("Hardcover identity report is malformed")
 
     def to_json(self) -> str:
+        source: dict[str, object] = {
+            "schema": "hardcover-identity-report-v6",
+            "outcome": self.outcome.value,
+        }
+        if self.outcome is HardcoverIdentityOutcome.MATCHED:
+            source.update(
+                edition_id=self.edition_id,
+                book_id=self.book_id,
+                comparison=self.comparison.value if self.comparison else None,
+            )
         return json.dumps(
-            {"schema": "hardcover-identity-report-v1", "outcome": self.outcome.value},
+            source,
             ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
@@ -741,13 +839,13 @@ class RunHardcoverIdentityReport:
             privacy_observer = None
             raise TypeError("Hardcover privacy observer is malformed")
 
-        lookup = getattr(provider, "lookup", None)
-        if not callable(lookup):
+        prepare = getattr(provider, "prepare", None)
+        if not callable(prepare):
             provider = None
             query = None
             context = None
             privacy_observer = None
-            lookup = None
+            prepare = None
             raise TypeError("book identity provider is malformed")
         typed_query, failure = _attempt_call(IsbnIdentityQuery.from_private, query)
         if failure is not None or type(typed_query) is not IsbnIdentityQuery:
@@ -755,28 +853,41 @@ class RunHardcoverIdentityReport:
             query = None
             context = None
             privacy_observer = None
-            lookup = None
+            prepare = None
             typed_query = None
             _raise_attempt_boundary(
                 "identity query",
                 failure or IdentityAttemptFailureKind.MALFORMED,
             )
-        result, failure = _attempt_call(lookup, typed_query, context)
+        prepared, failure = _attempt_call(prepare, typed_query, context)
         typed_query = None
         if failure is not None:
             provider = None
             query = None
             context = None
             privacy_observer = None
-            lookup = None
-            result = None
+            prepare = None
+            prepared = None
             _raise_attempt_boundary("identity provider attempt", failure)
+        if type(prepared) is IdentityAttemptResult:
+            result = prepared
+        else:
+            exchange = getattr(prepared, "exchange", None)
+            if not callable(exchange):
+                raise IdentityReportError("identity provider returned a malformed preparation")
+            result, failure = _attempt_call(
+                exchange,
+                context,
+                begin_transport=lambda: context,
+            )
+            if failure is not None:
+                raise _attempt_error("identity provider attempt", failure)
         if type(result) is not IdentityAttemptResult:
             provider = None
             query = None
             context = None
             privacy_observer = None
-            lookup = None
+            prepare = None
             result = None
             raise IdentityReportError("identity provider returned a malformed result")
         if result.failure is not None:
@@ -787,7 +898,7 @@ class RunHardcoverIdentityReport:
                 query = None
                 context = None
                 privacy_observer = None
-                lookup = None
+                prepare = None
                 result = None
                 _raise_no_decision(failure_kind)
             decision_report = IdentityDecisionPreviewReport(
@@ -828,7 +939,7 @@ class RunHardcoverIdentityReport:
                     query = None
                     context = None
                     privacy_observer = None
-                    lookup = None
+                    prepare = None
                     result = None
                     observations = ()
                     observer_values = ()
@@ -899,20 +1010,6 @@ def _notify_observer(
     return None
 
 
-def preactivation_report(
-    configuration: HardcoverProviderConfiguration,
-) -> HardcoverIdentityReport:
-    """Return before private query, database, credential, or network authority."""
-
-    if type(configuration) is not HardcoverProviderConfiguration:
-        raise TypeError("Hardcover provider configuration is malformed")
-    return HardcoverIdentityReport(
-        HardcoverIdentityOutcome.PROVIDER_NOT_ACTIVATED
-        if configuration.enabled
-        else HardcoverIdentityOutcome.DISABLED
-    )
-
-
 def inert_preview(
     configuration: HardcoverProviderConfiguration,
     query: PrivateIdentityQuery,
@@ -971,10 +1068,18 @@ def render_report_text(report: HardcoverIdentityReport) -> str:
         or type(report.outcome) is not HardcoverIdentityOutcome
     ):
         raise TypeError("Hardcover identity report is malformed")
+    identity = ""
+    if report.outcome is HardcoverIdentityOutcome.MATCHED:
+        identity = (
+            f"edition_id={report.edition_id}\n"
+            f"book_id={report.book_id}\n"
+            f"comparison={report.comparison.value}\n"
+        )
     return (
         "Hardcover identity report\n"
-        "schema=hardcover-identity-report-v1\n"
+        "schema=hardcover-identity-report-v6\n"
         f"outcome={report.outcome.value}\n"
+        f"{identity}"
         "proposal=false write=false\n"
     )
 
@@ -1288,7 +1393,13 @@ class ManageHardcoverIdentityWork:
                 claim,
                 "worker-a",
                 at(2_800_000),
-                IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 2),
+                IdentityWorkObservation(
+                    IdentityMatchOutcome.MATCHED,
+                    2,
+                    1001,
+                    2001,
+                    "Synthetic Ebook Alpha",
+                ),
                 gate_owned=True,
                 fail_before_commit=True,
             )
@@ -1319,7 +1430,13 @@ class ManageHardcoverIdentityWork:
                 checkpoint.interrupted,
                 "worker-a",
                 at(17_000_000),
-                IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 1),
+                IdentityWorkObservation(
+                    IdentityMatchOutcome.MATCHED,
+                    1,
+                    1001,
+                    2001,
+                    "Synthetic Ebook Alpha",
+                ),
                 gate_owned=True,
             )
         except StaleIdentityWorkFence:
@@ -1340,7 +1457,13 @@ class ManageHardcoverIdentityWork:
             retry,
             "worker-b",
             at(18_200_000),
-            IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 2),
+            IdentityWorkObservation(
+                IdentityMatchOutcome.MATCHED,
+                2,
+                1001,
+                2001,
+                "Synthetic Ebook Alpha",
+            ),
             gate_owned=True,
         )
         exact = self.accept(checkpoint.accepted.reference.work_key, at(86_418_200_000))
@@ -1364,6 +1487,7 @@ __all__ = [
     "IdentityAttemptFailureKind",
     "IdentityAttemptResult",
     "IdentityDecisionPreviewReport",
+    "IdentityExchangeGuardError",
     "IdentityLifecyclePreviewReport",
     "IdentityReportError",
     "IdentityWorkPersistenceError",
@@ -1371,12 +1495,12 @@ __all__ = [
     "IsbnIdentityQuery",
     "HardcoverIdentityWorkPersistence",
     "ManageHardcoverIdentityWork",
+    "PreparedIdentityExchange",
     "RunHardcoverIdentityReport",
     "RunHardcoverFixedAdapterPreview",
     "SafeExecutorPreviewReport",
     "StaleIdentityWorkFence",
     "fixed_adapter_preview_report",
     "inert_preview",
-    "preactivation_report",
     "render_report_text",
 ]

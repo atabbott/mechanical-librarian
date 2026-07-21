@@ -150,7 +150,7 @@ def c5_forbidden_corpus(
             _blob_projections(value.encode("ascii"), persistence_safe)
         )
     provider_identity = set(
-        _blob_projections(b"Synthetic Ebook Alpha", persistence_safe)
+        _blob_projections(b"Remote Volume Zeta", persistence_safe)
         | _blob_projections(b'"id":1001', persistence_safe)
         | _blob_projections(b'"book_id":2001', persistence_safe)
     )

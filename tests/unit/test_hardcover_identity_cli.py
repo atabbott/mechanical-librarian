@@ -669,7 +669,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         with self.assertRaises(PrivacyEvidenceError):
             assert_c2_channels_private(poisoned, corpus)
 
-    def test_production_disabled_and_enabled_short_circuit_before_private_authority(
+    def test_production_disabled_short_circuits_before_private_authority(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -677,32 +677,20 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             disabled = root / "disabled.json"
             source = json.loads(EXAMPLE_CONFIG.read_text(encoding="utf-8"))
             disabled.write_text(json.dumps(source), encoding="utf-8")
-            enabled = root / "enabled.json"
-            source["hardcover_provider"] = {
-                "enabled": True,
-                "secret_reference": "/must-not-open/hardcover-token",
-                "authority_revision": 1,
-            }
-            enabled.write_text(json.dumps(source), encoding="utf-8")
-
-            for config, outcome in (
-                (disabled, "disabled"),
-                (enabled, "provider_not_activated"),
-            ):
-                with self.subTest(outcome=outcome), _zero_authority():
-                    output = io.StringIO()
-                    errors = io.StringIO()
-                    exit_code = main(
-                        self.production_argv(config),
-                        state_check_runner=Mock(),
-                        hardcover_identity_runner=_run_hardcover_identity_report,
-                        stdout=output,
-                        stderr=errors,
-                    )
-                    self.assertEqual(exit_code, 0)
-                    self.assertEqual(errors.getvalue(), "")
-                    self.assertEqual(json.loads(output.getvalue())["outcome"], outcome)
-                    self.assertNotIn("must-not-open", output.getvalue())
+            with _zero_authority():
+                output = io.StringIO()
+                errors = io.StringIO()
+                exit_code = main(
+                    self.production_argv(disabled),
+                    state_check_runner=Mock(),
+                    hardcover_identity_runner=_run_hardcover_identity_report,
+                    stdout=output,
+                    stderr=errors,
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(errors.getvalue(), "")
+            self.assertEqual(json.loads(output.getvalue())["outcome"], "disabled")
+            self.assertNotIn("must-not-open", output.getvalue())
 
     def test_real_sigint_while_production_config_read_blocks_propagates(self) -> None:
         script = textwrap.dedent(
@@ -715,7 +703,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
 
             from mechanical_librarian.interfaces.cli import main
 
-            def blocking_config_runner(config):
+            def blocking_config_runner(config, database, query_file, one_shot):
                 descriptor = os.open(config, os.O_RDONLY | os.O_NONBLOCK)
                 try:
                     while True:
@@ -888,30 +876,30 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "c3-preview-output-privacy-scan-v1.json": "bedc4f12909da3b255a81e83537bf0019859f393fb9c460085411f9e30df021b",
             "preview-registry-c3-v6.json": "394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02",
             "c4-durable-work-input.json": "983ae3fbd9cb394772389e99dc722c81066e0d1ed268be7adc9623fdaf6c991e",
-            "c4-durable-work-example-output.json": "9c9b7370081a4833f26851de78cced52faace737faa953bd1acf19ca6cb99388",
+            "c4-durable-work-example-output.json": "476bbbde0a44f863260e6ab9eac95a02c255098dc587df1859a08b0096448b32",
             "c4-durable-work-input-schema.json": "f1d5c475af492c36469bb222b622afe232aebd5d0956d3b2afcd2f54b64c50a2",
             "c4-durable-work-variant-matrix.json": "5e1c6aedc4f322b7d6d979853a50913e5373cd97e695f4c1dc8a832eaba5a002",
-            "preview-output-schema-v5.json": "db6b3dd4b7dbd96e27dc9433b75f4b86ef2af482f92aef20b680c05a800c47a5",
+            "preview-output-schema-v5.json": "fbdbaf1913e57b5effbea024f8d57ece60aca7d06f1521ac2734209cf75efdbb",
             "preview-output-privacy-contract-v2.json": "02a897d7f3c997cc1c99b5f3ad808f3e636f704305cefa13ea44c8c5fb0c18e3",
             "preview-output-privacy-scan-v2.json": "81aa8c3db583bdd326ccda572dcb510060bb1868e93b449737d71adef7bee7bc",
-            "preview-registry-c4-v6.json": "9f49679ac4dad1f2a4e1755d08cf5844ba66f42abdde08437633ca863a483823",
+            "preview-registry-c4-v6.json": "94380cffa51cd0bb843eafa5aa8edb39e14bc7c254c90b9feb8d08b497ac2d22",
             "schema8-logical-snapshot-ledger.json": "140d3d17ad743f8860ff216052976344ff2f7258096f45765d286b9b4887508c",
             "c5-safe-executor-input.json": "6cbc58460ab2f1fdd9540b87ed91ae8ba858442e2f995bac248e03e4750ece4b",
             "c5-safe-executor-input-schema.json": "7b0c0a34f9994364b32a32f3b23ba0b4242c6944cd73c47abdc65385e4be9846",
             "c5-safe-executor-example-output.json": "9686ac45ad83d43861fa869ef81dea2cf175de36b7076baa52d2f84a2f5f27c6",
             "c5-safe-executor-variant-matrix.json": "4e5d5515ddd8ae9a6eda77917a591447d88eed3167b6bf53e779a81e48c04ada",
-            "preview-output-schema-c5-v6.json": "930f62a1218e37ef5de91bdc1b543176e84c6a65f1202d44998e25aa73edacc2",
-            "preview-output-privacy-contract-c5-v3.json": "b7b6fb5e8f7cf33a3b4df5747aa937fd2861b4af1e25a89d97c55ae4b21870b3",
-            "preview-output-privacy-scan-c5-v3.json": "f9fa12bd11c5d270aa26a6adaec1162e21818323ddc12bc52a44c1fa266ba713",
-            "preview-registry-c5-v6.json": "9699e563a3212885167f6a407867057e99958d2309b9bf1cf7adbc2de7cde777",
+            "preview-output-schema-c5-v6.json": "0d5f470fc530a62a8931d0b625ebe008a259044699cdde2e4625ebabebdaaa51",
+            "preview-output-privacy-contract-c5-v3.json": "4f849d54f9dd33a89b209198d0563e38fb5a584e2896e3d434994388ddf2b90a",
+            "preview-output-privacy-scan-c5-v3.json": "30ac9ea4f2ccec1054b619c047344005ed2e0fe40ef252f6b8101950bae74742",
+            "preview-registry-c5-v6.json": "bbaa89174d682be79e4e0b42f1fe0fc8a1643201bbc7b090bf926cba421e5c39",
             "c6-lifecycle-orchestration-input.json": "e764e534ac31f0212beddce8237ece3ce8a80599b58192dad4cc854a51ed3c2d",
             "c6-lifecycle-orchestration-input-schema.json": "22ef83f88625c9525bd81751c75b30f8455135414450897cf280abfb15af0e4a",
             "c6-lifecycle-orchestration-variant-matrix.json": "b81a8239e67049b15e2ee66f4c20b49426c545731b281f2e1f0bbcc0d8e8ca6b",
             "c6-lifecycle-orchestration-example-output.json": "ff02d438b04e6b57fad997dc977d641e1769c70d5a00995ebd4959fb99cfcb0a",
-            "preview-output-schema-c6-v1.json": "4812ffa3e665775c490a4b4ddc134780542c607de412443b878dd56fe1dc5e9c",
-            "preview-output-privacy-contract-c6-v1.json": "4fabd7a36607cce882a2598953e06a2d719cb3f193e369c2581994a7a3a19c25",
-            "preview-output-privacy-scan-c6-v1.json": "8324cdd858765bf134788a5aed3b2786b3ffe5500db1826772afbd14765b5000",
-            "preview-registry-c6-v1.json": "eea646f35a20280a38149b1a437bb9833bee23d4b5b9e79b1a36a2c0e49ae1d8",
+            "preview-output-schema-c6-v1.json": "33ca530b75336de072946ad57ccc79840b725ff8eca988b13cb9fc66b5a9dd18",
+            "preview-output-privacy-contract-c6-v1.json": "efd63809123e6164a486168063b31a8662ce2afb156752ae4debe6546e976941",
+            "preview-output-privacy-scan-c6-v1.json": "626c06b5ee9ff1139a0b4b0cfc6aa0f9929cf04cc7bd95f32c2461e1f577cf1d",
+            "preview-registry-c6-v1.json": "2f2076dab597501583607b0022add479c236568aa7961a27214a906c95c0d060",
         }
         self.assertEqual(
             {path.name for path in fixture_root.glob("*.json")}, set(expected)
@@ -1599,9 +1587,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
     def test_unknown_production_result_fails_closed(self) -> None:
         output = io.StringIO()
         errors = io.StringIO()
-        runner = Mock(
-            return_value=HardcoverIdentityReport(HardcoverIdentityOutcome.INVALID_INPUT)
-        )
+        runner = Mock(return_value=object())
         exit_code = main(
             self.production_argv(EXAMPLE_CONFIG),
             state_check_runner=Mock(),
@@ -1629,7 +1615,7 @@ class HardcoverIdentityCliTests(unittest.TestCase):
         ]
         malformed = [
             InertPreviewReport("disabled"),  # type: ignore[arg-type]
-            InertPreviewReport(HardcoverIdentityOutcome.PROVIDER_NOT_ACTIVATED),
+            InertPreviewReport("provider_not_activated"),  # type: ignore[arg-type]
         ]
         for counter in (
             "private_file_opened",

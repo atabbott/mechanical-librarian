@@ -20,10 +20,15 @@ from mechanical_librarian.application.hardcover_safe_executor import (
 )
 from mechanical_librarian.application.ports import OperationContext
 from mechanical_librarian.domain.hardcover_identity_work import (
+    IdentityWorkObservation,
     IdentityWorkOutcome,
     IdentityWorkReadiness,
     IdentityWorkRetryToken,
     IdentityWorkState,
+)
+from mechanical_librarian.domain.hardcover_identity import (
+    PrivateIdentityQuery,
+    compare_identity_titles,
 )
 
 
@@ -77,7 +82,7 @@ class RunHardcoverIdentityLifecycle:
                     egress_limit=request.egress_limit,
                 )
                 if accepted.outcome is IdentityWorkOutcome.MATCHED:
-                    return _report(HardcoverIdentityOutcome.MATCHED)
+                    return _matched_report(request.query, accepted.observation)
                 if accepted.outcome is IdentityWorkOutcome.PERSISTENCE_FAILURE:
                     return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
                 if accepted.outcome is IdentityWorkOutcome.RETRY_EXHAUSTED:
@@ -86,18 +91,14 @@ class RunHardcoverIdentityLifecycle:
                     accepted.outcome is IdentityWorkOutcome.STALE
                     and accepted.candidate is None
                 ):
-                    accepted = self._work.accept(
-                        request.work_key,
-                        now,
-                        egress_limit=request.egress_limit,
-                    )
+                    return _report(HardcoverIdentityOutcome.STALE)
                 active = self._work.inspect(accepted.reference, now)
             except (IdentityWorkPersistenceError, TypeError, ValueError):
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
             except Exception:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
 
-            terminal = _terminal_report(active)
+            terminal = _terminal_report(active, request.query)
             if terminal is not None:
                 return terminal
             if now >= active.aggregate_deadline or context.deadline.expired_at(now):
@@ -142,7 +143,11 @@ class RunHardcoverIdentityLifecycle:
                 owned_retry = None
                 return _report(HardcoverIdentityOutcome.IN_PROGRESS)
 
-            invocation = self._attempt.run_invocation(request, context)
+            invocation = self._attempt.run_invocation(
+                request,
+                context,
+                accepted=accepted,
+            )
             if type(invocation) is not HardcoverIdentityInvocationResult:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
             report = invocation.report
@@ -159,7 +164,7 @@ class RunHardcoverIdentityLifecycle:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
             except Exception:
                 return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
-            terminal = _terminal_report(refreshed)
+            terminal = _terminal_report(refreshed, request.query)
             if terminal is not None:
                 owned_retry = None
                 return terminal
@@ -268,9 +273,12 @@ class RunHardcoverIdentityLifecycle:
         return result
 
 
-def _terminal_report(active: IdentityWorkReadiness) -> HardcoverIdentityReport | None:
+def _terminal_report(
+    active: IdentityWorkReadiness,
+    query: PrivateIdentityQuery,
+) -> HardcoverIdentityReport | None:
     if active.state is IdentityWorkState.SUCCEEDED:
-        return _report(HardcoverIdentityOutcome.MATCHED)
+        return _matched_report(query, active.observation)
     if active.state is IdentityWorkState.CANCELLED:
         return _report(HardcoverIdentityOutcome.CANCELLED)
     if active.state is IdentityWorkState.FAILED:
@@ -280,6 +288,27 @@ def _terminal_report(active: IdentityWorkReadiness) -> HardcoverIdentityReport |
 
 def _report(outcome: HardcoverIdentityOutcome) -> HardcoverIdentityReport:
     return HardcoverIdentityReport(outcome)
+
+
+def _matched_report(
+    query: PrivateIdentityQuery,
+    observation: IdentityWorkObservation | None,
+) -> HardcoverIdentityReport:
+    if (
+        type(query) is not PrivateIdentityQuery
+        or type(observation) is not IdentityWorkObservation
+        or not observation.reusable
+        or observation.edition_id is None
+        or observation.book_id is None
+        or observation.provider_title is None
+    ):
+        return _report(HardcoverIdentityOutcome.PERSISTENCE_FAILURE)
+    return HardcoverIdentityReport(
+        HardcoverIdentityOutcome.MATCHED,
+        observation.edition_id,
+        observation.book_id,
+        compare_identity_titles(query.title, observation.provider_title),
+    )
 
 
 __all__ = ["RetryWait", "RunHardcoverIdentityLifecycle"]

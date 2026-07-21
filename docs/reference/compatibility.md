@@ -183,27 +183,33 @@ F09a supplies a deterministic fake candidate through the application-owned
 provider port. The closed `synthetic_preview` mode and derived false production
 applicability are part of compatibility identity. No live snapshot/media join,
 configuration, production review, or apply compatibility is claimed; that
-binding is deferred. F09b implements the same port for one generated
-`agree-empty` case through `hardcover-title-proposal-report`. It is disabled by
-omitting `--secret-reference`, adds no `config-v1` field, and fixes the HTTPS
-endpoint and read-only query. Only bounded canonical title evidence and minimal
-provenance are compatibility data. Raw provider traffic, credentials, secret
-paths, upstream identifiers, and caches are not retained artifacts.
+binding is deferred. F09b historically implemented the same port for one
+generated `agree-empty` case through `hardcover-title-proposal-report`. It was
+disabled by omitting `--secret-reference`, added no `config-v1` field, and
+fixed the HTTPS endpoint and read-only query. Its credentialed command is now
+retired; the activated F09f `hardcover-identity-report` surface owns current
+Hardcover operation and its
+[one-shot guidance](../operations/hardcover-identity-report.md#authorized-production-one-shot-procedure).
+Only bounded canonical title evidence and minimal provenance were compatibility
+data. Raw provider traffic, credentials, secret paths, upstream identifiers,
+and caches were not retained artifacts.
 
-Ordinary CI is fake-based and credential-free against the sanitized live key,
-type, count, and resource shape. F09b completion additionally requires the
-exact installed artifact to pass a bounded read-only run against the fixed
-endpoint with a dedicated non-production account and disposable state. Only a
-redacted aggregate result is retained. This proves the narrow F09b request,
-authentication, parser, and canonical title seam described by the
-[F09b Hardcover proof-of-concept contract](hardcover-f09b-contract.md). It does
+Ordinary F09b CI was fake-based and credential-free against the sanitized live
+key, type, count, and resource shape. Its exact installed artifact completed one
+bounded read-only qualification against the fixed endpoint with a dedicated
+non-production account and disposable state; that credentialed qualification
+is historical evidence and must not be repeated through the retired command.
+Only a redacted aggregate result was retained. This proved the narrow F09b
+request, authentication, parser, and canonical title seam described by the
+[F09b Hardcover proof-of-concept contract](hardcover-f09b-contract.md). It did
 not provide F09f's configured production operation, durable provider work,
 freshness/reuse, retry/restart, or ISBN-backed identity, nor F09g's live-target
 binding, and adds no AI, human decision, cover, rich-field, multi-provider, or
 apply compatibility promise.
 
-F09f increment 3 now installs `hardcover-isbn-identity-v1` as a dormant
-production-capable adapter through the application-owned ISBN identity port.
+F09f increment 3 installed `hardcover-isbn-identity-v1` through the
+application-owned ISBN identity port; activation now composes it at the
+installed command boundary.
 Its compatibility identity fixes the query and operation bytes, canonical ISBN
 array and body, HTTPS destination, public-address and Host/SNI/peer policy,
 authentication revalidation, status mapping, hostile header/body parser bounds,
@@ -211,8 +217,8 @@ complete row validation, and `hardcover-ebook-compatibility-v1` decision. The
 supported `fixed-adapter-v3` demonstration uses only the built-in post-policy
 in-memory byte channel and exports `actual_network:false`; it proves no live
 credential, egress, production configuration, target join, persistence,
-lifecycle, retry, proposal, or write compatibility. Enabled production remains
-`provider_not_activated`.
+lifecycle, retry, proposal, or write compatibility. The retained demonstration
+remains credential-free after activation.
 
 This compatibility claim treats contributor and network bytes/metadata,
 credentials, DNS/address/peer/TLS data, real external service `Exception`
@@ -222,12 +228,15 @@ structural fakes are trusted; arbitrary same-process descriptor, subclass,
 post-construction mutation, forged-exception, traceback-local, `SystemExit`, or
 `GeneratorExit` sabotage is not a supported compatibility boundary.
 
-The exact cumulative compatibility registry is
+The historical increment-3 compatibility registry is
 `preview-registry-c3-v6.json` / SHA-256
 `394ac103c85548ca3a1de44ef236ed59323fada7340a952b66aab986d0621a02`.
 It derives from installed C2 and contains exactly the inert, identity-decision,
-and fixed-adapter scenarios; future durable-work and executor definitions are
-not current compatibility data.
+and fixed-adapter scenarios. The current F09f compatibility evidence root is
+`hardcover-f09f-activation-registry-v1.json` / SHA-256
+`552fb260d15f0e81a9ac4f64e926897513d698ecfd3857d303b0328356ea88b0`.
+It binds the merged C6 registry, all six retained contributor scenarios, and
+the activated production contracts; the historical C3 scope remains unchanged.
 
 The fixed-adapter schema uses the project-owned UTF-8 byte-length meta-schema,
 digest `6e661639a611c463c65303efc2c83f97e9b522d23ee30c2e4e78f0d4c4e703b1`,
@@ -237,24 +246,27 @@ byte keyword rather than silently treating it as an annotation.
 Schema 7 adds only the F10a synthetic case, current-or-retired state, and
 append-only attributable transitions. It remains forward-only and does not
 reclassify schema-6 `synthetic_preview` history. F09f configured Hardcover
-title/identity and F09g live report-only proposals are separate planned 0.3
+title/identity and F09g live report-only proposals are separate 0.3
 compatibility boundaries and must not reclassify F09a, F09b, or F10a preview
-history. They create no tested or supported compatibility claim until their
-slices qualify and merge. F09c fallback identity and F10b production case
+history. F09f's activated boundary is tested and supported by its exact
+activation registry; F09g creates no claim until its slice qualifies and
+merges. F09c fallback identity and F10b production case
 admission remain separate planned 1.0 compatibility claims. F11 is an
 independent synthetic reviewer path; F17 is their convergence gate.
 
-## Planned 0.3 live title-report compatibility contract
+## Current 0.3 live title-report compatibility contract
 
-F07b will supply one current durable local evidence lineage. F09f will supply a
+F07b supplies one current durable local evidence lineage. F09f supplies a
 separate current configured Hardcover lineage containing a bounded title and
 strict ISBN-backed book and compatible ebook-edition identity. The provider
 query, configuration, authentication, parser, response/error shape,
 cardinality, compatibility policy, bounds, fixtures, and live-qualification
-versions are compatibility dimensions. The request, adapter, parser, and
-identity-decision dimensions are frozen and structurally supported through
-increment 3; durable work, retry/restart, production activation, and the single
-authorized live aggregate remain pending later F09f increments. F09f remains
+versions are compatibility dimensions. The request, adapter, parser,
+identity-decision, durable work, retry/restart, and production activation
+dimensions are frozen and structurally supported. The separately authorized
+one-request live aggregate is exact-head qualification evidence only. Its
+private matched report is validated and deleted without retaining an
+identifier-derived digest. F09f remains
 target-independent and claims no target join or proposal compatibility.
 
 F09g will bind the current target, snapshot, source/file identity, F07b
@@ -635,19 +647,32 @@ never authorize a write.
 
 ## Durable Hardcover identity compatibility
 
-Schema 9 adds Hardcover identity work without transforming schema-8 rows. A
+Schemas 9 and 10 add Hardcover identity work and lifecycle state without
+transforming schema-8 rows. Schema 11 adds no table column; it marks every
+legacy matched-current pointer expired so only a complete v2 private matched
+observation can be reused while preserving the old immutable observation as
+history. A
 work generation is compatible for matched-current reuse only when its opaque
 application-derived work key denotes the same validated identity inputs and
 its matched pointer is no older than exactly 24 hours. Generation number,
 candidate number, attempt number, and fence are monotonic within that work-key
 namespace and are never reset or inferred after restart.
 
+That opaque work key is the sole ISBN-derived persisted identifier permitted by
+the F09f privacy contract. Its exact derivation is a currentness compatibility
+boundary; it excludes title and raw/reversible input and is never a runtime
+output, log, export, report, or audit value. Installed production JSON conforms
+to `hardcover-identity-report-output-v6`. A matched report additionally carries
+positive edition/book IDs and `equal` or `different`; a non-matched report
+carries only the schema marker and closed outcome. Changing that shape or the
+closed outcome enum requires a new versioned output contract.
+
 The state values `pending`, `claimed`, `retry_wait`, `succeeded`, `failed`, and
 `cancelled`, the terminal result meanings, the 30-second aggregate window,
 15-second lease, six-second start threshold, three-attempt bound, and exact
 24-hour matched-currentness boundary are compatibility semantics. Changing a
 meaning or bound requires a new application contract and a documented durable
-migration; an older binary must not open schema 9. Append-only history remains
+migration; an older binary must not open schema 11. Append-only history remains
 attributable to its original contract rather than being reinterpreted.
 
 The installed `durable-work-v3` input is a closed qualification DSL, not a

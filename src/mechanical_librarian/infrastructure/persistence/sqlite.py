@@ -983,6 +983,14 @@ MIGRATIONS = (
         ),
         frozenset({"hardcover_identity_egress_policies"}),
     ),
+    Migration(
+        11,
+        (
+            "UPDATE current_hardcover_identity SET status='expired' WHERE status='matched'",
+            "CREATE INDEX hardcover_identity_observations_by_work ON hardcover_identity_observations(work_key,generation)",
+        ),
+        frozenset(),
+    ),
 )
 
 
@@ -1371,6 +1379,7 @@ class BoundStagedState:
     parent: BoundDisposableState
     name: str
     identity: tuple[int, int]
+    wal_snapshot: bool = False
 
     def _open(self, flags: int) -> int:
         self.parent._revalidate_directory()
@@ -1451,7 +1460,18 @@ class BoundStagedState:
         return _connect_serialized_state(None)
 
     def connect_existing(self) -> sqlite3.Connection:
-        return _connect_serialized_state(self.read_bytes())
+        value = self.read_bytes()
+        if self.wal_snapshot:
+            if len(value) < 100 or value[:16] != b"SQLite format 3\x00":
+                raise SchemaError("descriptor-bound database is malformed")
+            if value[18:20] != b"\x02\x02":
+                raise SchemaError(
+                    "descriptor-bound database journal mode is invalid"
+                )
+            normalized = bytearray(value)
+            normalized[18:20] = b"\x01\x01"
+            value = bytes(normalized)
+        return _connect_serialized_state(value)
 
     def persist(self, connection: sqlite3.Connection) -> None:
         if connection.in_transaction:
@@ -1585,14 +1605,12 @@ class BoundDisposableState:
             raise SchemaError("prepared state is not an exclusive regular file")
         if stat.S_IMODE(staged_status.st_mode) & 0o077:
             raise SchemaError("prepared state permissions are too broad")
-        try:
-            entries = set(os.listdir(self.directory_descriptor))
-        except OSError:
-            raise SchemaError("durable work preview directory is unavailable") from None
-        expected_entries = {staged.name}
-        if entries != expected_entries:
-            if self.target.name in entries:
-                return False
+        entries = _bounded_directory_entry_names(self.directory_descriptor, 2)
+        if self.target.name in entries:
+            return False
+        if staged.name not in entries:
+            raise SchemaError("prepared state still requires recovery sidecars")
+        if any(name not in {staged.name, self.target.name} for name in entries):
             raise SchemaError("prepared state still requires recovery sidecars")
 
         descriptor: int | None = None
@@ -1688,6 +1706,121 @@ class BoundDisposableState:
 
 
 @contextmanager
+def bound_existing_state(target: Path) -> Iterator[BoundStagedState]:
+    """Bind one existing regular database for descriptor-backed validation."""
+
+    if (
+        not target.is_absolute()
+        or target.name in {"", ".", ".."}
+        or any(part in {".", ".."} for part in target.parts)
+    ):
+        raise SchemaError("durable state path is invalid")
+    descriptor: int | None = None
+    failure: BaseException | None = None
+    try:
+        supplied_parent = target.parent
+        canonical_parent = supplied_parent.resolve(strict=True)
+        descriptor = os.open(
+            canonical_parent,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        descriptor_status = os.fstat(descriptor)
+        path_status = canonical_parent.lstat()
+        directory_identity = _directory_identity(descriptor_status)
+        target_status = os.stat(
+            target.name,
+            dir_fd=descriptor,
+            follow_symlinks=False,
+        )
+        sidecars_present = False
+        for suffix in _STATE_SUFFIXES[1:]:
+            try:
+                os.stat(
+                    f"{target.name}{suffix}",
+                    dir_fd=descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                continue
+            else:
+                sidecars_present = True
+        target_identity = (target_status.st_dev, target_status.st_ino)
+        if (
+            not stat.S_ISDIR(descriptor_status.st_mode)
+            or not stat.S_ISDIR(path_status.st_mode)
+            or directory_identity != _directory_identity(path_status)
+            or directory_identity[2] != os.geteuid()
+            or directory_identity[3] & 0o077
+            or not stat.S_ISREG(target_status.st_mode)
+            or target_status.st_nlink != 1
+            or target_status.st_uid != os.geteuid()
+            or stat.S_IMODE(target_status.st_mode) & 0o077
+            or sidecars_present
+        ):
+            raise SchemaError("durable state identity is invalid")
+        if supplied_parent.resolve(strict=True) != canonical_parent:
+            raise SchemaError("durable state identity is invalid")
+        parent = BoundDisposableState(
+            canonical_parent / target.name,
+            descriptor,
+            directory_identity,
+        )
+        bound = BoundStagedState(
+            parent,
+            target.name,
+            target_identity,
+            wal_snapshot=True,
+        )
+        yield bound
+        if supplied_parent.resolve(strict=True) != canonical_parent:
+            raise SchemaError("durable state identity changed")
+        parent._revalidate_directory()
+        final_status = os.stat(
+            target.name,
+            dir_fd=descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISREG(final_status.st_mode)
+            or final_status.st_nlink != 1
+            or final_status.st_uid != os.geteuid()
+            or (final_status.st_dev, final_status.st_ino) != target_identity
+            or stat.S_IMODE(final_status.st_mode) & 0o077
+        ):
+            raise SchemaError("durable state identity changed")
+        for suffix in _STATE_SUFFIXES[1:]:
+            try:
+                os.stat(
+                    f"{target.name}{suffix}",
+                    dir_fd=descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                continue
+            raise SchemaError("durable state identity changed")
+    except BaseException as error:
+        failure = error
+        if isinstance(error, SchemaError):
+            raise
+        if isinstance(error, OSError):
+            raise SchemaError("durable state identity is unavailable") from None
+        raise
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                if failure is not None:
+                    failure.add_note("descriptor-bound state cleanup failed")
+                else:
+                    raise SchemaError(
+                        "descriptor-bound state cleanup failed"
+                    ) from None
+
+
+@contextmanager
 def bound_disposable_state(target: Path) -> Iterator[BoundDisposableState]:
     """Bind one absent target in a new, empty, private, euid-owned parent."""
 
@@ -1711,7 +1844,7 @@ def bound_disposable_state(target: Path) -> Iterator[BoundDisposableState]:
             or identity != _directory_identity(path_status)
             or identity[2] != os.geteuid()
             or identity[3] != 0o700
-            or os.listdir(descriptor)
+            or not _directory_descriptor_is_empty(descriptor)
         ):
             raise SchemaError("durable work preview path is invalid")
         try:
@@ -1727,7 +1860,7 @@ def bound_disposable_state(target: Path) -> Iterator[BoundDisposableState]:
         failure = error
         if isinstance(error, SchemaError):
             raise
-        if isinstance(error, OSError):
+        if isinstance(error, (MemoryError, OSError)):
             raise SchemaError("durable work preview path is unavailable") from None
         raise
     finally:
@@ -1740,6 +1873,48 @@ def bound_disposable_state(target: Path) -> Iterator[BoundDisposableState]:
                 else:
                     raise SchemaError(
                         "durable work preview directory cleanup failed"
+                    ) from None
+
+
+def _directory_descriptor_is_empty(descriptor: int) -> bool:
+    """Read at most one directory entry and preserve control-flow failures."""
+
+    return not _bounded_directory_entry_names(descriptor, 1)
+
+
+def _bounded_directory_entry_names(
+    descriptor: int,
+    maximum: int,
+) -> tuple[str, ...]:
+    """Read a fixed number of descriptor-relative names and close the scan."""
+
+    entries = None
+    failure: BaseException | None = None
+    try:
+        entries = os.scandir(descriptor)
+        names: list[str] = []
+        for _ in range(maximum):
+            try:
+                entry = next(entries)
+            except StopIteration:
+                break
+            names.append(entry.name)
+        return tuple(names)
+    except BaseException as error:
+        failure = error
+        if isinstance(error, (MemoryError, OSError)):
+            raise SchemaError("durable work preview path is unavailable") from None
+        raise
+    finally:
+        if entries is not None:
+            try:
+                entries.close()
+            except OSError:
+                if failure is not None:
+                    failure.add_note("durable work preview scan cleanup failed")
+                else:
+                    raise SchemaError(
+                        "durable work preview scan cleanup failed"
                     ) from None
 
 
@@ -2081,6 +2256,16 @@ def migrate(connection: sqlite3.Connection) -> int:
     """Apply ordered migrations atomically, rejecting tampered or newer schemas."""
 
     return migrate_to_version(connection, len(MIGRATIONS))
+
+
+def validate_current_schema(connection: sqlite3.Connection) -> None:
+    """Validate one read-only snapshot against the complete current schema."""
+
+    known = _validated_migrations(connection)
+    applied = _validate_existing_schema(connection, known)
+    if set(applied) != set(known):
+        raise SchemaError("database schema requires migration")
+    _verify_integrity(connection)
 
 
 def finalize_staged_state(connection: sqlite3.Connection) -> None:

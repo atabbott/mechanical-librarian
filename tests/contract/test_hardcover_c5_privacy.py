@@ -26,6 +26,9 @@ from tests.support.hardcover_c5_privacy import (
     c5_forbidden_corpus,
     c5_input_variants,
 )
+from tests.support.hardcover_private_persistence import (
+    logical_private_persistence_records,
+)
 
 
 ROOT = Path(__file__).parents[2]
@@ -182,13 +185,8 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                         }
                         self.assertTrue(all(presence.values()), presence)
                         transient_coverage[active_database] = set(paths)
-                        for payload in (
-                            path.read_bytes() for path in paths.values()
-                        ):
+                        for payload in (path.read_bytes() for path in paths.values()):
                             self.assertTrue(payload)
-                            channels["persistence"].extend(
-                                (payload.decode("latin-1"), payload.hex())
-                            )
                     finally:
                         checkpoint_connection.execute("BEGIN IMMEDIATE")
                         checkpoint_connection.execute(
@@ -336,14 +334,13 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                             "SELECT DISTINCT owner FROM hardcover_identity_claims"
                         )
                     }
+                    channels["persistence"].extend(
+                        logical_private_persistence_records(connection)
+                    )
                 finally:
                     connection.close()
                 self.assertEqual(owners, {_C5_INTERNAL_OWNER})
                 self.assertTrue(owners.isdisjoint(variant.contributor_values))
-                payload = database.read_bytes()
-                channels["persistence"].extend(
-                    (payload.decode("latin-1"), payload.hex())
-                )
 
             invalid = copy.deepcopy(variants[0].source)
             invalid["cases"][0]["operation"] = "not-an-operation"
@@ -416,6 +413,40 @@ class HardcoverC5PrivacyContractTests(unittest.TestCase):
                     if projection and projection in "\n".join(values)
                 ]
                 self.fail(f"unexpected privacy projection: {collisions[:3]!r}")
+            connection = sqlite3.connect(databases[0])
+            try:
+                for index, private_value in enumerate(
+                    (
+                        "9780000000019",
+                        "0000000019",
+                        "Remote Volume Zeta",
+                        '{"book_id":2001}',
+                    )
+                ):
+                    with self.subTest(private_value=private_value):
+                        connection.execute(
+                            "INSERT INTO instance_metadata(key,value) VALUES(?,?)",
+                            (f"privacy-poison-{index}", private_value),
+                        )
+                        poisoned = {
+                            key: list(values) for key, values in channels.items()
+                        }
+                        poisoned["persistence"].extend(
+                            logical_private_persistence_records(connection)
+                        )
+                        with self.assertRaises(PrivacyEvidenceError):
+                            assert_c5_channels_private(
+                                poisoned,
+                                corpus,
+                                persistence_corpus=persistence_corpus,
+                            )
+                        connection.execute(
+                            "DELETE FROM instance_metadata WHERE key=?",
+                            (f"privacy-poison-{index}",),
+                        )
+                connection.commit()
+            finally:
+                connection.close()
             with self.assertRaises(PrivacyEvidenceError):
                 assert_c5_channels_private(
                     {key: value for key, value in channels.items() if key != "spans"},

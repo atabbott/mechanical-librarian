@@ -1,1 +1,1 @@
-{"result":{"interrupted_recovery_gate_owned":true,"migration_idempotence_verified":true,"migration_rollback_verified":true,"outcome":"stale","publication_rollback_verified":true,"schema_from":8,"schema_to":10},"scenario":"durable-work-v3","schema":"hardcover-synthetic-output-v5"}
+{"result":{"interrupted_recovery_gate_owned":true,"migration_idempotence_verified":true,"migration_rollback_verified":true,"outcome":"stale","publication_rollback_verified":true,"schema_from":8,"schema_to":11},"scenario":"durable-work-v3","schema":"hardcover-synthetic-output-v5"}

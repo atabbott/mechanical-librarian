@@ -66,6 +66,7 @@ from mechanical_librarian.application.title_review_cases import (
 from mechanical_librarian.application.hardcover_identity import (
     DurableWorkPreviewReport,
     FixedAdapterPreviewReport,
+    HardcoverExecutionPolicy,
     HardcoverIdentityOutcome,
     HardcoverIdentityReport,
     IdentityDecisionPreviewReport,
@@ -95,7 +96,9 @@ SyntheticTitleProposalRunner = Callable[[Path, str], SyntheticTitleProposalRepor
 HardcoverTitleProposalRunner = Callable[[Path, Path | None], SyntheticTitleProposalReport]
 SyntheticTitleReviewCaseRunner = Callable[[Path, str], SyntheticTitleReviewCaseReport]
 EpubOpeningEvidenceRunner = Callable[[Path, Path, str, str, int], EpubEvidenceResult]
-HardcoverIdentityRunner = Callable[[Path], HardcoverIdentityReport]
+HardcoverIdentityRunner = Callable[
+    [Path, Path, Path, HardcoverExecutionPolicy], HardcoverIdentityReport
+]
 HardcoverInertPreviewRunner = Callable[[Mapping[str, object]], InertPreviewReport]
 HardcoverIdentityDecisionPreviewRunner = Callable[
     [Mapping[str, object]], IdentityDecisionPreviewReport
@@ -141,6 +144,10 @@ _TITLE_PROPOSAL_FAILURE = "Synthetic title preview failed safely.\n"
 _TITLE_PROPOSAL_INVALID = "Synthetic title preview invocation is invalid.\n"
 _HARDCOVER_TITLE_PROPOSAL_FAILURE = "Hardcover title preview failed safely.\n"
 _HARDCOVER_TITLE_PROPOSAL_INVALID = "Hardcover title preview invocation is invalid.\n"
+_HARDCOVER_TITLE_RETIRED = (
+    "Credentialed Hardcover title preview is unsupported; use "
+    "hardcover-identity-report with configured provider authority.\n"
+)
 _TITLE_REVIEW_CASE_FAILURE = "Synthetic title review case failed safely.\n"
 _TITLE_REVIEW_CASE_INVALID = "Synthetic title review case invocation is invalid.\n"
 _EPUB_PACKAGE_EXIT = {
@@ -211,6 +218,7 @@ def _hardcover_identity_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--input")
+    parser.add_argument("--qualification-one-shot", action="store_true")
     parser.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
@@ -544,7 +552,7 @@ def _parser() -> argparse.ArgumentParser:
     title_review.add_argument("--format", choices=("json", "text"), default="json")
     commands.add_parser(
         "hardcover-identity-report",
-        help="report inert configured Hardcover ISBN/title identity readiness",
+        help="run one configured report-only Hardcover ISBN identity lookup",
     )
     return parser
 
@@ -600,6 +608,11 @@ def main(
         except _TitleArgumentError:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
             return 2
+        execution_policy = (
+            HardcoverExecutionPolicy.QUALIFICATION_ONE_SHOT
+            if hardcover_arguments.qualification_one_shot
+            else HardcoverExecutionPolicy.NORMAL
+        )
         synthetic = hardcover_arguments.mode == "synthetic-preview"
         if synthetic:
             durable = hardcover_arguments.scenario in {
@@ -621,6 +634,7 @@ def main(
                 and hardcover_arguments.format == "json"
                 and hardcover_arguments.config is None
                 and hardcover_arguments.query_file is None
+                and execution_policy is HardcoverExecutionPolicy.NORMAL
                 and (
                     (durable and hardcover_arguments.database is not None)
                     or (not durable and hardcover_arguments.database is None)
@@ -721,27 +735,29 @@ def main(
             and hardcover_arguments.config is not None
             and hardcover_arguments.database is not None
             and hardcover_arguments.query_file is not None
+            and execution_policy.accepts_output_format(hardcover_arguments.format)
         )
         if not exact or hardcover_identity_runner is None:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
             return 2
         try:
-            report = hardcover_identity_runner(hardcover_arguments.config)
+            report = hardcover_identity_runner(
+                hardcover_arguments.config,
+                hardcover_arguments.database,
+                hardcover_arguments.query_file,
+                execution_policy,
+            )
             if (
                 type(report) is not HardcoverIdentityReport
-                or report.outcome
-                not in {
-                    HardcoverIdentityOutcome.DISABLED,
-                    HardcoverIdentityOutcome.PROVIDER_NOT_ACTIVATED,
-                }
+                or type(report.outcome) is not HardcoverIdentityOutcome
             ):
-                raise TypeError("invalid preactivation report")
+                raise TypeError("invalid activated report")
             output.write(
                 report.to_json() + "\n"
                 if hardcover_arguments.format == "json"
                 else render_hardcover_identity_text(report)
             )
-            return 0
+            return execution_policy.exit_code(report.outcome)
         except Exception:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
             return 2
@@ -884,12 +900,23 @@ def main(
         output.write(rendered)
         return 0
     if raw_arguments[:1] == ["hardcover-title-proposal-report"]:
+        credentialed = any(
+            argument == "--secret-reference"
+            or argument.startswith("--secret-reference=")
+            for argument in raw_arguments[1:]
+        )
+        if credentialed:
+            errors.write(_HARDCOVER_TITLE_RETIRED)
+            return 2
         try:
             title_arguments = _hardcover_title_proposal_parser().parse_args(
                 raw_arguments[1:]
             )
         except _TitleArgumentError:
             errors.write(_HARDCOVER_TITLE_PROPOSAL_INVALID)
+            return 2
+        if title_arguments.secret_reference is not None:
+            errors.write(_HARDCOVER_TITLE_RETIRED)
             return 2
         if hardcover_title_proposal_runner is None:
             errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
@@ -898,7 +925,7 @@ def main(
             report = hardcover_title_proposal_runner(
                 title_arguments.database, title_arguments.secret_reference
             )
-        except (KeyboardInterrupt, Exception):
+        except Exception:
             errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
             return 1
         if type(report) is not SyntheticTitleProposalReport:

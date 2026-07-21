@@ -132,6 +132,7 @@ class HardcoverIdentityLifecycleCliTests(unittest.TestCase):
             *(case["process"].encode("ascii") for case in self.source["cases"]),
         ):
             self.assertNotIn(forbidden, persisted)
+        self.assertIn(b"Remote Volume Zeta", persisted)
 
     def test_alternate_order_labels_results_and_delay_are_semantic(self) -> None:
         alternate = copy.deepcopy(self.source)
@@ -231,12 +232,12 @@ class HardcoverIdentityLifecycleCliTests(unittest.TestCase):
         payload = registry_path.read_bytes()
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "eea646f35a20280a38149b1a437bb9833bee23d4b5b9e79b1a36a2c0e49ae1d8",
+            "2f2076dab597501583607b0022add479c236568aa7961a27214a906c95c0d060",
         )
         registry = json.loads(payload)
         self.assertEqual(
             registry["predecessor_registry_sha256"],
-            "9699e563a3212885167f6a407867057e99958d2309b9bf1cf7adbc2de7cde777",
+            "bbaa89174d682be79e4e0b42f1fe0fc8a1643201bbc7b090bf926cba421e5c39",
         )
         self.assertEqual(
             [scenario["scenario"] for scenario in registry["scenarios"]][-2:],

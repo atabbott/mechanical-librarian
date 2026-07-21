@@ -151,10 +151,11 @@ target service or a reviewer. Raw requests, responses, headers, tokens, request
 bodies, upstream identifiers, and provider caches are never persisted.
 
 Ordinary CI remains credential-free and fake-based through the same command and
-adapter seam using the sanitized live key/type/cardinality shape. F09b also
-requires the exact installed artifact to parse one bounded real-endpoint result
-with a dedicated non-production token and disposable state, retaining only a
-redacted aggregate. This narrow compatibility does not add F09f production
+adapter seam using the sanitized live key/type/cardinality shape. F09b
+historically completed one exact-installed-artifact bounded real-endpoint
+qualification with a dedicated non-production token and disposable state. Its
+credentialed command is retired, the request must not be repeated, and only the
+redacted aggregate remains. This narrow compatibility does not add F09f production
 configuration, persisted provider work, freshness/reuse, restart behavior, or
 ISBN-backed book/edition identity, nor F09g's live target/source join or
 proposal-applicability decision.
@@ -210,14 +211,16 @@ completed F09b #204/#223 -> F09f #239/#242
 F07b + F09f -> F09g #238/#243 -> 0.3.0 checkpoint exit
 ```
 
-F09f is the target-independent configured provider lane. Increment 1 installs
-its strict disabled-by-default configuration, private-query parser, and inert
-identity report; enabled configuration remains `provider_not_activated` and
-cannot construct provider authority. The slice owns the bounded
+F09f is the current target-independent configured provider lane. Its completed
+preactivation increments installed strict disabled-by-default configuration,
+private-query parsing, the fixed adapter, schema-11 work, and its durable
+lifecycle. Activation composes provider preparation before claiming and
+durably starting the attempt at the final transport boundary.
+The slice owns the bounded
 Hardcover title and strict ISBN-backed book/compatible ebook-edition
 observation, including its durable provider work, restart, reuse, freshness,
 invalidation, disabled and failure behavior, and live compatibility
-qualification. The book, edition, and title are one Hardcover provider lineage;
+qualification. Disabled mode retains zero authority. The book, edition, and title are one Hardcover provider lineage;
 they are not independent provider votes. Its exact external contracts and
 qualification are frozen in the Ready slice train. It does not inspect or join
 a live target and cannot decide proposal eligibility.

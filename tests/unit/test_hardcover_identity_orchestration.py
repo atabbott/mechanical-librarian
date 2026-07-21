@@ -86,11 +86,20 @@ class _SequenceProvider:
         self.results = list(results)
         self.starts = 0
 
-    def lookup(
+    def prepare(
         self,
         query: object,
         context: OperationContext,
+    ) -> _SequenceProvider:
+        return self
+
+    def exchange(
+        self,
+        context: OperationContext,
+        *,
+        begin_transport,
     ) -> IdentityAttemptResult:
+        begin_transport()
         self.starts += 1
         return self.results.pop(0)
 
@@ -103,7 +112,20 @@ class _DyingProvider:
     def __init__(self) -> None:
         self.starts = 0
 
-    def lookup(self, query: object, context: OperationContext) -> IdentityAttemptResult:
+    def prepare(
+        self,
+        query: object,
+        context: OperationContext,
+    ) -> _DyingProvider:
+        return self
+
+    def exchange(
+        self,
+        context: OperationContext,
+        *,
+        begin_transport,
+    ) -> IdentityAttemptResult:
+        begin_transport()
         self.starts += 1
         raise _ProcessDeath()
 
@@ -213,6 +235,69 @@ class HardcoverIdentityOrchestrationTests(unittest.TestCase):
         self.assertEqual(report.outcome, HardcoverIdentityOutcome.MATCHED)
         self.assertEqual(provider.starts, 3)
         self.assertEqual(retry_wait.timeouts, [1.0, 2.0])
+
+    def test_first_expired_lifecycle_invocation_is_stale_before_refresh(self) -> None:
+        provider = _SequenceProvider(self.matched(), self.matched())
+        lifecycle = self.lifecycle(provider, _Wait(self.clock))
+        request = self.request("lifecycle-stale-refresh")
+
+        initial = lifecycle.run(request, self.context())
+        self.clock.now += timedelta(hours=24, microseconds=1)
+        stale_context = self.context(
+            deadline=self.clock.now + timedelta(seconds=29)
+        )
+        stale = lifecycle.run(request, stale_context)
+        refreshed = lifecycle.run(request, stale_context)
+
+        self.assertEqual(initial.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(stale.outcome, HardcoverIdentityOutcome.STALE)
+        self.assertEqual(refreshed.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(provider.starts, 2)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM hardcover_identity_generations "
+                "WHERE work_key=?",
+                (request.work_key,),
+            ).fetchone(),
+            (2,),
+        )
+
+    def test_reserved_lifecycle_refresh_resumes_after_gate_contention(self) -> None:
+        seed_provider = _SequenceProvider(self.matched())
+        seed_lifecycle = self.lifecycle(seed_provider, _Wait(self.clock))
+        request = self.request("lifecycle-stale-gate-contention")
+
+        initial = seed_lifecycle.run(request, self.context())
+        self.clock.now += timedelta(hours=24, microseconds=1)
+        provider = _SequenceProvider(self.matched())
+        lifecycle = self.lifecycle(provider, _Wait(self.clock))
+        refresh_context = self.context(
+            deadline=self.clock.now + timedelta(seconds=29)
+        )
+        stale = lifecycle.run(request, refresh_context)
+        held = self.gate.try_acquire()
+        self.assertIsNotNone(held)
+        try:
+            busy = lifecycle.run(request, refresh_context)
+        finally:
+            held.release()
+        refreshed = lifecycle.run(request, refresh_context)
+
+        self.assertEqual(initial.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(stale.outcome, HardcoverIdentityOutcome.STALE)
+        self.assertEqual(busy.outcome, HardcoverIdentityOutcome.IN_PROGRESS)
+        self.assertEqual(refreshed.outcome, HardcoverIdentityOutcome.MATCHED)
+        self.assertEqual(seed_provider.starts, 1)
+        self.assertEqual(provider.starts, 1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT generation,state,attempt_count FROM "
+                "hardcover_identity_generations WHERE work_key=? "
+                "ORDER BY generation",
+                (request.work_key,),
+            ).fetchall(),
+            [(1, "succeeded", 1), (2, "succeeded", 1)],
+        )
 
     def test_competing_post_gate_retry_does_not_authorize_local_wait(self) -> None:
         request = self.request("competing-post-gate-retry")

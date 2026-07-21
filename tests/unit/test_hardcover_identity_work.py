@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import tempfile
 import unittest
@@ -41,7 +42,13 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
 WORK_KEY = "1" * 64
 OTHER_WORK_KEY = "2" * 64
 ORIGIN = datetime(2026, 1, 1, tzinfo=timezone.utc)
-MATCHED = IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 2)
+MATCHED = IdentityWorkObservation(
+    IdentityMatchOutcome.MATCHED,
+    2,
+    1001,
+    2001,
+    "Synthetic Ebook Alpha",
+)
 
 
 class ProtocolPersistenceCollaborator:
@@ -118,11 +125,17 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.path = Path(self.directory.name) / "state.sqlite"
         self.connection = connect(self.path)
         self.addCleanup(self.connection.close)
-        self.assertEqual(migrate(self.connection), 10)
+        self.assertEqual(migrate(self.connection), 11)
         self.repository = SQLiteHardcoverIdentityWorkRepository(self.connection)
 
-    def accept(self, *, key: str = WORK_KEY, when: datetime = ORIGIN):
-        return self.repository.accept(key, when)
+    def accept(
+        self,
+        *,
+        key: str = WORK_KEY,
+        when: datetime = ORIGIN,
+        egress_limit: int = 3,
+    ):
+        return self.repository.accept(key, when, egress_limit=egress_limit)
 
     def test_transaction_cleanup_failure_never_masks_control_flow(self) -> None:
         class RollbackFailureConnection:
@@ -300,15 +313,26 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
 
     def test_closed_observation_has_one_exact_canonical_shape(self) -> None:
-        canonical = '{"outcome":"matched","row_count":2}'
+        canonical = (
+            '{"book_id":2001,"edition_id":1001,"outcome":"matched",'
+            '"provider_title":"Synthetic Ebook Alpha","row_count":2}'
+        )
         self.assertEqual(MATCHED.to_canonical_json(), canonical)
         self.assertEqual(IdentityWorkObservation.from_canonical_json(canonical), MATCHED)
+        legacy = IdentityWorkObservation.from_canonical_json(
+            '{"outcome":"matched","row_count":2}'
+        )
+        self.assertFalse(legacy.reusable)
         for malformed in (
             '{}',
             '{"outcome":"matched","row_count":2,"title":"private"}',
             '{"outcome":"provider","row_count":2}',
             '{"outcome":"matched","row_count":"2"}',
             '{"row_count":2,"outcome":"matched"}',
+            '{"book_id":2001,"edition_id":1001,"outcome":"matched",'
+            '"provider_title":" Synthetic Ebook Alpha","row_count":2}',
+            '{"book_id":2001,"edition_id":1001,"outcome":"matched",'
+            '"provider_title":"Synthe\\u0301tic Ebook Alpha","row_count":2}',
         ):
             with self.subTest(malformed=malformed), self.assertRaises(ValueError):
                 IdentityWorkObservation.from_canonical_json(malformed)
@@ -328,6 +352,43 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM hardcover_identity_results"
             ).fetchone(),
             (0,),
+        )
+
+    def test_repository_rejects_legacy_observation_before_any_publication(self) -> None:
+        _, claim = self.started_claim()
+        legacy = IdentityWorkObservation(IdentityMatchOutcome.MATCHED, 2)
+        before = {
+            table: self.connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            for table in (
+                "hardcover_identity_results",
+                "hardcover_identity_observations",
+                "current_hardcover_identity",
+            )
+        }
+
+        with self.assertRaisesRegex(ValueError, "not reusable"):
+            self.repository.publish_matched(
+                claim,
+                "worker-a",
+                ORIGIN + timedelta(seconds=3),
+                legacy,
+                gate_owned=True,
+            )
+
+        self.assertEqual(
+            {
+                table: self.connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()
+                for table in before
+            },
+            before,
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT state,attempt_count FROM hardcover_identity_generations"
+            ).fetchone(),
+            ("claimed", 1),
         )
 
     def test_domain_transition_graph_is_closed(self) -> None:
@@ -410,6 +471,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                         accepted.reference,
                         expected,
                         ORIGIN + timedelta(seconds=30),
+                        observation=MATCHED if terminal == "matched" else None,
                     ),
                 )
                 self.assertEqual(self.connection.total_changes, changes)
@@ -1237,6 +1299,9 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         repeated = self.repository.accept(
             WORK_KEY, published_at + timedelta(hours=24, microseconds=2)
         )
+        active = self.repository.accept(
+            WORK_KEY, published_at + timedelta(hours=24, microseconds=3)
+        )
         self.assertEqual(
             (stale.outcome, stale.reference.generation, stale.candidate),
             (IdentityWorkOutcome.STALE, 2, None),
@@ -1244,6 +1309,10 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.assertEqual(
             (repeated.outcome, repeated.reference.generation, repeated.candidate),
             (IdentityWorkOutcome.STALE, 2, 1),
+        )
+        self.assertEqual(
+            (active.outcome, active.reference.generation, active.candidate),
+            (IdentityWorkOutcome.IN_PROGRESS, 2, None),
         )
         self.assertEqual(
             self.connection.execute(
@@ -1301,6 +1370,112 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             ).fetchall(),
             before,
         )
+
+    def test_matched_reuse_rejects_schema_valid_observation_substitution(self) -> None:
+        _, claim = self.started_claim()
+        self.repository.publish_matched(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=3),
+            MATCHED,
+            gate_owned=True,
+        )
+        before = self.connection.execute(
+            "SELECT observation_id,canonical_observation FROM hardcover_identity_observations"
+        ).fetchone()
+        self.connection.execute(
+            "DROP TRIGGER hardcover_identity_observations_no_update"
+        )
+        self.connection.execute(
+            "UPDATE hardcover_identity_observations SET canonical_observation=?",
+            (
+                IdentityWorkObservation(
+                    IdentityMatchOutcome.MATCHED,
+                    2,
+                    1002,
+                    2001,
+                    "Synthetic Ebook Alpha",
+                ).to_canonical_json(),
+            ),
+        )
+
+        with self.assertRaisesRegex(IdentityWorkPersistenceError, "inconsistent"):
+            self.repository.accept(WORK_KEY, ORIGIN + timedelta(seconds=4))
+
+        after = self.connection.execute(
+            "SELECT observation_id,canonical_observation FROM hardcover_identity_observations"
+        ).fetchone()
+        self.assertEqual(after[0], before[0])
+        self.assertNotEqual(after[1], before[1])
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT generation,status FROM current_hardcover_identity"
+            ).fetchone(),
+            (1, "matched"),
+        )
+
+    def test_schema_ten_legacy_current_pointer_expires_and_refetches(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            connection = connect(Path(directory) / "legacy.sqlite")
+            self.addCleanup(connection.close)
+            migrate_to_version(connection, 10)
+            work_key = "8" * 64
+            created = "2026-01-01T00:00:00.000000Z"
+            published = "2026-01-01T00:00:03.000000Z"
+            expires = "2026-01-02T00:00:03.000000Z"
+            canonical = '{"outcome":"matched","row_count":2}'
+            observation_id = hashlib.sha256(
+                f"{work_key}:1:matched-observation-v2".encode("ascii")
+            ).hexdigest()
+            connection.execute(
+                "INSERT INTO hardcover_identity_generations("
+                "work_key,generation,state,fence,attempt_count,aggregate_started_at,"
+                "aggregate_deadline,created_at,updated_at) VALUES(?,1,'succeeded',1,1,?,?,?,?)",
+                (work_key, created, expires, created, published),
+            )
+            connection.execute(
+                "INSERT INTO hardcover_identity_results VALUES(?,1,1,'matched',?)",
+                (work_key, published),
+            )
+            connection.execute(
+                "INSERT INTO hardcover_identity_observations VALUES(?,?,1,?,?)",
+                (observation_id, work_key, canonical, published),
+            )
+            connection.execute(
+                "INSERT INTO current_hardcover_identity VALUES(?,1,?,'matched',?,?)",
+                (work_key, observation_id, published, expires),
+            )
+
+            migrate(connection)
+            self.assertEqual(
+                connection.execute(
+                    "SELECT status FROM current_hardcover_identity"
+                ).fetchone(),
+                ("expired",),
+            )
+            repository = SQLiteHardcoverIdentityWorkRepository(connection)
+            accepted = repository.accept(
+                work_key, ORIGIN + timedelta(seconds=4)
+            )
+            reserved = repository.accept(
+                work_key, ORIGIN + timedelta(seconds=4, microseconds=1)
+            )
+
+            self.assertEqual(
+                (accepted.outcome, accepted.reference.generation, accepted.candidate),
+                (IdentityWorkOutcome.STALE, 2, None),
+            )
+            self.assertIsNone(accepted.observation)
+            self.assertEqual(
+                (reserved.outcome, reserved.reference.generation, reserved.candidate),
+                (IdentityWorkOutcome.STALE, 2, 1),
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT canonical_observation FROM hardcover_identity_observations"
+                ).fetchone(),
+                (canonical,),
+            )
 
     def test_matched_reuse_reconciles_terminal_generation_timestamp(self) -> None:
         _, claim = self.started_claim()
@@ -2127,7 +2302,13 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.assertEqual((claimed.candidate, claimed.fence), (2, 2))
 
     def test_egress_limit_is_atomic_immutable_and_restart_bound(self) -> None:
-        accepted = self.accept()
+        accepted = self.accept(egress_limit=1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT max_starts FROM hardcover_identity_egress_policies"
+            ).fetchall(),
+            [(1,)],
+        )
         claim = self.repository.claim(
             accepted.reference,
             "worker-a",
@@ -2145,7 +2326,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.connection.close()
         self.connection = connect(self.path)
         self.addCleanup(self.connection.close)
-        self.assertEqual(migrate(self.connection), 10)
+        self.assertEqual(migrate(self.connection), 11)
         self.repository = SQLiteHardcoverIdentityWorkRepository(self.connection)
         with self.assertRaisesRegex(
             IdentityWorkPersistenceError, "egress authority changed"
@@ -2186,7 +2367,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
         contender_connection = connect(self.path)
         self.addCleanup(contender_connection.close)
-        self.assertEqual(migrate(contender_connection), 10)
+        self.assertEqual(migrate(contender_connection), 11)
         contender = SQLiteHardcoverIdentityWorkRepository(contender_connection)
         direct = self.repository.accept(WORK_KEY, ORIGIN + timedelta(seconds=4))
         managed = ManageHardcoverIdentityWork(contender).accept(
@@ -2209,8 +2390,94 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             (1,),
         )
 
-    def test_one_shot_publication_rollback_restarts_terminal_without_retry(self) -> None:
+    def test_acceptance_reconciles_egress_authority_before_any_start(self) -> None:
+        one_shot = self.accept(egress_limit=1)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT p.max_starts,g.attempt_count "
+                "FROM hardcover_identity_egress_policies AS p "
+                "JOIN hardcover_identity_generations AS g USING(work_key,generation) "
+                "WHERE p.work_key=?",
+                (WORK_KEY,),
+            ).fetchall(),
+            [(1, 0)],
+        )
+        repeated = self.repository.accept(
+            WORK_KEY,
+            ORIGIN + timedelta(microseconds=1),
+            egress_limit=1,
+        )
+        self.assertEqual(repeated.reference, one_shot.reference)
+        with self.assertRaisesRegex(
+            IdentityWorkPersistenceError, "egress authority changed"
+        ):
+            self.repository.accept(
+                WORK_KEY,
+                ORIGIN + timedelta(microseconds=2),
+                egress_limit=3,
+            )
+
+        normal_key = "b" * 64
+        normal = self.repository.accept(normal_key, ORIGIN, egress_limit=3)
+        self.assertEqual(normal.reference.work_key, normal_key)
+        with self.assertRaisesRegex(
+            IdentityWorkPersistenceError, "egress authority changed"
+        ):
+            self.repository.accept(
+                normal_key,
+                ORIGIN + timedelta(microseconds=1),
+                egress_limit=1,
+            )
+
+    def test_legacy_active_generation_binds_only_before_a_start(self) -> None:
         accepted = self.accept()
+        self.connection.execute(
+            "DROP TRIGGER hardcover_identity_egress_policies_no_delete"
+        )
+        self.connection.execute(
+            "DELETE FROM hardcover_identity_egress_policies WHERE work_key=?",
+            (WORK_KEY,),
+        )
+        reconciled = self.repository.accept(
+            WORK_KEY,
+            ORIGIN + timedelta(microseconds=1),
+            egress_limit=1,
+        )
+        self.assertEqual(reconciled.reference, accepted.reference)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT max_starts FROM hardcover_identity_egress_policies"
+            ).fetchall(),
+            [(1,)],
+        )
+        claim = self.repository.claim(
+            accepted.reference,
+            "worker-a",
+            ORIGIN + timedelta(seconds=1),
+            gate_owned=True,
+        )
+        self.repository.renew_and_start(
+            claim,
+            "worker-a",
+            ORIGIN + timedelta(seconds=2),
+            gate_owned=True,
+            egress_limit=1,
+        )
+        self.connection.execute(
+            "DELETE FROM hardcover_identity_egress_policies WHERE work_key=?",
+            (WORK_KEY,),
+        )
+        with self.assertRaisesRegex(
+            IdentityWorkPersistenceError, "egress authority is unavailable"
+        ):
+            self.repository.accept(
+                WORK_KEY,
+                ORIGIN + timedelta(seconds=3),
+                egress_limit=1,
+            )
+
+    def test_one_shot_publication_rollback_restarts_terminal_without_retry(self) -> None:
+        accepted = self.accept(egress_limit=1)
         claim = self.repository.claim(
             accepted.reference,
             "worker-a",
@@ -2271,7 +2538,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
     def test_successful_one_shot_refresh_requires_explicit_normal_authority(
         self,
     ) -> None:
-        accepted = self.accept()
+        accepted = self.accept(egress_limit=1)
         claim = self.repository.claim(
             accepted.reference,
             "worker-a",
@@ -2305,11 +2572,14 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             ORIGIN + timedelta(hours=24, seconds=3, microseconds=2),
             egress_limit=3,
         )
-        repeated = self.repository.accept(
-            WORK_KEY,
-            ORIGIN + timedelta(hours=24, seconds=3, microseconds=3),
-            egress_limit=1,
-        )
+        with self.assertRaisesRegex(
+            IdentityWorkPersistenceError, "egress authority changed"
+        ):
+            self.repository.accept(
+                WORK_KEY,
+                ORIGIN + timedelta(hours=24, seconds=3, microseconds=3),
+                egress_limit=1,
+            )
         reserved = self.repository.accept(
             WORK_KEY,
             ORIGIN + timedelta(hours=24, seconds=3, microseconds=4),
@@ -2326,16 +2596,12 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
             (IdentityWorkOutcome.STALE, 2, None),
         )
         self.assertEqual(
-            (repeated.outcome, repeated.reference.generation),
-            (IdentityWorkOutcome.RETRY_EXHAUSTED, 1),
-        )
-        self.assertEqual(
             (reserved.outcome, reserved.reference.generation, reserved.candidate),
             (IdentityWorkOutcome.STALE, 2, 1),
         )
 
-    def test_egress_policy_and_start_roll_back_as_one_atomic_change(self) -> None:
-        accepted = self.accept()
+    def test_start_rollback_retains_the_acceptance_egress_policy(self) -> None:
+        accepted = self.accept(egress_limit=1)
         claim = self.repository.claim(
             accepted.reference,
             "worker-a",
@@ -2360,7 +2626,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
                 "(SELECT COUNT(*) FROM hardcover_identity_attempts),"
                 "(SELECT attempt_count FROM hardcover_identity_generations)"
             ).fetchone(),
-            (0, 0, 0),
+            (1, 0, 0),
         )
         self.connection.execute("DROP TRIGGER reject_identity_start")
         started = self.repository.renew_and_start(
@@ -2521,7 +2787,7 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
                 "VALUES(?,?,?,?,?,?)",
                 (WORK_KEY, 1, 1, 1, 1, timestamp),
             )
-            self.assertEqual(migrate(connection), 10)
+            self.assertEqual(migrate(connection), 11)
             self.assertEqual(
                 connection.execute(
                     "SELECT work_key,generation,max_starts,created_at "
@@ -2529,7 +2795,7 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
                 ).fetchall(),
                 [(WORK_KEY, 1, 3, timestamp)],
             )
-            self.assertEqual(migrate(connection), 10)
+            self.assertEqual(migrate(connection), 11)
 
     def test_schema_eight_upgrades_additively_and_idempotently(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2539,8 +2805,8 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
             connection.execute(
                 "INSERT INTO instance_metadata(key,value) VALUES('schema-eight-sentinel','preserved')"
             )
-            self.assertEqual(migrate(connection), 10)
-            self.assertEqual(migrate(connection), 10)
+            self.assertEqual(migrate(connection), 11)
+            self.assertEqual(migrate(connection), 11)
             self.assertEqual(
                 connection.execute(
                     "SELECT value FROM instance_metadata WHERE key='schema-eight-sentinel'"
@@ -2593,7 +2859,7 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
                             ).fetchone(),
                             (0,),
                         )
-                        self.assertEqual(migrate(connection), 10)
+                        self.assertEqual(migrate(connection), 11)
                     finally:
                         connection.close()
 

@@ -1,21 +1,21 @@
 {
   "available_through_increment": "Execute one bounded Hardcover identity attempt with durable authority",
   "output_privacy_contract": {
-    "bytes": 3225,
+    "bytes": 4046,
     "path": "preview-output-privacy-contract-c5-v3.json",
-    "sha256": "b7b6fb5e8f7cf33a3b4df5747aa937fd2861b4af1e25a89d97c55ae4b21870b3"
+    "sha256": "4f849d54f9dd33a89b209198d0563e38fb5a584e2896e3d434994388ddf2b90a"
   },
   "output_privacy_scan": {
-    "bytes": 2478,
+    "bytes": 2736,
     "path": "preview-output-privacy-scan-c5-v3.json",
-    "sha256": "f9fa12bd11c5d270aa26a6adaec1162e21818323ddc12bc52a44c1fa266ba713"
+    "sha256": "30ac9ea4f2ccec1054b619c047344005ed2e0fe40ef252f6b8101950bae74742"
   },
   "output_schema": {
     "bytes": 3980,
     "path": "preview-output-schema-c5-v6.json",
-    "sha256": "930f62a1218e37ef5de91bdc1b543176e84c6a65f1202d44998e25aa73edacc2"
+    "sha256": "0d5f470fc530a62a8931d0b625ebe008a259044699cdde2e4625ebabebdaaa51"
   },
-  "predecessor_registry_sha256": "9f49679ac4dad1f2a4e1755d08cf5844ba66f42abdde08437633ca863a483823",
+  "predecessor_registry_sha256": "94380cffa51cd0bb843eafa5aa8edb39e14bc7c254c90b9feb8d08b497ac2d22",
   "runtime_contract": {
     "anti_noop": "compare allowlisted derived typed fields across golden, alternate-valid, single-field mutation, title-only metamorphic, boundary, invalid-extra, and differing-output cases without computing or exporting an input digest; require zero production composition/egress",
     "authority": "no secret lookup, DNS, socket, real provider, production database, target join, proposal, review, or write authority",
@@ -27,9 +27,9 @@
     "expected_output_rule": "canonical example outputs are qualification oracles only and must never be loaded by runtime before emission",
     "input_limit_bytes": 65536,
     "input_source": "contributor-supplied stdin only; --input - is mandatory",
-    "privacy_qualification": "capture all v2 channels with hashing, exception, trace/span, metrics, persistence, export, reporting, and audit spies; injected raw/projected/digested forbidden forms must fail",
-    "resource_identity_boundary": "immutable public schema/build resource lengths and digests exist only in contributor-independent registry, build, review, and qualification evidence; runtime stdout, stderr, exceptions, logs, trace/span data, metric names/labels/values/exemplars, exports, reports, persistence, and audit records never contain them",
-    "runtime_output_privacy": "v2 channel-complete capture: only scenario-allowlisted typed redacted fields; no raw/projected/encoded/hashed/digested/fingerprinted title, private-query, ISBN, provider/resource identity, stable correlation, or substitute in stdout/stderr/exceptions/logs/traces/metrics/persistence/exports/reports/audit",
+    "privacy_qualification": "channel-complete capture plus exact logical table/column/canonical-shape validation and recovery cleanup; undeclared raw ISBN/provider persistence and every other raw, projected, or digested form fail",
+    "resource_identity_boundary": "public resource digests remain qualification-only; exact validated work-key, matched-observation/current-pointer, and binding-recovery cells are private persistence only, never runtime or retained evidence",
+    "runtime_output_privacy": "channel-complete capture permits only scenario-allowlisted public fields; exact validated matched observation/current pointer, work key, and recovery row are private persistence only; every title/query/ISBN/provider/resource projection remains forbidden elsewhere",
     "schema8": "c4 runtime regenerates schema 8 through exact migration prefix 1..8 and verifies contributor-independent public registry bindings; contributor stdin contains no schema/build digest and runtime channels emit none"
   },
   "scenarios": [
@@ -200,7 +200,7 @@
         "canonical_example_output": {
           "bytes": 281,
           "path": "c4-durable-work-example-output.json",
-          "sha256": "9c9b7370081a4833f26851de78cced52faace737faa953bd1acf19ca6cb99388"
+          "sha256": "476bbbde0a44f863260e6ab9eac95a02c255098dc587df1859a08b0096448b32"
         },
         "input_schema": {
           "bytes": 1098,

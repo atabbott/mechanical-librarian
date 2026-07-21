@@ -224,7 +224,7 @@ at F09g #238/#243, the checkpoint exit. F09f is a target-independent configured
 Hardcover lane: one bounded title plus strict ISBN-backed book and compatible
 ebook-edition identity form one provider lineage. Its exact external query,
 authentication, response/error contract, cardinality rules, bounds, fixtures,
-and live qualification must be frozen before it moves from Triaged to Ready.
+and live qualification are frozen in its activation registry.
 F09f owns no live target join or proposal authority.
 
 F09g owns the live target/source join. One current usable F07 title, exactly one
