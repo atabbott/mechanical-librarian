@@ -263,7 +263,7 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
     staged_state,
     validate_current_schema,
 )
-from mechanical_librarian.infrastructure.persistence.live_title_evidence import (
+from mechanical_librarian.adapters.persistence.live_title_evidence import (
     SQLiteLiveTitleEvidenceReader,
 )
 from mechanical_librarian.infrastructure.hardcover_identity_gate import (
@@ -1466,6 +1466,7 @@ def _run_live_title_proposal_report(
             SQLiteHardcoverIdentityWorkRepository(connection),
             lambda source: _fingerprint_live_epub_source(configuration, source),
             governing,
+            "epub" in configuration.evidence.enabled_formats,
         )
         repository = SQLiteTitleProposalRepository(
             connection,

@@ -20,6 +20,7 @@ APPLICATION_PORT_MODULES = {
     "mechanical_librarian.application.audit",
     "mechanical_librarian.application.hardcover_identity",
     "mechanical_librarian.application.job_heartbeat",
+    "mechanical_librarian.application.live_title_proposals",
     "mechanical_librarian.application.ports",
 }
 ALLOWED_LAYER_IMPORTS = {
@@ -356,6 +357,14 @@ class ImportBoundaryTests(unittest.TestCase):
             violates_boundary(
                 "mechanical_librarian.infrastructure.providers.hardcover_identity",
                 "mechanical_librarian.application.hardcover_identity",
+            )
+        )
+
+    def test_infrastructure_cannot_implement_live_title_proposal_port(self) -> None:
+        self.assertTrue(
+            violates_boundary(
+                "mechanical_librarian.infrastructure.persistence.live_title_evidence",
+                "mechanical_librarian.application.live_title_proposals",
             )
         )
 

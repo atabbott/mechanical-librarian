@@ -62,6 +62,7 @@ class SQLiteLiveTitleEvidenceReader:
         provider_validator: HardcoverMatchValidator,
         source_fingerprint: Callable[[ResolvedEpubSource], str],
         governing_digest: str,
+        epub_enabled: bool,
     ) -> None:
         self._connection = connection
         self._source_resolver = source_resolver
@@ -69,10 +70,15 @@ class SQLiteLiveTitleEvidenceReader:
         self._provider_validator = provider_validator
         self._source_fingerprint = source_fingerprint
         self._governing_digest = governing_digest
+        self._epub_enabled = epub_enabled
 
     def inspect_title_source(
         self, locator: EpubEvidenceLocator, mount_configuration_digest: str
     ) -> LiveSourceEvidence:
+        if not self._epub_enabled:
+            return LiveSourceEvidence(
+                locator, LiveSourceState.NOT_READY, mount_configuration_digest
+            )
         source = self._source_resolver.resolve(
             locator, mount_configuration_digest
         ).source

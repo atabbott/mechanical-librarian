@@ -68,7 +68,7 @@ from mechanical_librarian.domain.inventory_v2 import (
     opaque_target_reference,
 )
 from mechanical_librarian.infrastructure.persistence.sqlite import connect, migrate
-from mechanical_librarian.infrastructure.persistence.live_title_evidence import (
+from mechanical_librarian.adapters.persistence.live_title_evidence import (
     SQLiteLiveTitleEvidenceReader,
 )
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
@@ -243,6 +243,7 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
                 (self.root / source.relative_path).read_bytes()
             ).hexdigest(),
             self.governing_digest,
+            True,
         )
         publication_clock = kwargs.pop("publication_clock", lambda: self.now)
         return SQLiteTitleProposalRepository(
@@ -514,6 +515,38 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         self.assertFalse(changed.to_data()["production_applicable"])
         self.assertEqual(changed.persistence.history_count, 2)
 
+    def test_disabling_epub_prevents_positive_replay_and_provider_lookup(self) -> None:
+        first = _run_live_title_proposal_report(
+            self.config_path,
+            self.database,
+            self.locator.target_reference,
+            self.locator.snapshot_reference,
+            self.locator.file_index,
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["evidence"]["enabled_formats"] = ["m4b"]
+        self.config_path.write_text(json.dumps(config), encoding="utf-8")
+
+        with patch.object(
+            SQLiteLiveTitleEvidenceReader,
+            "inspect_title_provider",
+            side_effect=AssertionError("provider lookup must remain unreachable"),
+        ) as provider_lookup:
+            changed = _run_live_title_proposal_report(
+                self.config_path,
+                self.database,
+                self.locator.target_reference,
+                self.locator.snapshot_reference,
+                self.locator.file_index,
+            )
+
+        provider_lookup.assert_not_called()
+        self.assertEqual(first.proposal_set.result.value, "needs_review")
+        self.assertEqual(changed.proposal_set.result.value, "source_not_ready")
+        self.assertFalse(changed.persistence.replayed)
+        self.assertFalse(changed.to_data()["production_applicable"])
+        self.assertEqual(changed.persistence.history_count, 2)
+
     def test_exact_replay_rejects_a_concurrently_advanced_current_pointer(self) -> None:
         repository = self.repository()
         first = ProposeLiveTitle(repository).run(
@@ -573,6 +606,7 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
                 (self.root / source.relative_path).read_bytes()
             ).hexdigest(),
             self.governing_digest,
+            True,
         )
         second_digest = hashlib.sha256(b"second-mount").hexdigest()
         calls = 0
