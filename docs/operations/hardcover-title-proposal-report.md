@@ -69,5 +69,6 @@ F09b does not add provider configuration, durable provider work, freshness or
 reuse, retry/restart behavior, live-target binding, or production
 applicability. F09f owns the current target-independent configured provider
 work, title plus strict ISBN-backed book/edition identity, retry/restart,
-freshness, and reuse. F09g owns the later live target/source join and
-proposal-applicability decision.
+freshness, and reuse. The
+[`live-title-proposal-report`](live-title-proposal-report.md) command owns the
+live target/source join and proposal-applicability decision.

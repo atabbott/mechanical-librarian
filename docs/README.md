@@ -62,6 +62,7 @@ release standards as code.
 - [Durable EPUB opening evidence](operations/epub-opening-evidence.md)
 - [EPUB fixture materialization](operations/epub-fixture-materialization.md)
 - [Synthetic title proposal report](operations/synthetic-title-proposal-report.md)
+- [Live title proposal report](operations/live-title-proposal-report.md)
 - [Hardcover title proposal report](operations/hardcover-title-proposal-report.md)
 - [Hardcover identity report](operations/hardcover-identity-report.md)
 - [Synthetic title review case report](operations/synthetic-title-review-case-report.md)

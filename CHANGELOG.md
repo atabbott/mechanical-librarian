@@ -7,6 +7,16 @@ versioning after the first public release.
 
 ## Unreleased
 
+- Added `live-title-proposal-report`, which joins one exact current
+  Audiobookshelf ebook snapshot and durable EPUB title/ISBN evidence to one
+  current configured Hardcover observation. The command atomically publishes
+  either one immutable `needs_review`, `production_report_only` title proposal
+  or one of four stable zero-proposal results: `source_not_ready`,
+  `provider_not_ready`, `evidence_disagreement`, or `no_change`. Exact input
+  replay is duplicate-safe, changed input creates an immutable successor, and
+  the command grants no review, approval, apply, target-write, or media-write
+  authority.
+
 - Activated the disabled-by-default F09f configured Hardcover identity report.
   Enabled operation now validates one owner-only ISBN/title query, persists
   schema-11 work, prepares the fixed selected-public-IP Hardcover operation,

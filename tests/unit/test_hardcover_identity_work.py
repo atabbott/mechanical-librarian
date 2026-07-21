@@ -125,7 +125,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.path = Path(self.directory.name) / "state.sqlite"
         self.connection = connect(self.path)
         self.addCleanup(self.connection.close)
-        self.assertEqual(migrate(self.connection), 11)
+        self.assertEqual(migrate(self.connection), len(MIGRATIONS))
         self.repository = SQLiteHardcoverIdentityWorkRepository(self.connection)
 
     def accept(
@@ -2326,7 +2326,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         self.connection.close()
         self.connection = connect(self.path)
         self.addCleanup(self.connection.close)
-        self.assertEqual(migrate(self.connection), 11)
+        self.assertEqual(migrate(self.connection), len(MIGRATIONS))
         self.repository = SQLiteHardcoverIdentityWorkRepository(self.connection)
         with self.assertRaisesRegex(
             IdentityWorkPersistenceError, "egress authority changed"
@@ -2367,7 +2367,7 @@ class HardcoverIdentityWorkTests(unittest.TestCase):
         )
         contender_connection = connect(self.path)
         self.addCleanup(contender_connection.close)
-        self.assertEqual(migrate(contender_connection), 11)
+        self.assertEqual(migrate(contender_connection), len(MIGRATIONS))
         contender = SQLiteHardcoverIdentityWorkRepository(contender_connection)
         direct = self.repository.accept(WORK_KEY, ORIGIN + timedelta(seconds=4))
         managed = ManageHardcoverIdentityWork(contender).accept(
@@ -2787,7 +2787,7 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
                 "VALUES(?,?,?,?,?,?)",
                 (WORK_KEY, 1, 1, 1, 1, timestamp),
             )
-            self.assertEqual(migrate(connection), 11)
+            self.assertEqual(migrate(connection), len(MIGRATIONS))
             self.assertEqual(
                 connection.execute(
                     "SELECT work_key,generation,max_starts,created_at "
@@ -2795,7 +2795,7 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
                 ).fetchall(),
                 [(WORK_KEY, 1, 3, timestamp)],
             )
-            self.assertEqual(migrate(connection), 11)
+            self.assertEqual(migrate(connection), len(MIGRATIONS))
 
     def test_schema_eight_upgrades_additively_and_idempotently(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2805,8 +2805,8 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
             connection.execute(
                 "INSERT INTO instance_metadata(key,value) VALUES('schema-eight-sentinel','preserved')"
             )
-            self.assertEqual(migrate(connection), 11)
-            self.assertEqual(migrate(connection), 11)
+            self.assertEqual(migrate(connection), len(MIGRATIONS))
+            self.assertEqual(migrate(connection), len(MIGRATIONS))
             self.assertEqual(
                 connection.execute(
                     "SELECT value FROM instance_metadata WHERE key='schema-eight-sentinel'"
@@ -2859,7 +2859,7 @@ class HardcoverIdentityMigrationTests(unittest.TestCase):
                             ).fetchone(),
                             (0,),
                         )
-                        self.assertEqual(migrate(connection), 11)
+                        self.assertEqual(migrate(connection), len(MIGRATIONS))
                     finally:
                         connection.close()
 

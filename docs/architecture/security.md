@@ -285,7 +285,10 @@ that external lineage with independently derived local EPUB evidence, and it
 must revalidate every current input atomically before deriving the sole
 positive output: one `needs_review`, `production_report_only` proposal whose
 value is the exact current F07 normalized title. Every other condition fails
-closed as an exact zero-proposal result without erasing usable evidence.
+closed as `source_not_ready`, `provider_not_ready`, `evidence_disagreement`,
+or `no_change` without erasing usable evidence. Direct command output omits
+ISBNs, provider identifiers, work keys, source fingerprints, and private
+configuration digests.
 
 The 0.3 checkpoint constructs no reviewer, decision, approval, AI, apply,
 target-write, media-write, destructive, tagging, or release-publication

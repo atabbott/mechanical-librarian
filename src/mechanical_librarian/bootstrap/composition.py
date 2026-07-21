@@ -164,6 +164,11 @@ from mechanical_librarian.application.title_proposals import (
     scenario_lineage,
     scenario_named,
 )
+from mechanical_librarian.application.live_title_proposals import (
+    LiveSourceState,
+    LiveTitleProposalReport,
+    ProposeLiveTitle,
+)
 from mechanical_librarian.application.title_review_cases import (
     InspectSyntheticTitleReviewCase,
     SyntheticTitleReviewCaseReport,
@@ -254,6 +259,9 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
     publish_staged_state,
     staged_state,
     validate_current_schema,
+)
+from mechanical_librarian.infrastructure.persistence.live_title_evidence import (
+    SQLiteLiveTitleEvidenceReader,
 )
 from mechanical_librarian.infrastructure.hardcover_identity_gate import (
     DescriptorHardcoverIdentityGate,
@@ -1405,6 +1413,64 @@ def _epub_material_configuration(configuration, mappings) -> dict[str, object]:
     }
 
 
+def _run_live_title_proposal_report(
+    configuration_path: Path,
+    database: Path,
+    target_reference: str,
+    snapshot_reference: str,
+    file_index: int,
+) -> LiveTitleProposalReport:
+    """Publish one current live proposal without provider or target egress."""
+
+    configuration = load_configuration_file(configuration_path)
+    mount_digests = tuple(
+        sorted(
+            _mount_configuration_digest(mount)
+            for mount in configuration.media_mounts
+            if mount.library_type == "ebook" and mount.read_only
+        )
+    )
+    if not mount_digests:
+        raise ConfigurationError("live title proposal requires a read-only ebook mount")
+    locator = EpubEvidenceLocator(target_reference, snapshot_reference, file_index)
+    preflight(database)
+    if not path_entry_exists(database):
+        raise SchemaError("live title proposal state is unavailable")
+    connection = None
+    try:
+        connection = connect_existing(database)
+        migrate(connection)
+        evidence_reader = SQLiteLiveTitleEvidenceReader(
+            connection,
+            SQLiteEpubOpeningEvidenceRepository(connection),
+            SQLiteHardcoverIdentityWorkRepository(connection),
+        )
+        repository = SQLiteTitleProposalRepository(
+            connection,
+            source_reader=evidence_reader,
+            provider_reader=evidence_reader,
+        )
+        ready = tuple(
+            digest
+            for digest in mount_digests
+            if repository.inspect_source(locator, digest).state is LiveSourceState.READY
+        )
+        if len(ready) > 1:
+            raise SchemaError("live title proposal source is ambiguous")
+        mount_digest = ready[0] if ready else mount_digests[0]
+        provider = configuration.hardcover_provider
+        return ProposeLiveTitle(repository).run(
+            locator,
+            mount_digest,
+            provider_enabled=provider.enabled,
+            authority_revision=provider.authority_revision,
+            observed_at=datetime.now(timezone.utc),
+        )
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 def _run_synthetic_title_proposal_report(
     database: Path, scenario_name: str
 ) -> SyntheticTitleProposalReport:
@@ -1987,8 +2053,8 @@ def _run_hardcover_durable_work_preview(
                 ).fetchone() is None
             if (
                 not migration_rollback_verified
-                or migrate(connection) != 11
-                or migrate(connection) != 11
+                or migrate_to_version(connection, 11) != 11
+                or migrate_to_version(connection, 11) != 11
             ):
                 raise SchemaError("current schema migration proof failed")
             migration_idempotence_verified = connection.execute(
@@ -3079,6 +3145,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         epub_package_report_runner=_run_epub_package_report,
         epub_opening_report_runner=_run_epub_opening_report,
         epub_opening_evidence_runner=_run_epub_opening_evidence,
+        live_title_proposal_runner=_run_live_title_proposal_report,
         synthetic_title_proposal_runner=_run_synthetic_title_proposal_report,
         hardcover_title_proposal_runner=_run_hardcover_title_proposal_report,
         synthetic_title_review_case_runner=_run_synthetic_title_review_case_report,
