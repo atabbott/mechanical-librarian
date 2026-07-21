@@ -1605,14 +1605,12 @@ class BoundDisposableState:
             raise SchemaError("prepared state is not an exclusive regular file")
         if stat.S_IMODE(staged_status.st_mode) & 0o077:
             raise SchemaError("prepared state permissions are too broad")
-        try:
-            entries = set(os.listdir(self.directory_descriptor))
-        except OSError:
-            raise SchemaError("durable work preview directory is unavailable") from None
-        expected_entries = {staged.name}
-        if entries != expected_entries:
-            if self.target.name in entries:
-                return False
+        entries = _bounded_directory_entry_names(self.directory_descriptor, 2)
+        if self.target.name in entries:
+            return False
+        if staged.name not in entries:
+            raise SchemaError("prepared state still requires recovery sidecars")
+        if any(name not in {staged.name, self.target.name} for name in entries):
             raise SchemaError("prepared state still requires recovery sidecars")
 
         descriptor: int | None = None
@@ -1881,15 +1879,27 @@ def bound_disposable_state(target: Path) -> Iterator[BoundDisposableState]:
 def _directory_descriptor_is_empty(descriptor: int) -> bool:
     """Read at most one directory entry and preserve control-flow failures."""
 
+    return not _bounded_directory_entry_names(descriptor, 1)
+
+
+def _bounded_directory_entry_names(
+    descriptor: int,
+    maximum: int,
+) -> tuple[str, ...]:
+    """Read a fixed number of descriptor-relative names and close the scan."""
+
     entries = None
     failure: BaseException | None = None
     try:
         entries = os.scandir(descriptor)
-        try:
-            next(entries)
-        except StopIteration:
-            return True
-        return False
+        names: list[str] = []
+        for _ in range(maximum):
+            try:
+                entry = next(entries)
+            except StopIteration:
+                break
+            names.append(entry.name)
+        return tuple(names)
     except BaseException as error:
         failure = error
         if isinstance(error, (MemoryError, OSError)):

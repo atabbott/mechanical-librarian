@@ -40,6 +40,9 @@ from mechanical_librarian.infrastructure.security.provider_secrets import (
     PrivateFileProviderCredentials,
     ProviderSecretUnavailable,
 )
+from mechanical_librarian.infrastructure.persistence import (
+    sqlite as sqlite_infrastructure,
+)
 from mechanical_librarian.interfaces.cli import main
 
 
@@ -751,6 +754,56 @@ class HardcoverActivationTests(unittest.TestCase):
                 patch(
                     "mechanical_librarian.infrastructure.persistence.sqlite.os.scandir",
                     side_effect=MemoryError("synthetic allocation failure"),
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.PrivateFileProviderCredentials",
+                    side_effect=AssertionError("credential reached"),
+                ),
+            ):
+                report = _run_hardcover_identity_report(
+                    config,
+                    state_root / "state.sqlite",
+                    query,
+                    HardcoverExecutionPolicy.QUALIFICATION_ONE_SHOT,
+                )
+
+            self.assertEqual(
+                report.outcome,
+                HardcoverIdentityOutcome.PERSISTENCE_FAILURE,
+            )
+
+    def test_one_shot_rejects_population_added_at_publish_before_credentials(
+        self,
+    ) -> None:
+        with (
+            tempfile.TemporaryDirectory() as input_directory,
+            tempfile.TemporaryDirectory() as state_directory,
+        ):
+            inputs = Path(input_directory)
+            inputs.chmod(0o700)
+            state_root = Path(state_directory)
+            state_root.chmod(0o700)
+            config = self._enabled_config(inputs)
+            query = inputs / "query.json"
+            query.write_text(
+                json.dumps(
+                    {"isbn": "9780000000019", "title": "Synthetic Ebook Alpha"}
+                ),
+                encoding="utf-8",
+            )
+            query.chmod(0o600)
+            real_publish = sqlite_infrastructure.BoundDisposableState.publish
+
+            def populate_before_publish(bound, staged) -> bool:
+                for index in range(32):
+                    (state_root / f"publish-entry-{index}").touch()
+                return real_publish(bound, staged)
+
+            with (
+                patch.object(
+                    sqlite_infrastructure.BoundDisposableState,
+                    "publish",
+                    new=populate_before_publish,
                 ),
                 patch(
                     "mechanical_librarian.bootstrap.composition.PrivateFileProviderCredentials",

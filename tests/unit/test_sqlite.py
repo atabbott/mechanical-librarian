@@ -98,6 +98,142 @@ class SqliteFoundationTests(unittest.TestCase):
 
             self.assertEqual(target.read_bytes(), replacement)
 
+    def test_bound_publication_rejects_many_entries_with_two_reads_and_close(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "disposable"
+            parent.mkdir(mode=0o700)
+            real_scandir = os.scandir
+            next_calls = 0
+            close_calls = 0
+
+            class _CountingEntries:
+                def __init__(self, descriptor: int) -> None:
+                    self._entries = real_scandir(descriptor)
+
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    nonlocal next_calls
+                    next_calls += 1
+                    return next(self._entries)
+
+                def close(self) -> None:
+                    nonlocal close_calls
+                    close_calls += 1
+                    self._entries.close()
+
+            with sqlite.bound_disposable_state(parent / "state.sqlite") as bound:
+                with bound.staged_state() as staged:
+                    staged.write_bytes(b"complete staged state")
+                    for index in range(32):
+                        (parent / f"concurrent-entry-{index}").touch()
+                    with (
+                        patch.object(
+                            sqlite.os,
+                            "scandir",
+                            side_effect=lambda descriptor: _CountingEntries(
+                                descriptor
+                            ),
+                        ),
+                        self.assertRaisesRegex(SchemaError, "recovery sidecars"),
+                    ):
+                        bound.publish(staged)
+
+            self.assertEqual(next_calls, 2)
+            self.assertEqual(close_calls, 1)
+
+    def test_bound_publication_translates_scan_allocation_failure_and_closes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "disposable"
+            parent.mkdir(mode=0o700)
+            real_scandir = os.scandir
+            next_calls = 0
+            close_calls = 0
+
+            class _AllocationFailureEntries:
+                def __init__(self, descriptor: int) -> None:
+                    self._entries = real_scandir(descriptor)
+
+                def __iter__(self):
+                    return self
+
+                def __next__(self):
+                    nonlocal next_calls
+                    next_calls += 1
+                    if next_calls == 2:
+                        raise MemoryError("synthetic allocation failure")
+                    return next(self._entries)
+
+                def close(self) -> None:
+                    nonlocal close_calls
+                    close_calls += 1
+                    self._entries.close()
+
+            with sqlite.bound_disposable_state(parent / "state.sqlite") as bound:
+                with bound.staged_state() as staged:
+                    staged.write_bytes(b"complete staged state")
+                    with (
+                        patch.object(
+                            sqlite.os,
+                            "scandir",
+                            side_effect=lambda descriptor: _AllocationFailureEntries(
+                                descriptor
+                            ),
+                        ),
+                        self.assertRaisesRegex(SchemaError, "unavailable"),
+                    ):
+                        bound.publish(staged)
+
+            self.assertEqual(next_calls, 2)
+            self.assertEqual(close_calls, 1)
+
+    def test_bound_publication_target_winner_is_order_independent(self) -> None:
+        class _Entry:
+            def __init__(self, name: str) -> None:
+                self.name = name
+
+        class _OrderedEntries:
+            def __init__(self, names: tuple[str, ...]) -> None:
+                self._entries = iter(_Entry(name) for name in names)
+                self.closed = False
+
+            def __iter__(self):
+                return self
+
+            def __next__(self):
+                return next(self._entries)
+
+            def close(self) -> None:
+                self.closed = True
+
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "disposable"
+            parent.mkdir(mode=0o700)
+            target = parent / "state.sqlite"
+            with sqlite.bound_disposable_state(target) as bound:
+                with bound.staged_state() as staged:
+                    staged.write_bytes(b"complete staged state")
+                    target.write_bytes(b"concurrent winner")
+                    for names in (
+                        (staged.name, target.name),
+                        (target.name, staged.name),
+                        (target.name,),
+                    ):
+                        with self.subTest(names=names):
+                            entries = _OrderedEntries(names)
+                            with patch.object(
+                                sqlite.os,
+                                "scandir",
+                                return_value=entries,
+                            ):
+                                self.assertFalse(bound.publish(staged))
+                            self.assertTrue(entries.closed)
+
     def test_bound_publication_rejects_target_replacement_at_final_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory) / "disposable"
