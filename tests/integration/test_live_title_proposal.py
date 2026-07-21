@@ -7,6 +7,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.epub_opening_evidence import (
     SQLiteEpubOpeningEvidenceRepository,
@@ -66,6 +67,7 @@ from mechanical_librarian.infrastructure.persistence.live_title_evidence import 
     SQLiteLiveTitleEvidenceReader,
 )
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.local_media import sha256_descriptor
 from tests.support.epub_packages import opening_title_isbn_applicability
 
 
@@ -306,6 +308,50 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(report.proposal_set.result.value, "source_not_ready")
         self.assertFalse(report.to_data()["production_applicable"])
+
+    def test_atomic_path_replacement_during_final_hash_rejects_publication(self) -> None:
+        calls = 0
+
+        def replace_during_hash(
+            descriptor: int, length: int, *, maximum: int
+        ) -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                replacement = self.root / "replacement.epub"
+                replacement.write_bytes(b"replacement after final descriptor open")
+                replacement.replace(self.root / "book.epub")
+            return sha256_descriptor(descriptor, length, maximum=maximum)
+
+        with patch(
+            "mechanical_librarian.bootstrap.composition.sha256_descriptor",
+            side_effect=replace_during_hash,
+        ):
+            with self.assertRaisesRegex(
+                TitleProposalPersistenceError, "live proposal source changed"
+            ):
+                _run_live_title_proposal_report(
+                    self.config_path,
+                    self.database,
+                    self.locator.target_reference,
+                    self.locator.snapshot_reference,
+                    self.locator.file_index,
+                )
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                "WHERE execution_mode='production_report_only'"
+            ).fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM current_synthetic_title_proposals"
+            ).fetchone(),
+            (0,),
+        )
 
     def test_provider_expiry_is_checked_with_fresh_publication_clock(self) -> None:
         repository = self.repository(

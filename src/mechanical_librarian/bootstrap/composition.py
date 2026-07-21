@@ -1484,9 +1484,22 @@ def _fingerprint_live_epub_source(
         configuration.evidence.maximum_document_bytes,
     )
     opened = open_local_media(mounts[0].container_path, source.relative_path)
+    replacement = None
     try:
-        return sha256_descriptor(opened.descriptor, opened.length, maximum=maximum)
+        before_identity = opened.identity
+        digest = sha256_descriptor(
+            opened.descriptor, opened.length, maximum=maximum
+        )
+        after_identity = descriptor_identity(opened.descriptor)
+        replacement = open_local_media(
+            mounts[0].container_path, source.relative_path
+        )
+        if before_identity != after_identity or replacement.identity != before_identity:
+            raise LocalMediaError("local media source changed while reading")
+        return digest
     finally:
+        if replacement is not None:
+            os.close(replacement.descriptor)
         os.close(opened.descriptor)
 
 
