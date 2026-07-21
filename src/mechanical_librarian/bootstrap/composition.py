@@ -1426,12 +1426,9 @@ def _run_live_title_proposal_report(
     """Publish one current live proposal without provider or target egress."""
 
     configuration = load_configuration_file(configuration_path)
+    mappings = _inventory_mount_mappings(configuration)
     mount_digests = tuple(
-        sorted(
-            _mount_configuration_digest(mount)
-            for mount in configuration.media_mounts
-            if mount.library_type == "ebook" and mount.read_only
-        )
+        sorted(mapping.configuration_digest for mapping in mappings)
     )
     if not mount_digests:
         raise ConfigurationError("live title proposal requires a read-only ebook mount")
@@ -1439,15 +1436,36 @@ def _run_live_title_proposal_report(
     preflight(database)
     if not path_entry_exists(database):
         raise SchemaError("live title proposal state is unavailable")
+    package_limits = replace(
+        configuration.evidence.epub_package,
+        source_archive_bytes=min(
+            configuration.evidence.epub_package.source_archive_bytes,
+            configuration.evidence.maximum_document_bytes,
+        ),
+    )
+    limits = replace(
+        configuration.evidence.epub_opening,
+        package=package_limits,
+        text_characters_per_selection=min(
+            configuration.evidence.epub_opening.text_characters_per_selection,
+            configuration.evidence.maximum_text_characters,
+        ),
+    )
+    governing = epub_governing_digest(
+        limits, _epub_material_configuration(configuration, mappings)
+    )
     connection = None
     try:
         connection = connect_existing(database)
         migrate(connection)
+        epub_repository = SQLiteEpubOpeningEvidenceRepository(connection)
         evidence_reader = SQLiteLiveTitleEvidenceReader(
             connection,
-            SQLiteEpubOpeningEvidenceRepository(connection),
+            epub_repository,
+            epub_repository,
             SQLiteHardcoverIdentityWorkRepository(connection),
             lambda source: _fingerprint_live_epub_source(configuration, source),
+            governing,
         )
         repository = SQLiteTitleProposalRepository(
             connection,

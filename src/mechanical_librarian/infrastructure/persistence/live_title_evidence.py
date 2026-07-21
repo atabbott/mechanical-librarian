@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Protocol
 
 from mechanical_librarian.application.live_title_proposals import (
+    LiveEpubEvidenceValidator,
     LiveProviderEvidence,
     LiveProviderState,
     LiveSourceEvidence,
@@ -57,13 +58,17 @@ class SQLiteLiveTitleEvidenceReader:
         self,
         connection: sqlite3.Connection,
         source_resolver: EpubSourceResolver,
+        evidence_validator: LiveEpubEvidenceValidator,
         provider_validator: HardcoverMatchValidator,
         source_fingerprint: Callable[[ResolvedEpubSource], str],
+        governing_digest: str,
     ) -> None:
         self._connection = connection
         self._source_resolver = source_resolver
+        self._evidence_validator = evidence_validator
         self._provider_validator = provider_validator
         self._source_fingerprint = source_fingerprint
+        self._governing_digest = governing_digest
 
     def inspect_title_source(
         self, locator: EpubEvidenceLocator, mount_configuration_digest: str
@@ -118,7 +123,7 @@ class SQLiteLiveTitleEvidenceReader:
                 locator, LiveSourceState.NOT_READY, mount_configuration_digest
             )
         evidence = self._connection.execute(
-            "SELECT e.evidence_id,e.source_fingerprint,e.report_json,e.report_digest "
+            "SELECT e.evidence_id,e.source_fingerprint,e.report_json "
             "FROM current_epub_opening_evidence c JOIN epub_opening_evidence e "
             "ON e.evidence_id=c.evidence_id WHERE c.target_reference=? AND c.file_index=? "
             "AND e.snapshot_reference=? AND e.binding_digest=?",
@@ -133,13 +138,16 @@ class SQLiteLiveTitleEvidenceReader:
             return LiveSourceEvidence(
                 locator, LiveSourceState.NOT_READY, mount_configuration_digest
             )
-        report = EpubOpeningReport.from_json(evidence[2])
-        if (
-            hashlib.sha256(evidence[2].encode("utf-8")).hexdigest() != evidence[3]
-            or report.source_fingerprint is None
-            or report.source_fingerprint.digest != evidence[1]
+        if not self._evidence_validator.current_evidence_is_valid(
+            source,
+            str(evidence[1]),
+            self._governing_digest,
+            str(evidence[0]),
         ):
-            raise ValueError("live local evidence is inconsistent")
+            return LiveSourceEvidence(
+                locator, LiveSourceState.NOT_READY, mount_configuration_digest
+            )
+        report = EpubOpeningReport.from_json(evidence[2])
         try:
             current_source_fingerprint = self._source_fingerprint(source)
         except OSError:
@@ -177,7 +185,13 @@ class SQLiteLiveTitleEvidenceReader:
                 work_key=work_key,
             )
         generation, observation_id, status, current_since, expires_at = rows[0]
-        if status != "matched" or observed_at > _parse_time(str(expires_at)):
+        current_since_time = _parse_time(str(current_since))
+        expires_at_time = _parse_time(str(expires_at))
+        if (
+            status != "matched"
+            or observed_at < current_since_time
+            or observed_at > expires_at_time
+        ):
             return LiveProviderEvidence(
                 LiveProviderState.NOT_READY,
                 _not_ready_provider_identity(work_key, repr(rows[0])),

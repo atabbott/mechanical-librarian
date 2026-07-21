@@ -14,7 +14,10 @@ from mechanical_librarian.application.hardcover_safe_executor import (
 )
 from mechanical_librarian.application.title_proposals import ProposalPersistence
 from mechanical_librarian.domain.epub_opening import EpubOpeningReport, OpeningField
-from mechanical_librarian.domain.epub_opening_evidence import EpubEvidenceLocator
+from mechanical_librarian.domain.epub_opening_evidence import (
+    EpubEvidenceLocator,
+    ResolvedEpubSource,
+)
 from mechanical_librarian.domain.hardcover_identity import (
     isbn_identity,
     validate_private_query,
@@ -134,6 +137,16 @@ class LiveTitleProviderReader(Protocol):
     def inspect_title_provider(
         self, work_key: str, observed_at: datetime
     ) -> LiveProviderEvidence: ...
+
+
+class LiveEpubEvidenceValidator(Protocol):
+    def current_evidence_is_valid(
+        self,
+        source: ResolvedEpubSource,
+        source_fingerprint: str,
+        governing_digest: str,
+        evidence_id: str,
+    ) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -399,6 +412,7 @@ __all__ = [
     "LiveTitleProposalReport",
     "LiveTitleProviderReader",
     "LiveTitleSourceReader",
+    "LiveEpubEvidenceValidator",
     "ProposeLiveTitle",
     "mount_configuration_set_digest",
     "render_live_title_proposal_text",

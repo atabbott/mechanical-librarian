@@ -27,11 +27,16 @@ from mechanical_librarian.application.live_title_proposals import (
     ProposeLiveTitle,
 )
 from mechanical_librarian.bootstrap.composition import (
+    _epub_material_configuration,
+    _inventory_mount_mappings,
     _mount_configuration_digest,
     _run_epub_opening_report,
     _run_live_title_proposal_report,
 )
-from mechanical_librarian.domain.epub_opening_evidence import EpubEvidenceLocator
+from mechanical_librarian.domain.epub_opening_evidence import (
+    EpubEvidenceLocator,
+    epub_governing_digest,
+)
 from mechanical_librarian.domain.title_proposals import (
     TitleProposalResult,
     live_proposal_set_from_manifest,
@@ -96,10 +101,29 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
             "secret_reference": "/run/secrets/hardcover-token",
             "authority_revision": 1,
         }
+        config["evidence"]["maximum_text_characters"] = 1024
         self.config_path = self.root / "config.json"
         self.config_path.write_text(json.dumps(config), encoding="utf-8")
-        self.mount_digest = _mount_configuration_digest(
-            load_configuration_file(self.config_path).media_mounts[0]
+        configured = load_configuration_file(self.config_path)
+        self.mount_digest = _mount_configuration_digest(configured.media_mounts[0])
+        mappings = _inventory_mount_mappings(configured)
+        package_limits = replace(
+            configured.evidence.epub_package,
+            source_archive_bytes=min(
+                configured.evidence.epub_package.source_archive_bytes,
+                configured.evidence.maximum_document_bytes,
+            ),
+        )
+        opening_limits = replace(
+            configured.evidence.epub_opening,
+            package=package_limits,
+            text_characters_per_selection=min(
+                configured.evidence.epub_opening.text_characters_per_selection,
+                configured.evidence.maximum_text_characters,
+            ),
+        )
+        self.governing_digest = epub_governing_digest(
+            opening_limits, _epub_material_configuration(configured, mappings)
         )
         target = TargetId(
             AdapterId("audiobookshelf"),
@@ -157,7 +181,7 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         accepted = evidence.accept(
             source,
             report.source_fingerprint.digest,
-            hashlib.sha256(b"governing").hexdigest(),
+            self.governing_digest,
             datetime(2026, 7, 20, 1, tzinfo=timezone.utc),
         )
         claim = evidence.claim(
@@ -171,7 +195,7 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
             source,
             report.source_fingerprint.digest,
             report.source_fingerprint.digest,
-            hashlib.sha256(b"governing").hexdigest(),
+            self.governing_digest,
             report,
             datetime(2026, 7, 20, 1, tzinfo=timezone.utc),
         )
@@ -182,6 +206,7 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         hardcover = SQLiteHardcoverIdentityWorkRepository(self.connection)
         self.now = datetime.now(timezone.utc)
         start = self.now - timedelta(minutes=1)
+        self.provider_current_since = start
         accepted_work = hardcover.accept(self.work_key, start)
         identity_claim = hardcover.claim(
             accepted_work.reference, "worker", start, gate_owned=True
@@ -208,13 +233,16 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def repository(self, **kwargs) -> SQLiteTitleProposalRepository:
+        epub_repository = SQLiteEpubOpeningEvidenceRepository(self.connection)
         reader = SQLiteLiveTitleEvidenceReader(
             self.connection,
-            SQLiteEpubOpeningEvidenceRepository(self.connection),
+            epub_repository,
+            epub_repository,
             SQLiteHardcoverIdentityWorkRepository(self.connection),
             lambda source: hashlib.sha256(
                 (self.root / source.relative_path).read_bytes()
             ).hexdigest(),
+            self.governing_digest,
         )
         publication_clock = kwargs.pop("publication_clock", lambda: self.now)
         return SQLiteTitleProposalRepository(
@@ -375,6 +403,117 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
             (0,),
         )
 
+    def test_future_provider_current_since_rejects_clock_rollback_without_history(self) -> None:
+        repository = self.repository(
+            publication_clock=lambda: self.provider_current_since - timedelta(seconds=1)
+        )
+        future = repository.inspect_provider(
+            self.work_key, self.provider_current_since - timedelta(seconds=1)
+        )
+        self.assertEqual(future.state.value, "not_ready")
+
+        with self.assertRaisesRegex(
+            TitleProposalPersistenceError, "live provider evidence changed"
+        ):
+            ProposeLiveTitle(repository).run(
+                self.locator,
+                (self.mount_digest,),
+                provider_enabled=True,
+                authority_revision=1,
+                observed_at=self.now,
+            )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                "WHERE execution_mode='production_report_only'"
+            ).fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM current_synthetic_title_proposals"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_forged_current_f07b_row_without_work_lifecycle_is_rejected(self) -> None:
+        original = list(
+            self.connection.execute(
+                "SELECT * FROM epub_opening_evidence"
+            ).fetchone()
+        )
+        original[0] = "evidence_" + "a" * 32
+        original[1] = hashlib.sha256(b"forged-evidence-digest").hexdigest()
+        original[2] = hashlib.sha256(b"forged-work-key").hexdigest()
+        self.connection.execute("DELETE FROM current_epub_opening_evidence")
+        self.connection.execute(
+            "INSERT INTO epub_opening_evidence VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            tuple(original),
+        )
+        self.connection.execute(
+            "INSERT INTO current_epub_opening_evidence("
+            "target_reference,file_index,evidence_id,sequence,lane_revision,updated_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                self.locator.target_reference,
+                self.locator.file_index,
+                original[0],
+                2,
+                2,
+                self.now.isoformat().replace("+00:00", "Z"),
+            ),
+        )
+        self.connection.commit()
+
+        with self.assertRaisesRegex(
+            TitleProposalPersistenceError, "live proposal source could not be read"
+        ):
+            _run_live_title_proposal_report(
+                self.config_path,
+                self.database,
+                self.locator.target_reference,
+                self.locator.snapshot_reference,
+                self.locator.file_index,
+            )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                "WHERE execution_mode='production_report_only'"
+            ).fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM current_synthetic_title_proposals"
+            ).fetchone(),
+            (0,),
+        )
+
+    def test_governing_configuration_change_makes_old_f07b_evidence_not_ready(self) -> None:
+        first = _run_live_title_proposal_report(
+            self.config_path,
+            self.database,
+            self.locator.target_reference,
+            self.locator.snapshot_reference,
+            self.locator.file_index,
+        )
+        config = json.loads(self.config_path.read_text(encoding="utf-8"))
+        config["evidence"]["maximum_text_characters"] = 2048
+        self.config_path.write_text(json.dumps(config), encoding="utf-8")
+
+        changed = _run_live_title_proposal_report(
+            self.config_path,
+            self.database,
+            self.locator.target_reference,
+            self.locator.snapshot_reference,
+            self.locator.file_index,
+        )
+        self.assertEqual(first.proposal_set.result.value, "needs_review")
+        self.assertEqual(changed.proposal_set.result.value, "source_not_ready")
+        self.assertFalse(changed.persistence.replayed)
+        self.assertFalse(changed.to_data()["production_applicable"])
+        self.assertEqual(changed.persistence.history_count, 2)
+
     def test_exact_replay_rejects_a_concurrently_advanced_current_pointer(self) -> None:
         repository = self.repository()
         first = ProposeLiveTitle(repository).run(
@@ -428,10 +567,12 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         real_reader = SQLiteLiveTitleEvidenceReader(
             self.connection,
             SQLiteEpubOpeningEvidenceRepository(self.connection),
+            SQLiteEpubOpeningEvidenceRepository(self.connection),
             SQLiteHardcoverIdentityWorkRepository(self.connection),
             lambda source: hashlib.sha256(
                 (self.root / source.relative_path).read_bytes()
             ).hexdigest(),
+            self.governing_digest,
         )
         second_digest = hashlib.sha256(b"second-mount").hexdigest()
         calls = 0
