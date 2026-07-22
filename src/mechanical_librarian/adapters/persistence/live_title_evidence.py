@@ -18,6 +18,7 @@ from mechanical_librarian.application.live_title_proposals import (
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningReport
 from mechanical_librarian.domain.epub_opening_evidence import (
+    EpubEvidenceFailure,
     EpubEvidenceLocator,
     EpubSourceResolution,
     ResolvedEpubSource,
@@ -32,6 +33,10 @@ from mechanical_librarian.domain.inventory_v2 import (
     ObservationState,
     opaque_snapshot_reference,
     opaque_target_reference,
+)
+from mechanical_librarian.domain.title_proposals import (
+    TitleProposalValueError,
+    normalized_title_key,
 )
 
 
@@ -65,13 +70,23 @@ class SQLiteLiveTitleEvidenceReader:
     def inspect_title_source(
         self, locator: EpubEvidenceLocator, mount_configuration_digest: str
     ) -> LiveSourceEvidence:
-        source = self._source_resolver.resolve(
+        resolution = self._source_resolver.resolve(
             locator, mount_configuration_digest
-        ).source
-        if source is None:
+        )
+        if resolution.source is None:
+            if resolution.failure not in {
+                EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE,
+                EpubEvidenceFailure.WRONG_TARGET,
+                EpubEvidenceFailure.STALE_SNAPSHOT,
+                EpubEvidenceFailure.FILE_INDEX_OUT_OF_RANGE,
+                EpubEvidenceFailure.NON_EPUB,
+                EpubEvidenceFailure.MOUNT_MISMATCH,
+            }:
+                raise ValueError("live EPUB source resolution failed")
             return LiveSourceEvidence(
                 locator, LiveSourceState.NOT_READY, mount_configuration_digest
             )
+        source = resolution.source
         row = self._connection.execute(
             "SELECT s.snapshot_id,s.fingerprint_digest,s.canonical_observation,s.observed_at "
             "FROM current_inventory_v2 c JOIN inventory_v2_snapshots s USING "
@@ -115,6 +130,12 @@ class SQLiteLiveTitleEvidenceReader:
         title = titles[0]
         if title.state is ObservationState.PRESENT and len(title.values) == 1:
             current_title_loaded, current_title = True, title.values[0]
+            try:
+                normalized_title_key(current_title)
+            except TitleProposalValueError:
+                return LiveSourceEvidence(
+                    locator, LiveSourceState.NOT_READY, mount_configuration_digest
+                )
         elif title.state in {ObservationState.NULL, ObservationState.EMPTY}:
             current_title_loaded, current_title = True, None
         else:

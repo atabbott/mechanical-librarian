@@ -21,6 +21,7 @@ from mechanical_librarian.application.title_proposals import (
     SyntheticTitleProposalReport,
 )
 from mechanical_librarian.bootstrap.composition import _run_epub_opening_report
+from mechanical_librarian.domain.epub_opening import OpeningField
 from mechanical_librarian.domain.epub_opening_evidence import EpubEvidenceLocator
 from mechanical_librarian.domain.title_proposals import LiveTitleProposalSet
 from mechanical_librarian.interfaces.cli import main as cli_main
@@ -211,6 +212,28 @@ class LiveTitleProposalTests(unittest.TestCase):
                 self.assertEqual(report.proposal_set.proposals, ())
                 self.assertFalse(report.proposal_set.production_applicable)
                 self.assertEqual(repository.provider_reads, provider_reads)
+
+    def test_null_normalized_isbn_publishes_stable_source_not_ready(self) -> None:
+        report = replace(
+            self.report,
+            claims=tuple(
+                replace(claim, normalized_value=None)
+                if claim.field is OpeningField.IDENTIFIER
+                and claim.identifier_type in {"isbn_10", "isbn_13"}
+                else claim
+                for claim in self.report.claims
+            ),
+        )
+        source = replace(self.source, report=report)
+        repository = _Repository(source)
+        self.source = source
+
+        result = self._execute(repository)
+
+        self.assertEqual(result.proposal_set.result.value, "source_not_ready")
+        self.assertEqual(result.proposal_set.proposals, ())
+        self.assertFalse(result.proposal_set.production_applicable)
+        self.assertEqual(repository.provider_reads, 0)
 
     def test_exact_replay_and_changed_input_successor(self) -> None:
         repository = _Repository(self.source)

@@ -34,7 +34,9 @@ from mechanical_librarian.bootstrap.composition import (
     _run_live_title_proposal_report,
 )
 from mechanical_librarian.domain.epub_opening_evidence import (
+    EpubEvidenceFailure,
     EpubEvidenceLocator,
+    EpubSourceResolution,
     epub_governing_digest,
 )
 from mechanical_librarian.domain.title_proposals import (
@@ -390,8 +392,22 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
             ),
         )
         for observation in cases:
+            repository = self.repository()
+            source_reader = repository._source_reader
+            self.assertIsInstance(source_reader, SQLiteLiveTitleEvidenceReader)
+            resolution = source_reader._source_resolver.resolve(
+                self.locator, self.mount_digest
+            )
             with (
-                self.subTest(target=observation.target.adapter.value, media=observation.media_type.value),
+                self.subTest(
+                    target=observation.target.adapter.value,
+                    media=observation.media_type.value,
+                ),
+                patch.object(
+                    source_reader._source_resolver,
+                    "resolve",
+                    return_value=resolution,
+                ),
                 patch.object(InventoryObservation, "from_json", return_value=observation),
                 patch.object(
                     SQLiteLiveTitleEvidenceReader,
@@ -399,7 +415,7 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
                     side_effect=AssertionError("provider lookup must remain unreachable"),
                 ) as provider_lookup,
             ):
-                report = ProposeLiveTitle(self.repository()).run(
+                report = ProposeLiveTitle(repository).run(
                     self.locator,
                     (self.mount_digest,),
                     provider_enabled=True,
@@ -409,6 +425,89 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
                 provider_lookup.assert_not_called()
                 self.assertEqual(report.proposal_set.result.value, "source_not_ready")
                 self.assertFalse(report.to_data()["production_applicable"])
+
+    def test_malformed_current_title_publishes_stable_source_not_ready(self) -> None:
+        original = self.snapshot.observation
+        malformed = InventoryObservation.create(
+            target=original.target,
+            media_type=original.media_type,
+            lifecycle=original.lifecycle,
+            fields=(
+                FieldObservation(
+                    ObservationField.TITLE,
+                    ObservationState.PRESENT,
+                    ("Malformed\x01Title",),
+                ),
+            ),
+            file_identities=original.file_identities,
+            cover_identity=original.cover_identity,
+            adapter_version=original.adapter_version,
+            normalizer_version=original.normalizer_version,
+            service_version=original.service_version,
+            warnings=original.warnings,
+            observed_at=original.observed_at,
+        )
+        with (
+            patch.object(InventoryObservation, "from_json", return_value=malformed),
+            patch.object(InventorySnapshotV2, "create", return_value=self.snapshot),
+            patch.object(
+                SQLiteLiveTitleEvidenceReader,
+                "inspect_title_provider",
+                side_effect=AssertionError("provider lookup must remain unreachable"),
+            ) as provider_lookup,
+        ):
+            report = ProposeLiveTitle(self.repository()).run(
+                self.locator,
+                (self.mount_digest,),
+                provider_enabled=True,
+                authority_revision=1,
+                observed_at=self.now,
+            )
+
+        provider_lookup.assert_not_called()
+        self.assertEqual(report.proposal_set.result.value, "source_not_ready")
+        self.assertFalse(report.to_data()["production_applicable"])
+        self.assertEqual(report.persistence.history_count, 1)
+
+    def test_fatal_source_resolution_fails_without_proposal_history(self) -> None:
+        for failure in (
+            EpubEvidenceFailure.AMBIGUOUS_REFERENCE,
+            EpubEvidenceFailure.BINDING_INTEGRITY_FAILURE,
+            EpubEvidenceFailure.CORRUPT_STATE,
+            EpubEvidenceFailure.PERSISTENCE_FAILURE,
+        ):
+            with (
+                self.subTest(failure=failure.value),
+                patch.object(
+                    SQLiteEpubOpeningEvidenceRepository,
+                    "resolve",
+                    return_value=EpubSourceResolution(failure=failure),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    TitleProposalPersistenceError,
+                    "live proposal source could not be read",
+                ):
+                    ProposeLiveTitle(self.repository()).run(
+                        self.locator,
+                        (self.mount_digest,),
+                        provider_enabled=True,
+                        authority_revision=1,
+                        observed_at=self.now,
+                    )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                        "WHERE execution_mode='production_report_only'"
+                    ).fetchone(),
+                    (0,),
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT COUNT(*) FROM current_synthetic_title_proposals"
+                    ).fetchone(),
+                    (0,),
+                )
 
     def test_off_config_connection_or_library_is_not_a_live_source(self) -> None:
         original = json.loads(self.config_path.read_text(encoding="utf-8"))

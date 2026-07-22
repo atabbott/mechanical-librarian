@@ -343,6 +343,8 @@ def _select_local(source: LiveSourceEvidence) -> tuple[str, str] | None:
             or claim.applicability_label != "ebook"
         ):
             continue
+        if claim.normalized_value is None:
+            return None
         try:
             canonical_isbns.add(isbn_identity(claim.normalized_value).canonical_isbn_13)
         except (TypeError, ValueError):
