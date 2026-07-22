@@ -584,28 +584,27 @@ class SqliteFoundationTests(unittest.TestCase):
             self.addCleanup(connection.close)
             with patch.object(sqlite, "MIGRATIONS", MIGRATIONS[:6]):
                 self.assertEqual(migrate(connection), 6)
-            proposal = proposal_set_from_manifest(
-                manifest=title_manifest(),
-                result=TitleProposalResult.NEEDS_REVIEW,
-                proposed_value="A Synthetic Book",
-            )
+            proposal_set_id = "ps-" + "a" * 60
+            proposal_digest = "a" * 64
+            proposal_lineage = "synthetic-title-preview-agree-empty"
+            canonical_set = "{\"schema\":\"title-proposal-set-v1\"}"
             connection.execute(
                 "INSERT INTO synthetic_title_proposal_sets("
                 "set_id, identity_digest, lineage, lineage_revision, previous_set_id, mode, canonical_set"
                 ") VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
-                    proposal.set_id,
-                    proposal.identity_digest,
-                    proposal.lineage,
-                    proposal.lineage_revision,
-                    proposal.previous_set_id,
-                    proposal.mode.value,
-                    proposal.to_json(),
+                    proposal_set_id,
+                    proposal_digest,
+                    proposal_lineage,
+                    1,
+                    None,
+                    "synthetic_preview",
+                    canonical_set,
                 ),
             )
             connection.execute(
                 "INSERT INTO current_synthetic_title_proposals(lineage, set_id) VALUES (?, ?)",
-                (proposal.lineage, proposal.set_id),
+                (proposal_lineage, proposal_set_id),
             )
 
             self.assertEqual(migrate(connection), CURRENT_VERSION)
@@ -614,9 +613,9 @@ class SqliteFoundationTests(unittest.TestCase):
                 connection.execute(
                     "SELECT canonical_set,execution_mode FROM "
                     "synthetic_title_proposal_sets WHERE set_id = ?",
-                    (proposal.set_id,),
+                    (proposal_set_id,),
                 ).fetchone(),
-                (proposal.to_json(), "synthetic_preview"),
+                (canonical_set, "synthetic_preview"),
             )
             objects = {
                 (kind, name)
