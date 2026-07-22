@@ -80,6 +80,32 @@ def _target(value: dict[str, str]) -> TargetId:
 
 
 class DuxCorpusSchemaTests(unittest.TestCase):
+    def test_loaded_corpus_is_exactly_the_current_delivered_boundary(self) -> None:
+        registry = load_registry()
+
+        self.assertEqual(
+            dict(registry.coverage),
+            {
+                "destructive_cases": "dux-synthetic-11",
+                "evidence_only_input": "dux-synthetic-02",
+                "independent_siblings": "dux-synthetic-10",
+                "no_ops": "dux-synthetic-05",
+            },
+        )
+        self.assertEqual(
+            tuple(scenario.scenario_id for scenario in registry.scenarios),
+            (
+                "dux-synthetic-02",
+                "dux-synthetic-05",
+                "dux-synthetic-10",
+                "dux-synthetic-11",
+            ),
+        )
+        for scenario in registry.scenarios:
+            with self.subTest(scenario=scenario.scenario_id):
+                self.assertNotIn("future_owner", scenario.record)
+                self.assertNotIn("not_yet_proving_product_behavior", scenario.record)
+
     def test_registry_has_exact_complete_coverage_and_required_records(self) -> None:
         registry = load_registry()
         self.assertEqual(frozenset(registry.coverage), CATEGORIES)
@@ -101,16 +127,13 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 self.assertIsNone(licensing["required_notice"])
                 self.assertTrue(scenario.record["dux_behavior"])
                 self.assertTrue(scenario.record["preserved_invariant"])
-                if scenario.status == "future":
-                    self.assertTrue(scenario.record["not_yet_proving_product_behavior"])
-                    self.assertEqual(scenario.record["future_owner"]["state"], "open")
 
     def test_records_and_registry_are_immutable(self) -> None:
         registry = load_registry()
         with self.assertRaises(TypeError):
-            registry.coverage["conflicts"] = "dux-synthetic-01"  # type: ignore[index]
+            registry.coverage["no_ops"] = "dux-synthetic-02"  # type: ignore[index]
         with self.assertRaises(TypeError):
-            registry.scenarios[0].record["status"] = "current"  # type: ignore[index]
+            registry.scenarios[0].record["category"] = "no_ops"  # type: ignore[index]
 
     def test_committed_and_repeated_canonical_serialization_is_byte_stable(self) -> None:
         first = load_registry()
@@ -126,15 +149,15 @@ class DuxCorpusSchemaTests(unittest.TestCase):
         with _corpus_copy() as root:
             _rewrite(root, "dux-synthetic-11.json", lambda item: item.pop("provenance"))
             with self.assertRaisesRegex(CorpusValidationError, r"^DUX013_PROVENANCE scenario=dux-synthetic-11$"):
-                load_scenario("dux-synthetic-01", root)
+                load_scenario("dux-synthetic-02", root)
 
     def test_missing_provenance_and_invalid_versions_fail_closed(self) -> None:
         with _corpus_copy() as root:
-            _rewrite(root, "dux-synthetic-01.json", lambda item: item.pop("provenance"))
+            _rewrite(root, "dux-synthetic-02.json", lambda item: item.pop("provenance"))
             with self.assertRaisesRegex(CorpusValidationError, "DUX013_PROVENANCE"):
                 load_registry(root)
         with _corpus_copy() as root:
-            _rewrite(root, "dux-synthetic-01.json", lambda item: item.__setitem__("schema", "dux-synthetic-invalid"))
+            _rewrite(root, "dux-synthetic-02.json", lambda item: item.__setitem__("schema", "dux-synthetic-invalid"))
             with self.assertRaisesRegex(CorpusValidationError, "DUX010_SCENARIO_SCHEMA"):
                 load_registry(root)
         with _corpus_copy() as root:
@@ -142,13 +165,9 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.assertRaisesRegex(CorpusValidationError, "DUX006_REGISTRY_SCHEMA"):
                 load_registry(root)
 
-    def test_invalid_future_owner_duplicate_identity_and_orphan_fail_closed(self) -> None:
+    def test_duplicate_identity_and_orphan_fail_closed(self) -> None:
         with _corpus_copy() as root:
-            _rewrite(root, "dux-synthetic-01.json", lambda item: item["future_owner"].__setitem__("issue", 13))
-            with self.assertRaisesRegex(CorpusValidationError, "DUX015_OWNERSHIP"):
-                load_registry(root)
-        with _corpus_copy() as root:
-            _rewrite(root, "dux-synthetic-03.json", lambda item: item.__setitem__("scenario_id", "dux-synthetic-01"))
+            _rewrite(root, "dux-synthetic-05.json", lambda item: item.__setitem__("scenario_id", "dux-synthetic-02"))
             with self.assertRaisesRegex(CorpusValidationError, "DUX017_DUPLICATE_ID"):
                 load_registry(root)
         with _corpus_copy() as root:
@@ -160,16 +179,12 @@ class DuxCorpusSchemaTests(unittest.TestCase):
         cases = (
             ("category", ["sensitive-category-list"], "DUX012_CATEGORY"),
             ("category", {"sensitive-category-object": True}, "DUX012_CATEGORY"),
-            ("criterion", ["sensitive-criterion-list"], "DUX015_OWNERSHIP"),
-            ("criterion", {"sensitive-criterion-object": True}, "DUX015_OWNERSHIP"),
         )
         for field, rejected, rule in cases:
             with self.subTest(field=field, rejected_type=type(rejected).__name__), _corpus_copy() as root:
                 if field == "category":
                     mutate = lambda item, value=rejected: item.__setitem__(field, value)
-                else:
-                    mutate = lambda item, value=rejected: item["future_owner"].__setitem__(field, value)
-                _rewrite(root, "dux-synthetic-01.json", mutate)
+                _rewrite(root, "dux-synthetic-02.json", mutate)
                 with self.assertRaises(CorpusValidationError) as raised:
                     load_registry(root)
                 self.assertEqual(raised.exception.rule, rule)
@@ -185,7 +200,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(sentinel="generated-source-sentinel"), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
                 )
                 with self.assertRaises(CorpusValidationError) as raised:
@@ -255,7 +270,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(rule=rule), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
                 )
                 with self.assertRaises(CorpusValidationError) as raised:
@@ -316,7 +331,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(location="value", sentinel=sentinel), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
                 )
                 with self.assertRaises(CorpusValidationError) as raised:
@@ -333,7 +348,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(location="nested-key", sentinel=sentinel), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item["contract"]["input"].__setitem__(
                         value, "synthetic-value"
                     ),
@@ -354,7 +369,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(location="safe-value", sentinel=sentinel), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
                 )
                 self.assertEqual(len(load_registry(root).scenarios), len(CATEGORIES))
@@ -566,7 +581,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 if location in {"nested-key", "benign-nested-key"}:
                     _rewrite(
                         root,
-                        "dux-synthetic-01.json",
+                        "dux-synthetic-02.json",
                         lambda item, value=sentinel: item["contract"]["input"].__setitem__(
                             value, "synthetic-value"
                         ),
@@ -574,7 +589,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 else:
                     _rewrite(
                         root,
-                        "dux-synthetic-01.json",
+                        "dux-synthetic-02.json",
                         lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
                     )
                 if expected_rule is None:
@@ -594,7 +609,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 ("root-value", lambda item: item.__setitem__("dux_behavior", sentinel)),
                 (
                     "list-value",
-                    lambda item: item["contract"]["input"]["candidate_values"].append(sentinel),
+                    lambda item: item["contract"]["input"]["proposals"].append(sentinel),
                 ),
                 (
                     "deep-mapping-list-value",
@@ -612,7 +627,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             )
             for location, mutate in mutations:
                 with self.subTest(location=location, sentinel=sentinel), _corpus_copy() as root:
-                    _rewrite(root, "dux-synthetic-01.json", mutate)
+                    _rewrite(root, "dux-synthetic-02.json", mutate)
                     with self.assertRaises(CorpusValidationError) as raised:
                         load_registry(root)
                     self.assertEqual(raised.exception.rule, "DUX025_PRODUCTION_STATE")
@@ -629,7 +644,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(location="value", sentinel=sentinel), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
                 )
                 with self.assertRaises(CorpusValidationError) as raised:
@@ -646,7 +661,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(location="nested-key", sentinel=sentinel), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item["contract"]["input"].__setitem__(
                         value, "synthetic-value"
                     ),
@@ -665,7 +680,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(location="safe-value", sentinel=sentinel), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
                 )
                 self.assertEqual(len(load_registry(root).scenarios), len(CATEGORIES))
@@ -694,7 +709,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(sentinel=sentinel), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
                 )
                 with self.assertRaises(CorpusValidationError) as raised:
@@ -718,7 +733,7 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(rule=rule), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
                 )
                 with self.assertRaises(CorpusValidationError) as raised:
@@ -754,19 +769,19 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.subTest(sentinel=sentinel), _corpus_copy() as root:
                 _rewrite(
                     root,
-                    "dux-synthetic-01.json",
+                    "dux-synthetic-02.json",
                     lambda item, value=sentinel: item.__setitem__("dux_behavior", value),
                 )
                 self.assertEqual(len(load_registry(root).scenarios), len(CATEGORIES))
 
     def test_noncanonical_and_unowned_registry_files_fail_closed(self) -> None:
         with _corpus_copy() as root:
-            path = root / "dux-synthetic-01.json"
+            path = root / "dux-synthetic-02.json"
             path.write_bytes(path.read_bytes().replace(b'"category"', b' "category"', 1))
             with self.assertRaisesRegex(CorpusValidationError, "DUX005_NONCANONICAL"):
                 load_registry(root)
         with _corpus_copy() as root:
-            _rewrite(root, "registry.json", lambda item: item["scenario_files"].append("dux-synthetic-01.json"))
+            _rewrite(root, "registry.json", lambda item: item["scenario_files"].append("dux-synthetic-02.json"))
             with self.assertRaisesRegex(CorpusValidationError, "DUX007_REGISTRY_FILES"):
                 load_registry(root)
         with _corpus_copy() as root:
@@ -778,15 +793,8 @@ class DuxCorpusSchemaTests(unittest.TestCase):
 
     def test_each_category_rejects_a_type_correct_semantic_mismatch(self) -> None:
         invalid_changes = {
-            "dux-synthetic-01.json": lambda item: item["contract"]["expected"].__setitem__("agreement_families", 2),
             "dux-synthetic-02.json": lambda item: item["contract"]["input"]["proposals"].append("dux-synthetic-proposal-x"),
-            "dux-synthetic-03.json": lambda item: item["contract"]["input"].__setitem__("evidence_families", ["dux-synthetic-family-b", "dux-synthetic-family-b"]),
-            "dux-synthetic-04.json": lambda item: item["contract"]["input"].__setitem__("candidate_identity", item["contract"]["input"]["current_identity"]),
             "dux-synthetic-05.json": lambda item: item["contract"]["input"].__setitem__("proposed", ["synthetic-title-delta"]),
-            "dux-synthetic-06.json": lambda item: item["contract"]["input"].__setitem__("current_state", "empty"),
-            "dux-synthetic-07.json": lambda item: item["contract"]["input"].__setitem__("media_type", "audiobook"),
-            "dux-synthetic-08.json": lambda item: item["contract"]["input"].__setitem__("candidate", item["contract"]["input"]["current"]),
-            "dux-synthetic-09.json": lambda item: item["contract"]["expected"].__setitem__("sequence", ["8.625"]),
             "dux-synthetic-10.json": lambda item: item["contract"]["expected"].__setitem__("siblings", list(reversed(item["contract"]["expected"]["siblings"]))),
             "dux-synthetic-11.json": lambda item: item["contract"]["input"].__setitem__("destructive", False),
         }
@@ -795,72 +803,6 @@ class DuxCorpusSchemaTests(unittest.TestCase):
                 _rewrite(root, filename, mutate)
                 with self.assertRaisesRegex(CorpusValidationError, "DUX016_CONTRACT"):
                     load_registry(root)
-
-    def test_candidate_agreement_scenarios_remain_semantically_distinct(self) -> None:
-        owner_criterion = (
-            "Agreement is counted across independent evidence families, so correlated or "
-            "repeated rows cannot manufacture consensus; policy-defined decisive "
-            "single-family evidence remains possible."
-        )
-        expected = {
-            "dux-synthetic-01": {
-                "dux_behavior": (
-                    "Repeated candidate observations from one evidence family remain correlated."
-                ),
-                "preserved_invariant": (
-                    "Repeated observations from one evidence family remain non-consensus."
-                ),
-                "family_count": 1,
-                "expected": {"agreement_families": 1, "outcome": "not_consensus"},
-            },
-            "dux-synthetic-03": {
-                "dux_behavior": (
-                    "Equal candidates from independent evidence families may establish agreement."
-                ),
-                "preserved_invariant": (
-                    "Identical choices retain consensus without appearing multiple times."
-                ),
-                "family_count": 2,
-                "expected": {"agreement_families": 2, "outcome": "consensus"},
-            },
-        }
-        for scenario_id, contract in expected.items():
-            with self.subTest(scenario=scenario_id):
-                scenario = load_scenario(scenario_id)
-                record = _mutable(scenario.record)
-                inputs = record["contract"]["input"]
-                self.assertEqual(record["dux_behavior"], contract["dux_behavior"])
-                self.assertEqual(
-                    record["preserved_invariant"], contract["preserved_invariant"]
-                )
-                self.assertEqual(
-                    len(set(inputs["evidence_families"])), contract["family_count"]
-                )
-                self.assertEqual(record["contract"]["expected"], contract["expected"])
-                self.assertEqual(record["future_owner"]["criterion"], owner_criterion)
-
-    def test_series_scenario_preserves_membership_and_sequence_independently(self) -> None:
-        scenario = load_scenario("dux-synthetic-09")
-        record = _mutable(scenario.record)
-        inputs = record["contract"]["input"]
-        expected = record["contract"]["expected"]
-
-        self.assertEqual(
-            record["dux_behavior"],
-            "Series membership and sequence remain independently represented.",
-        )
-        self.assertEqual(
-            record["preserved_invariant"],
-            "Series choices preserve membership and sequence independently.",
-        )
-        self.assertEqual(
-            record["future_owner"]["criterion"],
-            "Represent series membership and sequence independently, including numeric, "
-            "decimal, labelled, conflicting-order, and unknown values.",
-        )
-        self.assertEqual(expected["membership"], inputs["raw_membership"])
-        self.assertEqual(expected["sequence"], inputs["raw_sequence"])
-        self.assertEqual(expected["outcome"], "independent_series_parts")
 
     def test_evidence_only_contract_requires_a_typed_evidence_reference_id(self) -> None:
         with _corpus_copy() as root:
