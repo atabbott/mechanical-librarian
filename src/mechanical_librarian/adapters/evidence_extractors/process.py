@@ -15,11 +15,11 @@ from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.identifiers import Fingerprint
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
-    EpubPackageLimits,
     EpubPackageCapability,
     EpubInspectionOutcome,
     EpubPackageReport,
 )
+from mechanical_librarian.domain.epub_inspection import EpubPackageLimits
 
 
 _STDOUT_LIMIT = 1_048_576
@@ -149,7 +149,6 @@ def _run_epub_opening_protocol(
 
     context = json.dumps(
         {
-            "capability": "opening_matter",
             "child_seconds": min(
                 float(limits.wall_seconds),
                 max(0.001, float(limits.wall_seconds) - _CHILD_MARGIN_SECONDS),

@@ -161,7 +161,7 @@ def _concrete_adapter_imports() -> list[str]:
     modules = {
         _module_name(path): path
         for path in adapter_root.rglob("*.py")
-        if path.name != "__init__.py"
+        if path.name not in {"__init__.py", "epub_package_model.py"}
     }
     violations: list[str] = []
     for origin, path in modules.items():
@@ -171,12 +171,7 @@ def _concrete_adapter_imports() -> list[str]:
                 for module in modules
                 if imported == module or imported.startswith(f"{module}.")
             ]
-            if (
-                targets
-                and origin not in targets
-                and max(targets, key=len)
-                != "mechanical_librarian.adapters.evidence_extractors.epub_package_model"
-            ):
+            if targets and origin not in targets:
                 violations.append(f"{origin} imports {max(targets, key=len)}")
     return sorted(set(violations))
 
@@ -259,12 +254,7 @@ class ImportBoundaryTests(unittest.TestCase):
         for path in sorted(PACKAGE_ROOT.rglob("*.py")):
             origin = _module_name(path)
             for target in _imports(path):
-                if (
-                    violates_boundary(origin, target)
-                    and not target.startswith(
-                        "mechanical_librarian.adapters.evidence_extractors.epub_package_model"
-                    )
-                ):
+                if violates_boundary(origin, target):
                     violations.append(f"{origin} imports {target}")
 
         self.assertEqual(violations, [])

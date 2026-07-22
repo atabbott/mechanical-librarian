@@ -783,35 +783,6 @@ class SupportedWriter(Protocol):
         ...
 
 
-@dataclass(frozen=True)
-class ExtractorRequest:
-    target: TargetId
-    snapshot: SnapshotId
-    fingerprint: Fingerprint
-    media_type: MediaType
-    files: tuple[FileReference, ...]
-    context: OperationContext
-
-    def __post_init__(self) -> None:
-        if type(self.target) is not TargetId or type(self.snapshot) is not SnapshotId or type(self.fingerprint) is not Fingerprint or type(self.media_type) is not MediaType or type(self.context) is not OperationContext:
-            raise ValueError("extractor requests require typed bounded snapshot context")
-        if type(self.files) is not tuple or not 1 <= len(self.files) <= 32 or not all(type(item) is FileReference for item in self.files):
-            raise ValueError("extractor files must be a non-empty bounded immutable tuple")
-        self.preflight()
-
-    def preflight(self) -> None:
-        size = sum(len(item.mount.encode("utf-8")) + len(item.relative_path.encode("utf-8")) for item in self.files)
-        self.context.preflight(item_count=len(self.files), serialized_bytes=size)
-
-    def preflight_result(self) -> PortResult[Unit]:
-        size = sum(len(item.mount.encode("utf-8")) + len(item.relative_path.encode("utf-8")) for item in self.files)
-        return self.context.preflight_result(item_count=len(self.files), serialized_bytes=size)
-
-
-class EvidenceExtractor(Protocol):
-    def extract(self, request: ExtractorRequest) -> PortResult[EvidenceRecord]: ...
-
-
 class ProviderFactCode(StrEnum):
     TITLE = "title"
     AUTHOR = "author"
@@ -1189,8 +1160,8 @@ __all__ = [
     "AdapterDiagnostics", "AuditRepository", "BackupReadiness",
     "BackupReadinessReport", "BackupReadinessRequest", "BackupState", "CancellationId",
     "CancellationProbe", "Capability", "CapabilitySet", "Clock", "CompatibilityReport",
-    "CompatibilityStatus", "CoverCandidate", "CoverMutation", "CoverProvider", "CurrentFieldState", "CurrentFieldStateKind", "Deadline", "EvidenceExtractor",
-    "ExpectedState", "ExtractorRequest", "FailureKind", "HealthReport", "HealthStatus",
+    "CompatibilityStatus", "CoverCandidate", "CoverMutation", "CoverProvider", "CurrentFieldState", "CurrentFieldStateKind", "Deadline",
+    "ExpectedState", "FailureKind", "HealthReport", "HealthStatus",
     "IdentifierGenerator", "JobHeartbeatRepository", "LibraryListRequest", "LibraryReadRequest",
     "LibraryConnectionDiagnostics", "LibraryConnectionDiagnosticsRequest", "LibraryConnectionFacts", "LibraryReader", "LibraryService", "MetadataCandidate", "MetadataMutation", "MetadataProvider", "Notification",
     "Notifier", "OperationContext", "OperationUsage", "Page", "PageRequest", "PortFailure", "PortResult",

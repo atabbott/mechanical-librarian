@@ -2062,6 +2062,17 @@ def _expat_supported() -> bool:
 class EpubPackageExtractor:
     """Extract one bounded OPF package report from an authorized byte source."""
 
+    def preflight(self, request: EpubPackageRequest) -> EpubInspectionOutcome | None:
+        """Bound hostile central-directory work before ``ZipFile`` is opened."""
+        try:
+            _check_request(request)
+            if datetime.now(timezone.utc) >= request.deadline:
+                raise _Rejected(EpubInspectionOutcome.TIMEOUT)
+            _central_directory(request)
+        except _Rejected as rejected:
+            return rejected.outcome
+        return None
+
     def extract(
         self, request: EpubPackageRequest, archive: zipfile.ZipFile | None = None
     ) -> EpubPackageReport:

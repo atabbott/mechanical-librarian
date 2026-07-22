@@ -14,12 +14,13 @@ from xml.parsers import expat
 
 from .evidence_bounds import EvidenceValueError, validate_code, validate_projection_text
 from .identifiers import Fingerprint, SchemaVersion
-from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+from .epub_inspection import (
+    EpubInspectionOutcome,
+    EpubObservationApplicability,
     EpubPackageLimits,
     MAX_PUBLIC_REPORT_BYTES,
     epub_file_lineage,
 )
-from .epub_inspection import EpubInspectionOutcome, EpubObservationApplicability
 
 
 EPUB_OPENING_REPORT_SCHEMA = SchemaVersion("epub-opening-report-v1")

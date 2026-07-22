@@ -36,7 +36,7 @@ def standard_family_contracts() -> tuple[FamilyContract, ...]:
     from mechanical_librarian.application.audit import AuditRepository
     from mechanical_librarian.application.job_heartbeat import JobHeartbeatRepository
     from mechanical_librarian.application.ports import (
-        AdapterDiagnostics, BackupReadiness, CoverProvider, EvidenceExtractor, LibraryReader,
+        AdapterDiagnostics, BackupReadiness, CoverProvider, LibraryReader,
         MetadataProvider, Notifier, Reviewer, SecretResolver, SnapshotRepository,
         SupportedWriter, Transaction, TransactionManager, WorkScheduler,
     )
@@ -64,7 +64,6 @@ def standard_family_contracts() -> tuple[FamilyContract, ...]:
         FamilyContract("diagnostics", tuple(method(AdapterDiagnostics, name) for name in ("capabilities", "compatibility", "health")), ("apply", "resolve")),
         FamilyContract("library-reader", tuple(method(LibraryReader, name) for name in ("discover_capabilities", "list_snapshots", "read_snapshot")), ("apply", "resolve", "lookup", "lookup_covers")),
         FamilyContract("supported-writer", (method(SupportedWriter, "apply"),), ("lookup", "lookup_covers", "resolve")),
-        FamilyContract("extractor", (method(EvidenceExtractor, "extract"),), ("apply", "lookup", "lookup_covers", "resolve")),
         FamilyContract("metadata-provider", (method(MetadataProvider, "lookup"),), ("apply", "resolve", "extract", "lookup_covers")),
         FamilyContract("cover-provider", (method(CoverProvider, "lookup_covers"),), ("apply", "resolve", "extract", "lookup")),
         FamilyContract("reviewer", (method(Reviewer, "review"),), ("apply", "resolve", "lookup", "lookup_covers")),

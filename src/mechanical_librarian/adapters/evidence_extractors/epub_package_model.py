@@ -8,15 +8,12 @@ persistence projection is considered.
 
 from __future__ import annotations
 
-import json
 import re
 import hashlib
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
-from types import MappingProxyType
-from typing import Any, Callable, ClassVar, Self
+from typing import Any, Callable
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -35,10 +32,11 @@ from mechanical_librarian.domain.inventory import FileReference
 from mechanical_librarian.domain.epub_inspection import (
     EpubInspectionOutcome,
     EpubObservationApplicability,
+    EpubPackageLimits,
+    epub_file_lineage,
 )
 
 
-EPUB_PACKAGE_REPORT_SCHEMA = SchemaVersion("local-evidence-report-v1")
 EPUB_PACKAGE_LIMIT_PROFILE = "epub-package-limits-v1"
 
 MAX_FACT_FIELDS = 64
@@ -61,12 +59,6 @@ _XML_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$")
 class EpubPackageCapability(StrEnum):
     PACKAGE = "package"
     OPENING_MATTER = "opening_matter"
-    COVER = "cover"
-    AUDIO_TAGS = "audio_tags"
-    CHAPTERS = "chapters"
-    DURATION = "duration"
-    HEALTH = "health"
-    WRITE_BACK = "write_back"
 
 
 class EpubPackageSourceError(EvidenceValueError):
@@ -135,76 +127,6 @@ class EpubPackageDeclarationKind(StrEnum):
 
 
 _FIELD_ORDER = {field: index for index, field in enumerate(EpubPackageField)}
-
-
-@dataclass(frozen=True)
-class EpubPackageLimits:
-    """Configured values bounded by immutable ``epub-package-limits-v1`` caps."""
-
-    source_archive_bytes: int = 268_435_456
-    archive_entries: int = 2_048
-    compressed_bytes_per_member: int = 268_435_456
-    expanded_bytes_per_member: int = 268_435_456
-    expanded_bytes_per_archive: int = 1_073_741_824
-    compression_ratio_per_member: int = 200
-    container_xml_bytes: int = 65_536
-    opf_package_bytes: int = 4_194_304
-    xml_nodes_per_document: int = 50_000
-    xml_attributes_per_document: int = 100_000
-    attributes_per_element: int = 64
-    xml_depth: int = 64
-    decoded_xml_text_characters: int = 262_144
-    metadata_nodes: int = 512
-    manifest_items: int = 4_096
-    spine_items: int = 4_096
-    guide_references: int = 256
-    prefix_mappings: int = 64
-
-    HARD_CAPS: ClassVar[Mapping[str, int]] = MappingProxyType({
-        "source_archive_bytes": 536_870_912,
-        "archive_entries": 8_192,
-        "compressed_bytes_per_member": 536_870_912,
-        "expanded_bytes_per_member": 536_870_912,
-        "expanded_bytes_per_archive": 2_147_483_648,
-        "compression_ratio_per_member": 1_000,
-        "container_xml_bytes": 1_048_576,
-        "opf_package_bytes": 16_777_216,
-        "xml_nodes_per_document": 200_000,
-        "xml_attributes_per_document": 400_000,
-        "attributes_per_element": 256,
-        "xml_depth": 128,
-        "decoded_xml_text_characters": 4_194_304,
-        "metadata_nodes": 2_048,
-        "manifest_items": 8_192,
-        "spine_items": 8_192,
-        "guide_references": 512,
-        "prefix_mappings": 256,
-    })
-    MEMBER_NAME_UTF8_BYTES_HARD_CAP = 1_024
-    COMPONENT_NAME_UTF8_BYTES_HARD_CAP = 255
-    ARCHIVE_NESTING_DEPTH = 1
-    MAX_REPORT_BYTES = MAX_PUBLIC_REPORT_BYTES
-    MAX_OBSERVATIONS = MAX_OBSERVATIONS
-    MAX_VALUES_PER_FIELD = MAX_VALUES_PER_FIELD
-    MAX_WARNINGS = MAX_WARNINGS
-    MAX_RAW_VALUE_CHARACTERS = MAX_RAW_VALUE_CHARACTERS
-    MAX_NORMALIZED_VALUE_CHARACTERS = MAX_NORMALIZED_VALUE_CHARACTERS
-
-    def __post_init__(self) -> None:
-        for name, hard_cap in self.HARD_CAPS.items():
-            value = getattr(self, name)
-            if type(value) is not int or not 1 <= value <= hard_cap:
-                raise EvidenceValueError("EPUB package limit is outside its immutable cap")
-
-    @property
-    def profile(self) -> str:
-        return EPUB_PACKAGE_LIMIT_PROFILE
-
-    def to_data(self) -> dict[str, int | str]:
-        return {
-            "profile": self.profile,
-            **{name: getattr(self, name) for name in self.HARD_CAPS},
-        }
 
 
 @dataclass(frozen=True, repr=False)
@@ -489,16 +411,6 @@ class EpubPackageUsage:
 
 
 @dataclass(frozen=True)
-class EpubPackageArtifactReference:
-    kind: str
-    identity: str
-
-    def __post_init__(self) -> None:
-        validate_code(self.kind, "artifact kind")
-        _digest(self.identity, "artifact identity")
-
-
-@dataclass(frozen=True)
 class EpubPackageReport:
     outcome: EpubInspectionOutcome
     capability: EpubPackageCapability
@@ -508,8 +420,6 @@ class EpubPackageReport:
     warnings: tuple[EpubPackageWarning, ...] = ()
     declarations: tuple[EpubPackageDeclaration, ...] = ()
     usage: EpubPackageUsage = EpubPackageUsage()
-    artifact: EpubPackageArtifactReference | None = None
-    schema_version: SchemaVersion = EPUB_PACKAGE_REPORT_SCHEMA
 
     def __post_init__(self) -> None:
         if (
@@ -517,8 +427,6 @@ class EpubPackageReport:
             or type(self.capability) is not EpubPackageCapability
             or type(self.limits) is not EpubPackageLimits
             or type(self.usage) is not EpubPackageUsage
-            or type(self.schema_version) is not SchemaVersion
-            or self.schema_version != EPUB_PACKAGE_REPORT_SCHEMA
         ):
             raise EvidenceValueError("local evidence report is malformed")
         if self.source_fingerprint is not None and type(self.source_fingerprint) is not Fingerprint:
@@ -526,10 +434,6 @@ class EpubPackageReport:
         _typed_tuple(self.observations, EpubPackageObservation, MAX_OBSERVATIONS, "observations")
         _typed_tuple(self.warnings, EpubPackageWarning, MAX_WARNINGS, "warnings")
         _typed_tuple(self.declarations, EpubPackageDeclaration, MAX_DECLARATIONS, "declarations")
-        if self.artifact is not None and type(self.artifact) is not EpubPackageArtifactReference:
-            raise EvidenceValueError("local evidence artifact reference is malformed")
-        if self.capability is EpubPackageCapability.PACKAGE and self.artifact is not None:
-            raise EvidenceValueError("package evidence must not retain an artifact")
         if self.outcome is EpubInspectionOutcome.SUCCESS and self.source_fingerprint is None:
             raise EvidenceValueError("successful local evidence requires a source fingerprint")
         if not self.outcome.succeeded and (self.observations or self.declarations):
@@ -583,10 +487,6 @@ class EpubPackageReport:
             count > MAX_VALUES_PER_FIELD for count in counts.values()
         ):
             raise EvidenceValueError("local evidence observation bounds are exceeded")
-        serialized = self._canonical_json(check_size=False)
-        if len(serialized.encode("utf-8")) > MAX_PUBLIC_REPORT_BYTES:
-            raise EvidenceValueError("local evidence report exceeds its byte limit")
-
     @property
     def succeeded(self) -> bool:
         return self.outcome.succeeded
@@ -594,52 +494,6 @@ class EpubPackageReport:
     @property
     def normalized_observations(self) -> tuple[EpubPackageObservation, ...]:
         return tuple(sorted(self.observations, key=lambda item: item.normalized_sort_key))
-
-    def to_data(self) -> dict[str, object]:
-        return {
-            "artifact": None if self.artifact is None else _artifact_data(self.artifact),
-            "capability": self.capability.value,
-            "declarations": [_declaration_data(item) for item in self.declarations],
-            "limits": self.limits.to_data(),
-            "normalized_observations": [
-                _observation_data(item) for item in self.normalized_observations
-            ],
-            "observations": [_observation_data(item) for item in self.observations],
-            "outcome": self.outcome.value,
-            "schema": self.schema_version.value,
-            "source_fingerprint": (
-                None if self.source_fingerprint is None else _fingerprint_data(self.source_fingerprint)
-            ),
-            "usage": self.usage.to_data(),
-            "warnings": [_warning_data(item) for item in self.warnings],
-        }
-
-    def _canonical_json(self, *, check_size: bool = True) -> str:
-        serialized = json.dumps(
-            self.to_data(), ensure_ascii=False, separators=(",", ":"), sort_keys=True
-        )
-        if check_size and len(serialized.encode("utf-8")) > MAX_PUBLIC_REPORT_BYTES:
-            raise EvidenceValueError("local evidence report exceeds its byte limit")
-        return serialized
-
-    def to_json(self) -> str:
-        return self._canonical_json()
-
-    @classmethod
-    def from_json(cls, serialized: str) -> Self:
-        if type(serialized) is not str or len(serialized.encode("utf-8")) > MAX_PUBLIC_REPORT_BYTES:
-            raise EvidenceValueError("local evidence report JSON is invalid")
-        try:
-            value = json.loads(serialized, object_pairs_hook=_unique_object)
-            report = _report_from_data(value)
-        except EvidenceValueError:
-            raise
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError, RecursionError):
-            raise EvidenceValueError("local evidence report JSON is invalid") from None
-        if report.to_json() != serialized:
-            raise EvidenceValueError("local evidence report JSON is not canonical")
-        return report
-
 
 def _digest(value: object, label: str) -> str:
     if type(value) is not str or _DIGEST.fullmatch(value) is None:
@@ -661,18 +515,6 @@ def epub_resource_identity(normalized_member_name: str) -> str:
     ):
         raise EvidenceValueError("normalized member name is malformed")
     return hashlib.sha256(encoded).hexdigest()
-
-
-def epub_file_lineage(source: Fingerprint) -> str:
-    """Return one capability-independent lineage for an immutable local file."""
-
-    if type(source) is not Fingerprint:
-        raise EvidenceValueError("local file lineage source is malformed")
-    return hashlib.sha256(
-        (source.schema.value + "\x00" + source.digest + "\x00local-file-v1").encode(
-            "ascii"
-        )
-    ).hexdigest()
 
 
 def _expanded_name(value: object) -> str:
@@ -876,10 +718,6 @@ def _declaration_from_data(value: object) -> EpubPackageDeclaration:
     )
 
 
-def _artifact_data(value: EpubPackageArtifactReference) -> dict[str, str]:
-    return {"identity": value.identity, "kind": value.kind}
-
-
 def _limits_from_data(value: object) -> EpubPackageLimits:
     keys = {"profile", *EpubPackageLimits.HARD_CAPS}
     item = _require_object(value, keys, "limits")
@@ -898,14 +736,12 @@ def _report_from_data(value: object) -> EpubPackageReport:
     item = _require_object(
         value,
         {
-            "artifact",
             "capability",
             "declarations",
             "limits",
             "normalized_observations",
             "observations",
             "outcome",
-            "schema",
             "source_fingerprint",
             "usage",
             "warnings",
@@ -939,14 +775,6 @@ def _report_from_data(value: object) -> EpubPackageReport:
             for entry in _require_list(item["declarations"], "declarations")
         ),
         usage=_usage_from_data(item["usage"]),
-        artifact=(
-            None
-            if item["artifact"] is None
-            else EpubPackageArtifactReference(
-                **_require_object(item["artifact"], {"identity", "kind"}, "artifact")
-            )
-        ),
-        schema_version=SchemaVersion(item["schema"]),
     )
     if normalized != report.normalized_observations:
         raise EvidenceValueError("normalized observations are not canonically ordered")
@@ -958,8 +786,6 @@ __all__ = [
     "EpubPackageDeclarationKind",
     "EpubPackageLimits",
     "EPUB_PACKAGE_LIMIT_PROFILE",
-    "EPUB_PACKAGE_REPORT_SCHEMA",
-    "EpubPackageArtifactReference",
     "EpubPackageCancellation",
     "EpubPackageCapability",
     "EpubPackageCitation",
@@ -974,6 +800,5 @@ __all__ = [
     "EpubPackageUsage",
     "EpubPackageWarning",
     "EpubObservationApplicability",
-    "epub_file_lineage",
     "epub_resource_identity",
 ]

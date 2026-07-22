@@ -44,11 +44,6 @@ from mechanical_librarian.application.epub_opening import (
     internal_opening_failure_report,
     render_epub_opening_text,
 )
-from mechanical_librarian.domain.epub_opening_evidence import (
-    EpubEvidenceFailure,
-    EpubEvidenceMode,
-    EpubEvidenceResult,
-)
 from mechanical_librarian.application.live_title_proposals import (
     LiveTitleProposalReport,
     render_live_title_proposal_text,
@@ -77,7 +72,6 @@ ConnectionProbeRunner = Callable[[Path], ConnectionProbeResult]
 AudiobookshelfInventoryRunner = Callable[[Path, Path], InventoryRunResult]
 AudiobookshelfPollRunner = Callable[[Path, Path, str], InventoryPollResult]
 InventoryPollInspectionRunner = Callable[[Path, str], InventoryPollResult]
-EpubOpeningEvidenceRunner = Callable[[Path, Path, str, str, int], EpubEvidenceResult]
 LiveTitleProposalRunner = Callable[[Path, Path, str, str, int], LiveTitleProposalReport]
 HardcoverIdentityRunner = Callable[
     [Path, Path, Path, HardcoverExecutionPolicy], HardcoverIdentityReport
@@ -144,7 +138,6 @@ _EPUB_PACKAGE_EXIT = {
     EpubInspectionOutcome.CHILD_FAILURE: 70,
     EpubInspectionOutcome.INTERNAL_FAILURE: 70,
 }
-_EPUB_EVIDENCE_FAILURE = "EPUB opening evidence failed safely.\n"
 _LIVE_TITLE_PROPOSAL_FAILURE = "Live title proposal report failed safely.\n"
 _HARDCOVER_IDENTITY_FAILURE = "Hardcover identity report failed safely.\n"
 
@@ -222,21 +215,6 @@ def _read_synthetic_input(stream: TextIO | None) -> Mapping[str, object]:
     if not isinstance(source, Mapping):
         raise ValueError("input document is invalid")
     return source
-
-
-def _epub_opening_evidence_parser() -> argparse.ArgumentParser:
-    parser = _EpubArgumentParser(
-        prog="mechanical-librarian epub-opening-evidence"
-    )
-    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
-    parser.add_argument("--config", required=True, metavar="PATH", type=Path)
-    parser.add_argument("--target", metavar="OPAQUE", type=_opaque_target)
-    parser.add_argument(
-        "--snapshot", metavar="OPAQUE", type=_opaque_snapshot
-    )
-    parser.add_argument("--file-index", metavar="INDEX", type=int)
-    parser.add_argument("--resume", action="store_true")
-    return parser
 
 
 def _opaque_target(value: str) -> str:
@@ -430,7 +408,6 @@ def main(
     audiobookshelf_poll_runner: AudiobookshelfPollRunner | None = None,
     inventory_poll_inspection_runner: InventoryPollInspectionRunner | None = None,
     epub_opening_report_runner: EpubOpeningReportRunner | None = None,
-    epub_opening_evidence_runner: EpubOpeningEvidenceRunner | None = None,
     live_title_proposal_runner: LiveTitleProposalRunner | None = None,
     hardcover_identity_runner: HardcoverIdentityRunner | None = None,
     hardcover_inert_preview_runner: HardcoverInertPreviewRunner | None = None,
@@ -463,6 +440,7 @@ def main(
     if raw_arguments[:1] in (
         ["epub-package-report"],
         ["epub-opening-report"],
+        ["epub-opening-evidence"],
         ["synthetic-title-proposal-report"],
         ["hardcover-title-proposal-report"],
         ["synthetic-title-review-case-report"],
@@ -660,63 +638,6 @@ def main(
         except Exception:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
             return 2
-    if raw_arguments[:1] == ["epub-opening-evidence"]:
-        try:
-            arguments = _epub_opening_evidence_parser().parse_args(raw_arguments[1:])
-            supplied = (
-                arguments.target is not None,
-                arguments.snapshot is not None,
-                arguments.file_index is not None,
-            )
-            if arguments.resume == any(supplied) or (not arguments.resume and not all(supplied)):
-                raise _EpubArgumentError("choose either resume or one complete selector")
-            if not arguments.resume and not 0 <= arguments.file_index <= 10_000:
-                raise _EpubArgumentError("file index is outside the supported range")
-        except (_EpubArgumentError, ValueError):
-            errors.write(_EPUB_EVIDENCE_FAILURE)
-            errors.write(f"failure={EpubEvidenceFailure.INVALID_INVOCATION.value}\n")
-            return 2
-        try:
-            result = (
-                EpubEvidenceResult(
-                    EpubEvidenceMode.FAILED,
-                    failure=EpubEvidenceFailure.INTERNAL_FAILURE,
-                )
-                if epub_opening_evidence_runner is None
-                else epub_opening_evidence_runner(
-                    arguments.config,
-                    arguments.database,
-                    "" if arguments.resume else arguments.target,
-                    "" if arguments.resume else arguments.snapshot,
-                    -1 if arguments.resume else arguments.file_index,
-                )
-            )
-        except (KeyboardInterrupt, Exception):
-            result = EpubEvidenceResult(
-                EpubEvidenceMode.FAILED,
-                failure=EpubEvidenceFailure.INTERNAL_FAILURE,
-            )
-        if type(result) is not EpubEvidenceResult or not result.succeeded:
-            failure = (
-                EpubEvidenceFailure.INTERNAL_FAILURE
-                if type(result) is not EpubEvidenceResult or result.failure is None
-                else result.failure
-            )
-            errors.write(_EPUB_EVIDENCE_FAILURE)
-            errors.write(f"failure={failure.value}\n")
-            return 1
-        output.write("EPUB opening evidence passed.\n")
-        output.write(
-            f"mode={result.mode.value} evidence={result.evidence_id} "
-            f"current={'true' if result.current_applicable else 'false'} "
-            f"outcome={result.outcome.value}\n"
-        )
-        output.write(
-            f"claims={result.claim_count} citations={result.citation_count} "
-            f"selected={result.selected_count} rejected={result.rejected_count} "
-            f"warnings={result.warning_count} parser={result.parser_mode}\n"
-        )
-        return 0
     arguments = _parser().parse_args(argv)
     if arguments.command in {"audiobookshelf-poll", "inventory-poll-inspect"}:
         runner = (

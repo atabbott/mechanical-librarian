@@ -349,9 +349,9 @@ def _select_local(source: LiveSourceEvidence) -> tuple[str, str] | None:
     ):
         return None
     titles = {
-        fact.observed_value
+        fact.canonical_value
         for fact in inspection.facts
-        if fact.field is EpubInspectionField.TITLE
+        if fact.field is EpubInspectionField.TITLE and fact.canonical_value is not None
     }
     if len(titles) != 1:
         return None

@@ -92,50 +92,6 @@ print(json.dumps(sorted(name for name in sys.modules if name.startswith(forbidde
                 child._install_parent_guard(10, threading.Event(), 999)
         exit_process.assert_called_once_with(70)
 
-    def test_production_child_routes_the_logical_request_through_the_private_extractor(
-        self,
-    ) -> None:
-        limits = EpubPackageLimits()
-        digest = "a" * 64
-        logical_identity = "b" * 64
-        expected = Fingerprint("sha256", SchemaVersion("source-v1"), digest)
-        report = EpubPackageReport(
-            EpubInspectionOutcome.SUCCESS,
-            EpubPackageCapability.PACKAGE,
-            limits,
-            expected,
-        )
-        context = {
-            "child_seconds": 4.5,
-            "expected_source": {
-                "algorithm": "sha256",
-                "digest": digest,
-                "schema": "source-v1",
-            },
-            "limits": limits.to_data(),
-            "logical_identity": logical_identity,
-        }
-
-        with (
-            patch.object(child, "_install_parent_guard") as install_parent_guard,
-            patch.object(child, "_apply_limits") as apply_limits,
-            patch.object(child, "_read_context", return_value=context),
-            patch.object(child, "_write_report") as write_report,
-            patch.object(child.signal, "signal"),
-            patch.object(child.os, "fstat", return_value=SimpleNamespace(st_size=128)),
-            patch.object(child.os, "close"),
-            patch.object(EpubPackageExtractor, "extract", return_value=report) as extract,
-        ):
-            exit_code = child.main(["10", "11", "123"])
-
-        self.assertEqual(exit_code, 0)
-        install_parent_guard.assert_called_once_with(11, ANY, 123)
-        apply_limits.assert_called_once_with()
-        write_report.assert_called_once_with(report)
-        request = extract.call_args.args[0]
-        self.assertEqual(request.expected_source, expected)
-        self.assertEqual(request.target.external_item.value, logical_identity)
-        self.assertEqual(request.file.relative_path, f"{logical_identity}.epub")
 
 
 if __name__ == "__main__":

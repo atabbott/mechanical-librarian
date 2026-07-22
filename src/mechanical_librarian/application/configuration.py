@@ -16,7 +16,7 @@ from mechanical_librarian.domain.identifiers import (
 )
 from mechanical_librarian.domain.inventory import SecretReference, ServiceEndpoint
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
-from mechanical_librarian.adapters.evidence_extractors.epub_package_model import EpubPackageLimits
+from mechanical_librarian.domain.epub_inspection import EpubPackageLimits
 
 
 class ConfigurationError(ValueError):

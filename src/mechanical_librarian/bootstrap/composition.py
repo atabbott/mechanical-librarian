@@ -2944,7 +2944,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         audiobookshelf_poll_runner=_run_audiobookshelf_poll,
         inventory_poll_inspection_runner=_inspect_audiobookshelf_poll,
         epub_opening_report_runner=_run_epub_opening_report,
-        epub_opening_evidence_runner=_run_epub_opening_evidence,
         live_title_proposal_runner=_run_live_title_proposal_report,
         hardcover_identity_runner=_run_hardcover_identity_report,
         hardcover_inert_preview_runner=_run_hardcover_inert_preview,
