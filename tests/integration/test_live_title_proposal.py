@@ -476,6 +476,55 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
             (0,),
         )
 
+    def test_connection_material_change_during_final_hash_rolls_back(self) -> None:
+        original = json.loads(self.config_path.read_text(encoding="utf-8"))
+        for field, value in (
+            ("endpoint", "https://replacement-audiobookshelf.invalid"),
+            ("secret_reference", "/run/secrets/replacement-audiobookshelf-token"),
+            ("capability_overrides", ["inventory-read"]),
+        ):
+            with self.subTest(field=field):
+                self.config_path.write_text(json.dumps(original), encoding="utf-8")
+                calls = 0
+
+                def change_configuration_during_hash(
+                    descriptor: int, length: int, *, maximum: int
+                ) -> str:
+                    nonlocal calls
+                    calls += 1
+                    digest = sha256_descriptor(descriptor, length, maximum=maximum)
+                    if calls == 2:
+                        changed = json.loads(json.dumps(original))
+                        changed["connections"][0][field] = value
+                        self.config_path.write_text(
+                            json.dumps(changed), encoding="utf-8"
+                        )
+                    return digest
+
+                with patch(
+                    "mechanical_librarian.bootstrap.composition.sha256_descriptor",
+                    side_effect=change_configuration_during_hash,
+                ):
+                    with self.assertRaisesRegex(
+                        TitleProposalPersistenceError, "live proposal source changed"
+                    ):
+                        _run_live_title_proposal_report(
+                            self.config_path,
+                            self.database,
+                            self.locator.target_reference,
+                            self.locator.snapshot_reference,
+                            self.locator.file_index,
+                        )
+
+                self.assertEqual(calls, 2)
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                        "WHERE execution_mode='production_report_only'"
+                    ).fetchone(),
+                    (0,),
+                )
+
     def test_source_replacement_after_store_callbacks_rolls_back_publication(self) -> None:
         original = opening_title_isbn_applicability()
 
@@ -708,6 +757,41 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
                         ).fetchone(),
                         (1,),
                     )
+
+    def test_disabled_provider_enablement_before_final_fence_rolls_back(self) -> None:
+        provider_enabled = False
+
+        def enable_provider() -> None:
+            nonlocal provider_enabled
+            provider_enabled = True
+
+        repository = self.repository(
+            provider_configuration_is_current=lambda: not provider_enabled,
+            after_pointer_advance=enable_provider,
+        )
+        with self.assertRaisesRegex(
+            TitleProposalPersistenceError, "live provider configuration changed"
+        ):
+            ProposeLiveTitle(repository).run(
+                self.locator,
+                (self.mount_digest,),
+                provider_enabled=False,
+                authority_revision=1,
+                observed_at=self.now,
+            )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                "WHERE execution_mode='production_report_only'"
+            ).fetchone(),
+            (0,),
+        )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM current_synthetic_title_proposals"
+            ).fetchone(),
+            (0,),
+        )
 
     def test_future_provider_current_since_rejects_clock_rollback_without_history(self) -> None:
         repository = self.repository(

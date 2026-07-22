@@ -83,6 +83,7 @@ from mechanical_librarian.application.connection_probe import (
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     ConfigurationError,
+    HardcoverProviderConfiguration,
 )
 from mechanical_librarian.application.hardcover_identity import (
     DurableWorkPreviewReport,
@@ -1470,6 +1471,7 @@ def _run_live_title_proposal_report(
             governing,
             lambda target: _live_title_source_is_configured(
                 configuration_path,
+                configuration,
                 target,
                 mount_digests,
                 governing,
@@ -1482,7 +1484,7 @@ def _run_live_title_proposal_report(
             publication_clock=lambda: datetime.now(timezone.utc),
             provider_configuration_is_current=lambda: (
                 _live_title_provider_is_configured(
-                    configuration_path, provider.authority_revision
+                    configuration_path, provider
                 )
             ),
         )
@@ -1535,6 +1537,7 @@ def _fingerprint_live_epub_source(
 
 def _live_title_source_is_configured(
     configuration_path: Path,
+    expected_configuration: ApplicationConfiguration,
     target: TargetId,
     expected_mount_digests: tuple[str, ...],
     expected_governing_digest: str,
@@ -1559,6 +1562,13 @@ def _live_title_source_is_configured(
             configuration.evidence.maximum_text_characters,
         ),
     )
+    expected_selected = tuple(
+        configured
+        for configured in expected_configuration.connections
+        if configured.adapter == "audiobookshelf"
+        and configured.connection_id == target.connection
+        and target.library.value in configured.enabled_libraries
+    )
     selected = tuple(
         configured
         for configured in configuration.connections
@@ -1568,7 +1578,9 @@ def _live_title_source_is_configured(
     )
     return (
         "epub" in configuration.evidence.enabled_formats
+        and len(expected_selected) == 1
         and len(selected) == 1
+        and selected[0] == expected_selected[0]
         and current_mount_digests == expected_mount_digests
         and epub_governing_digest(
             limits, _epub_material_configuration(configuration, mappings)
@@ -1578,13 +1590,11 @@ def _live_title_source_is_configured(
 
 
 def _live_title_provider_is_configured(
-    configuration_path: Path, expected_authority_revision: int
+    configuration_path: Path,
+    expected_provider: HardcoverProviderConfiguration,
 ) -> bool:
     provider = load_configuration_file(configuration_path).hardcover_provider
-    return (
-        provider.enabled
-        and provider.authority_revision == expected_authority_revision
-    )
+    return provider == expected_provider
 
 
 def _run_synthetic_title_proposal_report(

@@ -91,7 +91,6 @@ class SQLiteLiveTitleEvidenceReader:
         if (
             observation.target.adapter != AdapterId("audiobookshelf")
             or observation.media_type is not MediaType.EBOOK
-            or not self._target_is_configured(observation.target)
         ):
             return LiveSourceEvidence(
                 locator, LiveSourceState.NOT_READY, mount_configuration_digest
@@ -155,6 +154,10 @@ class SQLiteLiveTitleEvidenceReader:
                 locator, LiveSourceState.NOT_READY, mount_configuration_digest
             )
         if current_source_fingerprint != evidence[1]:
+            return LiveSourceEvidence(
+                locator, LiveSourceState.NOT_READY, mount_configuration_digest
+            )
+        if not self._target_is_configured(observation.target):
             return LiveSourceEvidence(
                 locator, LiveSourceState.NOT_READY, mount_configuration_digest
             )

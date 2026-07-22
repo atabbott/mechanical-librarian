@@ -186,19 +186,19 @@ class SQLiteTitleProposalRepository:
                 ) != source:
                     raise TitleProposalPersistenceError("live proposal source changed")
                 if provider.work_key is not None:
-                    if (
-                        self._provider_configuration_is_current is None
-                        or not self._provider_configuration_is_current()
-                    ):
-                        raise TitleProposalPersistenceError(
-                            "live provider configuration changed"
-                        )
                     if self._provider_reader.inspect_title_provider(
                         provider.work_key, self._publication_clock()
                     ) != provider:
                         raise TitleProposalPersistenceError(
                             "live provider evidence changed"
                         )
+                if (
+                    self._provider_configuration_is_current is None
+                    or not self._provider_configuration_is_current()
+                ):
+                    raise TitleProposalPersistenceError(
+                        "live provider configuration changed"
+                    )
                 if (
                     not persistence.current
                     or persistence.current_set_id != proposal_set.set_id
