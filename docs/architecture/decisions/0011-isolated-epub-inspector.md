@@ -4,6 +4,12 @@
 
 Accepted
 
+## Supersedes
+
+[ADR-0007](0007-transient-epub-package-child.md). ADR-0011 replaces its
+package-report parent/child JSON protocol with the private in-memory package
+model and opening-result-only child boundary.
+
 ## Decision
 
 The EPUB adapter owns package declarations, observations, citations, and usage

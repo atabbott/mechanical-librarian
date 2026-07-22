@@ -393,8 +393,8 @@ child keeps opaque navigation, content, cover, and linked-resource declarations
 private, then opens only bounded package-local navigation plus selected declared
 XHTML/HTML resources through the same archive session.
 The hostile-parser and process extension is governed by
-[ADR-0008](decisions/0008-transient-epub-opening-parser.md); ADR-0007 remains
-the accepted package-only isolation decision.
+[ADR-0008](decisions/0008-transient-epub-opening-parser.md) and the private
+opening-result boundary in [ADR-0011](decisions/0011-isolated-epub-inspector.md).
 Strict XHTML uses a fresh Expat parser; recovery uses a fresh standard-library
 `HTMLParser` over only those bounded bytes. Neither parser has a renderer,
 network client, URL/base resolver, stylesheet engine, script runtime, XSLT,
@@ -643,7 +643,7 @@ strict opaque references and a bounded file index. Resolution requires one
 current binding under the material configuration digest; media access uses
 no-follow descriptor traversal, and publication revalidates the current
 binding, source generation, lease owner, attempt, fence, and cancellation in
-one transaction. The extractor retains ADR-0007/0008 process isolation. No
+one transaction. The extractor retains ADR-0008/0011 process isolation. No
 credential, network, service-write, media-write, renderer, script, or browser
 authority is added.
 
