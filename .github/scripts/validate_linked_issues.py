@@ -35,7 +35,7 @@ _CLOSING_KEYWORD = r"(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|res
 _CLOSING_REFERENCE = rf"{_CLOSING_KEYWORD}:?[ \t]+#[1-9][0-9]*"
 _CLOSING_LINE = re.compile(
     rf"^[ \t]*(?:[-+*][ \t]+|[0-9]+[.)][ \t]+)?{_CLOSING_REFERENCE}"
-    rf"(?:[ \t]*,[ \t]*(?:{_CLOSING_KEYWORD}:?[ \t]+)?#[1-9][0-9]*)*[ \t]*$",
+    rf"(?:[ \t]*,[ \t]*{_CLOSING_REFERENCE})*[ \t]*$",
     re.IGNORECASE,
 )
 _FENCE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})")

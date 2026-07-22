@@ -96,12 +96,22 @@ class LinkedIssueGateTests(unittest.TestCase):
                 self.assertTrue(result.allowed)
                 self.assertEqual(result.references, (f"{REPOSITORY}#135",))
 
-    def test_raw_line_supports_multiple_closing_references(self) -> None:
-        result = evaluate_snapshot(
+    def test_raw_line_requires_a_keyword_for_every_closing_reference(self) -> None:
+        bare_reference = evaluate_snapshot(
             snapshot(
                 [issue(135), issue(139)],
                 [issue(135), issue(139)],
                 body="Closes #135, #139",
+            ),
+            REPOSITORY,
+        )
+        self.assertEqual(bare_reference.code, "manual_link_not_closing_reference")
+
+        result = evaluate_snapshot(
+            snapshot(
+                [issue(135), issue(139)],
+                [issue(135), issue(139)],
+                body="Closes #135, closes #139",
             ),
             REPOSITORY,
         )
