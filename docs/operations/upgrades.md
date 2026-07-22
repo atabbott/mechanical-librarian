@@ -129,8 +129,9 @@ reconciliation. Migration interruption rolls all schema-8 objects and its
 version row back together. Before upgrading important state, retain a verified
 pre-schema-8 copy. Downgrade requires restoring that copy; never delete the new
 tables or edit `schema_migrations`. After upgrade, run `state-check`,
-`inventory-inspect`, and one isolated `epub-opening-evidence` execution plus
-restart reuse.
+`inventory-inspect`, and the retained report-only `live-title-proposal-report`
+against isolated fixtures. EPUB opening extraction qualification remains an
+internal fixture-only boundary, not an operator command.
 
 The F09f durable-identity migration is additive and forward-only from every
 genuine schema prefix through schema 8. Migration 9 adds bounded generations,

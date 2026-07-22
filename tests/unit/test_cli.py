@@ -360,6 +360,12 @@ class CliTests(unittest.TestCase):
         self.assertNotIn(":memory:", errors.getvalue())
         self.assertIn("durable filesystem path", errors.getvalue())
 
+    def test_star_import_exposes_only_live_cli_runners(self) -> None:
+        namespace: dict[str, object] = {}
+        exec("from mechanical_librarian.interfaces.cli import *", namespace)
+        self.assertNotIn("EpubPackageReportRunner", namespace)
+        self.assertIn("LiveTitleProposalRunner", namespace)
+
 
 
 if __name__ == "__main__":

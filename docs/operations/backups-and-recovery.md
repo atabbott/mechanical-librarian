@@ -54,8 +54,10 @@ Interruption rolls the complete migration transaction back to schema 7. A
 failed evidence publication leaves the prior current pointer and immutable
 history unchanged. Downgrade is restore-only: stop the newer process, restore
 the verified copy, run `state-check`, run a new read-only inventory
-reconciliation, confirm selectors with `inventory-inspect`, and execute one
-`epub-opening-evidence` canary against isolated fixtures.
+reconciliation, confirm selectors with `inventory-inspect`, and run the
+retained report-only `live-title-proposal-report` against isolated fixtures.
+Opening extraction qualification remains an internal, fixture-only boundary;
+it is not an operator command.
 
 Before the forward-only F09f schema-9, schema-10, and schema-11 migrations of important
 state, stop identity workers and retain a verified pre-F09f curator-data copy.
