@@ -200,6 +200,10 @@ class TitleProposalDomainTests(unittest.TestCase):
         for left, right in equivalent:
             with self.subTest(left=left, right=right):
                 self.assertEqual(normalized_title_key(left), normalized_title_key(right))
+        for surrogate in ("\ud800", "\udfff"):
+            with self.subTest(surrogate=ord(surrogate)):
+                with self.assertRaises(TitleProposalValueError):
+                    normalized_title_key(surrogate)
 
     def test_identity_roundtrip_is_canonical_and_applicability_is_derived(self) -> None:
         value = proposal_set_from_manifest(

@@ -741,6 +741,7 @@ def _title(value: object, label: str) -> str:
         or len(value) > 16_384
         or "\x00" in value
         or any(ord(character) < 32 and character not in "\t\n\r" for character in value)
+        or any(unicodedata.category(character) == "Cs" for character in value)
     ):
         raise TitleProposalValueError(f"{label} is invalid")
     return value

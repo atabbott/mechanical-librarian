@@ -428,46 +428,60 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
 
     def test_malformed_current_title_publishes_stable_source_not_ready(self) -> None:
         original = self.snapshot.observation
-        malformed = InventoryObservation.create(
-            target=original.target,
-            media_type=original.media_type,
-            lifecycle=original.lifecycle,
-            fields=(
-                FieldObservation(
-                    ObservationField.TITLE,
-                    ObservationState.PRESENT,
-                    ("Malformed\x01Title",),
-                ),
-            ),
-            file_identities=original.file_identities,
-            cover_identity=original.cover_identity,
-            adapter_version=original.adapter_version,
-            normalizer_version=original.normalizer_version,
-            service_version=original.service_version,
-            warnings=original.warnings,
-            observed_at=original.observed_at,
-        )
-        with (
-            patch.object(InventoryObservation, "from_json", return_value=malformed),
-            patch.object(InventorySnapshotV2, "create", return_value=self.snapshot),
-            patch.object(
-                SQLiteLiveTitleEvidenceReader,
-                "inspect_title_provider",
-                side_effect=AssertionError("provider lookup must remain unreachable"),
-            ) as provider_lookup,
+        for case, current_title in (
+            ("control", "Malformed\x01Title"),
+            ("surrogate", "Bad\ud800Title"),
         ):
-            report = ProposeLiveTitle(self.repository()).run(
-                self.locator,
-                (self.mount_digest,),
-                provider_enabled=True,
-                authority_revision=1,
-                observed_at=self.now,
-            )
+            with self.subTest(case=case):
+                malformed = InventoryObservation.create(
+                    target=original.target,
+                    media_type=original.media_type,
+                    lifecycle=original.lifecycle,
+                    fields=(
+                        FieldObservation(
+                            ObservationField.TITLE,
+                            ObservationState.PRESENT,
+                            (current_title,),
+                        ),
+                    ),
+                    file_identities=original.file_identities,
+                    cover_identity=original.cover_identity,
+                    adapter_version=original.adapter_version,
+                    normalizer_version=original.normalizer_version,
+                    service_version=original.service_version,
+                    warnings=original.warnings,
+                    observed_at=original.observed_at,
+                )
+                with (
+                    patch.object(
+                        InventoryObservation, "from_json", return_value=malformed
+                    ),
+                    patch.object(
+                        InventorySnapshotV2, "create", return_value=self.snapshot
+                    ),
+                    patch.object(
+                        SQLiteLiveTitleEvidenceReader,
+                        "inspect_title_provider",
+                        side_effect=AssertionError(
+                            "provider lookup must remain unreachable"
+                        ),
+                    ) as provider_lookup,
+                ):
+                    report = ProposeLiveTitle(self.repository()).run(
+                        self.locator,
+                        (self.mount_digest,),
+                        provider_enabled=True,
+                        authority_revision=1,
+                        observed_at=self.now,
+                    )
 
-        provider_lookup.assert_not_called()
-        self.assertEqual(report.proposal_set.result.value, "source_not_ready")
-        self.assertFalse(report.to_data()["production_applicable"])
-        self.assertEqual(report.persistence.history_count, 1)
+                provider_lookup.assert_not_called()
+                self.assertEqual(
+                    report.proposal_set.result.value, "source_not_ready"
+                )
+                self.assertFalse(report.to_data()["production_applicable"])
+                report.to_json().encode("utf-8")
+                self.assertEqual(report.persistence.history_count, 1)
 
     def test_fatal_source_resolution_fails_without_proposal_history(self) -> None:
         for failure in (
