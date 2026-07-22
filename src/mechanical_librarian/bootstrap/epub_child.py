@@ -9,9 +9,13 @@ import signal
 import sys
 import threading
 import time
+import zipfile
 from datetime import datetime, timedelta, timezone
 
-from mechanical_librarian.adapters.evidence_extractors.epub_package import EpubPackageExtractor
+from mechanical_librarian.adapters.evidence_extractors.epub_package import (
+    EpubPackageExtractor,
+    _SourceIO,
+)
 from mechanical_librarian.adapters.evidence_extractors.epub_opening import EpubOpeningExtractor
 from mechanical_librarian.application.local_evidence import extract_local_evidence
 from mechanical_librarian.domain.identifiers import (
@@ -225,12 +229,14 @@ def main(argv: list[str] | None = None) -> int:
                 request.monotonic_deadline,
                 request.cancellation,
             )
-            package_report = extract_local_evidence(
-                EpubPackageExtractor(), package_request
-            )
-            report = EpubOpeningExtractor().extract(
-                request, limits, package_report
-            )
+            try:
+                with zipfile.ZipFile(_SourceIO(package_request), "r", allowZip64=True) as archive:
+                    package_report = EpubPackageExtractor().extract(package_request, archive)
+                    report = EpubOpeningExtractor().extract(
+                        request, limits, package_report, archive
+                    )
+            except (OSError, ValueError, zipfile.BadZipFile):
+                report = EpubOpeningReport(LocalEvidenceOutcome.INTEGRITY_FAILURE, limits)
         else:
             report = extract_local_evidence(EpubPackageExtractor(), request)
         _write_report(report)
