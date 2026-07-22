@@ -156,13 +156,11 @@ or unjoinable input its exact typed no-proposal result. Provider failure never
 erases local evidence or
 becomes negative bibliographic evidence. Identical inputs replay without
 duplication; changed inputs produce a superseding set without rewriting
-history. F10a's `synthetic-title-review-case-report` accepts only the
-already-persisted current F09a lineage selected by a closed scenario. Exactly
-one current immutable synthetic-preview set containing one `needs_review` title
-proposal creates a deterministic undecided case. Exact replay creates no
-duplicate; a qualifying current successor supersedes it, and a nonqualifying
-current successor retires it without an empty replacement. No other proposal or
-set creates or revives a case.
+history. F10a's `synthetic-title-review-case-report` formerly accepted only the
+already-persisted current F09a lineage selected by a closed scenario. It is now
+retired and the installed CLI rejects its name; this case-history description is
+historical only. No current proposal or set creates or revives a case through
+that retired command.
 
 F09a supplies a deterministic fake candidate through the application-owned
 provider port. The closed `synthetic_preview` mode and derived false production

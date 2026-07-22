@@ -183,20 +183,15 @@ title field that is present and loaded with an empty value is eligible for fill
 when F06 and provider corroborate, and a materially different current title
 remains eligible. A missing, unloaded, or unavailable current title, or an empty
 or unusable F06/provider title, produces an exact typed no-proposal result. F09b
-adds `hardcover-title-proposal-report` for only the fixed generated
-`agree-empty` case behind the same application-owned port. Omitting its optional
-secret-file reference performs no secret access, DNS, or egress and records
-`provider_disabled`; provider and credential failures retain local evidence as
-`provider_failed`. It changes no `config-v1` field. Required qualification uses
-a sanitized live-shape fake through the same adapter seam and the exact
-installed artifact against the bounded real endpoint. Production provider
-configuration, durable work, freshness/reuse, restart, and strict ISBN-backed
-Hardcover identity remain F09f scope; the live-target join remains F09g scope.
-F10a admits one current undecided synthetic case only from
-one current immutable proposal set containing exactly one current
-`needs_review` title proposal. It replays idempotently, supersedes for a
-qualifying successor, and retires for a nonqualifying successor without an
-empty replacement; no other proposal or set creates a case.
+historically added `hardcover-title-proposal-report` for only the fixed generated
+`agree-empty` case behind the same application-owned port. That command is
+retired and the installed CLI rejects its name; its former disabled/provider
+failure behavior is historical only. Production provider configuration, durable
+work, freshness/reuse, restart, and strict ISBN-backed Hardcover identity remain
+F09f scope; the live-target join remains F09g scope.
+F10a historically admitted one synthetic case only from one immutable proposal
+set containing one `needs_review` title proposal. Its retired command no longer
+creates, replays, supersedes, or retires cases.
 
 This staging uses the exact F06 `normalized_value` as the proposal value, keeps
 F06 `raw_value` as evidence/provenance, uses provider evidence only for
@@ -214,8 +209,8 @@ apply authority. The command accepts no configuration, live IDs, operator
 titles, media references, provider payloads, endpoints, or credentials. A live
 local-evidence-to-current-Audiobookshelf binding, configured-media resolution,
 and their freshness and recovery semantics are deliberately deferred to the
-explicit 0.3 work. F09b and F10a may continue the preview only without erasing
-that synthetic lineage or granting it production applicability.
+explicit 0.3 work. The retired F09b and F10a surfaces no longer continue that
+preview or grant its synthetic lineage production applicability.
 
 The next internal checkpoint is 0.3.0, the first trustworthy live title report.
 Completed F06 leads to F07a #143/#30/#31/#188 and then F07b #228/#32.
