@@ -216,14 +216,6 @@ def _explicit_body_references(body: str) -> frozenset[int]:
     fence: str | None = None
     in_comment = False
     for line in body.splitlines():
-        if in_comment:
-            if "-->" in line:
-                in_comment = False
-            continue
-        if "<!--" in line:
-            if "-->" not in line:
-                in_comment = True
-            continue
         if fence is not None:
             fence_match = _FENCE_CLOSER.fullmatch(line)
             if (
@@ -239,6 +231,9 @@ def _explicit_body_references(body: str) -> frozenset[int]:
             continue
         if line.startswith(("    ", "\t")):
             continue
+        if in_comment or "<!--" in line:
+            in_comment = _comment_continues(line, in_comment)
+            continue
         match = _CLOSING_LINE.fullmatch(line)
         if match is None:
             continue
@@ -247,6 +242,19 @@ def _explicit_body_references(body: str) -> frozenset[int]:
             if len(references) > 100:
                 raise ValueError
     return frozenset(references)
+
+
+def _comment_continues(line: str, in_comment: bool) -> bool:
+    """Advance only the bounded HTML-comment delimiter state for one line."""
+
+    position = 0
+    while True:
+        delimiter = "-->" if in_comment else "<!--"
+        found = line.find(delimiter, position)
+        if found < 0:
+            return in_comment
+        in_comment = not in_comment
+        position = found + len(delimiter)
 
 
 def main() -> int:

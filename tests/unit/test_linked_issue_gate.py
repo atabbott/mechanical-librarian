@@ -177,6 +177,28 @@ class LinkedIssueGateTests(unittest.TestCase):
                 self.assertFalse(result.allowed)
                 self.assertEqual(result.code, "manual_link_not_closing_reference")
 
+    def test_comment_delimiters_are_scanned_across_each_line(self) -> None:
+        result = evaluate_snapshot(
+            snapshot(
+                [issue(135)],
+                [issue(135)],
+                body="<!-- note --> <!--\nCloses #135\n-->",
+            ),
+            REPOSITORY,
+        )
+        self.assertEqual(result.code, "manual_link_not_closing_reference")
+
+    def test_comments_inside_code_do_not_poison_later_closing_lines(self) -> None:
+        for body in (
+            "```\n<!--\n```\nCloses #135",
+            "    <!--\nCloses #135",
+        ):
+            with self.subTest(body=body):
+                result = evaluate_snapshot(
+                    snapshot([issue(135)], [issue(135)], body=body), REPOSITORY
+                )
+                self.assertTrue(result.allowed)
+
     def test_manual_overlap_preserves_repository_identity(self) -> None:
         foreign_same_number = issue(135, repository="another/repository")
         result = evaluate_snapshot(
