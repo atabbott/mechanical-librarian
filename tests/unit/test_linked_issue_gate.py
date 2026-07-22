@@ -110,6 +110,44 @@ class LinkedIssueGateTests(unittest.TestCase):
             result.references, (f"{REPOSITORY}#135", f"{REPOSITORY}#139")
         )
 
+    def test_raw_line_supports_repeated_keywords_and_list_items(self) -> None:
+        for body in (
+            "Closes #135, fixes #139",
+            "- Closes #135",
+            "1. Resolves #135",
+        ):
+            with self.subTest(body=body):
+                result = evaluate_snapshot(
+                    snapshot(
+                        [issue(135), issue(139)],
+                        [issue(135), issue(139)],
+                        body=body,
+                    ),
+                    REPOSITORY,
+                )
+                self.assertTrue(result.allowed)
+
+    def test_longer_fence_stays_open_until_a_valid_closer(self) -> None:
+        result = evaluate_snapshot(
+            snapshot(
+                [issue(135)],
+                [issue(135)],
+                body="````\n```\nCloses #135\n````",
+            ),
+            REPOSITORY,
+        )
+        self.assertEqual(result.code, "manual_link_not_closing_reference")
+
+        result = evaluate_snapshot(
+            snapshot(
+                [issue(135)],
+                [issue(135)],
+                body="```\nexample\n````\nCloses #135",
+            ),
+            REPOSITORY,
+        )
+        self.assertTrue(result.allowed)
+
     def test_comments_quotes_fenced_and_code_examples_do_not_disambiguate(self) -> None:
         for body in (
             "Example: Closes #135",

@@ -31,12 +31,16 @@ class TooManyLabelsError(ValueError):
 
 
 _TRACKING_EXEMPT_LABEL = "tracking-exempt"
+_CLOSING_KEYWORD = r"(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)"
+_CLOSING_REFERENCE = rf"{_CLOSING_KEYWORD}:?[ \t]+#[1-9][0-9]*"
 _CLOSING_LINE = re.compile(
-    r"^[ \t]*(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)"
-    r":?[ \t]+(?P<references>#[1-9][0-9]*(?:[ \t]*,[ \t]*#[1-9][0-9]*)*)[ \t]*$",
+    rf"^[ \t]*(?:[-+*][ \t]+|[0-9]+[.)][ \t]+)?{_CLOSING_REFERENCE}"
+    rf"(?:[ \t]*,[ \t]*(?:{_CLOSING_KEYWORD}:?[ \t]+)?#[1-9][0-9]*)*[ \t]*$",
     re.IGNORECASE,
 )
 _FENCE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})")
+_FENCE_CLOSER = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})[ \t]*$")
+_ISSUE_REFERENCE = re.compile(r"#[1-9][0-9]*")
 
 
 def evaluate_snapshot(snapshot: object, expected_repository: str) -> GateResult:
@@ -220,21 +224,26 @@ def _explicit_body_references(body: str) -> frozenset[int]:
             if "-->" not in line:
                 in_comment = True
             continue
-        fence_match = _FENCE.match(line)
         if fence is not None:
-            if fence_match and fence_match.group("fence")[0] == fence:
+            fence_match = _FENCE_CLOSER.fullmatch(line)
+            if (
+                fence_match
+                and fence_match.group("fence")[0] == fence[0]
+                and len(fence_match.group("fence")) >= len(fence)
+            ):
                 fence = None
             continue
+        fence_match = _FENCE.match(line)
         if fence_match:
-            fence = fence_match.group("fence")[0]
+            fence = fence_match.group("fence")
             continue
         if line.startswith(("    ", "\t")):
             continue
         match = _CLOSING_LINE.fullmatch(line)
         if match is None:
             continue
-        for reference in match.group("references").split(","):
-            references.add(int(reference.strip()[1:]))
+        for reference in _ISSUE_REFERENCE.findall(line):
+            references.add(int(reference[1:]))
             if len(references) > 100:
                 raise ValueError
     return frozenset(references)
