@@ -199,6 +199,19 @@ class LinkedIssueGateTests(unittest.TestCase):
                 )
                 self.assertTrue(result.allowed)
 
+    def test_fence_markers_inside_comments_do_not_open_fence_state(self) -> None:
+        for marker in ("```", "~~~"):
+            with self.subTest(marker=marker):
+                result = evaluate_snapshot(
+                    snapshot(
+                        [issue(135)],
+                        [issue(135)],
+                        body=f"<!--\n{marker}\n-->\nCloses #135",
+                    ),
+                    REPOSITORY,
+                )
+                self.assertTrue(result.allowed)
+
     def test_manual_overlap_preserves_repository_identity(self) -> None:
         foreign_same_number = issue(135, repository="another/repository")
         result = evaluate_snapshot(

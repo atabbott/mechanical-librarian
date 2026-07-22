@@ -225,13 +225,16 @@ def _explicit_body_references(body: str) -> frozenset[int]:
             ):
                 fence = None
             continue
+        if in_comment:
+            in_comment = _comment_continues(line, in_comment)
+            continue
+        if line.startswith(("    ", "\t")):
+            continue
         fence_match = _FENCE.match(line)
         if fence_match:
             fence = fence_match.group("fence")
             continue
-        if line.startswith(("    ", "\t")):
-            continue
-        if in_comment or "<!--" in line:
+        if "<!--" in line:
             in_comment = _comment_continues(line, in_comment)
             continue
         match = _CLOSING_LINE.fullmatch(line)
