@@ -68,16 +68,17 @@ provider secret, and permits no provider egress.
 
 ### 0.2 title technical-preview boundary
 
-The 0.2 path remains report-only. F09a supplies a deterministic fake candidate
-through an application-owned provider-neutral port and obtains its other inputs
-only from a licence-safe generated EPUB passed by descriptor to the real F06
-child and an in-memory Audiobookshelf-shaped synthetic snapshot. Its CLI parser
-accepts only a database path, a closed scenario, and an output format before
-state is opened. It accepts no configuration, target/media identifiers, title
-values, paths, provider payloads, endpoints, or credentials. F09b preserves that
-mode. The retired preview command and its secret-file compatibility surface are
-not installed. The retained configured F09f identity report owns provider
-credentials, transport, persistence, and report-only behavior.
+The 0.2 path was report-only. F09a formerly supplied a deterministic fake
+candidate through an application-owned provider-neutral port and obtained its
+other inputs only from a licence-safe generated EPUB passed by descriptor to the
+real F06 child and an in-memory Audiobookshelf-shaped synthetic snapshot. Its
+retired CLI parser accepted only a database path, a closed scenario, and an
+output format before state was opened; it accepted no configuration,
+target/media identifiers, title values, paths, provider payloads, endpoints, or
+credentials. F09b formerly preserved that mode. The retired F09a/F09b/F10a
+preview commands and their secret-file compatibility surface are not installed.
+The retained configured F09f identity report owns provider credentials,
+transport, persistence, and report-only behavior.
 
 The enabled adapter owns one fixed read-only GraphQL query sent only by HTTPS
 POST to `https://api.hardcover.app/v1/graphql`. The origin, path, method, and

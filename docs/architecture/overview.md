@@ -174,16 +174,18 @@ The narrower 0.2 title preview used the same application-owned seams, with F09a
 constructing all three inputs inside a closed synthetic harness: an in-memory
 Audiobookshelf-shaped title snapshot, exactly one eligible `TITLE` from the real
 F06 child reading an application-generated EPUB, and one candidate from a
-provider-neutral port. F09b's `hardcover-title-proposal-report` and F10a's
+provider-neutral port. F09a's `synthetic-title-proposal-report`, F09b's
+`hardcover-title-proposal-report`, and F10a's
 `synthetic-title-review-case-report` were retired with that preview boundary;
-the installed CLI rejects both command names. Their former synthetic proposal
-and case behavior is historical only. Current configured Hardcover operation is
-the F09f `hardcover-identity-report` surface. AI, human decisions, covers, rich
-fields, multi-provider fusion, and writes remain outside the preview.
+the installed CLI rejects all three command names. Their former synthetic
+proposal and case behavior is historical only. Current configured Hardcover
+operation is the F09f `hardcover-identity-report` surface. AI, human decisions,
+covers, rich fields, multi-provider fusion, and writes remain outside the
+preview.
 
-The harness persists only identity-bound `synthetic_preview` sets with derived
-false production applicability and a separate synthetic current pointer. It
-never adds rows to inventory history or current inventory pointers, and it has
+The retired harness persisted only identity-bound `synthetic_preview` sets with
+derived false production applicability and a separate synthetic current pointer.
+It never added rows to inventory history or current inventory pointers, and had
 no review or apply adapter. Connecting a configured media item and current live
 snapshot to local evidence is a later application use case, not an implicit
 adapter hidden inside F09a.

@@ -203,14 +203,15 @@ checkpoint and do not block the 0.2 preview. F08 #144, the broader #16, #46,
 and WP6 contracts below describe that long-term architecture; they are not 0.2
 exit criteria.
 
-Every F09a set carries the closed `synthetic_preview` mode in its identity and
-derives `production_applicable=false`; it cannot enter production review or
-apply authority. The command accepts no configuration, live IDs, operator
-titles, media references, provider payloads, endpoints, or credentials. A live
-local-evidence-to-current-Audiobookshelf binding, configured-media resolution,
-and their freshness and recovery semantics are deliberately deferred to the
-explicit 0.3 work. The retired F09b and F10a surfaces no longer continue that
-preview or grant its synthetic lineage production applicability.
+Every historical F09a set carried the closed `synthetic_preview` mode in its
+identity and derived `production_applicable=false`; it could not enter
+production review or apply authority. Its retired command accepted no
+configuration, live IDs, operator titles, media references, provider payloads,
+endpoints, or credentials. A live local-evidence-to-current-Audiobookshelf
+binding, configured-media resolution, and their freshness and recovery semantics
+are deliberately deferred to the explicit 0.3 work. The retired F09a, F09b, and
+F10a surfaces no longer continue that preview or grant its synthetic lineage
+production applicability.
 
 The next internal checkpoint is 0.3.0, the first trustworthy live title report.
 Completed F06 leads to F07a #143/#30/#31/#188 and then F07b #228/#32.
