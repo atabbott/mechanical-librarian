@@ -22,7 +22,7 @@ from mechanical_librarian.domain.identifiers import (
 )
 
 
-SCHEMA_VERSION = "dux-corpus-v1"
+SCHEMA_VERSION = "dux-corpus-v2"
 SOURCE_COMMIT = "358d70039a2d7da5e1d4cf7f19032ed5bf0fdc3f"
 SOURCE_TAG = "dux-complete-2026-07-10"
 CORPUS_ROOT = Path(__file__).parents[1] / "fixtures" / "dux"
@@ -32,43 +32,10 @@ MAX_STRING_CHARS = 512
 
 CATEGORIES = frozenset(
     {
-        "repeated_candidates",
         "evidence_only_input",
-        "consensus",
-        "conflicts",
         "no_ops",
-        "unloaded_current_values",
-        "incompatible_fields",
-        "cover_choices",
-        "series_choices",
         "independent_siblings",
         "destructive_cases",
-    }
-)
-CURRENT_CATEGORIES = frozenset(
-    {"evidence_only_input", "no_ops", "independent_siblings", "destructive_cases"}
-)
-
-_FUTURE_CRITERIA = MappingProxyType(
-    {
-        70: frozenset(
-            {
-                "Distinguish fill-empty, replace-populated, exact no-op, normalized no-op, keep-current, unloaded-current, unsupported, and inapplicable behavior.",
-                "Enforce adapter/media applicability before a proposal can become selectable.",
-                "Represent series membership and sequence independently, including numeric, decimal, labelled, conflicting-order, and unknown values.",
-            }
-        ),
-        71: frozenset(
-            {
-                "Produce typed cover choices and reasons without applying target changes.",
-            }
-        ),
-        145: frozenset(
-            {
-                "Agreement is counted across independent evidence families, so correlated or repeated rows cannot manufacture consensus; policy-defined decisive single-family evidence remains possible.",
-                "Proposal qualification requires supported target and work identity, plus edition identity or applicability when the field policy or proposed change is edition-sensitive; relevant conflicting identity or comparable identifiers reject the candidate.",
-            }
-        ),
     }
 )
 
@@ -159,8 +126,6 @@ _COPYRIGHT = re.compile(
     re.IGNORECASE,
 )
 _RESERVED_VALUE = re.compile(r"^(?:dux-synthetic|synthetic)-[a-z0-9]+(?:-[a-z0-9]+)*$")
-_DECIMAL_SEQUENCE = re.compile(r"^[1-9][0-9]{0,2}\.[0-9]{1,3}$")
-_FUTURE_LABEL_MAX_CHARS = 128
 _SCENARIO_KEYS = frozenset(
     {
         "schema",
@@ -168,9 +133,6 @@ _SCENARIO_KEYS = frozenset(
         "category",
         "dux_behavior",
         "preserved_invariant",
-        "status",
-        "not_yet_proving_product_behavior",
-        "future_owner",
         "provenance",
         "licensing",
         "contract",
@@ -178,15 +140,8 @@ _SCENARIO_KEYS = frozenset(
 )
 _CONTRACT_SHAPES = MappingProxyType(
     {
-        "repeated_candidates": ("future_contract_fact", {"candidate_values": list, "evidence_families": list}, {"agreement_families": int, "outcome": str}),
         "evidence_only_input": ("review_case_empty_rejection", {"case_id": str, "evidence_id": str, "proposals": list, "snapshot_id": str, "target": dict}, {"exception": str, "outcome": str}),
-        "consensus": ("future_contract_fact", {"candidate_values": list, "evidence_families": list}, {"agreement_families": int, "outcome": str}),
-        "conflicts": ("future_contract_fact", {"candidate_identity": str, "current_identity": str, "field": str}, {"outcome": str}),
         "no_ops": ("field_proposal_no_change", {"current": list, "evidence_id": str, "field": str, "proposal_id": str, "proposed": list, "snapshot_id": str, "target": dict}, {"current_equals_proposed": bool, "kind": str}),
-        "unloaded_current_values": ("future_contract_fact", {"current_state": str, "field": str, "proposed": list}, {"outcome": str}),
-        "incompatible_fields": ("future_contract_fact", {"field": str, "media_type": str, "proposed": list}, {"outcome": str}),
-        "cover_choices": ("future_contract_fact", {"candidate": str, "current": str, "work_identity": str}, {"outcome": str}),
-        "series_choices": ("future_contract_fact", {"raw_membership": list, "raw_sequence": list}, {"membership": list, "outcome": str, "sequence": list}),
         "independent_siblings": ("review_group_projection", {"confidence": str, "label": str, "link_method": str, "siblings": list}, {"decision_state_present": bool, "siblings": list}),
         "destructive_cases": ("ordinary_review_case_destructive_rejection", {"case_id": str, "destructive": bool, "proposal_id": str, "snapshot_id": str, "target": dict}, {"exception": str, "outcome": str}),
     }
@@ -208,7 +163,6 @@ class CorpusValidationError(ValueError):
 class Scenario:
     scenario_id: str
     category: str
-    status: str
     contract: Mapping[str, Any]
     record: Mapping[str, Any]
     canonical_bytes: bytes
@@ -532,7 +486,7 @@ def _validate_contract_shape(category: str, contract: dict[str, Any], *, scenari
     def synthetic_label(value: object) -> bool:
         return (
             type(value) is str
-            and len(value) <= _FUTURE_LABEL_MAX_CHARS
+            and len(value) <= MAX_STRING_CHARS
             and _RESERVED_VALUE.fullmatch(value) is not None
         )
 
@@ -560,28 +514,12 @@ def _validate_contract_shape(category: str, contract: dict[str, Any], *, scenari
         require(current_identifier(target["library"], LibraryId))
         require(current_identifier(target["external_item"], ExternalItemId))
 
-    if category == "repeated_candidates":
-        require(synthetic_list(inputs["candidate_values"], size=2))
-        require(synthetic_list(inputs["evidence_families"], size=2))
-        require(len(set(inputs["candidate_values"])) == 1)
-        require(len(set(inputs["evidence_families"])) == 1)
-        require(expected == {"agreement_families": 1, "outcome": "not_consensus"})
-    elif category == "evidence_only_input":
+    if category == "evidence_only_input":
         require(current_identifier(inputs["case_id"], ReviewCaseId))
         require(current_identifier(inputs["evidence_id"], EvidenceId))
         require(current_identifier(inputs["snapshot_id"], SnapshotId))
         require(inputs["proposals"] == [])
         require(expected == {"exception": "ValueError", "outcome": "reject_empty_case"})
-    elif category == "consensus":
-        require(synthetic_list(inputs["candidate_values"], size=2))
-        require(synthetic_list(inputs["evidence_families"], size=2))
-        require(len(set(inputs["candidate_values"])) == 1)
-        require(len(set(inputs["evidence_families"])) == 2)
-        require(expected == {"agreement_families": 2, "outcome": "consensus"})
-    elif category == "conflicts":
-        require(synthetic_label(inputs["candidate_identity"]) and synthetic_label(inputs["current_identity"]))
-        require(inputs["candidate_identity"] != inputs["current_identity"])
-        require(inputs["field"] == "title" and expected == {"outcome": "reject_candidate"})
     elif category == "no_ops":
         require(synthetic_list(inputs["current"], size=1) and synthetic_list(inputs["proposed"], size=1))
         require(inputs["current"] == inputs["proposed"])
@@ -590,27 +528,6 @@ def _validate_contract_shape(category: str, contract: dict[str, Any], *, scenari
         require(current_identifier(inputs["proposal_id"], ProposalId))
         require(current_identifier(inputs["snapshot_id"], SnapshotId))
         require(expected == {"current_equals_proposed": True, "kind": "no_change"})
-    elif category == "unloaded_current_values":
-        require(inputs["current_state"] == "unloaded" and inputs["field"] == "publisher")
-        require(synthetic_list(inputs["proposed"], size=1))
-        require(expected == {"outcome": "unloaded_current"})
-    elif category == "incompatible_fields":
-        require(inputs["field"] == "narrators" and inputs["media_type"] == "ebook")
-        require(synthetic_list(inputs["proposed"], size=1))
-        require(expected == {"outcome": "inapplicable"})
-    elif category == "cover_choices":
-        require(all(synthetic_label(inputs[key]) for key in ("candidate", "current", "work_identity")))
-        require(inputs["candidate"] != inputs["current"])
-        require(expected == {"outcome": "typed_choice_without_change"})
-    elif category == "series_choices":
-        require(synthetic_list(inputs["raw_membership"], size=1))
-        require(
-            len(inputs["raw_sequence"]) == 1
-            and _DECIMAL_SEQUENCE.fullmatch(inputs["raw_sequence"][0]) is not None
-        )
-        require(expected["membership"] == inputs["raw_membership"])
-        require(expected["sequence"] == inputs["raw_sequence"])
-        require(expected["outcome"] == "independent_series_parts")
     elif category == "independent_siblings":
         require(all(synthetic_label(inputs[key]) for key in ("confidence", "label", "link_method")))
         require(
@@ -672,30 +589,6 @@ def _validate_scenario(value: dict[str, Any], raw: bytes, *, filename: str, ordi
     }:
         _fail("DUX014_LICENCE", scenario=scenario_id, ordinal=ordinal)
 
-    status = value["status"]
-    owner = value["future_owner"]
-    not_yet = value["not_yet_proving_product_behavior"]
-    if value["category"] in CURRENT_CATEGORIES:
-        if status != "current" or owner is not None or not_yet is not False:
-            _fail("DUX015_OWNERSHIP", scenario=scenario_id, ordinal=ordinal)
-    else:
-        if status != "future" or not_yet is not True:
-            _fail("DUX015_OWNERSHIP", scenario=scenario_id, ordinal=ordinal)
-        owner_value = _exact_keys(
-            owner,
-            frozenset({"issue", "state", "criterion"}),
-            "DUX015_OWNERSHIP",
-            scenario=scenario_id,
-            ordinal=ordinal,
-        )
-        if (
-            type(owner_value["issue"]) is not int
-            or owner_value["state"] != "open"
-            or type(owner_value["criterion"]) is not str
-            or owner_value["criterion"] not in _FUTURE_CRITERIA.get(owner_value["issue"], ())
-        ):
-            _fail("DUX015_OWNERSHIP", scenario=scenario_id, ordinal=ordinal)
-
     _audit(value, scenario=scenario_id, ordinal=ordinal)
     contract = _exact_keys(
         value["contract"],
@@ -708,7 +601,7 @@ def _validate_scenario(value: dict[str, Any], raw: bytes, *, filename: str, ordi
         _fail("DUX016_CONTRACT", scenario=scenario_id, ordinal=ordinal)
     _validate_contract_shape(value["category"], contract, scenario=scenario_id, ordinal=ordinal)
     frozen = _freeze(value)
-    return Scenario(scenario_id, value["category"], status, frozen["contract"], frozen, raw)
+    return Scenario(scenario_id, value["category"], frozen["contract"], frozen, raw)
 
 
 def load_registry(root: Path = CORPUS_ROOT) -> CorpusRegistry:

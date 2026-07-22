@@ -19,7 +19,7 @@ identify the behavior source.
 
 The registry is `tests/fixtures/dux/registry.json`; scenario records are the
 other JSON files in that directory. `tests/support/dux_corpus.py` owns the
-test-only schema and loader. Schema `dux-corpus-v1` is an internal test
+test-only schema and loader. Schema `dux-corpus-v2` is an internal test
 compatibility contract, not a supported application API.
 
 The registry has exactly three fields:
@@ -32,9 +32,6 @@ Each scenario records:
 
 - its schema, reserved scenario identity, coverage category, exact DUX
   behavior identity, and preserved invariant;
-- `current` or `future` status;
-- for future behavior, an open owning issue, its captured open state, an exact
-  governing criterion, and `not_yet_proving_product_behavior: true`;
 - source commit and tag, behavioral treatment
   `independently_reimplemented`, and fixture origin `generated`;
 - licence conclusion `AGPL-3.0-or-later`, authorship as Mechanical Librarian
@@ -43,11 +40,9 @@ Each scenario records:
 - the smallest typed input facts and expected outcome needed by a contract
   consumer.
 
-The exact coverage categories are repeated candidates, evidence-only input,
-consensus, conflicts, no-ops, unloaded current values, incompatible fields,
-cover choices, series choices, independent siblings, and destructive cases.
-One scenario owns each category. Combining meanings does not create an
-additional implicit coverage entry.
+The exact coverage categories are evidence-only input, no-ops, independent
+siblings, and destructive cases. One scenario owns each category. Combining
+meanings does not create an additional implicit coverage entry.
 
 ## Reserved synthetic namespace and recipes
 
@@ -79,8 +74,8 @@ it to this generated corpus.
 The loader reads and validates the registry and every owned file before it
 returns any scenario. Validation rejects unknown or missing keys, incompatible
 versions, absent provenance or licence facts, duplicate identities or files,
-orphan files, incomplete or duplicate coverage, invalid current/future
-ownership, noncanonical files, and malformed or oversized JSON. Returned
+orphan files, incomplete or duplicate coverage, noncanonical files, and
+malformed or oversized JSON. Returned
 records, nested mappings, collections, coverage, and scenario order are
 immutable.
 
@@ -89,11 +84,10 @@ symlinks, and nested content fail validation. Each category also validates its
 allowed kind, outcome and flags, bounded reserved values, and relevant
 equality, cardinality, identity, and cross-field facts.
 
-Current adapter, connection, library, case, snapshot, evidence, proposal, and
+Adapter, connection, library, case, snapshot, evidence, proposal, and
 sibling-case identities are validated by their exact domain value types,
 including the 64-character internal-identifier bound. External item identities
-retain their separate domain bound. Future-only synthetic labels use a distinct
-128-character fixture bound and do not stand in for current internal IDs.
+retain their separate domain bound.
 
 All files are canonical UTF-8 JSON: object keys are sorted, separators are
 fixed, list order is deliberate, and exactly one final LF is present. Repeated
@@ -126,26 +120,19 @@ dedicated provenance locations; embedded occurrences elsewhere are rejected.
 The repository does not retain a raw private or source-value blocklist, and
 negative tests use newly generated unsafe sentinels.
 
-## Consumers and future extension
+## Consumers
 
-Current scenarios must be consumed through an exact available typed domain
-seam. The initial consumers prove evidence-only empty-case rejection,
+Every scenario is consumed through an exact available typed domain seam. The
+consumers prove evidence-only empty-case rejection,
 `FieldProposal` no-change shape, display-only `ReviewGroup` sibling isolation,
 and destructive exclusion from ordinary `ReviewCase` flow. They do not claim
 candidate aggregation, selection, apply-plan, cover, or series behavior that
 the current domain does not implement.
 
-Future scenarios are fixture contracts only. Their owner and exact criterion
-are embedded so a test can validate ownership without network access. They are
-explicitly not yet proving product behavior. The owning ticket adds its product
-consumer when the behavior exists; changing the fixture alone cannot satisfy
-that ticket.
-
 An extension must remain test-only, allocate exactly one registry category,
-use an available typed consumer or a valid future owner, and pass complete
-registry validation. Do not add a production loader, resource lookup, network
-check, prototype checkout, environment discovery, or hidden compatibility
-fallback.
+use an available typed consumer, and pass complete registry validation. Do not
+add a production loader, resource lookup, network check, prototype checkout,
+environment discovery, or hidden compatibility fallback.
 
 For a compatible data correction, rewrite the affected scenario and registry
 with canonical serialization and review the byte diff. For an incompatible
