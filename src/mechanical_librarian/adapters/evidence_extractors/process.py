@@ -265,7 +265,7 @@ def run_epub_package_child(
                     stream.close()
 
 
-def run_epub_opening_child(
+def run_epub_inspector_child(
     descriptor: int,
     expected_source: Fingerprint,
     limits: EpubOpeningLimits,
@@ -284,6 +284,11 @@ def run_epub_opening_child(
         cancelled=cancelled,
         logical_identity=logical_identity,
     )
+
+
+# Internal transitional spelling retained only while the existing F07b
+# persistence adapter is migrated; it delegates to the sole controller above.
+run_epub_opening_child = run_epub_inspector_child
 
 
 def _run_epub_opening_protocol(
@@ -415,4 +420,4 @@ def _run_epub_opening_protocol(
                     stream.close()
 
 
-__all__ = ["run_epub_opening_child", "run_epub_package_child"]
+__all__ = ["run_epub_inspector_child", "run_epub_package_child"]

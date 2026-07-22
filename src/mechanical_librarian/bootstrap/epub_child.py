@@ -235,7 +235,9 @@ def main(argv: list[str] | None = None) -> int:
                     report = EpubOpeningExtractor().extract(
                         request, limits, package_report, archive
                     )
-            except (OSError, ValueError, zipfile.BadZipFile):
+            except zipfile.BadZipFile:
+                report = EpubOpeningReport(LocalEvidenceOutcome.UNSUPPORTED_FORMAT, limits)
+            except (OSError, ValueError):
                 report = EpubOpeningReport(LocalEvidenceOutcome.INTEGRITY_FAILURE, limits)
         else:
             report = extract_local_evidence(EpubPackageExtractor(), request)

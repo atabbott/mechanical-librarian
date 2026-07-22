@@ -48,7 +48,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_inventory imp
     AudiobookshelfInventoryReader,
 )
 from mechanical_librarian.adapters.evidence_extractors.process import (
-    run_epub_opening_child,
+    run_epub_inspector_child,
     run_epub_package_child,
 )
 from mechanical_librarian.adapters.evidence_extractors.synthetic_epub import (
@@ -1235,7 +1235,7 @@ def _run_epub_opening_execution(
         logical_identity = hashlib.sha256(
             f"{mount_name}\x00{relative_reference}".encode("utf-8")
         ).hexdigest()
-        report = run_epub_opening_child(
+        report = run_epub_inspector_child(
             opened.descriptor,
             expected,
             limits,

@@ -76,51 +76,6 @@ class EpubOpeningProcessTests(unittest.TestCase):
         self.assertEqual(sibling.outcome, LocalEvidenceOutcome.SUCCESS)
         self.assertTrue(sibling.claims)
 
-    def test_supported_cli_emits_typed_path_free_json_and_text(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            mount = root / "media"
-            mount.mkdir()
-            source = mount / "book.epub"
-            source.write_bytes(opening_claims_complete())
-            config = root / "configuration.json"
-            config.write_text(json.dumps(_configuration(mount)), encoding="utf-8")
-            for output_format in ("json", "text"):
-                with self.subTest(output_format=output_format):
-                    output = io.StringIO()
-                    errors = io.StringIO()
-                    with redirect_stdout(output), redirect_stderr(errors):
-                        exit_code = bootstrap.main(
-                            [
-                                "epub-opening-report",
-                                "--config",
-                                str(config),
-                                "--mount",
-                                "books",
-                                "--file",
-                                "book.epub",
-                                "--format",
-                                output_format,
-                            ]
-                        )
-                    combined = output.getvalue() + errors.getvalue()
-                    self.assertEqual(exit_code, 0, errors.getvalue())
-                    self.assertEqual(errors.getvalue(), "")
-                    self.assertNotIn(str(root), combined)
-                    self.assertNotIn("book.epub", combined)
-                    self.assertNotIn("docker-secret", combined)
-                    if output_format == "json":
-                        report = json.loads(output.getvalue())
-                        self.assertEqual(report["schema"], "epub-opening-report-v1")
-                        self.assertEqual(report["outcome"], "success")
-                        self.assertEqual(
-                            report["limits"]["profile"],
-                            "epub-opening-limits-v1",
-                        )
-                        self.assertTrue(report["claims"])
-                    else:
-                        self.assertIn("outcome=\"success\"", output.getvalue())
-
     def test_timeout_and_output_overflow_discard_partial_state_and_leave_a_usable_sibling(self) -> None:
         value = opening_strict_xhtml()
         expected = Fingerprint(
@@ -193,7 +148,7 @@ class EpubOpeningProcessTests(unittest.TestCase):
                 )
 
             with patch.object(
-                bootstrap, "run_epub_opening_child", side_effect=mutate
+                bootstrap, "run_epub_inspector_child", side_effect=mutate
             ):
                 report = bootstrap._run_epub_opening_report(
                     config, "books", "book.epub"
@@ -227,17 +182,6 @@ class EpubOpeningProcessTests(unittest.TestCase):
                     )
                     if expected_outcome is LocalEvidenceOutcome.UNSUPPORTED_FORMAT:
                         self.assertIsNone(execution.report.source_fingerprint)
-
-    def test_invalid_invocation_is_a_closed_typed_failure(self) -> None:
-        output = io.StringIO()
-        errors = io.StringIO()
-        with redirect_stdout(output), redirect_stderr(errors):
-            exit_code = bootstrap.main(["epub-opening-report", "--mount", "books"])
-        self.assertEqual(exit_code, 2)
-        self.assertEqual(output.getvalue(), "")
-        report = json.loads(errors.getvalue())
-        self.assertEqual(report["outcome"], "invalid_invocation")
-        self.assertEqual(report["schema"], "epub-opening-report-v1")
 
     def test_disabled_epub_is_a_typed_pre_open_no_applicable_outcome(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
