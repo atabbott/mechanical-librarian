@@ -23,7 +23,7 @@ from .epub_opening import (
     OpeningParseMode,
 )
 from .identifiers import DomainValueError, canonical_json
-from .local_evidence import LocalEvidenceOutcome
+from .epub_inspection import EpubInspectionOutcome
 
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -33,15 +33,15 @@ _EVIDENCE = re.compile(r"^evidence_[0-9a-f]{32}$")
 
 PUBLISHABLE_EPUB_OUTCOMES = frozenset(
     {
-        LocalEvidenceOutcome.SUCCESS,
-        LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE,
-        LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
-        LocalEvidenceOutcome.UNSUPPORTED_VERSION,
-        LocalEvidenceOutcome.UNSUPPORTED_COMPRESSION,
-        LocalEvidenceOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS,
-        LocalEvidenceOutcome.ENCRYPTED,
-        LocalEvidenceOutcome.MALFORMED,
-        LocalEvidenceOutcome.INTEGRITY_FAILURE,
+        EpubInspectionOutcome.SUCCESS,
+        EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
+        EpubInspectionOutcome.UNSUPPORTED_FORMAT,
+        EpubInspectionOutcome.UNSUPPORTED_VERSION,
+        EpubInspectionOutcome.UNSUPPORTED_COMPRESSION,
+        EpubInspectionOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS,
+        EpubInspectionOutcome.ENCRYPTED,
+        EpubInspectionOutcome.MALFORMED,
+        EpubInspectionOutcome.INTEGRITY_FAILURE,
     }
 )
 
@@ -176,7 +176,7 @@ class EpubEvidenceClaim:
 @dataclass(frozen=True)
 class EpubEvidenceResult:
     mode: EpubEvidenceMode
-    outcome: LocalEvidenceOutcome | None = None
+    outcome: EpubInspectionOutcome | None = None
     failure: EpubEvidenceFailure | None = None
     evidence_id: str | None = None
     current_applicable: bool = False
@@ -199,7 +199,7 @@ class EpubEvidenceResult:
             type(self.mode) is not EpubEvidenceMode
             or (
                 self.outcome is not None
-                and type(self.outcome) is not LocalEvidenceOutcome
+                and type(self.outcome) is not EpubInspectionOutcome
             )
             or (self.failure is not None and type(self.failure) is not EpubEvidenceFailure)
             or (self.evidence_id is not None and _EVIDENCE.fullmatch(self.evidence_id) is None)

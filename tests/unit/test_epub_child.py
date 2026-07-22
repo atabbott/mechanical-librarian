@@ -14,11 +14,11 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     EpubPackageExtractor,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
-from mechanical_librarian.domain.local_evidence import (
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageLimits,
-    LocalEvidenceCapability,
-    LocalEvidenceOutcome,
-    LocalEvidenceReport,
+    EpubPackageCapability,
+    EpubInspectionOutcome,
+    EpubPackageReport,
 )
 
 
@@ -35,7 +35,7 @@ class EpubChildCompositionTests(unittest.TestCase):
             "limits": EpubPackageLimits().to_data(),
             "logical_identity": "b" * 64,
         }
-        written: list[LocalEvidenceReport] = []
+        written: list[EpubPackageReport] = []
         with (
             patch.object(child, "_install_parent_guard"),
             patch.object(child, "_apply_limits"),
@@ -47,7 +47,7 @@ class EpubChildCompositionTests(unittest.TestCase):
         ):
             self.assertEqual(child.main(["10", "11", "123"]), 0)
         self.assertEqual(len(written), 1)
-        self.assertEqual(written[0].outcome, LocalEvidenceOutcome.INTERNAL_FAILURE)
+        self.assertEqual(written[0].outcome, EpubInspectionOutcome.INTERNAL_FAILURE)
         extract.assert_not_called()
 
     def test_entrypoint_import_does_not_load_network_database_or_secret_implementations(
@@ -99,9 +99,9 @@ print(json.dumps(sorted(name for name in sys.modules if name.startswith(forbidde
         digest = "a" * 64
         logical_identity = "b" * 64
         expected = Fingerprint("sha256", SchemaVersion("source-v1"), digest)
-        report = LocalEvidenceReport(
-            LocalEvidenceOutcome.SUCCESS,
-            LocalEvidenceCapability.PACKAGE,
+        report = EpubPackageReport(
+            EpubInspectionOutcome.SUCCESS,
+            EpubPackageCapability.PACKAGE,
             limits,
             expected,
         )

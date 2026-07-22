@@ -39,11 +39,6 @@ from mechanical_librarian.application.inventory_polling import (
     InventoryPollOutcome,
     InventoryPollResult,
 )
-from mechanical_librarian.application.local_evidence import (
-    EpubPackageReportRunner,
-    internal_failure_report,
-    render_local_evidence_text,
-)
 from mechanical_librarian.application.epub_opening import (
     EpubOpeningReportRunner,
     internal_opening_failure_report,
@@ -70,12 +65,7 @@ from mechanical_librarian.application.hardcover_identity import (
     SafeExecutorPreviewReport,
     render_report_text as render_hardcover_identity_text,
 )
-from mechanical_librarian.domain.local_evidence import (
-    EpubPackageLimits,
-    LocalEvidenceCapability,
-    LocalEvidenceOutcome,
-    LocalEvidenceReport,
-)
+from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.inventory import SecretReference
 
@@ -134,25 +124,25 @@ _CONNECTION_FAILURE = (
 _ABS_INVENTORY_FAILURE = "Audiobookshelf inventory failed safely.\n"
 _ABS_POLL_FAILURE = "Audiobookshelf poll failed safely.\n"
 _EPUB_PACKAGE_EXIT = {
-    LocalEvidenceOutcome.INVALID_INVOCATION: 2,
-    LocalEvidenceOutcome.SUCCESS: 0,
-    LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE: 0,
-    LocalEvidenceOutcome.INVALID_CONFIGURATION: 3,
-    LocalEvidenceOutcome.INVALID_REFERENCE: 3,
-    LocalEvidenceOutcome.UNAVAILABLE_SOURCE: 3,
-    LocalEvidenceOutcome.UNSUPPORTED_FORMAT: 4,
-    LocalEvidenceOutcome.UNSUPPORTED_VERSION: 4,
-    LocalEvidenceOutcome.UNSUPPORTED_COMPRESSION: 4,
-    LocalEvidenceOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS: 4,
-    LocalEvidenceOutcome.ENCRYPTED: 4,
-    LocalEvidenceOutcome.MALFORMED: 5,
-    LocalEvidenceOutcome.INTEGRITY_FAILURE: 5,
-    LocalEvidenceOutcome.RESOURCE_LIMIT: 5,
-    LocalEvidenceOutcome.TIMEOUT: 5,
-    LocalEvidenceOutcome.CANCELLATION: 5,
-    LocalEvidenceOutcome.UNSTABLE_SOURCE: 5,
-    LocalEvidenceOutcome.CHILD_FAILURE: 70,
-    LocalEvidenceOutcome.INTERNAL_FAILURE: 70,
+    EpubInspectionOutcome.INVALID_INVOCATION: 2,
+    EpubInspectionOutcome.SUCCESS: 0,
+    EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE: 0,
+    EpubInspectionOutcome.INVALID_CONFIGURATION: 3,
+    EpubInspectionOutcome.INVALID_REFERENCE: 3,
+    EpubInspectionOutcome.UNAVAILABLE_SOURCE: 3,
+    EpubInspectionOutcome.UNSUPPORTED_FORMAT: 4,
+    EpubInspectionOutcome.UNSUPPORTED_VERSION: 4,
+    EpubInspectionOutcome.UNSUPPORTED_COMPRESSION: 4,
+    EpubInspectionOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS: 4,
+    EpubInspectionOutcome.ENCRYPTED: 4,
+    EpubInspectionOutcome.MALFORMED: 5,
+    EpubInspectionOutcome.INTEGRITY_FAILURE: 5,
+    EpubInspectionOutcome.RESOURCE_LIMIT: 5,
+    EpubInspectionOutcome.TIMEOUT: 5,
+    EpubInspectionOutcome.CANCELLATION: 5,
+    EpubInspectionOutcome.UNSTABLE_SOURCE: 5,
+    EpubInspectionOutcome.CHILD_FAILURE: 70,
+    EpubInspectionOutcome.INTERNAL_FAILURE: 70,
 }
 _EPUB_EVIDENCE_FAILURE = "EPUB opening evidence failed safely.\n"
 _LIVE_TITLE_PROPOSAL_FAILURE = "Live title proposal report failed safely.\n"
@@ -234,15 +224,6 @@ def _read_synthetic_input(stream: TextIO | None) -> Mapping[str, object]:
     return source
 
 
-def _epub_parser() -> argparse.ArgumentParser:
-    parser = _EpubArgumentParser(prog="mechanical-librarian epub-package-report")
-    parser.add_argument("--config", required=True, metavar="PATH", type=Path)
-    parser.add_argument("--mount", required=True, metavar="NAME", type=_bounded_identifier)
-    parser.add_argument("--file", required=True, metavar="RELATIVE")
-    parser.add_argument("--format", choices=("json", "text"), default="json")
-    return parser
-
-
 def _epub_opening_parser() -> argparse.ArgumentParser:
     parser = _EpubArgumentParser(prog="mechanical-librarian epub-opening-report")
     parser.add_argument("--config", required=True, metavar="PATH", type=Path)
@@ -290,22 +271,6 @@ def _live_title_proposal_parser() -> argparse.ArgumentParser:
     parser.add_argument("--file-index", required=True, metavar="INDEX", type=int)
     parser.add_argument("--format", choices=("json", "text"), default="json")
     return parser
-
-
-def _write_epub_report(
-    report: LocalEvidenceReport,
-    output_format: str,
-    output: TextIO,
-    errors: TextIO,
-) -> int:
-    exit_status = _EPUB_PACKAGE_EXIT[report.outcome]
-    destination = output if exit_status == 0 else errors
-    destination.write(
-        report.to_json() + "\n"
-        if output_format == "json"
-        else render_local_evidence_text(report)
-    )
-    return exit_status
 
 
 def _write_epub_opening_report(
@@ -473,7 +438,6 @@ def main(
     inventory_inspection_runner: AudiobookshelfInventoryRunner | None = None,
     audiobookshelf_poll_runner: AudiobookshelfPollRunner | None = None,
     inventory_poll_inspection_runner: InventoryPollInspectionRunner | None = None,
-    epub_package_report_runner: EpubPackageReportRunner | None = None,
     epub_opening_report_runner: EpubOpeningReportRunner | None = None,
     epub_opening_evidence_runner: EpubOpeningEvidenceRunner | None = None,
     live_title_proposal_runner: LiveTitleProposalRunner | None = None,
@@ -508,7 +472,6 @@ def main(
     if raw_arguments[:1] in (
         ["epub-package-report"],
         ["epub-opening-report"],
-        ["epub-opening-evidence"],
         ["synthetic-title-proposal-report"],
         ["hardcover-title-proposal-report"],
         ["synthetic-title-review-case-report"],
@@ -782,7 +745,7 @@ def main(
         except _EpubArgumentError:
             return _write_epub_opening_report(
                 EpubOpeningReport(
-                    LocalEvidenceOutcome.INVALID_INVOCATION,
+                    EpubInspectionOutcome.INVALID_INVOCATION,
                     EpubOpeningLimits(),
                 ),
                 requested_format,
@@ -801,7 +764,7 @@ def main(
             )
         except KeyboardInterrupt:
             report = EpubOpeningReport(
-                LocalEvidenceOutcome.CANCELLATION,
+                EpubInspectionOutcome.CANCELLATION,
                 EpubOpeningLimits(),
             )
         except Exception:
@@ -809,59 +772,6 @@ def main(
         if type(report) is not EpubOpeningReport:
             report = internal_opening_failure_report()
         return _write_epub_opening_report(
-            report,
-            epub_arguments.format,
-            output,
-            errors,
-        )
-    if raw_arguments[:1] == ["epub-package-report"]:
-        requested_format = "json"
-        index = 1
-        while index < len(raw_arguments):
-            argument = raw_arguments[index]
-            candidate: str | None = None
-            if argument.startswith("--format="):
-                candidate = argument.partition("=")[2]
-            elif argument == "--format" and index + 1 < len(raw_arguments):
-                index += 1
-                candidate = raw_arguments[index]
-            if candidate in {"json", "text"}:
-                requested_format = candidate
-            index += 1
-        try:
-            epub_arguments = _epub_parser().parse_args(raw_arguments[1:])
-        except _EpubArgumentError:
-            return _write_epub_report(
-                LocalEvidenceReport(
-                    LocalEvidenceOutcome.INVALID_INVOCATION,
-                    LocalEvidenceCapability.PACKAGE,
-                    EpubPackageLimits(),
-                ),
-                requested_format,
-                output,
-                errors,
-            )
-        try:
-            report = (
-                internal_failure_report()
-                if epub_package_report_runner is None
-                else epub_package_report_runner(
-                    epub_arguments.config,
-                    epub_arguments.mount,
-                    epub_arguments.file,
-                )
-            )
-        except KeyboardInterrupt:
-            report = LocalEvidenceReport(
-                LocalEvidenceOutcome.CANCELLATION,
-                LocalEvidenceCapability.PACKAGE,
-                EpubPackageLimits(),
-            )
-        except Exception:
-            report = internal_failure_report()
-        if type(report) is not LocalEvidenceReport:
-            report = internal_failure_report()
-        return _write_epub_report(
             report,
             epub_arguments.format,
             output,

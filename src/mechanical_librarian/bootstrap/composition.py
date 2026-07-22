@@ -49,7 +49,6 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_inventory imp
 )
 from mechanical_librarian.adapters.evidence_extractors.process import (
     run_epub_inspector_child,
-    run_epub_package_child,
 )
 from mechanical_librarian.adapters.persistence.title_proposals import (
     SQLiteTitleProposalRepository,
@@ -168,12 +167,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     ResolvedEpubSource,
     epub_governing_digest,
 )
-from mechanical_librarian.domain.local_evidence import (
-    EpubPackageLimits,
-    LocalEvidenceCapability,
-    LocalEvidenceOutcome,
-    LocalEvidenceReport,
-)
+from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.inventory import (
     AdapterCapabilities,
     LibraryConnection,
@@ -1028,103 +1022,8 @@ def _inventory_inspection_outcome(state: ScanState) -> InventoryOutcome:
     }[state]
 
 
-def _local_evidence_failure(
-    outcome: LocalEvidenceOutcome,
-    limits: EpubPackageLimits | None = None,
-) -> LocalEvidenceReport:
-    return LocalEvidenceReport(
-        outcome,
-        LocalEvidenceCapability.PACKAGE,
-        EpubPackageLimits() if limits is None else limits,
-    )
-
-
-def _run_epub_package_report(
-    configuration_path: Path, mount_name: str, relative_reference: str
-) -> LocalEvidenceReport:
-    """Validate one logical reference and extract it through a transient child."""
-
-    try:
-        configuration = load_configuration_file(configuration_path)
-    except ConfigurationError:
-        return _local_evidence_failure(LocalEvidenceOutcome.INVALID_CONFIGURATION)
-    limits = replace(
-        configuration.evidence.epub_package,
-        source_archive_bytes=min(
-            configuration.evidence.epub_package.source_archive_bytes,
-            configuration.evidence.maximum_document_bytes,
-        ),
-    )
-    if "epub" not in configuration.evidence.enabled_formats:
-        return _local_evidence_failure(LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE, limits)
-    try:
-        validate_relative_reference(relative_reference)
-    except LocalMediaError:
-        return _local_evidence_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
-    mounts = tuple(mount for mount in configuration.media_mounts if mount.name == mount_name)
-    if len(mounts) != 1 or not mounts[0].read_only:
-        return _local_evidence_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
-    opened = None
-    replacement = None
-    baseline_established = False
-    try:
-        opened = open_local_media(mounts[0].container_path, relative_reference)
-        if opened.length > limits.source_archive_bytes:
-            return _local_evidence_failure(LocalEvidenceOutcome.RESOURCE_LIMIT, limits)
-        before_identity = opened.identity
-        before_digest = sha256_descriptor(
-            opened.descriptor, opened.length, maximum=limits.source_archive_bytes
-        )
-        baseline_established = True
-        expected = Fingerprint("sha256", SchemaVersion("source-v1"), before_digest)
-        logical_identity = hashlib.sha256(
-            f"{mount_name}\x00{relative_reference}".encode("utf-8")
-        ).hexdigest()
-        report = run_epub_package_child(
-            opened.descriptor,
-            expected,
-            limits,
-            logical_identity=logical_identity,
-            wall_seconds=min(configuration.limits.parser_timeout_seconds, 60),
-        )
-        after_digest = sha256_descriptor(
-            opened.descriptor, opened.length, maximum=limits.source_archive_bytes
-        )
-        after_identity = descriptor_identity(opened.descriptor)
-        replacement = open_local_media(mounts[0].container_path, relative_reference)
-        replacement_digest = sha256_descriptor(
-            replacement.descriptor,
-            replacement.length,
-            maximum=limits.source_archive_bytes,
-        )
-        if (
-            before_identity != after_identity
-            or replacement.identity != before_identity
-            or before_digest != after_digest
-            or replacement_digest != before_digest
-        ):
-            return _local_evidence_failure(LocalEvidenceOutcome.UNSTABLE_SOURCE, limits)
-        return report
-    except LocalMediaError:
-        return _local_evidence_failure(
-            LocalEvidenceOutcome.UNSTABLE_SOURCE
-            if baseline_established
-            else LocalEvidenceOutcome.UNAVAILABLE_SOURCE,
-            limits,
-        )
-    except Exception:
-        return _local_evidence_failure(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
-    finally:
-        for value in (opened, replacement):
-            if value is not None:
-                try:
-                    os.close(value.descriptor)
-                except OSError:
-                    pass
-
-
 def _opening_failure(
-    outcome: LocalEvidenceOutcome,
+    outcome: EpubInspectionOutcome,
     limits: EpubOpeningLimits | None = None,
 ) -> EpubOpeningReport:
     return EpubOpeningReport(
@@ -1164,7 +1063,7 @@ def _run_epub_opening_execution(
         try:
             configuration = load_configuration_file(configuration_path)
         except ConfigurationError:
-            return _opening_failure(LocalEvidenceOutcome.INVALID_CONFIGURATION)
+            return _opening_failure(EpubInspectionOutcome.INVALID_CONFIGURATION)
     else:
         configuration = frozen_configuration
     package_limits = replace(
@@ -1183,22 +1082,22 @@ def _run_epub_opening_execution(
         ),
     )
     if "epub" not in configuration.evidence.enabled_formats:
-        return _opening_failure(LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE, limits)
+        return _opening_failure(EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE, limits)
     try:
         validate_relative_reference(relative_reference)
     except LocalMediaError:
-        return _opening_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
+        return _opening_failure(EpubInspectionOutcome.INVALID_REFERENCE, limits)
     mounts = tuple(
         mount for mount in configuration.media_mounts if mount.name == mount_name
     )
     if len(mounts) != 1 or not mounts[0].read_only:
-        return _opening_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
+        return _opening_failure(EpubInspectionOutcome.INVALID_REFERENCE, limits)
     opened = replacement = None
     baseline_established = False
     try:
         opened = open_local_media(mounts[0].container_path, relative_reference)
         if opened.length > package_limits.source_archive_bytes:
-            return _opening_failure(LocalEvidenceOutcome.RESOURCE_LIMIT, limits)
+            return _opening_failure(EpubInspectionOutcome.RESOURCE_LIMIT, limits)
         before_identity = opened.identity
         before_digest = sha256_descriptor(
             opened.descriptor,
@@ -1234,17 +1133,17 @@ def _run_epub_opening_execution(
             or before_digest != after_digest
             or replacement_digest != before_digest
         ):
-            return _opening_failure(LocalEvidenceOutcome.UNSTABLE_SOURCE, limits)
+            return _opening_failure(EpubInspectionOutcome.UNSTABLE_SOURCE, limits)
         return EpubOpeningExecution(report, before_digest)
     except LocalMediaError:
         return _opening_failure(
-            LocalEvidenceOutcome.UNSTABLE_SOURCE
+            EpubInspectionOutcome.UNSTABLE_SOURCE
             if baseline_established
-            else LocalEvidenceOutcome.UNAVAILABLE_SOURCE,
+            else EpubInspectionOutcome.UNAVAILABLE_SOURCE,
             limits,
         )
     except Exception:
-        return _opening_failure(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
+        return _opening_failure(EpubInspectionOutcome.INTERNAL_FAILURE, limits)
     finally:
         for value in (opened, replacement):
             if value is not None:
@@ -3044,7 +2943,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         inventory_inspection_runner=_inspect_audiobookshelf_inventory,
         audiobookshelf_poll_runner=_run_audiobookshelf_poll,
         inventory_poll_inspection_runner=_inspect_audiobookshelf_poll,
-        epub_package_report_runner=_run_epub_package_report,
         epub_opening_report_runner=_run_epub_opening_report,
         epub_opening_evidence_runner=_run_epub_opening_evidence,
         live_title_proposal_runner=_run_live_title_proposal_report,

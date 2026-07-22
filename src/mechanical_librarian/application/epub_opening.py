@@ -7,14 +7,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
-from mechanical_librarian.domain.local_evidence import LocalEvidenceOutcome
+from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 
 
 EpubOpeningReportRunner = Callable[[Path, str, str], EpubOpeningReport]
 
 
 def internal_opening_failure_report() -> EpubOpeningReport:
-    return EpubOpeningReport(LocalEvidenceOutcome.INTERNAL_FAILURE, EpubOpeningLimits())
+    return EpubOpeningReport(EpubInspectionOutcome.INTERNAL_FAILURE, EpubOpeningLimits())
 
 
 def render_epub_opening_text(report: EpubOpeningReport) -> str:

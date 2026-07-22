@@ -18,24 +18,28 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Callable, ClassVar, Self
 
-from .evidence_bounds import (
+from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_code,
     validate_projection_text,
     validate_text,
 )
-from .identifiers import (
+from mechanical_librarian.domain.identifiers import (
     CompatibilityVersion,
     ExtractorVersion,
     Fingerprint,
     SchemaVersion,
     TargetId,
 )
-from .inventory import FileReference
+from mechanical_librarian.domain.inventory import FileReference
+from mechanical_librarian.domain.epub_inspection import (
+    EpubInspectionOutcome,
+    EpubObservationApplicability,
+)
 
 
-LOCAL_EVIDENCE_REPORT_SCHEMA = SchemaVersion("local-evidence-report-v1")
-LOCAL_EVIDENCE_LIMIT_PROFILE = "epub-package-limits-v1"
+EPUB_PACKAGE_REPORT_SCHEMA = SchemaVersion("local-evidence-report-v1")
+EPUB_PACKAGE_LIMIT_PROFILE = "epub-package-limits-v1"
 
 MAX_FACT_FIELDS = 64
 MAX_OBSERVATIONS = 256
@@ -54,7 +58,7 @@ _LANGUAGE = re.compile(
 _XML_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$")
 
 
-class LocalEvidenceCapability(StrEnum):
+class EpubPackageCapability(StrEnum):
     PACKAGE = "package"
     OPENING_MATTER = "opening_matter"
     COVER = "cover"
@@ -65,45 +69,11 @@ class LocalEvidenceCapability(StrEnum):
     WRITE_BACK = "write_back"
 
 
-class LocalEvidenceOutcome(StrEnum):
-    INVALID_INVOCATION = "invalid_invocation"
-    SUCCESS = "success"
-    NO_APPLICABLE_EVIDENCE = "no_applicable_evidence"
-    INVALID_CONFIGURATION = "invalid_configuration"
-    INVALID_REFERENCE = "invalid_reference"
-    UNSUPPORTED_FORMAT = "unsupported_format"
-    UNSUPPORTED_VERSION = "unsupported_version"
-    UNSUPPORTED_COMPRESSION = "unsupported_compression"
-    UNSUPPORTED_MULTIPLE_RENDITIONS = "unsupported_multiple_renditions"
-    ENCRYPTED = "encrypted"
-    MALFORMED = "malformed"
-    INTEGRITY_FAILURE = "integrity_failure"
-    RESOURCE_LIMIT = "resource_limit"
-    TIMEOUT = "timeout"
-    CANCELLATION = "cancellation"
-    UNSTABLE_SOURCE = "unstable_source"
-    UNAVAILABLE_SOURCE = "unavailable_source"
-    CHILD_FAILURE = "child_failure"
-    INTERNAL_FAILURE = "internal_failure"
-
-    @property
-    def succeeded(self) -> bool:
-        return self in {self.SUCCESS, self.NO_APPLICABLE_EVIDENCE}
-
-
-class ObservationApplicability(StrEnum):
-    WORK = "work"
-    EDITION = "edition"
-    FILE = "file"
-    UNKNOWN = "unknown"
-    INAPPLICABLE = "inapplicable"
-
-
-class LocalEvidenceSourceError(EvidenceValueError):
+class EpubPackageSourceError(EvidenceValueError):
     """The authorized byte source failed independently of parser limits."""
 
 
-class CitationSection(StrEnum):
+class EpubPackageCitationSection(StrEnum):
     PACKAGE = "package"
     METADATA = "metadata"
     MANIFEST = "manifest"
@@ -114,7 +84,7 @@ class CitationSection(StrEnum):
     ENCRYPTION = "encryption"
 
 
-class LocalEvidenceField(StrEnum):
+class EpubPackageField(StrEnum):
     PACKAGE_IDENTIFIER = "package_identifier"
     PACKAGE_VERSION = "package_version"
     TITLE = "title"
@@ -152,7 +122,7 @@ class LocalEvidenceField(StrEnum):
     SPINE = "spine"
 
 
-class DeclarationKind(StrEnum):
+class EpubPackageDeclarationKind(StrEnum):
     ROOTFILE = "rootfile"
     PACKAGE = "package"
     MANIFEST_ITEM = "manifest_item"
@@ -164,7 +134,7 @@ class DeclarationKind(StrEnum):
     ENCRYPTION = "encryption"
 
 
-_FIELD_ORDER = {field: index for index, field in enumerate(LocalEvidenceField)}
+_FIELD_ORDER = {field: index for index, field in enumerate(EpubPackageField)}
 
 
 @dataclass(frozen=True)
@@ -228,7 +198,7 @@ class EpubPackageLimits:
 
     @property
     def profile(self) -> str:
-        return LOCAL_EVIDENCE_LIMIT_PROFILE
+        return EPUB_PACKAGE_LIMIT_PROFILE
 
     def to_data(self) -> dict[str, int | str]:
         return {
@@ -238,7 +208,7 @@ class EpubPackageLimits:
 
 
 @dataclass(frozen=True, repr=False)
-class LocalEvidenceCancellation:
+class EpubPackageCancellation:
     id: str
     _reader: Callable[[], bool]
 
@@ -254,11 +224,11 @@ class LocalEvidenceCancellation:
         return value
 
     def __repr__(self) -> str:
-        return "LocalEvidenceCancellation(<typed>)"
+        return "EpubPackageCancellation(<typed>)"
 
 
 @dataclass(frozen=True, repr=False)
-class LocalEvidenceSource:
+class EpubPackageSource:
     """Random-access read view bounded to one already-authorized source."""
 
     length: int
@@ -281,41 +251,41 @@ class LocalEvidenceSource:
         try:
             value = self._reader(offset, maximum_bytes)
         except Exception:
-            raise LocalEvidenceSourceError("local evidence source read failed") from None
+            raise EpubPackageSourceError("local evidence source read failed") from None
         if type(value) is not bytes or len(value) > maximum_bytes:
-            raise LocalEvidenceSourceError("local evidence source returned an invalid read")
+            raise EpubPackageSourceError("local evidence source returned an invalid read")
         return value
 
     def __repr__(self) -> str:
-        return f"LocalEvidenceSource(length={self.length}, reader=<redacted>)"
+        return f"EpubPackageSource(length={self.length}, reader=<redacted>)"
 
 
 @dataclass(frozen=True)
-class LocalEvidenceRequest:
+class EpubPackageRequest:
     target: TargetId
     file: FileReference
-    source: LocalEvidenceSource
+    source: EpubPackageSource
     expected_source: Fingerprint
-    capability: LocalEvidenceCapability
+    capability: EpubPackageCapability
     limits: EpubPackageLimits
     deadline: datetime
     monotonic_deadline: float
-    cancellation: LocalEvidenceCancellation
+    cancellation: EpubPackageCancellation
 
     def __post_init__(self) -> None:
         if (
             type(self.target) is not TargetId
             or type(self.file) is not FileReference
-            or type(self.source) is not LocalEvidenceSource
+            or type(self.source) is not EpubPackageSource
             or type(self.expected_source) is not Fingerprint
-            or type(self.capability) is not LocalEvidenceCapability
+            or type(self.capability) is not EpubPackageCapability
             or type(self.limits) is not EpubPackageLimits
             or type(self.deadline) is not datetime
             or self.deadline.tzinfo is None
             or self.deadline.utcoffset() is None
             or type(self.monotonic_deadline) is not float
             or self.monotonic_deadline <= 0
-            or type(self.cancellation) is not LocalEvidenceCancellation
+            or type(self.cancellation) is not EpubPackageCancellation
         ):
             raise EvidenceValueError("local evidence request is malformed")
         if self.source.length > self.limits.source_archive_bytes:
@@ -324,10 +294,10 @@ class LocalEvidenceRequest:
 
 
 @dataclass(frozen=True)
-class LocalEvidenceCitation:
+class EpubPackageCitation:
     source_fingerprint: Fingerprint
     resource_identity: str
-    section: CitationSection
+    section: EpubPackageCitationSection
     expanded_name: str
     source_ordinal: int
     selector: str | None = None
@@ -336,7 +306,7 @@ class LocalEvidenceCitation:
         if type(self.source_fingerprint) is not Fingerprint:
             raise EvidenceValueError("citation source fingerprint is malformed")
         _digest(self.resource_identity, "citation resource identity")
-        if type(self.section) is not CitationSection:
+        if type(self.section) is not EpubPackageCitationSection:
             raise EvidenceValueError("citation section is malformed")
         _expanded_name(self.expanded_name)
         if type(self.source_ordinal) is not int or not 1 <= self.source_ordinal <= 1_000_000:
@@ -358,12 +328,12 @@ class LocalEvidenceCitation:
 
 
 @dataclass(frozen=True, repr=False)
-class LocalEvidenceObservation:
-    field: LocalEvidenceField
+class EpubPackageObservation:
+    field: EpubPackageField
     raw_value: str
     normalized_value: str | None
-    applicability: ObservationApplicability
-    citation: LocalEvidenceCitation
+    applicability: EpubObservationApplicability
+    citation: EpubPackageCitation
     schema_version: SchemaVersion
     extractor_version: ExtractorVersion
     compatibility_version: CompatibilityVersion
@@ -373,9 +343,9 @@ class LocalEvidenceObservation:
 
     def __post_init__(self) -> None:
         if (
-            type(self.field) is not LocalEvidenceField
-            or type(self.applicability) is not ObservationApplicability
-            or type(self.citation) is not LocalEvidenceCitation
+            type(self.field) is not EpubPackageField
+            or type(self.applicability) is not EpubObservationApplicability
+            or type(self.citation) is not EpubPackageCitation
             or type(self.schema_version) is not SchemaVersion
             or type(self.extractor_version) is not ExtractorVersion
             or type(self.compatibility_version) is not CompatibilityVersion
@@ -422,19 +392,19 @@ class LocalEvidenceObservation:
 
     def __repr__(self) -> str:
         return (
-            "LocalEvidenceObservation(field="
+            "EpubPackageObservation(field="
             f"{self.field.value!r}, value=<redacted>, citation=<typed>)"
         )
 
 
 @dataclass(frozen=True)
-class LocalEvidenceWarning:
+class EpubPackageWarning:
     code: str
-    citation: LocalEvidenceCitation | None = None
+    citation: EpubPackageCitation | None = None
 
     def __post_init__(self) -> None:
         validate_code(self.code, "local evidence warning code")
-        if self.citation is not None and type(self.citation) is not LocalEvidenceCitation:
+        if self.citation is not None and type(self.citation) is not EpubPackageCitation:
             raise EvidenceValueError("local evidence warning citation is malformed")
 
     @property
@@ -443,17 +413,17 @@ class LocalEvidenceWarning:
 
 
 @dataclass(frozen=True)
-class LocalEvidenceDeclaration:
-    kind: DeclarationKind
+class EpubPackageDeclaration:
+    kind: EpubPackageDeclarationKind
     source_ordinal: int
-    citation: LocalEvidenceCitation
+    citation: EpubPackageCitation
     resource_identity: str | None = None
     identifier: str | None = None
     media_type: str | None = None
     properties: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if type(self.kind) is not DeclarationKind or type(self.citation) is not LocalEvidenceCitation:
+        if type(self.kind) is not EpubPackageDeclarationKind or type(self.citation) is not EpubPackageCitation:
             raise EvidenceValueError("local evidence declaration is malformed")
         if type(self.source_ordinal) is not int or not 1 <= self.source_ordinal <= 1_000_000:
             raise EvidenceValueError("declaration source ordinal is invalid")
@@ -481,7 +451,7 @@ class LocalEvidenceDeclaration:
 
 
 @dataclass(frozen=True)
-class LocalEvidenceUsage:
+class EpubPackageUsage:
     """Deterministic logical counters; runtime peaks and timings stay out of reports."""
 
     archive_entries: int = 0
@@ -519,7 +489,7 @@ class LocalEvidenceUsage:
 
 
 @dataclass(frozen=True)
-class LocalEvidenceArtifactReference:
+class EpubPackageArtifactReference:
     kind: str
     identity: str
 
@@ -529,42 +499,42 @@ class LocalEvidenceArtifactReference:
 
 
 @dataclass(frozen=True)
-class LocalEvidenceReport:
-    outcome: LocalEvidenceOutcome
-    capability: LocalEvidenceCapability
+class EpubPackageReport:
+    outcome: EpubInspectionOutcome
+    capability: EpubPackageCapability
     limits: EpubPackageLimits
     source_fingerprint: Fingerprint | None = None
-    observations: tuple[LocalEvidenceObservation, ...] = ()
-    warnings: tuple[LocalEvidenceWarning, ...] = ()
-    declarations: tuple[LocalEvidenceDeclaration, ...] = ()
-    usage: LocalEvidenceUsage = LocalEvidenceUsage()
-    artifact: LocalEvidenceArtifactReference | None = None
-    schema_version: SchemaVersion = LOCAL_EVIDENCE_REPORT_SCHEMA
+    observations: tuple[EpubPackageObservation, ...] = ()
+    warnings: tuple[EpubPackageWarning, ...] = ()
+    declarations: tuple[EpubPackageDeclaration, ...] = ()
+    usage: EpubPackageUsage = EpubPackageUsage()
+    artifact: EpubPackageArtifactReference | None = None
+    schema_version: SchemaVersion = EPUB_PACKAGE_REPORT_SCHEMA
 
     def __post_init__(self) -> None:
         if (
-            type(self.outcome) is not LocalEvidenceOutcome
-            or type(self.capability) is not LocalEvidenceCapability
+            type(self.outcome) is not EpubInspectionOutcome
+            or type(self.capability) is not EpubPackageCapability
             or type(self.limits) is not EpubPackageLimits
-            or type(self.usage) is not LocalEvidenceUsage
+            or type(self.usage) is not EpubPackageUsage
             or type(self.schema_version) is not SchemaVersion
-            or self.schema_version != LOCAL_EVIDENCE_REPORT_SCHEMA
+            or self.schema_version != EPUB_PACKAGE_REPORT_SCHEMA
         ):
             raise EvidenceValueError("local evidence report is malformed")
         if self.source_fingerprint is not None and type(self.source_fingerprint) is not Fingerprint:
             raise EvidenceValueError("local evidence source fingerprint is malformed")
-        _typed_tuple(self.observations, LocalEvidenceObservation, MAX_OBSERVATIONS, "observations")
-        _typed_tuple(self.warnings, LocalEvidenceWarning, MAX_WARNINGS, "warnings")
-        _typed_tuple(self.declarations, LocalEvidenceDeclaration, MAX_DECLARATIONS, "declarations")
-        if self.artifact is not None and type(self.artifact) is not LocalEvidenceArtifactReference:
+        _typed_tuple(self.observations, EpubPackageObservation, MAX_OBSERVATIONS, "observations")
+        _typed_tuple(self.warnings, EpubPackageWarning, MAX_WARNINGS, "warnings")
+        _typed_tuple(self.declarations, EpubPackageDeclaration, MAX_DECLARATIONS, "declarations")
+        if self.artifact is not None and type(self.artifact) is not EpubPackageArtifactReference:
             raise EvidenceValueError("local evidence artifact reference is malformed")
-        if self.capability is LocalEvidenceCapability.PACKAGE and self.artifact is not None:
+        if self.capability is EpubPackageCapability.PACKAGE and self.artifact is not None:
             raise EvidenceValueError("package evidence must not retain an artifact")
-        if self.outcome is LocalEvidenceOutcome.SUCCESS and self.source_fingerprint is None:
+        if self.outcome is EpubInspectionOutcome.SUCCESS and self.source_fingerprint is None:
             raise EvidenceValueError("successful local evidence requires a source fingerprint")
         if not self.outcome.succeeded and (self.observations or self.declarations):
             raise EvidenceValueError("failed local evidence cannot contain a partial report")
-        if self.outcome is LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE and (
+        if self.outcome is EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE and (
             self.observations or self.declarations
         ):
             raise EvidenceValueError("no-applicable-evidence cannot contain observations")
@@ -591,11 +561,11 @@ class LocalEvidenceReport:
         ):
             raise EvidenceValueError("local evidence citations must match source identity")
         if (
-            self.capability is LocalEvidenceCapability.PACKAGE
+            self.capability is EpubPackageCapability.PACKAGE
             and self.source_fingerprint is not None
             and any(
                 item.same_file_lineage
-                != local_file_lineage(self.source_fingerprint)
+                != epub_file_lineage(self.source_fingerprint)
                 for item in self.observations
             )
         ):
@@ -606,7 +576,7 @@ class LocalEvidenceReport:
             raise EvidenceValueError("local evidence observation citations must be unique")
         if any(item.source_ordinal != item.citation.source_ordinal for item in self.declarations):
             raise EvidenceValueError("declaration and citation order must agree")
-        counts: dict[LocalEvidenceField, int] = {}
+        counts: dict[EpubPackageField, int] = {}
         for observation in self.observations:
             counts[observation.field] = counts.get(observation.field, 0) + 1
         if len(counts) > MAX_FACT_FIELDS or any(
@@ -622,7 +592,7 @@ class LocalEvidenceReport:
         return self.outcome.succeeded
 
     @property
-    def normalized_observations(self) -> tuple[LocalEvidenceObservation, ...]:
+    def normalized_observations(self) -> tuple[EpubPackageObservation, ...]:
         return tuple(sorted(self.observations, key=lambda item: item.normalized_sort_key))
 
     def to_data(self) -> dict[str, object]:
@@ -677,7 +647,7 @@ def _digest(value: object, label: str) -> str:
     return value
 
 
-def local_resource_identity(normalized_member_name: str) -> str:
+def epub_resource_identity(normalized_member_name: str) -> str:
     """Hash a validated normalized internal member name for a path-free citation."""
 
     validate_text(normalized_member_name, "normalized member name", 1_024)
@@ -693,7 +663,7 @@ def local_resource_identity(normalized_member_name: str) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def local_file_lineage(source: Fingerprint) -> str:
+def epub_file_lineage(source: Fingerprint) -> str:
     """Return one capability-independent lineage for an immutable local file."""
 
     if type(source) is not Fingerprint:
@@ -771,7 +741,7 @@ def _fingerprint_from_data(value: object) -> Fingerprint:
     return Fingerprint(item["algorithm"], SchemaVersion(item["schema"]), item["digest"])
 
 
-def _citation_data(value: LocalEvidenceCitation) -> dict[str, object]:
+def _citation_data(value: EpubPackageCitation) -> dict[str, object]:
     return {
         "expanded_name": value.expanded_name,
         "resource_identity": value.resource_identity,
@@ -782,7 +752,7 @@ def _citation_data(value: LocalEvidenceCitation) -> dict[str, object]:
     }
 
 
-def _citation_from_data(value: object) -> LocalEvidenceCitation:
+def _citation_from_data(value: object) -> EpubPackageCitation:
     item = _require_object(
         value,
         {
@@ -795,17 +765,17 @@ def _citation_from_data(value: object) -> LocalEvidenceCitation:
         },
         "citation",
     )
-    return LocalEvidenceCitation(
+    return EpubPackageCitation(
         source_fingerprint=_fingerprint_from_data(item["source_fingerprint"]),
         resource_identity=item["resource_identity"],
-        section=CitationSection(item["section"]),
+        section=EpubPackageCitationSection(item["section"]),
         expanded_name=item["expanded_name"],
         source_ordinal=item["source_ordinal"],
         selector=item["selector"],
     )
 
 
-def _observation_data(value: LocalEvidenceObservation) -> dict[str, object]:
+def _observation_data(value: EpubPackageObservation) -> dict[str, object]:
     return {
         "applicability": value.applicability.value,
         "citation": _citation_data(value.citation),
@@ -821,7 +791,7 @@ def _observation_data(value: LocalEvidenceObservation) -> dict[str, object]:
     }
 
 
-def _observation_from_data(value: object) -> LocalEvidenceObservation:
+def _observation_from_data(value: object) -> EpubPackageObservation:
     item = _require_object(
         value,
         {
@@ -839,11 +809,11 @@ def _observation_from_data(value: object) -> LocalEvidenceObservation:
         },
         "observation",
     )
-    return LocalEvidenceObservation(
-        field=LocalEvidenceField(item["field"]),
+    return EpubPackageObservation(
+        field=EpubPackageField(item["field"]),
         raw_value=item["raw_value"],
         normalized_value=item["normalized_value"],
-        applicability=ObservationApplicability(item["applicability"]),
+        applicability=EpubObservationApplicability(item["applicability"]),
         citation=_citation_from_data(item["citation"]),
         schema_version=SchemaVersion(item["schema_version"]),
         extractor_version=ExtractorVersion(item["extractor_version"]),
@@ -854,22 +824,22 @@ def _observation_from_data(value: object) -> LocalEvidenceObservation:
     )
 
 
-def _warning_data(value: LocalEvidenceWarning) -> dict[str, object]:
+def _warning_data(value: EpubPackageWarning) -> dict[str, object]:
     return {
         "citation": None if value.citation is None else _citation_data(value.citation),
         "code": value.code,
     }
 
 
-def _warning_from_data(value: object) -> LocalEvidenceWarning:
+def _warning_from_data(value: object) -> EpubPackageWarning:
     item = _require_object(value, {"citation", "code"}, "warning")
-    return LocalEvidenceWarning(
+    return EpubPackageWarning(
         item["code"],
         None if item["citation"] is None else _citation_from_data(item["citation"]),
     )
 
 
-def _declaration_data(value: LocalEvidenceDeclaration) -> dict[str, object]:
+def _declaration_data(value: EpubPackageDeclaration) -> dict[str, object]:
     return {
         "citation": _citation_data(value.citation),
         "identifier": value.identifier,
@@ -881,7 +851,7 @@ def _declaration_data(value: LocalEvidenceDeclaration) -> dict[str, object]:
     }
 
 
-def _declaration_from_data(value: object) -> LocalEvidenceDeclaration:
+def _declaration_from_data(value: object) -> EpubPackageDeclaration:
     item = _require_object(
         value,
         {
@@ -895,8 +865,8 @@ def _declaration_from_data(value: object) -> LocalEvidenceDeclaration:
         },
         "declaration",
     )
-    return LocalEvidenceDeclaration(
-        kind=DeclarationKind(item["kind"]),
+    return EpubPackageDeclaration(
+        kind=EpubPackageDeclarationKind(item["kind"]),
         source_ordinal=item["source_ordinal"],
         citation=_citation_from_data(item["citation"]),
         resource_identity=item["resource_identity"],
@@ -906,25 +876,25 @@ def _declaration_from_data(value: object) -> LocalEvidenceDeclaration:
     )
 
 
-def _artifact_data(value: LocalEvidenceArtifactReference) -> dict[str, str]:
+def _artifact_data(value: EpubPackageArtifactReference) -> dict[str, str]:
     return {"identity": value.identity, "kind": value.kind}
 
 
 def _limits_from_data(value: object) -> EpubPackageLimits:
     keys = {"profile", *EpubPackageLimits.HARD_CAPS}
     item = _require_object(value, keys, "limits")
-    if item["profile"] != LOCAL_EVIDENCE_LIMIT_PROFILE:
+    if item["profile"] != EPUB_PACKAGE_LIMIT_PROFILE:
         raise EvidenceValueError("local evidence limit profile is unsupported")
     return EpubPackageLimits(**{name: item[name] for name in EpubPackageLimits.HARD_CAPS})
 
 
-def _usage_from_data(value: object) -> LocalEvidenceUsage:
-    keys = set(LocalEvidenceUsage().to_data())
+def _usage_from_data(value: object) -> EpubPackageUsage:
+    keys = set(EpubPackageUsage().to_data())
     item = _require_object(value, keys, "usage")
-    return LocalEvidenceUsage(**item)
+    return EpubPackageUsage(**item)
 
 
-def _report_from_data(value: object) -> LocalEvidenceReport:
+def _report_from_data(value: object) -> EpubPackageReport:
     item = _require_object(
         value,
         {
@@ -950,9 +920,9 @@ def _report_from_data(value: object) -> LocalEvidenceReport:
         _observation_from_data(entry)
         for entry in _require_list(item["normalized_observations"], "normalized observations")
     )
-    report = LocalEvidenceReport(
-        outcome=LocalEvidenceOutcome(item["outcome"]),
-        capability=LocalEvidenceCapability(item["capability"]),
+    report = EpubPackageReport(
+        outcome=EpubInspectionOutcome(item["outcome"]),
+        capability=EpubPackageCapability(item["capability"]),
         limits=_limits_from_data(item["limits"]),
         source_fingerprint=(
             None
@@ -972,7 +942,7 @@ def _report_from_data(value: object) -> LocalEvidenceReport:
         artifact=(
             None
             if item["artifact"] is None
-            else LocalEvidenceArtifactReference(
+            else EpubPackageArtifactReference(
                 **_require_object(item["artifact"], {"identity", "kind"}, "artifact")
             )
         ),
@@ -984,26 +954,26 @@ def _report_from_data(value: object) -> LocalEvidenceReport:
 
 
 __all__ = [
-    "CitationSection",
-    "DeclarationKind",
+    "EpubPackageCitationSection",
+    "EpubPackageDeclarationKind",
     "EpubPackageLimits",
-    "LOCAL_EVIDENCE_LIMIT_PROFILE",
-    "LOCAL_EVIDENCE_REPORT_SCHEMA",
-    "LocalEvidenceArtifactReference",
-    "LocalEvidenceCancellation",
-    "LocalEvidenceCapability",
-    "LocalEvidenceCitation",
-    "LocalEvidenceDeclaration",
-    "LocalEvidenceField",
-    "LocalEvidenceObservation",
-    "LocalEvidenceOutcome",
-    "LocalEvidenceReport",
-    "LocalEvidenceRequest",
-    "LocalEvidenceSource",
-    "LocalEvidenceSourceError",
-    "LocalEvidenceUsage",
-    "LocalEvidenceWarning",
-    "ObservationApplicability",
-    "local_file_lineage",
-    "local_resource_identity",
+    "EPUB_PACKAGE_LIMIT_PROFILE",
+    "EPUB_PACKAGE_REPORT_SCHEMA",
+    "EpubPackageArtifactReference",
+    "EpubPackageCancellation",
+    "EpubPackageCapability",
+    "EpubPackageCitation",
+    "EpubPackageDeclaration",
+    "EpubPackageField",
+    "EpubPackageObservation",
+    "EpubInspectionOutcome",
+    "EpubPackageReport",
+    "EpubPackageRequest",
+    "EpubPackageSource",
+    "EpubPackageSourceError",
+    "EpubPackageUsage",
+    "EpubPackageWarning",
+    "EpubObservationApplicability",
+    "epub_file_lineage",
+    "epub_resource_identity",
 ]

@@ -1621,10 +1621,10 @@
       "classification_reason": "canonical F06 payload mutations prove that shared F06/F07 lineage is source-derived",
       "consumer_ownership": ["f07a-opening-qualification"],
       "expected": {"package": {"outcome": "success", "exit": 0}, "opening": {"outcome": "success", "exit": 0}},
-      "generator": "tests.unit.test_local_evidence.LocalEvidenceTests.test_closed_canonical_schema_rejects_unknown_duplicate_and_reordered_json",
+      "generator": "tests.unit.test_epub_opening.EpubOpeningTests.test_citations_are_exact_versioned_path_free_and_round_trip_canonically",
       "deterministic_recipe": null,
       "materialized_filename": null,
-      "generation_inputs": {"recipe": "tests.unit.test_local_evidence.LocalEvidenceTests.test_closed_canonical_schema_rejects_unknown_duplicate_and_reordered_json", "seed": "deterministic"},
+      "generation_inputs": {"recipe": "tests.unit.test_epub_opening.EpubOpeningTests.test_citations_are_exact_versioned_path_free_and_round_trip_canonically", "seed": "deterministic"},
       "provenance": "repository-authored linked F07a shared-lineage envelope evidence",
       "provenance_kind": "repository-authored-synthetic",
       "spdx": "AGPL-3.0-or-later"

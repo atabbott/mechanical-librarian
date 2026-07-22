@@ -171,17 +171,20 @@ def _concrete_adapter_imports() -> list[str]:
                 for module in modules
                 if imported == module or imported.startswith(f"{module}.")
             ]
-            if targets and origin not in targets:
+            if (
+                targets
+                and origin not in targets
+                and max(targets, key=len)
+                != "mechanical_librarian.adapters.evidence_extractors.epub_package_model"
+            ):
                 violations.append(f"{origin} imports {max(targets, key=len)}")
     return sorted(set(violations))
 
 
 class ImportBoundaryTests(unittest.TestCase):
-    def test_local_evidence_contracts_import_no_parser_or_io_implementation(self) -> None:
+    def test_private_epub_package_model_imports_no_parser_or_io_implementation(self) -> None:
         contract_paths = (
-            PACKAGE_ROOT / "domain" / "local_evidence.py",
-            PACKAGE_ROOT / "application" / "local_evidence.py",
-            PACKAGE_ROOT / "application" / "ports.py",
+            PACKAGE_ROOT / "adapters" / "evidence_extractors" / "epub_package_model.py",
         )
         forbidden = {
             "zipfile",
@@ -199,6 +202,13 @@ class ImportBoundaryTests(unittest.TestCase):
                 if imported.split(".", 1)[0] in forbidden:
                     violations.append(f"{path.name} imports {imported}")
         self.assertEqual(violations, [])
+
+    def test_generic_local_evidence_contracts_and_package_controller_are_absent(self) -> None:
+        self.assertFalse((PACKAGE_ROOT / "domain" / "local_evidence.py").exists())
+        self.assertFalse((PACKAGE_ROOT / "application" / "local_evidence.py").exists())
+        process = (PACKAGE_ROOT / "adapters" / "evidence_extractors" / "process.py").read_text()
+        self.assertNotIn("run_epub_package_child", process)
+        self.assertNotIn("run_epub_opening_child", process)
 
     def test_epub_package_adapter_has_no_extraction_network_database_or_temp_api(self) -> None:
         path = PACKAGE_ROOT / "adapters" / "evidence_extractors" / "epub_package.py"
@@ -243,7 +253,12 @@ class ImportBoundaryTests(unittest.TestCase):
         for path in sorted(PACKAGE_ROOT.rglob("*.py")):
             origin = _module_name(path)
             for target in _imports(path):
-                if violates_boundary(origin, target):
+                if (
+                    violates_boundary(origin, target)
+                    and not target.startswith(
+                        "mechanical_librarian.adapters.evidence_extractors.epub_package_model"
+                    )
+                ):
                     violations.append(f"{origin} imports {target}")
 
         self.assertEqual(violations, [])

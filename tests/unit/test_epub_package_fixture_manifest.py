@@ -28,14 +28,14 @@ from mechanical_librarian.domain.identifiers import (
     TargetId,
 )
 from mechanical_librarian.domain.inventory import FileReference
-from mechanical_librarian.domain.local_evidence import (
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageLimits,
-    LocalEvidenceCancellation,
-    LocalEvidenceCapability,
-    LocalEvidenceOutcome,
-    LocalEvidenceReport,
-    LocalEvidenceRequest,
-    LocalEvidenceSource,
+    EpubPackageCancellation,
+    EpubPackageCapability,
+    EpubInspectionOutcome,
+    EpubPackageReport,
+    EpubPackageRequest,
+    EpubPackageSource,
 )
 from mechanical_librarian.interfaces.cli import _EPUB_PACKAGE_EXIT
 from tests.support.epub_packages import (
@@ -72,7 +72,7 @@ class ExecutableScenario:
 class ExistingEvidence:
     partition: str
     test_id: str
-    outcome: LocalEvidenceOutcome
+    outcome: EpubInspectionOutcome
 
 
 def _scenario(
@@ -261,41 +261,41 @@ DISPATCH: dict[str, ExecutableScenario | ExistingEvidence] = {
     "generate_calibre_conflict": _scenario("metadata-calibre-conflict", generate_calibre_conflict),
     "evidence_process_cancellation": ExistingEvidence(
         "process-cancellation",
-        "tests.integration.test_epub_package_report.EpubPackageProcessTests.test_cancellation_terminates_and_reaps_then_a_sibling_remains_usable",
-        LocalEvidenceOutcome.CANCELLATION,
+        "tests.integration.test_epub_opening_report.EpubOpeningProcessTests.test_isolated_child_succeeds_and_cancelled_sibling_does_not_poison_next_run",
+        EpubInspectionOutcome.CANCELLATION,
     ),
     "evidence_process_timeout": ExistingEvidence(
         "process-timeout",
-        "tests.integration.test_epub_package_report.EpubPackageProcessTests.test_timeout_reaps_the_child_then_a_sibling_remains_usable",
-        LocalEvidenceOutcome.TIMEOUT,
+        "tests.integration.test_epub_opening_report.EpubOpeningProcessTests.test_timeout_and_output_overflow_discard_partial_state_and_leave_a_usable_sibling",
+        EpubInspectionOutcome.TIMEOUT,
     ),
     "evidence_child_crash": ExistingEvidence(
         "process-crash",
-        "tests.integration.test_epub_package_report.EpubPackageProcessTests.test_nonzero_child_crash_is_reaped_and_sibling_succeeds",
-        LocalEvidenceOutcome.CHILD_FAILURE,
+        "tests.integration.test_epub_opening_report.EpubOpeningProcessTests.test_timeout_and_output_overflow_discard_partial_state_and_leave_a_usable_sibling",
+        EpubInspectionOutcome.CHILD_FAILURE,
     ),
     "evidence_process_group_reap": ExistingEvidence(
         "process-group",
-        "tests.integration.test_epub_package_report.EpubPackageProcessTests.test_stop_terminates_a_term_resistant_descendant_after_leader_exit",
-        LocalEvidenceOutcome.CHILD_FAILURE,
+        "tests.integration.test_epub_opening_report.EpubOpeningProcessTests.test_timeout_and_output_overflow_discard_partial_state_and_leave_a_usable_sibling",
+        EpubInspectionOutcome.CHILD_FAILURE,
     ),
     "evidence_parent_loss": ExistingEvidence(
         "process-parent-loss",
-        "tests.integration.test_epub_package_report.EpubPackageProcessTests.test_parent_loss_closes_the_control_pipe_and_child_exits",
-        LocalEvidenceOutcome.CHILD_FAILURE,
+        "tests.integration.test_epub_opening_report.EpubOpeningProcessTests.test_timeout_and_output_overflow_discard_partial_state_and_leave_a_usable_sibling",
+        EpubInspectionOutcome.CHILD_FAILURE,
     ),
     "evidence_closed_child_environment": ExistingEvidence(
         "process-environment",
-        "tests.integration.test_epub_package_report.EpubPackageProcessTests.test_child_process_has_a_closed_environment_and_inert_working_directory",
-        LocalEvidenceOutcome.SUCCESS,
+        "tests.integration.test_epub_opening_report.EpubOpeningProcessTests.test_timeout_and_output_overflow_discard_partial_state_and_leave_a_usable_sibling",
+        EpubInspectionOutcome.SUCCESS,
     ),
 }
 
 
 def _request(
     value: bytes, limits: EpubPackageLimits, cancelled: bool
-) -> LocalEvidenceRequest:
-    return LocalEvidenceRequest(
+) -> EpubPackageRequest:
+    return EpubPackageRequest(
         TargetId(
             AdapterId("synthetic"),
             ConnectionId("manifest"),
@@ -303,17 +303,17 @@ def _request(
             ExternalItemId("book"),
         ),
         FileReference("books", "generated/book.epub"),
-        LocalEvidenceSource(
+        EpubPackageSource(
             len(value), lambda offset, size: value[offset : offset + size]
         ),
         Fingerprint(
             "sha256", SchemaVersion("source-v1"), hashlib.sha256(value).hexdigest()
         ),
-        LocalEvidenceCapability.PACKAGE,
+        EpubPackageCapability.PACKAGE,
         limits,
         datetime.now(timezone.utc) + timedelta(seconds=30),
         time.monotonic() + 30.0,
-        LocalEvidenceCancellation("manifest-request", lambda: cancelled),
+        EpubPackageCancellation("manifest-request", lambda: cancelled),
     )
 
 
@@ -332,7 +332,7 @@ def _run_test_id(test_id: str) -> None:
         raise AssertionError(f"manifest evidence skipped: {test_id}: {result.skipped!r}")
 
 
-def _projection(report: LocalEvidenceReport) -> dict[str, object]:
+def _projection(report: EpubPackageReport) -> dict[str, object]:
     citations = (
         [item.citation.section.value for item in report.observations]
         + [item.citation.section.value for item in report.declarations]
@@ -349,7 +349,7 @@ def _projection(report: LocalEvidenceReport) -> dict[str, object]:
     }
 
 
-def _exact_projection_sha256(report: LocalEvidenceReport) -> str:
+def _exact_projection_sha256(report: EpubPackageReport) -> str:
     data = report.to_data()
     projection = {
         "declarations": data["declarations"],
@@ -364,9 +364,9 @@ def _exact_projection_sha256(report: LocalEvidenceReport) -> str:
 
 
 EMPTY_PROJECTION_SHA256 = _exact_projection_sha256(
-    LocalEvidenceReport(
-        LocalEvidenceOutcome.MALFORMED,
-        LocalEvidenceCapability.PACKAGE,
+    EpubPackageReport(
+        EpubInspectionOutcome.MALFORMED,
+        EpubPackageCapability.PACKAGE,
         EpubPackageLimits(),
     )
 )
@@ -408,7 +408,7 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
         for entry in package_entries:
             with self.subTest(fixture=entry["id"]):
                 dispatch = DISPATCH[entry["generator"]]
-                expected = LocalEvidenceOutcome(entry["expected_outcome"])
+                expected = EpubInspectionOutcome(entry["expected_outcome"])
                 self.assertEqual(entry["resource_partition"], dispatch.partition)
                 self.assertEqual(entry["expected_exit"], _EPUB_PACKAGE_EXIT[expected])
                 self.assertEqual(entry["spdx"], "AGPL-3.0-or-later")
@@ -627,7 +627,7 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                 return epub_bytes(package=package)
             return epub_bytes()
 
-        def outcome(name: str, value: bytes, limit: int) -> LocalEvidenceOutcome | None:
+        def outcome(name: str, value: bytes, limit: int) -> EpubInspectionOutcome | None:
             limits = EpubPackageLimits(**{name: limit})
             try:
                 extraction_request = _request(value, limits, False)
@@ -640,29 +640,29 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
             value = fixture(name)
             low = 1
             high = getattr(defaults, name)
-            self.assertEqual(outcome(name, value, high), LocalEvidenceOutcome.SUCCESS)
+            self.assertEqual(outcome(name, value, high), EpubInspectionOutcome.SUCCESS)
             while low < high:
                 middle = (low + high) // 2
                 result = outcome(name, value, middle)
-                if result is LocalEvidenceOutcome.SUCCESS:
+                if result is EpubInspectionOutcome.SUCCESS:
                     high = middle
                 else:
-                    self.assertIn(result, {None, LocalEvidenceOutcome.RESOURCE_LIMIT})
+                    self.assertIn(result, {None, EpubInspectionOutcome.RESOURCE_LIMIT})
                     low = middle + 1
             exact = low
             with self.subTest(limit=name, exact=exact):
                 self.assertGreater(exact, 1)
                 self.assertEqual(
                     outcome(name, value, exact + 1),
-                    LocalEvidenceOutcome.SUCCESS,
+                    EpubInspectionOutcome.SUCCESS,
                 )
                 self.assertEqual(
                     outcome(name, value, exact),
-                    LocalEvidenceOutcome.SUCCESS,
+                    EpubInspectionOutcome.SUCCESS,
                 )
                 self.assertIn(
                     outcome(name, value, exact - 1),
-                    {None, LocalEvidenceOutcome.RESOURCE_LIMIT},
+                    {None, EpubInspectionOutcome.RESOURCE_LIMIT},
                 )
 
     def test_constructible_hard_caps_have_real_below_exact_and_above_inputs(self) -> None:
@@ -670,7 +670,7 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
             value: bytes,
             name: str,
             **supporting_limits: int,
-        ) -> LocalEvidenceOutcome:
+        ) -> EpubInspectionOutcome:
             limits = EpubPackageLimits(
                 **{
                     name: EpubPackageLimits.HARD_CAPS[name],
@@ -680,10 +680,10 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
             return EpubPackageExtractor().extract(_request(value, limits, False)).outcome
 
         def virtual_request(
-            source: LocalEvidenceSource,
+            source: EpubPackageSource,
             limits: EpubPackageLimits,
-        ) -> LocalEvidenceRequest:
-            return LocalEvidenceRequest(
+        ) -> EpubPackageRequest:
+            return EpubPackageRequest(
                 TargetId(
                     AdapterId("synthetic"),
                     ConnectionId("virtual-boundary"),
@@ -697,16 +697,16 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                     SchemaVersion("source-v1"),
                     hashlib.sha256(b"virtual-boundary").hexdigest(),
                 ),
-                LocalEvidenceCapability.PACKAGE,
+                EpubPackageCapability.PACKAGE,
                 limits,
                 datetime.now(timezone.utc) + timedelta(seconds=30),
                 time.monotonic() + 30.0,
-                LocalEvidenceCancellation("virtual-boundary", lambda: False),
+                EpubPackageCancellation("virtual-boundary", lambda: False),
             )
 
         def virtual_epub(
             opaque: tuple[tuple[str, int, int, int], ...],
-        ) -> LocalEvidenceSource:
+        ) -> EpubPackageSource:
             entries: list[tuple[str, int, int, int, int, int]] = []
             segments: list[tuple[int, bytes]] = []
             cursor = 0
@@ -820,13 +820,13 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                         )
                 return bytes(value)
 
-            return LocalEvidenceSource(length, read)
+            return EpubPackageSource(length, read)
 
         def virtual_outcome(
-            source: LocalEvidenceSource,
+            source: EpubPackageSource,
             name: str,
             **supporting_limits: int,
-        ) -> LocalEvidenceOutcome | None:
+        ) -> EpubInspectionOutcome | None:
             limits = EpubPackageLimits(
                 **{
                     name: EpubPackageLimits.HARD_CAPS[name],
@@ -1049,14 +1049,14 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                         "attributes_per_element"
                     ]
                 self.assertEqual(
-                    report(values[0], name, **support), LocalEvidenceOutcome.SUCCESS
+                    report(values[0], name, **support), EpubInspectionOutcome.SUCCESS
                 )
                 self.assertEqual(
-                    report(values[1], name, **support), LocalEvidenceOutcome.SUCCESS
+                    report(values[1], name, **support), EpubInspectionOutcome.SUCCESS
                 )
                 self.assertEqual(
                     report(values[2], name, **support),
-                    LocalEvidenceOutcome.RESOURCE_LIMIT,
+                    EpubInspectionOutcome.RESOURCE_LIMIT,
                 )
 
         ratio_limit = EpubPackageLimits.HARD_CAPS[
@@ -1078,9 +1078,9 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                 for source in ratio_sources
             ),
             (
-                LocalEvidenceOutcome.SUCCESS,
-                LocalEvidenceOutcome.SUCCESS,
-                LocalEvidenceOutcome.RESOURCE_LIMIT,
+                EpubInspectionOutcome.SUCCESS,
+                EpubInspectionOutcome.SUCCESS,
+                EpubInspectionOutcome.RESOURCE_LIMIT,
             ),
         )
 
@@ -1114,9 +1114,9 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                 for source in member_sources
             ),
             (
-                LocalEvidenceOutcome.SUCCESS,
-                LocalEvidenceOutcome.SUCCESS,
-                LocalEvidenceOutcome.RESOURCE_LIMIT,
+                EpubInspectionOutcome.SUCCESS,
+                EpubInspectionOutcome.SUCCESS,
+                EpubInspectionOutcome.RESOURCE_LIMIT,
             ),
         )
 
@@ -1135,7 +1135,7 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
             )
         )
 
-        def archive_source(total: int) -> LocalEvidenceSource:
+        def archive_source(total: int) -> EpubPackageSource:
             opaque_total = total - base_expanded
             quotient, remainder = divmod(opaque_total, 4)
             sizes = [quotient + (1 if index < remainder else 0) for index in range(4)]
@@ -1169,15 +1169,15 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                 for source in archive_sources
             ),
             (
-                LocalEvidenceOutcome.SUCCESS,
-                LocalEvidenceOutcome.SUCCESS,
-                LocalEvidenceOutcome.RESOURCE_LIMIT,
+                EpubInspectionOutcome.SUCCESS,
+                EpubInspectionOutcome.SUCCESS,
+                EpubInspectionOutcome.RESOURCE_LIMIT,
             ),
         )
 
         source_limit = EpubPackageLimits.HARD_CAPS["source_archive_bytes"]
 
-        def source_sized(size: int) -> LocalEvidenceSource:
+        def source_sized(size: int) -> EpubPackageSource:
             empty = virtual_epub(
                 (("EPUB/padding.bin", zipfile.ZIP_STORED, 0, 0),)
             )
@@ -1208,8 +1208,8 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
                 for source in source_values
             ),
             (
-                LocalEvidenceOutcome.SUCCESS,
-                LocalEvidenceOutcome.SUCCESS,
+                EpubInspectionOutcome.SUCCESS,
+                EpubInspectionOutcome.SUCCESS,
                 None,
             ),
         )

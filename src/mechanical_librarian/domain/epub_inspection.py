@@ -11,11 +11,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from mechanical_librarian.domain.identifiers import Fingerprint
-from mechanical_librarian.domain.epub_opening import EpubOpeningReport, OpeningField
-from mechanical_librarian.domain.local_evidence import (
-    LocalEvidenceOutcome,
-    ObservationApplicability,
-)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mechanical_librarian.domain.epub_opening import EpubOpeningReport
 
 
 _CHECKSUMS = frozenset({"valid_isbn_10", "valid_isbn_13", "invalid", "not_applicable"})
@@ -24,13 +23,37 @@ _BASES = frozenset({"package_metadata", "opening_matter"})
 
 
 class EpubInspectionOutcome(StrEnum):
+    INVALID_INVOCATION = "invalid_invocation"
     SUCCESS = "success"
     NO_APPLICABLE_EVIDENCE = "no_applicable_evidence"
-    INVALID_SOURCE = "invalid_source"
+    INVALID_CONFIGURATION = "invalid_configuration"
+    INVALID_REFERENCE = "invalid_reference"
+    UNSUPPORTED_FORMAT = "unsupported_format"
+    UNSUPPORTED_VERSION = "unsupported_version"
+    UNSUPPORTED_COMPRESSION = "unsupported_compression"
+    UNSUPPORTED_MULTIPLE_RENDITIONS = "unsupported_multiple_renditions"
+    ENCRYPTED = "encrypted"
+    MALFORMED = "malformed"
+    INTEGRITY_FAILURE = "integrity_failure"
     RESOURCE_LIMIT = "resource_limit"
     TIMEOUT = "timeout"
+    CANCELLATION = "cancellation"
     UNSTABLE_SOURCE = "unstable_source"
+    UNAVAILABLE_SOURCE = "unavailable_source"
     CHILD_FAILURE = "child_failure"
+    INTERNAL_FAILURE = "internal_failure"
+
+    @property
+    def succeeded(self) -> bool:
+        return self in {self.SUCCESS, self.NO_APPLICABLE_EVIDENCE}
+
+
+class EpubObservationApplicability(StrEnum):
+    WORK = "work"
+    EDITION = "edition"
+    FILE = "file"
+    UNKNOWN = "unknown"
+    INAPPLICABLE = "inapplicable"
 
 
 class EpubInspectionField(StrEnum):
@@ -102,19 +125,21 @@ class EpubInspection:
 
     @classmethod
     def from_opening_report(cls, report: EpubOpeningReport) -> "EpubInspection":
+        from mechanical_librarian.domain.epub_opening import EpubOpeningReport, OpeningField
+
         if type(report) is not EpubOpeningReport:
             raise ValueError("EPUB inspection requires a typed opening report")
         outcome = (
             EpubInspectionOutcome.SUCCESS
-            if report.outcome is LocalEvidenceOutcome.SUCCESS
+            if report.outcome is EpubInspectionOutcome.SUCCESS
             else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
-            if report.outcome is LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE
+            if report.outcome is EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
             else EpubInspectionOutcome.RESOURCE_LIMIT
-            if report.outcome is LocalEvidenceOutcome.RESOURCE_LIMIT
+            if report.outcome is EpubInspectionOutcome.RESOURCE_LIMIT
             else EpubInspectionOutcome.TIMEOUT
-            if report.outcome is LocalEvidenceOutcome.TIMEOUT
+            if report.outcome is EpubInspectionOutcome.TIMEOUT
             else EpubInspectionOutcome.UNSTABLE_SOURCE
-            if report.outcome is LocalEvidenceOutcome.UNSTABLE_SOURCE
+            if report.outcome is EpubInspectionOutcome.UNSTABLE_SOURCE
             else EpubInspectionOutcome.CHILD_FAILURE
         )
         source = report.source_fingerprint
@@ -122,7 +147,7 @@ class EpubInspection:
             return cls(outcome, None)
         facts: list[EpubInspectionFact] = []
         for claim in report.claims:
-            if claim.applicability in {ObservationApplicability.INAPPLICABLE, ObservationApplicability.UNKNOWN}:
+            if claim.applicability in {EpubObservationApplicability.INAPPLICABLE, EpubObservationApplicability.UNKNOWN}:
                 continue
             if claim.field is OpeningField.TITLE and claim.normalized_value is not None:
                 facts.append(EpubInspectionFact(EpubInspectionField.TITLE, source, claim.raw_value, None, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "opening_matter"))

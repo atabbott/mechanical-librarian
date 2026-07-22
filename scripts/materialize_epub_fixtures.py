@@ -44,7 +44,7 @@ _LINKED_GENERATORS = {
     "opening-node-text-limit-matrix": "tests.unit.test_epub_opening.EpubOpeningTests.test_node_text_link_and_document_limits_cover_exact_and_rejection_boundaries",
     "opening-private-gate-matrix": "tests.unit.test_qualify_epub_opening.EpubOpeningQualificationTests.test_private_usage_and_rejection_decision_table_fail_closed",
     "opening-registry-parser-matrix": "tests.unit.test_materialize_epub_fixtures.MaterializeEpubFixturesTests.test_registry_parser_rejects_consumer_recipe_expectation_and_schema_drift",
-    "opening-shared-lineage-envelope-matrix": "tests.unit.test_local_evidence.LocalEvidenceTests.test_closed_canonical_schema_rejects_unknown_duplicate_and_reordered_json",
+    "opening-shared-lineage-envelope-matrix": "tests.unit.test_epub_opening.EpubOpeningTests.test_citations_are_exact_versioned_path_free_and_round_trip_canonically",
     "parent-loss": "evidence_parent_loss",
     "process-group-reap": "evidence_process_group_reap",
 }

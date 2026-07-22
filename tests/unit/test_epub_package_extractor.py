@@ -21,17 +21,17 @@ from mechanical_librarian.domain.identifiers import (
     TargetId,
 )
 from mechanical_librarian.domain.inventory import FileReference
-from mechanical_librarian.domain.local_evidence import (
-    CitationSection,
-    DeclarationKind,
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+    EpubPackageCitationSection,
+    EpubPackageDeclarationKind,
     EpubPackageLimits,
-    LocalEvidenceCancellation,
-    LocalEvidenceCapability,
-    LocalEvidenceField,
-    LocalEvidenceOutcome,
-    LocalEvidenceRequest,
-    LocalEvidenceSource,
-    ObservationApplicability,
+    EpubPackageCancellation,
+    EpubPackageCapability,
+    EpubPackageField,
+    EpubInspectionOutcome,
+    EpubPackageRequest,
+    EpubPackageSource,
+    EpubObservationApplicability,
 )
 from tests.support.epub_packages import (
     CONTAINER_MULTIPLE,
@@ -44,23 +44,23 @@ from tests.support.epub_packages import (
 )
 
 
-def request(value: bytes, *, cancelled: bool = False) -> LocalEvidenceRequest:
-    return LocalEvidenceRequest(
+def request(value: bytes, *, cancelled: bool = False) -> EpubPackageRequest:
+    return EpubPackageRequest(
         TargetId(AdapterId("synthetic"), ConnectionId("local"), LibraryId("library"), ExternalItemId("book")),
         FileReference("books", "generated/book.epub"),
-        LocalEvidenceSource(len(value), lambda offset, size: value[offset : offset + size]),
+        EpubPackageSource(len(value), lambda offset, size: value[offset : offset + size]),
         Fingerprint("sha256", SchemaVersion("source-v1"), hashlib.sha256(value).hexdigest()),
-        LocalEvidenceCapability.PACKAGE,
+        EpubPackageCapability.PACKAGE,
         EpubPackageLimits(),
         datetime.now(timezone.utc) + timedelta(seconds=30),
         time.monotonic() + 30.0,
-        LocalEvidenceCancellation("unit-request", lambda: cancelled),
+        EpubPackageCancellation("unit-request", lambda: cancelled),
     )
 
 
-def request_with_limits(value: bytes, limits: EpubPackageLimits) -> LocalEvidenceRequest:
+def request_with_limits(value: bytes, limits: EpubPackageLimits) -> EpubPackageRequest:
     base = request(value)
-    return LocalEvidenceRequest(
+    return EpubPackageRequest(
         base.target,
         base.file,
         base.source,
@@ -129,13 +129,13 @@ class EpubPackageExtractorTests(unittest.TestCase):
         first = extractor.extract(request(value))
         second = extractor.extract(request(value))
 
-        self.assertEqual(first.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(first.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(first.to_json(), second.to_json())
         self.assertIsNone(first.artifact)
         self.assertEqual(first.source_fingerprint.digest, hashlib.sha256(value).hexdigest())
-        self.assertTrue({LocalEvidenceField.TITLE, LocalEvidenceField.CREATOR, LocalEvidenceField.PACKAGE_IDENTIFIER, LocalEvidenceField.COVER}.issubset({item.field for item in first.observations}))
-        self.assertEqual(sum(item.kind is DeclarationKind.NAVIGATION for item in first.declarations), 1)
-        self.assertEqual(sum(item.kind is DeclarationKind.MANIFEST_ITEM for item in first.declarations), 3)
+        self.assertTrue({EpubPackageField.TITLE, EpubPackageField.CREATOR, EpubPackageField.PACKAGE_IDENTIFIER, EpubPackageField.COVER}.issubset({item.field for item in first.observations}))
+        self.assertEqual(sum(item.kind is EpubPackageDeclarationKind.NAVIGATION for item in first.declarations), 1)
+        self.assertEqual(sum(item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM for item in first.declarations), 3)
         serialized = first.to_json()
         self.assertNotIn("chapter.xhtml", serialized)
         self.assertNotIn("cover.jpg", serialized)
@@ -144,7 +144,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
 
     def test_bounded_producer_forced_zip64_local_headers_are_supported(self) -> None:
         report = EpubPackageExtractor().extract(request(epub_zip64_bytes()))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
 
     def test_data_descriptors_are_exact_and_unsafe_general_flags_are_rejected(self) -> None:
         described = epub_data_descriptor_bytes()
@@ -162,14 +162,14 @@ class EpubPackageExtractorTests(unittest.TestCase):
         struct.pack_into("<H", unsafe_flag, central + 8, struct.unpack_from("<H", unsafe_flag, central + 8)[0] | 0x20)
         struct.pack_into("<H", unsafe_flag, local + 6, struct.unpack_from("<H", unsafe_flag, local + 6)[0] | 0x20)
 
-        self.assertEqual(valid.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(valid.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(
             EpubPackageExtractor().extract(request(bytes(corrupted))).outcome,
-            LocalEvidenceOutcome.INTEGRITY_FAILURE,
+            EpubInspectionOutcome.INTEGRITY_FAILURE,
         )
         self.assertEqual(
             EpubPackageExtractor().extract(request(bytes(unsafe_flag))).outcome,
-            LocalEvidenceOutcome.MALFORMED,
+            EpubInspectionOutcome.MALFORMED,
         )
 
     def test_descriptor_signature_ambiguity_and_local_placeholders_are_validated(self) -> None:
@@ -181,7 +181,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     EpubPackageExtractor().extract(request(value)).outcome,
-                    LocalEvidenceOutcome.SUCCESS,
+                    EpubInspectionOutcome.SUCCESS,
                 )
 
         described = epub_data_descriptor_bytes()
@@ -197,7 +197,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 struct.pack_into("<L", corrupted, second_local + offset, 1)
                 self.assertEqual(
                     EpubPackageExtractor().extract(request(bytes(corrupted))).outcome,
-                    LocalEvidenceOutcome.INTEGRITY_FAILURE,
+                    EpubInspectionOutcome.INTEGRITY_FAILURE,
                 )
 
         invalid_version = bytearray(described)
@@ -205,26 +205,26 @@ class EpubPackageExtractorTests(unittest.TestCase):
         struct.pack_into("<H", invalid_version, second_central + 6, 0)
         self.assertEqual(
             EpubPackageExtractor().extract(request(bytes(invalid_version))).outcome,
-            LocalEvidenceOutcome.MALFORMED,
+            EpubInspectionOutcome.MALFORMED,
         )
 
     def test_epub2_preserves_legacy_declarations_without_dereferencing(self) -> None:
         report = EpubPackageExtractor().extract(request(epub_bytes(version=2)))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
-        self.assertIn(DeclarationKind.NCX, {item.kind for item in report.declarations})
-        self.assertIn(DeclarationKind.GUIDE_REFERENCE, {item.kind for item in report.declarations})
-        self.assertIn(LocalEvidenceField.PUBLICATION_DATE, {item.field for item in report.observations})
-        self.assertIn(LocalEvidenceField.CREATOR_ROLE, {item.field for item in report.observations})
-        self.assertIn(LocalEvidenceField.SORT_KEY, {item.field for item in report.observations})
-        self.assertIn(LocalEvidenceField.IDENTIFIER_SCHEME, {item.field for item in report.observations})
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
+        self.assertIn(EpubPackageDeclarationKind.NCX, {item.kind for item in report.declarations})
+        self.assertIn(EpubPackageDeclarationKind.GUIDE_REFERENCE, {item.kind for item in report.declarations})
+        self.assertIn(EpubPackageField.PUBLICATION_DATE, {item.field for item in report.observations})
+        self.assertIn(EpubPackageField.CREATOR_ROLE, {item.field for item in report.observations})
+        self.assertIn(EpubPackageField.SORT_KEY, {item.field for item in report.observations})
+        self.assertIn(EpubPackageField.IDENTIFIER_SCHEME, {item.field for item in report.observations})
         primary = next(
             item
             for item in report.observations
-            if item.field is LocalEvidenceField.PACKAGE_IDENTIFIER
+            if item.field is EpubPackageField.PACKAGE_IDENTIFIER
         )
         self.assertEqual(primary.raw_value, "0-306-40615-2")
         self.assertEqual(primary.normalized_value, "0306406152")
-        self.assertIs(primary.applicability, ObservationApplicability.UNKNOWN)
+        self.assertIs(primary.applicability, EpubObservationApplicability.UNKNOWN)
 
         tours = b'''<tours>
     <tour title="Synthetic route">
@@ -236,7 +236,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         toured = EpubPackageExtractor().extract(
             request(epub_bytes(package=toured_package))
         )
-        self.assertEqual(toured.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(toured.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn("deprecated_tours", {item.code for item in toured.warnings})
         self.assertNotIn("Synthetic route", toured.to_json())
         self.assertNotIn("Synthetic stop", toured.to_json())
@@ -252,7 +252,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 invalid_tour_report = EpubPackageExtractor().extract(
                     request(epub_bytes(package=package))
                 )
-                self.assertEqual(invalid_tour_report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(invalid_tour_report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(
                     "invalid_deprecated_tours",
                     {item.code for item in invalid_tour_report.warnings},
@@ -273,16 +273,16 @@ class EpubPackageExtractorTests(unittest.TestCase):
         first = EpubPackageExtractor().extract(request(value))
         second = EpubPackageExtractor().extract(request(value))
 
-        self.assertEqual(first.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(first.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(first.to_json(), second.to_json())
         self.assertEqual(first.usage.metadata_nodes, 6)
         self.assertTrue(
             {
-                LocalEvidenceField.TITLE,
-                LocalEvidenceField.CREATOR,
-                LocalEvidenceField.LANGUAGE,
-                LocalEvidenceField.PACKAGE_IDENTIFIER,
-                LocalEvidenceField.COVER,
+                EpubPackageField.TITLE,
+                EpubPackageField.CREATOR,
+                EpubPackageField.LANGUAGE,
+                EpubPackageField.PACKAGE_IDENTIFIER,
+                EpubPackageField.COVER,
             }
             <= {item.field for item in first.observations}
         )
@@ -290,13 +290,13 @@ class EpubPackageExtractorTests(unittest.TestCase):
             EpubPackageExtractor().extract(
                 request_with_limits(value, EpubPackageLimits(metadata_nodes=6))
             ).outcome,
-            LocalEvidenceOutcome.SUCCESS,
+            EpubInspectionOutcome.SUCCESS,
         )
         self.assertEqual(
             EpubPackageExtractor().extract(
                 request_with_limits(value, EpubPackageLimits(metadata_nodes=5))
             ).outcome,
-            LocalEvidenceOutcome.RESOURCE_LIMIT,
+            EpubInspectionOutcome.RESOURCE_LIMIT,
         )
 
     def test_epub2_ncx_reference_is_required_and_rejects_fallback_information(self) -> None:
@@ -327,14 +327,14 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 report = EpubPackageExtractor().extract(
                     request(epub_bytes(version=2, package=package))
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(
                     "invalid_ncx_declaration",
                     {item.code for item in report.warnings},
                 )
                 self.assertFalse(
                     any(
-                        item.kind is DeclarationKind.NCX
+                        item.kind is EpubPackageDeclarationKind.NCX
                         for item in report.declarations
                     )
                 )
@@ -360,7 +360,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             {item.code for item in fallback_report.warnings},
         )
         self.assertIn(
-            DeclarationKind.NCX,
+            EpubPackageDeclarationKind.NCX,
             {item.kind for item in fallback_report.declarations},
         )
 
@@ -370,9 +370,9 @@ class EpubPackageExtractorTests(unittest.TestCase):
             b'<item id="remote" href="https://catalogue.example/private.xml" media-type="application/xml"/></manifest>',
         )
         report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertNotIn("catalogue.example", report.to_json())
-        self.assertEqual(sum(item.kind is DeclarationKind.MANIFEST_ITEM for item in report.declarations), 4)
+        self.assertEqual(sum(item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM for item in report.declarations), 4)
 
     def test_namespaces_spine_cardinality_percent_paths_and_global_ids_are_strict(self) -> None:
         foreign_container = CONTAINER_ONE.replace(
@@ -407,11 +407,11 @@ class EpubPackageExtractorTests(unittest.TestCase):
         self.assertEqual(
             outcomes,
             (
-                LocalEvidenceOutcome.MALFORMED,
-                LocalEvidenceOutcome.MALFORMED,
-                LocalEvidenceOutcome.MALFORMED,
-                LocalEvidenceOutcome.SUCCESS,
-                LocalEvidenceOutcome.SUCCESS,
+                EpubInspectionOutcome.MALFORMED,
+                EpubInspectionOutcome.MALFORMED,
+                EpubInspectionOutcome.MALFORMED,
+                EpubInspectionOutcome.SUCCESS,
+                EpubInspectionOutcome.SUCCESS,
             ),
         )
         duplicate_report = EpubPackageExtractor().extract(
@@ -432,14 +432,14 @@ class EpubPackageExtractorTests(unittest.TestCase):
             request(epub_bytes(package=duplicate_primary))
         )
         self.assertEqual(
-            duplicate_primary_report.outcome, LocalEvidenceOutcome.SUCCESS
+            duplicate_primary_report.outcome, EpubInspectionOutcome.SUCCESS
         )
         self.assertIn(
             "ambiguous_package_id",
             {item.code for item in duplicate_primary_report.warnings},
         )
         self.assertNotIn(
-            LocalEvidenceField.PACKAGE_IDENTIFIER,
+            EpubPackageField.PACKAGE_IDENTIFIER,
             {item.field for item in duplicate_primary_report.observations},
         )
 
@@ -452,7 +452,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             {item.code for item in invalid_primary_report.warnings},
         )
         self.assertNotIn(
-            LocalEvidenceField.PACKAGE_IDENTIFIER,
+            EpubPackageField.PACKAGE_IDENTIFIER,
             {item.field for item in invalid_primary_report.observations},
         )
 
@@ -463,7 +463,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             request(epub_bytes(package=duplicate_manifest_id))
         )
         self.assertEqual(
-            duplicate_manifest_report.outcome, LocalEvidenceOutcome.SUCCESS
+            duplicate_manifest_report.outcome, EpubInspectionOutcome.SUCCESS
         )
         self.assertFalse(
             any(
@@ -484,14 +484,14 @@ class EpubPackageExtractorTests(unittest.TestCase):
         cover_observation = next(
             item
             for item in report.observations
-            if item.field is LocalEvidenceField.COVER
+            if item.field is EpubPackageField.COVER
         )
         cover_declaration = next(
             item
             for item in report.declarations
-            if item.kind is DeclarationKind.COVER
+            if item.kind is EpubPackageDeclarationKind.COVER
         )
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "duplicate_manifest_resource", {item.code for item in report.warnings}
         )
@@ -525,14 +525,14 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 report = EpubPackageExtractor().extract(
                     request(epub_bytes(version=2, package=package))
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(
                     "invalid_guide_reference",
                     {item.code for item in report.warnings},
                 )
                 self.assertFalse(
                     any(
-                        item.kind is DeclarationKind.GUIDE_REFERENCE
+                        item.kind is EpubPackageDeclarationKind.GUIDE_REFERENCE
                         for item in report.declarations
                     )
                 )
@@ -543,7 +543,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         fragment_report = EpubPackageExtractor().extract(
             request(epub_bytes(version=2, package=fragment_only))
         )
-        self.assertEqual(fragment_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(fragment_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "invalid_guide_reference",
             {item.code for item in fragment_report.warnings},
@@ -558,7 +558,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 report = EpubPackageExtractor().extract(
                     request(epub_bytes(package=package))
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertTrue(
                     {"invalid_manifest_item", "invalid_spine_item"}
                     <= {item.code for item in report.warnings}
@@ -571,7 +571,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 report = EpubPackageExtractor().extract(
                     request(epub_bytes(version=2, package=package))
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(
                     "invalid_guide_reference",
                     {item.code for item in report.warnings},
@@ -587,7 +587,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         report = EpubPackageExtractor().extract(
             request(epub_bytes(version=2, package=toured))
         )
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "invalid_deprecated_tours", {item.code for item in report.warnings}
         )
@@ -610,13 +610,13 @@ class EpubPackageExtractorTests(unittest.TestCase):
                         )
                     )
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(
                     "invalid_spine_item", {item.code for item in report.warnings}
                 )
                 self.assertFalse(
                     any(
-                        item.kind is DeclarationKind.SPINE_ITEM
+                        item.kind is EpubPackageDeclarationKind.SPINE_ITEM
                         for item in report.declarations
                     )
                 )
@@ -636,11 +636,11 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 )
             )
         )
-        self.assertEqual(fallback_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(fallback_report.outcome, EpubInspectionOutcome.SUCCESS)
         spine = next(
             item
             for item in fallback_report.declarations
-            if item.kind is DeclarationKind.SPINE_ITEM
+            if item.kind is EpubPackageDeclarationKind.SPINE_ITEM
         )
         self.assertEqual(spine.identifier, "chapter")
 
@@ -677,7 +677,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 spine_items = [
                     item
                     for item in first.declarations
-                    if item.kind is DeclarationKind.SPINE_ITEM
+                    if item.kind is EpubPackageDeclarationKind.SPINE_ITEM
                 ]
                 duplicate_warnings = [
                     item
@@ -688,7 +688,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     expected_ordinals[version]
                 )
 
-                self.assertEqual(first.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(first.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertEqual(first.to_json(), second.to_json())
                 self.assertEqual(
                     [item.identifier for item in spine_items],
@@ -710,7 +710,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     duplicate_warnings[0].citation.section,
-                    CitationSection.SPINE,
+                    EpubPackageCitationSection.SPINE,
                 )
                 serialized = first.to_json()
                 self.assertNotIn("second.xhtml", serialized)
@@ -746,12 +746,12 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     )
                 )
 
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertEqual(
                     [
                         item.identifier
                         for item in report.declarations
-                        if item.kind is DeclarationKind.SPINE_ITEM
+                        if item.kind is EpubPackageDeclarationKind.SPINE_ITEM
                     ],
                     ["chapter", "second"],
                 )
@@ -778,7 +778,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     spine_items = [
                         item
                         for item in report.declarations
-                        if item.kind is DeclarationKind.SPINE_ITEM
+                        if item.kind is EpubPackageDeclarationKind.SPINE_ITEM
                     ]
                     invalid_warnings = [
                         item
@@ -786,14 +786,14 @@ class EpubPackageExtractorTests(unittest.TestCase):
                         if item.code == "invalid_spine_item"
                     ]
 
-                    self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                    self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                     self.assertEqual(len(spine_items), 1)
                     self.assertEqual(spine_items[0].identifier, "chapter")
                     self.assertEqual(len(invalid_warnings), 1)
                     self.assertIsNotNone(invalid_warnings[0].citation)
                     self.assertEqual(
                         invalid_warnings[0].citation.section,
-                        CitationSection.SPINE,
+                        EpubPackageCitationSection.SPINE,
                     )
                     self.assertLess(
                         invalid_warnings[0].citation.source_ordinal,
@@ -822,7 +822,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 report = EpubPackageExtractor().extract(
                     request(epub_bytes(package=package))
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(
                     "unsafe_manifest_item", {item.code for item in report.warnings}
                 )
@@ -836,7 +836,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         oversized_report = EpubPackageExtractor().extract(
             request(epub_bytes(package=oversized_media))
         )
-        self.assertEqual(oversized_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(oversized_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "invalid_manifest_item", {item.code for item in oversized_report.warnings}
         )
@@ -847,7 +847,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         excessive_report = EpubPackageExtractor().extract(
             request(epub_bytes(package=excessive_properties))
         )
-        self.assertEqual(excessive_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(excessive_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "invalid_manifest_item", {item.code for item in excessive_report.warnings}
         )
@@ -868,27 +868,27 @@ class EpubPackageExtractorTests(unittest.TestCase):
             (
                 missing_cover,
                 "missing_manifest_resource",
-                DeclarationKind.COVER,
-                LocalEvidenceField.COVER,
+                EpubPackageDeclarationKind.COVER,
+                EpubPackageField.COVER,
             ),
             (
                 wrong_cover,
                 "invalid_cover_declaration",
-                DeclarationKind.COVER,
-                LocalEvidenceField.COVER,
+                EpubPackageDeclarationKind.COVER,
+                EpubPackageField.COVER,
             ),
             (
                 wrong_navigation,
                 "invalid_navigation_declaration",
-                DeclarationKind.NAVIGATION,
-                LocalEvidenceField.NAVIGATION,
+                EpubPackageDeclarationKind.NAVIGATION,
+                EpubPackageField.NAVIGATION,
             ),
         ):
             with self.subTest(warning=warning):
                 report = EpubPackageExtractor().extract(
                     request(epub_bytes(package=package))
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(warning, {item.code for item in report.warnings})
                 self.assertNotIn(forbidden_kind, {item.kind for item in report.declarations})
                 self.assertNotIn(forbidden_field, {item.field for item in report.observations})
@@ -917,21 +917,21 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 identifier = next(
                     item
                     for item in report.observations
-                    if item.field is LocalEvidenceField.IDENTIFIER
+                    if item.field is EpubPackageField.IDENTIFIER
                 )
                 self.assertEqual(identifier.normalized_value, normalized)
                 self.assertIs(
                     identifier.applicability,
                     (
-                        ObservationApplicability.UNKNOWN
+                        EpubObservationApplicability.UNKNOWN
                         if valid
-                        else ObservationApplicability.INAPPLICABLE
+                        else EpubObservationApplicability.INAPPLICABLE
                     ),
                 )
                 inferred = {
                     item.normalized_value
                     for item in report.observations
-                    if item.field is LocalEvidenceField.IDENTIFIER_SCHEME
+                    if item.field is EpubPackageField.IDENTIFIER_SCHEME
                     and item.citation.selector == "inferred-identifier-type"
                 }
                 self.assertEqual(inferred, set() if scheme is None else {scheme})
@@ -950,12 +950,12 @@ class EpubPackageExtractorTests(unittest.TestCase):
         declared_identifier = next(
             item
             for item in declared_report.observations
-            if item.field is LocalEvidenceField.IDENTIFIER
+            if item.field is EpubPackageField.IDENTIFIER
         )
-        self.assertEqual(declared_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(declared_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIs(
             declared_identifier.applicability,
-            ObservationApplicability.INAPPLICABLE,
+            EpubObservationApplicability.INAPPLICABLE,
         )
         self.assertIn(
             "invalid_identifier", {item.code for item in declared_report.warnings}
@@ -965,7 +965,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             {
                 item.normalized_value
                 for item in declared_report.observations
-                if item.field is LocalEvidenceField.IDENTIFIER_SCHEME
+                if item.field is EpubPackageField.IDENTIFIER_SCHEME
             },
         )
 
@@ -977,14 +977,14 @@ class EpubPackageExtractorTests(unittest.TestCase):
         agreeing = EpubPackageExtractor().extract(
             request(epub_bytes(version=2, package=agreeing_package))
         )
-        self.assertEqual(agreeing.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(agreeing.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertNotIn(
             "contradictory_cover_declaration",
             {item.code for item in agreeing.warnings},
         )
         self.assertEqual(
             sum(
-                item.field is LocalEvidenceField.COVER
+                item.field is EpubPackageField.COVER
                 for item in agreeing.observations
             ),
             1,
@@ -992,7 +992,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         agreeing_cover = next(
             item
             for item in agreeing.declarations
-            if item.kind is DeclarationKind.COVER
+            if item.kind is EpubPackageDeclarationKind.COVER
         )
         self.assertTrue(agreeing_cover.citation.expanded_name.endswith("}meta"))
 
@@ -1015,13 +1015,13 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 )
             )
         )
-        self.assertEqual(conflicting.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(conflicting.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "contradictory_cover_declaration",
             {item.code for item in conflicting.warnings},
         )
         self.assertNotIn(
-            LocalEvidenceField.COVER,
+            EpubPackageField.COVER,
             {item.field for item in conflicting.observations},
         )
 
@@ -1041,25 +1041,25 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 )
             )
         )
-        self.assertEqual(current_conflict.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(current_conflict.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "contradictory_cover_declaration",
             {item.code for item in current_conflict.warnings},
         )
         self.assertNotIn(
-            LocalEvidenceField.COVER,
+            EpubPackageField.COVER,
             {item.field for item in current_conflict.observations},
         )
 
     def test_hostile_path_reference_matrix_is_typed_and_never_resolved_externally(self) -> None:
         references = {
-            "/absolute.xhtml": LocalEvidenceOutcome.MALFORMED,
-            "../../escape.xhtml": LocalEvidenceOutcome.MALFORMED,
-            "chapter%2Fxhtml": LocalEvidenceOutcome.MALFORMED,
-            "chapter\\xhtml": LocalEvidenceOutcome.MALFORMED,
-            "file:///private/book.xhtml": LocalEvidenceOutcome.MALFORMED,
-            "https://user@example.invalid/private": LocalEvidenceOutcome.MALFORMED,
-            "x" * 1_025: LocalEvidenceOutcome.RESOURCE_LIMIT,
+            "/absolute.xhtml": EpubInspectionOutcome.MALFORMED,
+            "../../escape.xhtml": EpubInspectionOutcome.MALFORMED,
+            "chapter%2Fxhtml": EpubInspectionOutcome.MALFORMED,
+            "chapter\\xhtml": EpubInspectionOutcome.MALFORMED,
+            "file:///private/book.xhtml": EpubInspectionOutcome.MALFORMED,
+            "https://user@example.invalid/private": EpubInspectionOutcome.MALFORMED,
+            "x" * 1_025: EpubInspectionOutcome.RESOURCE_LIMIT,
         }
         for reference, expected in references.items():
             package = EPUB3_PACKAGE.replace(b"chapter.xhtml", reference.encode(), 1)
@@ -1081,7 +1081,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         )
         self.assertEqual(
             EpubPackageExtractor().extract(request(bytes(encrypted_zip))).outcome,
-            LocalEvidenceOutcome.ENCRYPTED,
+            EpubInspectionOutcome.ENCRYPTED,
         )
 
     def test_entity_and_xinclude_matrix_is_rejected_without_external_access(self) -> None:
@@ -1099,7 +1099,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     EpubPackageExtractor().extract(
                         request(epub_bytes(package=package))
                     ).outcome,
-                    LocalEvidenceOutcome.MALFORMED,
+                    EpubInspectionOutcome.MALFORMED,
                 )
         xinclude = EPUB3_PACKAGE.replace(
             b"</metadata>",
@@ -1109,7 +1109,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             EpubPackageExtractor().extract(
                 request(epub_bytes(package=xinclude))
             ).outcome,
-            LocalEvidenceOutcome.MALFORMED,
+            EpubInspectionOutcome.MALFORMED,
         )
 
     def test_package_child_order_and_refinement_targets_are_closed(self) -> None:
@@ -1142,7 +1142,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     EpubPackageExtractor().extract(
                         request(epub_bytes(package=package))
                     ).outcome,
-                    LocalEvidenceOutcome.MALFORMED,
+                    EpubInspectionOutcome.MALFORMED,
                 )
         for package, warning in (
             (missing_target, "unresolved_metadata_refinement"),
@@ -1152,30 +1152,30 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 report = EpubPackageExtractor().extract(
                     request(epub_bytes(package=package))
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(warning, {item.code for item in report.warnings})
         trailing_cases = (
-            (b'<collection role="index"/>', LocalEvidenceOutcome.SUCCESS),
+            (b'<collection role="index"/>', EpubInspectionOutcome.SUCCESS),
             (
                 b'<bindings><mediaType media-type="application/x-synthetic" handler="chapter"/></bindings>'
                 b'<collection role="index"/>',
-                LocalEvidenceOutcome.SUCCESS,
+                EpubInspectionOutcome.SUCCESS,
             ),
             (
                 b'<guide><reference type="text" title="Start" href="chapter.xhtml"/></guide>'
                 b'<bindings><mediaType media-type="application/x-synthetic" handler="chapter"/></bindings>'
                 b'<collection role="index"/><collection role="preview"/>',
-                LocalEvidenceOutcome.SUCCESS,
+                EpubInspectionOutcome.SUCCESS,
             ),
             (
                 b'<collection role="index"/>'
                 b'<bindings><mediaType media-type="application/x-synthetic" handler="chapter"/></bindings>',
-                LocalEvidenceOutcome.MALFORMED,
+                EpubInspectionOutcome.MALFORMED,
             ),
             (
                 b'<bindings><mediaType media-type="application/x-synthetic" handler="chapter"/></bindings>'
                 b'<guide><reference type="text" title="Start" href="chapter.xhtml"/></guide>',
-                LocalEvidenceOutcome.MALFORMED,
+                EpubInspectionOutcome.MALFORMED,
             ),
         )
         for trailing_children, outcome in trailing_cases:
@@ -1197,7 +1197,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             EpubPackageExtractor().extract(
                 request(epub_bytes(container=container_links))
             ).outcome,
-            LocalEvidenceOutcome.SUCCESS,
+            EpubInspectionOutcome.SUCCESS,
         )
 
     def test_unsafe_metadata_is_one_way_projected_with_a_cited_warning(self) -> None:
@@ -1213,7 +1213,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 package = EPUB3_PACKAGE.replace(b"A Synthetic Book", private.encode("utf-8"))
                 report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
                 serialized = report.to_json()
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertNotIn(private, serialized)
                 self.assertIn("unsafe-source-text-sha256", serialized)
                 self.assertIn("unsafe_metadata_redacted", serialized)
@@ -1242,7 +1242,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     for item in report.warnings
                     if item.code == "invalid_package_id" and item.citation is not None
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertNotIn(namespace, serialized)
                 self.assertTrue(
                     warning.citation.expanded_name.startswith("{urn:sha256:")
@@ -1264,7 +1264,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     for item in report.warnings
                     if item.code == "invalid_package_id" and item.citation is not None
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertNotIn("syntheticPrivateTokenSentinel", report.to_json())
                 self.assertTrue(
                     warning.citation.expanded_name.startswith("{urn:sha256:")
@@ -1284,9 +1284,9 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 title = next(
                     item
                     for item in report.observations
-                    if item.field is LocalEvidenceField.TITLE
+                    if item.field is EpubPackageField.TITLE
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 if length <= maximum:
                     self.assertEqual(title.raw_value, value)
                     self.assertNotIn(
@@ -1313,7 +1313,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             b"</metadata>", invalid_nodes + b"</metadata>"
         )
         report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertLessEqual(len(report.warnings), EpubPackageLimits.MAX_WARNINGS)
         self.assertIn(
             "warning_occurrences_aggregated",
@@ -1343,11 +1343,11 @@ class EpubPackageExtractorTests(unittest.TestCase):
         identifier_applicability = {
             observation.applicability
             for observation in report.observations
-            if observation.field in {LocalEvidenceField.IDENTIFIER, LocalEvidenceField.PACKAGE_IDENTIFIER}
+            if observation.field in {EpubPackageField.IDENTIFIER, EpubPackageField.PACKAGE_IDENTIFIER}
         }
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
-        self.assertIn(LocalEvidenceField.CONTRIBUTOR_ROLE, fields)
-        self.assertIn(ObservationApplicability.UNKNOWN, identifier_applicability)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
+        self.assertIn(EpubPackageField.CONTRIBUTOR_ROLE, fields)
+        self.assertIn(EpubObservationApplicability.UNKNOWN, identifier_applicability)
         self.assertTrue(
             {
                 "ambiguous_title",
@@ -1376,11 +1376,11 @@ class EpubPackageExtractorTests(unittest.TestCase):
         schemes = {
             item.normalized_value
             for item in report.observations
-            if item.field is LocalEvidenceField.IDENTIFIER_SCHEME
+            if item.field is EpubPackageField.IDENTIFIER_SCHEME
         }
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertTrue(
-            {LocalEvidenceField.EDITION, LocalEvidenceField.FORMAT, LocalEvidenceField.REGION}.issubset(fields)
+            {EpubPackageField.EDITION, EpubPackageField.FORMAT, EpubPackageField.REGION}.issubset(fields)
         )
         self.assertTrue({"ISBN-13", "UUID", "DOI", "ASIN"}.issubset(schemes))
         self.assertIn("invalid_identifier", {item.code for item in report.warnings})
@@ -1399,9 +1399,9 @@ class EpubPackageExtractorTests(unittest.TestCase):
         for value in (bare, remapped):
             with self.subTest(value=hashlib.sha256(value).hexdigest()):
                 result = EpubPackageExtractor().extract(request(epub_bytes(package=value)))
-                self.assertEqual(result.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(result.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertNotIn(
-                    LocalEvidenceField.EDITION,
+                    EpubPackageField.EDITION,
                     {item.field for item in result.observations},
                 )
                 self.assertIn(
@@ -1417,9 +1417,9 @@ class EpubPackageExtractorTests(unittest.TestCase):
         implicit_report = EpubPackageExtractor().extract(
             request(epub_bytes(package=implicit))
         )
-        self.assertEqual(implicit_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(implicit_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
-            LocalEvidenceField.EDITION,
+            EpubPackageField.EDITION,
             {item.field for item in implicit_report.observations},
         )
 
@@ -1430,7 +1430,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             EpubPackageExtractor().extract(
                 request(epub_bytes(package=invalid_prefix))
             ).outcome,
-            LocalEvidenceOutcome.MALFORMED,
+            EpubInspectionOutcome.MALFORMED,
         )
 
     def test_repeated_calibre_values_preserve_occurrences_and_conflicts(self) -> None:
@@ -1449,7 +1449,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             for item in report.observations
             if item.citation.selector == "calibre-fallback"
         ]
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(calibre_values, ["First Series", "Second Series", "1", "2"])
         self.assertIn("contradictory_series", {item.code for item in report.warnings})
 
@@ -1464,10 +1464,10 @@ class EpubPackageExtractorTests(unittest.TestCase):
         positions = [
             item
             for item in unpaired_report.observations
-            if item.field is LocalEvidenceField.COLLECTION_POSITION
+            if item.field is EpubPackageField.COLLECTION_POSITION
             and item.citation.selector == "calibre-fallback"
         ]
-        self.assertEqual(unpaired_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(unpaired_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(len(positions), 1)
         self.assertIn(
             "incomplete_calibre_series",
@@ -1490,17 +1490,17 @@ class EpubPackageExtractorTests(unittest.TestCase):
         package = EPUB3_PACKAGE.replace(b"</metadata>", additions + b"</metadata>")
         report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
         fields = {item.field for item in report.observations}
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertTrue(
             {
-                LocalEvidenceField.SUBTITLE,
-                LocalEvidenceField.PUBLISHER,
-                LocalEvidenceField.SUBJECT,
-                LocalEvidenceField.DESCRIPTION,
-                LocalEvidenceField.RIGHTS,
-                LocalEvidenceField.SOURCE,
-                LocalEvidenceField.RELATION,
-                LocalEvidenceField.TYPE,
+                EpubPackageField.SUBTITLE,
+                EpubPackageField.PUBLISHER,
+                EpubPackageField.SUBJECT,
+                EpubPackageField.DESCRIPTION,
+                EpubPackageField.RIGHTS,
+                EpubPackageField.SOURCE,
+                EpubPackageField.RELATION,
+                EpubPackageField.TYPE,
             }.issubset(fields)
         )
         subtitle = [
@@ -1509,7 +1509,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             if item.raw_value == "Synthetic Subtitle"
         ]
         self.assertEqual(len(subtitle), 1)
-        self.assertIs(subtitle[0].field, LocalEvidenceField.SUBTITLE)
+        self.assertIs(subtitle[0].field, EpubPackageField.SUBTITLE)
         self.assertEqual(subtitle[0].declared_display_sequence, 2)
         self.assertIn("title-type-subtitle@", subtitle[0].citation.selector or "")
         self.assertIn("display-seq@", subtitle[0].citation.selector or "")
@@ -1524,7 +1524,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             all(
                 item.same_file_lineage is not None
                 for item in report.observations
-                if item.field in {LocalEvidenceField.COVER, LocalEvidenceField.SUBTITLE}
+                if item.field in {EpubPackageField.COVER, EpubPackageField.SUBTITLE}
             )
         )
 
@@ -1540,7 +1540,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 )
             )
         )
-        self.assertEqual(conflict_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(conflict_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "contradictory_cover_declaration",
             {item.code for item in conflict_report.warnings},
@@ -1555,7 +1555,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         creator_report = EpubPackageExtractor().extract(
             request(epub_bytes(package=creator_display))
         )
-        self.assertEqual(creator_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(creator_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "inapplicable_metadata_refinement",
             {item.code for item in creator_report.warnings},
@@ -1564,7 +1564,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             all(
                 item.declared_display_sequence is None
                 for item in creator_report.observations
-                if item.field is LocalEvidenceField.CREATOR
+                if item.field is EpubPackageField.CREATOR
             )
         )
 
@@ -1591,21 +1591,21 @@ class EpubPackageExtractorTests(unittest.TestCase):
             if item.raw_value
             in {"Main", "Subtitle", "Short", "Collection", "Edition", "Expanded"}
         }
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(len(by_value), 6)
-        self.assertIs(by_value["Main"].field, LocalEvidenceField.TITLE)
-        self.assertIs(by_value["Subtitle"].field, LocalEvidenceField.SUBTITLE)
-        self.assertIs(by_value["Short"].field, LocalEvidenceField.TITLE)
-        self.assertIs(by_value["Collection"].field, LocalEvidenceField.COLLECTION)
-        self.assertIs(by_value["Edition"].field, LocalEvidenceField.EDITION)
-        self.assertIs(by_value["Expanded"].field, LocalEvidenceField.TITLE)
+        self.assertIs(by_value["Main"].field, EpubPackageField.TITLE)
+        self.assertIs(by_value["Subtitle"].field, EpubPackageField.SUBTITLE)
+        self.assertIs(by_value["Short"].field, EpubPackageField.TITLE)
+        self.assertIs(by_value["Collection"].field, EpubPackageField.COLLECTION)
+        self.assertIs(by_value["Edition"].field, EpubPackageField.EDITION)
+        self.assertIs(by_value["Expanded"].field, EpubPackageField.TITLE)
         self.assertEqual(by_value["Main"].declared_display_sequence, 1_000_000)
 
         invalid_values = (
             (
                 b'<meta property="dcterms:modified">2026-01-13T00:00:00Z</meta>',
                 b'<meta property="dcterms:modified">2026-01-13</meta>',
-                LocalEvidenceField.MODIFICATION_DATE,
+                EpubPackageField.MODIFICATION_DATE,
                 "invalid_date",
                 "2026-01-13",
                 True,
@@ -1613,7 +1613,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             (
                 b'<meta property="group-position">2</meta>',
                 b'<meta property="group-position">0</meta>',
-                LocalEvidenceField.COLLECTION_POSITION,
+                EpubPackageField.COLLECTION_POSITION,
                 "invalid_metadata_refinement",
                 "0",
                 False,
@@ -1621,7 +1621,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             (
                 b'<dc:language>en-GB</dc:language>',
                 b'<dc:language>not a language!</dc:language>',
-                LocalEvidenceField.LANGUAGE,
+                EpubPackageField.LANGUAGE,
                 "invalid_language",
                 "not a language!",
                 True,
@@ -1629,7 +1629,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             (
                 b'<dc:language>en-GB</dc:language>',
                 b'<dc:language>123</dc:language>',
-                LocalEvidenceField.LANGUAGE,
+                EpubPackageField.LANGUAGE,
                 "invalid_language",
                 "123",
                 True,
@@ -1637,7 +1637,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             (
                 b'<meta property="group-position">2</meta>',
                 '<meta property="group-position">٢</meta>'.encode(),
-                LocalEvidenceField.COLLECTION_POSITION,
+                EpubPackageField.COLLECTION_POSITION,
                 "invalid_metadata_refinement",
                 "٢",
                 False,
@@ -1649,7 +1649,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 invalid = EpubPackageExtractor().extract(
                     request(epub_bytes(package=invalid_package))
                 )
-                self.assertEqual(invalid.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(invalid.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(warning, {item.code for item in invalid.warnings})
                 values = [
                     item
@@ -1660,7 +1660,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 if retained:
                     self.assertTrue(
                         all(
-                        item.applicability is ObservationApplicability.INAPPLICABLE
+                        item.applicability is EpubObservationApplicability.INAPPLICABLE
                         and item.normalized_value is None
                         for item in values
                         )
@@ -1689,7 +1689,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     for item in display_report.observations
                     if item.raw_value == "A Synthetic Book"
                 )
-                self.assertEqual(display_report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(display_report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertEqual(title.declared_display_sequence, expected)
                 self.assertEqual(
                     "invalid_metadata_refinement"
@@ -1709,14 +1709,14 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 report = EpubPackageExtractor().extract(
                     request(epub_bytes(package=package))
                 )
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(
                     "invalid_language", {item.code for item in report.warnings}
                 )
                 title = next(
                     item
                     for item in report.observations
-                    if item.field is LocalEvidenceField.TITLE
+                    if item.field is EpubPackageField.TITLE
                 )
                 self.assertIsNone(title.language)
 
@@ -1726,9 +1726,9 @@ class EpubPackageExtractorTests(unittest.TestCase):
             request(epub_bytes(package=b'<!DOCTYPE package [<!ENTITY x "value">]>' + EPUB3_PACKAGE))
         )
         cancelled = EpubPackageExtractor().extract(request(epub_bytes(), cancelled=True))
-        self.assertEqual(multiple.outcome, LocalEvidenceOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS)
-        self.assertEqual(entity.outcome, LocalEvidenceOutcome.MALFORMED)
-        self.assertEqual(cancelled.outcome, LocalEvidenceOutcome.CANCELLATION)
+        self.assertEqual(multiple.outcome, EpubInspectionOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS)
+        self.assertEqual(entity.outcome, EpubInspectionOutcome.MALFORMED)
+        self.assertEqual(cancelled.outcome, EpubInspectionOutcome.CANCELLATION)
         self.assertFalse(multiple.observations or entity.observations or cancelled.observations)
 
     def test_unsupported_expat_is_rejected_before_the_source_is_opened(self) -> None:
@@ -1741,10 +1741,10 @@ class EpubPackageExtractorTests(unittest.TestCase):
             return value[offset : offset + size]
 
         base = request(value)
-        guarded = LocalEvidenceRequest(
+        guarded = EpubPackageRequest(
             base.target,
             base.file,
-            LocalEvidenceSource(len(value), reader),
+            EpubPackageSource(len(value), reader),
             base.expected_source,
             base.capability,
             base.limits,
@@ -1757,7 +1757,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             "expat_2.7.1",
         ):
             report = EpubPackageExtractor().extract(guarded)
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.UNAVAILABLE_SOURCE)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.UNAVAILABLE_SOURCE)
         self.assertEqual(reads, 0)
 
     def test_required_and_opaque_encryption_are_distinct(self) -> None:
@@ -1765,18 +1765,18 @@ class EpubPackageExtractorTests(unittest.TestCase):
         required = opaque.replace(b"EPUB/cover.jpg", b"EPUB/package.opf")
         opaque_report = EpubPackageExtractor().extract(request(epub_bytes(encryption=opaque)))
         required_report = EpubPackageExtractor().extract(request(epub_bytes(encryption=required)))
-        self.assertEqual(opaque_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(opaque_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn("opaque_resource_encrypted", tuple(item.code for item in opaque_report.warnings))
         self.assertEqual(
-            sum(item.kind is DeclarationKind.ENCRYPTION for item in opaque_report.declarations),
+            sum(item.kind is EpubPackageDeclarationKind.ENCRYPTION for item in opaque_report.declarations),
             1,
         )
-        self.assertEqual(required_report.outcome, LocalEvidenceOutcome.ENCRYPTED)
+        self.assertEqual(required_report.outcome, EpubInspectionOutcome.ENCRYPTED)
         self.assertEqual(
             EpubPackageExtractor().extract(
                 request(epub_bytes(package=b"not XML", encryption=required))
             ).outcome,
-            LocalEvidenceOutcome.ENCRYPTED,
+            EpubInspectionOutcome.ENCRYPTED,
         )
 
         encrypted_key = b'''<EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData><CipherValue>repository-authored-synthetic-key</CipherValue></CipherData></EncryptedKey>'''
@@ -1787,7 +1787,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         keyed_report = EpubPackageExtractor().extract(
             request(epub_bytes(encryption=opaque_with_key))
         )
-        self.assertEqual(keyed_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(keyed_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "opaque_resource_encrypted", {item.code for item in keyed_report.warnings}
         )
@@ -1796,7 +1796,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             EpubPackageExtractor().extract(
                 request(epub_bytes(encryption=required_with_key))
             ).outcome,
-            LocalEvidenceOutcome.ENCRYPTED,
+            EpubInspectionOutcome.ENCRYPTED,
         )
 
         encoded_required = required.replace(b"package.opf", b"%70ackage.opf")
@@ -1807,15 +1807,15 @@ class EpubPackageExtractorTests(unittest.TestCase):
         empty = b'<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"/>'
         self.assertEqual(
             EpubPackageExtractor().extract(request(epub_bytes(encryption=encoded_required))).outcome,
-            LocalEvidenceOutcome.ENCRYPTED,
+            EpubInspectionOutcome.ENCRYPTED,
         )
         self.assertEqual(
             EpubPackageExtractor().extract(request(epub_bytes(encryption=wrong_namespace))).outcome,
-            LocalEvidenceOutcome.MALFORMED,
+            EpubInspectionOutcome.MALFORMED,
         )
         self.assertEqual(
             EpubPackageExtractor().extract(request(epub_bytes(encryption=empty))).outcome,
-            LocalEvidenceOutcome.MALFORMED,
+            EpubInspectionOutcome.MALFORMED,
         )
 
         invalid_documents = (
@@ -1832,13 +1832,13 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     EpubPackageExtractor().extract(
                         request(epub_bytes(encryption=document))
                     ).outcome,
-                    LocalEvidenceOutcome.MALFORMED,
+                    EpubInspectionOutcome.MALFORMED,
                 )
 
     def test_per_field_declaration_and_public_report_bounds_are_resource_limits(self) -> None:
         for count, outcome in (
-            (32, LocalEvidenceOutcome.SUCCESS),
-            (33, LocalEvidenceOutcome.RESOURCE_LIMIT),
+            (32, EpubInspectionOutcome.SUCCESS),
+            (33, EpubInspectionOutcome.RESOURCE_LIMIT),
         ):
             subjects = b"".join(
                 f"<dc:subject>subject-{index}</dc:subject>".encode()
@@ -1869,7 +1869,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 EpubPackageLimits(manifest_items=8_192),
             )
         )
-        self.assertEqual(declaration_report.outcome, LocalEvidenceOutcome.RESOURCE_LIMIT)
+        self.assertEqual(declaration_report.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
 
         large = "x" * 1_021
         additions = []
@@ -1890,7 +1890,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             b"</metadata>", "".join(additions).encode() + b"</metadata>"
         )
         report = EpubPackageExtractor().extract(request(epub_bytes(package=report_package)))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.RESOURCE_LIMIT)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
 
     def test_raw_zip_preflight_rejects_nul_aliases_crc_and_compression_before_xml(self) -> None:
         original = epub_bytes()
@@ -1920,10 +1920,10 @@ class EpubPackageExtractorTests(unittest.TestCase):
         self.assertEqual(
             results,
             (
-                LocalEvidenceOutcome.MALFORMED,
-                LocalEvidenceOutcome.UNSUPPORTED_COMPRESSION,
-                LocalEvidenceOutcome.INTEGRITY_FAILURE,
-                LocalEvidenceOutcome.MALFORMED,
+                EpubInspectionOutcome.MALFORMED,
+                EpubInspectionOutcome.UNSUPPORTED_COMPRESSION,
+                EpubInspectionOutcome.INTEGRITY_FAILURE,
+                EpubInspectionOutcome.MALFORMED,
             ),
         )
 
@@ -1957,7 +1957,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 directory = epub_bytes(extra_entries=(("EPUB/", b"", method),))
                 self.assertEqual(
                     EpubPackageExtractor().extract(request(directory)).outcome,
-                    LocalEvidenceOutcome.SUCCESS,
+                    EpubInspectionOutcome.SUCCESS,
                 )
 
         compatible = add_flags(
@@ -1965,7 +1965,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             0x16,
         )
         report = EpubPackageExtractor().extract(request(compatible))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn("noncanonical_zip_flags", {item.code for item in report.warnings})
 
         for value in (
@@ -1985,7 +1985,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             with self.subTest(rejected_sha256=hashlib.sha256(value).hexdigest()):
                 self.assertEqual(
                     EpubPackageExtractor().extract(request(value)).outcome,
-                    LocalEvidenceOutcome.MALFORMED,
+                    EpubInspectionOutcome.MALFORMED,
                 )
 
     def test_common_noncanonical_packaging_preserves_trustworthy_evidence(self) -> None:
@@ -1997,7 +1997,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         for value in variants:
             with self.subTest(variant=hashlib.sha256(value).hexdigest()):
                 report = EpubPackageExtractor().extract(request(value))
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(
                     "noncanonical_mimetype",
                     {item.code for item in report.warnings},
@@ -2007,7 +2007,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             EpubPackageExtractor().extract(
                 request(epub_bytes(mimetype_value=b"application/not-epub"))
             ).outcome,
-            LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+            EpubInspectionOutcome.UNSUPPORTED_FORMAT,
         )
 
         long_description = "Synthetic description " + "x" * 6_600
@@ -2016,13 +2016,13 @@ class EpubPackageExtractorTests(unittest.TestCase):
             f"<dc:description>{long_description}</dc:description></metadata>".encode(),
         )
         report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             long_description,
             {
                 item.raw_value
                 for item in report.observations
-                if item.field is LocalEvidenceField.DESCRIPTION
+                if item.field is EpubPackageField.DESCRIPTION
             },
         )
 
@@ -2030,7 +2030,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         legacy_report = EpubPackageExtractor().extract(
             request(epub_bytes(package=legacy_version))
         )
-        self.assertEqual(legacy_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(legacy_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "noncanonical_package_version",
             {item.code for item in legacy_report.warnings},
@@ -2061,12 +2061,12 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 compatible = EpubPackageExtractor().extract(
                     request(epub_bytes(package=package, extra_entries=extra_entries))
                 )
-                self.assertEqual(compatible.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(compatible.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertIn(warning, {item.code for item in compatible.warnings})
 
         self.assertEqual(
             EpubPackageExtractor().extract(request(epub_bytes()[:-22])).outcome,
-            LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+            EpubInspectionOutcome.UNSUPPORTED_FORMAT,
         )
 
     def test_configured_archive_xml_and_compression_bounds_fail_without_partial_success(self) -> None:
@@ -2084,7 +2084,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
             request_with_limits(ratio_bomb, EpubPackageLimits(compression_ratio_per_member=2))
         )
         for report in (entry_limited, node_limited, ratio_limited):
-            self.assertEqual(report.outcome, LocalEvidenceOutcome.RESOURCE_LIMIT)
+            self.assertEqual(report.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
             self.assertFalse(report.observations or report.declarations)
 
         aggregate = epub_bytes(
@@ -2093,7 +2093,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         aggregate_report = EpubPackageExtractor().extract(
             request_with_limits(aggregate, EpubPackageLimits(expanded_bytes_per_archive=2_000))
         )
-        self.assertEqual(aggregate_report.outcome, LocalEvidenceOutcome.RESOURCE_LIMIT)
+        self.assertEqual(aggregate_report.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
 
     def test_live_monotonic_deadline_source_io_and_allocator_failures_are_typed(self) -> None:
         value = epub_bytes()
@@ -2103,10 +2103,10 @@ class EpubPackageExtractorTests(unittest.TestCase):
             time.sleep(0.01)
             return value[offset : offset + size]
 
-        late = LocalEvidenceRequest(
+        late = EpubPackageRequest(
             base.target,
             base.file,
-            LocalEvidenceSource(len(value), delayed),
+            EpubPackageSource(len(value), delayed),
             base.expected_source,
             base.capability,
             base.limits,
@@ -2114,10 +2114,10 @@ class EpubPackageExtractorTests(unittest.TestCase):
             time.monotonic() + 0.001,
             base.cancellation,
         )
-        unavailable = LocalEvidenceRequest(
+        unavailable = EpubPackageRequest(
             base.target,
             base.file,
-            LocalEvidenceSource(len(value), lambda _offset, _size: (_ for _ in ()).throw(OSError("EIO"))),
+            EpubPackageSource(len(value), lambda _offset, _size: (_ for _ in ()).throw(OSError("EIO"))),
             base.expected_source,
             base.capability,
             base.limits,
@@ -2125,14 +2125,14 @@ class EpubPackageExtractorTests(unittest.TestCase):
             base.monotonic_deadline,
             base.cancellation,
         )
-        self.assertEqual(EpubPackageExtractor().extract(late).outcome, LocalEvidenceOutcome.TIMEOUT)
-        self.assertEqual(EpubPackageExtractor().extract(unavailable).outcome, LocalEvidenceOutcome.UNAVAILABLE_SOURCE)
+        self.assertEqual(EpubPackageExtractor().extract(late).outcome, EpubInspectionOutcome.TIMEOUT)
+        self.assertEqual(EpubPackageExtractor().extract(unavailable).outcome, EpubInspectionOutcome.UNAVAILABLE_SOURCE)
         with patch(
             "mechanical_librarian.adapters.evidence_extractors.epub_package.expat.ParserCreate",
             side_effect=MemoryError,
         ):
             exhausted = EpubPackageExtractor().extract(request(value))
-        self.assertEqual(exhausted.outcome, LocalEvidenceOutcome.RESOURCE_LIMIT)
+        self.assertEqual(exhausted.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
 
 
 if __name__ == "__main__":

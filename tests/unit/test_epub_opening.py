@@ -33,14 +33,14 @@ from mechanical_librarian.domain.identifiers import (
     TargetId,
 )
 from mechanical_librarian.domain.inventory import FileReference
-from mechanical_librarian.domain.local_evidence import (
-    LocalEvidenceCancellation,
-    LocalEvidenceCapability,
-    LocalEvidenceOutcome,
-    LocalEvidenceRequest,
-    LocalEvidenceSource,
-    ObservationApplicability,
-    local_file_lineage,
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+    EpubPackageCancellation,
+    EpubPackageCapability,
+    EpubInspectionOutcome,
+    EpubPackageRequest,
+    EpubPackageSource,
+    EpubObservationApplicability,
+    epub_file_lineage,
 )
 from tests.support.epub_packages import (
     MATERIALIZED_RECIPES,
@@ -60,12 +60,12 @@ from tests.support.epub_packages import (
 )
 
 
-def _request(value: bytes, limits: EpubOpeningLimits | None = None) -> LocalEvidenceRequest:
+def _request(value: bytes, limits: EpubOpeningLimits | None = None) -> EpubPackageRequest:
     selected = EpubOpeningLimits() if limits is None else limits
     source = Fingerprint(
         "sha256", SchemaVersion("source-v1"), hashlib.sha256(value).hexdigest()
     )
-    return LocalEvidenceRequest(
+    return EpubPackageRequest(
         TargetId(
             AdapterId("local-epub"),
             ConnectionId("local"),
@@ -73,15 +73,15 @@ def _request(value: bytes, limits: EpubOpeningLimits | None = None) -> LocalEvid
             ExternalItemId("0" * 64),
         ),
         FileReference("local", "0.epub"),
-        LocalEvidenceSource(
+        EpubPackageSource(
             len(value), lambda offset, size: value[offset : offset + size]
         ),
         source,
-        LocalEvidenceCapability.OPENING_MATTER,
+        EpubPackageCapability.OPENING_MATTER,
         selected.package,
         datetime.now(timezone.utc) + timedelta(seconds=30),
         time.monotonic() + 30.0,
-        LocalEvidenceCancellation("opening-test", lambda: False),
+        EpubPackageCancellation("opening-test", lambda: False),
     )
 
 
@@ -90,12 +90,12 @@ def _extract(
 ) -> EpubOpeningReport:
     selected = EpubOpeningLimits() if limits is None else limits
     request = _request(value, selected)
-    package_request = LocalEvidenceRequest(
+    package_request = EpubPackageRequest(
         request.target,
         request.file,
         request.source,
         request.expected_source,
-        LocalEvidenceCapability.PACKAGE,
+        EpubPackageCapability.PACKAGE,
         request.limits,
         request.deadline,
         request.monotonic_deadline,
@@ -127,16 +127,16 @@ class EpubOpeningTests(unittest.TestCase):
             with self.subTest(recipe=name):
                 report = _extract(recipe())
                 expected = (
-                    LocalEvidenceOutcome.RESOURCE_LIMIT
+                    EpubInspectionOutcome.RESOURCE_LIMIT
                     if name == "opening_resource_limit"
-                    else LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE
+                    else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
                     if name in {
                         "opening_no_applicable",
                         "opening_invalid_encoding",
                         "opening_utf16le_unsupported",
                         "opening_utf16be_unsupported",
                     }
-                    else LocalEvidenceOutcome.SUCCESS
+                    else EpubInspectionOutcome.SUCCESS
                 )
                 self.assertEqual(report.outcome, expected)
                 if name in {"opening_epub3_landmarks", "opening_epub2_guide"}:
@@ -178,7 +178,7 @@ class EpubOpeningTests(unittest.TestCase):
 
     def test_citations_are_exact_versioned_path_free_and_round_trip_canonically(self) -> None:
         report = _extract(opening_claims_complete())
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(
             {claim.field for claim in report.claims},
             {
@@ -204,17 +204,17 @@ class EpubOpeningTests(unittest.TestCase):
             self.assertNotIn("/Users/", report.to_json())
             self.assertEqual(
                 citation.same_file_lineage,
-                local_file_lineage(report.source_fingerprint),
+                epub_file_lineage(report.source_fingerprint),
             )
         self.assertEqual(
             report.same_file_lineage,
-            local_file_lineage(report.source_fingerprint),
+            epub_file_lineage(report.source_fingerprint),
         )
         self.assertEqual(EpubOpeningReport.from_json(report.to_json()), report)
 
     def test_plain_chapter_heading_never_becomes_a_book_title(self) -> None:
         report = _extract(self._single(_xhtml("<h1>Chapter One</h1><p>Story prose.</p>")))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE)
         self.assertFalse(report.claims)
 
     def test_landmark_terms_require_landmarks_ancestry_and_epub_namespace(self) -> None:
@@ -265,7 +265,7 @@ class EpubOpeningTests(unittest.TestCase):
                 media_type="text/html",
             )
         )
-        self.assertEqual(bounded_voids.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(bounded_voids.outcome, EpubInspectionOutcome.SUCCESS)
         body = _extract(
             self._single(
                 _xhtml('<h1 epub:type="fulltitle">Front Title</h1><main epub:type="bodymatter"><p>eBook ISBN 9780306406157</p></main>')
@@ -288,7 +288,7 @@ class EpubOpeningTests(unittest.TestCase):
             )
         )
         self.assertEqual(
-            nested_body.outcome, LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE
+            nested_body.outcome, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
         )
         self.assertIn("body_transition_reached", nested_body.warnings)
         implied = _extract(
@@ -297,7 +297,7 @@ class EpubOpeningTests(unittest.TestCase):
                 media_type="text/html",
             )
         )
-        self.assertEqual(implied.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(implied.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn("Implied Close Title", {claim.raw_value for claim in implied.claims})
 
     def test_foreign_inclusion_is_rejected_without_losing_a_safe_sibling(self) -> None:
@@ -336,7 +336,7 @@ class EpubOpeningTests(unittest.TestCase):
         for media_type in ("application/xhtml+xml", "text/html"):
             with self.subTest(media_type=media_type):
                 report = _extract(self._single(content, media_type=media_type))
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertEqual(
                     [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE],
                     ["Safe QName Sibling"],
@@ -348,7 +348,7 @@ class EpubOpeningTests(unittest.TestCase):
                 _xhtml('<h1 epub:type="vendor:fulltitle">Vendor False Title</h1>')
             )
         )
-        self.assertEqual(prefixed.outcome, LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE)
+        self.assertEqual(prefixed.outcome, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE)
 
         boundary = _extract(
             self._single(
@@ -438,7 +438,7 @@ class EpubOpeningTests(unittest.TestCase):
                     if claim.field is OpeningField.IDENTIFIER
                 )
                 self.assertEqual(identifier.applicability_label, "unlabelled")
-                self.assertIs(identifier.applicability, ObservationApplicability.UNKNOWN)
+                self.assertIs(identifier.applicability, EpubObservationApplicability.UNKNOWN)
 
         preceding = _extract(
             self._single(
@@ -503,7 +503,7 @@ class EpubOpeningTests(unittest.TestCase):
             with self.subTest(semantic=semantic):
                 self.assertEqual(
                     scoped_identifier.applicability,
-                    ObservationApplicability.UNKNOWN,
+                    EpubObservationApplicability.UNKNOWN,
                 )
                 self.assertEqual(
                     scoped_identifier.applicability_label,
@@ -532,7 +532,7 @@ class EpubOpeningTests(unittest.TestCase):
         self.assertEqual(conflicting_identifier.applicability_label, "unlabelled")
         self.assertIs(
             conflicting_identifier.applicability,
-            ObservationApplicability.UNKNOWN,
+            EpubObservationApplicability.UNKNOWN,
         )
         self.assertIn(
             "Electronic paperback",
@@ -710,8 +710,8 @@ class EpubOpeningTests(unittest.TestCase):
         self.assertEqual(
             {claim.applicability for claim in identifiers},
             {
-                ObservationApplicability.EDITION,
-                ObservationApplicability.INAPPLICABLE,
+                EpubObservationApplicability.EDITION,
+                EpubObservationApplicability.INAPPLICABLE,
             },
         )
 
@@ -736,13 +736,13 @@ class EpubOpeningTests(unittest.TestCase):
             ),
             2,
         )
-        self.assertEqual(absent.outcome, LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE)
-        self.assertEqual(per_resource.outcome, LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE)
+        self.assertEqual(absent.outcome, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE)
+        self.assertEqual(per_resource.outcome, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE)
         self.assertIn(
             OpeningResourceDisposition.RESOURCE_LIMIT,
             {resource.disposition for resource in per_resource.resources},
         )
-        self.assertEqual(aggregate.outcome, LocalEvidenceOutcome.RESOURCE_LIMIT)
+        self.assertEqual(aggregate.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
         self.assertFalse(aggregate.claims)
         self.assertFalse(aggregate.resources)
 
@@ -756,14 +756,14 @@ class EpubOpeningTests(unittest.TestCase):
             self._single(minimal),
             EpubOpeningLimits(text_characters_per_selection=2),
         )
-        self.assertEqual(exact_text.outcome, LocalEvidenceOutcome.SUCCESS)
-        self.assertEqual(above_text.outcome, LocalEvidenceOutcome.RESOURCE_LIMIT)
+        self.assertEqual(exact_text.outcome, EpubInspectionOutcome.SUCCESS)
+        self.assertEqual(above_text.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
         malformed = b'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">abc</h1></body>'''
         cumulative = _extract(
             self._single(malformed),
             EpubOpeningLimits(nodes_per_resource=10, nodes_per_selection=6),
         )
-        self.assertEqual(cumulative.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(cumulative.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(cumulative.usage.nodes, 6)
         self.assertEqual(cumulative.usage.text_characters, 6)
         self.assertEqual(
@@ -771,14 +771,14 @@ class EpubOpeningTests(unittest.TestCase):
                 self._single(malformed),
                 EpubOpeningLimits(nodes_per_resource=10, nodes_per_selection=5),
             ).outcome,
-            LocalEvidenceOutcome.RESOURCE_LIMIT,
+            EpubInspectionOutcome.RESOURCE_LIMIT,
         )
         self.assertEqual(
             _extract(
                 self._single(minimal),
                 EpubOpeningLimits(nodes_per_resource=3, nodes_per_selection=3),
             ).outcome,
-            LocalEvidenceOutcome.SUCCESS,
+            EpubInspectionOutcome.SUCCESS,
         )
 
         package = _opening_package(
@@ -797,9 +797,9 @@ class EpubOpeningTests(unittest.TestCase):
             self._single(minimal),
             EpubOpeningLimits(nodes_per_resource=10, nodes_per_selection=2),
         )
-        self.assertEqual(local_nodes.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(local_nodes.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(OpeningResourceDisposition.RESOURCE_LIMIT, {item.disposition for item in local_nodes.resources})
-        self.assertEqual(aggregate_nodes.outcome, LocalEvidenceOutcome.RESOURCE_LIMIT)
+        self.assertEqual(aggregate_nodes.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
 
         navigation_nodes = _opening_epub(
             package=_opening_package(
@@ -818,7 +818,7 @@ class EpubOpeningTests(unittest.TestCase):
             navigation_nodes,
             EpubOpeningLimits(nodes_per_resource=5, nodes_per_selection=5),
         )
-        self.assertEqual(charged_navigation.outcome, LocalEvidenceOutcome.RESOURCE_LIMIT)
+        self.assertEqual(charged_navigation.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
         self.assertFalse(charged_navigation.resources)
         unsafe_navigation = _opening_epub(
             package=_opening_package(
@@ -842,14 +842,14 @@ class EpubOpeningTests(unittest.TestCase):
                 unsafe_navigation,
                 EpubOpeningLimits(nodes_per_resource=5, nodes_per_selection=5),
             ).outcome,
-            LocalEvidenceOutcome.SUCCESS,
+            EpubInspectionOutcome.SUCCESS,
         )
         self.assertEqual(
             _extract(
                 unsafe_navigation,
                 EpubOpeningLimits(nodes_per_resource=5, nodes_per_selection=4),
             ).outcome,
-            LocalEvidenceOutcome.RESOURCE_LIMIT,
+            EpubInspectionOutcome.RESOURCE_LIMIT,
         )
 
         nav_package = _opening_package(
@@ -863,17 +863,17 @@ class EpubOpeningTests(unittest.TestCase):
         )
         self.assertEqual(
             _extract(nav_value, EpubOpeningLimits(navigation_links=2)).outcome,
-            LocalEvidenceOutcome.SUCCESS,
+            EpubInspectionOutcome.SUCCESS,
         )
         self.assertEqual(
             _extract(nav_value, EpubOpeningLimits(navigation_links=1)).outcome,
-            LocalEvidenceOutcome.RESOURCE_LIMIT,
+            EpubInspectionOutcome.RESOURCE_LIMIT,
         )
 
     def test_navigation_only_and_unknown_encoding_preserve_typed_outcomes(self) -> None:
         public_doctype = b'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">Recovered Doctype</h1></body></html>'''
         recovered_doctype = _extract(self._single(public_doctype))
-        self.assertEqual(recovered_doctype.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(recovered_doctype.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(recovered_doctype.claims[0].raw_value, "Recovered Doctype")
         self.assertEqual(
             recovered_doctype.resources[0].parse_mode, OpeningParseMode.RECOVERED
@@ -889,7 +889,7 @@ class EpubOpeningTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(
-                    inert_doctype.outcome, LocalEvidenceOutcome.SUCCESS
+                    inert_doctype.outcome, EpubInspectionOutcome.SUCCESS
                 )
                 self.assertEqual(
                     inert_doctype.resources[0].parse_mode,
@@ -913,7 +913,7 @@ class EpubOpeningTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         rejected.outcome,
-                        LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE,
+                        EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
                     )
                     self.assertEqual(
                         rejected.resources[0].disposition,
@@ -930,7 +930,7 @@ class EpubOpeningTests(unittest.TestCase):
                 inert_comment = _extract(
                     self._single(comment, media_type=media_type)
                 )
-                self.assertEqual(inert_comment.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(inert_comment.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertEqual(
                     inert_comment.resources[0].parse_mode,
                     OpeningParseMode.STRICT
@@ -953,7 +953,7 @@ class EpubOpeningTests(unittest.TestCase):
                         self._single(cdata, media_type=media_type)
                     )
                     self.assertEqual(
-                        inert_cdata.outcome, LocalEvidenceOutcome.SUCCESS
+                        inert_cdata.outcome, EpubInspectionOutcome.SUCCESS
                     )
                     self.assertEqual(
                         inert_cdata.resources[0].parse_mode,
@@ -975,7 +975,7 @@ class EpubOpeningTests(unittest.TestCase):
                         self._single(raw_text, media_type=media_type)
                     )
                     self.assertEqual(
-                        inert_raw_text.outcome, LocalEvidenceOutcome.SUCCESS
+                        inert_raw_text.outcome, EpubInspectionOutcome.SUCCESS
                     )
                     self.assertEqual(
                         inert_raw_text.resources[0].parse_mode,
@@ -996,7 +996,7 @@ class EpubOpeningTests(unittest.TestCase):
             ),
         )
         report = _extract(nav_only)
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE)
         self.assertEqual(report.usage.selected_documents, 0)
         self.assertEqual(len(report.resources), 1)
         self.assertEqual(report.resources[0].selection_path, ("epub3_navigation",))
@@ -1011,7 +1011,7 @@ class EpubOpeningTests(unittest.TestCase):
             )
         )
         self.assertEqual(
-            nav_in_spine.outcome, LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE
+            nav_in_spine.outcome, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
         )
         self.assertEqual(nav_in_spine.usage.selected_documents, 1)
         self.assertEqual(
@@ -1040,7 +1040,7 @@ class EpubOpeningTests(unittest.TestCase):
                 ),
             )
         )
-        self.assertEqual(content.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(content.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             OpeningResourceDisposition.UNSUPPORTED_ENCODING,
             {resource.disposition for resource in content.resources},
@@ -1060,7 +1060,7 @@ class EpubOpeningTests(unittest.TestCase):
                 ),
             )
         )
-        self.assertEqual(navigation.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(navigation.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn("unusable_navigation_document", navigation.warnings)
 
         minimal = b'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">abc</h1></body></html>'''
@@ -1530,7 +1530,7 @@ class EpubOpeningTests(unittest.TestCase):
                 )
             )
             with self.subTest(roles=roles):
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertEqual(
                     report.resources[1].selection_path,
                     ("epub3_landmark", "titlepage"),
@@ -1584,14 +1584,14 @@ class EpubOpeningTests(unittest.TestCase):
         for body in lookalikes:
             with self.subTest(body=hashlib.sha256(body).hexdigest()):
                 report = _extract(self._single(body, media_type="text/html"))
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
 
         cp1252 = (
             b'<meta http-equiv="Content-Type" content="text/html; charset=windows-1252">'
             b'<h1 epub:type="fulltitle">Publisher\x92s Clock</h1>'
         )
         recovered = _extract(self._single(cp1252, media_type="text/html"))
-        self.assertEqual(recovered.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(recovered.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertIn(
             "Publisher’s Clock", {claim.raw_value for claim in recovered.claims}
         )
@@ -1626,7 +1626,7 @@ class EpubOpeningTests(unittest.TestCase):
         for body in inert:
             report = _extract(self._single(body, media_type="text/html"))
             with self.subTest(body=hashlib.sha256(body).hexdigest()):
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
 
         unclosed_foreign = _extract(
             self._single(
@@ -1636,7 +1636,7 @@ class EpubOpeningTests(unittest.TestCase):
         )
         self.assertEqual(
             unclosed_foreign.outcome,
-            LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE,
+            EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
         )
         self.assertFalse(unclosed_foreign.claims)
 
@@ -1646,7 +1646,7 @@ class EpubOpeningTests(unittest.TestCase):
                 media_type="text/html",
             )
         )
-        self.assertEqual(equivalent.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(equivalent.outcome, EpubInspectionOutcome.SUCCESS)
 
         duplicates = (
             b'<meta charset="utf-8" charset="utf-8"><h1>Duplicate Charset</h1>',
@@ -1771,7 +1771,7 @@ class EpubOpeningTests(unittest.TestCase):
         for body in accepted:
             report = _extract(self._single(body))
             with self.subTest(body=hashlib.sha256(body).hexdigest()):
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
 
         malformed = (
             b'''<?xml note="encoding='shift_jis'" version="1.0"?><html><body>x</body>''',
@@ -1877,13 +1877,13 @@ class EpubOpeningTests(unittest.TestCase):
             b'<itemref idref="safe" linear="no"/>',
         )
         empty = _extract(_opening_epub(package=all_no, entries=entries))
-        self.assertEqual(empty.outcome, LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE)
+        self.assertEqual(empty.outcome, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE)
         self.assertFalse(empty.resources)
         self.assertEqual(empty.usage.selected_documents, 0)
 
     def test_post_open_reports_require_the_complete_bound_provenance_set(self) -> None:
         report = _extract(self._single(_xhtml("<p>No claims here.</p>")))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE)
         self.assertTrue(report.resources)
         self.assertGreater(report.usage.opened_resources, 0)
         for removed in (
@@ -1901,7 +1901,7 @@ class EpubOpeningTests(unittest.TestCase):
                 EpubOpeningReport.from_json(serialized)
 
         pristine = EpubOpeningReport(
-            LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE,
+            EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
             EpubOpeningLimits(),
             report.source_fingerprint,
         )
@@ -2032,7 +2032,7 @@ class EpubOpeningTests(unittest.TestCase):
     def test_empty_default_namespace_resets_reenter_recovery_html(self) -> None:
         root = b'''<!doctype html><html xmlns="" xmlns:e="http://www.idpf.org/2007/ops"><head><meta charset="windows-1252"></head><body><p e:type="publisher">Root Reset Publisher\x92s</p><h1 e:type="fulltitle">Root Reset Title</h1><section e:type="bodymatter"><h1 e:type="fulltitle">Root Body Fake</h1></section></body></html>'''
         root_report = _extract(self._single(root))
-        self.assertEqual(root_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(root_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(
             [(claim.field, claim.raw_value) for claim in root_report.claims],
             [
@@ -2044,7 +2044,7 @@ class EpubOpeningTests(unittest.TestCase):
 
         subtree = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg xmlns="urn:outer-foreign"><section xmlns=""><meta charset="iso-8859-1"><p e:type="publisher">Subtree Caf\xe9 Publisher</p><svg><h1 e:type="fulltitle">Reset SVG Fake</h1></svg><math><h1 e:type="fulltitle">Reset Math Fake</h1></math><h1 e:type="fulltitle">Subtree Reset Title</h1></section><h1 e:type="fulltitle">Later Foreign Fake</h1></svg><h1 e:type="fulltitle">Later Safe Sibling</h1></body></html>'''
         subtree_report = _extract(self._single(subtree))
-        self.assertEqual(subtree_report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(subtree_report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(
             [(claim.field, claim.raw_value) for claim in subtree_report.claims],
             [
@@ -2264,7 +2264,7 @@ class EpubOpeningTests(unittest.TestCase):
                 )
             )
             with self.subTest(declarations=declarations):
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertEqual(
                     [
                         claim.raw_value
@@ -2299,7 +2299,7 @@ class EpubOpeningTests(unittest.TestCase):
                 ),
             )
         )
-        self.assertEqual(fallback.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(fallback.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(
             [
                 claim.raw_value
@@ -2350,7 +2350,7 @@ class EpubOpeningTests(unittest.TestCase):
                 publication(count, reverse), EpubOpeningLimits(navigation_links=2)
             )
             with self.subTest(count=count, reverse=reverse):
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertEqual(report.usage.navigation_links, count)
                 self.assertIn("invalid_navigation_target", report.warnings)
                 self.assertEqual(
@@ -2361,7 +2361,7 @@ class EpubOpeningTests(unittest.TestCase):
         above = _extract(
             publication(3), EpubOpeningLimits(navigation_links=2)
         )
-        self.assertEqual(above.outcome, LocalEvidenceOutcome.RESOURCE_LIMIT)
+        self.assertEqual(above.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
         self.assertFalse(above.claims)
         self.assertFalse(above.resources)
 
@@ -2441,7 +2441,7 @@ class EpubOpeningTests(unittest.TestCase):
     def test_unqualified_foreign_end_tags_use_the_open_element_identity(self) -> None:
         body = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg xmlns="urn:explicit-svg"><meta charset="shift_jis"><h1 e:type="fulltitle">Explicit SVG Fake</h1></svg><math xmlns="urn:explicit-math"><h1 e:type="fulltitle">Explicit Math Fake</h1></math><meta charset="windows-1252"><h1 e:type="fulltitle">Publisher\x92s Explicit Close Safe</h1></html>'''
         report = _extract(self._single(body))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(
             [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE],
             ["Publisher’s Explicit Close Safe"],
@@ -2485,7 +2485,7 @@ class EpubOpeningTests(unittest.TestCase):
     def test_unqualified_end_tags_resolve_the_current_default_namespace(self) -> None:
         body = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:s="urn:foreign"><body><s:template><meta charset="shift_jis"></template><meta charset="shift_jis"><h1 e:type="fulltitle">Wrong Default Fake</h1></s:template><meta charset="windows-1252"><h1 e:type="fulltitle">Publisher\x92s Default Safe</h1></html>'''
         report = _extract(self._single(body))
-        self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(
             [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE],
             ["Publisher’s Default Safe"],
@@ -2529,7 +2529,7 @@ class EpubOpeningTests(unittest.TestCase):
         ):
             report = _extract(self._single(body))
             with self.subTest(body=hashlib.sha256(body).hexdigest()):
-                self.assertEqual(report.outcome, LocalEvidenceOutcome.SUCCESS)
+                self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertEqual(
                     [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE],
                     [expected],
@@ -2637,7 +2637,7 @@ class EpubOpeningTests(unittest.TestCase):
         report = _extract(self._single(content, media_type="text/html"))
         self.assertIn(
             report.outcome,
-            {LocalEvidenceOutcome.SUCCESS, LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE},
+            {EpubInspectionOutcome.SUCCESS, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE},
         )
         self.assertNotIn("example.invalid", report.to_json())
 

@@ -47,11 +47,11 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceMode,
     EpubEvidenceResult,
 )
-from mechanical_librarian.domain.local_evidence import (
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageLimits,
-    LocalEvidenceCapability,
-    LocalEvidenceOutcome,
-    LocalEvidenceReport,
+    EpubPackageCapability,
+    EpubInspectionOutcome,
+    EpubPackageReport,
 )
 from mechanical_librarian.interfaces.cli import main
 from mechanical_librarian.bootstrap.composition import _epub_material_configuration
@@ -85,7 +85,7 @@ class CliTests(unittest.TestCase):
         runner = Mock(
             return_value=EpubEvidenceResult(
                 EpubEvidenceMode.REUSED,
-                LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+                EpubInspectionOutcome.UNSUPPORTED_FORMAT,
                 evidence_id="evidence_" + "b" * 32,
                 current_applicable=True,
             )
@@ -135,7 +135,7 @@ class CliTests(unittest.TestCase):
     def test_epub_opening_evidence_cli_is_opaque_bounded_and_path_free(self) -> None:
         result = EpubEvidenceResult(
             EpubEvidenceMode.REUSED,
-            LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+            EpubInspectionOutcome.UNSUPPORTED_FORMAT,
             evidence_id="evidence_" + "a" * 32,
             current_applicable=True,
             rejected_count=1,
@@ -232,163 +232,6 @@ class CliTests(unittest.TestCase):
             errors.getvalue(),
             "EPUB opening evidence failed safely.\nfailure=resource_limit\n",
         )
-
-    def test_epub_invalid_invocation_is_a_typed_private_safe_envelope(self) -> None:
-        output = io.StringIO()
-        errors = io.StringIO()
-        runner = Mock()
-        exit_code = main(
-            ["epub-package-report", "--config", "/private/config.json"],
-            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
-            epub_package_report_runner=runner,
-            stdout=output,
-            stderr=errors,
-        )
-        self.assertEqual(exit_code, 2)
-        self.assertEqual(output.getvalue(), "")
-        self.assertIn('"outcome":"invalid_invocation"', errors.getvalue())
-        self.assertNotIn("usage:", errors.getvalue())
-        self.assertNotIn("/private", errors.getvalue())
-        runner.assert_not_called()
-
-    def test_epub_package_report_has_exact_exit_stream_and_typed_json_envelope(self) -> None:
-        expected_exits = {
-            LocalEvidenceOutcome.INVALID_INVOCATION: 2,
-            LocalEvidenceOutcome.SUCCESS: 0,
-            LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE: 0,
-            LocalEvidenceOutcome.INVALID_CONFIGURATION: 3,
-            LocalEvidenceOutcome.INVALID_REFERENCE: 3,
-            LocalEvidenceOutcome.UNAVAILABLE_SOURCE: 3,
-            LocalEvidenceOutcome.UNSUPPORTED_FORMAT: 4,
-            LocalEvidenceOutcome.UNSUPPORTED_VERSION: 4,
-            LocalEvidenceOutcome.UNSUPPORTED_COMPRESSION: 4,
-            LocalEvidenceOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS: 4,
-            LocalEvidenceOutcome.ENCRYPTED: 4,
-            LocalEvidenceOutcome.MALFORMED: 5,
-            LocalEvidenceOutcome.INTEGRITY_FAILURE: 5,
-            LocalEvidenceOutcome.RESOURCE_LIMIT: 5,
-            LocalEvidenceOutcome.TIMEOUT: 5,
-            LocalEvidenceOutcome.CANCELLATION: 5,
-            LocalEvidenceOutcome.UNSTABLE_SOURCE: 5,
-            LocalEvidenceOutcome.CHILD_FAILURE: 70,
-            LocalEvidenceOutcome.INTERNAL_FAILURE: 70,
-        }
-        for outcome, expected_exit in expected_exits.items():
-            with self.subTest(outcome=outcome):
-                report = LocalEvidenceReport(
-                    outcome,
-                    LocalEvidenceCapability.PACKAGE,
-                    EpubPackageLimits(),
-                    (
-                        Fingerprint("sha256", SchemaVersion("source-v1"), "a" * 64)
-                        if outcome is LocalEvidenceOutcome.SUCCESS
-                        else None
-                    ),
-                )
-                output = io.StringIO()
-                errors = io.StringIO()
-                runner = Mock(return_value=report)
-                exit_code = main(
-                    [
-                        "epub-package-report",
-                        "--config",
-                        "/private/config.json",
-                        "--mount",
-                        "books",
-                        "--file",
-                        "private/book.epub",
-                    ],
-                    state_check_runner=lambda _path: StateCheckResult(
-                        StateCheckOutcome.READY
-                    ),
-                    epub_package_report_runner=runner,
-                    stdout=output,
-                    stderr=errors,
-                )
-                self.assertEqual(exit_code, expected_exit)
-                runner.assert_called_once_with(
-                    Path("/private/config.json"), "books", "private/book.epub"
-                )
-                rendered = output.getvalue() if expected_exit == 0 else errors.getvalue()
-                self.assertEqual(rendered, report.to_json() + "\n")
-                self.assertEqual(errors.getvalue() if expected_exit == 0 else output.getvalue(), "")
-                self.assertIn(f'"outcome":"{outcome.value}"', rendered)
-                self.assertNotIn("/private", rendered)
-
-    def test_epub_text_uses_same_projection_and_runner_failure_is_internal(self) -> None:
-        report = LocalEvidenceReport(
-            LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE,
-            LocalEvidenceCapability.PACKAGE,
-            EpubPackageLimits(),
-        )
-        output = io.StringIO()
-        errors = io.StringIO()
-        exit_code = main(
-            [
-                "epub-package-report",
-                "--config",
-                "config.json",
-                "--mount",
-                "books",
-                "--file",
-                "book.epub",
-                "--format",
-                "text",
-            ],
-            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
-            epub_package_report_runner=lambda *_: report,
-            stdout=output,
-            stderr=errors,
-        )
-        self.assertEqual(exit_code, 0)
-        self.assertIn('outcome="no_applicable_evidence"\n', output.getvalue())
-        self.assertIn('"profile":"epub-package-limits-v1"', output.getvalue())
-        self.assertEqual(errors.getvalue(), "")
-
-        def hostile(*_args: object) -> LocalEvidenceReport:
-            raise RuntimeError("/private/sentinel token=secret")
-
-        output = io.StringIO()
-        errors = io.StringIO()
-        exit_code = main(
-            [
-                "epub-package-report",
-                "--config",
-                "config.json",
-                "--mount",
-                "books",
-                "--file",
-                "book.epub",
-            ],
-            state_check_runner=lambda _path: StateCheckResult(StateCheckOutcome.READY),
-            epub_package_report_runner=hostile,
-            stdout=output,
-            stderr=errors,
-        )
-        self.assertEqual(exit_code, 70)
-        self.assertEqual(output.getvalue(), "")
-        self.assertIn('"outcome":"internal_failure"', errors.getvalue())
-        self.assertNotIn("sentinel", errors.getvalue())
-
-        for format_arguments in (
-            ["--format=text"],
-            ["--format", "json", "--format=text"],
-        ):
-            with self.subTest(format_arguments=format_arguments):
-                output = io.StringIO()
-                errors = io.StringIO()
-                exit_code = main(
-                    ["epub-package-report", *format_arguments],
-                    state_check_runner=lambda _path: StateCheckResult(
-                        StateCheckOutcome.READY
-                    ),
-                    epub_package_report_runner=Mock(),
-                    stdout=output,
-                    stderr=errors,
-                )
-                self.assertEqual(exit_code, 2)
-                self.assertEqual(output.getvalue(), "")
-                self.assertIn('outcome="invalid_invocation"', errors.getvalue())
 
     def test_poll_inspection_needs_no_config_or_target_access(self) -> None:
         result = InventoryPollResult(
