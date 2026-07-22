@@ -39,11 +39,6 @@ from mechanical_librarian.application.inventory_polling import (
     InventoryPollOutcome,
     InventoryPollResult,
 )
-from mechanical_librarian.application.epub_opening import (
-    EpubOpeningReportRunner,
-    internal_opening_failure_report,
-    render_epub_opening_text,
-)
 from mechanical_librarian.application.live_title_proposals import (
     LiveTitleProposalReport,
     render_live_title_proposal_text,
@@ -61,7 +56,6 @@ from mechanical_librarian.application.hardcover_identity import (
     render_report_text as render_hardcover_identity_text,
 )
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
-from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.inventory import SecretReference
 
 
@@ -242,22 +236,6 @@ def _live_title_proposal_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _write_epub_opening_report(
-    report: EpubOpeningReport,
-    output_format: str,
-    output: TextIO,
-    errors: TextIO,
-) -> int:
-    exit_status = _EPUB_PACKAGE_EXIT[report.outcome]
-    destination = output if exit_status == 0 else errors
-    destination.write(
-        report.to_json() + "\n"
-        if output_format == "json"
-        else render_epub_opening_text(report)
-    )
-    return exit_status
-
-
 def _database_path(value: str) -> Path:
     path = Path(value)
     if path == Path(":memory:"):
@@ -407,7 +385,6 @@ def main(
     inventory_inspection_runner: AudiobookshelfInventoryRunner | None = None,
     audiobookshelf_poll_runner: AudiobookshelfPollRunner | None = None,
     inventory_poll_inspection_runner: InventoryPollInspectionRunner | None = None,
-    epub_opening_report_runner: EpubOpeningReportRunner | None = None,
     live_title_proposal_runner: LiveTitleProposalRunner | None = None,
     hardcover_identity_runner: HardcoverIdentityRunner | None = None,
     hardcover_inert_preview_runner: HardcoverInertPreviewRunner | None = None,

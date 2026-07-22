@@ -47,4 +47,3 @@ class EpubInspectionFactTests(unittest.TestCase):
 
         self.assertIsNone(fact.canonical_value)
         self.assertEqual(fact.checksum, "invalid")
-

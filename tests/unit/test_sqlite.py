@@ -578,7 +578,7 @@ class SqliteFoundationTests(unittest.TestCase):
                         raise KeyboardInterrupt
             self.assertEqual(tuple(parent.iterdir()), ())
 
-    def _f10a_migration_is_additive_from_genuine_schema_six_state(self) -> None:
+    def test_f10a_migration_is_additive_from_genuine_schema_six_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)

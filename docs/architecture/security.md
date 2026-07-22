@@ -75,13 +75,9 @@ child and an in-memory Audiobookshelf-shaped synthetic snapshot. Its CLI parser
 accepts only a database path, a closed scenario, and an output format before
 state is opened. It accepts no configuration, target/media identifiers, title
 values, paths, provider payloads, endpoints, or credentials. F09b preserves that
-mode and adds `hardcover-title-proposal-report` for only the generated
-`agree-empty` case. Omitting its optional secret-file reference creates no
-adapter or network client, resolves no secret, performs no DNS lookup, and
-permits no provider egress. It adds no `config-v1` field. A malformed reference
-fails before state access. A valid reference whose file is missing, insecure,
-unreadable, or invalid makes no request and records `provider_failed` while
-preserving local F06 evidence.
+mode. The retired preview command and its secret-file compatibility surface are
+not installed. The retained configured F09f identity report owns provider
+credentials, transport, persistence, and report-only behavior.
 
 The enabled adapter owns one fixed read-only GraphQL query sent only by HTTPS
 POST to `https://api.hardcover.app/v1/graphql`. The origin, path, method, and
