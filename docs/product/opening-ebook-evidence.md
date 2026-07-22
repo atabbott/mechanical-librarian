@@ -135,7 +135,7 @@ resources in order. `epub-opening-limits-v1` defaults to five qualifying
 opening documents and closes the document, resource/selection byte, text,
 node, depth, navigation-link, time, fact, warning, excerpt, and report bounds.
 The immutable values are published in the
-[operator contract](../operations/epub-opening-report.md).
+internal EPUB inspection boundary; it has no standalone operator command.
 
 Skip or separately classify:
 
