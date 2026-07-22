@@ -19,7 +19,7 @@ identify the behavior source.
 
 The registry is `tests/fixtures/dux/registry.json`; scenario records are the
 other JSON files in that directory. `tests/support/dux_corpus.py` owns the
-test-only schema and loader. Schema `dux-corpus-v1` is an internal test
+test-only schema and loader. Schema `dux-corpus-v2` is an internal test
 compatibility contract, not a supported application API.
 
 The registry has exactly three fields:

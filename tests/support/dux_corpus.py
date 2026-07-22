@@ -22,7 +22,7 @@ from mechanical_librarian.domain.identifiers import (
 )
 
 
-SCHEMA_VERSION = "dux-corpus-v1"
+SCHEMA_VERSION = "dux-corpus-v2"
 SOURCE_COMMIT = "358d70039a2d7da5e1d4cf7f19032ed5bf0fdc3f"
 SOURCE_TAG = "dux-complete-2026-07-10"
 CORPUS_ROOT = Path(__file__).parents[1] / "fixtures" / "dux"

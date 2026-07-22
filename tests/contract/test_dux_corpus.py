@@ -165,6 +165,32 @@ class DuxCorpusSchemaTests(unittest.TestCase):
             with self.assertRaisesRegex(CorpusValidationError, "DUX006_REGISTRY_SCHEMA"):
                 load_registry(root)
 
+    def test_incompatible_v1_corpus_is_rejected_by_the_current_schema(self) -> None:
+        registry = load_registry()
+        self.assertEqual(registry.canonical_bytes, canonical_json({
+            "coverage": {
+                "destructive_cases": "dux-synthetic-11",
+                "evidence_only_input": "dux-synthetic-02",
+                "independent_siblings": "dux-synthetic-10",
+                "no_ops": "dux-synthetic-05",
+            },
+            "scenario_files": [
+                "dux-synthetic-02.json",
+                "dux-synthetic-05.json",
+                "dux-synthetic-10.json",
+                "dux-synthetic-11.json",
+            ],
+            "schema": "dux-corpus-v2",
+        }))
+        with _corpus_copy() as root:
+            _rewrite(root, "registry.json", lambda item: item.__setitem__("schema", "dux-corpus-v1"))
+            with self.assertRaisesRegex(CorpusValidationError, "DUX006_REGISTRY_SCHEMA"):
+                load_registry(root)
+        with _corpus_copy() as root:
+            _rewrite(root, "dux-synthetic-02.json", lambda item: item.__setitem__("schema", "dux-corpus-v1"))
+            with self.assertRaisesRegex(CorpusValidationError, "DUX010_SCENARIO_SCHEMA"):
+                load_registry(root)
+
     def test_duplicate_identity_and_orphan_fail_closed(self) -> None:
         with _corpus_copy() as root:
             _rewrite(root, "dux-synthetic-05.json", lambda item: item.__setitem__("scenario_id", "dux-synthetic-02"))
