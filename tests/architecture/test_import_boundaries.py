@@ -209,6 +209,12 @@ class ImportBoundaryTests(unittest.TestCase):
         process = (PACKAGE_ROOT / "adapters" / "evidence_extractors" / "process.py").read_text()
         self.assertNotIn("run_epub_package_child", process)
         self.assertNotIn("run_epub_opening_child", process)
+        self.assertEqual(process.count("def run_epub_inspector_child("), 1)
+        child = (PACKAGE_ROOT / "bootstrap" / "epub_child.py").read_text()
+        self.assertEqual(child.count("zipfile.ZipFile("), 1)
+        self.assertIn("EpubPackageExtractor().extract(package_request, archive)", child)
+        self.assertIn("EpubOpeningExtractor().extract(", child)
+        self.assertNotIn("package_report.to_json", child)
 
     def test_epub_package_adapter_has_no_extraction_network_database_or_temp_api(self) -> None:
         path = PACKAGE_ROOT / "adapters" / "evidence_extractors" / "epub_package.py"

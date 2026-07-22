@@ -53,12 +53,6 @@ from tests.support.epub_packages import (
 MANIFEST = (
     Path(__file__).parents[1] / "fixtures" / "epub_package" / "manifest.json"
 )
-QUALIFICATION = (
-    Path(__file__).parents[2]
-    / "docs"
-    / "reference"
-    / "epub-package-f06-qualification.json"
-)
 UNSAFE_METADATA = "Authorization: Bearer synthetic-token-1234"
 
 
@@ -1240,29 +1234,6 @@ class EpubPackageFixtureManifestTests(unittest.TestCase):
             with self.subTest(partition=item["partition"]):
                 self.assertEqual(set(item), {"partition", "test_id"})
                 _run_test_id(item["test_id"])
-
-    def test_committed_linux_measurements_are_bounded_and_reproducible(self) -> None:
-        evidence = json.loads(QUALIFICATION.read_text(encoding="utf-8"))
-        self.assertEqual(evidence["schema"], "epub-package-qualification-v1")
-        self.assertEqual(evidence["outcome"], "success")
-        self.assertEqual(evidence["environment"]["platform"], "linux")
-        self.assertIn("@sha256:", evidence["environment"]["image"])
-        self.assertEqual(evidence["runner"], "scripts/qualify_epub_package.py")
-        self.assertNotIn("/Users/", repr(evidence))
-        constraints = evidence["constraints"]
-        self.assertTrue(constraints["container_read_only"])
-        self.assertEqual(constraints["network"], "none")
-        self.assertEqual(constraints["runtime_user"], "65534:65534")
-        measured = evidence["measured"]
-        self.assertLessEqual(measured["child_peak_rss_kib"], 256 * 1_024)
-        self.assertLessEqual(measured["child_peak_descriptors"], 64)
-        self.assertLessEqual(measured["peak_process_group_members"], 1)
-        self.assertLessEqual(measured["output_bytes"], 524_288)
-        self.assertLess(measured["elapsed_seconds"], 5)
-        self.assertEqual(measured["parent_descriptor_delta"], 0)
-        self.assertEqual(measured["started_children"], 1)
-        self.assertEqual(measured["surviving_children"], 0)
-
 
 if __name__ == "__main__":
     unittest.main()

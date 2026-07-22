@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Replaced the retired public EPUB package/opening diagnostics with one internal,
+  isolated EPUB inspector. Package declarations remain adapter-private; the
+  retained live title report is the only public consumer. The retired qualifier
+  and fixture-materialization registry commands were removed.
+
 All notable user-visible changes will be documented here.
 
 The project intends to follow Keep a Changelog conventions and semantic

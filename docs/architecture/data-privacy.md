@@ -46,10 +46,11 @@ APIs, reviewer packets, exports, and support bundles. Future durable F07b state
 may retain only the accepted bounded evidence contract, never decoded or
 diagnostic markup.
 
-Private EPUB compatibility qualification captures raw local reports only in
-bounded process memory, reduces them to controlled aggregate outcome, field,
-warning, parser-mode, limit, runtime, and privacy categories, and then discards
-them. Repository, CI, issue, and pull-request evidence contains no private
+The isolated EPUB child retains package declarations only in bounded process
+memory and returns the typed opening result; it never serializes the private
+package model to its parent. Hostile synthetic fixtures exercise that boundary
+directly rather than through a public compatibility qualifier. Repository, CI,
+issue, and pull-request evidence contains no private
 filename, path, member name, title, author, identifier, corpus/source hash,
 metadata value, excerpt, citation, per-book result, raw report, or publication
 content.

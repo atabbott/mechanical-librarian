@@ -58,7 +58,6 @@ release standards as code.
 - [Synthetic inventory round trip](operations/synthetic-inventory.md)
 - [Audiobookshelf inventory](operations/audiobookshelf-inventory.md)
 - [Audiobookshelf connection check](operations/audiobookshelf-connection.md)
-- [EPUB fixture materialization](operations/epub-fixture-materialization.md)
 - [Live title proposal report](operations/live-title-proposal-report.md)
 - [Hardcover identity report](operations/hardcover-identity-report.md)
 - [Deployment model](operations/deployment.md)

@@ -392,10 +392,10 @@ required XML members retain their separate small byte/tree limits, and the
 child address-space and public-report caps are unchanged.
 
 Fresh Expat parsers reject DOCTYPE/entity declarations, external resolution,
-and XInclude while enforcing XML and package-graph counters. F06 keeps opaque
-navigation, content, cover, and linked-resource declarations undereferenced.
-F07a composes the completed F06 report into a separate adapter and opens only
-bounded package-local navigation plus selected declared XHTML/HTML resources.
+and XInclude while enforcing XML and package-graph counters. The isolated EPUB
+child keeps opaque navigation, content, cover, and linked-resource declarations
+private, then opens only bounded package-local navigation plus selected declared
+XHTML/HTML resources through the same archive session.
 The hostile-parser and process extension is governed by
 [ADR-0008](decisions/0008-transient-epub-opening-parser.md); ADR-0007 remains
 the accepted package-only isolation decision.
@@ -464,8 +464,8 @@ memory boundary is available. The Linux F06 cohort is qualified non-root with
 networking disabled and the container root, repository, and installed Python
 environment read-only.
 
-F07a does not treat tolerant parsing as additional authority and does not
-weaken F06 archive, path, codec, encryption, CRC, source-stability, output,
+Opening parsing does not treat tolerant parsing as additional authority and
+does not weaken archive, path, codec, encryption, CRC, source-stability, output,
 process, cancellation, or reaping controls. Complete decoded resources,
 navigation trees, recovered trees, and diagnostic markup are never retained.
 The exact local command response is private owner output; CI and private-shadow

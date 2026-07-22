@@ -224,15 +224,6 @@ def _read_synthetic_input(stream: TextIO | None) -> Mapping[str, object]:
     return source
 
 
-def _epub_opening_parser() -> argparse.ArgumentParser:
-    parser = _EpubArgumentParser(prog="mechanical-librarian epub-opening-report")
-    parser.add_argument("--config", required=True, metavar="PATH", type=Path)
-    parser.add_argument("--mount", required=True, metavar="NAME", type=_bounded_identifier)
-    parser.add_argument("--file", required=True, metavar="RELATIVE")
-    parser.add_argument("--format", choices=("json", "text"), default="json")
-    return parser
-
-
 def _epub_opening_evidence_parser() -> argparse.ArgumentParser:
     parser = _EpubArgumentParser(
         prog="mechanical-librarian epub-opening-evidence"
@@ -726,57 +717,6 @@ def main(
             f"warnings={result.warning_count} parser={result.parser_mode}\n"
         )
         return 0
-    if raw_arguments[:1] == ["epub-opening-report"]:
-        requested_format = "json"
-        index = 1
-        while index < len(raw_arguments):
-            argument = raw_arguments[index]
-            candidate: str | None = None
-            if argument.startswith("--format="):
-                candidate = argument.partition("=")[2]
-            elif argument == "--format" and index + 1 < len(raw_arguments):
-                index += 1
-                candidate = raw_arguments[index]
-            if candidate in {"json", "text"}:
-                requested_format = candidate
-            index += 1
-        try:
-            epub_arguments = _epub_opening_parser().parse_args(raw_arguments[1:])
-        except _EpubArgumentError:
-            return _write_epub_opening_report(
-                EpubOpeningReport(
-                    EpubInspectionOutcome.INVALID_INVOCATION,
-                    EpubOpeningLimits(),
-                ),
-                requested_format,
-                output,
-                errors,
-            )
-        try:
-            report = (
-                internal_opening_failure_report()
-                if epub_opening_report_runner is None
-                else epub_opening_report_runner(
-                    epub_arguments.config,
-                    epub_arguments.mount,
-                    epub_arguments.file,
-                )
-            )
-        except KeyboardInterrupt:
-            report = EpubOpeningReport(
-                EpubInspectionOutcome.CANCELLATION,
-                EpubOpeningLimits(),
-            )
-        except Exception:
-            report = internal_opening_failure_report()
-        if type(report) is not EpubOpeningReport:
-            report = internal_opening_failure_report()
-        return _write_epub_opening_report(
-            report,
-            epub_arguments.format,
-            output,
-            errors,
-        )
     arguments = _parser().parse_args(argv)
     if arguments.command in {"audiobookshelf-poll", "inventory-poll-inspect"}:
         runner = (
