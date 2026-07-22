@@ -16,7 +16,10 @@ from mechanical_librarian.application.live_title_proposals import (
     LiveSourceState,
     ProposeLiveTitle,
 )
-from mechanical_librarian.application.title_proposals import ProposalPersistence
+from mechanical_librarian.application.title_proposals import (
+    ProposalPersistence,
+    SyntheticTitleProposalReport,
+)
 from mechanical_librarian.bootstrap.composition import _run_epub_opening_report
 from mechanical_librarian.domain.epub_opening_evidence import EpubEvidenceLocator
 from mechanical_librarian.domain.title_proposals import LiveTitleProposalSet
@@ -91,6 +94,20 @@ class _Repository:
 
 
 class LiveTitleProposalTests(unittest.TestCase):
+    def test_live_persistence_cannot_be_rendered_as_a_synthetic_report(self) -> None:
+        proposal_set = self._execute(_Repository(self.source)).proposal_set
+        persistence = ProposalPersistence(
+            proposal_set,
+            replayed=False,
+            current=True,
+            current_set_id=proposal_set.set_id,
+            superseded_set_id=None,
+            history_count=proposal_set.lineage_revision,
+        )
+
+        with self.assertRaisesRegex(ValueError, "synthetic proposal report is malformed"):
+            SyntheticTitleProposalReport(persistence)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.temporary = tempfile.TemporaryDirectory()

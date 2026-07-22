@@ -172,9 +172,15 @@ class TitleProposalRepository(Protocol):
 class SyntheticTitleProposalReport:
     persistence: ProposalPersistence
 
+    def __post_init__(self) -> None:
+        if type(self.persistence.proposal_set) is not TitleProposalSet:
+            raise ValueError("synthetic proposal report is malformed")
+
     @property
     def proposal_set(self) -> TitleProposalSet:
-        return self.persistence.proposal_set
+        value = self.persistence.proposal_set
+        assert type(value) is TitleProposalSet
+        return value
 
     def to_data(self) -> dict[str, object]:
         value = self.proposal_set.to_data()

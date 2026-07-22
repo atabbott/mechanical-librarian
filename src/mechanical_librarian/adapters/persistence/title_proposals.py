@@ -46,6 +46,7 @@ class SQLiteTitleProposalRepository:
         source_reader: LiveTitleSourceReader | None = None,
         provider_reader: LiveTitleProviderReader | None = None,
         publication_clock: Callable[[], datetime] | None = None,
+        provider_configuration_is_current: Callable[[], bool] | None = None,
     ) -> None:
         self._connection = connection
         self._after_history_insert = after_history_insert
@@ -54,6 +55,7 @@ class SQLiteTitleProposalRepository:
         self._source_reader = source_reader
         self._provider_reader = provider_reader
         self._publication_clock = publication_clock
+        self._provider_configuration_is_current = provider_configuration_is_current
 
     def current(self, lineage: str) -> TitleProposalSet | None:
         try:
@@ -183,6 +185,20 @@ class SQLiteTitleProposalRepository:
                     source.locator, mount_configuration_digests
                 ) != source:
                     raise TitleProposalPersistenceError("live proposal source changed")
+                if provider.work_key is not None:
+                    if (
+                        self._provider_configuration_is_current is None
+                        or not self._provider_configuration_is_current()
+                    ):
+                        raise TitleProposalPersistenceError(
+                            "live provider configuration changed"
+                        )
+                    if self._provider_reader.inspect_title_provider(
+                        provider.work_key, self._publication_clock()
+                    ) != provider:
+                        raise TitleProposalPersistenceError(
+                            "live provider evidence changed"
+                        )
                 if (
                     not persistence.current
                     or persistence.current_set_id != proposal_set.set_id

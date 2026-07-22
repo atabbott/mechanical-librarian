@@ -258,11 +258,15 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
             kwargs.pop("target_is_configured", lambda _target: True),
         )
         publication_clock = kwargs.pop("publication_clock", lambda: self.now)
+        provider_configuration_is_current = kwargs.pop(
+            "provider_configuration_is_current", lambda: True
+        )
         return SQLiteTitleProposalRepository(
             self.connection,
             source_reader=reader,
             provider_reader=reader,
             publication_clock=publication_clock,
+            provider_configuration_is_current=provider_configuration_is_current,
             **kwargs,
         )
 
@@ -598,6 +602,112 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
             ).fetchone(),
             (0,),
         )
+
+    def test_provider_expiry_after_store_callbacks_rolls_back_successor(self) -> None:
+        prior = ProposeLiveTitle(self.repository()).run(
+            self.locator,
+            (self.mount_digest,),
+            provider_enabled=False,
+            authority_revision=1,
+            observed_at=self.now,
+        )
+
+        for callback in (
+            "after_history_insert",
+            "after_pointer_advance",
+            "before_readback",
+        ):
+            with self.subTest(callback=callback):
+                publication_time = self.now
+
+                def expire_provider() -> None:
+                    nonlocal publication_time
+                    publication_time = self.now + timedelta(days=365)
+
+                repository = self.repository(
+                    publication_clock=lambda: publication_time,
+                    **{callback: expire_provider},
+                )
+                with self.assertRaisesRegex(
+                    TitleProposalPersistenceError, "live provider evidence changed"
+                ):
+                    ProposeLiveTitle(repository).run(
+                        self.locator,
+                        (self.mount_digest,),
+                        provider_enabled=True,
+                        authority_revision=1,
+                        observed_at=self.now,
+                    )
+                self.assertEqual(
+                    repository.current_live(prior.proposal_set.lineage),
+                    prior.proposal_set,
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                        "WHERE execution_mode='production_report_only'"
+                    ).fetchone(),
+                    (1,),
+                )
+
+    def test_provider_configuration_changes_after_store_callbacks_roll_back_successor(
+        self,
+    ) -> None:
+        prior = ProposeLiveTitle(self.repository()).run(
+            self.locator,
+            (self.mount_digest,),
+            provider_enabled=False,
+            authority_revision=1,
+            observed_at=self.now,
+        )
+
+        for callback in (
+            "after_history_insert",
+            "after_pointer_advance",
+            "before_readback",
+        ):
+            for change in ("disabled", "authority_revision"):
+                with self.subTest(callback=callback, change=change):
+                    provider_configuration = {
+                        "enabled": True,
+                        "authority_revision": 1,
+                    }
+
+                    def change_provider_configuration() -> None:
+                        if change == "disabled":
+                            provider_configuration["enabled"] = False
+                        else:
+                            provider_configuration["authority_revision"] = 2
+
+                    repository = self.repository(
+                        provider_configuration_is_current=lambda: (
+                            provider_configuration["enabled"]
+                            and provider_configuration["authority_revision"] == 1
+                        ),
+                        **{callback: change_provider_configuration},
+                    )
+                    with self.assertRaisesRegex(
+                        TitleProposalPersistenceError,
+                        "live provider configuration changed",
+                    ):
+                        ProposeLiveTitle(repository).run(
+                            self.locator,
+                            (self.mount_digest,),
+                            provider_enabled=True,
+                            authority_revision=1,
+                            observed_at=self.now,
+                        )
+                    self.assertEqual(
+                        repository.current_live(prior.proposal_set.lineage),
+                        prior.proposal_set,
+                    )
+                    self.assertEqual(
+                        self.connection.execute(
+                            "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                            "WHERE execution_mode='production_report_only'"
+                        ).fetchone(),
+                        (1,),
+                    )
 
     def test_future_provider_current_since_rejects_clock_rollback_without_history(self) -> None:
         repository = self.repository(

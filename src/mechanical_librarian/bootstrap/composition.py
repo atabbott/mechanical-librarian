@@ -1455,6 +1455,7 @@ def _run_live_title_proposal_report(
     governing = epub_governing_digest(
         limits, _epub_material_configuration(configuration, mappings)
     )
+    provider = configuration.hardcover_provider
     connection = None
     try:
         connection = connect_existing(database)
@@ -1479,8 +1480,12 @@ def _run_live_title_proposal_report(
             source_reader=evidence_reader,
             provider_reader=evidence_reader,
             publication_clock=lambda: datetime.now(timezone.utc),
+            provider_configuration_is_current=lambda: (
+                _live_title_provider_is_configured(
+                    configuration_path, provider.authority_revision
+                )
+            ),
         )
-        provider = configuration.hardcover_provider
         return ProposeLiveTitle(repository).run(
             locator,
             mount_digests,
@@ -1569,6 +1574,16 @@ def _live_title_source_is_configured(
             limits, _epub_material_configuration(configuration, mappings)
         )
         == expected_governing_digest
+    )
+
+
+def _live_title_provider_is_configured(
+    configuration_path: Path, expected_authority_revision: int
+) -> bool:
+    provider = load_configuration_file(configuration_path).hardcover_provider
+    return (
+        provider.enabled
+        and provider.authority_revision == expected_authority_revision
     )
 
 
