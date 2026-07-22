@@ -499,15 +499,6 @@ def _parser() -> argparse.ArgumentParser:
     poll_inspect.add_argument(
         "--poll-id", required=True, metavar="ID", type=_bounded_identifier
     )
-    title_proposal = commands.add_parser(
-        "synthetic-title-proposal-report",
-        help="emit one persisted apply-ineligible synthetic title proposal preview",
-    )
-    title_proposal.add_argument(
-        "--database", required=True, metavar="PATH", type=_database_path
-    )
-    title_proposal.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
-    title_proposal.add_argument("--format", choices=("json", "text"), default="json")
     live_title = commands.add_parser(
         "live-title-proposal-report",
         help="publish one current report-only live title proposal result",
@@ -518,17 +509,6 @@ def _parser() -> argparse.ArgumentParser:
     live_title.add_argument("--snapshot", required=True, metavar="OPAQUE", type=_opaque_snapshot)
     live_title.add_argument("--file-index", required=True, metavar="INDEX", type=int)
     live_title.add_argument("--format", choices=("json", "text"), default="json")
-    hardcover_title = commands.add_parser(
-        "hardcover-title-proposal-report",
-        help="emit one persisted apply-ineligible Hardcover title proof of concept",
-    )
-    hardcover_title.add_argument(
-        "--database", required=True, metavar="PATH", type=_database_path
-    )
-    hardcover_title.add_argument(
-        "--secret-reference", metavar="PATH", type=_provider_secret_reference
-    )
-    hardcover_title.add_argument("--format", choices=("json", "text"), default="json")
     title_review = commands.add_parser(
         "synthetic-title-review-case-report",
         help="admit and inspect one apply-ineligible synthetic title review case",
@@ -595,6 +575,8 @@ def main(
         ["epub-package-report"],
         ["epub-opening-report"],
         ["epub-opening-evidence"],
+        ["synthetic-title-proposal-report"],
+        ["hardcover-title-proposal-report"],
     ):
         errors.write("unknown command\n")
         return 2
