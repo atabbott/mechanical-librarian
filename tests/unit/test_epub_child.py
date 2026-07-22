@@ -43,7 +43,7 @@ class EpubChildCompositionTests(unittest.TestCase):
             patch.object(child, "_write_report", side_effect=written.append),
             patch.object(child.signal, "signal"),
             patch.object(child.os, "close"),
-            patch.object(child, "extract_local_evidence") as extract,
+            patch.object(EpubPackageExtractor, "extract") as extract,
         ):
             self.assertEqual(child.main(["10", "11", "123"]), 0)
         self.assertEqual(len(written), 1)
@@ -92,7 +92,7 @@ print(json.dumps(sorted(name for name in sys.modules if name.startswith(forbidde
                 child._install_parent_guard(10, threading.Event(), 999)
         exit_process.assert_called_once_with(70)
 
-    def test_production_child_routes_the_logical_request_through_the_application_service(
+    def test_production_child_routes_the_logical_request_through_the_private_extractor(
         self,
     ) -> None:
         limits = EpubPackageLimits()
@@ -124,7 +124,7 @@ print(json.dumps(sorted(name for name in sys.modules if name.startswith(forbidde
             patch.object(child.signal, "signal"),
             patch.object(child.os, "fstat", return_value=SimpleNamespace(st_size=128)),
             patch.object(child.os, "close"),
-            patch.object(child, "extract_local_evidence", return_value=report) as extract,
+            patch.object(EpubPackageExtractor, "extract", return_value=report) as extract,
         ):
             exit_code = child.main(["10", "11", "123"])
 
@@ -132,8 +132,7 @@ print(json.dumps(sorted(name for name in sys.modules if name.startswith(forbidde
         install_parent_guard.assert_called_once_with(11, ANY, 123)
         apply_limits.assert_called_once_with()
         write_report.assert_called_once_with(report)
-        extractor, request = extract.call_args.args
-        self.assertIsInstance(extractor, EpubPackageExtractor)
+        request = extract.call_args.args[0]
         self.assertEqual(request.expected_source, expected)
         self.assertEqual(request.target.external_item.value, logical_identity)
         self.assertEqual(request.file.relative_path, f"{logical_identity}.epub")

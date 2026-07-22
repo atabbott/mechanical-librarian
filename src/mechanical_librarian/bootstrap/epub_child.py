@@ -17,7 +17,6 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _SourceIO,
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_opening import EpubOpeningExtractor
-from mechanical_librarian.application.local_evidence import extract_local_evidence
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
@@ -240,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
             except (OSError, ValueError):
                 report = EpubOpeningReport(LocalEvidenceOutcome.INTEGRITY_FAILURE, limits)
         else:
-            report = extract_local_evidence(EpubPackageExtractor(), request)
+            report = EpubPackageExtractor().extract(request)
         _write_report(report)
         return 0
     except BaseException:
