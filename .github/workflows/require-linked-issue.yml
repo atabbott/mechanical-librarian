@@ -37,6 +37,6 @@ jobs:
             -f owner="$owner" \
             -f name="$repository" \
             -F number="$PR_NUMBER" \
-            -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){nameWithOwner defaultBranchRef{name} pullRequest(number:$number){isDraft baseRefName bodyHTML labels(first:100){totalCount pageInfo{hasNextPage} nodes{name}} allClosingIssues:closingIssuesReferences(first:100){totalCount pageInfo{hasNextPage} nodes{number state repository{nameWithOwner}}} manualClosingIssues:closingIssuesReferences(first:100,userLinkedOnly:true){totalCount pageInfo{hasNextPage} nodes{number state repository{nameWithOwner}}}}}}' \
+            -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){nameWithOwner defaultBranchRef{name} pullRequest(number:$number){isDraft baseRefName body labels(first:100){totalCount pageInfo{hasNextPage} nodes{name}} allClosingIssues:closingIssuesReferences(first:100){totalCount pageInfo{hasNextPage} nodes{number state repository{nameWithOwner}}} manualClosingIssues:closingIssuesReferences(first:100,userLinkedOnly:true){totalCount pageInfo{hasNextPage} nodes{number state repository{nameWithOwner}}}}}}' \
             | python3 .github/scripts/validate_linked_issues.py \
                 --repository "$GITHUB_REPOSITORY"
