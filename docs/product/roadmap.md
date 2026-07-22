@@ -133,10 +133,12 @@ checkpoint does not publish a release.
 F09c #205/#210/#211 remains separately planned for 1.0 as a fallback
 report/provider lane and is not an F09g blocker. Later provider-neutral work
 #69/#70 consumes compatible F09c identity, with qualification in #73 and F17
-#153. F10b #240/#241 remains 1.0 work after completed F10a and F09g; it admits a
-qualifying live report into production review. F11 remains an independently
-deliverable synthetic shadow path, and the production title/case and reviewer
-paths converge only at F17 qualification.
+#153. F10b #240/#241 remains 1.0 work after completed F10a and #197; it admits
+a qualifying current neutral persisted report claim into production review. F09g
+#238 remains historical characterization evidence for that report boundary, not
+an active F10b input. F11 remains an independently deliverable synthetic shadow
+path, and the production title/case and reviewer paths converge only at F17
+qualification.
 
 Exit: one current Audiobookshelf ebook produces a restartable, evidence-backed
 live title proposal or exact zero-proposal report without gaining review,

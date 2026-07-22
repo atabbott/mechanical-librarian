@@ -413,7 +413,9 @@ admission, human and AI decision, approval, cover/rich-field work, apply,
 target/media write, destructive action, tagging, and release publication. F09c
 is not constructed or required by F09g. F09c's separate later fallback lane is
 consumed by provider-neutral #69/#70 and qualified through #73 and F17 #153;
-F10b separately qualifies production review admission after F09g.
+F10b separately qualifies production review admission after #197 from the
+current neutral persisted report/claim boundary. F09g #238 supplies historical
+characterization evidence only and is not an active F10b input.
 
 The broader 1.0 report-only end-to-end scenario disables every external
 metadata provider and still completes inventory, local evidence extraction,

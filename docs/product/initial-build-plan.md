@@ -246,10 +246,12 @@ apply, target or media write, destructive authority, tag, or release
 publication. F09c #205/#210/#211 remains a separate 1.0 fallback report/provider
 lane and does not block F09g; #69/#70 later consume compatible F09c identity,
 with qualification in #73 and F17 #153. F10b #240/#241 remains 1.0 work after
-completed F10a and F09g and owns production review-case admission. F11 remains
-an independently deliverable synthetic shadow path; F17 is the convergence
-qualification gate. These planning relationships add no production behavior
-to F10a.
+completed F10a and #197 and owns production review-case admission from a
+qualifying current neutral persisted report claim. F09g #238 is historical
+characterization evidence for this boundary, not an active F10b dependency.
+F11 remains an independently deliverable synthetic shadow path; F17 is the
+convergence qualification gate. These planning relationships add no production
+behavior to F10a.
 
 ## WP5: candidate and policy engine
 

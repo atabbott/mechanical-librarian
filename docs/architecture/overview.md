@@ -235,10 +235,12 @@ title votes.
 
 F09c remains a separate 1.0 fallback identity report/provider lane and is not a
 dependency of F09g. Later provider-neutral candidate work consumes compatible
-F09c identity. F10b, after completed F10a and F09g, owns production review-case
-admission. The 0.3 path adds no review, decision, AI, apply, target/media write,
-destructive, or release-publication capability. F11 remains independently
-synthetic, with production and reviewer paths converging only at F17.
+F09c identity. F10b, after completed F10a and #197, owns production review-case
+admission from the current neutral persisted report/claim boundary; F09g #238
+is characterization evidence, not its active input. The 0.3 path adds no
+review, decision, AI, apply, target/media write, destructive, or
+release-publication capability. F11 remains independently synthetic, with
+production and reviewer paths converging only at F17.
 
 ### Apply
 
