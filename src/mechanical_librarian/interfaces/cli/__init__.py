@@ -54,18 +54,9 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceMode,
     EpubEvidenceResult,
 )
-from mechanical_librarian.application.title_proposals import (
-    SCENARIOS,
-    SyntheticTitleProposalReport,
-    render_title_proposal_text,
-)
 from mechanical_librarian.application.live_title_proposals import (
     LiveTitleProposalReport,
     render_live_title_proposal_text,
-)
-from mechanical_librarian.application.title_review_cases import (
-    SyntheticTitleReviewCaseReport,
-    render_title_review_case_text,
 )
 from mechanical_librarian.application.hardcover_identity import (
     DurableWorkPreviewReport,
@@ -96,9 +87,6 @@ ConnectionProbeRunner = Callable[[Path], ConnectionProbeResult]
 AudiobookshelfInventoryRunner = Callable[[Path, Path], InventoryRunResult]
 AudiobookshelfPollRunner = Callable[[Path, Path, str], InventoryPollResult]
 InventoryPollInspectionRunner = Callable[[Path, str], InventoryPollResult]
-SyntheticTitleProposalRunner = Callable[[Path, str], SyntheticTitleProposalReport]
-HardcoverTitleProposalRunner = Callable[[Path, Path | None], SyntheticTitleProposalReport]
-SyntheticTitleReviewCaseRunner = Callable[[Path, str], SyntheticTitleReviewCaseReport]
 EpubOpeningEvidenceRunner = Callable[[Path, Path, str, str, int], EpubEvidenceResult]
 LiveTitleProposalRunner = Callable[[Path, Path, str, str, int], LiveTitleProposalReport]
 HardcoverIdentityRunner = Callable[
@@ -145,16 +133,6 @@ _CONNECTION_FAILURE = (
 )
 _ABS_INVENTORY_FAILURE = "Audiobookshelf inventory failed safely.\n"
 _ABS_POLL_FAILURE = "Audiobookshelf poll failed safely.\n"
-_TITLE_PROPOSAL_FAILURE = "Synthetic title preview failed safely.\n"
-_TITLE_PROPOSAL_INVALID = "Synthetic title preview invocation is invalid.\n"
-_HARDCOVER_TITLE_PROPOSAL_FAILURE = "Hardcover title preview failed safely.\n"
-_HARDCOVER_TITLE_PROPOSAL_INVALID = "Hardcover title preview invocation is invalid.\n"
-_HARDCOVER_TITLE_RETIRED = (
-    "Credentialed Hardcover title preview is unsupported; use "
-    "hardcover-identity-report with configured provider authority.\n"
-)
-_TITLE_REVIEW_CASE_FAILURE = "Synthetic title review case failed safely.\n"
-_TITLE_REVIEW_CASE_INVALID = "Synthetic title review case invocation is invalid.\n"
 _EPUB_PACKAGE_EXIT = {
     LocalEvidenceOutcome.INVALID_INVOCATION: 2,
     LocalEvidenceOutcome.SUCCESS: 0,
@@ -301,16 +279,6 @@ def _opaque_snapshot(value: str) -> str:
     return value
 
 
-def _title_proposal_parser() -> argparse.ArgumentParser:
-    parser = _TitleArgumentParser(
-        prog="mechanical-librarian synthetic-title-proposal-report"
-    )
-    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
-    parser.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
-    parser.add_argument("--format", choices=("json", "text"), default="json")
-    return parser
-
-
 def _live_title_proposal_parser() -> argparse.ArgumentParser:
     parser = _TitleArgumentParser(
         prog="mechanical-librarian live-title-proposal-report"
@@ -320,28 +288,6 @@ def _live_title_proposal_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target", required=True, metavar="OPAQUE", type=_opaque_target)
     parser.add_argument("--snapshot", required=True, metavar="OPAQUE", type=_opaque_snapshot)
     parser.add_argument("--file-index", required=True, metavar="INDEX", type=int)
-    parser.add_argument("--format", choices=("json", "text"), default="json")
-    return parser
-
-
-def _hardcover_title_proposal_parser() -> argparse.ArgumentParser:
-    parser = _TitleArgumentParser(
-        prog="mechanical-librarian hardcover-title-proposal-report"
-    )
-    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
-    parser.add_argument(
-        "--secret-reference", metavar="PATH", type=_provider_secret_reference
-    )
-    parser.add_argument("--format", choices=("json", "text"), default="json")
-    return parser
-
-
-def _title_review_case_parser() -> argparse.ArgumentParser:
-    parser = _TitleArgumentParser(
-        prog="mechanical-librarian synthetic-title-review-case-report"
-    )
-    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
-    parser.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
     parser.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
@@ -509,15 +455,6 @@ def _parser() -> argparse.ArgumentParser:
     live_title.add_argument("--snapshot", required=True, metavar="OPAQUE", type=_opaque_snapshot)
     live_title.add_argument("--file-index", required=True, metavar="INDEX", type=int)
     live_title.add_argument("--format", choices=("json", "text"), default="json")
-    title_review = commands.add_parser(
-        "synthetic-title-review-case-report",
-        help="admit and inspect one apply-ineligible synthetic title review case",
-    )
-    title_review.add_argument(
-        "--database", required=True, metavar="PATH", type=_database_path
-    )
-    title_review.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
-    title_review.add_argument("--format", choices=("json", "text"), default="json")
     commands.add_parser(
         "hardcover-identity-report",
         help="run one configured report-only Hardcover ISBN identity lookup",
@@ -540,9 +477,6 @@ def main(
     epub_opening_report_runner: EpubOpeningReportRunner | None = None,
     epub_opening_evidence_runner: EpubOpeningEvidenceRunner | None = None,
     live_title_proposal_runner: LiveTitleProposalRunner | None = None,
-    synthetic_title_proposal_runner: SyntheticTitleProposalRunner | None = None,
-    hardcover_title_proposal_runner: HardcoverTitleProposalRunner | None = None,
-    synthetic_title_review_case_runner: SyntheticTitleReviewCaseRunner | None = None,
     hardcover_identity_runner: HardcoverIdentityRunner | None = None,
     hardcover_inert_preview_runner: HardcoverInertPreviewRunner | None = None,
     hardcover_identity_decision_preview_runner: (
@@ -577,6 +511,7 @@ def main(
         ["epub-opening-evidence"],
         ["synthetic-title-proposal-report"],
         ["hardcover-title-proposal-report"],
+        ["synthetic-title-review-case-report"],
     ):
         errors.write("unknown command\n")
         return 2

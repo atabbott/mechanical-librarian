@@ -15,14 +15,13 @@ from mechanical_librarian.application.live_title_proposals import (
     LiveSourceEvidence,
     LiveSourceState,
     LiveTitleSourceReader,
+    ProposalPersistence,
     mount_configuration_set_digest,
 )
-from mechanical_librarian.application.title_proposals import ProposalPersistence
 from mechanical_librarian.domain.epub_opening_evidence import EpubEvidenceLocator
 from mechanical_librarian.domain.title_proposals import (
     LiveTitleProposalSet,
     ProposalExecutionMode,
-    TitleProposalSet,
     TitleProposalValueError,
 )
 
@@ -335,12 +334,7 @@ class SQLiteTitleProposalRepository:
         if len(pointers) != 1:
             raise TitleProposalPersistenceError("proposal lineage requires one current pointer")
         history = tuple(_hydrate(row) for row in rows)
-        revision_bound = (
-            _MAX_SYNTHETIC_LINEAGE_REVISIONS
-            if type(history[0]) is TitleProposalSet
-            else _MAX_LIVE_LINEAGE_REVISIONS
-        )
-        if len(history) > revision_bound:
+        if len(history) > _MAX_LIVE_LINEAGE_REVISIONS:
             raise TitleProposalPersistenceError("proposal lineage exceeds its revision bound")
         expected_revisions = tuple(range(1, len(history) + 1))
         if tuple(item.lineage_revision for item in history) != expected_revisions:

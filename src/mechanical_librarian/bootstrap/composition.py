@@ -51,17 +51,8 @@ from mechanical_librarian.adapters.evidence_extractors.process import (
     run_epub_inspector_child,
     run_epub_package_child,
 )
-from mechanical_librarian.adapters.evidence_extractors.synthetic_epub import (
-    generated_synthetic_epub,
-)
 from mechanical_librarian.adapters.persistence.title_proposals import (
     SQLiteTitleProposalRepository,
-)
-from mechanical_librarian.adapters.persistence.title_review_cases import (
-    SQLiteTitleReviewCaseRepository,
-)
-from mechanical_librarian.adapters.providers.synthetic_title import (
-    SyntheticTitleProvider,
 )
 from mechanical_librarian.adapters.providers.synthetic_hardcover_identity import (
     SyntheticBookIdentityProvider,
@@ -70,10 +61,6 @@ from mechanical_librarian.adapters.providers.hardcover_identity import (
     HttpxIdentityByteChannel,
     LiveHardcoverIdentityProvider,
     StructuralHardcoverIdentityPreview,
-)
-from mechanical_librarian.adapters.providers.hardcover_title import (
-    AddressResolver,
-    HardcoverTitleProvider,
 )
 from mechanical_librarian.application.connection_probe import (
     ConnectionProbeOutcome,
@@ -160,21 +147,9 @@ from mechanical_librarian.application.synthetic_inventory import (
     SyntheticInventoryOutcome,
     SyntheticInventoryResult,
 )
-from mechanical_librarian.application.title_proposals import (
-    ProviderPreviewProfile,
-    ProposeSyntheticTitle,
-    SyntheticScenario,
-    SyntheticTitleProposalReport,
-    scenario_lineage,
-    scenario_named,
-)
 from mechanical_librarian.application.live_title_proposals import (
     LiveTitleProposalReport,
     ProposeLiveTitle,
-)
-from mechanical_librarian.application.title_review_cases import (
-    InspectSyntheticTitleReviewCase,
-    SyntheticTitleReviewCaseReport,
 )
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
@@ -1687,7 +1662,7 @@ def _persist_synthetic_title_proposal(
     epub_digest: str,
     opaque_identity: str,
     *,
-    profile: ProviderPreviewProfile = ProviderPreviewProfile.SYNTHETIC,
+    profile: object = None,
     provider: _MetadataProvider | None = None,
     unavailable_kind: FailureKind | None = None,
 ) -> SyntheticTitleProposalReport:
@@ -3272,9 +3247,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         epub_opening_report_runner=_run_epub_opening_report,
         epub_opening_evidence_runner=_run_epub_opening_evidence,
         live_title_proposal_runner=_run_live_title_proposal_report,
-        synthetic_title_proposal_runner=_run_synthetic_title_proposal_report,
-        hardcover_title_proposal_runner=_run_hardcover_title_proposal_report,
-        synthetic_title_review_case_runner=_run_synthetic_title_review_case_report,
         hardcover_identity_runner=_run_hardcover_identity_report,
         hardcover_inert_preview_runner=_run_hardcover_inert_preview,
         hardcover_identity_decision_preview_runner=(

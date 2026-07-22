@@ -12,7 +12,6 @@ from typing import Protocol
 from mechanical_librarian.application.hardcover_safe_executor import (
     hardcover_identity_work_key,
 )
-from mechanical_librarian.application.title_proposals import ProposalPersistence
 from mechanical_librarian.domain.epub_inspection import (
     EpubInspection,
     EpubInspectionField,
@@ -109,6 +108,31 @@ class LiveProviderEvidence:
 
     def __repr__(self) -> str:
         return "LiveProviderEvidence(<redacted>)"
+
+
+@dataclass(frozen=True)
+class ProposalPersistence:
+    proposal_set: LiveTitleProposalSet
+    replayed: bool
+    current: bool
+    current_set_id: str
+    superseded_set_id: str | None
+    history_count: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.proposal_set) is not LiveTitleProposalSet
+            or type(self.replayed) is not bool
+            or type(self.current) is not bool
+            or type(self.current_set_id) is not str
+            or not self.current_set_id.startswith("ps-")
+            or (self.superseded_set_id is not None and type(self.superseded_set_id) is not str)
+            or type(self.history_count) is not int
+            or self.history_count < 1
+        ):
+            raise ValueError("proposal persistence projection is invalid")
+        if self.current and self.current_set_id != self.proposal_set.set_id:
+            raise ValueError("current proposal projection disagrees with its pointer")
 
 
 class LiveTitleProposalRepository(Protocol):

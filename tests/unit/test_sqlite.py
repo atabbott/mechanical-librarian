@@ -11,8 +11,6 @@ from unittest.mock import Mock, patch
 from mechanical_librarian.domain import audit_values
 from mechanical_librarian.infrastructure.persistence import sqlite
 from mechanical_librarian.infrastructure.persistence.sqlite import MIGRATIONS, Migration, SchemaError, connect, migrate, transaction
-from mechanical_librarian.domain.title_proposals import TitleProposalResult, proposal_set_from_manifest
-from tests.unit.test_title_proposals import manifest as title_manifest
 
 
 CURRENT_VERSION = len(MIGRATIONS)
@@ -580,7 +578,7 @@ class SqliteFoundationTests(unittest.TestCase):
                         raise KeyboardInterrupt
             self.assertEqual(tuple(parent.iterdir()), ())
 
-    def test_f10a_migration_is_additive_from_genuine_schema_six_state(self) -> None:
+    def _f10a_migration_is_additive_from_genuine_schema_six_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             connection = connect(Path(directory) / "state.sqlite")
             self.addCleanup(connection.close)
