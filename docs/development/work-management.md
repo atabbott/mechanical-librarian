@@ -279,11 +279,13 @@ workflow rejects placeholder, nonexistent, closed, or missing references. A
 horizontal ticket commit alone does not justify a separate ready pull request;
 each increment must be independently safe and vertically demonstrable.
 
-The gate uses GitHub-recognized closing-link metadata rather than parsing pull
-request Markdown. Examples, quotations, fenced code, manual links, nonexistent
-issues, and closed issues do not satisfy it. At least one supported closing
-reference must resolve to an open issue in this repository. The case-insensitive
-keyword vocabulary is `close`, `closes`, `closed`, `fix`,
+The gate uses GitHub-recognized closing-link metadata plus the raw pull-request
+body only to distinguish a same-issue manual/native overlap. Its deliberately
+narrow line scan accepts standalone GitHub closing lines, while examples,
+quotations, fenced or indented code, inline code, comments, manual links,
+nonexistent issues, and closed issues do not satisfy it. At least one supported
+closing reference must resolve to an open issue in this repository. The
+case-insensitive keyword vocabulary is `close`, `closes`, `closed`, `fix`,
 `fixes`, `fixed`, `resolve`, `resolves`, and `resolved`. Every recognized closing
 reference used by the gate must remain open when the pull request becomes ready.
 Cross-repository and non-default-branch closing links do not satisfy this
@@ -293,17 +295,15 @@ The bounded gate supports at most 100 recognized references and reports a
 specific limit failure rather than evaluating incomplete pagination. If the
 same issue is both manually linked and named by a closing keyword, place the
 closing reference on its own line so the gate can distinguish the body source
-using GitHub's rendered closing-keyword and issue-link annotations without
-treating examples, custom links, formatting, quotations, or code as closing
-instructions.
+without treating examples, custom links, formatting, quotations, or code as
+closing instructions.
 
 The narrow exception is trivial cleanup that consists only of spelling,
-formatting, broken-link, or comment-only corrections. A maintainer authorizes
-the exception by applying the exact `tracking-exempt` label and adding visible
-prose beneath the single top-level `Tracking exemption` heading in the pull
-request description. The label and rationale are both required; the gate does
-not inspect or classify the diff. Quoted, commented, code-formatted, nested,
-empty, or duplicate rationale sections do not qualify.
+formatting, broken-link, or comment-only corrections. The gate's native
+authorization is the exact maintainer-applied `tracking-exempt` label. Review
+policy also requires visible prose beneath the single top-level `Tracking
+exemption` heading in the pull-request description; that human-facing policy is
+not interpreted by the gate. The gate does not inspect or classify the diff.
 
 The exception is unavailable when a change affects executable behavior,
 dependencies or lockfiles, builds, CI or workflows, releases, configuration,
