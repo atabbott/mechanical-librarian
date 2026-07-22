@@ -142,6 +142,22 @@ Exit: one current Audiobookshelf ebook produces a restartable, evidence-backed
 live title proposal or exact zero-proposal report without gaining review,
 decision, mutation, destructive, or release-publication authority.
 
+### Pre-deployment 0.4.0 simplification checkpoint
+
+The qualified F09g #238 report is characterization evidence for the reset: its
+current target/media reading, local title/ISBN extraction, provider observation,
+currentness, privacy, and persistence behavior remain the safety baseline, but
+its proposal gate is replaced at #197 by one neutral evidence report. The
+checkpoint starts from a clean database and exposes exactly one synchronous
+report-only command with explicit configuration, database, connection, library,
+item, and EPUB-file inputs. #253, #255, #257, and #261 are the four contributors
+to the #197 activation; #254, #256, #258, and #260 are superseded historical
+work to reconcile, not active contributors.
+
+The checkpoint excludes review, decisions, apply, writes, background execution,
+retry, caching, compatibility paths, tags, releases, and publication. It is an
+internal pre-deployment checkpoint, not a supported version or release train.
+
 ## M3: AI review in shadow mode
 
 - Add isolated Codex CLI reviewer.

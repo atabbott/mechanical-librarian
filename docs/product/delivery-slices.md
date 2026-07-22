@@ -259,6 +259,50 @@ the external Hardcover catalogue lineage.
   apply, target or media write, destructive authority, tag, GitHub Release, or
   release publication.
 
+## Delivery checkpoint 0.4.0: clean-state neutral evidence report
+
+0.4.0 simplifies the qualified #238 path into one clean-state, synchronous,
+report-only metadata-evidence command for an explicitly selected EPUB ebook.
+The qualified #238 target/media reading, local title/ISBN extraction, provider
+observation, currentness, privacy, and persistence behavior are
+characterization evidence. #257 preserves that final-0.3 behavior while moving
+the EPUB boundary to one isolated inspector; #197 alone replaces #238's final
+proposal gate with the neutral evidence-report contract.
+
+| Work | Issue | Role and dependency |
+| --- | --- | --- |
+| Baseline | #253 | Freeze this contract after qualified #238. |
+| Fixture correction | #255 | Remove stale fixture ownership after #253. |
+| EPUB inspector | #257 | Preserve final-0.3 evidence behavior until #197 activation. |
+| Linked-work gate | #261 | Simplify the independent GitHub policy gate after #253. |
+| Activation | #197 | Sole runtime/schema reset after all four contributors. |
+
+The installed activation command is exactly
+`metadata-report --config PATH --database PATH --connection NAME --library NAME --item ITEM_ID --file-index INDEX`.
+Both path inputs are required; no defaults, CWD discovery, implicit filenames,
+or undocumented environment fallbacks exist. Success emits exactly the
+persisted canonical JSON report plus a newline; failure emits no stdout, one
+bounded redacted stderr diagnostic, and a nonzero exit.
+
+Only a new database is a supported 0.4 starting state. Pre-0.4 development
+databases have no recognition, migration, import, preservation, or tailored
+compatibility path. No partial 0.4 runtime is exposed before #197. The existing
+final-0.3 report stays report-only during the contributor work.
+
+### 0.4.0 checkpoint exit
+
+- #253, #255, #257, and #261 are complete; #197 alone activates the complete
+  outcome and reconciles historical #254, #256, #258, and #260;
+- an installed artifact demonstrates the exact one-command, clean-state
+  contract, neutral canonical report replay, privacy/currentness/hostile-input
+  safeguards, and report-only/no-write boundary; and
+- no review, decision, approval, apply, target/media write, background worker,
+  retry, provider cache, compatibility machinery, tag, release, or release
+  artifact is introduced.
+
+Completing this internal checkpoint does not create a release train, supported
+version, tag, GitHub Release, or published artifact.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit

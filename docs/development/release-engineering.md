@@ -19,6 +19,15 @@ After the first published release, maintainers may explicitly designate later
 milestones as release trains. That designation is not an automatic consequence
 of release publication or checkpoint completion.
 
+### 0.4.0 boundary
+
+0.4.0 is specifically a pre-deployment clean-state simplification checkpoint.
+Its completion, including the installed `metadata-report` demonstration, does
+not authorize a tag, GitHub Release, supported version, release artifact, or
+publication. It has no supported pre-0.4 upgrade source; its clean-state reset
+must not be presented as a release migration. The governing scope and safety
+split are recorded in [ADR-0010](../architecture/decisions/0010-0-4-neutral-evidence-baseline.md).
+
 ## Release goals
 
 Releases must be reproducible, attributable, upgradeable, recoverable, and
