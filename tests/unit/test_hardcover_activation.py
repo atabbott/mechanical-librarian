@@ -950,7 +950,6 @@ class HardcoverActivationTests(unittest.TestCase):
             )
 
     def test_credentialed_f09b_command_is_retired_before_runner(self) -> None:
-        runner = Mock()
         errors = io.StringIO()
         code = main(
             [
@@ -961,18 +960,15 @@ class HardcoverActivationTests(unittest.TestCase):
                 "/provider-token",
             ],
             state_check_runner=Mock(),
-            hardcover_title_proposal_runner=runner,
             stdout=io.StringIO(),
             stderr=errors,
         )
         self.assertEqual(code, 2)
-        self.assertIn("hardcover-identity-report", errors.getvalue())
-        runner.assert_not_called()
+        self.assertEqual(errors.getvalue(), "unknown command\n")
 
     def test_credentialed_f09b_abbreviations_are_retired_before_runner(self) -> None:
         for spelling in ("--secret-ref", "--secret-r", "--secret"):
             with self.subTest(spelling=spelling):
-                runner = Mock()
                 errors = io.StringIO()
                 code = main(
                     [
@@ -983,13 +979,11 @@ class HardcoverActivationTests(unittest.TestCase):
                         "/provider-token",
                     ],
                     state_check_runner=Mock(),
-                    hardcover_title_proposal_runner=runner,
                     stdout=io.StringIO(),
                     stderr=errors,
                 )
                 self.assertEqual(code, 2)
-                self.assertIn("hardcover-identity-report", errors.getvalue())
-                runner.assert_not_called()
+                self.assertEqual(errors.getvalue(), "unknown command\n")
 
 
 if __name__ == "__main__":
