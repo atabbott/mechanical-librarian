@@ -38,6 +38,13 @@ modes, or presentation flags. On success the command emits exactly its
 persisted canonical JSON report and one trailing newline. On failure it emits
 no stdout, one bounded redacted diagnostic on stderr, and a nonzero exit.
 
+Each report uses a small relational identity, lookup, digest, and schema-version
+envelope plus one immutable canonical JSON report document. The envelope and
+document identity must agree, and the closed typed document is validated on both
+write and read. Exact re-observation replays the same whole report identity and
+bytes; changed evidence produces its successor without changing the former
+document.
+
 The #238 contract is characterization evidence, not the 0.4 public result:
 
 - target/media reading, local EPUB title and ISBN extraction, compatible
@@ -125,7 +132,8 @@ deployment to protect.
 - #257 proves #238-equivalent EPUB evidence behaviour through the isolated
   child while the final-0.3 report remains usable.
 - #197 demonstrates the installed one-command contract from clean state,
-  canonical report replay, no-write/report-only boundaries, and the required
-  hostile-input, privacy, currentness, and transactional checks.
+  whole-report canonical replay through the agreeing relational envelope and
+  document, no-write/report-only boundaries, and the required hostile-input,
+  privacy, currentness, and transactional checks.
 - The final `main` state reconciles the four superseded issues and records no
   tag, release, or release artifact as a consequence of milestone completion.

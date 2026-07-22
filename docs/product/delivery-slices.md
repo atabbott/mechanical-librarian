@@ -284,6 +284,12 @@ or undocumented environment fallbacks exist. Success emits exactly the
 persisted canonical JSON report plus a newline; failure emits no stdout, one
 bounded redacted stderr diagnostic, and a nonzero exit.
 
+Each report has a small relational identity, lookup, digest, and schema-version
+envelope plus one immutable canonical JSON document. The envelope and document
+identity agree, and the closed typed document is validated on write and read.
+Exact re-observation replays the same whole report identity and bytes; changed
+evidence creates a successor without changing the prior document.
+
 Only a new database is a supported 0.4 starting state. Pre-0.4 development
 databases have no recognition, migration, import, preservation, or tailored
 compatibility path. No partial 0.4 runtime is exposed before #197. The existing
@@ -294,8 +300,9 @@ final-0.3 report stays report-only during the contributor work.
 - #253, #255, #257, and #261 are complete; #197 alone activates the complete
   outcome and reconciles historical #254, #256, #258, and #260;
 - an installed artifact demonstrates the exact one-command, clean-state
-  contract, neutral canonical report replay, privacy/currentness/hostile-input
-  safeguards, and report-only/no-write boundary; and
+  contract, agreeing relational envelope and canonical document, whole-report
+  replay, privacy/currentness/hostile-input safeguards, and report-only/no-write
+  boundary; and
 - no review, decision, approval, apply, target/media write, background worker,
   retry, provider cache, compatibility machinery, tag, release, or release
   artifact is introduced.
@@ -312,7 +319,7 @@ canary slice. Destructive operations remain outside ordinary review and apply.
 | --- | --- | --- | --- | --- |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
 | F09c Work identity fallback | #205 | Bounded Open Library work/edition discovery and optional LibraryThing ISBN-family clustering preserve ambiguity, lineage, independent-provider limits, and disabled/failure behavior. | #210, #211; unresolved prerequisite #68 | `slice/f09c-work-identity-fallback` |
-| F10b Production title review case | #240 | Exactly one current qualifying `production_report_only` title proposal becomes one durable undecided production review case while preserving exact freshness, evidence, version, replay, and supersession proof. | #241; F10a #146 and F09g #238 | `slice/f10b-production-title-case` |
+| F10b Production title review case | #240 | Exactly one current qualifying neutral persisted report claim becomes one durable undecided production review case while preserving exact freshness, evidence, version, replay, and supersession proof. | #241; F10a #146 and #197 | `slice/f10b-production-title-case` |
 | F11 AI shadow recommendation | #147 | An isolated reviewer receives a complete bounded vendor-neutral packet carrying the exact normalized current snapshot and explicit field-load state only after required authoritative inputs join successfully, without target-service or provider credentials or vendor payloads, then returns one direct closed-schema `AIDecision` for every proposal; its required `problems` list contains adverse or unresolved problem codes, with `problems: []` for a clean approval. Malformed output, unknown fields, missing required fields, duplicate or partial decisions, trailing content, or semantic repair becomes a typed failure without authorizing apply. A zero-proposal selection terminates without invocation, and optional provider failure remains operational. | #74-#80 | `slice/f11-ai-shadow-review` |
 | F12a Authenticated API foundation | #189 | The supported HTTP service exposes deterministic versioned OpenAPI, minimal anonymous liveness, and one bounded authenticated owner diagnostic; invalid sessions, origins, CSRF, proxy and rate-limit contexts fail closed. | #96, #97 | `slice/f12a-authenticated-api` |
 | F12b Human decision round trip | #148 | An authenticated owner accepts, keeps, or rejects one field, restarts and retrieves the immutable decision/history, then observes a safe stale-version conflict. | #19 | `slice/f12b-human-decision` |
@@ -329,10 +336,10 @@ chain. F09c remains separately blocked on its declared prerequisite #68 and is
 not a prerequisite for the 0.3 F09g report. Its fallback identity remains a
 separate report/provider lane; later provider-neutral candidate work #69/#70
 consumes compatible F09c identity, with qualification in #73 and F17 #153.
-F10b starts after completed F10a and F09g and is the first production review-case
-admission for this path. F11 remains independently deliverable against its
-synthetic shadow input. The production title and synthetic reviewer paths
-converge only in F17 qualification.
+F10b starts after completed F10a and #197 and is the first production review-case
+admission from the current neutral persisted report/claim boundary. F11 remains
+independently deliverable against its synthetic shadow input. The production
+title and synthetic reviewer paths converge only in F17 qualification.
 
 ### 1.0.0 checkpoint exit
 
