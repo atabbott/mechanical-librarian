@@ -13,7 +13,11 @@ from mechanical_librarian.application.hardcover_safe_executor import (
     hardcover_identity_work_key,
 )
 from mechanical_librarian.application.title_proposals import ProposalPersistence
-from mechanical_librarian.domain.epub_opening import EpubOpeningReport, OpeningField
+from mechanical_librarian.domain.epub_inspection import (
+    EpubInspection,
+    EpubInspectionField,
+    EpubInspectionOutcome,
+)
 from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceLocator,
     ResolvedEpubSource,
@@ -25,10 +29,6 @@ from mechanical_librarian.domain.hardcover_identity import (
 from mechanical_librarian.domain.hardcover_identity_work import (
     IdentityWorkObservation,
     IdentityWorkReference,
-)
-from mechanical_librarian.domain.local_evidence import (
-    LocalEvidenceOutcome,
-    ObservationApplicability,
 )
 from mechanical_librarian.domain.title_proposals import (
     LIVE_TITLE_PROPOSAL_POLICY_VERSION,
@@ -62,7 +62,7 @@ class LiveSourceEvidence:
     current_title: str | None = None
     evidence_id: str | None = None
     source_fingerprint: str | None = None
-    report: EpubOpeningReport | None = None
+    inspection: EpubInspection | None = None
 
     def __post_init__(self) -> None:
         ready = self.state is LiveSourceState.READY
@@ -77,7 +77,7 @@ class LiveSourceEvidence:
                 and self.current_title_loaded
                 and _evidence_id(self.evidence_id)
                 and _digest(self.source_fingerprint)
-                and type(self.report) is EpubOpeningReport
+                and type(self.inspection) is EpubInspection
             )
             or (
                 self.current_title is not None
@@ -317,36 +317,32 @@ class ProposeLiveTitle:
 
 
 def _select_local(source: LiveSourceEvidence) -> tuple[str, str] | None:
-    report = source.report
+    inspection = source.inspection
     if (
         source.state is not LiveSourceState.READY
-        or report is None
-        or report.outcome is not LocalEvidenceOutcome.SUCCESS
+        or inspection is None
+        or inspection.outcome is not EpubInspectionOutcome.SUCCESS
     ):
         return None
     titles = {
-        claim.normalized_value
-        for claim in report.claims
-        if claim.field is OpeningField.TITLE
-        and claim.normalized_value is not None
-        and claim.applicability
-        not in {ObservationApplicability.INAPPLICABLE, ObservationApplicability.UNKNOWN}
+        fact.observed_value
+        for fact in inspection.facts
+        if fact.field is EpubInspectionField.TITLE
     }
     if len(titles) != 1:
         return None
     canonical_isbns: set[str] = set()
-    for claim in report.claims:
+    for fact in inspection.facts:
         if (
-            claim.field is not OpeningField.IDENTIFIER
-            or claim.identifier_type not in {"isbn_10", "isbn_13"}
-            or claim.applicability is not ObservationApplicability.EDITION
-            or claim.applicability_label != "ebook"
+            fact.field is not EpubInspectionField.ISBN
+            or fact.checksum not in {"valid_isbn_10", "valid_isbn_13"}
+            or fact.media != "ebook"
         ):
             continue
-        if claim.normalized_value is None:
+        if fact.canonical_value is None:
             return None
         try:
-            canonical_isbns.add(isbn_identity(claim.normalized_value).canonical_isbn_13)
+            canonical_isbns.add(isbn_identity(fact.canonical_value).canonical_isbn_13)
         except (TypeError, ValueError):
             return None
     if len(canonical_isbns) != 1:
