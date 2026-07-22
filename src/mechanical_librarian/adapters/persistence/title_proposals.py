@@ -57,29 +57,6 @@ class SQLiteTitleProposalRepository:
         self._publication_clock = publication_clock
         self._provider_configuration_is_current = provider_configuration_is_current
 
-    def current(self, lineage: str) -> TitleProposalSet | None:
-        try:
-            with _read_transaction(self._connection):
-                _history, current = self._validate_lineage(lineage)
-            if current is not None and type(current) is not TitleProposalSet:
-                raise TitleProposalPersistenceError("synthetic proposal lineage has a live mode")
-            return current
-        except TitleProposalPersistenceError:
-            raise
-        except (sqlite3.Error, TypeError, ValueError, RecursionError):
-            raise TitleProposalPersistenceError("proposal state could not be read") from None
-
-    def store(self, proposal_set: TitleProposalSet) -> ProposalPersistence:
-        if type(proposal_set) is not TitleProposalSet:
-            raise TitleProposalPersistenceError("proposal publication input is invalid")
-        try:
-            with _transaction(self._connection):
-                return self._store(proposal_set)
-        except TitleProposalPersistenceError:
-            raise
-        except (sqlite3.Error, TitleProposalValueError, TypeError, ValueError, RecursionError):
-            raise TitleProposalPersistenceError("proposal publication failed safely") from None
-
     def current_live(self, lineage: str) -> LiveTitleProposalSet | None:
         try:
             with _read_transaction(self._connection):

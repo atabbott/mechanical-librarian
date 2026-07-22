@@ -21,6 +21,7 @@ from mechanical_librarian.application.title_proposals import (
     SyntheticTitleProposalReport,
 )
 from mechanical_librarian.bootstrap.composition import _run_epub_opening_report
+from mechanical_librarian.domain.epub_inspection import EpubInspection
 from mechanical_librarian.domain.epub_opening import OpeningField
 from mechanical_librarian.domain.epub_opening_evidence import EpubEvidenceLocator
 from mechanical_librarian.domain.title_proposals import LiveTitleProposalSet
@@ -149,7 +150,7 @@ class LiveTitleProposalTests(unittest.TestCase):
             current_title=None,
             evidence_id="evidence_" + "3" * 32,
             source_fingerprint=self.report.source_fingerprint.digest,
-            report=self.report,
+            inspection=EpubInspection.from_opening_report(self.report),
         )
         self.now = datetime(2026, 7, 21, tzinfo=timezone.utc)
 
@@ -224,7 +225,7 @@ class LiveTitleProposalTests(unittest.TestCase):
                 for claim in self.report.claims
             ),
         )
-        source = replace(self.source, report=report)
+        source = replace(self.source, inspection=EpubInspection.from_opening_report(report))
         repository = _Repository(source)
         self.source = source
 
