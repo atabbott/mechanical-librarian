@@ -400,20 +400,13 @@ different. Its sole positive output is one `needs_review`,
 normalized title, and it derives production applicability only for that
 positive report.
 
-The F09g decision matrix separately covers a missing or unloaded current title;
-missing or invalid local ISBNs; conflicting or ambiguously applicable ISBN
-claims; multiple distinct canonical local ISBNs; empty or unusable local title;
-disabled or failed provider; empty, unmatched, multiple, ambiguous,
-incompatible, malformed, or stale provider observation; equivalent current
-title; local/provider disagreement; and a stale input detected during final
-revalidation. Repeated equivalent claims of the same canonical local ISBN must
-remain one ISBN and must not alone force a zero-proposal result. Every listed
-negative condition produces the exact typed zero-proposal result and preserves
-usable evidence. Tests prove Hardcover book/edition/title are one lineage and
-that only local EPUB versus catalogue evidence is independent. Identical replay
-is duplicate-safe; changed inputs supersede without mutation; reverse or stale
-replay cannot rewind current applicability; publication is atomic across
-injected failures and concurrency.
+F09g tests cover representative inputs for each stable zero-proposal category:
+`source_not_ready`, `provider_not_ready`, `evidence_disagreement`, and
+`no_change`. Repeated equivalent claims of the same canonical local ISBN remain
+one ISBN and do not alone force a zero-proposal result. Tests also prove the
+positive join, direct-output privacy, exact replay, changed-input supersession,
+stale final revalidation, atomic publication rollback, and additive migration
+compatibility while preserving synthetic history as production-inapplicable.
 
 Negative authority tests for the complete 0.3 cohort deny review-case
 admission, human and AI decision, approval, cover/rich-field work, apply,

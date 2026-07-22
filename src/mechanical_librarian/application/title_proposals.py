@@ -42,6 +42,7 @@ from mechanical_librarian.domain.title_proposals import (
     TITLE_COMPARISON_VERSION,
     TITLE_PROPOSAL_POLICY_VERSION,
     TITLE_PROPOSAL_SCHEMA,
+    LiveTitleProposalSet,
     TitleProposalResult,
     TitleProposalSet,
     normalized_title_key,
@@ -138,7 +139,7 @@ class _ProviderObservation:
 
 @dataclass(frozen=True)
 class ProposalPersistence:
-    proposal_set: TitleProposalSet
+    proposal_set: TitleProposalSet | LiveTitleProposalSet
     replayed: bool
     current: bool
     current_set_id: str
@@ -147,7 +148,7 @@ class ProposalPersistence:
 
     def __post_init__(self) -> None:
         if (
-            type(self.proposal_set) is not TitleProposalSet
+            type(self.proposal_set) not in {TitleProposalSet, LiveTitleProposalSet}
             or type(self.replayed) is not bool
             or type(self.current) is not bool
             or type(self.current_set_id) is not str
@@ -171,9 +172,15 @@ class TitleProposalRepository(Protocol):
 class SyntheticTitleProposalReport:
     persistence: ProposalPersistence
 
+    def __post_init__(self) -> None:
+        if type(self.persistence.proposal_set) is not TitleProposalSet:
+            raise ValueError("synthetic proposal report is malformed")
+
     @property
     def proposal_set(self) -> TitleProposalSet:
-        return self.persistence.proposal_set
+        value = self.persistence.proposal_set
+        assert type(value) is TitleProposalSet
+        return value
 
     def to_data(self) -> dict[str, object]:
         value = self.proposal_set.to_data()

@@ -413,6 +413,36 @@ class SQLiteEpubOpeningEvidenceRepository:
         except sqlite3.Error:
             return None
 
+    def current_evidence_is_valid(
+        self,
+        source: ResolvedEpubSource,
+        source_fingerprint: str,
+        governing_digest: str,
+        evidence_id: str,
+    ) -> bool:
+        """Validate one pointed current result through the owning F07b model."""
+
+        if (
+            type(source) is not ResolvedEpubSource
+            or not _digest(source_fingerprint)
+            or not _digest(governing_digest)
+            or type(evidence_id) is not str
+            or not evidence_id.startswith("evidence_")
+            or len(evidence_id) != 41
+        ):
+            raise ValueError("current EPUB evidence identity is invalid")
+        result = self._reusable(
+            epub_work_key(source, source_fingerprint, governing_digest),
+            source,
+            source_fingerprint,
+            governing_digest,
+        )
+        if result is None:
+            return False
+        if not result.current_applicable or result.evidence_id != evidence_id:
+            raise ValueError("current EPUB evidence pointer is inconsistent")
+        return True
+
     def claim(
         self,
         work_id: str,

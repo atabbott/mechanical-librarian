@@ -614,10 +614,11 @@ class SqliteFoundationTests(unittest.TestCase):
             self.assertEqual(migrate(connection), CURRENT_VERSION)
             self.assertEqual(
                 connection.execute(
-                    "SELECT canonical_set FROM synthetic_title_proposal_sets WHERE set_id = ?",
+                    "SELECT canonical_set,execution_mode FROM "
+                    "synthetic_title_proposal_sets WHERE set_id = ?",
                     (proposal.set_id,),
                 ).fetchone(),
-                (proposal.to_json(),),
+                (proposal.to_json(), "synthetic_preview"),
             )
             objects = {
                 (kind, name)

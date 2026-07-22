@@ -81,10 +81,11 @@ upgrade, and restore the verified pre-migration copy to roll back. See
 [Upgrades and migrations](upgrades.md) and
 [Backups and recovery](backups-and-recovery.md).
 
-## Deferred live binding
+## Separate live binding
 
 F09a deliberately does not join a production F06 report to a current
-Audiobookshelf snapshot. A later slice must define configured-media resolution,
-snapshot/file freshness, join identity, operational retry, and recovery before
-that path can exist. Later preview slices may consume this history only while
-preserving its visibly synthetic, production-inapplicable lineage.
+Audiobookshelf snapshot. The separate
+[`live-title-proposal-report`](live-title-proposal-report.md) command owns that
+join. Schema 12 preserves every existing F09a row as `synthetic_preview` and
+production-inapplicable; live results use a distinct execution mode in the
+shared append-only proposal history.

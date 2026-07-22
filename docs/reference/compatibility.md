@@ -249,10 +249,10 @@ reclassify schema-6 `synthetic_preview` history. F09f configured Hardcover
 title/identity and F09g live report-only proposals are separate 0.3
 compatibility boundaries and must not reclassify F09a, F09b, or F10a preview
 history. F09f's activated boundary is tested and supported by its exact
-activation registry; F09g creates no claim until its slice qualifies and
-merges. F09c fallback identity and F10b production case
-admission remain separate planned 1.0 compatibility claims. F11 is an
-independent synthetic reviewer path; F17 is their convergence gate.
+activation registry; F09g adds the separately versioned live proposal set and
+schema-12 execution-mode discriminator. F09c fallback identity and F10b
+production case admission remain separate planned 1.0 compatibility claims.
+F11 is an independent synthetic reviewer path; F17 is their convergence gate.
 
 ## Current 0.3 live title-report compatibility contract
 
@@ -269,22 +269,21 @@ private matched report is validated and deleted without retaining an
 identifier-derived digest. F09f remains
 target-independent and claims no target join or proposal compatibility.
 
-F09g will bind the current target, snapshot, source/file identity, F07b
+F09g binds the current target, snapshot, source/file identity, F07b
 evidence, F09f observation, comparison policy, and proposal policy. Exactly one
 distinct canonical checksum-valid edition-applicable local ISBN must be
 equivalent to the ISBN of one unique compatible Hardcover ebook edition
 belonging to one book, and the one usable current F07 title and Hardcover title
 must agree. With a loaded current Audiobookshelf title that is empty or
-materially different, the sole positive output will be one `needs_review`,
+materially different, the sole positive output is one `needs_review`,
 `production_report_only` proposal whose value is the exact current F07
 normalized title.
 
-A missing or unloaded current title; a missing or invalid local ISBN;
-conflicting or ambiguously applicable ISBN claims; multiple distinct canonical
-local ISBNs; no match; multiple, ambiguous, or incompatible provider matches;
-stale target, local, or provider state; disabled or failed provider;
-current-title equivalence; or local/provider title disagreement will have its
-own typed zero-proposal compatibility outcome. Repeated equivalent claims of
+A missing, invalid, conflicting, ambiguous, or stale local input produces
+`source_not_ready`. Disabled, failed, missing, ambiguous, incompatible, or
+stale provider state produces `provider_not_ready`; title disagreement produces
+`evidence_disagreement`; and current-title equivalence produces `no_change`.
+Repeated equivalent claims of
 the same canonical local ISBN will remain one ISBN and will not alone force a
 zero-proposal result. Valid local evidence will be retained.
 Semantically duplicate provider rows may be normalized only under the frozen
@@ -297,9 +296,8 @@ Identical current inputs will replay without duplicate state. A changed bound
 input will create a superseding result and cannot rewrite or revive earlier
 history. Only the one positive `needs_review`, `production_report_only` result
 will derive production applicability for the report; zero-proposal results and
-all 0.2 synthetic history will remain structurally ineligible. This planned
-contract adds no current tested or supported compatibility claim and promises
-no review admission, decision, approval, AI, apply, target/media write,
+all 0.2 synthetic history will remain structurally ineligible. This contract
+adds no review admission, decision, approval, AI, apply, target/media write,
 destructive, tagging, or release publication.
 
 ## Audiobookshelf support

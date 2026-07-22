@@ -154,6 +154,19 @@ then migration, restart, recovery,
 publication rollback, stale-fence rejection, and currentness without live
 provider or production-database authority.
 
+The F09g proposal migration is additive and forward-only from every genuine
+schema prefix through schema 11. Migration 12 adds an `execution_mode`
+discriminator to the existing proposal-history table. Existing rows retain
+`synthetic_preview`; no canonical proposal, pointer, inventory, EPUB evidence,
+or provider-work row is rewritten. Live publication inserts immutable
+`production_report_only` history and advances the shared current pointer in one
+transaction after final evidence revalidation. Before upgrading important
+state, retain a verified pre-schema-12 copy. Downgrade requires stopping the
+newer process and restoring that copy. After upgrade, run `state-check`, replay
+one synthetic proposal, and run one isolated
+[`live-title-proposal-report`](live-title-proposal-report.md) against report-only
+state.
+
 ## Verification
 
 After upgrade:

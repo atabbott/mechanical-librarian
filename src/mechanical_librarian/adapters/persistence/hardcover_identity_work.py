@@ -66,7 +66,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                     if now < _parse_time(current_since):
                         raise IdentityWorkPersistenceError("identity work chronology is invalid")
                     if status == "matched" and now <= _parse_time(expires_at):
-                        observation = self._validate_current_match(
+                        observation = self.validate_current_match(
                             reference, observation_id, current_since, expires_at
                         )
                         if observation.reusable:
@@ -82,7 +82,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                         expired = True
                         expired_generation = generation
                     if status == "matched":
-                        self._validate_current_match(
+                        self.validate_current_match(
                             reference, observation_id, current_since, expires_at
                         )
                         self._connection.execute(
@@ -278,7 +278,7 @@ class SQLiteHardcoverIdentityWorkRepository:
                         raise IdentityWorkPersistenceError(
                             "current identity work is inconsistent"
                         )
-                    observation = self._validate_current_match(
+                    observation = self.validate_current_match(
                         reference,
                         observation_id,
                         current_since,
@@ -1229,13 +1229,13 @@ class SQLiteHardcoverIdentityWorkRepository:
             raise IdentityWorkPersistenceError("identity work retry history is corrupt")
         return candidate
 
-    def _validate_current_match(
+    def validate_current_match(
         self,
         reference: IdentityWorkReference,
         observation_id: str,
         current_since: str,
         expires_at: str,
-    ) -> None:
+    ) -> IdentityWorkObservation:
         rows = self._connection.execute(
             "SELECT g.state,g.fence,g.updated_at,r.outcome,r.fence,r.published_at,o.observation_id,o.canonical_observation,o.created_at "
             "FROM hardcover_identity_generations g "

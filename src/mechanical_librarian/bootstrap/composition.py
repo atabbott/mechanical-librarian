@@ -80,7 +80,11 @@ from mechanical_librarian.application.connection_probe import (
     ConnectionProbeResult,
     InspectLibraryConnection,
 )
-from mechanical_librarian.application.configuration import ConfigurationError
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    ConfigurationError,
+    HardcoverProviderConfiguration,
+)
 from mechanical_librarian.application.hardcover_identity import (
     DurableWorkPreviewReport,
     FixedAdapterPreviewReport,
@@ -164,6 +168,10 @@ from mechanical_librarian.application.title_proposals import (
     scenario_lineage,
     scenario_named,
 )
+from mechanical_librarian.application.live_title_proposals import (
+    LiveTitleProposalReport,
+    ProposeLiveTitle,
+)
 from mechanical_librarian.application.title_review_cases import (
     InspectSyntheticTitleReviewCase,
     SyntheticTitleReviewCaseReport,
@@ -173,6 +181,7 @@ from mechanical_librarian.domain.identifiers import (
     Fingerprint,
     LibraryId,
     SchemaVersion,
+    TargetId,
     canonical_json,
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
@@ -181,6 +190,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceLocator,
     EpubEvidenceMode,
     EpubEvidenceResult,
+    ResolvedEpubSource,
     epub_governing_digest,
 )
 from mechanical_librarian.domain.local_evidence import (
@@ -254,6 +264,9 @@ from mechanical_librarian.infrastructure.persistence.sqlite import (
     publish_staged_state,
     staged_state,
     validate_current_schema,
+)
+from mechanical_librarian.adapters.persistence.live_title_evidence import (
+    SQLiteLiveTitleEvidenceReader,
 )
 from mechanical_librarian.infrastructure.hardcover_identity_gate import (
     DescriptorHardcoverIdentityGate,
@@ -1405,6 +1418,185 @@ def _epub_material_configuration(configuration, mappings) -> dict[str, object]:
     }
 
 
+def _run_live_title_proposal_report(
+    configuration_path: Path,
+    database: Path,
+    target_reference: str,
+    snapshot_reference: str,
+    file_index: int,
+) -> LiveTitleProposalReport:
+    """Publish one current live proposal without provider or target egress."""
+
+    configuration = load_configuration_file(configuration_path)
+    mappings = _inventory_mount_mappings(configuration)
+    mount_digests = tuple(
+        sorted(mapping.configuration_digest for mapping in mappings)
+    )
+    if not mount_digests:
+        raise ConfigurationError("live title proposal requires a read-only ebook mount")
+    locator = EpubEvidenceLocator(target_reference, snapshot_reference, file_index)
+    preflight(database)
+    if not path_entry_exists(database):
+        raise SchemaError("live title proposal state is unavailable")
+    package_limits = replace(
+        configuration.evidence.epub_package,
+        source_archive_bytes=min(
+            configuration.evidence.epub_package.source_archive_bytes,
+            configuration.evidence.maximum_document_bytes,
+        ),
+    )
+    limits = replace(
+        configuration.evidence.epub_opening,
+        package=package_limits,
+        text_characters_per_selection=min(
+            configuration.evidence.epub_opening.text_characters_per_selection,
+            configuration.evidence.maximum_text_characters,
+        ),
+    )
+    governing = epub_governing_digest(
+        limits, _epub_material_configuration(configuration, mappings)
+    )
+    provider = configuration.hardcover_provider
+    connection = None
+    try:
+        connection = connect_existing(database)
+        migrate(connection)
+        epub_repository = SQLiteEpubOpeningEvidenceRepository(connection)
+        evidence_reader = SQLiteLiveTitleEvidenceReader(
+            connection,
+            epub_repository,
+            epub_repository,
+            SQLiteHardcoverIdentityWorkRepository(connection),
+            lambda source: _fingerprint_live_epub_source(configuration, source),
+            governing,
+            lambda target: _live_title_source_is_configured(
+                configuration_path,
+                configuration,
+                target,
+                mount_digests,
+                governing,
+            ),
+        )
+        repository = SQLiteTitleProposalRepository(
+            connection,
+            source_reader=evidence_reader,
+            provider_reader=evidence_reader,
+            publication_clock=lambda: datetime.now(timezone.utc),
+            provider_configuration_is_current=lambda: (
+                _live_title_provider_is_configured(
+                    configuration_path, provider
+                )
+            ),
+        )
+        return ProposeLiveTitle(repository).run(
+            locator,
+            mount_digests,
+            provider_enabled=provider.enabled,
+            authority_revision=provider.authority_revision,
+            observed_at=datetime.now(timezone.utc),
+        )
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _fingerprint_live_epub_source(
+    configuration: ApplicationConfiguration, source: ResolvedEpubSource
+) -> str:
+    mounts = tuple(
+        mount
+        for mount in configuration.media_mounts
+        if mount.name == source.mount_name
+        and _mount_configuration_digest(mount) == source.mount_configuration_digest
+    )
+    if len(mounts) != 1:
+        raise ValueError("resolved EPUB mount changed")
+    maximum = min(
+        configuration.evidence.epub_package.source_archive_bytes,
+        configuration.evidence.maximum_document_bytes,
+    )
+    opened = open_local_media(mounts[0].container_path, source.relative_path)
+    replacement = None
+    try:
+        before_identity = opened.identity
+        digest = sha256_descriptor(
+            opened.descriptor, opened.length, maximum=maximum
+        )
+        after_identity = descriptor_identity(opened.descriptor)
+        replacement = open_local_media(
+            mounts[0].container_path, source.relative_path
+        )
+        if before_identity != after_identity or replacement.identity != before_identity:
+            raise LocalMediaError("local media source changed while reading")
+        return digest
+    finally:
+        if replacement is not None:
+            os.close(replacement.descriptor)
+        os.close(opened.descriptor)
+
+
+def _live_title_source_is_configured(
+    configuration_path: Path,
+    expected_configuration: ApplicationConfiguration,
+    target: TargetId,
+    expected_mount_digests: tuple[str, ...],
+    expected_governing_digest: str,
+) -> bool:
+    configuration = load_configuration_file(configuration_path)
+    mappings = _inventory_mount_mappings(configuration)
+    current_mount_digests = tuple(
+        sorted(mapping.configuration_digest for mapping in mappings)
+    )
+    package_limits = replace(
+        configuration.evidence.epub_package,
+        source_archive_bytes=min(
+            configuration.evidence.epub_package.source_archive_bytes,
+            configuration.evidence.maximum_document_bytes,
+        ),
+    )
+    limits = replace(
+        configuration.evidence.epub_opening,
+        package=package_limits,
+        text_characters_per_selection=min(
+            configuration.evidence.epub_opening.text_characters_per_selection,
+            configuration.evidence.maximum_text_characters,
+        ),
+    )
+    expected_selected = tuple(
+        configured
+        for configured in expected_configuration.connections
+        if configured.adapter == "audiobookshelf"
+        and configured.connection_id == target.connection
+        and target.library.value in configured.enabled_libraries
+    )
+    selected = tuple(
+        configured
+        for configured in configuration.connections
+        if configured.adapter == "audiobookshelf"
+        and configured.connection_id == target.connection
+        and target.library.value in configured.enabled_libraries
+    )
+    return (
+        "epub" in configuration.evidence.enabled_formats
+        and len(expected_selected) == 1
+        and len(selected) == 1
+        and selected[0] == expected_selected[0]
+        and current_mount_digests == expected_mount_digests
+        and epub_governing_digest(
+            limits, _epub_material_configuration(configuration, mappings)
+        )
+        == expected_governing_digest
+    )
+
+
+def _live_title_provider_is_configured(
+    configuration_path: Path,
+    expected_provider: HardcoverProviderConfiguration,
+) -> bool:
+    provider = load_configuration_file(configuration_path).hardcover_provider
+    return provider == expected_provider
+
+
 def _run_synthetic_title_proposal_report(
     database: Path, scenario_name: str
 ) -> SyntheticTitleProposalReport:
@@ -1987,8 +2179,8 @@ def _run_hardcover_durable_work_preview(
                 ).fetchone() is None
             if (
                 not migration_rollback_verified
-                or migrate(connection) != 11
-                or migrate(connection) != 11
+                or migrate_to_version(connection, 11) != 11
+                or migrate_to_version(connection, 11) != 11
             ):
                 raise SchemaError("current schema migration proof failed")
             migration_idempotence_verified = connection.execute(
@@ -3079,6 +3271,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         epub_package_report_runner=_run_epub_package_report,
         epub_opening_report_runner=_run_epub_opening_report,
         epub_opening_evidence_runner=_run_epub_opening_evidence,
+        live_title_proposal_runner=_run_live_title_proposal_report,
         synthetic_title_proposal_runner=_run_synthetic_title_proposal_report,
         hardcover_title_proposal_runner=_run_hardcover_title_proposal_report,
         synthetic_title_review_case_runner=_run_synthetic_title_review_case_report,

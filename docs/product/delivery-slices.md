@@ -181,16 +181,16 @@ and rich Hardcover work #209 remain 1.0.0 scope.
 
 This internal checkpoint connects current Audiobookshelf state, durable local
 EPUB evidence, and one configured Hardcover observation to report one
-trustworthy live title proposal or an exact typed zero-proposal result. It does
-not publish a release or add review admission, a human or AI decision, apply,
-target or media writes, destructive authority, or a tag.
+trustworthy live title proposal or one of four stable zero-proposal results. It
+does not publish a release or add review admission, a human or AI decision,
+apply, target or media writes, destructive authority, or a tag.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Increment branch stem/example |
 | --- | --- | --- | --- | --- |
 | F07a EPUB opening-matter evidence report | #143 | One safely readable EPUB produces a bounded transient opening-matter claim report with exact provenance or a typed no-applicable/rejected outcome. | #30, #31, #188; #25 and #26 are non-closing inputs | `slice/f07a-epub-opening-evidence` |
 | F07b Durable EPUB evidence round trip | #228 | Completed F07a evidence executes durably for one isolated target and snapshot, survives restart, reuses compatible results, supersedes stale applicability, and remains inspectable without persistence of decoded content. | #32; #25 is a non-closing input | `slice/f07b-durable-epub-evidence` |
 | F09f Supported Hardcover title and identity provider | #239 | Disabled-by-default configured Hardcover work persists one bounded current title plus strict ISBN-backed book and compatible ebook-edition identity as one provider lineage, with restart, reuse, freshness, invalidation, and live qualification. It remains target-independent and owns no proposal authority. | #242; completed F09b #204 | `slice/f09f-hardcover-title-identity` |
-| F09g Live Audiobookshelf title proposal | #238 | One exact current Audiobookshelf ebook snapshot, selected durable local title and edition-applicable ISBN evidence, and one current compatible Hardcover observation produce either one immutable `needs_review`, `production_report_only` proposal whose value is the exact current F07 normalized title or an exact typed zero-proposal result without review admission or write authority. | #243; F07b #228 and F09f #239 | `slice/f09g-live-title-proposal` |
+| F09g Live Audiobookshelf title proposal | #238 | One exact current Audiobookshelf ebook snapshot, selected durable local title and edition-applicable ISBN evidence, and one current compatible Hardcover observation produce either one immutable `needs_review`, `production_report_only` proposal whose value is the exact current F07 normalized title or one of `source_not_ready`, `provider_not_ready`, `evidence_disagreement`, and `no_change`, without review admission or write authority. | #243; F07b #228 and F09f #239 | `slice/f09g-live-title-proposal` |
 
 F07a freezes `epub-opening-report-v1`, `epub-opening-limits-v1`, and the
 selection/parser/projection/normalization/vocabulary compatibility identities.
@@ -234,11 +234,12 @@ Audiobookshelf title that is empty or materially different. Repeated equivalent
 claims of that same canonical local ISBN do not force a zero-proposal result;
 conflicting, ambiguously applicable, or multiple distinct ISBNs do. The sole
 positive proposal value is the exact current F07 normalized title. Missing,
-unloaded, invalid, conflicting, ambiguously applicable, multiple distinct,
-ambiguous, incompatible, stale, disabled, failed, equivalent, or disagreeing
-inputs produce their exact typed zero-proposal result while preserving usable
-local evidence. The independence claim is the local EPUB evidence versus the
-external Hardcover catalogue lineage.
+invalid, conflicting, ambiguous, or stale local inputs produce
+`source_not_ready`; disabled, failed, missing, ambiguous, incompatible, or stale
+provider state produces `provider_not_ready`; disagreement produces
+`evidence_disagreement`; and equivalence produces `no_change`. Usable local
+evidence is preserved. The independence claim is the local EPUB evidence versus
+the external Hardcover catalogue lineage.
 
 ### 0.3.0 checkpoint exit
 
@@ -252,8 +253,8 @@ external Hardcover catalogue lineage.
 - F09g atomically revalidates the live target and both evidence lineages, then
   persists and reports the one eligible `needs_review`,
   `production_report_only` proposal whose value is the exact current F07
-  normalized title, or the exact zero-proposal result, with replay,
-  supersession, and evidence preservation; and
+  normalized title, or one of the four stable zero-proposal results, with
+  replay, supersession, and evidence preservation; and
 - the checkpoint contains no review admission, human or AI decision, approval,
   apply, target or media write, destructive authority, tag, GitHub Release, or
   release publication.

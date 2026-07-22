@@ -19,8 +19,10 @@ from typing import Self
 
 
 TITLE_PROPOSAL_SCHEMA = "title-proposal-set-v1"
+LIVE_TITLE_PROPOSAL_SCHEMA = "live-title-proposal-set-v1"
 TITLE_COMPARISON_VERSION = "unicode-title-comparison-v1"
 TITLE_PROPOSAL_POLICY_VERSION = "synthetic-title-policy-v1"
+LIVE_TITLE_PROPOSAL_POLICY_VERSION = "live-title-policy-v1"
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _HARDCOVER_PROVIDER_VERSIONS = frozenset(
@@ -34,6 +36,7 @@ class TitleProposalValueError(ValueError):
 
 class ProposalExecutionMode(StrEnum):
     SYNTHETIC_PREVIEW = "synthetic_preview"
+    PRODUCTION_REPORT_ONLY = "production_report_only"
 
 
 class TitleProposalResult(StrEnum):
@@ -50,6 +53,28 @@ class TitleProposalResult(StrEnum):
     PROVIDER_EMPTY = "provider_empty"
     PROVIDER_NO_MATCH = "provider_no_match"
     STALE_INPUT = "stale_input"
+    SOURCE_NOT_READY = "source_not_ready"
+    PROVIDER_NOT_READY = "provider_not_ready"
+    EVIDENCE_DISAGREEMENT = "evidence_disagreement"
+
+
+_SYNTHETIC_TITLE_RESULTS = frozenset(
+    {
+        TitleProposalResult.NEEDS_REVIEW,
+        TitleProposalResult.NO_CHANGE,
+        TitleProposalResult.CURRENT_MISSING,
+        TitleProposalResult.CURRENT_UNAVAILABLE,
+        TitleProposalResult.LOCAL_PROVIDER_CONFLICT,
+        TitleProposalResult.F06_MISSING,
+        TitleProposalResult.F06_AMBIGUOUS,
+        TitleProposalResult.F06_UNUSABLE,
+        TitleProposalResult.PROVIDER_DISABLED,
+        TitleProposalResult.PROVIDER_FAILED,
+        TitleProposalResult.PROVIDER_EMPTY,
+        TitleProposalResult.PROVIDER_NO_MATCH,
+        TitleProposalResult.STALE_INPUT,
+    }
+)
 
 
 class SyntheticTitleState(StrEnum):
@@ -93,6 +118,241 @@ class SyntheticTitleProposal:
 
 
 @dataclass(frozen=True)
+class LiveTitleProposalSet:
+    set_id: str
+    identity_digest: str
+    lineage: str
+    lineage_revision: int
+    previous_set_id: str | None
+    result: TitleProposalResult
+    manifest: Mapping[str, object]
+    proposals: tuple[SyntheticTitleProposal, ...]
+    mode: ProposalExecutionMode = ProposalExecutionMode.PRODUCTION_REPORT_ONLY
+
+    def __post_init__(self) -> None:
+        if (
+            not _IDENTIFIER.fullmatch(self.set_id)
+            or not _DIGEST.fullmatch(self.identity_digest)
+            or not _IDENTIFIER.fullmatch(self.lineage)
+            or type(self.lineage_revision) is not int
+            or not 1 <= self.lineage_revision <= 1_000_000
+            or (
+                self.previous_set_id is not None
+                and not _IDENTIFIER.fullmatch(self.previous_set_id)
+            )
+            or type(self.result) is not TitleProposalResult
+            or self.result
+            not in {
+                TitleProposalResult.NEEDS_REVIEW,
+                TitleProposalResult.SOURCE_NOT_READY,
+                TitleProposalResult.PROVIDER_NOT_READY,
+                TitleProposalResult.EVIDENCE_DISAGREEMENT,
+                TitleProposalResult.NO_CHANGE,
+            }
+            or self.mode is not ProposalExecutionMode.PRODUCTION_REPORT_ONLY
+            or not isinstance(self.manifest, Mapping)
+            or type(self.proposals) is not tuple
+            or any(type(item) is not SyntheticTitleProposal for item in self.proposals)
+        ):
+            raise TitleProposalValueError("live proposal set is invalid")
+        try:
+            object.__setattr__(self, "manifest", _deep_freeze(self.manifest))
+        except (TypeError, ValueError, RecursionError):
+            raise TitleProposalValueError("live proposal manifest is invalid") from None
+        required = {
+            "comparison_version",
+            "file_index",
+            "inventory_fingerprint",
+            "lineage",
+            "lineage_revision",
+            "local_evidence_id",
+            "mode",
+            "mount_configuration_digest",
+            "mount_configuration_set_digest",
+            "policy_version",
+            "previous_set_id",
+            "proposal_schema",
+            "provider_evidence_id",
+            "provider_status",
+            "snapshot_reference",
+            "source_fingerprint",
+            "target_reference",
+        }
+        if set(self.manifest) != required:
+            raise TitleProposalValueError("live proposal manifest has unknown or missing fields")
+        if (
+            self.manifest["mode"] != self.mode.value
+            or self.manifest["lineage"] != self.lineage
+            or self.manifest["lineage_revision"] != self.lineage_revision
+            or self.manifest["previous_set_id"] != self.previous_set_id
+            or self.manifest["proposal_schema"] != LIVE_TITLE_PROPOSAL_SCHEMA
+            or self.manifest["comparison_version"] != TITLE_COMPARISON_VERSION
+            or self.manifest["policy_version"] != LIVE_TITLE_PROPOSAL_POLICY_VERSION
+            or type(self.manifest["file_index"]) is not int
+            or not 0 <= self.manifest["file_index"] <= 10_000
+            or self.manifest["provider_status"] not in {"ready", "not_ready"}
+        ):
+            raise TitleProposalValueError("live proposal manifest disagrees with its envelope")
+        for field in (
+            "inventory_fingerprint",
+            "mount_configuration_digest",
+            "mount_configuration_set_digest",
+            "source_fingerprint",
+        ):
+            value = self.manifest[field]
+            if value is not None and (type(value) is not str or _DIGEST.fullmatch(value) is None):
+                raise TitleProposalValueError("live proposal evidence digest is invalid")
+        for field, pattern in (
+            ("target_reference", r"target_[0-9a-f]{32}"),
+            ("snapshot_reference", r"snapshot_[0-9a-f]{32}"),
+            ("local_evidence_id", r"evidence_[0-9a-f]{32}"),
+            ("provider_evidence_id", r"[0-9a-f]{64}"),
+        ):
+            value = self.manifest[field]
+            if value is not None and (type(value) is not str or re.fullmatch(pattern, value) is None):
+                raise TitleProposalValueError("live proposal evidence reference is invalid")
+        if len(self.proposals) != (1 if self.result is TitleProposalResult.NEEDS_REVIEW else 0):
+            raise TitleProposalValueError("live proposal count does not match result")
+        if self.result is TitleProposalResult.NEEDS_REVIEW and (
+            self.manifest["provider_status"] != "ready"
+            or any(
+                self.manifest[field] is None
+                for field in (
+                    "inventory_fingerprint",
+                    "local_evidence_id",
+                    "mount_configuration_digest",
+                    "mount_configuration_set_digest",
+                    "provider_evidence_id",
+                    "snapshot_reference",
+                    "source_fingerprint",
+                    "target_reference",
+                )
+            )
+        ):
+            raise TitleProposalValueError(
+                "needs-review result requires ready live evidence"
+            )
+        expected = _identity_digest(self.manifest, self.result, self.proposals)
+        if expected != self.identity_digest or self.set_id != f"ps-{expected[:60]}":
+            raise TitleProposalValueError("live proposal identity does not match its semantics")
+
+    @property
+    def production_applicable(self) -> bool:
+        return self.result is TitleProposalResult.NEEDS_REVIEW
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "identity_digest": self.identity_digest,
+            "lineage": self.lineage,
+            "lineage_revision": self.lineage_revision,
+            "manifest": _deep_thaw(self.manifest),
+            "mode": self.mode.value,
+            "previous_set_id": self.previous_set_id,
+            "production_applicable": self.production_applicable,
+            "proposals": [item.to_data() for item in self.proposals],
+            "result": self.result.value,
+            "schema": LIVE_TITLE_PROPOSAL_SCHEMA,
+            "set_id": self.set_id,
+        }
+
+    def to_json(self) -> str:
+        serialized = _canonical_json(self.to_data())
+        if len(serialized.encode("utf-8")) > 131_072:
+            raise TitleProposalValueError("live proposal report is too large")
+        return serialized
+
+    @classmethod
+    def from_json(cls, serialized: str) -> Self:
+        if type(serialized) is not str or len(serialized.encode("utf-8")) > 131_072:
+            raise TitleProposalValueError("live proposal JSON is invalid")
+        try:
+            value = json.loads(serialized, object_pairs_hook=_unique_object)
+            if type(value) is not dict or set(value) != {
+                "identity_digest", "lineage", "lineage_revision", "manifest", "mode",
+                "previous_set_id", "production_applicable", "proposals", "result",
+                "schema", "set_id",
+            } or value["schema"] != LIVE_TITLE_PROPOSAL_SCHEMA:
+                raise TitleProposalValueError("live proposal JSON has unknown or missing fields")
+            result = TitleProposalResult(value["result"])
+            if value["production_applicable"] is not (result is TitleProposalResult.NEEDS_REVIEW):
+                raise TitleProposalValueError("live proposal JSON has invalid authority")
+            raw_proposals = value["proposals"]
+            if type(raw_proposals) is not list:
+                raise TitleProposalValueError("live proposal JSON is invalid")
+            proposals = tuple(
+                SyntheticTitleProposal(
+                    id=item["id"],
+                    current_value=item["current_value"],
+                    proposed_value=item["proposed_value"],
+                    kind=item["kind"],
+                    disposition=item["disposition"],
+                )
+                for item in raw_proposals
+                if type(item) is dict
+                and set(item) == {
+                    "current_value", "disposition", "field", "id", "kind", "proposed_value"
+                }
+                and item["field"] == "title"
+            )
+            if len(proposals) != len(raw_proposals):
+                raise TitleProposalValueError("live proposal JSON is invalid")
+            proposal_set = cls(
+                set_id=value["set_id"],
+                identity_digest=value["identity_digest"],
+                lineage=value["lineage"],
+                lineage_revision=value["lineage_revision"],
+                previous_set_id=value["previous_set_id"],
+                result=result,
+                manifest=value["manifest"],
+                proposals=proposals,
+                mode=ProposalExecutionMode(value["mode"]),
+            )
+        except TitleProposalValueError:
+            raise
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, RecursionError):
+            raise TitleProposalValueError("live proposal JSON is invalid") from None
+        if proposal_set.to_json() != serialized:
+            raise TitleProposalValueError("live proposal JSON is not canonical")
+        return proposal_set
+
+
+def live_proposal_set_from_manifest(
+    *,
+    manifest: dict[str, object],
+    result: TitleProposalResult,
+    current_value: str | None = None,
+    proposed_value: str | None = None,
+) -> LiveTitleProposalSet:
+    proposals: tuple[SyntheticTitleProposal, ...] = ()
+    if result is TitleProposalResult.NEEDS_REVIEW:
+        if proposed_value is None:
+            raise TitleProposalValueError("needs-review result requires a proposed title")
+        kind = "fill_empty" if current_value is None else "replace_populated"
+        proposal_id = _deterministic_proposal_id(
+            manifest,
+            result,
+            current_value=current_value,
+            proposed_value=proposed_value,
+            kind=kind,
+            disposition="needs_review",
+        )
+        proposals = (SyntheticTitleProposal(
+            proposal_id, current_value, proposed_value, kind
+        ),)
+    digest = _identity_digest(manifest, result, proposals)
+    return LiveTitleProposalSet(
+        set_id=f"ps-{digest[:60]}",
+        identity_digest=digest,
+        lineage=manifest["lineage"],
+        lineage_revision=manifest["lineage_revision"],
+        previous_set_id=manifest["previous_set_id"],
+        result=result,
+        manifest=manifest,
+        proposals=proposals,
+    )
+
+
+@dataclass(frozen=True)
 class TitleProposalSet:
     set_id: str
     identity_digest: str
@@ -116,7 +376,10 @@ class TitleProposalSet:
             raise TitleProposalValueError("proposal-set revision is invalid")
         if self.previous_set_id is not None and not _IDENTIFIER.fullmatch(self.previous_set_id):
             raise TitleProposalValueError("proposal-set predecessor is invalid")
-        if type(self.result) is not TitleProposalResult:
+        if (
+            type(self.result) is not TitleProposalResult
+            or self.result not in _SYNTHETIC_TITLE_RESULTS
+        ):
             raise TitleProposalValueError("proposal-set result is invalid")
         if type(self.mode) is not ProposalExecutionMode or self.mode is not ProposalExecutionMode.SYNTHETIC_PREVIEW:
             raise TitleProposalValueError("proposal-set mode is invalid")
@@ -478,6 +741,7 @@ def _title(value: object, label: str) -> str:
         or len(value) > 16_384
         or "\x00" in value
         or any(ord(character) < 32 and character not in "\t\n\r" for character in value)
+        or any(unicodedata.category(character) == "Cs" for character in value)
     ):
         raise TitleProposalValueError(f"{label} is invalid")
     return value

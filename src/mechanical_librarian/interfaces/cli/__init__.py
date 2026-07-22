@@ -59,6 +59,10 @@ from mechanical_librarian.application.title_proposals import (
     SyntheticTitleProposalReport,
     render_title_proposal_text,
 )
+from mechanical_librarian.application.live_title_proposals import (
+    LiveTitleProposalReport,
+    render_live_title_proposal_text,
+)
 from mechanical_librarian.application.title_review_cases import (
     SyntheticTitleReviewCaseReport,
     render_title_review_case_text,
@@ -96,6 +100,7 @@ SyntheticTitleProposalRunner = Callable[[Path, str], SyntheticTitleProposalRepor
 HardcoverTitleProposalRunner = Callable[[Path, Path | None], SyntheticTitleProposalReport]
 SyntheticTitleReviewCaseRunner = Callable[[Path, str], SyntheticTitleReviewCaseReport]
 EpubOpeningEvidenceRunner = Callable[[Path, Path, str, str, int], EpubEvidenceResult]
+LiveTitleProposalRunner = Callable[[Path, Path, str, str, int], LiveTitleProposalReport]
 HardcoverIdentityRunner = Callable[
     [Path, Path, Path, HardcoverExecutionPolicy], HardcoverIdentityReport
 ]
@@ -172,6 +177,7 @@ _EPUB_PACKAGE_EXIT = {
     LocalEvidenceOutcome.INTERNAL_FAILURE: 70,
 }
 _EPUB_EVIDENCE_FAILURE = "EPUB opening evidence failed safely.\n"
+_LIVE_TITLE_PROPOSAL_FAILURE = "Live title proposal report failed safely.\n"
 _HARDCOVER_IDENTITY_FAILURE = "Hardcover identity report failed safely.\n"
 
 
@@ -301,6 +307,19 @@ def _title_proposal_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
     parser.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
+    parser.add_argument("--format", choices=("json", "text"), default="json")
+    return parser
+
+
+def _live_title_proposal_parser() -> argparse.ArgumentParser:
+    parser = _TitleArgumentParser(
+        prog="mechanical-librarian live-title-proposal-report"
+    )
+    parser.add_argument("--config", required=True, metavar="PATH", type=Path)
+    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
+    parser.add_argument("--target", required=True, metavar="OPAQUE", type=_opaque_target)
+    parser.add_argument("--snapshot", required=True, metavar="OPAQUE", type=_opaque_snapshot)
+    parser.add_argument("--file-index", required=True, metavar="INDEX", type=int)
     parser.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
@@ -530,6 +549,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     title_proposal.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
     title_proposal.add_argument("--format", choices=("json", "text"), default="json")
+    live_title = commands.add_parser(
+        "live-title-proposal-report",
+        help="publish one current report-only live title proposal result",
+    )
+    live_title.add_argument("--config", required=True, metavar="PATH", type=Path)
+    live_title.add_argument("--database", required=True, metavar="PATH", type=_database_path)
+    live_title.add_argument("--target", required=True, metavar="OPAQUE", type=_opaque_target)
+    live_title.add_argument("--snapshot", required=True, metavar="OPAQUE", type=_opaque_snapshot)
+    live_title.add_argument("--file-index", required=True, metavar="INDEX", type=int)
+    live_title.add_argument("--format", choices=("json", "text"), default="json")
     hardcover_title = commands.add_parser(
         "hardcover-title-proposal-report",
         help="emit one persisted apply-ineligible Hardcover title proof of concept",
@@ -571,6 +600,7 @@ def main(
     epub_package_report_runner: EpubPackageReportRunner | None = None,
     epub_opening_report_runner: EpubOpeningReportRunner | None = None,
     epub_opening_evidence_runner: EpubOpeningEvidenceRunner | None = None,
+    live_title_proposal_runner: LiveTitleProposalRunner | None = None,
     synthetic_title_proposal_runner: SyntheticTitleProposalRunner | None = None,
     hardcover_title_proposal_runner: HardcoverTitleProposalRunner | None = None,
     synthetic_title_review_case_runner: SyntheticTitleReviewCaseRunner | None = None,
@@ -600,6 +630,36 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    if raw_arguments[:1] == ["live-title-proposal-report"]:
+        try:
+            live_arguments = _live_title_proposal_parser().parse_args(raw_arguments[1:])
+            if not 0 <= live_arguments.file_index <= 10_000:
+                raise _TitleArgumentError("file index is outside the supported range")
+        except (_TitleArgumentError, ValueError):
+            errors.write(_LIVE_TITLE_PROPOSAL_FAILURE)
+            return 2
+        if live_title_proposal_runner is None:
+            errors.write(_LIVE_TITLE_PROPOSAL_FAILURE)
+            return 1
+        try:
+            report = live_title_proposal_runner(
+                live_arguments.config,
+                live_arguments.database,
+                live_arguments.target,
+                live_arguments.snapshot,
+                live_arguments.file_index,
+            )
+            if type(report) is not LiveTitleProposalReport:
+                raise TypeError("live title proposal report is malformed")
+            output.write(
+                report.to_json() + "\n"
+                if live_arguments.format == "json"
+                else render_live_title_proposal_text(report)
+            )
+            return 0
+        except Exception:
+            errors.write(_LIVE_TITLE_PROPOSAL_FAILURE)
+            return 1
     if raw_arguments[:1] == ["hardcover-identity-report"]:
         try:
             hardcover_arguments = _hardcover_identity_parser().parse_args(
@@ -1281,6 +1341,7 @@ __all__ = [
     "SyntheticInventoryRunner",
     "AudiobookshelfInventoryRunner",
     "EpubPackageReportRunner",
+    "LiveTitleProposalRunner",
     "SyntheticTitleProposalRunner",
     "SyntheticTitleReviewCaseRunner",
     "main",
