@@ -93,6 +93,19 @@ class _Repository:
 
 
 class LiveTitleProposalTests(unittest.TestCase):
+    def test_retired_title_commands_are_absent(self) -> None:
+        for command in (
+            "synthetic-title-proposal-report",
+            "hardcover-title-proposal-report",
+            "synthetic-title-review-case-report",
+        ):
+            errors = StringIO()
+            self.assertEqual(
+                cli_main([command], state_check_runner=lambda _database: None, stderr=errors),
+                2,
+            )
+            self.assertEqual(errors.getvalue(), "unknown command\n")
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.temporary = tempfile.TemporaryDirectory()

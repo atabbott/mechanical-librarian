@@ -814,109 +814,6 @@ def main(
             output,
             errors,
         )
-    if raw_arguments[:1] == ["synthetic-title-review-case-report"]:
-        try:
-            review_arguments = _title_review_case_parser().parse_args(raw_arguments[1:])
-        except _TitleArgumentError:
-            errors.write(_TITLE_REVIEW_CASE_INVALID)
-            return 2
-        if synthetic_title_review_case_runner is None:
-            errors.write(_TITLE_REVIEW_CASE_FAILURE)
-            return 1
-        try:
-            report = synthetic_title_review_case_runner(
-                review_arguments.database, review_arguments.scenario
-            )
-        except (KeyboardInterrupt, Exception):
-            errors.write(_TITLE_REVIEW_CASE_FAILURE)
-            return 1
-        if type(report) is not SyntheticTitleReviewCaseReport:
-            errors.write(_TITLE_REVIEW_CASE_FAILURE)
-            return 1
-        try:
-            rendered = (
-                report.to_json() + "\n"
-                if review_arguments.format == "json"
-                else render_title_review_case_text(report)
-            )
-        except Exception:
-            errors.write(_TITLE_REVIEW_CASE_FAILURE)
-            return 1
-        output.write(rendered)
-        return 0
-    if raw_arguments[:1] == ["hardcover-title-proposal-report"]:
-        credentialed = any(
-            argument == "--secret-reference"
-            or argument.startswith("--secret-reference=")
-            for argument in raw_arguments[1:]
-        )
-        if credentialed:
-            errors.write(_HARDCOVER_TITLE_RETIRED)
-            return 2
-        try:
-            title_arguments = _hardcover_title_proposal_parser().parse_args(
-                raw_arguments[1:]
-            )
-        except _TitleArgumentError:
-            errors.write(_HARDCOVER_TITLE_PROPOSAL_INVALID)
-            return 2
-        if title_arguments.secret_reference is not None:
-            errors.write(_HARDCOVER_TITLE_RETIRED)
-            return 2
-        if hardcover_title_proposal_runner is None:
-            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
-            return 1
-        try:
-            report = hardcover_title_proposal_runner(
-                title_arguments.database, title_arguments.secret_reference
-            )
-        except Exception:
-            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
-            return 1
-        if type(report) is not SyntheticTitleProposalReport:
-            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
-            return 1
-        try:
-            rendered = (
-                report.to_json() + "\n"
-                if title_arguments.format == "json"
-                else render_title_proposal_text(report)
-            )
-        except Exception:
-            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
-            return 1
-        output.write(rendered)
-        return 0
-    if raw_arguments[:1] == ["synthetic-title-proposal-report"]:
-        try:
-            title_arguments = _title_proposal_parser().parse_args(raw_arguments[1:])
-        except _TitleArgumentError:
-            errors.write(_TITLE_PROPOSAL_INVALID)
-            return 2
-        if synthetic_title_proposal_runner is None:
-            errors.write(_TITLE_PROPOSAL_FAILURE)
-            return 1
-        try:
-            report = synthetic_title_proposal_runner(
-                title_arguments.database, title_arguments.scenario
-            )
-        except (KeyboardInterrupt, Exception):
-            errors.write(_TITLE_PROPOSAL_FAILURE)
-            return 1
-        if type(report) is not SyntheticTitleProposalReport:
-            errors.write(_TITLE_PROPOSAL_FAILURE)
-            return 1
-        try:
-            rendered = (
-                report.to_json() + "\n"
-                if title_arguments.format == "json"
-                else render_title_proposal_text(report)
-            )
-        except Exception:
-            errors.write(_TITLE_PROPOSAL_FAILURE)
-            return 1
-        output.write(rendered)
-        return 0
     if raw_arguments[:1] == ["epub-package-report"]:
         requested_format = "json"
         index = 1
@@ -1227,7 +1124,5 @@ __all__ = [
     "AudiobookshelfInventoryRunner",
     "EpubPackageReportRunner",
     "LiveTitleProposalRunner",
-    "SyntheticTitleProposalRunner",
-    "SyntheticTitleReviewCaseRunner",
     "main",
 ]

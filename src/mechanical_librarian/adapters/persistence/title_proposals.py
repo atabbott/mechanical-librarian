@@ -30,7 +30,6 @@ class TitleProposalPersistenceError(RuntimeError):
     """Proposal history is unavailable, corrupt, or inconsistent."""
 
 
-_MAX_SYNTHETIC_LINEAGE_REVISIONS = 2
 _MAX_LIVE_LINEAGE_REVISIONS = 1_000
 
 
@@ -204,9 +203,7 @@ class SQLiteTitleProposalRepository:
             raise TitleProposalPersistenceError("live proposal source is ambiguous")
         return ready[0] if ready else sources[0]
 
-    def _store(
-        self, proposal_set: TitleProposalSet | LiveTitleProposalSet
-    ) -> ProposalPersistence:
+    def _store(self, proposal_set: LiveTitleProposalSet) -> ProposalPersistence:
         canonical = proposal_set.to_json()
         history, current = self._validate_lineage(proposal_set.lineage)
         by_id = self._row_for_id(proposal_set.set_id)
@@ -221,7 +218,7 @@ class SQLiteTitleProposalRepository:
             (proposal_set.lineage, proposal_set.lineage_revision),
         ).fetchone()
         rows = [row for row in (by_id, by_digest, by_revision) if row is not None]
-        existing: TitleProposalSet | LiveTitleProposalSet | None = None
+        existing: LiveTitleProposalSet | None = None
         for row in rows:
             hydrated = _hydrate(row)
             if existing is not None and hydrated != existing:
@@ -249,7 +246,7 @@ class SQLiteTitleProposalRepository:
                 raise TitleProposalPersistenceError("proposal revision is not the exact successor")
             if proposal_set.previous_set_id != current.set_id:
                 raise TitleProposalPersistenceError("proposal predecessor does not match current state")
-            if proposal_set.lineage != current.lineage or type(current) is not type(proposal_set):
+            if proposal_set.lineage != current.lineage:
                 raise TitleProposalPersistenceError("proposal supersession crosses lineages")
 
         self._connection.execute(
@@ -306,10 +303,7 @@ class SQLiteTitleProposalRepository:
 
     def _validate_lineage(
         self, lineage: str
-    ) -> tuple[
-        tuple[TitleProposalSet | LiveTitleProposalSet, ...],
-        TitleProposalSet | LiveTitleProposalSet | None,
-    ]:
+    ) -> tuple[tuple[LiveTitleProposalSet, ...], LiveTitleProposalSet | None]:
         if (
             type(lineage) is not str
             or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", lineage) is None
@@ -351,15 +345,12 @@ class SQLiteTitleProposalRepository:
         return history, history[-1]
 
 
-def _hydrate(row: tuple[object, ...]) -> TitleProposalSet | LiveTitleProposalSet:
+def _hydrate(row: tuple[object, ...]) -> LiveTitleProposalSet:
     if len(row) != 7 or type(row[6]) is not str:
         raise TitleProposalPersistenceError("proposal history row is malformed")
-    mode = ProposalExecutionMode(str(row[5]))
-    proposal_set = (
-        TitleProposalSet.from_json(row[6])
-        if mode is ProposalExecutionMode.SYNTHETIC_PREVIEW
-        else LiveTitleProposalSet.from_json(row[6])
-    )
+    if row[5] != ProposalExecutionMode.PRODUCTION_REPORT_ONLY.value:
+        raise TitleProposalPersistenceError("proposal history has a retired execution mode")
+    proposal_set = LiveTitleProposalSet.from_json(row[6])
     if (
         row[0] != proposal_set.set_id
         or row[1] != proposal_set.identity_digest
