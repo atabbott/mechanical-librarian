@@ -34,6 +34,7 @@ release standards as code.
 - [AI trust boundary](architecture/ai-boundary.md)
 - [HTTP API contract](architecture/http-api.md)
 - [Architecture decisions](architecture/decisions/README.md)
+- [0.4 clean-state neutral evidence baseline](architecture/decisions/0010-0-4-neutral-evidence-baseline.md)
 
 ## Development
 

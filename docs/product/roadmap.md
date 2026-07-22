@@ -133,14 +133,32 @@ checkpoint does not publish a release.
 F09c #205/#210/#211 remains separately planned for 1.0 as a fallback
 report/provider lane and is not an F09g blocker. Later provider-neutral work
 #69/#70 consumes compatible F09c identity, with qualification in #73 and F17
-#153. F10b #240/#241 remains 1.0 work after completed F10a and F09g; it admits a
-qualifying live report into production review. F11 remains an independently
-deliverable synthetic shadow path, and the production title/case and reviewer
-paths converge only at F17 qualification.
+#153. F10b #240/#241 remains 1.0 work after completed F10a and #197; it admits
+a qualifying current neutral persisted report claim into production review. F09g
+#238 remains historical characterization evidence for that report boundary, not
+an active F10b input. F11 remains an independently deliverable synthetic shadow
+path, and the production title/case and reviewer paths converge only at F17
+qualification.
 
 Exit: one current Audiobookshelf ebook produces a restartable, evidence-backed
 live title proposal or exact zero-proposal report without gaining review,
 decision, mutation, destructive, or release-publication authority.
+
+### Pre-deployment 0.4.0 simplification checkpoint
+
+The qualified F09g #238 report is characterization evidence for the reset: its
+current target/media reading, local title/ISBN extraction, provider observation,
+currentness, privacy, and persistence behavior remain the safety baseline, but
+its proposal gate is replaced at #197 by one neutral evidence report. The
+checkpoint starts from a clean database and exposes exactly one synchronous
+report-only command with explicit configuration, database, connection, library,
+item, and EPUB-file inputs. #253, #255, #257, and #261 are the four contributors
+to the #197 activation; #254, #256, #258, and #260 are superseded historical
+work to reconcile, not active contributors.
+
+The checkpoint excludes review, decisions, apply, writes, background execution,
+retry, caching, compatibility paths, tags, releases, and publication. It is an
+internal pre-deployment checkpoint, not a supported version or release train.
 
 ## M3: AI review in shadow mode
 
