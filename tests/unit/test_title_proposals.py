@@ -7,6 +7,8 @@ import unittest
 from dataclasses import FrozenInstanceError
 
 from mechanical_librarian.domain.title_proposals import (
+    LIVE_TITLE_PROPOSAL_POLICY_VERSION,
+    LIVE_TITLE_PROPOSAL_SCHEMA,
     ProposalExecutionMode,
     TITLE_COMPARISON_VERSION,
     TITLE_PROPOSAL_POLICY_VERSION,
@@ -14,6 +16,7 @@ from mechanical_librarian.domain.title_proposals import (
     TitleProposalResult,
     TitleProposalSet,
     TitleProposalValueError,
+    live_proposal_set_from_manifest,
     normalized_title_key,
     proposal_set_from_manifest,
 )
@@ -93,7 +96,61 @@ def hardcover_manifest(
     return value
 
 
+def live_manifest() -> dict[str, object]:
+    return {
+        "comparison_version": TITLE_COMPARISON_VERSION,
+        "file_index": 0,
+        "inventory_fingerprint": "a" * 64,
+        "lineage": "live-title-ready-evidence",
+        "lineage_revision": 1,
+        "local_evidence_id": "evidence_" + "b" * 32,
+        "mode": ProposalExecutionMode.PRODUCTION_REPORT_ONLY.value,
+        "mount_configuration_digest": "c" * 64,
+        "mount_configuration_set_digest": "d" * 64,
+        "policy_version": LIVE_TITLE_PROPOSAL_POLICY_VERSION,
+        "previous_set_id": None,
+        "proposal_schema": LIVE_TITLE_PROPOSAL_SCHEMA,
+        "provider_evidence_id": "e" * 64,
+        "provider_status": "ready",
+        "snapshot_reference": "snapshot_" + "f" * 32,
+        "source_fingerprint": "1" * 64,
+        "target_reference": "target_" + "2" * 32,
+    }
+
+
 class TitleProposalDomainTests(unittest.TestCase):
+    def test_live_positive_requires_complete_ready_source_and_provider_evidence(self) -> None:
+        value = live_proposal_set_from_manifest(
+            manifest=live_manifest(),
+            result=TitleProposalResult.NEEDS_REVIEW,
+            proposed_value="A Current EPUB Title",
+        )
+        self.assertTrue(value.production_applicable)
+        self.assertEqual(type(value).from_json(value.to_json()), value)
+
+        for field, replacement in (
+            ("provider_status", "not_ready"),
+            ("inventory_fingerprint", None),
+            ("local_evidence_id", None),
+            ("mount_configuration_digest", None),
+            ("mount_configuration_set_digest", None),
+            ("provider_evidence_id", None),
+            ("snapshot_reference", None),
+            ("source_fingerprint", None),
+            ("target_reference", None),
+        ):
+            with self.subTest(field=field):
+                invalid = live_manifest()
+                invalid[field] = replacement
+                with self.assertRaisesRegex(
+                    TitleProposalValueError, "requires ready live evidence"
+                ):
+                    live_proposal_set_from_manifest(
+                        manifest=invalid,
+                        result=TitleProposalResult.NEEDS_REVIEW,
+                        proposed_value="A Current EPUB Title",
+                    )
+
     def test_hardcover_profile_is_closed_canonical_and_does_not_relax_f09a(self) -> None:
         value = proposal_set_from_manifest(
             manifest=hardcover_manifest(),

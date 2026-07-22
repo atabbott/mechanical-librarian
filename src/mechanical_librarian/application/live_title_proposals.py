@@ -22,6 +22,10 @@ from mechanical_librarian.domain.hardcover_identity import (
     isbn_identity,
     validate_private_query,
 )
+from mechanical_librarian.domain.hardcover_identity_work import (
+    IdentityWorkObservation,
+    IdentityWorkReference,
+)
 from mechanical_librarian.domain.local_evidence import (
     LocalEvidenceOutcome,
     ObservationApplicability,
@@ -147,6 +151,16 @@ class LiveEpubEvidenceValidator(Protocol):
         governing_digest: str,
         evidence_id: str,
     ) -> bool: ...
+
+
+class LiveTitleProviderMatchValidator(Protocol):
+    def validate_current_match(
+        self,
+        reference: IdentityWorkReference,
+        observation_id: str,
+        current_since: str,
+        expires_at: str,
+    ) -> IdentityWorkObservation: ...
 
 
 @dataclass(frozen=True)
@@ -411,6 +425,7 @@ __all__ = [
     "LiveSourceState",
     "LiveTitleProposalReport",
     "LiveTitleProviderReader",
+    "LiveTitleProviderMatchValidator",
     "LiveTitleSourceReader",
     "LiveEpubEvidenceValidator",
     "ProposeLiveTitle",

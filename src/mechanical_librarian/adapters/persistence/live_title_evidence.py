@@ -14,6 +14,7 @@ from mechanical_librarian.application.live_title_proposals import (
     LiveProviderState,
     LiveSourceEvidence,
     LiveSourceState,
+    LiveTitleProviderMatchValidator,
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningReport
 from mechanical_librarian.domain.epub_opening_evidence import (
@@ -21,10 +22,9 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     EpubSourceResolution,
     ResolvedEpubSource,
 )
-from mechanical_librarian.domain.hardcover_identity_work import (
-    IdentityWorkObservation,
-    IdentityWorkReference,
-)
+from mechanical_librarian.domain.hardcover_identity_work import IdentityWorkReference
+from mechanical_librarian.domain.identifiers import AdapterId, TargetId
+from mechanical_librarian.domain.inventory import MediaType
 from mechanical_librarian.domain.inventory_v2 import (
     InventoryObservation,
     InventorySnapshotV2,
@@ -41,16 +41,6 @@ class EpubSourceResolver(Protocol):
     ) -> EpubSourceResolution: ...
 
 
-class HardcoverMatchValidator(Protocol):
-    def _validate_current_match(
-        self,
-        reference: IdentityWorkReference,
-        observation_id: str,
-        current_since: str,
-        expires_at: str,
-    ) -> IdentityWorkObservation: ...
-
-
 class SQLiteLiveTitleEvidenceReader:
     """Project already-current F07b and F09f rows without new work or egress."""
 
@@ -59,10 +49,10 @@ class SQLiteLiveTitleEvidenceReader:
         connection: sqlite3.Connection,
         source_resolver: EpubSourceResolver,
         evidence_validator: LiveEpubEvidenceValidator,
-        provider_validator: HardcoverMatchValidator,
+        provider_validator: LiveTitleProviderMatchValidator,
         source_fingerprint: Callable[[ResolvedEpubSource], str],
         governing_digest: str,
-        epub_enabled: bool,
+        target_is_configured: Callable[[TargetId], bool],
     ) -> None:
         self._connection = connection
         self._source_resolver = source_resolver
@@ -70,15 +60,11 @@ class SQLiteLiveTitleEvidenceReader:
         self._provider_validator = provider_validator
         self._source_fingerprint = source_fingerprint
         self._governing_digest = governing_digest
-        self._epub_enabled = epub_enabled
+        self._target_is_configured = target_is_configured
 
     def inspect_title_source(
         self, locator: EpubEvidenceLocator, mount_configuration_digest: str
     ) -> LiveSourceEvidence:
-        if not self._epub_enabled:
-            return LiveSourceEvidence(
-                locator, LiveSourceState.NOT_READY, mount_configuration_digest
-            )
         source = self._source_resolver.resolve(
             locator, mount_configuration_digest
         ).source
@@ -102,6 +88,14 @@ class SQLiteLiveTitleEvidenceReader:
         observation = InventoryObservation.from_json(
             str(row[2]), _parse_time(str(row[3]))
         )
+        if (
+            observation.target.adapter != AdapterId("audiobookshelf")
+            or observation.media_type is not MediaType.EBOOK
+            or not self._target_is_configured(observation.target)
+        ):
+            return LiveSourceEvidence(
+                locator, LiveSourceState.NOT_READY, mount_configuration_digest
+            )
         snapshot = InventorySnapshotV2.create(observation)
         if (
             snapshot.id.value != str(row[0])
@@ -203,7 +197,7 @@ class SQLiteLiveTitleEvidenceReader:
                 _not_ready_provider_identity(work_key, repr(rows[0])),
                 work_key=work_key,
             )
-        observation = self._provider_validator._validate_current_match(
+        observation = self._provider_validator.validate_current_match(
             IdentityWorkReference(work_key, int(generation)),
             str(observation_id),
             str(current_since),

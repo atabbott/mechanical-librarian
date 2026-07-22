@@ -180,6 +180,7 @@ from mechanical_librarian.domain.identifiers import (
     Fingerprint,
     LibraryId,
     SchemaVersion,
+    TargetId,
     canonical_json,
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
@@ -1466,7 +1467,12 @@ def _run_live_title_proposal_report(
             SQLiteHardcoverIdentityWorkRepository(connection),
             lambda source: _fingerprint_live_epub_source(configuration, source),
             governing,
-            "epub" in configuration.evidence.enabled_formats,
+            lambda target: _live_title_source_is_configured(
+                configuration_path,
+                target,
+                mount_digests,
+                governing,
+            ),
         )
         repository = SQLiteTitleProposalRepository(
             connection,
@@ -1520,6 +1526,50 @@ def _fingerprint_live_epub_source(
         if replacement is not None:
             os.close(replacement.descriptor)
         os.close(opened.descriptor)
+
+
+def _live_title_source_is_configured(
+    configuration_path: Path,
+    target: TargetId,
+    expected_mount_digests: tuple[str, ...],
+    expected_governing_digest: str,
+) -> bool:
+    configuration = load_configuration_file(configuration_path)
+    mappings = _inventory_mount_mappings(configuration)
+    current_mount_digests = tuple(
+        sorted(mapping.configuration_digest for mapping in mappings)
+    )
+    package_limits = replace(
+        configuration.evidence.epub_package,
+        source_archive_bytes=min(
+            configuration.evidence.epub_package.source_archive_bytes,
+            configuration.evidence.maximum_document_bytes,
+        ),
+    )
+    limits = replace(
+        configuration.evidence.epub_opening,
+        package=package_limits,
+        text_characters_per_selection=min(
+            configuration.evidence.epub_opening.text_characters_per_selection,
+            configuration.evidence.maximum_text_characters,
+        ),
+    )
+    selected = tuple(
+        configured
+        for configured in configuration.connections
+        if configured.adapter == "audiobookshelf"
+        and configured.connection_id == target.connection
+        and target.library.value in configured.enabled_libraries
+    )
+    return (
+        "epub" in configuration.evidence.enabled_formats
+        and len(selected) == 1
+        and current_mount_digests == expected_mount_digests
+        and epub_governing_digest(
+            limits, _epub_material_configuration(configuration, mappings)
+        )
+        == expected_governing_digest
+    )
 
 
 def _run_synthetic_title_proposal_report(

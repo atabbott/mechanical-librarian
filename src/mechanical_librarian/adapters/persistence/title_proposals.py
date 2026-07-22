@@ -179,6 +179,10 @@ class SQLiteTitleProposalRepository:
                     ) != provider:
                         raise TitleProposalPersistenceError("live provider evidence changed")
                 persistence = self._store(proposal_set)
+                if self._inspect_source_selection(
+                    source.locator, mount_configuration_digests
+                ) != source:
+                    raise TitleProposalPersistenceError("live proposal source changed")
                 if (
                     not persistence.current
                     or persistence.current_set_id != proposal_set.set_id

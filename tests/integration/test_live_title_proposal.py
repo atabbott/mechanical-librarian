@@ -76,6 +76,9 @@ from mechanical_librarian.infrastructure.local_media import sha256_descriptor
 from tests.support.epub_packages import opening_title_isbn_applicability
 
 
+LIBRARY_ID = "00000000-0000-4000-8000-000000000001"
+
+
 class LiveTitleProposalIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -94,6 +97,15 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
                 "service_path": "/books",
                 "container_path": str(self.root),
                 "read_only": True,
+            }
+        ]
+        config["connections"] = [
+            {
+                "adapter": "audiobookshelf",
+                "enabled_libraries": [LIBRARY_ID],
+                "endpoint": "https://audiobookshelf.invalid",
+                "id": "connection",
+                "secret_reference": "/run/secrets/audiobookshelf-token",
             }
         ]
         config["hardcover_provider"] = {
@@ -128,7 +140,7 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         target = TargetId(
             AdapterId("audiobookshelf"),
             ConnectionId("connection"),
-            LibraryId("library"),
+            LibraryId(LIBRARY_ID),
             ExternalItemId("item"),
         )
         observation = InventoryObservation.create(
@@ -243,7 +255,7 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
                 (self.root / source.relative_path).read_bytes()
             ).hexdigest(),
             self.governing_digest,
-            True,
+            kwargs.pop("target_is_configured", lambda _target: True),
         )
         publication_clock = kwargs.pop("publication_clock", lambda: self.now)
         return SQLiteTitleProposalRepository(
@@ -338,6 +350,90 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
         self.assertEqual(report.proposal_set.result.value, "source_not_ready")
         self.assertFalse(report.to_data()["production_applicable"])
 
+    def test_non_audiobookshelf_or_non_ebook_inventory_is_not_a_live_source(self) -> None:
+        original = self.snapshot.observation
+        cases = (
+            InventoryObservation.create(
+                target=TargetId(
+                    AdapterId("synthetic"),
+                    ConnectionId("connection"),
+                    LibraryId(LIBRARY_ID),
+                    ExternalItemId("item"),
+                ),
+                media_type=original.media_type,
+                lifecycle=original.lifecycle,
+                fields=original.fields,
+                file_identities=original.file_identities,
+                cover_identity=original.cover_identity,
+                adapter_version=original.adapter_version,
+                normalizer_version=original.normalizer_version,
+                service_version=original.service_version,
+                warnings=original.warnings,
+                observed_at=original.observed_at,
+            ),
+            InventoryObservation.create(
+                target=original.target,
+                media_type=MediaType.AUDIOBOOK,
+                lifecycle=original.lifecycle,
+                fields=original.fields,
+                file_identities=original.file_identities,
+                cover_identity=original.cover_identity,
+                adapter_version=original.adapter_version,
+                normalizer_version=original.normalizer_version,
+                service_version=original.service_version,
+                warnings=original.warnings,
+                observed_at=original.observed_at,
+            ),
+        )
+        for observation in cases:
+            with (
+                self.subTest(target=observation.target.adapter.value, media=observation.media_type.value),
+                patch.object(InventoryObservation, "from_json", return_value=observation),
+                patch.object(
+                    SQLiteLiveTitleEvidenceReader,
+                    "inspect_title_provider",
+                    side_effect=AssertionError("provider lookup must remain unreachable"),
+                ) as provider_lookup,
+            ):
+                report = ProposeLiveTitle(self.repository()).run(
+                    self.locator,
+                    (self.mount_digest,),
+                    provider_enabled=True,
+                    authority_revision=1,
+                    observed_at=self.now,
+                )
+                provider_lookup.assert_not_called()
+                self.assertEqual(report.proposal_set.result.value, "source_not_ready")
+                self.assertFalse(report.to_data()["production_applicable"])
+
+    def test_off_config_connection_or_library_is_not_a_live_source(self) -> None:
+        original = json.loads(self.config_path.read_text(encoding="utf-8"))
+        for field, value in (
+            ("id", "other-connection"),
+            ("enabled_libraries", ["00000000-0000-4000-8000-000000000002"]),
+        ):
+            with self.subTest(field=field):
+                changed = json.loads(json.dumps(original))
+                changed["connections"][0][field] = value
+                self.config_path.write_text(json.dumps(changed), encoding="utf-8")
+                with patch.object(
+                    SQLiteLiveTitleEvidenceReader,
+                    "inspect_title_provider",
+                    side_effect=AssertionError(
+                        "provider lookup must remain unreachable"
+                    ),
+                ) as provider_lookup:
+                    report = _run_live_title_proposal_report(
+                        self.config_path,
+                        self.database,
+                        self.locator.target_reference,
+                        self.locator.snapshot_reference,
+                        self.locator.file_index,
+                    )
+                provider_lookup.assert_not_called()
+                self.assertEqual(report.proposal_set.result.value, "source_not_ready")
+                self.assertFalse(report.to_data()["production_applicable"])
+
     def test_atomic_path_replacement_during_final_hash_rejects_publication(self) -> None:
         calls = 0
 
@@ -375,12 +471,111 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
             ).fetchone(),
             (0,),
         )
+
+    def test_source_replacement_after_store_callbacks_rolls_back_publication(self) -> None:
+        original = opening_title_isbn_applicability()
+
+        def replace_source() -> None:
+            replacement = self.root / "replacement.epub"
+            replacement.write_bytes(b"replacement during proposal transaction")
+            replacement.replace(self.root / "book.epub")
+
+        for callback in (
+            "after_history_insert",
+            "after_pointer_advance",
+            "before_readback",
+        ):
+            with self.subTest(callback=callback):
+                (self.root / "book.epub").write_bytes(original)
+                with self.assertRaisesRegex(
+                    TitleProposalPersistenceError, "live proposal source changed"
+                ):
+                    ProposeLiveTitle(
+                        self.repository(**{callback: replace_source})
+                    ).run(
+                        self.locator,
+                        (self.mount_digest,),
+                        provider_enabled=True,
+                        authority_revision=1,
+                        observed_at=self.now,
+                    )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                        "WHERE execution_mode='production_report_only'"
+                    ).fetchone(),
+                    (0,),
+                )
+                self.assertEqual(
+                    self.connection.execute(
+                        "SELECT COUNT(*) FROM current_synthetic_title_proposals"
+                    ).fetchone(),
+                    (0,),
+                )
+
+    def test_config_revocation_after_history_insert_rolls_back_publication(self) -> None:
+        selected = True
+
+        def revoke_configuration() -> None:
+            nonlocal selected
+            selected = False
+
+        with self.assertRaisesRegex(
+            TitleProposalPersistenceError, "live proposal source changed"
+        ):
+            ProposeLiveTitle(
+                self.repository(
+                    target_is_configured=lambda _target: selected,
+                    after_history_insert=revoke_configuration,
+                )
+            ).run(
+                self.locator,
+                (self.mount_digest,),
+                provider_enabled=True,
+                authority_revision=1,
+                observed_at=self.now,
+            )
+        self.assertEqual(
+            self.connection.execute(
+                "SELECT COUNT(*) FROM synthetic_title_proposal_sets "
+                "WHERE execution_mode='production_report_only'"
+            ).fetchone(),
+            (0,),
+        )
         self.assertEqual(
             self.connection.execute(
                 "SELECT COUNT(*) FROM current_synthetic_title_proposals"
             ).fetchone(),
             (0,),
         )
+
+    def test_repository_rejects_a_persisted_positive_with_not_ready_evidence(self) -> None:
+        repository = self.repository()
+        report = ProposeLiveTitle(repository).run(
+            self.locator,
+            (self.mount_digest,),
+            provider_enabled=True,
+            authority_revision=1,
+            observed_at=self.now,
+        )
+        data = json.loads(report.proposal_set.to_json())
+        data["manifest"]["provider_status"] = "not_ready"
+        self.connection.execute(
+            "DROP TRIGGER synthetic_title_proposal_sets_no_update"
+        )
+        self.connection.execute(
+            "UPDATE synthetic_title_proposal_sets SET canonical_set=? WHERE set_id=?",
+            (
+                json.dumps(data, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+                report.proposal_set.set_id,
+            ),
+        )
+        self.connection.commit()
+
+        with self.assertRaisesRegex(
+            TitleProposalPersistenceError, "proposal state could not be read"
+        ):
+            repository.current_live(report.proposal_set.lineage)
 
     def test_provider_expiry_is_checked_with_fresh_publication_clock(self) -> None:
         repository = self.repository(
@@ -606,7 +801,7 @@ class LiveTitleProposalIntegrationTests(unittest.TestCase):
                 (self.root / source.relative_path).read_bytes()
             ).hexdigest(),
             self.governing_digest,
-            True,
+            lambda _target: True,
         )
         second_digest = hashlib.sha256(b"second-mount").hexdigest()
         calls = 0

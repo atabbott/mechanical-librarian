@@ -213,6 +213,25 @@ class LiveTitleProposalSet:
                 raise TitleProposalValueError("live proposal evidence reference is invalid")
         if len(self.proposals) != (1 if self.result is TitleProposalResult.NEEDS_REVIEW else 0):
             raise TitleProposalValueError("live proposal count does not match result")
+        if self.result is TitleProposalResult.NEEDS_REVIEW and (
+            self.manifest["provider_status"] != "ready"
+            or any(
+                self.manifest[field] is None
+                for field in (
+                    "inventory_fingerprint",
+                    "local_evidence_id",
+                    "mount_configuration_digest",
+                    "mount_configuration_set_digest",
+                    "provider_evidence_id",
+                    "snapshot_reference",
+                    "source_fingerprint",
+                    "target_reference",
+                )
+            )
+        ):
+            raise TitleProposalValueError(
+                "needs-review result requires ready live evidence"
+            )
         expected = _identity_digest(self.manifest, self.result, self.proposals)
         if expected != self.identity_digest or self.set_id != f"ps-{expected[:60]}":
             raise TitleProposalValueError("live proposal identity does not match its semantics")
