@@ -478,23 +478,6 @@ def _parser() -> argparse.ArgumentParser:
     inventory_inspect.add_argument(
         "--database", required=True, metavar="PATH", type=_database_path
     )
-    epub_evidence = commands.add_parser(
-        "epub-opening-evidence",
-        help="execute or reuse durable EPUB opening evidence from an opaque selector",
-    )
-    epub_evidence.add_argument(
-        "--database", required=True, metavar="PATH", type=_database_path
-    )
-    epub_evidence.add_argument("--config", required=True, metavar="PATH", type=Path)
-    epub_evidence.add_argument(
-        "--target", required=True, metavar="OPAQUE", type=_opaque_target
-    )
-    epub_evidence.add_argument(
-        "--snapshot", required=True, metavar="OPAQUE", type=_opaque_snapshot
-    )
-    epub_evidence.add_argument(
-        "--file-index", required=True, metavar="INDEX", type=int
-    )
     poll = commands.add_parser(
         "audiobookshelf-poll",
         help="run or resume one durable bounded Audiobookshelf poll trigger",
@@ -515,30 +498,6 @@ def _parser() -> argparse.ArgumentParser:
     )
     poll_inspect.add_argument(
         "--poll-id", required=True, metavar="ID", type=_bounded_identifier
-    )
-    epub_package = commands.add_parser(
-        "epub-package-report",
-        help="emit one bounded cited EPUB package-evidence report",
-    )
-    epub_package.add_argument("--config", required=True, metavar="PATH", type=Path)
-    epub_package.add_argument(
-        "--mount", required=True, metavar="NAME", type=_bounded_identifier
-    )
-    epub_package.add_argument("--file", required=True, metavar="RELATIVE")
-    epub_package.add_argument(
-        "--format", choices=("json", "text"), default="json"
-    )
-    epub_opening = commands.add_parser(
-        "epub-opening-report",
-        help="emit one bounded cited EPUB opening-matter report",
-    )
-    epub_opening.add_argument("--config", required=True, metavar="PATH", type=Path)
-    epub_opening.add_argument(
-        "--mount", required=True, metavar="NAME", type=_bounded_identifier
-    )
-    epub_opening.add_argument("--file", required=True, metavar="RELATIVE")
-    epub_opening.add_argument(
-        "--format", choices=("json", "text"), default="json"
     )
     title_proposal = commands.add_parser(
         "synthetic-title-proposal-report",
@@ -630,6 +589,15 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    # These former diagnostics are deliberately not compatibility aliases: the
+    # live title report remains the only retained public consumer.
+    if raw_arguments[:1] in (
+        ["epub-package-report"],
+        ["epub-opening-report"],
+        ["epub-opening-evidence"],
+    ):
+        errors.write("unknown command\n")
+        return 2
     if raw_arguments[:1] == ["live-title-proposal-report"]:
         try:
             live_arguments = _live_title_proposal_parser().parse_args(raw_arguments[1:])
