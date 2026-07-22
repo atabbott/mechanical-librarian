@@ -9,6 +9,7 @@ import re
 import time
 import unicodedata
 import zipfile
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from urllib.parse import unquote
@@ -2356,6 +2357,7 @@ class EpubOpeningExtractor:
         request: LocalEvidenceRequest,
         limits: EpubOpeningLimits,
         package_report: LocalEvidenceReport,
+        archive: zipfile.ZipFile | None = None,
     ) -> EpubOpeningReport:
         if (
             type(request) is not LocalEvidenceRequest
@@ -2376,7 +2378,7 @@ class EpubOpeningExtractor:
         if package_report.outcome is LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE:
             return EpubOpeningReport(LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE, limits, request.expected_source)
         try:
-            return self._extract_validated(request, limits, package_report)
+            return self._extract_validated(request, limits, package_report, archive)
         except _AggregateRejected as error:
             return EpubOpeningReport(error.outcome, limits)
         except LocalEvidenceSourceError:
@@ -2386,8 +2388,10 @@ class EpubOpeningExtractor:
         except Exception:
             return EpubOpeningReport(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
 
-    def _extract_validated(self, request: LocalEvidenceRequest, limits: EpubOpeningLimits, package_report: LocalEvidenceReport) -> EpubOpeningReport:
-        with zipfile.ZipFile(_SourceIO(request), "r") as archive:
+    def _extract_validated(self, request: LocalEvidenceRequest, limits: EpubOpeningLimits, package_report: LocalEvidenceReport, archive: zipfile.ZipFile | None = None) -> EpubOpeningReport:
+        archive_context = nullcontext(archive) if archive is not None else zipfile.ZipFile(_SourceIO(request), "r")
+        with archive_context as archive:
+            assert archive is not None
             package_lineage = local_file_lineage(request.expected_source)
             names_by_identity = {local_resource_identity(info.filename): info.filename for info in archive.infolist() if not info.is_dir()}
             (

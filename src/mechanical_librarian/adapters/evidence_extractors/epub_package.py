@@ -16,6 +16,7 @@ import time
 import unicodedata
 import zipfile
 import zlib
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from xml.parsers import expat
@@ -2061,7 +2062,9 @@ def _expat_supported() -> bool:
 class EpubPackageExtractor:
     """Extract one bounded OPF package report from an authorized byte source."""
 
-    def extract(self, request: LocalEvidenceRequest) -> LocalEvidenceReport:
+    def extract(
+        self, request: LocalEvidenceRequest, archive: zipfile.ZipFile | None = None
+    ) -> LocalEvidenceReport:
         if type(request) is not LocalEvidenceRequest or request.capability is not LocalEvidenceCapability.PACKAGE:
             return LocalEvidenceReport(LocalEvidenceOutcome.INTERNAL_FAILURE, LocalEvidenceCapability.PACKAGE, EpubPackageLimits())
         try:
@@ -2074,12 +2077,14 @@ class EpubPackageExtractor:
             entries = {entry.name: entry for entry in entries_tuple}
             if _MIMETYPE not in entries or _CONTAINER not in entries:
                 raise _Rejected(LocalEvidenceOutcome.MALFORMED)
-            source_io = _SourceIO(request)
-            try:
-                archive = zipfile.ZipFile(source_io, "r", allowZip64=True)
-            except (zipfile.BadZipFile, OSError, ValueError):
-                raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE) from None
-            with archive:
+            own_archive = archive is None
+            if own_archive:
+                source_io = _SourceIO(request)
+                try:
+                    archive = zipfile.ZipFile(source_io, "r", allowZip64=True)
+                except (zipfile.BadZipFile, OSError, ValueError):
+                    raise _Rejected(LocalEvidenceOutcome.INTEGRITY_FAILURE) from None
+            with (archive if own_archive else nullcontext(archive)):
                 marker = entries[_MIMETYPE]
                 noncanonical_mimetype = (
                     entries_tuple[0].name != _MIMETYPE
