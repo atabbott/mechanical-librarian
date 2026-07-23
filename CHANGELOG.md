@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Expand the bounded configured Hardcover observation to persist ordered rich
+  edition/work field evidence, roles, source scope, and per-local comparisons.
+
 - Preserve source-spine slot positions for bounded local EPUB rear evidence and
   make exact-ID report reopening non-creating.
 - Preserve local EPUB source/DOM evidence order, explicit source capabilities,
