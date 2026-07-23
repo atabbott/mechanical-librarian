@@ -534,10 +534,13 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("persisted cover is unavailable")
         try:
             row = self._connection.execute(
-                "SELECT preview_digest FROM metadata_report_cover_references WHERE report_id=? AND artifact_id=? AND preview_variant=?",
+                "SELECT c.preview_digest,r.document FROM metadata_report_cover_references c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.report_id=? AND c.artifact_id=? AND c.preview_variant=?",
                 (report_id, artifact_id, preview_variant),
             ).fetchone()
-            if row is None or len(row) != 1 or type(row[0]) is not str:
+            if row is None or len(row) != 2 or type(row[0]) is not str or type(row[1]) is not str:
+                raise MetadataReportError("persisted cover is unavailable")
+            report = MetadataReport.from_json(row[1])
+            if not any(source.artifact is not None and source.artifact.artifact_id == artifact_id and source.artifact.preview_variant == preview_variant and source.artifact.preview_digest == row[0] for source in report.cover_sources):
                 raise MetadataReportError("persisted cover is unavailable")
             return row[0]
         except MetadataReportError:
