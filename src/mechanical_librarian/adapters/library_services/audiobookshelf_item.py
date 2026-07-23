@@ -133,7 +133,13 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
     if cover_path is not None:
         if type(cover_path) is not str or not cover_path.startswith("/") or len(cover_path) > 1024:
             raise MetadataReportError("target response is invalid")
-        cover = TargetCover(hashlib.sha256(cover_path.encode()).hexdigest(), cover_path)
+        # The service's metadata-provided route is evidence of presence only.
+        # Acquisition is pinned to its one documented raw endpoint so a hostile
+        # detail response cannot redirect this credential-free request.
+        cover = TargetCover(
+            hashlib.sha256(cover_path.encode()).hexdigest(),
+            f"/api/items/{quote(item, safe='')}/cover?raw=1",
+        )
     return TargetSnapshot(media_kind, title, files, cover)
 
 

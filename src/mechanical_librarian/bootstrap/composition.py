@@ -122,7 +122,7 @@ class _CoverEvidenceObserver:
         self._artifacts = artifacts
         self._providers = {value.name: value for value in providers}
 
-    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...], descriptors: tuple[tuple[str, str], ...] = ()) -> tuple[CoverSource, ...]:
+    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...], descriptors: tuple[tuple[str, str | None], ...] = ()) -> tuple[CoverSource, ...]:
         if target.cover is None:
             source = CoverSource(cover_source_id(CoverSourceKind.ABS, "absent"), CoverSourceKind.ABS, CoverSourceState.ABSENT)
             return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=time.monotonic() + 60.0))
@@ -144,7 +144,7 @@ class _CoverEvidenceObserver:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
         return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
 
-    def _hardcover(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[tuple[str, str], ...], *, deadline: float) -> tuple[CoverSource, ...]:
+    def _hardcover(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[tuple[str, str | None], ...], *, deadline: float) -> tuple[CoverSource, ...]:
         results: list[CoverSource] = []
         for observation in observations:
             configuration = self._providers.get(observation.provider)
@@ -160,7 +160,11 @@ class _CoverEvidenceObserver:
                 results.extend(CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.TIMEOUT, timeout_scope="not_started_due_to_aggregate_deadline") for source_id, _ in values)
                 continue
             for source_id, url in values:
-                results.append(self._remote(source_id, url, deadline))
+                results.append(
+                    CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.ABSENT)
+                    if url is None
+                    else self._remote(source_id, url, deadline)
+                )
         return tuple(results)
 
     def _remote(self, source_id: str, url: str, deadline: float) -> CoverSource:

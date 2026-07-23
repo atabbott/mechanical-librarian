@@ -101,7 +101,7 @@ class CoverObserver(Protocol):
         target: TargetSnapshot,
         providers: tuple[ProviderObservation, ...],
         local_sources: tuple[CoverSource, ...],
-        descriptors: tuple[tuple[str, str], ...] = (),
+        descriptors: tuple[tuple[str, str | None], ...] = (),
     ) -> tuple[CoverSource, ...]: ...
 
 

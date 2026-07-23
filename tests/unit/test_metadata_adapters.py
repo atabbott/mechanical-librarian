@@ -873,6 +873,8 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(claims[ClaimKind.TITLE].links[0].outcome, Comparison.DISAGREEMENT)
         self.assertEqual(observation.input_references, (self._claim().reference,))
         self.assertEqual(len(requests), 1)
+        self.assertEqual(2, len(provider.cover_descriptors))
+        self.assertTrue(all(url is None for _, url in provider.cover_descriptors))
         self.assertEqual(str(requests[0].url), HARDCOVER_URL)
         self.assertIn("limit:6", json.loads(requests[0].content)["query"])
         self.assertEqual(provider.observe((self._claim(), self._title_claim())).status, ProviderStatus.UNAVAILABLE)

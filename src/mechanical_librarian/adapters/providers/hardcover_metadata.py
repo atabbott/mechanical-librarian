@@ -40,7 +40,7 @@ class HardcoverMetadataProvider:
         self._name, self._client = name, client
         self._maximum_bytes = min(maximum_bytes, MAX_RESPONSE_BYTES)
         self._called = False
-        self.cover_descriptors: tuple[tuple[str, str], ...] = ()
+        self.cover_descriptors: tuple[tuple[str, str | None], ...] = ()
 
     def observe(self, local_claims: tuple[LocalClaim, ...]) -> ProviderObservation:
         if self._called:
@@ -121,12 +121,12 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
     return tuple(sorted(candidates, key=lambda candidate: candidate.identity))
 
 
-def _parse_cover_descriptors(payload: bytes) -> tuple[tuple[str, str], ...]:
+def _parse_cover_descriptors(payload: bytes) -> tuple[tuple[str, str | None], ...]:
     source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
     rows = _closed(_closed(source, {"data"})["data"], {"editions", "books"})["editions"]
     if type(rows) is not list or len(rows) > MAX_CANDIDATES:
         raise ValueError("provider rows invalid")
-    descriptors: list[tuple[str, str]] = []
+    descriptors: list[tuple[str, str | None]] = []
     for row_value in rows:
         if type(row_value) is dict and "image" not in row_value:
             row_value = {**row_value, "image": None}
@@ -134,9 +134,9 @@ def _parse_cover_descriptors(payload: bytes) -> tuple[tuple[str, str], ...]:
         image = _closed_or_none(row["image"], {"url"})
         if image is not None and (type(image["url"]) is not str or not image["url"] or len(image["url"]) > 2048):
             raise ValueError("provider image invalid")
-        if image is not None:
-            source_identity = f"{row['id']}:{image['url']}"
-            descriptors.append(("hardcover_" + hashlib.sha256(source_identity.encode()).hexdigest(), image["url"]))
+        url = None if image is None else image["url"]
+        source_identity = f"{row['id']}:{url if url is not None else 'absent'}"
+        descriptors.append(("hardcover_" + hashlib.sha256(source_identity.encode()).hexdigest(), url))
     return tuple(descriptors)
 
 
