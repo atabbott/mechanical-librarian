@@ -18,6 +18,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
     UnsupportedMediaError,
+    MetadataReportError,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -101,6 +102,16 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_repository_closes_when_inspection_or_provider_validation_fails(self) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        repository = _Repository()
+        class BrokenInspector:
+            def inspect(self, *args): raise RuntimeError("broken")
+            def unchanged(self, *args): return True
+        service = GenerateMetadataReport(target=_Target([TargetSnapshot("ebook", "Title", (selected,))]), inspector=BrokenInspector(), repository_factory=lambda: repository, providers=(), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
+        with self.assertRaises(MetadataReportError):
+            service.run("item-1", 0)
+        self.assertTrue(repository.closed)
     def test_f09j_exact_max_shape_fits_one_mebibyte(self) -> None:
         """The admitted provider envelope fits before its parser is widened."""
         def claim(candidate: str, kind: ClaimKind, value: str) -> ProviderClaim:
@@ -364,6 +375,13 @@ class MetadataReportTests(unittest.TestCase):
         data["providers"][0]["candidates"][0]["claims"][0]["links"][0]["outcome"] = "disagreement"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(data))
+
+    def test_maximum_description_comparison_is_field_appropriate(self) -> None:
+        local_value = "d" * 512
+        provider_value = "p" * MAX_DESCRIPTION_CHARACTERS
+        local = LocalClaim.create(kind=ClaimKind.DESCRIPTION, observed=local_value, canonical=local_value, excerpt=local_value, applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK)
+        bare = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.DESCRIPTION, value=provider_value, state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable")
+        self.assertEqual(comparison_links(bare, (local,)), (ComparisonLink(local.reference, Comparison.DISAGREEMENT),))
 
     def test_non_valid_title_sentinel_cannot_become_canonical(self) -> None:
         sentinel = "unsafe-source-text-sha256:" + "a" * 64
