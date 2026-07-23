@@ -182,7 +182,9 @@ def _response_body(
             body.extend(chunk)
         body = bytes(body)
     else:
-        body = bytearray(body_start)
+        # Close-delimited bodies have no bytes buffered by header parsing.
+        # Stream from the TLS socket until peer close under the same caps.
+        body = bytearray()
         while True:
             if len(body) > MAX_BYTES:
                 raise RemoteCoverError("remote cover is oversized")

@@ -161,6 +161,20 @@ class RemoteCoverTests(unittest.TestCase):
         self.assertEqual(0, redirect.body_bytes_read)
         self.assertEqual(5, valid.body_bytes_read)
 
+    def test_production_path_reads_close_delimited_image_body(self) -> None:
+        secured = _FakeSocket(
+            b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n",
+            b"close-delimited-cover",
+        )
+        with (
+            patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]),
+            patch("socket.create_connection", return_value=secured),
+            patch("ssl.create_default_context", return_value=_FakeContext()),
+        ):
+            result = fetch_remote_cover("https://example.com/cover.png")
+        self.assertEqual(b"close-delimited-cover", result.content)
+        self.assertEqual(len(result.content), secured.body_bytes_read)
+
     def test_production_path_bounds_unterminated_chunk_framing(self) -> None:
         secured = _FakeSocket(
             b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nTransfer-Encoding: chunked\r\n\r\n",
