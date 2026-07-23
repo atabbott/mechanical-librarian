@@ -60,8 +60,12 @@ unchanged.
 
 Every 0.5 increment accepts only an absent database or its own exact current
 schema. `metadata-report-v1`, prior 0.5 increment schemas, extra objects,
-altered SQL, malformed content, failed foreign-key/integrity checks, and all
-other schemas fail closed before mutation. They are not migrated, imported,
-preserved, or passed through a compatibility parser. Recovery uses a clean
-database and supported report regeneration; same-schema exact-ID and
-current-scope replay retain their existing transaction and validation controls.
+altered SQL, failed foreign-key/integrity checks, and all other schemas fail
+closed before mutation. Persisted report content is validated when an exact-ID
+or current-scope read selects it and when a selected current report or exact-ID
+collision participates in publication. Malformed targeted content fails closed;
+unrelated historical rows are not a whole-database semantic preflight. Earlier
+schemas are not migrated, imported, preserved, or passed through a compatibility
+parser. Recovery uses a clean database and supported report regeneration;
+same-schema exact-ID and current-scope replay retain their existing transaction
+and validation controls.

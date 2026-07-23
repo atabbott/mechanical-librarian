@@ -130,7 +130,11 @@ internally by stable ID.
 The command can read configured target metadata, read the selected mounted
 EPUB, contact explicitly enabled referenced providers, and append neutral
 reports. Its repository may initialize an absent database or open an exact
-current-schema database; it has no backward-compatibility authority. It cannot
-browse inventory, review or decide claims, apply changes, write a service or
-media file, run background work, retry, prune, repair, import, downgrade, retain
-selectively, or migrate any state.
+current-schema database after schema-object, foreign-key, and SQLite-integrity
+checks. It validates report content and current-pointer scope only when selected
+by an exact-ID/current-scope read or involved in publication; opening the
+repository does not semantically audit unrelated history. It has no
+backward-compatibility authority. It cannot browse inventory, review or decide
+claims, apply changes, write a service or media file, run background work,
+retry, prune, repair, import, downgrade, retain selectively, or migrate any
+state.
