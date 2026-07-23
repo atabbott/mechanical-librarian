@@ -520,14 +520,14 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("persisted current report scope disagrees")
         return document
 
-    def preview_digest(self, report_id: str, artifact_id: str) -> str:
+    def preview_digest(self, report_id: str, artifact_id: str, preview_variant: str) -> str:
         """Return only a preview explicitly referenced by one exact report."""
-        if type(report_id) is not str or type(artifact_id) is not str:
+        if type(report_id) is not str or type(artifact_id) is not str or preview_variant != "preview-320x480-rgba-png-v1":
             raise MetadataReportError("persisted cover is unavailable")
         try:
             row = self._connection.execute(
-                "SELECT preview_digest FROM metadata_report_cover_references WHERE report_id=? AND artifact_id=?",
-                (report_id, artifact_id),
+                "SELECT preview_digest FROM metadata_report_cover_references WHERE report_id=? AND artifact_id=? AND preview_variant=?",
+                (report_id, artifact_id, preview_variant),
             ).fetchone()
             if row is None or len(row) != 1 or type(row[0]) is not str:
                 raise MetadataReportError("persisted cover is unavailable")

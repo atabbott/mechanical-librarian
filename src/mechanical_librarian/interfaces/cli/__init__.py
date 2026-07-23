@@ -24,7 +24,7 @@ from mechanical_librarian.domain.metadata_report import MetadataReport, ReportVa
 Runner = Callable[[Path, Path, Path, str, str, str, int], str]
 ReopenRunner = Callable[[Path, str], str]
 CurrentReopenRunner = Callable[[Path, str, str, str, str], str]
-PreviewRunner = Callable[[Path, Path, str, str], bytes]
+PreviewRunner = Callable[[Path, Path, str, str, str], bytes]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -84,6 +84,7 @@ def _parser() -> _Parser:
     preview.add_argument("--artifact-store", required=True, metavar="PATH", type=Path)
     preview.add_argument("--report-id", required=True, metavar="REPORT_ID", type=_report_id)
     preview.add_argument("--artifact-id", required=True, metavar="ARTIFACT_ID", type=_artifact_id)
+    preview.add_argument("--preview-variant", required=True, metavar="VARIANT", type=_preview_variant)
     return parser
 
 
@@ -96,6 +97,12 @@ def _report_id(value: str) -> str:
 def _artifact_id(value: str) -> str:
     if re.fullmatch(r"cover_[0-9a-f]{64}", value) is None:
         raise argparse.ArgumentTypeError("invalid artifact id")
+    return value
+
+
+def _preview_variant(value: str) -> str:
+    if value != "preview-320x480-rgba-png-v1":
+        raise argparse.ArgumentTypeError("invalid preview variant")
     return value
 
 
@@ -112,7 +119,7 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
             errors.write("Metadata report failed safely.\n")
             return 1
         try:
-            preview = preview_runner(arguments.database, arguments.artifact_store, arguments.report_id, arguments.artifact_id)
+            preview = preview_runner(arguments.database, arguments.artifact_store, arguments.report_id, arguments.artifact_id, arguments.preview_variant)
             if type(preview) is not bytes or not preview:
                 raise ValueError
             output.buffer.write(preview) if hasattr(output, "buffer") else output.write(preview.decode("latin1"))

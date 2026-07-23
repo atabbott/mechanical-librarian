@@ -46,7 +46,8 @@ offline read is a report-bound preview:
 mechanical-librarian metadata-report-cover-preview \
   --database /data/reports.sqlite --artifact-store /data/cover-artifacts \
   --report-id report_<64-lowercase-hex-characters> \
-  --artifact-id cover_<64-lowercase-hex-characters>
+  --artifact-id cover_<64-lowercase-hex-characters> \
+  --preview-variant preview-320x480-rgba-png-v1
 ```
 
 It writes raw preview bytes only to non-interactive stdout. It never performs

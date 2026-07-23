@@ -25,7 +25,7 @@ class CoverPreviewCliTests(unittest.TestCase):
         output = _BinaryOutput()
         calls: list[tuple[object, ...]] = []
         result = main(
-            ["metadata-report-cover-preview", "--database", "report.sqlite", "--artifact-store", "artifacts", "--report-id", REPORT, "--artifact-id", ARTIFACT],
+            ["metadata-report-cover-preview", "--database", "report.sqlite", "--artifact-store", "artifacts", "--report-id", REPORT, "--artifact-id", ARTIFACT, "--preview-variant", "preview-320x480-rgba-png-v1"],
             preview_runner=lambda *args: calls.append(args) or b"\x89PNG\r\n",
             stdout=output,
             stderr=io.StringIO(),
@@ -41,7 +41,7 @@ class CoverPreviewCliTests(unittest.TestCase):
             called = True
             return b"preview"
         result = main(
-            ["metadata-report-cover-preview", "--database", "report.sqlite", "--artifact-store", "artifacts", "--report-id", REPORT, "--artifact-id", ARTIFACT],
+            ["metadata-report-cover-preview", "--database", "report.sqlite", "--artifact-store", "artifacts", "--report-id", REPORT, "--artifact-id", ARTIFACT, "--preview-variant", "preview-320x480-rgba-png-v1"],
             preview_runner=runner,
             stdout=_BinaryOutput(tty=True),
             stderr=io.StringIO(),

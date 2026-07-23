@@ -198,9 +198,9 @@ class MetadataPersistenceTests(unittest.TestCase):
             )
             repository = open_repository(path)
             repository.publish(report, lambda: True)
-            self.assertEqual(artifact.preview_digest, repository.preview_digest(report.report_id, artifact.artifact_id))
+            self.assertEqual(artifact.preview_digest, repository.preview_digest(report.report_id, artifact.artifact_id, artifact.preview_variant))
             with self.assertRaises(MetadataReportError):
-                repository.preview_digest(report.report_id, "cover_" + "0" * 64)
+                repository.preview_digest(report.report_id, "cover_" + "0" * 64, artifact.preview_variant)
             repository.close()
 
     def test_corrupt_document_and_envelope_disagreement_fail_closed(self) -> None:

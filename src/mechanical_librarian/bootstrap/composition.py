@@ -237,11 +237,11 @@ def reopen_current_metadata_report(database_path: Path, connection: str, library
         repository.close()
 
 
-def reopen_cover_preview(database_path: Path, artifact_store_path: Path, report_id: str, artifact_id: str) -> bytes:
+def reopen_cover_preview(database_path: Path, artifact_store_path: Path, report_id: str, artifact_id: str, preview_variant: str) -> bytes:
     """Read the one report-bound preview; originals and discovery stay unavailable."""
     repository = open_repository(database_path, create=False)
     try:
-        digest = repository.preview_digest(report_id, artifact_id)
+        digest = repository.preview_digest(report_id, artifact_id, preview_variant)
         return CoverArtifactStore(artifact_store_path, create=False).read_preview_digest(digest)
     finally:
         repository.close()
