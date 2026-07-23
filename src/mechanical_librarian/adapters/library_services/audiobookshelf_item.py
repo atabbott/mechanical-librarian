@@ -34,7 +34,7 @@ class AudiobookshelfItemReader:
         self._service_path = service_path.rstrip("/") or "/"
         self._maximum_bytes = maximum_bytes
 
-    def read(self, item: str) -> TargetSnapshot:
+    def read(self, item: str, *, deadline: float | None = None) -> TargetSnapshot:
         if type(item) is not str or not 1 <= len(item) <= 512 or item.strip() != item or any(character in item for character in "\x00/\\"):
             raise MetadataReportError("target item is invalid")
         try:
@@ -44,6 +44,7 @@ class AudiobookshelfItemReader:
                 f"{self._endpoint}/api/items/{quote(item, safe='')}",
                 params={"expanded": "1"},
                 headers={"Accept": "application/json", "Accept-Encoding": "identity"},
+                timeout=_phase_timeout(deadline),
             ) as response:
                 if response.status_code in {401, 403, 404}:
                     raise MetadataReportError("target item is unavailable")
@@ -52,7 +53,7 @@ class AudiobookshelfItemReader:
                 content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
                 if content_type != "application/json":
                     raise MetadataReportError("target response is invalid")
-                payload = _bounded_body(response, self._maximum_bytes)
+                payload = _bounded_body(response, self._maximum_bytes, deadline=deadline)
         except MetadataReportError:
             raise
         except (httpx.HTTPError, OSError, ValueError) as error:
@@ -78,13 +79,13 @@ class AudiobookshelfItemReader:
             raise MetadataReportError("target cover is invalid")
         if deadline is not None and time.monotonic() >= deadline:
             raise CoverTimeoutError("target cover timed out")
-        before = self.read(cover.item)
+        before = self.read(cover.item, deadline=deadline)
         if before.cover != cover:
             raise CoverSourceChangedError("target cover changed")
         try:
             with httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""}) as client:
                 host = httpx.URL(self._endpoint).host
-                with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=5.0) as response:
+                with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=_phase_timeout(deadline)) as response:
                     if response.status_code == 404:
                         value = None
                     elif response.status_code != 200:
@@ -94,7 +95,7 @@ class AudiobookshelfItemReader:
                         if content_type not in {"image/jpeg", "image/png", "image/webp"}:
                             raise MetadataReportError("target cover is invalid")
                         value = _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
-            after = self.read(cover.item)
+            after = self.read(cover.item, deadline=deadline)
             if after.cover != before.cover:
                 raise CoverSourceChangedError("target cover changed")
             return value
@@ -214,6 +215,15 @@ def _bounded_body(response: httpx.Response, maximum: int, *, deadline: float | N
     if not chunks:
         raise MetadataReportError("target response is invalid")
     return b"".join(chunks)
+
+
+def _phase_timeout(deadline: float | None) -> float:
+    if deadline is None:
+        return 5.0
+    remaining = min(5.0, deadline - time.monotonic())
+    if remaining <= 0:
+        raise CoverTimeoutError("target cover timed out")
+    return remaining
 
 
 def _mapping(value: object) -> dict[str, Any]:
