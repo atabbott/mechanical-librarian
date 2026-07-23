@@ -6,7 +6,6 @@ import hashlib
 import os
 import sqlite3
 import stat
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import quote
@@ -210,10 +209,9 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
     uri = f"file:{quote(absolute, safe='/')}?mode=ro&immutable=1"
     connection: sqlite3.Connection | None = None
     try:
-        before = _open_descriptors()
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
+        _validate_connection_binding(connection, path, descriptor)
         connection.execute("PRAGMA schema_version").fetchone()
-        _validate_connection_binding(path, descriptor, before)
         _validate_schema(connection)
     finally:
         if connection is not None:
@@ -221,54 +219,61 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
 
 
 def _connect_bound(path: Path, descriptor: int) -> sqlite3.Connection:
-    before = _open_descriptors()
     absolute = str(path.absolute())
     uri = f"file:{quote(absolute, safe='/')}?mode=rw"
     connection = sqlite3.connect(uri, uri=True, isolation_level=None)
     try:
-        _validate_connection_binding(path, descriptor, before)
+        _validate_connection_binding(connection, path, descriptor)
         return connection
     except Exception:
         connection.close()
         raise
 
 
-def _open_descriptors() -> set[int]:
-    if not sys.platform.startswith("linux"):
-        return set()
-    try:
-        return {
-            int(value)
-            for value in os.listdir("/proc/self/fd")
-            if value.isascii() and value.isdigit()
-        }
-    except OSError as error:
-        raise MetadataReportError("database descriptor binding is unavailable") from error
-
-
-def _validate_connection_binding(path: Path, descriptor: int, before: set[int]) -> None:
+def _validate_connection_binding(
+    connection: sqlite3.Connection,
+    path: Path,
+    descriptor: int,
+) -> None:
     expected = os.fstat(descriptor)
     expected_identity = (expected.st_dev, expected.st_ino)
-    if sys.platform.startswith("linux"):
-        candidates = _open_descriptors() - before - {descriptor}
-        for candidate in candidates:
-            try:
-                information = os.fstat(candidate)
-            except OSError:
-                continue
-            if stat.S_ISREG(information.st_mode) and (
-                information.st_dev,
-                information.st_ino,
-            ) == expected_identity:
-                return
-        raise MetadataReportError("database pathname changed while opening")
+    rows = connection.execute("PRAGMA database_list").fetchall()
+    if (
+        len(rows) != 1
+        or len(rows[0]) != 3
+        or rows[0][0] != 0
+        or rows[0][1] != "main"
+        or type(rows[0][2]) is not str
+        or not rows[0][2]
+        or not os.path.isabs(rows[0][2])
+    ):
+        raise MetadataReportError("database connection identity is unavailable")
+    verification = -1
     try:
-        information = path.lstat()
+        verification = os.open(
+            rows[0][2],
+            os.O_RDONLY
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        connected = os.fstat(verification)
+        if not stat.S_ISREG(connected.st_mode) or (
+            connected.st_dev,
+            connected.st_ino,
+        ) != expected_identity:
+            raise MetadataReportError("database pathname changed while opening")
     except OSError as error:
         raise MetadataReportError("database pathname changed while opening") from error
-    if not stat.S_ISREG(information.st_mode) or (
-        information.st_dev,
-        information.st_ino,
+    finally:
+        if verification >= 0:
+            os.close(verification)
+    try:
+        requested = path.lstat()
+    except OSError as error:
+        raise MetadataReportError("database pathname changed while opening") from error
+    if not stat.S_ISREG(requested.st_mode) or (
+        requested.st_dev,
+        requested.st_ino,
     ) != expected_identity:
         raise MetadataReportError("database pathname changed while opening")
 
