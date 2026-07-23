@@ -12,14 +12,9 @@ import time
 from collections.abc import Callable
 
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
-from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
+from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint
-from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
-    EpubPackageCapability,
-    EpubInspectionOutcome,
-    EpubPackageReport,
-)
-from mechanical_librarian.domain.epub_inspection import EpubPackageLimits
+from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionOutcome, EpubPackageLimits
 
 
 _STDOUT_LIMIT = 1_048_576
@@ -29,10 +24,6 @@ _WALL_SECONDS = 60.0
 _CHILD_MAX_SECONDS = 55.0
 _CHILD_MARGIN_SECONDS = 0.25
 _TERMINATION_GRACE_SECONDS = 2.0
-
-
-def _failure(outcome: EpubInspectionOutcome, limits: EpubPackageLimits) -> EpubPackageReport:
-    return EpubPackageReport(outcome, EpubPackageCapability.PACKAGE, limits)
 
 
 def _group_exists(identifier: int) -> bool:
@@ -119,11 +110,11 @@ def run_epub_inspector_child(
     *,
     cancelled: Callable[[], bool] = lambda: False,
     logical_identity: str | None = None,
-) -> EpubOpeningReport:
+) -> EpubInspection:
     """Run the F07a capability through the same isolated child controls."""
 
     if type(limits) is not EpubOpeningLimits:
-        return EpubOpeningReport(EpubInspectionOutcome.INTERNAL_FAILURE, EpubOpeningLimits())
+        return EpubInspection(EpubInspectionOutcome.INTERNAL_FAILURE, None)
     return _run_epub_opening_protocol(
         descriptor,
         expected_source,
@@ -141,11 +132,11 @@ def _run_epub_opening_protocol(
     *,
     cancelled: Callable[[], bool],
     logical_identity: str | None,
-) -> EpubOpeningReport:
+) -> EpubInspection:
     """Capability-specific closed envelope; process authority matches F06."""
 
-    def failure(outcome: EpubInspectionOutcome) -> EpubOpeningReport:
-        return EpubOpeningReport(outcome, limits)
+    def failure(outcome: EpubInspectionOutcome) -> EpubInspection:
+        return EpubInspection(outcome, None)
 
     context = json.dumps(
         {
@@ -234,13 +225,10 @@ def _run_epub_opening_protocol(
         if return_code != 0 or stderr or not payload.endswith(b"\n") or payload.count(b"\n") != 1:
             return failure(EpubInspectionOutcome.CHILD_FAILURE)
         try:
-            report = EpubOpeningReport.from_json(payload[:-1].decode("utf-8", "strict"))
-        except (EvidenceValueError, UnicodeError):
+            report = EpubInspection.from_json(payload[:-1].decode("utf-8", "strict"))
+        except (EvidenceValueError, UnicodeError, ValueError):
             return failure(EpubInspectionOutcome.CHILD_FAILURE)
-        if report.limits != limits or (
-            report.source_fingerprint is not None
-            and report.source_fingerprint != expected_source
-        ):
+        if report.source is not None and report.source != expected_source:
             return failure(EpubInspectionOutcome.CHILD_FAILURE)
         return report
     except (OSError, ValueError, subprocess.SubprocessError):

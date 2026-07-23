@@ -277,12 +277,15 @@ proposal gate with the neutral evidence-report contract.
 | Linked-work gate | #261 | Simplify the independent GitHub policy gate after #253. |
 | Activation | #197 | Sole runtime/schema reset after all four contributors. |
 
-The installed activation command is exactly
+The installed activation observation command is exactly
 `metadata-report --config PATH --database PATH --connection NAME --library NAME --item ITEM_ID --file-index INDEX`.
 Both path inputs are required; no defaults, CWD discovery, implicit filenames,
 or undocumented environment fallbacks exist. Success emits exactly the
 persisted canonical JSON report plus a newline; failure emits no stdout, one
 bounded redacted stderr diagnostic, and a nonzero exit.
+The separate configuration-free `metadata-report-get` surface reopens either an
+exact immutable ID or the current report for a full connection/library/item/file
+identity scope; neither lookup observes a target or advances a pointer.
 
 Each report has a small relational identity, lookup, digest, and schema-version
 envelope plus one immutable canonical JSON document. The envelope and document
@@ -299,16 +302,27 @@ final-0.3 report stays report-only during the contributor work.
 
 - #253, #255, #257, and #261 are complete; #197 alone activates the complete
   outcome and reconciles historical #254, #256, #258, and #260;
-- an installed artifact demonstrates the exact one-command, clean-state
-  contract, agreeing relational envelope and canonical document, whole-report
-  replay, privacy/currentness/hostile-input safeguards, and report-only/no-write
-  boundary; and
+- an installed artifact demonstrates the exact observation-command, clean-state
+  contract, configuration-free exact-ID/current-scope replay, agreeing relational
+  envelope and canonical document, privacy/currentness/hostile-input safeguards,
+  and report-only/no-write boundary; and
 - no review, decision, approval, apply, target/media write, background worker,
   retry, provider cache, compatibility machinery, tag, release, or release
   artifact is introduced.
 
 Completing this internal checkpoint does not create a release train, supported
 version, tag, GitHub Release, or published artifact.
+
+## Delivery checkpoint 0.5.0: complete ebook metadata and cover evidence
+
+F09i #293, F09j #294, and F09k #295 complete local, configured Hardcover, and
+validated cover evidence in order. Throughout this checkpoint, each increment
+recognizes only an absent database or its own exact current schema.
+`metadata-report-v1`, prior 0.5 increment schemas, and all earlier development
+schemas are rejected before mutation. There is no migration, import,
+preservation, or compatibility parser. Recovery is a clean database plus
+supported report regeneration; old databases may be retained offline.
+Exact-ID/current-scope replay is required only within the exact current schema.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 

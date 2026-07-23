@@ -16,6 +16,22 @@ Every option is required. There are no default paths, current-directory lookup,
 implicit filenames, environment fallbacks, presentation flags, or alternate
 output formats.
 
+An exact persisted report can be reopened without operational configuration,
+credentials, target access, provider construction, or network access:
+
+```text
+mechanical-librarian metadata-report-get \
+  --database /data/reports.sqlite \
+  --report-id report_<64-lowercase-hex-characters>
+```
+
+The current report for a known scope can also be reopened offline:
+
+```text
+mechanical-librarian metadata-report-get --database /data/reports.sqlite --current \
+  --connection primary --library ebooks --item ITEM_ID --file-identity <64-lowercase-hex>
+```
+
 On success stdout is exactly the persisted canonical JSON report followed by
 one newline. On failure stdout is empty, stderr contains one fixed bounded
 diagnostic, and the exit status is nonzero. Diagnostics never include paths,
@@ -24,7 +40,11 @@ credentials, target values, provider bodies, or EPUB text.
 ## Preconditions
 
 - The database path is absent for the first invocation or already contains the
-  exact 0.4 two-table schema.
+  exact current schema required by the installed increment.
+- `metadata-report-v1`, prior 0.5 increment schemas, and all earlier development
+  schemas are rejected before mutation. There is no migration, import,
+  preservation, or compatibility parser. Keep an old database offline if
+  required, initialize a clean database, and rerun the supported report command.
 - On supported Linux deployments, the database parent directory is owned by
   the process user and grants no group or other permissions. The configured
   database basename has no `-journal`, `-wal`, or `-shm` recovery sidecar.
@@ -64,12 +84,29 @@ so a harmless file-list reorder does not change the target.
 The isolated child receives only the already-open read-only EPUB descriptor,
 source fingerprint, and fixed limits. It first captures one bounded immutable
 byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
-parsing. It returns bounded title and ISBN facts.
+ parsing. It returns only bounded, source-attributed local metadata facts:
+ explicit package fields, bounded opening matter, and an independent rear-spine
+ copyright pass. The rear pass considers only the final eight accepted spine
+ slots in reverse order, opens at most four XHTML/HTML resources, and never
+ substitutes an excluded, missing, encrypted, image, unsupported, or duplicate
+ slot. It admits only explicit title, creator, contributor, or byline cues and checksum-valid ISBNs when
+ the same resource has a copyright marker; it is not whole-book mining.
+ Across both pools there are at most nine content opens, 9 MiB of expanded
+ content, 786432 projected characters, 150000 nodes, and 80 claims.
 Each ISBN fact keeps its exact observed substring, a directly supporting
 excerpt, checksum result, canonical value only when valid, and an explicit
 ebook, print, unknown, or ambiguous classification with its nonnumeric label
 basis. ISBN-10 remains ISBN-10; print and invalid identifiers are retained as
 evidence but are never sent merely as ebook inputs.
+Every report contains every supported local field in fixed order with one closed
+state: `valid`, `absent`, `malformed`, `oversized`, `unsupported`, `untyped`, or
+`inapplicable`. These field results are independent evidence summaries, not a
+rank or decision. Each field also carries source states: Audiobookshelf target
+metadata supports only title in this slice, while EPUB supports the complete
+local field vocabulary. Source and DOM occurrence order is retained from the
+isolated inspector through persisted replay; content-derived references never
+reorder evidence. Unsafe and oversized sentinels remain non-canonical evidence.
+
 The credential-bearing parent combines those facts with the exact current
 target title. Every referenced, enabled Hardcover connection makes at most one
 fresh request. Disabled references produce one `disabled` observation without
@@ -85,12 +122,19 @@ cache exists.
 The report ID is derived from the complete canonical document. Exact fresh
 re-observation returns the same ID and bytes without accumulating another row.
 Changed evidence creates an immutable successor and advances only the separate
-current pointer. Earlier reports remain retrievable internally by stable ID.
+current pointer. Earlier reports in that exact current schema remain retrievable
+internally by stable ID.
 
 ## Authority
 
 The command can read configured target metadata, read the selected mounted
 EPUB, contact explicitly enabled referenced providers, and append neutral
-reports. It cannot browse inventory, review or decide claims, apply changes,
-write a service or media file, run background work, retry, prune, migrate, or
-repair state.
+reports. Its repository may initialize an absent database or open an exact
+current-schema database after schema-object, foreign-key, and SQLite-integrity
+checks. It validates report content and current-pointer scope only when selected
+by an exact-ID/current-scope read or involved in publication; opening the
+repository does not semantically audit unrelated history. It has no
+backward-compatibility authority. It cannot browse inventory, review or decide
+claims, apply changes, write a service or media file, run background work,
+retry, prune, repair, import, downgrade, retain selectively, or migrate any
+state.

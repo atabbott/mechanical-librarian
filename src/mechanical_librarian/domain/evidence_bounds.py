@@ -76,6 +76,12 @@ _SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
     r"(?i)\b(?:api[ _-]?key|client[ _-]?secret|access[ _-]?token|"
     r"refresh[ _-]?token|session[ _-]?token|password|passwd)\b\s*(?:[:=]|\s)\s*\S+"
 )
+_SOURCE_TEXT_SENTINEL = re.compile(
+    r"(?:unsafe|oversized)-source-text-sha256:[0-9a-f]{64}"
+)
+_SOURCE_TEXT_SENTINEL_PREFIX = re.compile(
+    r"(?:unsafe|oversized)-source-text-sha256:"
+)
 
 T = TypeVar("T")
 
@@ -135,6 +141,18 @@ def validate_projection_text(value: object, label: str, maximum: int) -> str:
     if _credential_shaped(text):
         raise EvidenceValueError(f"{label} must not contain credential-shaped text")
     return text
+
+
+def validate_role_projection(value: object, label: str = "contributor role") -> str:
+    """Accept a bounded public role or one exact source-text sentinel."""
+
+    if type(value) is not str:
+        raise EvidenceValueError(f"{label} must be text")
+    if _SOURCE_TEXT_SENTINEL.fullmatch(value):
+        return value
+    if _SOURCE_TEXT_SENTINEL_PREFIX.match(value):
+        raise EvidenceValueError(f"{label} has a malformed source-text sentinel")
+    return validate_projection_text(value, label, 64)
 
 
 def validate_safe_diagnostic_text(value: object, label: str, maximum: int) -> str:

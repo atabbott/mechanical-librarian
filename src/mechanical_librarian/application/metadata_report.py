@@ -20,6 +20,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderStatus,
     TargetFacts,
+    derive_field_results,
     normalize_title,
 )
 
@@ -142,10 +143,12 @@ class GenerateMetadataReport:
             basis="target_metadata",
             checksum="not_applicable",
             applicability_basis="not_applicable",
+            occurrence=0,
         )
-        combined_claims = tuple(
-            sorted((target_title_claim, *local.claims), key=lambda value: value.reference)
-        )
+        # Claims are evidence, not a set: retain the target observation first and
+        # then the inspector's DOM/source occurrence order.  Content-addressed
+        # references are deliberately not an ordering key.
+        combined_claims = (target_title_claim, *local.claims)
         observations: list[ProviderObservation] = []
         for binding in self._providers:
             if not binding.enabled:
@@ -171,7 +174,7 @@ class GenerateMetadataReport:
 
         reasons = tuple(
             sorted(
-                {f"opening_{claim.kind.value}" for claim in local.claims}
+                {f"{claim.basis}_{claim.kind.value}" for claim in local.claims}
                 or {"no_opening_claims"}
             )
         )
@@ -185,6 +188,7 @@ class GenerateMetadataReport:
             local_claims=combined_claims,
             local_reasons=reasons,
             providers=tuple(sorted(observations, key=lambda value: value.provider)),
+            field_results=derive_field_results(combined_claims),
         )
         repository: ReportRepository | None = None
         try:

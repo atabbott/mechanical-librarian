@@ -5,17 +5,24 @@ EPUB. It contains:
 
 - target connection, library, item, and exact current title;
 - selected file index, opaque file identity, EPUB format, and content digest;
-- stable source-attributed local title and ISBN claims;
+- stable source-attributed local field claims with bounded occurrence and, where
+  applicable, rear-spine provenance;
 - a local `candidate` or `no_candidate` status with bounded reasons; and
 - independent provider observations with stable input references and zero or
   more provider-identity-ordered candidates.
 
-Title and ISBN are the only claim variants. ISBN claims retain the observed
-substring, canonical checksum-valid identifier when available, at most 280
-characters of directly supporting opening-matter context,
+The local field vocabulary is title/subtitle, creator/contributor and role,
+series/sequence, ISBN, date, publisher/imprint, description, language, and
+contextual subject evidence; typed field states remain evidence, not decisions.
+
+Local claims represent the closed field vocabulary. ISBN claims retain the
+observed substring, canonical checksum-valid identifier when available, at
+most 280 characters of directly supporting opening-matter context,
 ebook/print/unknown/ambiguous applicability, and an explicit nonnumeric label
 basis. Invalid, unlabeled, and conflicting-label identifiers remain distinct
-facts; an ISBN-10 is not represented as an observed ISBN-13.
+facts; an ISBN-10 is not represented as an observed ISBN-13. Other bounded
+local fields remain source-attributed evidence, never decisions, and preserve
+their admitted source/DOM order and rear-spine provenance where present.
 
 Provider observations are `disabled`, `insufficient_input`, `candidates`,
 `no_match`, `authentication`, `authorization`, `rate_limited`, `unavailable`,
@@ -25,3 +32,7 @@ decision or winner.
 
 Claim references and the report ID are derived from canonical content. Exact
 replay therefore preserves IDs and bytes without an idempotency subsystem.
+Every admitted EPUB occurrence, including identical values, retains source/DOM
+order through a bounded v2 occurrence ordinal in its claim identity.
+The replay guarantee applies within the exact current schema; the domain model
+does not interpret reports from prior or intermediate development schemas.

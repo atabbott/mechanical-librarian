@@ -117,6 +117,7 @@ class EpubPackageDeclarationKind(StrEnum):
     PACKAGE = "package"
     MANIFEST_ITEM = "manifest_item"
     SPINE_ITEM = "spine_item"
+    SPINE_SLOT = "spine_slot"
     GUIDE_REFERENCE = "guide_reference"
     NAVIGATION = "navigation"
     NCX = "ncx"
@@ -341,10 +342,16 @@ class EpubPackageDeclaration:
     identifier: str | None = None
     media_type: str | None = None
     properties: tuple[str, ...] = ()
+    linear: bool = True
+    spine_position: int | None = None
 
     def __post_init__(self) -> None:
         if type(self.kind) is not EpubPackageDeclarationKind or type(self.citation) is not EpubPackageCitation:
             raise EvidenceValueError("local evidence declaration is malformed")
+        if type(self.linear) is not bool:
+            raise EvidenceValueError("declaration linearity is malformed")
+        if self.spine_position is not None and (type(self.spine_position) is not int or self.spine_position < 1):
+            raise EvidenceValueError("declaration spine position is malformed")
         if type(self.source_ordinal) is not int or not 1 <= self.source_ordinal <= 1_000_000:
             raise EvidenceValueError("declaration source ordinal is invalid")
         if self.resource_identity is not None:

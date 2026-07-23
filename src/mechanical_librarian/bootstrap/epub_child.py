@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import resource
 import signal
 import sys
@@ -19,6 +20,8 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _Rejected,
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_opening import EpubOpeningExtractor
+from mechanical_librarian.adapters.evidence_extractors.epub_local import package_facts as _adapter_package_facts, rear_facts as _adapter_rear_facts
+from mechanical_librarian.adapters.evidence_extractors import epub_opening as opening_parser
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
@@ -30,6 +33,7 @@ from mechanical_librarian.domain.identifiers import (
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.epub_inspection import EpubPackageLimits, EpubInspectionOutcome
+from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionFact, EpubInspectionField
 from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageCancellation,
@@ -37,6 +41,8 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     EpubPackageRequest,
     EpubPackageSource,
     EpubPackageSourceError,
+    EpubPackageReport,
+    epub_resource_identity,
 )
 
 
@@ -148,7 +154,7 @@ def _install_parent_guard(
     watcher.start()
 
 
-def _write_report(report: EpubOpeningReport) -> None:
+def _write_report(report: EpubInspection) -> None:
     payload = (report.to_json() + "\n").encode("utf-8")
     if len(payload) > _STDOUT_LIMIT:
         raise ValueError("child report exceeded protocol")
@@ -162,21 +168,89 @@ def _inspect_opening(
     package_request: EpubPackageRequest,
     limits: EpubOpeningLimits,
 ) -> EpubOpeningReport:
+    return _inspect_bundle(request, package_request, limits)[1]
+
+
+def _inspect_bundle(
+    request: EpubPackageRequest,
+    package_request: EpubPackageRequest,
+    limits: EpubOpeningLimits,
+) -> tuple[object, EpubOpeningReport, tuple[EpubInspectionFact, ...]]:
     try:
         rejected = EpubPackageExtractor().preflight(package_request)
         if rejected is not None:
-            return EpubOpeningReport(rejected, limits)
+            return (
+                EpubPackageReport(rejected, EpubPackageCapability.PACKAGE, package_request.limits),
+                EpubOpeningReport(rejected, limits),
+                (),
+            )
         with zipfile.ZipFile(_SourceIO(package_request), "r", allowZip64=True) as archive:
             package_report = EpubPackageExtractor().extract(package_request, archive)
-            return EpubOpeningExtractor().extract(request, limits, package_report, archive)
+            opening_report = EpubOpeningExtractor().extract(request, limits, package_report, archive)
+            return package_report, opening_report, _adapter_rear_facts(request, package_report, opening_report, archive)
     except _Rejected as rejected:
-        return EpubOpeningReport(rejected.outcome, limits)
+        return (
+            None,
+            EpubOpeningReport(rejected.outcome, limits),
+            (),
+        )
+    except opening_parser._AggregateRejected as rejected:
+        return (
+            None,
+            EpubOpeningReport(rejected.outcome, limits),
+            (),
+        )
     except EpubPackageSourceError:
-        return EpubOpeningReport(EpubInspectionOutcome.UNAVAILABLE_SOURCE, limits)
+        return (
+            None,
+            EpubOpeningReport(EpubInspectionOutcome.UNAVAILABLE_SOURCE, limits),
+            (),
+        )
     except zipfile.BadZipFile:
-        return EpubOpeningReport(EpubInspectionOutcome.UNSUPPORTED_FORMAT, limits)
+        return (
+            None,
+            EpubOpeningReport(EpubInspectionOutcome.UNSUPPORTED_FORMAT, limits),
+            (),
+        )
     except (OSError, ValueError):
-        return EpubOpeningReport(EpubInspectionOutcome.INTEGRITY_FAILURE, limits)
+        return (
+            None,
+            EpubOpeningReport(EpubInspectionOutcome.INTEGRITY_FAILURE, limits),
+            (),
+        )
+
+
+def _package_facts(report, source: Fingerprint) -> tuple[EpubInspectionFact, ...]:
+    return _adapter_package_facts(report, source)
+
+
+def _inspection(
+    package_report, opening_report: EpubOpeningReport,
+    rear_facts: tuple[EpubInspectionFact, ...] = (),
+) -> EpubInspection:
+    opening = EpubInspection.from_opening_report(opening_report)
+    source = package_report.source_fingerprint or opening.source
+    if source is None:
+        return EpubInspection(opening.outcome, None)
+    if not package_report.succeeded:
+        return EpubInspection(package_report.outcome, source)
+    if opening.outcome not in {
+        EpubInspectionOutcome.SUCCESS,
+        EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
+    }:
+        return EpubInspection(opening.outcome, source)
+    facts = (*_package_facts(package_report, source), *opening.facts, *rear_facts)
+    outcome = EpubInspectionOutcome.SUCCESS if facts else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
+    return EpubInspection(outcome, source, facts)
+
+
+def _rear_facts(
+    request: EpubPackageRequest,
+    package_report: EpubPackageReport,
+    opening_report: EpubOpeningReport,
+    archive: zipfile.ZipFile,
+) -> tuple[EpubInspectionFact, ...]:
+    return _adapter_rear_facts(request, package_report, opening_report, archive)
 
 
 def _snapshot_source(descriptor: int, maximum: int) -> bytes:
@@ -235,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if hashlib.sha256(snapshot).hexdigest() != expected.digest:
             _write_report(
-                EpubOpeningReport(EpubInspectionOutcome.INTEGRITY_FAILURE, limits)
+                EpubInspection(EpubInspectionOutcome.INTEGRITY_FAILURE, None)
             )
             return 0
         request = EpubPackageRequest(
@@ -257,12 +331,23 @@ def main(argv: list[str] | None = None) -> int:
             EpubPackageCapability.PACKAGE, request.limits, request.deadline,
             request.monotonic_deadline, request.cancellation,
         )
-        report = _inspect_opening(request, package_request, limits)
-        _write_report(report)
+        bundle = _inspect_bundle(request, package_request, limits)
+        package_report, opening_report = bundle[:2]
+        rear_facts = bundle[2] if len(bundle) == 3 else ()
+        if package_report is None:
+            _write_report(EpubInspection(opening_report.outcome, None))
+        else:
+            _write_report(_inspection(package_report, opening_report, rear_facts))
         return 0
+    except MemoryError:
+        try:
+            _write_report(EpubInspection(EpubInspectionOutcome.RESOURCE_LIMIT, None))
+            return 0
+        except BaseException:
+            return 70
     except BaseException:
         try:
-            _write_report(EpubOpeningReport(EpubInspectionOutcome.INTERNAL_FAILURE, limits))
+            _write_report(EpubInspection(EpubInspectionOutcome.INTERNAL_FAILURE, None))
             return 0
         except BaseException:
             return 70

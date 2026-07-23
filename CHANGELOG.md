@@ -2,9 +2,25 @@
 
 ## Unreleased
 
+- Preserve source-spine slot positions for bounded local EPUB rear evidence and
+  make exact-ID report reopening non-creating.
+- Preserve local EPUB source/DOM evidence order, explicit source capabilities,
+  and non-canonical oversized or unsafe sentinel states through report replay.
+- Preserve duplicate EPUB occurrences with bounded v2 ordinals.
+- Require every 0.5 increment to accept only an absent database or its exact
+  current schema. Prior and intermediate schemas are rejected without mutation;
+  same-schema exact-ID/current-scope replay remains available, and recovery is a
+  clean database plus supported report regeneration.
+
+- Added `metadata-report-v2` local-field evidence: complete ordered field
+  states, package/opening evidence, and bounded rear-spine copyright evidence.
+  Exact persisted reports can be reopened by report ID without operational
+  configuration, credentials, target access, or network access.
+
 - Activated the clean-state 0.4 neutral metadata-evidence runtime. The installed
-  package now exposes only `metadata-report` with required config, database,
-  connection, library, item, and file-index inputs.
+  package exposes `metadata-report` with required config, database, connection,
+  library, item, and file-index inputs, plus configuration-free exact-ID and
+  current-scope `metadata-report-get` replay.
 - Added explicit named target connections, libraries, read-only mounts, and
   provider connections with per-library provider references and explicit
   enablement.

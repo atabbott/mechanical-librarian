@@ -27,7 +27,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v1'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v2'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -407,6 +407,15 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("target or media changed")
             if self._binding is not None:
                 self._binding.require_current()
+            current = self._connection.execute(
+                "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,r.file_identity,r.content_digest,r.schema_version,r.document_digest,r.document FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
+                values[1:5],
+            ).fetchone()
+            if current is not None:
+                document = _validate_report_row(current)
+                persisted = MetadataReport.from_json(document)
+                if (persisted.target.connection, persisted.target.library, persisted.target.item, persisted.file.identity) != values[1:5]:
+                    raise MetadataReportError("persisted current report scope disagrees")
             existing = self._connection.execute(
                 "SELECT connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
                 (report.report_id,),
@@ -440,25 +449,12 @@ class SQLiteMetadataReportRepository:
     def get(self, report_id: str) -> str:
         try:
             row = self._connection.execute(
-                "SELECT connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
+                "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
                 (report_id,),
             ).fetchone()
             if row is None:
                 raise MetadataReportError("persisted report is unavailable")
-            connection, library, item, file_identity, content_digest, schema, digest, document = row
-            if type(document) is not str or schema != REPORT_SCHEMA or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest:
-                raise MetadataReportError("persisted report is invalid")
-            report = MetadataReport.from_json(document)
-            if (
-                report.report_id != report_id
-                or report.target.connection != connection
-                or report.target.library != library
-                or report.target.item != item
-                or report.file.identity != file_identity
-                or report.file.content_digest != content_digest
-            ):
-                raise MetadataReportError("persisted report envelope disagrees")
-            return document
+            return _validate_report_row(row)
         except (sqlite3.Error, ReportValueError, UnicodeError) as error:
             if isinstance(error, MetadataReportError):
                 raise
@@ -467,7 +463,7 @@ class SQLiteMetadataReportRepository:
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
         try:
             row = self._connection.execute(
-                "SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?",
+                "SELECT c.report_id,r.schema_version,r.connection_name,r.library_name,r.item_id,r.file_identity FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
                 (connection, library, item, file_identity),
             ).fetchone()
         except sqlite3.Error as error:
@@ -496,7 +492,7 @@ class SQLiteMetadataReportRepository:
                 self._binding.close()
 
 
-def open_repository(path: Path) -> SQLiteMetadataReportRepository:
+def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportRepository:
     created = False
     descriptor = -1
     created_identity: tuple[int, int] | None = None
@@ -524,7 +520,7 @@ def open_repository(path: Path) -> SQLiteMetadataReportRepository:
                 _reject_database_sidecars(path)
                 _validate_existing_read_only(path, descriptor)
                 _reject_database_sidecars(path)
-        else:
+        elif create:
             descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
             information = os.fstat(descriptor)
             if not stat.S_ISREG(information.st_mode):
@@ -534,6 +530,8 @@ def open_repository(path: Path) -> SQLiteMetadataReportRepository:
             if sys.platform.startswith("linux"):
                 binding = _LinuxDatabaseBinding.create(path, descriptor)
                 descriptor = -1
+        else:
+            raise MetadataReportError("database is unavailable")
         database_path = binding.alias_path if binding is not None else path
         database_descriptor = (
             binding.descriptor if binding is not None else descriptor
@@ -815,12 +813,24 @@ def _unlink_created(path: Path, expected: tuple[int, int]) -> None:
 
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
-    tables = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
-    triggers = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall()
-    expected_tables = sorted((("current_metadata_reports", _CURRENT_SQL), ("metadata_reports", _REPORTS_SQL)))
-    expected_triggers = sorted((("metadata_reports_no_delete", _NO_DELETE_SQL), ("metadata_reports_no_update", _NO_UPDATE_SQL)))
-    if tables != expected_tables or triggers != expected_triggers or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+    objects = connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
+    expected_objects = sorted((("index", "sqlite_autoindex_current_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_2", None), ("table", "current_metadata_reports", _CURRENT_SQL), ("table", "metadata_reports", _REPORTS_SQL), ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL), ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL)))
+    if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
 
+
+def _validate_report_row(row: tuple[object, ...]) -> str:
+    if len(row) != 9:
+        raise MetadataReportError("persisted report is invalid")
+    report_id, connection, library, item, file_identity, content_digest, schema, digest, document = row
+    if type(report_id) is not str or type(document) is not str or schema != REPORT_SCHEMA or type(digest) is not str or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest:
+        raise MetadataReportError("persisted report is invalid")
+    try:
+        report = MetadataReport.from_json(document)
+    except ReportValueError as error:
+        raise MetadataReportError("persisted report is invalid") from error
+    if (report.report_id, report.target.connection, report.target.library, report.target.item, report.file.identity, report.file.content_digest) != (report_id, connection, library, item, file_identity, content_digest):
+        raise MetadataReportError("persisted report envelope disagrees")
+    return document
 
 __all__ = ["SQLiteMetadataReportRepository", "open_repository"]

@@ -83,8 +83,10 @@ def opening_selection_digest(
 class OpeningField(StrEnum):
     TITLE = "title"
     SUBTITLE = "subtitle"
+    CREATOR = "creator"
     CONTRIBUTOR = "contributor"
     CONTRIBUTOR_ROLE = "contributor_role"
+    CREATOR_ROLE = "creator_role"
     PUBLISHER = "publisher"
     IMPRINT = "imprint"
     PUBLICATION_DATE = "publication_date"
@@ -265,6 +267,7 @@ class OpeningClaim:
     citation: OpeningCitation
     identifier_type: str | None = None
     applicability_label: str | None = None
+    state: str = "valid"
 
     def __post_init__(self) -> None:
         if (
@@ -273,9 +276,13 @@ class OpeningClaim:
             or type(self.citation) is not OpeningCitation
         ):
             raise EvidenceValueError("opening claim is malformed")
+        if self.state not in {"valid", "oversized", "unsupported"}:
+            raise EvidenceValueError("opening claim state is malformed")
         validate_projection_text(self.raw_value, "opening raw value", 280)
-        if self.raw_value not in self.citation.exact_excerpt:
+        if self.state == "valid" and self.raw_value not in self.citation.exact_excerpt:
             raise EvidenceValueError("opening claim is outside its cited excerpt")
+        if self.state != "valid" and self.raw_value != self.citation.exact_excerpt:
+            raise EvidenceValueError("redacted opening claim citation disagrees")
         if self.normalized_value is not None:
             validate_projection_text(self.normalized_value, "opening normalized value", 280)
         if self.field is OpeningField.IDENTIFIER:
@@ -690,12 +697,12 @@ def _citation_from_data(value: object) -> OpeningCitation:
 
 
 def _claim_data(value: OpeningClaim) -> dict[str, object]:
-    return {"applicability": value.applicability.value, "applicability_label": value.applicability_label, "citation": _citation_data(value.citation), "field": value.field.value, "identifier_type": value.identifier_type, "normalized_value": value.normalized_value, "raw_value": value.raw_value}
+    return {"applicability": value.applicability.value, "applicability_label": value.applicability_label, "citation": _citation_data(value.citation), "field": value.field.value, "identifier_type": value.identifier_type, "normalized_value": value.normalized_value, "raw_value": value.raw_value, "state": value.state}
 
 
 def _claim_from_data(value: object) -> OpeningClaim:
-    item = _object(value, {"applicability", "applicability_label", "citation", "field", "identifier_type", "normalized_value", "raw_value"})
-    return OpeningClaim(OpeningField(item["field"]), item["raw_value"], item["normalized_value"], EpubObservationApplicability(item["applicability"]), _citation_from_data(item["citation"]), item["identifier_type"], item["applicability_label"])
+    item = _object(value, {"applicability", "applicability_label", "citation", "field", "identifier_type", "normalized_value", "raw_value", "state"})
+    return OpeningClaim(OpeningField(item["field"]), item["raw_value"], item["normalized_value"], EpubObservationApplicability(item["applicability"]), _citation_from_data(item["citation"]), item["identifier_type"], item["applicability_label"], item["state"])
 
 
 def _resource_data(value: OpeningResourceResult) -> dict[str, object]:

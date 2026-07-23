@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import unicodedata
@@ -21,6 +22,8 @@ from mechanical_librarian.domain.metadata_report import MetadataReport, ReportVa
 
 
 Runner = Callable[[Path, Path, str, str, str, int], str]
+ReopenRunner = Callable[[Path, str], str]
+CurrentReopenRunner = Callable[[Path, str, str, str, str], str]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -65,10 +68,25 @@ def _parser() -> _Parser:
     report.add_argument("--library", required=True, metavar="NAME", type=_name)
     report.add_argument("--item", required=True, metavar="ITEM_ID", type=_item)
     report.add_argument("--file-index", required=True, metavar="INDEX", type=_index)
+    reopen = commands.add_parser("metadata-report-get", help="reopen one persisted metadata report")
+    reopen.add_argument("--database", required=True, metavar="PATH", type=Path)
+    selector = reopen.add_mutually_exclusive_group(required=True)
+    selector.add_argument("--report-id", metavar="REPORT_ID", type=_report_id)
+    selector.add_argument("--current", action="store_true")
+    reopen.add_argument("--connection", type=_name)
+    reopen.add_argument("--library", type=_name)
+    reopen.add_argument("--item", type=_item)
+    reopen.add_argument("--file-identity", metavar="SHA256")
     return parser
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def _report_id(value: str) -> str:
+    if re.fullmatch(r"report_[0-9a-f]{64}", value) is None:
+        raise argparse.ArgumentTypeError("invalid report id")
+    return value
+
+
+def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     try:
@@ -76,6 +94,26 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, std
     except _ArgumentFailure:
         errors.write("Metadata report failed: invalid invocation.\n")
         return 2
+    if arguments.command == "metadata-report-get":
+        if (arguments.current and current_reopen_runner is None) or (not arguments.current and reopen_runner is None):
+            errors.write("Metadata report failed safely.\n")
+            return 1
+        try:
+            if arguments.current:
+                if None in (arguments.connection, arguments.library, arguments.item, arguments.file_identity) or re.fullmatch(r"[0-9a-f]{64}", arguments.file_identity) is None:
+                    raise ValueError
+                serialized = current_reopen_runner(arguments.database, arguments.connection, arguments.library, arguments.item, arguments.file_identity)
+            else:
+                serialized = reopen_runner(arguments.database, arguments.report_id)
+            report_id = _persisted_report_id(serialized)
+            if not arguments.current and report_id != arguments.report_id:
+                raise ReportValueError("report output is invalid")
+        except Exception:
+            errors.write("Metadata report failed safely.\n")
+            return 1
+        output.write(serialized)
+        output.write("\n")
+        return 0
     if runner is None:
         errors.write("Metadata report failed safely.\n")
         return 1
@@ -99,6 +137,14 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, std
     output.write(serialized)
     output.write("\n")
     return 0
+
+
+def _persisted_report_id(serialized: object) -> str:
+    """Validate the one supported persisted report model."""
+    report = MetadataReport.from_json(serialized)
+    if report.to_json() != serialized:
+        raise ReportValueError("report output is invalid")
+    return report.report_id
 
 
 __all__ = ["main"]

@@ -49,6 +49,8 @@ class HardcoverMetadataProvider:
                     if claim.kind is ClaimKind.ISBN
                     and claim.canonical is not None
                     and claim.applicability in {"ebook", "unknown"}
+                    and claim.basis == "opening_matter"
+                    and claim.rear_provenance is None
                 ),
                 key=lambda value: (value.canonical or "", value.reference),
             )

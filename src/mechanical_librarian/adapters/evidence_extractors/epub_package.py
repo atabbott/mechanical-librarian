@@ -1347,8 +1347,6 @@ def _package_report(
                     continue
                 if attribute_name == "scheme" and local != "identifier":
                     continue
-                if attribute_name == "scheme" and invalid_identifier:
-                    continue
                 if attribute_name == "event" and local != "date":
                     continue
                 qualifier_node = _Node(node.name, node.attributes, text_parts=[qualifier], ordinal=node.ordinal)
@@ -1436,7 +1434,9 @@ def _package_report(
                 if referenced.name not in allowed_targets[resolved_property]:
                     warnings.append(EpubPackageWarning("inapplicable_metadata_refinement"))
                     continue
-                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+                # Associate an EPUB3 refinement with its explicit DC target so
+                # projection never attaches it to a merely preceding person.
+                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=referenced.ordinal)
                 observations.append(
                     _observation(
                         request,
@@ -1759,7 +1759,7 @@ def _package_report(
         return False
 
     accepted_spine_ids: set[str] = set()
-    for itemref in spine.children:
+    for spine_position, itemref in enumerate(spine.children, 1):
         if itemref.name != f"{{{_OPF_NS}}}itemref":
             warnings.append(EpubPackageWarning("invalid_spine_item"))
             continue
@@ -1770,6 +1770,21 @@ def _package_report(
             warnings.append(EpubPackageWarning("invalid_spine_item", citation))
             continue
         idref = _attribute(itemref, "idref")
+        linear = _attribute(itemref, "linear")
+        is_linear = linear in {None, "yes"}
+        if not is_linear and linear != "no":
+            warnings.append(EpubPackageWarning("invalid_spine_item", citation))
+        declarations.append(
+            EpubPackageDeclaration(
+                EpubPackageDeclarationKind.SPINE_SLOT,
+                itemref.ordinal,
+                citation,
+                manifest_ids.get(idref) if idref else None,
+                idref,
+                linear=is_linear,
+                spine_position=spine_position,
+            )
+        )
         if not idref or not has_compatible_spine_target(idref):
             warnings.append(EpubPackageWarning("invalid_spine_item"))
             continue
@@ -1784,6 +1799,8 @@ def _package_report(
                 citation,
                 manifest_ids[idref],
                 idref,
+                linear=is_linear,
+                spine_position=spine_position,
             )
         )
     toc = _attribute(spine, "toc")

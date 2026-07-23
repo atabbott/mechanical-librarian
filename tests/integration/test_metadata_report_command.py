@@ -530,7 +530,7 @@ class MetadataReportCommandTests(unittest.TestCase):
             successor_report = MetadataReport.from_json(successor)
             self.assertEqual(first, replay)
             self.assertNotEqual(first_report.report_id, successor_report.report_id)
-            self.assertEqual({claim.kind.value for claim in first_report.local_claims}, {"title", "isbn"})
+            self.assertEqual({claim.kind.value for claim in first_report.local_claims}, {"title", "isbn", "language"})
             isbn_claims = [claim for claim in first_report.local_claims if claim.kind.value == "isbn"]
             self.assertEqual({claim.checksum for claim in isbn_claims}, {"valid_isbn_13"})
             self.assertEqual({claim.applicability for claim in isbn_claims}, {"ebook", "print"})
@@ -591,7 +591,10 @@ class MetadataReportCommandTests(unittest.TestCase):
                     run_metadata_report(config, database, "secondary", "other", "item-1", 0)
                 )
             self.assertEqual(primary.local_status, "no_candidate")
-            self.assertEqual(primary.local_reasons, ("no_opening_claims",))
+            self.assertEqual(
+                primary.local_reasons,
+                ("package_metadata_language", "package_metadata_title"),
+            )
             self.assertEqual(primary.providers[0].status.value, "disabled")
             self.assertEqual(secondary.local_status, "no_candidate")
             self.assertEqual(secondary.providers, ())

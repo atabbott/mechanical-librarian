@@ -7,14 +7,15 @@ a media-evidence protocol or a future format extension point.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Callable, ClassVar, Mapping
 
-from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
-from mechanical_librarian.domain.identifiers import Fingerprint
+from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_role_projection
+from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 
 if TYPE_CHECKING:
     from mechanical_librarian.domain.epub_opening import EpubOpeningReport
@@ -24,6 +25,8 @@ _CHECKSUMS = frozenset({"valid_isbn_10", "valid_isbn_13", "invalid", "not_applic
 _MEDIA = frozenset({"ebook", "print", "unknown", "ambiguous", "not_applicable"})
 _CLASSIFICATION_BASES = frozenset({"ebook", "paperback", "hardcover", "print", "unlabelled", "ambiguous", "not_applicable"})
 _BASES = frozenset({"package_metadata", "opening_matter"})
+_FIELD_STATES = frozenset({"valid", "malformed", "oversized", "unsupported", "untyped", "inapplicable"})
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 EPUB_PACKAGE_LIMIT_PROFILE = "epub-package-limits-v1"
 MAX_PUBLIC_REPORT_BYTES = 524_288
@@ -147,7 +150,41 @@ def epub_file_lineage(source: Fingerprint) -> str:
 
 class EpubInspectionField(StrEnum):
     TITLE = "title"
+    SUBTITLE = "subtitle"
+    CREATOR = "creator"
+    CONTRIBUTOR = "contributor"
+    SERIES = "series"
+    SERIES_SEQUENCE = "series_sequence"
     ISBN = "isbn"
+    PUBLICATION_DATE = "publication_date"
+    PUBLISHER = "publisher"
+    DESCRIPTION = "description"
+    LANGUAGE = "language"
+    SUBJECT = "subject"
+
+
+@dataclass(frozen=True, repr=False)
+class EpubRearProvenance:
+    """Bounded, opaque provenance for a rear-spine observation."""
+
+    resource_identity: str
+    spine_ordinal: int
+    tail_slot: int
+    marker: str
+    citation: str
+
+    def __post_init__(self) -> None:
+        if (
+            _DIGEST.fullmatch(self.resource_identity) is None
+            or type(self.spine_ordinal) is not int or self.spine_ordinal < 1
+            or type(self.tail_slot) is not int or not 1 <= self.tail_slot <= 8
+            or type(self.marker) is not str or not self.marker or len(self.marker) > 64
+            or type(self.citation) is not str or not self.citation or len(self.citation) > 280
+        ):
+            raise ValueError("EPUB rear provenance is malformed")
+
+    def to_data(self) -> dict[str, object]:
+        return {"citation": self.citation, "marker": self.marker, "resource_identity": self.resource_identity, "spine_ordinal": self.spine_ordinal, "tail_slot": self.tail_slot}
 
 
 @dataclass(frozen=True, repr=False)
@@ -164,6 +201,9 @@ class EpubInspectionFact:
     classification_basis: str
     basis: str
     outcome: EpubInspectionOutcome = EpubInspectionOutcome.SUCCESS
+    state: str = "valid"
+    role: str | None = None
+    rear_provenance: EpubRearProvenance | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -172,7 +212,7 @@ class EpubInspectionFact:
             or type(self.observed_value) is not str
             or not self.observed_value
             or len(self.observed_value) > 280
-            or (self.canonical_value is not None and (type(self.canonical_value) is not str or not self.canonical_value or len(self.canonical_value) > 280))
+            or (self.canonical_value is not None and (type(self.canonical_value) is not str or not self.canonical_value or len(self.canonical_value) > 512))
             or type(self.supporting_context) is not str
             or not self.supporting_context
             or len(self.supporting_context) > 280
@@ -181,20 +221,31 @@ class EpubInspectionFact:
             or self.classification_basis not in _CLASSIFICATION_BASES
             or self.basis not in _BASES
             or type(self.outcome) is not EpubInspectionOutcome
+            or self.state not in _FIELD_STATES
+            or (self.role is not None and not _valid_role(self.role))
+            or (self.rear_provenance is not None and type(self.rear_provenance) is not EpubRearProvenance)
         ):
             raise ValueError("EPUB inspection fact is malformed")
-        if self.field is EpubInspectionField.TITLE and (
-            self.canonical_value is None
+        if self.field is not EpubInspectionField.ISBN and (
+            (self.state == "valid" and self.canonical_value is None)
             or self.checksum != "not_applicable"
             or self.media != "not_applicable"
             or self.classification_basis != "not_applicable"
         ):
-            raise ValueError("EPUB title fact has identifier fields")
+            raise ValueError("EPUB non-identifier fact has identifier fields")
         if self.field is EpubInspectionField.ISBN and self.checksum.startswith("valid_") != (self.canonical_value is not None):
             raise ValueError("EPUB ISBN checksum does not match canonical value")
 
     def __repr__(self) -> str:
         return "EpubInspectionFact(<redacted>)"
+
+
+def _valid_role(value: object) -> bool:
+    try:
+        validate_role_projection(value)
+    except EvidenceValueError:
+        return False
+    return True
 
 
 @dataclass(frozen=True, repr=False)
@@ -221,26 +272,35 @@ class EpubInspection:
 
         if type(report) is not EpubOpeningReport:
             raise ValueError("EPUB inspection requires a typed opening report")
-        outcome = (
-            EpubInspectionOutcome.SUCCESS
-            if report.outcome is EpubInspectionOutcome.SUCCESS
-            else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
-            if report.outcome is EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
-            else EpubInspectionOutcome.RESOURCE_LIMIT
-            if report.outcome is EpubInspectionOutcome.RESOURCE_LIMIT
-            else EpubInspectionOutcome.TIMEOUT
-            if report.outcome is EpubInspectionOutcome.TIMEOUT
-            else EpubInspectionOutcome.UNSTABLE_SOURCE
-            if report.outcome is EpubInspectionOutcome.UNSTABLE_SOURCE
-            else EpubInspectionOutcome.CHILD_FAILURE
-        )
+        outcome = report.outcome
         source = report.source_fingerprint
         if source is None:
             return cls(outcome, None)
         facts: list[EpubInspectionFact] = []
+        fields = {
+            OpeningField.TITLE: EpubInspectionField.TITLE,
+            OpeningField.SUBTITLE: EpubInspectionField.SUBTITLE,
+            OpeningField.CREATOR: EpubInspectionField.CREATOR,
+            OpeningField.CONTRIBUTOR: EpubInspectionField.CONTRIBUTOR,
+            OpeningField.SERIES: EpubInspectionField.SERIES,
+            OpeningField.SERIES_ORDER: EpubInspectionField.SERIES_SEQUENCE,
+            OpeningField.PUBLICATION_DATE: EpubInspectionField.PUBLICATION_DATE,
+            OpeningField.PUBLISHER: EpubInspectionField.PUBLISHER,
+            OpeningField.IMPRINT: EpubInspectionField.PUBLISHER,
+        }
+        contributor_index: int | None = None
+        creator_index: int | None = None
         for claim in report.claims:
-            if claim.field is OpeningField.TITLE and claim.normalized_value is not None and claim.applicability not in {EpubObservationApplicability.INAPPLICABLE, EpubObservationApplicability.UNKNOWN}:
-                facts.append(EpubInspectionFact(EpubInspectionField.TITLE, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter"))
+            if claim.field is OpeningField.TITLE and (claim.normalized_value is not None or claim.state != "valid") and claim.applicability not in {EpubObservationApplicability.INAPPLICABLE, EpubObservationApplicability.UNKNOWN}:
+                facts.append(EpubInspectionFact(EpubInspectionField.TITLE, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter", state=claim.state))
+            elif claim.field in fields and (claim.normalized_value is not None or claim.state != "valid"):
+                facts.append(EpubInspectionFact(fields[claim.field], source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter", state=claim.state))
+                contributor_index = len(facts) - 1 if claim.field is OpeningField.CONTRIBUTOR else contributor_index
+                creator_index = len(facts) - 1 if claim.field is OpeningField.CREATOR else creator_index
+            elif claim.field is OpeningField.CONTRIBUTOR_ROLE and contributor_index is not None:
+                facts[contributor_index] = replace(facts[contributor_index], role=claim.normalized_value or claim.raw_value)
+            elif claim.field is OpeningField.CREATOR_ROLE and creator_index is not None:
+                facts[creator_index] = replace(facts[creator_index], role=claim.normalized_value or claim.raw_value)
             elif claim.field is OpeningField.IDENTIFIER and claim.identifier_type in {"isbn_10", "isbn_13"}:
                 checksum = claim.identifier_type if claim.identifier_type in {"isbn_10", "isbn_13"} and claim.normalized_value is not None else "invalid"
                 classification_basis = claim.applicability_label or "unlabelled"
@@ -250,8 +310,65 @@ class EpubInspection:
                     else "ambiguous" if classification_basis == "ambiguous"
                     else "unknown"
                 )
-                facts.append(EpubInspectionFact(EpubInspectionField.ISBN, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, f"valid_{checksum}" if checksum != "invalid" else checksum, media, classification_basis, "opening_matter"))
+                facts.append(EpubInspectionFact(EpubInspectionField.ISBN, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, f"valid_{checksum}" if checksum != "invalid" else checksum, media, classification_basis, "opening_matter", state="valid" if claim.normalized_value is not None else "malformed"))
         return cls(outcome, source, tuple(facts))
+
+    def to_json(self) -> str:
+        """Canonical closed protocol payload for the isolated child boundary."""
+        return json.dumps(
+            {
+                "facts": [
+                    {
+                        "applicability_basis": fact.classification_basis,
+                        "basis": fact.basis,
+                        "canonical": fact.canonical_value,
+                        "checksum": fact.checksum,
+                        "field": fact.field.value,
+                        "media": fact.media,
+                        "observed": fact.observed_value,
+                        "outcome": fact.outcome.value,
+                        "rear_provenance": None if fact.rear_provenance is None else fact.rear_provenance.to_data(),
+                        "role": fact.role,
+                        "support": fact.supporting_context,
+                        "state": fact.state,
+                    }
+                    for fact in self.facts
+                ],
+                "outcome": self.outcome.value,
+                "schema": "epub-inspection-v1",
+                "source": None if self.source is None else {
+                    "algorithm": self.source.algorithm,
+                    "digest": self.source.digest,
+                    "schema": self.source.schema.value,
+                },
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    @classmethod
+    def from_json(cls, serialized: str) -> "EpubInspection":
+        if type(serialized) is not str or len(serialized.encode("utf-8")) > MAX_PUBLIC_REPORT_BYTES:
+            raise ValueError("EPUB inspection protocol is invalid")
+        try:
+            value = json.loads(serialized)
+            if type(value) is not dict or set(value) != {"facts", "outcome", "schema", "source"} or value["schema"] != "epub-inspection-v1":
+                raise ValueError
+            source_data = value["source"]
+            source = None if source_data is None else Fingerprint(source_data["algorithm"], SchemaVersion(source_data["schema"]), source_data["digest"])
+            facts = tuple(
+                EpubInspectionFact(
+                    EpubInspectionField(item["field"]), source, item["observed"], item["canonical"], item["support"], item["checksum"], item["media"], item["applicability_basis"], item["basis"], EpubInspectionOutcome(item["outcome"]), item["state"], item["role"], None if item["rear_provenance"] is None else EpubRearProvenance(**item["rear_provenance"])
+                )
+                for item in value["facts"]
+            )
+            result = cls(EpubInspectionOutcome(value["outcome"]), source, facts)
+        except (KeyError, TypeError, ValueError):
+            raise ValueError("EPUB inspection protocol is invalid") from None
+        if result.to_json() != serialized:
+            raise ValueError("EPUB inspection protocol is not canonical")
+        return result
 
     def __repr__(self) -> str:
         return "EpubInspection(<redacted>)"

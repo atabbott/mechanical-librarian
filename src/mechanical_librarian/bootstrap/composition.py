@@ -21,7 +21,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionOutcome
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
-from mechanical_librarian.domain.metadata_report import ClaimKind, LocalClaim
+from mechanical_librarian.domain.metadata_report import ClaimKind, FieldState, LocalClaim, RearClaimProvenance
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -45,22 +45,27 @@ class _IsolatedEpubInspector:
                 EpubOpeningLimits(),
                 logical_identity=digest,
             )
-            inspection = EpubInspection.from_opening_report(report)
+            inspection = report
             if inspection.outcome not in {EpubInspectionOutcome.SUCCESS, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE}:
                 raise MetadataReportError("EPUB inspection failed")
-            claims_by_reference: dict[str, LocalClaim] = {}
-            for fact in inspection.facts:
+            claims: list[LocalClaim] = []
+            for occurrence, fact in enumerate(inspection.facts, 1):
                 claim = LocalClaim.create(
                     kind=ClaimKind(fact.field.value),
                     observed=fact.observed_value,
                     canonical=fact.canonical_value,
                     excerpt=fact.supporting_context,
                     applicability=fact.media,
+                    basis=fact.basis,
                     checksum=fact.checksum,
                     applicability_basis=fact.classification_basis,
+                    state=FieldState(fact.state),
+                    role=fact.role,
+                    rear_provenance=None if fact.rear_provenance is None else RearClaimProvenance(**fact.rear_provenance.to_data()),
+                    occurrence=occurrence,
                 )
-                claims_by_reference[claim.reference] = claim
-            return InspectionResult(digest, tuple(sorted(claims_by_reference.values(), key=lambda value: value.reference)))
+                claims.append(claim)
+            return InspectionResult(digest, tuple(claims))
         except MetadataReportError:
             raise
         except (LocalMediaError, OSError, ValueError) as error:
@@ -117,8 +122,30 @@ def run_metadata_report(config_path: Path, database_path: Path, connection_name:
     return service.run(item, file_index)
 
 
+def reopen_metadata_report(database_path: Path, report_id: str) -> str:
+    """Read one exact persisted report without loading operational configuration."""
+    repository = open_repository(database_path, create=False)
+    try:
+        return repository.get(report_id)
+    finally:
+        repository.close()
+
+
+def reopen_current_metadata_report(database_path: Path, connection: str, library: str, item: str, file_identity: str) -> str:
+    repository = open_repository(database_path, create=False)
+    try:
+        return repository.current(connection, library, item, file_identity)
+    finally:
+        repository.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    return cli_main(argv, runner=run_metadata_report)
+    return cli_main(
+        argv,
+        runner=run_metadata_report,
+        reopen_runner=reopen_metadata_report,
+        current_reopen_runner=reopen_current_metadata_report,
+    )
 
 
-__all__ = ["main", "run_metadata_report"]
+__all__ = ["main", "reopen_current_metadata_report", "reopen_metadata_report", "run_metadata_report"]

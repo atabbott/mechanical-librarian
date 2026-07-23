@@ -13,10 +13,11 @@ from typing import Any, Mapping, Self
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
+    validate_role_projection,
 )
 
 
-REPORT_SCHEMA = "metadata-report-v1"
+REPORT_SCHEMA = "metadata-report-v2"
 MAX_REPORT_BYTES = 262_144
 MAX_CANDIDATES = 4
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -31,7 +32,83 @@ class ReportValueError(ValueError):
 
 class ClaimKind(StrEnum):
     TITLE = "title"
+    SUBTITLE = "subtitle"
+    CREATOR = "creator"
+    CONTRIBUTOR = "contributor"
+    SERIES = "series"
+    SERIES_SEQUENCE = "series_sequence"
     ISBN = "isbn"
+    PUBLICATION_DATE = "publication_date"
+    PUBLISHER = "publisher"
+    DESCRIPTION = "description"
+    LANGUAGE = "language"
+    SUBJECT = "subject"
+
+
+class FieldState(StrEnum):
+    """Closed outcome vocabulary for each local metadata field."""
+
+    VALID = "valid"
+    ABSENT = "absent"
+    MALFORMED = "malformed"
+    OVERSIZED = "oversized"
+    UNSUPPORTED = "unsupported"
+    UNTYPED = "untyped"
+    INAPPLICABLE = "inapplicable"
+
+
+class FieldSource(StrEnum):
+    EPUB = "epub"
+    TARGET_METADATA = "target_metadata"
+
+
+@dataclass(frozen=True, slots=True)
+class FieldSourceResult:
+    source: FieldSource
+    state: FieldState
+
+    def __post_init__(self) -> None:
+        if type(self.source) is not FieldSource or type(self.state) is not FieldState:
+            raise ReportValueError("field source result is invalid")
+
+    def to_data(self) -> dict[str, str]:
+        return {"source": self.source.value, "state": self.state.value}
+
+
+@dataclass(frozen=True, slots=True)
+class RearClaimProvenance:
+    resource_identity: str
+    spine_ordinal: int
+    tail_slot: int
+    marker: str
+    citation: str
+
+    def __post_init__(self) -> None:
+        if (_DIGEST.fullmatch(self.resource_identity) is None or type(self.spine_ordinal) is not int or self.spine_ordinal < 1 or type(self.tail_slot) is not int or not 1 <= self.tail_slot <= 8):
+            raise ReportValueError("rear claim provenance is invalid")
+        _projection_text(self.marker, "rear marker", 64)
+        _projection_text(self.citation, "rear citation", 280)
+
+    def to_data(self) -> dict[str, object]:
+        return {"citation": self.citation, "marker": self.marker, "resource_identity": self.resource_identity, "spine_ordinal": self.spine_ordinal, "tail_slot": self.tail_slot}
+
+
+@dataclass(frozen=True, slots=True)
+class FieldResult:
+    """Closed aggregate state for one field, independent of source claims."""
+
+    kind: ClaimKind
+    state: FieldState
+    sources: tuple[FieldSourceResult, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.kind) is not ClaimKind or type(self.state) is not FieldState:
+            raise ReportValueError("field result is invalid")
+        if type(self.sources) is not tuple or any(type(value) is not FieldSourceResult for value in self.sources) or (self.sources and tuple(value.source for value in self.sources) != tuple(FieldSource)):
+            raise ReportValueError("field result sources are invalid")
+
+    def to_data(self) -> dict[str, str]:
+        return {"kind": self.kind.value, "state": self.state.value, "sources": [value.to_data() for value in self.sources]}
 
 
 class ProviderStatus(StrEnum):
@@ -144,33 +221,52 @@ class LocalClaim:
     basis: str
     checksum: str
     applicability_basis: str
+    state: FieldState = FieldState.VALID
+    role: str | None = None
+    rear_provenance: RearClaimProvenance | None = None
+    occurrence: int = 0
 
     def __post_init__(self) -> None:
         if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("local_"):
             raise ReportValueError("local claim reference is invalid")
-        if type(self.kind) is not ClaimKind:
+        if type(self.kind) is not ClaimKind or type(self.state) is not FieldState:
             raise ReportValueError("local claim kind is invalid")
-        maximum = 512 if self.kind is ClaimKind.TITLE else 280
-        _text(self.observed, "observed claim", maximum)
+        if self.basis == "target_metadata" and self.kind is not ClaimKind.TITLE:
+            raise ReportValueError("target metadata claim kind is invalid")
+        if self.role is not None:
+            if self.kind not in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}:
+                raise ReportValueError("local claim role is invalid")
+            try:
+                validate_role_projection(self.role)
+            except EvidenceValueError as error:
+                raise ReportValueError("local claim role is invalid") from error
+        if self.rear_provenance is not None and type(self.rear_provenance) is not RearClaimProvenance:
+            raise ReportValueError("rear claim provenance is invalid")
+        if self.rear_provenance is not None and (self.basis != "opening_matter" or self.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR, ClaimKind.ISBN}):
+            raise ReportValueError("rear claim provenance is inapplicable")
+        if type(self.occurrence) is not int or not 0 <= self.occurrence <= 1_000_000:
+            raise ReportValueError("local claim occurrence is invalid")
+        maximum = 512 if self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.DESCRIPTION} else 280
+        _projection_text(self.observed, "observed claim", maximum)
         if self.canonical is not None:
-            _text(self.canonical, "canonical claim", 512)
-        _text(self.excerpt, "claim excerpt", maximum)
+            _projection_text(self.canonical, "canonical claim", 512)
+        _projection_text(self.excerpt, "claim excerpt", maximum)
         if self.observed not in self.excerpt:
             raise ReportValueError("claim excerpt does not support its observation")
         if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"}:
             raise ReportValueError("claim applicability is invalid")
-        if self.basis not in {"opening_matter", "target_metadata"}:
+        if self.basis not in {"opening_matter", "package_metadata", "target_metadata"}:
             raise ReportValueError("claim basis is invalid")
         if self.checksum not in {"valid_isbn_10", "valid_isbn_13", "invalid", "not_applicable"}:
             raise ReportValueError("claim checksum is invalid")
         if self.applicability_basis not in {"ebook", "paperback", "hardcover", "print", "unlabelled", "ambiguous", "not_applicable"}:
             raise ReportValueError("claim applicability basis is invalid")
-        if self.kind is ClaimKind.TITLE and (
+        if self.kind is not ClaimKind.ISBN and (
             self.checksum != "not_applicable"
             or self.applicability != "not_applicable"
             or self.applicability_basis != "not_applicable"
         ):
-            raise ReportValueError("title claim has identifier fields")
+            raise ReportValueError("non-identifier claim has identifier fields")
         if self.kind is ClaimKind.ISBN and (
             self.checksum.startswith("valid_") != (self.canonical is not None)
             or self.applicability == "not_applicable"
@@ -179,7 +275,10 @@ class LocalClaim:
             raise ReportValueError("ISBN claim typing is inconsistent")
         if self.kind is ClaimKind.ISBN and self.canonical is not None and not _valid_isbn(self.canonical, self.checksum):
             raise ReportValueError("ISBN claim checksum is inconsistent")
-        if self.kind is ClaimKind.TITLE and self.canonical != normalize_title(self.observed):
+        sentinel = _sentinel_state(self.observed)
+        if sentinel is not None and (self.state is not sentinel or self.canonical is not None):
+            raise ReportValueError("source sentinel claim is inconsistent")
+        if self.state is FieldState.VALID and self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE} and self.canonical != normalize_title(self.observed):
             raise ReportValueError("title claim normalization is inconsistent")
         expected = stable_reference("local", self._reference_data())
         if self.reference != expected:
@@ -197,6 +296,10 @@ class LocalClaim:
         basis: str = "opening_matter",
         checksum: str,
         applicability_basis: str,
+        state: FieldState = FieldState.VALID,
+        role: str | None = None,
+        rear_provenance: RearClaimProvenance | None = None,
+        occurrence: int = 0,
     ) -> Self:
         value = {
             "applicability": applicability,
@@ -207,8 +310,12 @@ class LocalClaim:
             "kind": kind.value,
             "observed": observed,
             "applicability_basis": applicability_basis,
+            "state": state.value if type(state) is FieldState else "",
+            "role": role,
+            "rear_provenance": None if rear_provenance is None else rear_provenance.to_data(),
+            "occurrence": occurrence,
         }
-        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis)
+        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis, state, role, rear_provenance, occurrence)
 
     def _reference_data(self) -> dict[str, object]:
         return {
@@ -220,10 +327,14 @@ class LocalClaim:
             "kind": self.kind.value,
             "observed": self.observed,
             "applicability_basis": self.applicability_basis,
+            "state": self.state.value,
+            "role": self.role,
+            "rear_provenance": None if self.rear_provenance is None else self.rear_provenance.to_data(),
+            "occurrence": self.occurrence,
         }
 
     def to_data(self) -> dict[str, object]:
-        return {"reference": self.reference, **self._reference_data()}
+        return {"reference": self.reference, "state": self.state.value, **self._reference_data()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,12 +350,9 @@ class ProviderClaim:
             raise ReportValueError("provider claim reference is invalid")
         if type(self.kind) is not ClaimKind or type(self.comparison) is not Comparison:
             raise ReportValueError("provider claim is invalid")
-        _text(self.value, "provider claim value", 512)
-        if self.kind is ClaimKind.TITLE:
-            try:
-                validate_projection_text(self.value, "provider title", 512)
-            except EvidenceValueError as error:
-                raise ReportValueError("provider title is not public-safe") from error
+        if self.kind not in {ClaimKind.TITLE, ClaimKind.ISBN}:
+            raise ReportValueError("provider claim kind is invalid")
+        _projection_text(self.value, "provider claim value", 512)
         if self.kind is ClaimKind.ISBN and not (
             _valid_isbn(self.value, "valid_isbn_10")
             or _valid_isbn(self.value, "valid_isbn_13")
@@ -342,6 +450,7 @@ class MetadataReport:
     local_status: str
     local_reasons: tuple[str, ...]
     providers: tuple[ProviderObservation, ...]
+    field_results: tuple[FieldResult, ...]
     schema_version: str = REPORT_SCHEMA
 
     def __post_init__(self) -> None:
@@ -366,6 +475,13 @@ class MetadataReport:
         names = tuple(value.provider for value in self.providers)
         if names != tuple(sorted(set(names))):
             raise ReportValueError("provider observations are not in canonical order")
+        if (
+            type(self.field_results) is not tuple
+            or any(type(value) is not FieldResult for value in self.field_results)
+            or tuple(value.kind for value in self.field_results) != tuple(ClaimKind)
+            or self.field_results != derive_field_results(self.local_claims)
+        ):
+            raise ReportValueError("field results are inconsistent")
         known = set(references)
         if any(not set(provider.input_references).issubset(known) for provider in self.providers):
             raise ReportValueError("provider inputs do not reference local claims")
@@ -394,12 +510,14 @@ class MetadataReport:
         local_claims: tuple[LocalClaim, ...],
         local_reasons: tuple[str, ...],
         providers: tuple[ProviderObservation, ...],
+        field_results: tuple[FieldResult, ...] | None = None,
     ) -> Self:
         local_status = "candidate" if any(value.basis == "opening_matter" for value in local_claims) else "no_candidate"
-        data = _report_data("", target, file, local_claims, local_status, local_reasons, providers)
+        results = field_results if field_results is not None else derive_field_results(local_claims)
+        data = _report_data("", target, file, local_claims, local_status, local_reasons, providers, results)
         data.pop("report_id")
         identity = f"report_{hashlib.sha256(canonical_json(data).encode('utf-8')).hexdigest()}"
-        return cls(identity, target, file, local_claims, local_status, local_reasons, providers)
+        return cls(identity, target, file, local_claims, local_status, local_reasons, providers, results)
 
     def _identity_data(self) -> dict[str, object]:
         value = self.to_data()
@@ -407,7 +525,7 @@ class MetadataReport:
         return value
 
     def to_data(self) -> dict[str, object]:
-        return _report_data(self.report_id, self.target, self.file, self.local_claims, self.local_status, self.local_reasons, self.providers)
+        return _report_data(self.report_id, self.target, self.file, self.local_claims, self.local_status, self.local_reasons, self.providers, self.field_results)
 
     def to_json(self) -> str:
         return canonical_json(self.to_data())
@@ -430,6 +548,40 @@ class MetadataReport:
         if report.to_json() != serialized:
             raise ReportValueError("report document is not canonical")
         return report
+
+
+def derive_field_results(local_claims: tuple[LocalClaim, ...]) -> tuple[FieldResult, ...]:
+    """Summarise observed field states without making claims a decision surface."""
+    precedence = (
+        FieldState.MALFORMED, FieldState.OVERSIZED, FieldState.UNSUPPORTED,
+        FieldState.UNTYPED, FieldState.INAPPLICABLE, FieldState.VALID,
+    )
+    def source_state(kind: ClaimKind, source: FieldSource) -> FieldState:
+        if source is FieldSource.TARGET_METADATA and kind is not ClaimKind.TITLE:
+            return FieldState.UNSUPPORTED
+        basis = "target_metadata" if source is FieldSource.TARGET_METADATA else None
+        return next(
+            (
+                state
+                for state in precedence
+                if any(
+                    claim.kind is kind
+                    and claim.state is state
+                    and ((claim.basis == basis) if basis is not None else claim.basis != "target_metadata")
+                    for claim in local_claims
+                )
+            ),
+            FieldState.ABSENT,
+        )
+
+    return tuple(
+        FieldResult(
+            kind,
+            next((state for state in precedence if any(claim.kind is kind and claim.state is state for claim in local_claims)), FieldState.ABSENT),
+            tuple(FieldSourceResult(source, source_state(kind, source)) for source in FieldSource),
+        )
+        for kind in ClaimKind
+    )
 
 
 def compare_claim(kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) -> tuple[Comparison, tuple[str, ...]]:
@@ -462,9 +614,10 @@ def compare_claim(kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) ->
     )
 
 
-def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...]) -> dict[str, object]:
+def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...], field_results: tuple[FieldResult, ...]) -> dict[str, object]:
     return {
         "file": file.to_data(),
+        "field_results": [value.to_data() for value in field_results],
         "local": {
             "claims": [value.to_data() for value in local_claims],
             "reasons": list(local_reasons),
@@ -478,12 +631,13 @@ def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_cla
 
 
 def _report_from_data(value: object) -> MetadataReport:
-    root = _object(value, {"file", "local", "providers", "report_id", "schema_version", "target"})
+    root = _object(value, {"field_results", "file", "local", "providers", "report_id", "schema_version", "target"})
     target = _object(root["target"], {"connection", "current_title", "item", "library"})
     file = _object(root["file"], {"content_digest", "format", "identity", "selected_index"})
     local = _object(root["local"], {"claims", "reasons", "status"})
     claims = tuple(_local_claim_from_data(item) for item in _list(local["claims"]))
     providers = tuple(_provider_from_data(item) for item in _list(root["providers"]))
+    field_results = tuple(_field_result_from_data(item) for item in _list(root["field_results"]))
     reasons = tuple(_strings(local["reasons"]))
     return MetadataReport(
         root["report_id"],
@@ -493,13 +647,20 @@ def _report_from_data(value: object) -> MetadataReport:
         local["status"],
         reasons,
         providers,
+        field_results,
         root["schema_version"],
     )
 
 
+def _field_result_from_data(value: object) -> FieldResult:
+    item = _object(value, {"kind", "state", "sources"})
+    return FieldResult(ClaimKind(item["kind"]), FieldState(item["state"]), tuple(FieldSourceResult(FieldSource(source["source"]), FieldState(source["state"])) for source in _list(item["sources"])))
+
+
 def _local_claim_from_data(value: object) -> LocalClaim:
-    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference"})
-    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"])
+    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference", "state", "role", "rear_provenance", "occurrence"})
+    provenance = item["rear_provenance"]
+    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"], FieldState(item["state"]), item["role"], None if provenance is None else RearClaimProvenance(**_object(provenance, {"citation", "marker", "resource_identity", "spine_ordinal", "tail_slot"})), item["occurrence"])
 
 
 def _provider_from_data(value: object) -> ProviderObservation:
@@ -560,6 +721,21 @@ def _text(value: object, label: str, maximum: int) -> None:
         raise ReportValueError(f"{label} is invalid")
 
 
+def _projection_text(value: object, label: str, maximum: int) -> None:
+    try:
+        validate_projection_text(value, label, maximum)
+    except EvidenceValueError as error:
+        raise ReportValueError(f"{label} is invalid") from error
+
+
+def _sentinel_state(value: str) -> FieldState | None:
+    if re.fullmatch(r"unsafe-source-text-sha256:[0-9a-f]{64}", value):
+        return FieldState.UNSUPPORTED
+    if re.fullmatch(r"oversized-source-text-sha256:[0-9a-f]{64}", value):
+        return FieldState.OVERSIZED
+    return None
+
+
 def _valid_isbn(value: str, checksum: str) -> bool:
     if checksum == "valid_isbn_13" and len(value) == 13 and value.isascii() and value.isdigit():
         expected = (10 - sum((1 if index % 2 == 0 else 3) * int(character) for index, character in enumerate(value[:12])) % 10) % 10
@@ -570,7 +746,7 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 
 
 __all__ = [
-    "ClaimKind", "Comparison", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
+    "ClaimKind", "Comparison", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
     "ProviderObservation", "ProviderStatus", "REPORT_SCHEMA", "ReportValueError",
     "TargetFacts", "canonical_json", "compare_claim", "normalize_title",
