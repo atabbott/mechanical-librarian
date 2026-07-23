@@ -1474,9 +1474,9 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
         name = names_by_identity[identity]
         data: bytes | None = None
         try:
+            navigation_opened = 1
             data = _read_member(archive, name, limits.expanded_bytes_per_resource, request)
             navigation_expanded = len(data)
-            navigation_opened = 1
             projection = _parse(data, "application/xhtml+xml", limits, request)
             navigation_text = projection.work_text_characters
             navigation_nodes = projection.work_nodes
@@ -1563,7 +1563,7 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
                 OpeningResourceResult(
                     identity, OpeningResourceDisposition.MALFORMED,
                     ("epub3_navigation",), warnings=("unusable_navigation_document",),
-                    opened=data is not None,
+                    opened=navigation_opened == 1,
                 )
             )
     elif (
@@ -2460,9 +2460,9 @@ class EpubOpeningExtractor:
                     continue
                 data: bytes | None = None
                 try:
+                    opened += 1
                     data = _read_member(archive, name, limits.expanded_bytes_per_resource, request)
                     expanded += len(data)
-                    opened += 1
                     if expanded > limits.expanded_bytes_per_selection:
                         raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
                     projection = _parse(data, candidate.media_type, limits, request)
@@ -2518,7 +2518,7 @@ class EpubOpeningExtractor:
                             OpeningResourceDisposition.RESOURCE_LIMIT,
                             candidate.selection_path,
                             warnings=(code,),
-                            opened=data is not None,
+                            opened=True,
                         )
                     )
                     warnings.append(code)
@@ -2581,7 +2581,7 @@ class EpubOpeningExtractor:
                     warnings.append(code)
                 except ValueError:
                     code = "malformed_selected_resource"
-                    resources.append(OpeningResourceResult(candidate.identity, OpeningResourceDisposition.MALFORMED, candidate.selection_path, warnings=(code,), opened=data is not None))
+                    resources.append(OpeningResourceResult(candidate.identity, OpeningResourceDisposition.MALFORMED, candidate.selection_path, warnings=(code,), opened=True))
                     warnings.append(code)
             unique_warnings = tuple(sorted(set(warnings)))
             if len(unique_warnings) > limits.warnings or len(claims) > limits.facts:

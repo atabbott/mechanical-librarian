@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import io
+import struct
 import subprocess
 import sys
 import threading
@@ -200,6 +202,17 @@ class EpubChildArchiveConstructionTests(unittest.TestCase):
 
 class EpubChildRearSpineTests(unittest.TestCase):
     @staticmethod
+    def _crc_mismatch(value: bytes, names: tuple[str, ...]) -> bytes:
+        corrupted = bytearray(value)
+        with zipfile.ZipFile(io.BytesIO(value), "r") as archive:
+            for name in names:
+                info = archive.getinfo(name)
+                name_length, extra_length = struct.unpack_from("<HH", corrupted, info.header_offset + 26)
+                payload_offset = info.header_offset + 30 + name_length + extra_length
+                corrupted[payload_offset] ^= 1
+        return bytes(corrupted)
+
+    @staticmethod
     def _request(value: bytes, *, cancelled=lambda: False, deadline_seconds: float = 30.0):
         source = Fingerprint("sha256", SchemaVersion("source-v1"), hashlib.sha256(value).hexdigest())
         limits = EpubOpeningLimits()
@@ -393,6 +406,63 @@ class EpubChildRearSpineTests(unittest.TestCase):
             facts = child._rear_facts(request, package_report, opening_report, archive)
         self.assertEqual([(fact.field.value, fact.canonical_value) for fact in facts], [("title", "Slot 8"), ("title", "Slot 7"), ("title", "Slot 6")])
         self.assertLessEqual(opening_report.usage.opened_resources + len(facts), 9)
+
+    def test_rear_pool_charges_crc_failed_opening_attempts_before_rear_reads(self) -> None:
+        items = (("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'),) + tuple(
+            (f"opening{index}", f"opening{index}.xhtml", "application/xhtml+xml", "") for index in range(5)
+        ) + tuple(
+            (f"rear{index}", f"rear{index}.xhtml", "application/xhtml+xml", "") for index in range(4)
+        )
+        package = _opening_package(items=items, spine=tuple(identity for identity, *_ in items if identity != "nav"))
+        value = _opening_epub(
+            package=package,
+            entries=(("EPUB/nav.xhtml", _xhtml('<nav epub:type="toc"></nav>'), 0),) + tuple(
+                (f"EPUB/opening{index}.xhtml", _xhtml('<h1 epub:type="fulltitle">Opening</h1>'), 0)
+                for index in range(5)
+            ) + tuple(
+                (f"EPUB/rear{index}.xhtml", _xhtml(f'<p>Copyright 2026</p><h1 epub:type="fulltitle">Rear {index}</h1>'), 0)
+                for index in range(4)
+            ),
+        )
+        value = self._crc_mismatch(value, tuple(f"EPUB/opening{index}.xhtml" for index in range(5)))
+        request = self._request(value)
+        package_request = EpubPackageRequest(request.target, request.file, request.source, request.expected_source, EpubPackageCapability.PACKAGE, request.limits, request.deadline, request.monotonic_deadline, request.cancellation)
+        package_report, opening_report, _ = child._inspect_bundle(request, package_request, EpubOpeningLimits())
+        self.assertEqual(opening_report.usage.opened_resources, 6)
+        self.assertTrue(all(resource.opened for resource in opening_report.resources))
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package_report, opening_report, archive)
+        self.assertEqual([(fact.field.value, fact.canonical_value) for fact in facts], [("title", "Rear 3"), ("title", "Rear 2"), ("title", "Rear 1")])
+        self.assertLessEqual(opening_report.usage.opened_resources + len(facts), 9)
+
+    def test_navigation_read_failure_is_an_opened_operation(self) -> None:
+        package = _opening_package(
+            items=(("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'), ("safe", "safe.xhtml", "application/xhtml+xml", "")),
+            spine=("safe",),
+        )
+        value = _opening_epub(
+            package=package,
+            entries=(
+                ("EPUB/nav.xhtml", _xhtml('<nav epub:type="toc"></nav>'), 0),
+                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Safe Title</h1>'), 0),
+            ),
+        )
+        request = self._request(value)
+        package_request = EpubPackageRequest(request.target, request.file, request.source, request.expected_source, EpubPackageCapability.PACKAGE, request.limits, request.deadline, request.monotonic_deadline, request.cancellation)
+        original_read = child.opening_parser._read_member
+
+        def fail_navigation_read(archive, name, maximum, active_request):
+            if name == "EPUB/nav.xhtml":
+                raise ValueError("synthetic navigation read failure")
+            return original_read(archive, name, maximum, active_request)
+
+        with patch.object(child.opening_parser, "_read_member", side_effect=fail_navigation_read):
+            with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+                package_report = EpubPackageExtractor().extract(package_request, archive)
+                opening_report = child.EpubOpeningExtractor().extract(request, EpubOpeningLimits(), package_report, archive)
+        self.assertEqual(opening_report.usage.opened_resources, 2)
+        self.assertTrue(opening_report.resources[0].opened)
+        self.assertEqual(opening_report.resources[0].selection_path, ("epub3_navigation",))
 
     def test_rear_pool_preserves_cancellation_terminal(self) -> None:
         value = _opening_epub(
