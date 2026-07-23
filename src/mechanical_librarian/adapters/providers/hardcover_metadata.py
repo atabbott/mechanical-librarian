@@ -257,13 +257,30 @@ def _position(value: int | str | Decimal) -> str:
         decimal = Decimal(value)
     except (InvalidOperation, ValueError) as error:
         raise ValueError("provider position invalid") from error
-    if not decimal.is_finite() or decimal.adjusted() > 12 or decimal.adjusted() < -MAX_SCALAR_CHARACTERS:
+    if not decimal.is_finite():
         raise ValueError("provider position invalid")
-    text = format(decimal.normalize(), "f")
+    source = decimal.as_tuple()
+    digits_tuple = source.digits
+    exponent = source.exponent
+    while len(digits_tuple) > 1 and exponent < 0 and digits_tuple[-1] == 0:
+        digits_tuple = digits_tuple[:-1]
+        exponent += 1
+    normalized = Decimal((source.sign, digits_tuple, exponent))
+    if normalized.is_zero():
+        return "0"
+    digits = len(digits_tuple)
+    sign = 1 if source.sign else 0
+    if exponent >= 0:
+        length = sign + digits + exponent
+    elif digits + exponent > 0:
+        length = sign + digits + 1
+    else:
+        length = sign + 2 + -(digits + exponent) + digits
+    if not 1 <= length <= MAX_SCALAR_CHARACTERS:
+        raise ValueError("provider position invalid")
+    text = format(normalized, "f")
     if "." in text:
         text = text.rstrip("0").rstrip(".")
-    if len(text) > MAX_SCALAR_CHARACTERS:
-        raise ValueError("provider position invalid")
     return text or "0"
 
 

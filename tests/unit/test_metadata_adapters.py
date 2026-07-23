@@ -847,6 +847,8 @@ class ProviderAdapterTests(unittest.TestCase):
     def test_exact_rich_caps_and_pinned_schema_are_admitted(self) -> None:
         self.assertEqual(hardcover_metadata.HARDCOVER_SCHEMA_COMMIT, "2c03110845765c32af945ed550a942330c394a3e")
         self.assertIn("contributions(order_by:{id:asc},limit:17){id contribution author{id name}}", hardcover_metadata._QUERY)
+        self.assertIn("books:books(", hardcover_metadata._QUERY)
+        self.assertNotIn("books_through_editions", hardcover_metadata._QUERY)
         self.assertIn("book_series(order_by:{id:asc},limit:17){id position series{id name}}", hardcover_metadata._QUERY)
         self.assertIn("taggings(order_by:{id:asc},limit:33){id tag{id tag}}", hardcover_metadata._QUERY)
         for scalar, description, expected in (("x" * 512, "d" * 16384, "valid"), ("x" * 513, "d" * 16385, "oversized")):
@@ -883,6 +885,21 @@ class ProviderAdapterTests(unittest.TestCase):
             payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions}], [{"id": 1, "title": None}])
             with self.assertRaises(ValueError):
                 hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())
+
+    def test_series_positions_and_code3_are_retained_at_projection_bounds(self) -> None:
+        for position, expected in (("10", "10"), ("20.0", "20"), ("100", "100"), (10, "10")):
+            payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "language": {"id": 1, "code2": None, "code3": "eng", "language": "English"}}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": position, "series": {"id": 1, "name": "S"}}]}])
+            claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
+            self.assertEqual(next(claim.value for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE), expected)
+            self.assertEqual(next(claim.value for claim in claims if claim.kind is ClaimKind.LANGUAGE), "eng")
+        boundary = "1" * 512
+        payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": boundary, "series": {"id": 1, "name": "S"}}]}])
+        claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
+        self.assertEqual(next(claim.value for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE), boundary)
+        for position, state in (("9" * 513, FieldState.OVERSIZED), ("1e-999", FieldState.MALFORMED)):
+            payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": position, "series": {"id": 1, "name": "S"}}]}])
+            claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
+            self.assertEqual(next(claim.state for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE), state)
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
