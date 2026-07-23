@@ -144,6 +144,24 @@ class Comparison(StrEnum):
     NOT_COMPARABLE = "not_comparable"
 
 
+class ClaimScope(StrEnum):
+    WORK = "work"
+    EDITION = "edition"
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonLink:
+    local_reference: str
+    outcome: Comparison
+
+    def __post_init__(self) -> None:
+        if _REFERENCE.fullmatch(self.local_reference) is None or not self.local_reference.startswith("local_") or type(self.outcome) is not Comparison:
+            raise ReportValueError("comparison link is invalid")
+
+    def to_data(self) -> dict[str, str]:
+        return {"local_reference": self.local_reference, "outcome": self.outcome.value}
+
+
 def canonical_json(value: object) -> str:
     try:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
@@ -362,13 +380,15 @@ class ProviderClaim:
     role: str | None = None
     state: FieldState = FieldState.VALID
     raw_order: int = 0
+    scope: ClaimScope = ClaimScope.EDITION
+    links: tuple[ComparisonLink, ...] = ()
 
     def __post_init__(self) -> None:
         if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("provider_"):
             raise ReportValueError("provider claim reference is invalid")
         if type(self.kind) is not ClaimKind or type(self.comparison) is not Comparison:
             raise ReportValueError("provider claim is invalid")
-        if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"} or type(self.state) is not FieldState or type(self.raw_order) is not int or self.raw_order < 0:
+        if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"} or type(self.state) is not FieldState or type(self.raw_order) is not int or self.raw_order < 0 or type(self.scope) is not ClaimScope or type(self.links) is not tuple or any(type(link) is not ComparisonLink for link in self.links):
             raise ReportValueError("provider claim scope is invalid")
         if self.role is not None and (self.kind not in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR} or not self.role):
             raise ReportValueError("provider claim role is invalid")
@@ -398,6 +418,8 @@ class ProviderClaim:
             "role": self.role,
             "state": self.state.value,
             "raw_order": self.raw_order,
+            "scope": self.scope.value,
+            "links": [link.to_data() for link in self.links],
             "value": self.value,
         }
 
@@ -717,8 +739,9 @@ def _candidate_from_data(value: object) -> ProviderCandidate:
 
 
 def _provider_claim_from_data(value: object) -> ProviderClaim:
-    item = _object(value, {"applicability", "comparison", "kind", "local_references", "raw_order", "reference", "role", "state", "value"})
-    return ProviderClaim(item["reference"], ClaimKind(item["kind"]), item["value"], Comparison(item["comparison"]), tuple(_strings(item["local_references"])), item["applicability"], item["role"], FieldState(item["state"]), item["raw_order"])
+    item = _object(value, {"applicability", "comparison", "kind", "links", "local_references", "raw_order", "reference", "role", "scope", "state", "value"})
+    links = tuple(ComparisonLink(_object(link, {"local_reference", "outcome"})["local_reference"], Comparison(_object(link, {"local_reference", "outcome"})["outcome"])) for link in _list(item["links"]))
+    return ProviderClaim(item["reference"], ClaimKind(item["kind"]), item["value"], Comparison(item["comparison"]), tuple(_strings(item["local_references"])), item["applicability"], item["role"], FieldState(item["state"]), item["raw_order"], ClaimScope(item["scope"]), links)
 
 
 def _object(value: object, keys: set[str]) -> dict[str, Any]:
