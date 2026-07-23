@@ -48,6 +48,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     canonical_json,
     comparison_links,
+    claim_scope,
     derive_field_results,
     normalize_title,
     stable_reference,
@@ -109,6 +110,14 @@ class MetadataReportTests(unittest.TestCase):
             def inspect(self, *args): raise RuntimeError("broken")
             def unchanged(self, *args): return True
         service = GenerateMetadataReport(target=_Target([TargetSnapshot("ebook", "Title", (selected,))]), inspector=BrokenInspector(), repository_factory=lambda: repository, providers=(), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
+        with self.assertRaises(MetadataReportError):
+            service.run("item-1", 0)
+        self.assertTrue(repository.closed)
+        repository = _Repository()
+        inspector = _Inspector(InspectionResult("c" * 64, ()))
+        class MismatchedProvider:
+            def observe(self, claims): return ProviderObservation("other", ProviderStatus.NO_MATCH)
+        service = GenerateMetadataReport(target=_Target([TargetSnapshot("ebook", "Title", (selected,))]), inspector=inspector, repository_factory=lambda: repository, providers=(ProviderBinding("catalogue", True, MismatchedProvider),), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ("catalogue",)), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
         with self.assertRaises(MetadataReportError):
             service.run("item-1", 0)
         self.assertTrue(repository.closed)
@@ -382,6 +391,13 @@ class MetadataReportTests(unittest.TestCase):
         local = LocalClaim.create(kind=ClaimKind.DESCRIPTION, observed=local_value, canonical=local_value, excerpt=local_value, applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK)
         bare = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.DESCRIPTION, value=provider_value, state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable")
         self.assertEqual(comparison_links(bare, (local,)), (ComparisonLink(local.reference, Comparison.DISAGREEMENT),))
+
+    def test_edition_field_scope_agrees_with_same_scope_provider_evidence(self) -> None:
+        for kind in (ClaimKind.PUBLICATION_DATE, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE):
+            self.assertEqual(claim_scope(kind), ClaimScope.EDITION)
+        local = LocalClaim.create(kind=ClaimKind.PUBLISHER, observed="Press", canonical="Press", excerpt="Press", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=claim_scope(ClaimKind.PUBLISHER))
+        provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.PUBLISHER, value="Press", state=FieldState.VALID, scope=ClaimScope.EDITION, applicability="not_applicable")
+        self.assertEqual(comparison_links(provider, (local,)), (ComparisonLink(local.reference, Comparison.AGREEMENT),))
 
     def test_non_valid_title_sentinel_cannot_become_canonical(self) -> None:
         sentinel = "unsafe-source-text-sha256:" + "a" * 64
