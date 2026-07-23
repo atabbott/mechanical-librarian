@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import sqlite3
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -194,6 +195,61 @@ class MetadataPersistenceTests(unittest.TestCase):
                 if original.exists():
                     original.rename(path)
             self.assertEqual(alternate.read_bytes(), alternate_before)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_double_path_swap_cannot_hide_the_alternate_sqlite_connection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "reports.sqlite"
+            repository = open_repository(path)
+            repository.close()
+            alternate = root / "alternate.sqlite"
+            alternate_repository = open_repository(alternate)
+            alternate_repository.close()
+            original = root / "original.sqlite"
+            alternate_before = alternate.read_bytes()
+            real_connect = sqlite3.connect
+            calls = 0
+
+            def double_swapping_connect(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls != 2:
+                    return real_connect(*args, **kwargs)
+                path.rename(original)
+                path.symlink_to(alternate)
+                connection = real_connect(*args, **kwargs)
+                path.unlink()
+                original.rename(path)
+                return connection
+
+            try:
+                with patch.object(
+                    metadata_persistence.sqlite3,
+                    "connect",
+                    side_effect=double_swapping_connect,
+                ), self.assertRaises(MetadataReportError):
+                    open_repository(path)
+            finally:
+                if path.is_symlink():
+                    path.unlink()
+                if original.exists():
+                    if path.exists():
+                        path.unlink()
+                    original.rename(path)
+            self.assertEqual(alternate.read_bytes(), alternate_before)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_linux_descriptor_binding_allows_ordinary_open_and_reopen(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            report = _report()
+            repository.publish(report, lambda: True)
+            repository.close()
+            reopened = open_repository(path)
+            self.assertEqual(reopened.get(report.report_id), report.to_json())
+            reopened.close()
 
     def test_current_pointer_scope_must_agree_with_decoded_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
