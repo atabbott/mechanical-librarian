@@ -34,6 +34,13 @@ retains every valid candidate without ranking.
 
 SQLite stores immutable canonical documents in `metadata_reports` and one
 separate pointer per target/file scope in `current_metadata_reports`. Report
-insert and pointer advance share one transaction. No migration ledger,
-workflow, audit, job, attempt, cache, normalized claim table, or deletion
-surface exists.
+insert and pointer advance share one transaction. The sole baseline uses
+rollback-journal `DELETE` mode. It recognizes neither WAL/recovery sidecars nor
+prior schemas, and has no migration ledger, workflow, audit, job, attempt,
+cache, normalized claim table, or deletion surface.
+
+On supported Linux deployments, the repository holds an exclusive lock on the
+owner-only database parent directory and opens SQLite through an unpredictable
+verified hard-link alias to the already-opened database inode. SQLite journal
+artifacts are therefore private-alias scoped. The configured path must continue
+to name that inode and remain free of recovery sidecars at publication.

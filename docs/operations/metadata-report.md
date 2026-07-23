@@ -25,6 +25,9 @@ credentials, target values, provider bodies, or EPUB text.
 
 - The database path is absent for the first invocation or already contains the
   exact 0.4 two-table schema.
+- On supported Linux deployments, the database parent directory is owned by
+  the process user and grants no group or other permissions. The configured
+  database basename has no `-journal`, `-wal`, or `-shm` recovery sidecar.
 - The configuration uses `config-v2` and names the requested connection and
   library explicitly.
 - The target secret and each enabled referenced provider secret are owner-only
@@ -34,6 +37,12 @@ credentials, target values, provider bodies, or EPUB text.
 
 Audiobook and non-EPUB targets fail before EPUB inspection, provider
 construction, provider credential access, egress, or report publication.
+
+Linux production opens the database through a private verified hard-link alias
+while holding the parent-directory lock for the repository lifetime. The alias
+and its clean private journal artifacts are removed on close. Non-Linux runs
+retain the no-follow and inode checks for development qualification, but do not
+claim the Linux production exclusion guarantee.
 
 ## Evidence and replay
 

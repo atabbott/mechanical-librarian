@@ -3,7 +3,7 @@
 - Status: accepted
 - Date: 2026-07-23
 - Owners: project maintainers
-- Supersedes: ADR-0009
+- Supersedes: ADR-0003, ADR-0009, and the migration-specific provisions of ADR-0006
 
 ## Context
 
@@ -24,6 +24,22 @@ Persist exactly two application tables: immutable canonical metadata reports
 and their separate current pointers. Accept only a new database or that exact
 schema. Provide no migration or compatibility path for pre-0.4 development
 state.
+
+Use SQLite rollback-journal `DELETE` mode for this sole baseline. WAL,
+migration-ledger, forward-migration, compatibility, recovery, and repair
+machinery are outside the accepted contract. On supported Linux deployments,
+hold an exclusive owner-directory binding for the repository lifetime and open
+SQLite only through a verified private hard-link alias to the already-opened
+database inode. Configured-name recovery sidecars are rejected; the private
+alias confines SQLite-created journal artifacts to the owned binding.
+
+## Replacement scope
+
+ADR-0003 remains the historical rationale for selecting SQLite, but this ADR
+replaces its WAL, durable-job, migration, and prior-schema validation policy.
+The dependency-direction and composition-root decisions in ADR-0006 remain
+accepted; only its versioned-migration directory and runtime migration
+execution provisions are replaced. ADR-0009 is superseded in full.
 
 ## Consequences
 

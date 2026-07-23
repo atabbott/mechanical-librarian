@@ -1,10 +1,10 @@
 # ADR-0003: Use SQLite as the Default State Store
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-07-10
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: none
+- Superseded by: ADR-0012
 
 ## Context
 
@@ -48,3 +48,9 @@ application. Domain code does not import SQLite or ORM types.
 - Migrations run against every supported prior schema in CI.
 - The application refuses unsupported or unsafe database locations when they
   cannot provide required locking semantics.
+
+## Supersession
+
+ADR-0012 retains SQLite for the activated 0.4 report store but replaces this
+ADR's WAL, durable-job, and forward-migration decisions. WAL and migrations in
+this record are historical context, not current runtime authority.

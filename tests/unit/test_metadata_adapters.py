@@ -50,6 +50,28 @@ def _report(title: str = "Current title") -> MetadataReport:
     )
 
 
+def _leave_hot_journal(path: Path) -> Path:
+    child = (
+        "import os,sqlite3,sys\n"
+        "connection=sqlite3.connect(sys.argv[1])\n"
+        "connection.execute('PRAGMA journal_mode=DELETE')\n"
+        "connection.execute('PRAGMA synchronous=FULL')\n"
+        "connection.execute('BEGIN IMMEDIATE')\n"
+        "connection.execute('PRAGMA user_version=1')\n"
+        "os._exit(0)\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", child, str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    journal = Path(f"{path}-journal")
+    if not journal.is_file() or journal.stat().st_size <= 512:
+        raise AssertionError("synthetic hot journal was not created")
+    return journal
+
+
 class MetadataPersistenceTests(unittest.TestCase):
     def test_clean_database_has_exactly_two_tables_and_replays(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -169,24 +191,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             connection.execute("INSERT INTO legacy VALUES('original')")
             connection.commit()
             connection.close()
-            child = (
-                "import os,sqlite3,sys\n"
-                "connection=sqlite3.connect(sys.argv[1])\n"
-                "connection.execute('PRAGMA journal_mode=DELETE')\n"
-                "connection.execute('PRAGMA synchronous=FULL')\n"
-                "connection.execute('BEGIN IMMEDIATE')\n"
-                "connection.execute(\"UPDATE legacy SET value='uncommitted'\")\n"
-                "os._exit(0)\n"
-            )
-            subprocess.run(
-                [sys.executable, "-c", child, str(path)],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            journal = Path(f"{path}-journal")
-            self.assertTrue(journal.is_file())
-            self.assertGreater(journal.stat().st_size, 512)
+            journal = _leave_hot_journal(path)
             before = {
                 path.name: path.read_bytes(),
                 journal.name: journal.read_bytes(),
@@ -269,8 +274,9 @@ class MetadataPersistenceTests(unittest.TestCase):
                     metadata_persistence.sqlite3,
                     "connect",
                     side_effect=double_swapping_connect,
-                ), self.assertRaises(MetadataReportError):
-                    open_repository(path)
+                ):
+                    safely_bound = open_repository(path)
+                    safely_bound.close()
             finally:
                 if path.is_symlink():
                     path.unlink()
@@ -283,14 +289,107 @@ class MetadataPersistenceTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
     def test_linux_descriptor_binding_allows_ordinary_open_and_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "reports.sqlite"
+            root = Path(directory)
+            path = root / "reports.sqlite"
             repository = open_repository(path)
+            aliases = tuple(
+                value.name
+                for value in root.iterdir()
+                if value.name.startswith(".metadata-report-binding-")
+            )
+            self.assertEqual(len(aliases), 1)
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
             report = _report()
             repository.publish(report, lambda: True)
             repository.close()
+            self.assertEqual(
+                tuple(
+                    value.name
+                    for value in root.iterdir()
+                    if value.name.startswith(".metadata-report-binding-")
+                ),
+                (),
+            )
             reopened = open_repository(path)
             self.assertEqual(reopened.get(report.report_id), report.to_json())
             reopened.close()
+            self.assertEqual(tuple(value.name for value in root.iterdir()), ("reports.sqlite",))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_linux_raced_configured_hot_journal_cannot_control_alias_open(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "reports.sqlite"
+            repository = open_repository(path)
+            repository.close()
+            real_connect = sqlite3.connect
+            raced: dict[str, bytes] = {}
+            observed_uris: list[str] = []
+
+            def racing_connect(database, *args, **kwargs):
+                observed_uris.append(str(database))
+                if len(observed_uris) == 2:
+                    journal = _leave_hot_journal(path)
+                    raced["main"] = path.read_bytes()
+                    raced["journal"] = journal.read_bytes()
+                return real_connect(database, *args, **kwargs)
+
+            with patch.object(
+                metadata_persistence.sqlite3,
+                "connect",
+                side_effect=racing_connect,
+            ), self.assertRaises(MetadataReportError):
+                open_repository(path)
+            journal = Path(f"{path}-journal")
+            self.assertEqual(len(observed_uris), 2)
+            self.assertIn("/proc/self/fd/", observed_uris[1])
+            self.assertIn(".metadata-report-binding-", observed_uris[1])
+            self.assertNotIn(str(path.absolute()), observed_uris[1])
+            self.assertEqual(path.read_bytes(), raced["main"])
+            self.assertEqual(journal.read_bytes(), raced["journal"])
+            self.assertEqual(
+                set(value.name for value in root.iterdir()),
+                {"reports.sqlite", "reports.sqlite-journal"},
+            )
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_linux_publication_requires_configured_sidecars_to_remain_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "reports.sqlite"
+            repository = open_repository(path)
+            sidecar = Path(f"{path}-journal")
+            sidecar.write_bytes(b"configured-path-race")
+            with self.assertRaises(MetadataReportError):
+                repository.publish(_report(), lambda: True)
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM metadata_reports"
+                ).fetchone(),
+                (0,),
+            )
+            repository.close()
+            self.assertEqual(sidecar.read_bytes(), b"configured-path-race")
+            self.assertEqual(
+                set(value.name for value in root.iterdir()),
+                {"reports.sqlite", "reports.sqlite-journal"},
+            )
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_linux_database_parent_must_be_owner_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "shared"
+            parent.mkdir()
+            parent.chmod(0o755)
+            path = parent / "reports.sqlite"
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
+            self.assertFalse(path.exists())
+            parent.chmod(0o700)
+            repository = open_repository(path)
+            repository.close()
+            self.assertEqual(tuple(value.name for value in parent.iterdir()), ("reports.sqlite",))
 
     def test_current_pointer_scope_must_agree_with_decoded_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

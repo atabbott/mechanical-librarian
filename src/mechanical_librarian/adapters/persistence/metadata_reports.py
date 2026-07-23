@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import secrets
 import sqlite3
 import stat
 import sys
@@ -13,6 +14,11 @@ from urllib.parse import quote
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import MetadataReport, REPORT_SCHEMA, ReportValueError
+
+if sys.platform.startswith("linux"):
+    import fcntl
+else:
+    fcntl = None
 
 
 _REPORTS_SQL = (
@@ -42,9 +48,189 @@ _NO_DELETE_SQL = (
 )
 
 
+class _LinuxDatabaseBinding:
+    def __init__(
+        self,
+        configured_name: str,
+        descriptor: int,
+        parent_descriptor: int,
+        alias_name: str,
+        expected_identity: tuple[int, int],
+    ) -> None:
+        self.configured_name = configured_name
+        self.descriptor = descriptor
+        self.parent_descriptor = parent_descriptor
+        self.alias_name = alias_name
+        self.expected_identity = expected_identity
+        self.alias_path = Path(
+            f"/proc/self/fd/{parent_descriptor}/{alias_name}"
+        )
+        self.closed = False
+
+    @classmethod
+    def create(cls, path: Path, descriptor: int) -> "_LinuxDatabaseBinding":
+        if fcntl is None:
+            raise MetadataReportError("database private binding is unavailable")
+        absolute = path.absolute()
+        if not absolute.name:
+            raise MetadataReportError("database path is invalid")
+        parent_descriptor = -1
+        alias_name: str | None = None
+        locked = False
+        succeeded = False
+        try:
+            parent_descriptor = os.open(
+                absolute.parent,
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+            parent = os.fstat(parent_descriptor)
+            if (
+                not stat.S_ISDIR(parent.st_mode)
+                or parent.st_uid != os.geteuid()
+                or parent.st_mode & 0o077
+            ):
+                raise MetadataReportError(
+                    "database parent directory is not owner-only"
+                )
+            fcntl.flock(parent_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+            expected = os.fstat(descriptor)
+            expected_identity = (expected.st_dev, expected.st_ino)
+            _require_named_identity(
+                parent_descriptor, absolute.name, expected_identity
+            )
+            _reject_database_sidecars_in_directory(
+                parent_descriptor, absolute.name
+            )
+            for _ in range(8):
+                candidate = (
+                    f".metadata-report-binding-{secrets.token_hex(16)}.sqlite"
+                )
+                try:
+                    os.link(
+                        absolute.name,
+                        candidate,
+                        src_dir_fd=parent_descriptor,
+                        dst_dir_fd=parent_descriptor,
+                        follow_symlinks=False,
+                    )
+                except FileExistsError:
+                    continue
+                alias_name = candidate
+                break
+            if alias_name is None:
+                raise MetadataReportError(
+                    "database private binding is unavailable"
+                )
+            _require_named_identity(
+                parent_descriptor, alias_name, expected_identity
+            )
+            binding = cls(
+                absolute.name,
+                descriptor,
+                parent_descriptor,
+                alias_name,
+                expected_identity,
+            )
+            succeeded = True
+            return binding
+        except MetadataReportError:
+            raise
+        except (OSError, ValueError) as error:
+            raise MetadataReportError(
+                "database private binding is unavailable"
+            ) from error
+        finally:
+            if alias_name is not None and not succeeded:
+                try:
+                    os.unlink(alias_name, dir_fd=parent_descriptor)
+                except OSError:
+                    pass
+            if not succeeded:
+                if locked:
+                    try:
+                        fcntl.flock(parent_descriptor, fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                if parent_descriptor >= 0:
+                    os.close(parent_descriptor)
+
+    def require_current(self) -> None:
+        _require_named_identity(
+            self.parent_descriptor,
+            self.configured_name,
+            self.expected_identity,
+        )
+        _reject_database_sidecars_in_directory(
+            self.parent_descriptor, self.configured_name
+        )
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        failure: OSError | None = None
+        for suffix in ("-journal", "-wal", "-shm"):
+            name = f"{self.alias_name}{suffix}"
+            try:
+                information = os.stat(
+                    name,
+                    dir_fd=self.parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                failure = failure or error
+                continue
+            if (
+                not stat.S_ISREG(information.st_mode)
+                or information.st_uid != os.geteuid()
+            ):
+                failure = failure or OSError("unsafe private database artifact")
+                continue
+            try:
+                os.unlink(name, dir_fd=self.parent_descriptor)
+            except OSError as error:
+                failure = failure or error
+        try:
+            _require_named_identity(
+                self.parent_descriptor,
+                self.alias_name,
+                self.expected_identity,
+            )
+            os.unlink(self.alias_name, dir_fd=self.parent_descriptor)
+        except (OSError, MetadataReportError) as error:
+            failure = failure or OSError(str(error))
+        try:
+            os.close(self.descriptor)
+        except OSError as error:
+            failure = failure or error
+        try:
+            fcntl.flock(self.parent_descriptor, fcntl.LOCK_UN)
+        except OSError as error:
+            failure = failure or error
+        try:
+            os.close(self.parent_descriptor)
+        except OSError as error:
+            failure = failure or error
+        if failure is not None:
+            raise MetadataReportError(
+                "database private binding cleanup failed"
+            ) from failure
+
+
 class SQLiteMetadataReportRepository:
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        binding: _LinuxDatabaseBinding | None = None,
+    ) -> None:
         self._connection = connection
+        self._binding = binding
 
     def publish(self, report: MetadataReport, currentness: Callable[[], bool]) -> str:
         if type(report) is not MetadataReport or not callable(currentness):
@@ -66,6 +252,8 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             if currentness() is not True:
                 raise MetadataReportError("target or media changed")
+            if self._binding is not None:
+                self._binding.require_current()
             existing = self._connection.execute(
                 "SELECT connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
                 (report.report_id,),
@@ -146,7 +334,11 @@ class SQLiteMetadataReportRepository:
         return document
 
     def close(self) -> None:
-        self._connection.close()
+        try:
+            self._connection.close()
+        finally:
+            if self._binding is not None:
+                self._binding.close()
 
 
 def open_repository(path: Path) -> SQLiteMetadataReportRepository:
@@ -154,6 +346,7 @@ def open_repository(path: Path) -> SQLiteMetadataReportRepository:
     descriptor = -1
     created_identity: tuple[int, int] | None = None
     connection: sqlite3.Connection | None = None
+    binding: _LinuxDatabaseBinding | None = None
     try:
         nofollow = getattr(os, "O_NOFOLLOW", 0)
         if not nofollow:
@@ -164,10 +357,18 @@ def open_repository(path: Path) -> SQLiteMetadataReportRepository:
             information = os.fstat(descriptor)
             if not stat.S_ISREG(information.st_mode):
                 raise MetadataReportError("database path is invalid")
-            _reject_database_sidecars(path)
             _validate_delete_mode_header(descriptor)
-            _validate_existing_read_only(path, descriptor)
-            _reject_database_sidecars(path)
+            if sys.platform.startswith("linux"):
+                binding = _LinuxDatabaseBinding.create(path, descriptor)
+                descriptor = -1
+                _validate_existing_read_only(
+                    binding.alias_path, binding.descriptor
+                )
+                binding.require_current()
+            else:
+                _reject_database_sidecars(path)
+                _validate_existing_read_only(path, descriptor)
+                _reject_database_sidecars(path)
         else:
             descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
             information = os.fstat(descriptor)
@@ -175,7 +376,20 @@ def open_repository(path: Path) -> SQLiteMetadataReportRepository:
                 raise MetadataReportError("database path is invalid")
             created = True
             created_identity = (information.st_dev, information.st_ino)
-        connection = _connect_bound(path, descriptor)
+            if sys.platform.startswith("linux"):
+                binding = _LinuxDatabaseBinding.create(path, descriptor)
+                descriptor = -1
+        database_path = binding.alias_path if binding is not None else path
+        database_descriptor = (
+            binding.descriptor if binding is not None else descriptor
+        )
+        connection = _connect_bound(
+            database_path,
+            database_descriptor,
+            binding.require_current if binding is not None else None,
+        )
+        if binding is not None:
+            binding.require_current()
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA journal_mode=DELETE")
         connection.execute("PRAGMA synchronous=FULL")
@@ -188,18 +402,32 @@ def open_repository(path: Path) -> SQLiteMetadataReportRepository:
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
         _validate_schema(connection)
-        os.close(descriptor)
-        descriptor = -1
-        return SQLiteMetadataReportRepository(connection)
+        if binding is None:
+            os.close(descriptor)
+            descriptor = -1
+        repository = SQLiteMetadataReportRepository(connection, binding)
+        connection = None
+        binding = None
+        return repository
     except MetadataReportError:
         if connection is not None:
             connection.close()
+        if binding is not None:
+            try:
+                binding.close()
+            except MetadataReportError:
+                pass
         if created and created_identity is not None:
             _unlink_created(path, created_identity)
         raise
     except (OSError, sqlite3.Error) as error:
         if connection is not None:
             connection.close()
+        if binding is not None:
+            try:
+                binding.close()
+            except MetadataReportError:
+                pass
         if created and created_identity is not None:
             _unlink_created(path, created_identity)
         raise MetadataReportError("database is unavailable or incompatible") from error
@@ -223,11 +451,17 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
             connection.close()
 
 
-def _connect_bound(path: Path, descriptor: int) -> sqlite3.Connection:
+def _connect_bound(
+    path: Path,
+    descriptor: int,
+    preconnect: Callable[[], None] | None = None,
+) -> sqlite3.Connection:
     absolute = str(path.absolute())
     uri = f"file:{quote(absolute, safe='/')}?mode=rw"
     before = _regular_descriptors(descriptor)
     _reject_database_sidecars(path)
+    if preconnect is not None:
+        preconnect()
     connection = sqlite3.connect(uri, uri=True, isolation_level=None)
     try:
         _validate_connection_binding(connection, path, descriptor, before)
@@ -249,6 +483,47 @@ def _reject_database_sidecars(path: Path) -> None:
                 "database recovery state is unavailable"
             ) from error
         raise MetadataReportError("database recovery state is unsupported")
+
+
+def _reject_database_sidecars_in_directory(
+    parent_descriptor: int, basename: str
+) -> None:
+    for suffix in ("-journal", "-wal", "-shm"):
+        try:
+            os.stat(
+                f"{basename}{suffix}",
+                dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise MetadataReportError(
+                "database recovery state is unavailable"
+            ) from error
+        raise MetadataReportError("database recovery state is unsupported")
+
+
+def _require_named_identity(
+    parent_descriptor: int,
+    name: str,
+    expected_identity: tuple[int, int],
+) -> None:
+    try:
+        information = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+    except OSError as error:
+        raise MetadataReportError(
+            "database pathname changed while opening"
+        ) from error
+    if not stat.S_ISREG(information.st_mode) or (
+        information.st_dev,
+        information.st_ino,
+    ) != expected_identity:
+        raise MetadataReportError("database pathname changed while opening")
 
 
 def _validate_delete_mode_header(descriptor: int) -> None:
