@@ -63,7 +63,7 @@ class CoverDeadline:
 
 def _public_https(url: str) -> tuple[str, int]:
     _validate_url(url)
-    parts = urlsplit(url)
+    parts = _parts(url)
     if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443) or parts.username or parts.password or parts.fragment:
         raise RemoteCoverError("unsafe remote cover")
     try:
@@ -77,7 +77,7 @@ def _public_https(url: str) -> tuple[str, int]:
 
 def _pinned_address(url: str, deadline: float | CoverDeadline | None = None) -> tuple[str, str, str]:
     _validate_url(url)
-    parts = urlsplit(url)
+    parts = _parts(url)
     if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443) or parts.username or parts.password or parts.fragment:
         raise RemoteCoverError("unsafe remote cover")
     host = parts.hostname
@@ -85,7 +85,7 @@ def _pinned_address(url: str, deadline: float | CoverDeadline | None = None) -> 
     if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
         raise RemoteCoverError("unsafe remote cover")
     selected = addresses[0][4][0]
-    return host, selected, urlsplit(url).path or "/"
+    return host, selected, _parts(url).path or "/"
 
 
 def _resolve(host: str, deadline: float | CoverDeadline | None) -> list[tuple[object, ...]]:
@@ -108,6 +108,15 @@ def _resolve(host: str, deadline: float | CoverDeadline | None) -> list[tuple[ob
 def _validate_url(url: str) -> None:
     if type(url) is not str or not url or any(ord(value) < 0x21 or ord(value) > 0x7E for value in url) or "\\" in url:
         raise RemoteCoverError("unsafe remote cover")
+
+
+def _parts(url: str):
+    try:
+        parts = urlsplit(url)
+        _ = parts.hostname, parts.port
+        return parts
+    except ValueError as error:
+        raise RemoteCoverError("unsafe remote cover") from error
 
 
 def _remaining(deadline: float | CoverDeadline | None) -> float:
@@ -239,9 +248,12 @@ def _chunked_body(secured: ssl.SSLSocket, deadline: float | CoverDeadline | None
 def _redirect_target(current: str, location: str | None) -> str:
     if not location:
         raise RemoteCoverError("remote redirect is invalid")
-    target = urljoin(current, location)
+    try:
+        target = urljoin(current, location)
+    except ValueError as error:
+        raise RemoteCoverError("unsafe remote cover") from error
     _validate_url(target)
-    parts = urlsplit(target)
+    parts = _parts(target)
     if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443) or parts.username or parts.password or parts.fragment:
         raise RemoteCoverError("remote redirect is invalid")
     return target
@@ -260,7 +272,7 @@ def _admitted_media_type(headers: object) -> str:
 
 def _pinned_fetch(url: str, deadline: float | CoverDeadline | None) -> tuple[int, dict[str, str], bytes]:
     host, address, path = _pinned_address(url, deadline)
-    query = urlsplit(url).query
+    query = _parts(url).query
     if query:
         path += "?" + query
     raw = socket.create_connection((address, 443), timeout=_remaining(deadline))
@@ -326,6 +338,8 @@ def fetch_remote_cover(url: str, *, deadline: float | CoverDeadline | None = Non
                 return RemoteCover(current, media_type, b"".join(chunks))
         raise RemoteCoverError("remote redirect limit exceeded")
     except httpx.TimeoutException as error:
+        raise RemoteCoverTimeout("remote cover timed out") from error
+    except (TimeoutError, socket.timeout) as error:
         raise RemoteCoverTimeout("remote cover timed out") from error
     except (httpx.HTTPError, OSError, ssl.SSLError, UnicodeError) as error:
         raise RemoteCoverError("remote cover unavailable") from error

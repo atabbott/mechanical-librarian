@@ -76,6 +76,13 @@ class RemoteCoverTests(unittest.TestCase):
         for value in ("https://user@example.com/a.jpg", "https://example.com/a.jpg#fragment"):
             with self.assertRaises(RemoteCoverError):
                 _public_https(value)
+
+    def test_invalid_port_and_malformed_ipv6_fail_before_dns(self) -> None:
+        for value in ("https://example.com:99999/cover.png", "https://[::1/cover.png"):
+            with self.subTest(value=value), patch("socket.getaddrinfo") as lookup:
+                with self.assertRaisesRegex(RemoteCoverError, "unsafe remote cover"):
+                    _public_https(value)
+                lookup.assert_not_called()
         for value in (
             "https://example.com/a b.jpg",
             "https://example.com/a\x00b.jpg",
