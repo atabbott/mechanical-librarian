@@ -64,6 +64,8 @@ class HardcoverMetadataProvider:
                     return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
                 if response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
                     return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
+                if response.headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}:
+                    return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
                 payload = _body(response, self._maximum_bytes)
         except _ResponseOversized:
             return ProviderObservation(self._name, ProviderStatus.OVERSIZED, references)
