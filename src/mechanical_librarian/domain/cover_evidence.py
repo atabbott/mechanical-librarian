@@ -14,7 +14,7 @@ from enum import StrEnum
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_ID = re.compile(r"^cover_[0-9a-f]{64}$")
-_SOURCE_ID = re.compile(r"^(?:epub|hardcover)_[0-9a-f]{64}$")
+_SOURCE_ID = re.compile(r"^(?:abs|epub|hardcover)_[0-9a-f]{64}$")
 
 
 class CoverEvidenceError(ValueError):
@@ -22,6 +22,7 @@ class CoverEvidenceError(ValueError):
 
 
 class CoverSourceKind(StrEnum):
+    ABS = "abs"
     EPUB = "epub"
     HARDCOVER = "hardcover"
 

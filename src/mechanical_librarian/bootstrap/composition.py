@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -19,13 +20,16 @@ from mechanical_librarian.application.metadata_report import (
     InspectionResult,
     MetadataReportError,
     ProviderBinding,
+    CoverTimeoutError,
+    TargetCoverReader,
+    TargetSnapshot,
     UnsupportedMediaError,
 )
 from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionOutcome
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, FieldState, LocalClaim, RearClaimProvenance, claim_scope
-from mechanical_librarian.domain.cover_evidence import CoverSource, CoverSourceKind, CoverSourceState
+from mechanical_librarian.domain.cover_evidence import CoverSource, CoverSourceKind, CoverSourceState, cover_source_id
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -92,6 +96,42 @@ class _IsolatedEpubInspector:
             if opened is not None:
                 os.close(opened.descriptor)
 
+
+class _CoverEvidenceObserver:
+    """Acquire the one declared ABS cover inside the slice's bounded envelope.
+
+    EPUB results are already collected by the isolated media inspector.  This
+    deliberately has no selection policy: each source merely records its own
+    acquisition or validation outcome.
+    """
+
+    def __init__(self, target: TargetCoverReader, artifacts: CoverArtifactStore) -> None:
+        self._target = target
+        self._artifacts = artifacts
+
+    def observe(self, target: TargetSnapshot, providers: tuple[object, ...], local_sources: tuple[CoverSource, ...]) -> tuple[CoverSource, ...]:
+        del providers
+        if target.cover is None:
+            source = CoverSource(cover_source_id(CoverSourceKind.ABS, "absent"), CoverSourceKind.ABS, CoverSourceState.ABSENT)
+            return (source, *local_sources)
+        source_id = cover_source_id(CoverSourceKind.ABS, target.cover.identity)
+        deadline = time.monotonic() + 60.0
+        try:
+            original = self._target.read_cover(target.cover, deadline=deadline)
+            if original is None:
+                source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.ABSENT)
+            else:
+                decoded = decode_cover(original)
+                self._artifacts.stage(decoded.artifact, original, decoded.preview)
+                source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.RETRIEVED, decoded.artifact)
+        except CoverTimeoutError:
+            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.TIMEOUT, timeout_scope="attempted")
+        except CoverDecodeRejected:
+            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.DECODE_FAILED)
+        except MetadataReportError:
+            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
+        return (source, *local_sources)
+
     def unchanged(self, mount: MediaMountConfiguration, relative_path: str, expected_digest: str, maximum_bytes: int) -> bool:
         opened = None
         try:
@@ -139,6 +179,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
         library=library,
         mount=mount,
         limits=configuration.limits,
+        cover_observer=_CoverEvidenceObserver(target, CoverArtifactStore(artifact_store_path, create=False)),
     )
     return service.run(item, file_index)
 

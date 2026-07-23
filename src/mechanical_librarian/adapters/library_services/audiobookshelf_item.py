@@ -14,6 +14,7 @@ import httpx
 
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
+    CoverTimeoutError,
     TargetFile,
     TargetCover,
     TargetSnapshot,
@@ -75,7 +76,7 @@ class AudiobookshelfItemReader:
         if type(cover) is not TargetCover or not cover.path.startswith("/"):
             raise MetadataReportError("target cover is invalid")
         if deadline is not None and time.monotonic() >= deadline:
-            raise MetadataReportError("target cover timed out")
+            raise CoverTimeoutError("target cover timed out")
         try:
             with httpx.Client(trust_env=False, follow_redirects=False, headers={}) as client:
                 host = httpx.URL(self._endpoint).host
@@ -189,7 +190,7 @@ def _bounded_body(response: httpx.Response, maximum: int, *, deadline: float | N
     length = 0
     for chunk in response.iter_bytes():
         if deadline is not None and time.monotonic() >= deadline:
-            raise MetadataReportError("target cover timed out")
+            raise CoverTimeoutError("target cover timed out")
         length += len(chunk)
         if length > maximum:
             raise MetadataReportError("target response is oversized")

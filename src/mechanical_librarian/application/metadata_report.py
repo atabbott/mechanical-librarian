@@ -43,6 +43,10 @@ class CredentialError(MetadataReportError):
     pass
 
 
+class CoverTimeoutError(MetadataReportError):
+    """The bounded cover-acquisition aggregate deadline elapsed."""
+
+
 @dataclass(frozen=True, slots=True)
 class TargetFile:
     identity: str
@@ -89,6 +93,17 @@ class MetadataProvider(Protocol):
     def observe(self, local_claims: tuple[LocalClaim, ...]) -> ProviderObservation: ...
 
 
+class CoverObserver(Protocol):
+    """Collect bounded report-only cover outcomes before final publication."""
+
+    def observe(
+        self,
+        target: TargetSnapshot,
+        providers: tuple[ProviderObservation, ...],
+        local_sources: tuple[CoverSource, ...],
+    ) -> tuple[CoverSource, ...]: ...
+
+
 class ReportRepository(Protocol):
     def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None = None) -> str: ...
     def get(self, report_id: str) -> str: ...
@@ -117,6 +132,7 @@ class GenerateMetadataReport:
         library: LibraryConfiguration,
         mount: MediaMountConfiguration | None,
         limits: ReportLimits,
+        cover_observer: CoverObserver | None = None,
     ) -> None:
         self._target = target
         self._inspector = inspector
@@ -126,6 +142,7 @@ class GenerateMetadataReport:
         self._library = library
         self._mount = mount
         self._limits = limits
+        self._cover_observer = cover_observer
 
     def run(self, item: str, file_index: int) -> str:
         if self._library.media_kind != "ebook" or self._mount is None:
@@ -210,13 +227,16 @@ class GenerateMetadataReport:
             )
         )
         try:
+            cover_sources = local.cover_sources if self._cover_observer is None else self._cover_observer.observe(
+                initial, tuple(observations), local.cover_sources
+            )
             report = MetadataReport.create(
                 target=TargetFacts(self._connection.name, self._library.name, item, initial.title),
                 file=FileFacts(file_index, selected.identity, local.content_digest),
                 local_claims=combined_claims, local_reasons=reasons,
                 providers=tuple(sorted(observations, key=lambda value: value.provider)),
                 field_results=derive_field_results(combined_claims),
-                cover_sources=local.cover_sources,
+                cover_sources=cover_sources,
             )
         except Exception:
             repository.close()
@@ -284,7 +304,7 @@ class GenerateMetadataReport:
 
 
 __all__ = [
-    "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
+    "CoverObserver", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
     "InspectionResult", "MetadataProvider", "MetadataReportError", "ProviderBinding",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
