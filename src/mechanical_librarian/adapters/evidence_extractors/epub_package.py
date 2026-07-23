@@ -1771,6 +1771,9 @@ def _package_report(
             continue
         idref = _attribute(itemref, "idref")
         linear = _attribute(itemref, "linear")
+        is_linear = linear in {None, "yes"}
+        if not is_linear and linear != "no":
+            warnings.append(EpubPackageWarning("invalid_spine_item", citation))
         declarations.append(
             EpubPackageDeclaration(
                 EpubPackageDeclarationKind.SPINE_SLOT,
@@ -1778,7 +1781,7 @@ def _package_report(
                 citation,
                 manifest_ids.get(idref) if idref else None,
                 idref,
-                linear=linear != "no",
+                linear=is_linear,
                 spine_position=spine_position,
             )
         )
@@ -1796,7 +1799,7 @@ def _package_report(
                 citation,
                 manifest_ids[idref],
                 idref,
-                linear=linear != "no",
+                linear=is_linear,
                 spine_position=spine_position,
             )
         )

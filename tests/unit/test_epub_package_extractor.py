@@ -72,6 +72,17 @@ def request_with_limits(value: bytes, limits: EpubPackageLimits) -> EpubPackageR
 
 
 class EpubPackageExtractorTests(unittest.TestCase):
+    def test_spine_linearity_is_exact_and_invalid_values_are_non_linear(self) -> None:
+        original = b'<itemref idref="chapter"/>'
+        for value, expected_linear, warned in ((None, True, False), ("yes", True, False), ("no", False, False), ("YES", False, True), (" no ", False, True)):
+            itemref = original if value is None else f'<itemref idref="chapter" linear="{value}"/>'.encode()
+            report = EpubPackageExtractor().extract(request(epub_bytes(package=EPUB3_PACKAGE.replace(original, itemref))))
+            with self.subTest(value=value):
+                slot = next(item for item in report.declarations if item.kind is EpubPackageDeclarationKind.SPINE_SLOT)
+                item = next(item for item in report.declarations if item.kind is EpubPackageDeclarationKind.SPINE_ITEM)
+                self.assertEqual((slot.linear, item.linear), (expected_linear, expected_linear))
+                self.assertEqual("invalid_spine_item" in {warning.code for warning in report.warnings}, warned)
+
     def test_epub3_package_is_deterministic_and_cited(self) -> None:
         value = epub_bytes()
         extractor = EpubPackageExtractor()

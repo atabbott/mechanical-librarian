@@ -22,6 +22,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageCapability,
+    EpubPackageDeclarationKind,
     EpubPackageLimits,
     EpubPackageReport,
     EpubPackageSourceError,
@@ -351,10 +352,51 @@ class EpubChildRearSpineTests(unittest.TestCase):
             facts = child._rear_facts(request, package, opening, archive)
         self.assertEqual([(fact.field.value, fact.canonical_value) for fact in facts], [("title", "Rear Clock"), ("creator", "Ada Example"), ("isbn", "9780306406157")])
 
+    def test_rear_pool_admits_nested_explicit_cues_but_scans_isbns_only_on_leaves(self) -> None:
+        tail = _xhtml(
+            '<p>Copyright 2026</p><h1 epub:type="fulltitle">Nested <span>Title</span></h1>'
+            '<p epub:type="creator">Ada <span>Example</span></p>'
+            '<p epub:type="contributor">Bea <span>Contributor</span></p>'
+            '<p>by <span>Cara Example</span></p><section><span>Plain container</span></section>'
+            '<p><span>ISBN 9780306406157</span></p>'
+        )
+        request, (package, opening, _) = self._bundle(tail)
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+        self.assertEqual(
+            [(fact.field.value, fact.canonical_value) for fact in facts],
+            [("title", "Nested Title"), ("creator", "Ada Example"), ("contributor", "Bea Contributor"), ("creator", "Cara Example"), ("isbn", "9780306406157")],
+        )
+        self.assertEqual(sum(fact.field.value == "isbn" for fact in facts), 1)
+
     def test_rear_pool_does_not_replace_a_tail_slot_without_marker(self) -> None:
         request, (package, opening, _) = self._bundle(_xhtml('<h1 epub:type="fulltitle">Unmarked Tail</h1><p>ISBN 9780306406157</p>'))
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
             self.assertEqual(child._rear_facts(request, package, opening, archive), ())
+
+    def test_invalid_final_spine_slot_cannot_displace_a_valid_rear_tail_slot(self) -> None:
+        items = (("slot0", "slot0.xhtml", "application/xhtml+xml", ""),) + tuple(
+            (f"slot{index}", f"slot{index}.png", "image/png", "") for index in range(1, 8)
+        ) + (("slot8", "slot8.xhtml", "application/xhtml+xml", ""),)
+        package = _opening_package(items=items, spine=tuple(identity for identity, *_ in items)).replace(
+            b'<itemref idref="slot8"/>', b'<itemref idref="slot8" linear="MAYBE"/>'
+        )
+        value = _opening_epub(
+            package=package,
+            entries=(
+                ("EPUB/slot0.xhtml", _xhtml('<p>Copyright 2026</p><h1 epub:type="fulltitle">Retained Tail</h1>'), 8),
+                *((f"EPUB/slot{index}.png", b"synthetic-image", 0) for index in range(1, 8)),
+                ("EPUB/slot8.xhtml", _xhtml('<p>ordinary prose</p>'), 8),
+            ),
+        )
+        request = self._request(value)
+        package_request = EpubPackageRequest(request.target, request.file, request.source, request.expected_source, EpubPackageCapability.PACKAGE, request.limits, request.deadline, request.monotonic_deadline, request.cancellation)
+        package_report = EpubPackageExtractor().extract(package_request)
+        self.assertFalse(next(item for item in package_report.declarations if item.kind is EpubPackageDeclarationKind.SPINE_SLOT and item.identifier == "slot8").linear)
+        opening = EpubOpeningReport(EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE, EpubOpeningLimits(), package_report.source_fingerprint)
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package_report, opening, archive)
+        self.assertEqual([(fact.field.value, fact.canonical_value) for fact in facts], [("title", "Retained Tail")])
 
     def test_rear_pool_suppresses_unsafe_cues_without_losing_safe_facts(self) -> None:
         for unsafe in ("/Users/private/title", "Authorization: Bearer abcdefgh"):
@@ -477,6 +519,21 @@ class EpubChildRearSpineTests(unittest.TestCase):
             with zipfile.ZipFile(child._SourceIO(initial), "r") as archive:
                 child._rear_facts(request, package, opening, archive)
         self.assertEqual(raised.exception.outcome, EpubInspectionOutcome.CANCELLATION)
+
+    def test_child_protocol_preserves_exact_opening_terminal_outcomes(self) -> None:
+        malformed = epub_bytes(package=EPUB3_PACKAGE.replace(b"</metadata>", b"<"))
+        cancelled = epub_bytes()
+        for value, cancelled_check, expected in ((malformed, lambda: False, EpubInspectionOutcome.MALFORMED), (cancelled, lambda: True, EpubInspectionOutcome.CANCELLATION)):
+            with self.subTest(expected=expected):
+                request = self._request(value, cancelled=cancelled_check)
+                package_request = EpubPackageRequest(request.target, request.file, request.source, request.expected_source, EpubPackageCapability.PACKAGE, request.limits, request.deadline, request.monotonic_deadline, request.cancellation)
+                package, opening, _ = child._inspect_bundle(request, package_request, EpubOpeningLimits())
+                self.assertEqual(opening.outcome, expected)
+                self.assertEqual(child._inspection(package, opening).outcome, expected)
+        for outcome in EpubInspectionOutcome:
+            if outcome is EpubInspectionOutcome.SUCCESS:
+                continue
+            self.assertEqual(child.EpubInspection.from_opening_report(EpubOpeningReport(outcome, EpubOpeningLimits())).outcome, outcome)
 
 
 if __name__ == "__main__":

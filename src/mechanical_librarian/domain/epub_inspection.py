@@ -272,19 +272,7 @@ class EpubInspection:
 
         if type(report) is not EpubOpeningReport:
             raise ValueError("EPUB inspection requires a typed opening report")
-        outcome = (
-            EpubInspectionOutcome.SUCCESS
-            if report.outcome is EpubInspectionOutcome.SUCCESS
-            else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
-            if report.outcome is EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
-            else EpubInspectionOutcome.RESOURCE_LIMIT
-            if report.outcome is EpubInspectionOutcome.RESOURCE_LIMIT
-            else EpubInspectionOutcome.TIMEOUT
-            if report.outcome is EpubInspectionOutcome.TIMEOUT
-            else EpubInspectionOutcome.UNSTABLE_SOURCE
-            if report.outcome is EpubInspectionOutcome.UNSTABLE_SOURCE
-            else EpubInspectionOutcome.CHILD_FAILURE
-        )
+        outcome = report.outcome
         source = report.source_fingerprint
         if source is None:
             return cls(outcome, None)

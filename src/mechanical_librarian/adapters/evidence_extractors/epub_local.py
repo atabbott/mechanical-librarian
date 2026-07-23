@@ -146,7 +146,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
         provenance = EpubRearProvenance(identity, spine_item.spine_position or tail_slot, tail_slot, marker.group(0).lower(), marker.group(0))
         parents = {a for element in projection.elements for a in element.ancestors}; resource_isbns = 0
         for element in projection.elements:
-            if element.ordinal in parents: continue
+            is_ancestor = element.ordinal in parents
             value = " ".join(element.exact_text.split())
             if not value or len(value) > 280: continue
             try:
@@ -154,12 +154,15 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             except EvidenceValueError:
                 continue
             field = canonical = None; role = None
+            byline = _BYLINE.match(value)
+            admitted_cue = bool(element.semantics & {"title", "fulltitle", "contributor", "creator"}) or byline is not None
+            if is_ancestor and not admitted_cue: continue
             if element.semantics & {"title", "fulltitle"}: field, canonical = EpubInspectionField.TITLE, normalize_title(value)
             elif element.semantics & {"contributor"}: field, canonical = EpubInspectionField.CONTRIBUTOR, value
             elif element.semantics & {"creator"}: field, canonical = EpubInspectionField.CREATOR, value
-            elif (byline := _BYLINE.match(value)) is not None and len(byline.group(1)) <= 280: field, canonical = EpubInspectionField.CREATOR, byline.group(1)
+            elif byline is not None and len(byline.group(1)) <= 280: field, canonical = EpubInspectionField.CREATOR, byline.group(1)
             if field is not None: facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
-            for match in opening._ISBN.finditer(value):
+            for match in () if is_ancestor else opening._ISBN.finditer(value):
                 if resource_isbns >= 4: break
                 isbn = opening._normal(match.group(0), opening.OpeningField.IDENTIFIER)
                 if len(isbn) in {10, 13} and opening._isbn_valid(isbn):

@@ -89,7 +89,7 @@ byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
  copyright pass. The rear pass considers only the final eight accepted spine
  slots in reverse order, opens at most four XHTML/HTML resources, and never
  substitutes an excluded, missing, encrypted, image, unsupported, or duplicate
- slot. It admits only explicit title/creator cues and checksum-valid ISBNs when
+ slot. It admits only explicit title, creator, contributor, or byline cues and checksum-valid ISBNs when
  the same resource has a copyright marker; it is not whole-book mining.
  Across both pools there are at most nine content opens, 9 MiB of expanded
  content, 786432 projected characters, 150000 nodes, and 80 claims.
