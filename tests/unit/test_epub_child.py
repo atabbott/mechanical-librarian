@@ -77,6 +77,21 @@ class EpubChildCompositionTests(unittest.TestCase):
         inspect.assert_not_called()
         self.assertEqual([value.outcome for value in written], [EpubInspectionOutcome.INTEGRITY_FAILURE])
 
+    def test_snapshot_memory_exhaustion_is_a_resource_limit_terminal(self) -> None:
+        expected = hashlib.sha256(b"original").hexdigest()
+        written: list[EpubInspection] = []
+        with (
+            patch.object(child, "_install_parent_guard"),
+            patch.object(child, "_apply_limits"),
+            patch.object(child, "_read_context", return_value=self._opening_context(expected)),
+            patch.object(child, "_snapshot_source", side_effect=MemoryError()),
+            patch.object(child, "_write_report", side_effect=written.append),
+            patch.object(child.signal, "signal"),
+            patch.object(child.os, "close"),
+        ):
+            self.assertEqual(child.main(["10", "11", "123"]), 0)
+        self.assertEqual([(value.outcome, value.facts) for value in written], [(EpubInspectionOutcome.RESOURCE_LIMIT, ())])
+
     def test_matching_snapshot_is_the_immutable_source_used_for_all_parser_reads(self) -> None:
         snapshot = bytearray(b"one bounded immutable snapshot")
         expected = hashlib.sha256(snapshot).hexdigest()

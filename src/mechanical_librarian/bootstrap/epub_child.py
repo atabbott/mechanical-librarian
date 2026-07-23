@@ -339,6 +339,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             _write_report(_inspection(package_report, opening_report, rear_facts))
         return 0
+    except MemoryError:
+        try:
+            _write_report(EpubInspection(EpubInspectionOutcome.RESOURCE_LIMIT, None))
+            return 0
+        except BaseException:
+            return 70
     except BaseException:
         try:
             _write_report(EpubInspection(EpubInspectionOutcome.INTERNAL_FAILURE, None))
