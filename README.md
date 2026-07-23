@@ -1,96 +1,46 @@
 # Mechanical Librarian
 
-> The project is pre-release and the repository remains private during initial
-> development.
+Mechanical Librarian is a self-hosted, evidence-first metadata curator for
+ebook and audiobook libraries. The project is pre-release; there is no
+production image, supported release, or write-capable runtime yet.
 
-Mechanical Librarian is a self-hosted service that keeps ebook and audiobook
-metadata, covers, series information, and identifiers correct with minimal
-human intervention. It is designed to run continuously beside a media library,
-make evidence-backed decisions, apply safe changes through supported service
-APIs, and retain a complete audit history.
+## Current checkpoint
 
-The first production integration targets Audiobookshelf for both ebooks and
-audiobooks. The architecture keeps library services, metadata providers, and AI
-reviewers behind adapters so additional integrations can be added without
-changing the domain model.
+The 0.4 development checkpoint installs one synchronous, report-only command:
 
-## Product goals
+```text
+mechanical-librarian metadata-report \
+  --config /run/secrets/mechanical-librarian.json \
+  --database /var/lib/mechanical-librarian/reports.sqlite \
+  --connection primary --library ebooks --item ITEM_ID --file-index 0
+```
 
-- New books are normally correct without the owner noticing.
-- Human review is reserved for genuinely unresolved or destructive decisions.
-- Every automatic decision and production change is explainable and auditable.
-- One container, one persistent data volume, optional read-only library mounts,
-  and one HTTP port are sufficient for the normal deployment.
-- AI is an untrusted decision-support component and never has production write
-  authority.
-- Safe defaults, backups, validation, verification, and rollback are built in.
-- The project is portable, documented, testable, and suitable for public
-  contribution from its first release.
+It reads one explicitly selected Audiobookshelf EPUB, extracts bounded title
+and ISBN facts in an isolated child, independently observes each explicitly
+referenced provider, and stores one neutral canonical JSON report. Success
+writes exactly that persisted document and a newline to stdout. The command
+has no inventory, review, decision, apply, target-write, or media-write
+authority.
 
-## Current status
+Only a clean 0.4 database is supported. Earlier development databases and
+retired commands are intentionally not migrated or recognized.
 
-The project is in its initial implementation stage. An installable typed Python
-package, architecture-boundary scaffold, durable-state diagnostic, and
-recoverable synthetic job heartbeat, and a persisted synthetic inventory round
-trip exist, but no production image or supported release exists yet. See the
-[durable state check](docs/operations/state-check.md),
-[synthetic job heartbeat](docs/operations/job-heartbeat.md), and
-[synthetic inventory](docs/operations/synthetic-inventory.md),
-[Audiobookshelf inventory](docs/operations/audiobookshelf-inventory.md), and
-[Audiobookshelf connection check](docs/operations/audiobookshelf-connection.md),
-executable operator surface. The disabled-by-default, report-only
-[configured Hardcover identity report](docs/operations/hardcover-identity-report.md)
-is also installed; it uses strict private input and durable bounded execution
-and has no proposal or write authority.
+See the [metadata report operations guide](docs/operations/metadata-report.md),
+[configuration reference](docs/reference/configuration.md), and
+[documentation index](docs/README.md).
 
-The currently numbered delivery milestones are internal pre-release checkpoints,
-not release-publication commitments. Completing one does not create a tag,
-GitHub Release, supported version, or published release artifact. The first
-release publication will occur only after a maintainer explicitly selects a
-checkpoint whose genuinely usable functionality provides value to the owner or
-another user and every applicable release gate and release-publication gate
-passes. No checkpoint or version has been selected for that first published
-release.
+## Product direction
 
-The earlier Ebook Management workspace is a prototype and evidence source. Its
-completed DUX dashboard work is frozen as a traceable baseline and informs the
-production [review experience](docs/product/review-experience.md), but it is not
-a runtime dependency. Components may be extracted only after they are made
-portable, given narrow interfaces, and covered by isolated tests.
+The intended product remains one self-contained container beside a media
+library, with Audiobookshelf as the first adapter, supported service APIs for
+future metadata writes, read-only media mounts by default, explicit safety
+gates, and durable auditability. AI reviewers remain untrusted and never
+receive service credentials or production write authority.
 
-## Documentation
+Do not use real library databases, copyrighted book contents, personal
+domains, tokens, or unredacted reports in issues, tests, or pull requests.
 
-Start with the [documentation index](docs/README.md).
+## Contributing and licence
 
-- [Product vision](docs/product/vision.md)
-- [Scope and non-goals](docs/product/scope.md)
-- [Automation policy](docs/product/automation-policy.md)
-- [Bounded EPUB package and opening-matter evidence](docs/product/opening-ebook-evidence.md)
-- [Bounded opening-audio evidence](docs/product/opening-audio-evidence.md)
-- [Review experience](docs/product/review-experience.md)
-- [Reviewer backends after the 1.0 checkpoint](docs/product/future-reviewer-backends.md)
-- [Initial build plan](docs/product/initial-build-plan.md)
-- [Architecture overview](docs/architecture/overview.md)
-- [Security model](docs/architecture/security.md)
-- [Data privacy](docs/architecture/data-privacy.md)
-- [Quality strategy](docs/development/quality-strategy.md)
-- [DUX extraction record](docs/development/dux-extraction.md)
-- [Roadmap](docs/product/roadmap.md)
-- [Architecture decisions](docs/architecture/decisions/README.md)
-
-## Contributing
-
-The project is not ready for external contributions until its publication
-readiness gates pass. The intended contribution and review model is documented
-in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-Questions and diagnostic reports will follow the public [support policy](SUPPORT.md).
-
-Do not use real library databases, copyrighted book contents, personal domains,
-tokens, or unredacted production reports in issues, tests, or pull requests.
-
-## Licence
-
-Mechanical Librarian is licensed under
-[AGPL-3.0-or-later](LICENSE). The rationale and project-material policy are in
-[the licence decision record](docs/product/license-decision.md).
+Development and review expectations are in [CONTRIBUTING.md](CONTRIBUTING.md).
+Mechanical Librarian is licensed under [AGPL-3.0-or-later](LICENSE).

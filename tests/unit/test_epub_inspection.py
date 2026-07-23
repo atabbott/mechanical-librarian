@@ -24,6 +24,7 @@ class EpubInspectionFactTests(unittest.TestCase):
             supporting_context="ISBN 978-0-306-40615-7 (eBook)",
             checksum="valid_isbn_13",
             media="ebook",
+            classification_basis="ebook",
             basis="opening_matter",
         )
 
@@ -42,6 +43,7 @@ class EpubInspectionFactTests(unittest.TestCase):
             supporting_context="ISBN 9780306406158",
             checksum="invalid",
             media="unknown",
+            classification_basis="unlabelled",
             basis="opening_matter",
         )
 

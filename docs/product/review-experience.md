@@ -7,8 +7,7 @@ human queue. When a person is needed, the product presents one durable,
 target-shaped decision surface backed by server-authoritative state.
 
 This document is the product contract for that experience. It incorporates the
-validated behavior from the completed DUX prototype baseline recorded in the
-[DUX extraction record](../development/dux-extraction.md), while rejecting the
+validated behavior from the retired prototype baseline, while rejecting the
 prototype's static-file delivery and browser-local workflow authority.
 
 ## Governing outcomes

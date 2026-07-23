@@ -1,1065 +1,162 @@
-"""Versioned, secret-free configuration projection and validation."""
+"""Secret-safe, explicit configuration values for the 0.4 report command."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from enum import StrEnum
-import unicodedata
-from typing import Any, Callable
+import re
+from dataclasses import dataclass
 
-from mechanical_librarian.domain.identifiers import (
-    ConnectionId,
-    DomainValueError,
-    PolicyVersion,
-    SchemaVersion,
-)
-from mechanical_librarian.domain.inventory import SecretReference, ServiceEndpoint
-from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
-from mechanical_librarian.domain.epub_inspection import EpubPackageLimits
+
+_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
 class ConfigurationError(ValueError):
-    """A safe validation error; it never includes configuration values."""
+    """A fixed, value-free configuration failure."""
 
 
-class ChangeImpact(StrEnum):
-    """Closed, public-safe effects that a configuration change can require."""
-
-    RESTART_REQUIRED = "restart_required"
-    INVENTORY_RECONCILIATION_REQUIRED = "inventory_reconciliation_required"
-    EVIDENCE_INVALIDATION_REQUIRED = "evidence_invalidation_required"
-    REEXTRACT_EVIDENCE = "reextract_evidence"
-    EVIDENCE_REEVALUATION_REQUIRED = "evidence_reevaluation_required"
-    CANDIDATE_REEVALUATION_REQUIRED = "candidate_reevaluation_required"
-    REVIEW_REEVALUATION_REQUIRED = "review_reevaluation_required"
-    NOTIFICATION_RECONFIGURATION_REQUIRED = "notification_reconfiguration_required"
-    BACKUP_READINESS_REVALIDATION_REQUIRED = "backup_readiness_revalidation_required"
+def _name(value: object, label: str) -> None:
+    if type(value) is not str or _NAME.fullmatch(value) is None:
+        raise ConfigurationError(f"{label} is invalid")
 
 
-@dataclass(frozen=True)
-class ConfigurationChange:
-    """A changed public schema path and its deterministic impacts."""
-
-    path: str
-    impacts: tuple[ChangeImpact, ...]
-
-
-@dataclass(frozen=True)
-class ConfigurationImportPlan:
-    """A value-free dry-run plan; it retains no source configuration."""
-
-    changes: tuple[ConfigurationChange, ...]
-
-    @property
-    def changed_sections(self) -> tuple[str, ...]:
-        sections: list[str] = []
-        for change in self.changes:
-            section = change.path.split(".", 1)[0]
-            if section not in sections:
-                sections.append(section)
-        return tuple(sections)
-
-    @property
-    def impacts(self) -> tuple[ChangeImpact, ...]:
-        present = {impact for change in self.changes for impact in change.impacts}
-        return tuple(impact for impact in ChangeImpact if impact in present)
-
-    @property
-    def requires_restart(self) -> bool:
-        return ChangeImpact.RESTART_REQUIRED in self.impacts
-
-    @property
-    def reextract_evidence(self) -> bool:
-        return bool(
-            {
-                ChangeImpact.EVIDENCE_INVALIDATION_REQUIRED,
-                ChangeImpact.REEXTRACT_EVIDENCE,
-            }.intersection(self.impacts)
-        )
-
-    @property
-    def requires_inventory_reconciliation(self) -> bool:
-        return ChangeImpact.INVENTORY_RECONCILIATION_REQUIRED in self.impacts
-
-    @property
-    def reevaluates_evidence(self) -> bool:
-        return ChangeImpact.EVIDENCE_REEVALUATION_REQUIRED in self.impacts
-
-    @property
-    def is_noop(self) -> bool:
-        return not self.changes
-
-    def audit_event(self) -> "ConfigurationChangeEvent":
-        """Project a value-free typed fact suitable for later audit persistence."""
-
-        return ConfigurationChangeEvent(SchemaVersion("config-change-v1"), self.changes)
-
-
-@dataclass(frozen=True)
-class ConfigurationChangeEvent:
-    schema_version: SchemaVersion
-    changes: tuple[ConfigurationChange, ...]
+@dataclass(frozen=True, repr=False, slots=True)
+class TargetConnectionConfiguration:
+    name: str
+    endpoint: str
+    secret_file: str
+    adapter: str = "audiobookshelf"
 
     def __post_init__(self) -> None:
-        if (
-            type(self.schema_version) is not SchemaVersion
-            or self.schema_version != SchemaVersion("config-change-v1")
-            or type(self.changes) is not tuple
-            or any(type(change) is not ConfigurationChange for change in self.changes)
-        ):
-            raise ConfigurationError("configuration change event is malformed")
-
-
-@dataclass(frozen=True, repr=False)
-class ConnectionConfiguration:
-    adapter: str
-    endpoint: ServiceEndpoint
-    secret: SecretReference
-    enabled_libraries: tuple[str, ...]
-    capability_overrides: tuple[str, ...] = ()
-    connection_id: ConnectionId | None = None
-
-    def __post_init__(self) -> None:
-        _text(self.adapter, "connection adapter", 64)
-        if (
-            type(self.endpoint) is not ServiceEndpoint
-            or type(self.secret) is not SecretReference
-        ):
-            raise ConfigurationError(
-                "connection endpoint or secret reference is malformed"
-            )
-        if (
-            type(self.enabled_libraries) is not tuple
-            or not self.enabled_libraries
-            or self.enabled_libraries != tuple(sorted(self.enabled_libraries))
-        ):
-            raise ConfigurationError(
-                "enabled libraries must be a canonical non-empty tuple"
-            )
-        if (
-            _text_tuple(self.enabled_libraries, "enabled libraries", required=True)
-            != self.enabled_libraries
-        ):
-            raise ConfigurationError("enabled libraries are malformed")
-        if type(self.capability_overrides) is not tuple:
-            raise ConfigurationError("capability overrides must be a canonical tuple")
-        if (
-            _capability_overrides(self.capability_overrides)
-            != self.capability_overrides
-        ):
-            raise ConfigurationError("capability overrides must be a canonical tuple")
-        if (
-            self.connection_id is not None
-            and type(self.connection_id) is not ConnectionId
-        ):
-            raise ConfigurationError("connection ID is malformed")
+        _name(self.name, "target connection name")
+        if self.adapter != "audiobookshelf" or type(self.endpoint) is not str or type(self.secret_file) is not str:
+            raise ConfigurationError("target connection is invalid")
 
     def __repr__(self) -> str:
-        return "ConnectionConfiguration(<redacted>)"
+        return "TargetConnectionConfiguration(<redacted>)"
 
 
-@dataclass(frozen=True, repr=False)
-class MediaMountConfiguration:
+@dataclass(frozen=True, repr=False, slots=True)
+class ProviderConnectionConfiguration:
     name: str
-    library_type: str
-    container_path: str
-    service_path: str
-    read_only: bool = True
+    enabled: bool
+    secret_file: str | None
+    adapter: str = "hardcover"
 
     def __post_init__(self) -> None:
-        _text(self.name, "media mount name", 64)
-        _text(self.library_type, "media mount library type", 64)
-        _text(self.container_path, "media mount container path", 1024)
-        _text(self.service_path, "media mount service path", 1024)
-        if type(self.read_only) is not bool or not self.read_only:
-            raise ConfigurationError("media mounts must be read-only")
-        if not self.container_path.startswith("/") or not self.service_path.startswith(
-            "/"
-        ):
-            raise ConfigurationError(
-                "media mount paths must be absolute container/service paths"
-            )
+        _name(self.name, "provider connection name")
+        if self.adapter != "hardcover" or type(self.enabled) is not bool:
+            raise ConfigurationError("provider connection is invalid")
+        if self.enabled != (self.secret_file is not None):
+            raise ConfigurationError("provider enablement and secret configuration disagree")
+
+    def __repr__(self) -> str:
+        return "ProviderConnectionConfiguration(<redacted>)"
+
+
+@dataclass(frozen=True, repr=False, slots=True)
+class MediaMountConfiguration:
+    name: str
+    container_path: str
+    service_path: str
+    read_only: bool
+
+    def __post_init__(self) -> None:
+        _name(self.name, "media mount name")
+        if type(self.container_path) is not str or not self.container_path.startswith("/") or type(self.service_path) is not str or not self.service_path.startswith("/") or self.read_only is not True:
+            raise ConfigurationError("media mount is invalid")
 
     def __repr__(self) -> str:
         return "MediaMountConfiguration(<redacted>)"
 
 
-@dataclass(frozen=True)
-class ResourceLimits:
-    parser_concurrency: int = 1
-    parser_timeout_seconds: int = 60
-    temporary_bytes: int = 1_073_741_824
+@dataclass(frozen=True, slots=True)
+class LibraryConfiguration:
+    name: str
+    connection: str
+    library_id: str
+    media_kind: str
+    mount: str | None
+    provider_connections: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        _name(self.name, "library name")
+        _name(self.connection, "library connection")
+        if type(self.library_id) is not str or not 1 <= len(self.library_id) <= 128 or self.media_kind not in {"ebook", "audiobook"}:
+            raise ConfigurationError("library is invalid")
+        if self.mount is not None:
+            _name(self.mount, "library mount")
+        if type(self.provider_connections) is not tuple or any(type(value) is not str for value in self.provider_connections) or len(set(self.provider_connections)) != len(self.provider_connections):
+            raise ConfigurationError("library provider references are duplicated or invalid")
+        for value in self.provider_connections:
+            _name(value, "library provider reference")
+
+
+@dataclass(frozen=True, slots=True)
+class ReportLimits:
+    target_response_bytes: int = 1_048_576
+    provider_response_bytes: int = 65_536
+    source_archive_bytes: int = 268_435_456
+    timeout_seconds: int = 30
 
     def __post_init__(self) -> None:
         if (
-            type(self.parser_concurrency) is not int
-            or not 1 <= self.parser_concurrency <= 8
+            type(self.target_response_bytes) is not int or not 1_024 <= self.target_response_bytes <= 4_194_304
+            or type(self.provider_response_bytes) is not int or not 1_024 <= self.provider_response_bytes <= 262_144
+            or type(self.source_archive_bytes) is not int or not 1_024 <= self.source_archive_bytes <= 268_435_456
+            or type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 60
         ):
-            raise ConfigurationError("parser concurrency must be between 1 and 8")
-        if (
-            type(self.parser_timeout_seconds) is not int
-            or not 1 <= self.parser_timeout_seconds <= 3_600
-        ):
-            raise ConfigurationError(
-                "parser timeout must be between 1 and 3600 seconds"
-            )
-        if (
-            type(self.temporary_bytes) is not int
-            or not 1_048_576 <= self.temporary_bytes <= 17_179_869_184
-        ):
-            raise ConfigurationError("temporary storage limit is outside safe bounds")
+            raise ConfigurationError("report limits are invalid")
 
 
-@dataclass(frozen=True)
-class EvidenceConfiguration:
-    enabled_formats: tuple[str, ...] = ("epub", "m4b", "mp3")
-    maximum_document_bytes: int = 67_108_864
-    maximum_text_characters: int = 524_288
-    epub_package: EpubPackageLimits = field(default_factory=EpubPackageLimits)
-    epub_opening: EpubOpeningLimits = field(default_factory=EpubOpeningLimits)
-
-    def __post_init__(self) -> None:
-        if (
-            type(self.enabled_formats) is not tuple
-            or not self.enabled_formats
-            or self.enabled_formats != tuple(sorted(self.enabled_formats))
-            or _text_tuple(self.enabled_formats, "evidence formats", required=True)
-            != self.enabled_formats
-        ):
-            raise ConfigurationError(
-                "evidence formats must be a canonical non-empty tuple"
-            )
-        if not all(value in {"epub", "m4b", "mp3"} for value in self.enabled_formats):
-            raise ConfigurationError("evidence format is unsupported")
-        if (
-            type(self.maximum_document_bytes) is not int
-            or not 1_048_576 <= self.maximum_document_bytes <= 536_870_912
-        ):
-            raise ConfigurationError(
-                "evidence document byte limit is outside safe bounds"
-            )
-        if (
-            type(self.maximum_text_characters) is not int
-            or not 1_024 <= self.maximum_text_characters <= 4_194_304
-        ):
-            raise ConfigurationError("evidence text limit is outside safe bounds")
-        if type(self.epub_package) is not EpubPackageLimits:
-            raise ConfigurationError("EPUB package limits are malformed")
-        if (
-            type(self.epub_opening) is not EpubOpeningLimits
-            or self.epub_opening.package != self.epub_package
-        ):
-            raise ConfigurationError("EPUB opening limits are malformed")
-
-
-@dataclass(frozen=True)
-class RetentionConfiguration:
-    evidence_days: int = 90
-    job_log_days: int = 30
-    maximum_artifact_bytes: int = 1_073_741_824
-
-    def __post_init__(self) -> None:
-        if type(self.evidence_days) is not int or not 1 <= self.evidence_days <= 3_650:
-            raise ConfigurationError("evidence retention is outside safe bounds")
-        if type(self.job_log_days) is not int or not 1 <= self.job_log_days <= 365:
-            raise ConfigurationError("job-log retention is outside safe bounds")
-        if (
-            type(self.maximum_artifact_bytes) is not int
-            or not 1_048_576 <= self.maximum_artifact_bytes <= 17_179_869_184
-        ):
-            raise ConfigurationError("artifact retention limit is outside safe bounds")
-
-
-@dataclass(frozen=True)
-class PolicyConfiguration:
-    policy_version: str = "policy-v1"
-
-    def __post_init__(self) -> None:
-        if type(self.policy_version) is not str:
-            raise ConfigurationError("policy version is malformed")
-        try:
-            PolicyVersion(self.policy_version)
-        except DomainValueError:
-            raise ConfigurationError("policy version is malformed") from None
-
-
-@dataclass(frozen=True)
-class InventoryConfiguration:
-    page_size: int = 100
-    max_pages: int = 512
-    max_items: int = 10_000
-    max_response_bytes: int = 67_108_864
-    timeout_seconds: int = 300
-    stability_delay_seconds: int = 0
-    poll_generation: int = 0
-    max_attempts: int = 3
-    max_elapsed_seconds: int = 900
-    initial_backoff_seconds: int = 5
-    max_backoff_seconds: int = 300
-    connect_timeout_seconds: int = 10
-    read_timeout_seconds: int = 30
-    max_in_flight_requests: int = 1
-
-    def __post_init__(self) -> None:
-        bounds = (
-            (self.page_size, 1, 500),
-            (self.max_pages, 2, 10_000),
-            (self.max_items, 2, 10_000),
-            (self.max_response_bytes, 1_024, 67_108_864),
-            (self.timeout_seconds, 1, 3_600),
-            (self.stability_delay_seconds, 0, 86_400),
-            (self.poll_generation, 0, 1_000_000),
-            (self.max_attempts, 1, 16),
-            (self.max_elapsed_seconds, 1, 86_400),
-            (self.initial_backoff_seconds, 1, 3_600),
-            (self.max_backoff_seconds, 1, 86_400),
-            (self.connect_timeout_seconds, 1, 300),
-            (self.read_timeout_seconds, 1, 3_600),
-            (self.max_in_flight_requests, 1, 1),
-        )
-        if any(
-            type(value) is not int or not minimum <= value <= maximum
-            for value, minimum, maximum in bounds
-        ):
-            raise ConfigurationError("inventory bounds are invalid")
-        if self.max_backoff_seconds < self.initial_backoff_seconds:
-            raise ConfigurationError("inventory bounds are invalid")
-
-
-@dataclass(frozen=True, repr=False)
-class HardcoverProviderConfiguration:
-    """Restart-bound provider configuration with a redacted representation."""
-
-    enabled: bool = False
-    secret_reference: str | None = None
-    authority_revision: int = 1
-
-    def __post_init__(self) -> None:
-        if type(self.enabled) is not bool:
-            raise ConfigurationError("Hardcover provider enabled is malformed")
-        if (
-            type(self.authority_revision) is not int
-            or not 1 <= self.authority_revision <= 2_147_483_647
-        ):
-            raise ConfigurationError("Hardcover authority revision is malformed")
-        if not self.enabled:
-            if self.secret_reference is not None:
-                raise ConfigurationError("disabled Hardcover provider has a secret")
-            return
-        value = self.secret_reference
-        try:
-            encoded = value.encode("utf-8") if type(value) is str else b""
-        except UnicodeError:
-            encoded = b""
-        if (
-            type(value) is not str
-            or not 1 <= len(value) <= 256
-            or not 1 <= len(encoded) <= 1_024
-            or not value.startswith("/")
-            or value.strip() != value
-            or "\x00" in value
-            or "://" in value
-            or any(part in {".", ".."} for part in value.split("/"))
-            or any(
-                unicodedata.category(character) in {"Cc", "Cf", "Cs"}
-                for character in value
-            )
-        ):
-            raise ConfigurationError("Hardcover secret reference is malformed")
-
-    def __repr__(self) -> str:
-        return "HardcoverProviderConfiguration(<redacted>)"
-
-    def export(self) -> dict[str, object]:
-        return {
-            "enabled": self.enabled,
-            "authority_revision": self.authority_revision,
-            "secret_configured": self.secret_reference is not None,
-        }
-
-
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, slots=True)
 class ApplicationConfiguration:
-    schema_version: SchemaVersion
-    instance_name: str
-    connections: tuple[ConnectionConfiguration, ...]
-    media_mounts: tuple[MediaMountConfiguration, ...]
-    limits: ResourceLimits
-    inventory: InventoryConfiguration = field(default_factory=InventoryConfiguration)
-    evidence: EvidenceConfiguration = field(default_factory=EvidenceConfiguration)
-    hardcover_provider: HardcoverProviderConfiguration = field(
-        default_factory=HardcoverProviderConfiguration
-    )
-    providers: tuple[str, ...] = ()
-    reviewers: tuple[str, ...] = ()
-    policy: PolicyConfiguration = PolicyConfiguration()
-    notifications: tuple[str, ...] = ()
-    backups_enabled: bool = True
-    retention: RetentionConfiguration = field(default_factory=RetentionConfiguration)
-    destructive_actions_enabled: bool = False
+    connections: tuple[TargetConnectionConfiguration, ...]
+    libraries: tuple[LibraryConfiguration, ...]
+    mounts: tuple[MediaMountConfiguration, ...]
+    providers: tuple[ProviderConnectionConfiguration, ...]
+    limits: ReportLimits = ReportLimits()
+    schema_version: str = "config-v2"
 
     def __post_init__(self) -> None:
-        if type(
-            self.schema_version
-        ) is not SchemaVersion or self.schema_version != SchemaVersion("config-v1"):
-            raise ConfigurationError("unsupported configuration schema version")
-        _text(self.instance_name, "instance name", 64)
-        if (
-            type(self.connections) is not tuple
-            or not self.connections
-            or any(
-                type(value) is not ConnectionConfiguration for value in self.connections
-            )
-        ):
-            raise ConfigurationError("configuration requires typed connections")
-        if type(self.media_mounts) is not tuple or any(
-            type(value) is not MediaMountConfiguration for value in self.media_mounts
-        ):
-            raise ConfigurationError("configuration requires typed media mounts")
-        if (
-            type(self.limits) is not ResourceLimits
-            or type(self.inventory) is not InventoryConfiguration
-            or type(self.evidence) is not EvidenceConfiguration
-            or type(self.hardcover_provider) is not HardcoverProviderConfiguration
-            or type(self.policy) is not PolicyConfiguration
-            or type(self.retention) is not RetentionConfiguration
-        ):
-            raise ConfigurationError("configuration limits or policy are malformed")
-        for values, label in (
-            (self.providers, "providers"),
-            (self.reviewers, "reviewers"),
-            (self.notifications, "notifications"),
-        ):
-            if type(values) is not tuple or _text_tuple(values, label) != values:
-                raise ConfigurationError(f"{label} must be an immutable typed tuple")
-        if type(self.backups_enabled) is not bool:
-            raise ConfigurationError("backups enabled must be a boolean")
-        if (
-            type(self.destructive_actions_enabled) is not bool
-            or self.destructive_actions_enabled
-        ):
-            raise ConfigurationError(
-                "destructive actions are not configurable in this release"
-            )
+        if self.schema_version != "config-v2":
+            raise ConfigurationError("configuration schema is unsupported")
+        typed = (
+            (self.connections, TargetConnectionConfiguration, "target connections"),
+            (self.libraries, LibraryConfiguration, "libraries"),
+            (self.mounts, MediaMountConfiguration, "media mounts"),
+            (self.providers, ProviderConnectionConfiguration, "provider connections"),
+        )
+        for values, expected, label in typed:
+            if type(values) is not tuple or any(type(value) is not expected for value in values):
+                raise ConfigurationError(f"{label} are invalid")
+            names = tuple(value.name for value in values)
+            if names != tuple(sorted(set(names))):
+                raise ConfigurationError(f"{label} are not in canonical unique order")
+        connection_names = {value.name for value in self.connections}
+        mount_names = {value.name for value in self.mounts}
+        provider_names = {value.name for value in self.providers}
+        for library in self.libraries:
+            if library.connection not in connection_names or (library.mount is not None and library.mount not in mount_names) or not set(library.provider_connections).issubset(provider_names):
+                raise ConfigurationError("library references are invalid")
+            if library.media_kind == "ebook" and library.mount is None:
+                raise ConfigurationError("ebook library requires a read-only media mount")
 
     def __repr__(self) -> str:
         return "ApplicationConfiguration(<redacted>)"
 
-    def export(self) -> dict[str, object]:
-        """Return a deterministic diagnostic/export view without secrets or paths."""
-
-        return {
-            "schema_version": self.schema_version.value,
-            "instance_name": self.instance_name,
-            "connections": [
-                {
-                    "adapter": connection.adapter,
-                    "id": (
-                        None
-                        if connection.connection_id is None
-                        else connection.connection_id.value
-                    ),
-                    "secret_configured": True,
-                    "enabled_libraries": list(connection.enabled_libraries),
-                    "capability_overrides": list(connection.capability_overrides),
-                }
-                for connection in self.connections
-            ],
-            "media_mounts": [
-                {
-                    "name": mount.name,
-                    "library_type": mount.library_type,
-                    "read_only": mount.read_only,
-                }
-                for mount in self.media_mounts
-            ],
-            "limits": {
-                "parser_concurrency": self.limits.parser_concurrency,
-                "parser_timeout_seconds": self.limits.parser_timeout_seconds,
-                "temporary_bytes": self.limits.temporary_bytes,
-            },
-            "inventory": {
-                "page_size": self.inventory.page_size,
-                "max_pages": self.inventory.max_pages,
-                "max_items": self.inventory.max_items,
-                "max_response_bytes": self.inventory.max_response_bytes,
-                "timeout_seconds": self.inventory.timeout_seconds,
-                "stability_delay_seconds": self.inventory.stability_delay_seconds,
-                "poll_generation": self.inventory.poll_generation,
-                "max_attempts": self.inventory.max_attempts,
-                "max_elapsed_seconds": self.inventory.max_elapsed_seconds,
-                "initial_backoff_seconds": self.inventory.initial_backoff_seconds,
-                "max_backoff_seconds": self.inventory.max_backoff_seconds,
-                "connect_timeout_seconds": self.inventory.connect_timeout_seconds,
-                "read_timeout_seconds": self.inventory.read_timeout_seconds,
-                "max_in_flight_requests": self.inventory.max_in_flight_requests,
-            },
-            "evidence": {
-                "enabled_formats": list(self.evidence.enabled_formats),
-                "maximum_document_bytes": self.evidence.maximum_document_bytes,
-                "maximum_text_characters": self.evidence.maximum_text_characters,
-                "epub_package": self.evidence.epub_package.to_data(),
-                "epub_opening": {
-                    "profile": self.evidence.epub_opening.profile,
-                    **{
-                        name: getattr(self.evidence.epub_opening, name)
-                        for name in EpubOpeningLimits.HARD_CAPS
-                    },
-                },
-            },
-            "hardcover_provider": self.hardcover_provider.export(),
-            "providers": list(self.providers),
-            "reviewers": list(self.reviewers),
-            "policy": {"policy_version": self.policy.policy_version},
-            "notifications": list(self.notifications),
-            "backups_enabled": self.backups_enabled,
-            "retention": {
-                "evidence_days": self.retention.evidence_days,
-                "job_log_days": self.retention.job_log_days,
-                "maximum_artifact_bytes": self.retention.maximum_artifact_bytes,
-            },
-            "destructive_actions_enabled": False,
-        }
+    def select(self, connection: str, library: str) -> tuple[TargetConnectionConfiguration, LibraryConfiguration, MediaMountConfiguration | None, tuple[ProviderConnectionConfiguration, ...]]:
+        matches = tuple(value for value in self.libraries if value.name == library and value.connection == connection)
+        if len(matches) != 1:
+            raise ConfigurationError("requested connection or library is unavailable")
+        selected = matches[0]
+        target = next(value for value in self.connections if value.name == connection)
+        mount = None if selected.mount is None else next(value for value in self.mounts if value.name == selected.mount)
+        providers_by_name = {value.name: value for value in self.providers}
+        providers = tuple(providers_by_name[name] for name in sorted(selected.provider_connections))
+        return target, selected, mount, providers
 
 
-_CONFIGURATION_FIELDS = frozenset(
-    {
-        "schema_version",
-        "instance_name",
-        "connections",
-        "media_mounts",
-        "limits",
-        "inventory",
-        "evidence",
-        "hardcover_provider",
-        "providers",
-        "reviewers",
-        "policy",
-        "notifications",
-        "backups_enabled",
-        "retention",
-        "destructive_actions_enabled",
-    }
-)
-_CONNECTION_FIELDS = frozenset(
-    {
-        "id",
-        "adapter",
-        "endpoint",
-        "secret_reference",
-        "enabled_libraries",
-        "capability_overrides",
-    }
-)
-_MOUNT_FIELDS = frozenset(
-    {"name", "library_type", "container_path", "service_path", "read_only"}
-)
-_LIMIT_FIELDS = frozenset(
-    {"parser_concurrency", "parser_timeout_seconds", "temporary_bytes"}
-)
-_INVENTORY_FIELDS = frozenset(
-    {
-        "page_size",
-        "max_pages",
-        "max_items",
-        "max_response_bytes",
-        "timeout_seconds",
-        "stability_delay_seconds",
-        "poll_generation",
-        "max_attempts",
-        "max_elapsed_seconds",
-        "initial_backoff_seconds",
-        "max_backoff_seconds",
-        "connect_timeout_seconds",
-        "read_timeout_seconds",
-        "max_in_flight_requests",
-    }
-)
-_POLICY_FIELDS = frozenset({"policy_version"})
-_EVIDENCE_FIELDS = frozenset(
-    {
-        "enabled_formats",
-        "maximum_document_bytes",
-        "maximum_text_characters",
-        "epub_package",
-        "epub_opening",
-    }
-)
-_EPUB_PACKAGE_FIELDS = frozenset({"profile", *EpubPackageLimits.HARD_CAPS})
-_EPUB_OPENING_FIELDS = frozenset({"profile", *EpubOpeningLimits.HARD_CAPS})
-_RETENTION_FIELDS = frozenset(
-    {"evidence_days", "job_log_days", "maximum_artifact_bytes"}
-)
-_HARDCOVER_PROVIDER_FIELDS = frozenset(
-    {"enabled", "secret_reference", "authority_revision"}
-)
-_READ_ONLY_CAPABILITY_OVERRIDES = frozenset(
-    {
-        "inventory-read",
-        "metadata-read",
-        "media-file-read",
-        "notifications",
-        "pagination",
-        "concurrency-tokens",
-        "cover-read",
-    }
-)
-
-
-def project_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
-    """Project one already transport-validated mapping into immutable values."""
-
-    try:
-        _only(source, _CONFIGURATION_FIELDS, "configuration")
-        schema_version = SchemaVersion(_required_text(source, "schema_version", 32))
-        if schema_version != SchemaVersion("config-v1"):
-            raise ConfigurationError("unsupported configuration schema version")
-        instance_name = _required_text(source, "instance_name", 64)
-        connections = tuple(
-            _connection(value)
-            for value in _sequence(
-                source.get("connections"), "connections", required=True
-            )
-        )
-        mounts = tuple(
-            _mount(value)
-            for value in _sequence(source.get("media_mounts", ()), "media mounts")
-        )
-        limits_source = source.get("limits", {})
-        _only(limits_source, _LIMIT_FIELDS, "limits")
-        limits = ResourceLimits(**limits_source)
-        inventory_source = source.get("inventory", {})
-        _only(inventory_source, _INVENTORY_FIELDS, "inventory")
-        inventory = InventoryConfiguration(**inventory_source)
-        evidence_source = source.get("evidence", {})
-        _only(evidence_source, _EVIDENCE_FIELDS, "evidence")
-        epub_package_source = evidence_source.get("epub_package", {})
-        _only(epub_package_source, _EPUB_PACKAGE_FIELDS, "EPUB package limits")
-        profile = epub_package_source.get("profile", "epub-package-limits-v1")
-        if profile != "epub-package-limits-v1":
-            raise ConfigurationError("EPUB package limit profile is unsupported")
-        epub_package = EpubPackageLimits(
-            **{
-                name: epub_package_source.get(name, getattr(EpubPackageLimits(), name))
-                for name in EpubPackageLimits.HARD_CAPS
-            }
-        )
-        epub_opening_source = evidence_source.get("epub_opening", {})
-        _only(epub_opening_source, _EPUB_OPENING_FIELDS, "EPUB opening limits")
-        if (
-            epub_opening_source.get("profile", "epub-opening-limits-v1")
-            != "epub-opening-limits-v1"
-        ):
-            raise ConfigurationError("EPUB opening limit profile is unsupported")
-        epub_opening = EpubOpeningLimits(
-            package=epub_package,
-            **{
-                name: epub_opening_source.get(
-                    name, getattr(EpubOpeningLimits(), name)
-                )
-                for name in EpubOpeningLimits.HARD_CAPS
-            },
-        )
-        evidence = EvidenceConfiguration(
-            enabled_formats=_set_text_tuple(
-                evidence_source.get("enabled_formats", ("epub", "m4b", "mp3")),
-                "evidence formats",
-                required=True,
-            ),
-            maximum_document_bytes=evidence_source.get(
-                "maximum_document_bytes", 67_108_864
-            ),
-            maximum_text_characters=evidence_source.get(
-                "maximum_text_characters", 524_288
-            ),
-            epub_package=epub_package,
-            epub_opening=epub_opening,
-        )
-        hardcover_source = source.get("hardcover_provider", {})
-        _only(hardcover_source, _HARDCOVER_PROVIDER_FIELDS, "Hardcover provider")
-        hardcover_provider = HardcoverProviderConfiguration(
-            enabled=_boolean(
-                hardcover_source.get("enabled", False), "Hardcover provider enabled"
-            ),
-            secret_reference=hardcover_source.get("secret_reference"),
-            authority_revision=hardcover_source.get("authority_revision", 1),
-        )
-        policy_source = source.get("policy", {})
-        _only(policy_source, _POLICY_FIELDS, "policy")
-        policy = PolicyConfiguration(
-            policy_version=_text(
-                policy_source.get("policy_version", "policy-v1"), "policy version", 64
-            )
-        )
-        backups_enabled = _boolean(
-            source.get("backups_enabled", True), "backups enabled"
-        )
-        destructive = _boolean(
-            source.get("destructive_actions_enabled", False),
-            "destructive actions enabled",
-        )
-        if destructive:
-            raise ConfigurationError(
-                "destructive actions are not configurable in this release"
-            )
-        retention_source = source.get("retention", {})
-        _only(retention_source, _RETENTION_FIELDS, "retention")
-        retention = RetentionConfiguration(**retention_source)
-        return ApplicationConfiguration(
-            schema_version=schema_version,
-            instance_name=instance_name,
-            connections=connections,
-            media_mounts=mounts,
-            limits=limits,
-            inventory=inventory,
-            evidence=evidence,
-            hardcover_provider=hardcover_provider,
-            providers=_text_tuple(source.get("providers", ()), "providers"),
-            reviewers=_text_tuple(source.get("reviewers", ()), "reviewers"),
-            policy=policy,
-            notifications=_text_tuple(source.get("notifications", ()), "notifications"),
-            backups_enabled=backups_enabled,
-            retention=retention,
-            destructive_actions_enabled=False,
-        )
-    except ConfigurationError:
-        raise
-    except (KeyError, TypeError, ValueError):
-        raise ConfigurationError("configuration is malformed") from None
-
-
-_R = ChangeImpact.RESTART_REQUIRED
-_I = ChangeImpact.INVENTORY_RECONCILIATION_REQUIRED
-_X = ChangeImpact.EVIDENCE_INVALIDATION_REQUIRED
-_RX = ChangeImpact.REEXTRACT_EVIDENCE
-_E = ChangeImpact.EVIDENCE_REEVALUATION_REQUIRED
-_C = ChangeImpact.CANDIDATE_REEVALUATION_REQUIRED
-_V = ChangeImpact.REVIEW_REEVALUATION_REQUIRED
-_N = ChangeImpact.NOTIFICATION_RECONFIGURATION_REQUIRED
-_B = ChangeImpact.BACKUP_READINESS_REVALIDATION_REQUIRED
-
-
-def _projection(attribute: str) -> Callable[[ApplicationConfiguration], object]:
-    return lambda configuration: getattr(configuration, attribute)
-
-
-def _connection_projection(
-    attribute: str,
-) -> Callable[[ApplicationConfiguration], object]:
-    return lambda configuration: tuple(
-        getattr(connection, attribute) for connection in configuration.connections
-    )
-
-
-def _mount_projection(attribute: str) -> Callable[[ApplicationConfiguration], object]:
-    return lambda configuration: tuple(
-        getattr(mount, attribute) for mount in configuration.media_mounts
-    )
-
-
-def _limit_projection(attribute: str) -> Callable[[ApplicationConfiguration], object]:
-    return lambda configuration: getattr(configuration.limits, attribute)
-
-
-def _inventory_projection(
-    attribute: str,
-) -> Callable[[ApplicationConfiguration], object]:
-    return lambda configuration: getattr(configuration.inventory, attribute)
-
-
-def _evidence_projection(
-    attribute: str,
-) -> Callable[[ApplicationConfiguration], object]:
-    return lambda configuration: getattr(configuration.evidence, attribute)
-
-
-def _retention_projection(
-    attribute: str,
-) -> Callable[[ApplicationConfiguration], object]:
-    return lambda configuration: getattr(configuration.retention, attribute)
-
-
-_IMPACT_MATRIX: tuple[
-    tuple[str, Callable[[ApplicationConfiguration], object], tuple[ChangeImpact, ...]],
-    ...,
-] = (
-    ("instance.instance_name", _projection("instance_name"), (_R,)),
-    ("connections.id", _connection_projection("connection_id"), (_R, _I, _X, _C, _V)),
-    ("connections.adapter", _connection_projection("adapter"), (_R, _I, _X, _C, _V)),
-    ("connections.endpoint", _connection_projection("endpoint"), (_R, _I, _X, _C, _V)),
-    (
-        "connections.secret_reference",
-        _connection_projection("secret"),
-        (_R, _I, _X, _C, _V),
-    ),
-    (
-        "connections.enabled_libraries",
-        _connection_projection("enabled_libraries"),
-        (_R, _I, _X, _C, _V),
-    ),
-    (
-        "connections.capability_overrides",
-        _connection_projection("capability_overrides"),
-        (_R, _I, _E, _C, _V),
-    ),
-    ("media_mounts.name", _mount_projection("name"), (_R, _I, _X, _C, _V)),
-    (
-        "media_mounts.library_type",
-        _mount_projection("library_type"),
-        (_R, _I, _X, _C, _V),
-    ),
-    (
-        "media_mounts.container_path",
-        _mount_projection("container_path"),
-        (_R, _I, _X, _C, _V),
-    ),
-    (
-        "media_mounts.service_path",
-        _mount_projection("service_path"),
-        (_R, _I, _X, _C, _V),
-    ),
-    ("limits.parser_concurrency", _limit_projection("parser_concurrency"), (_R,)),
-    (
-        "limits.parser_timeout_seconds",
-        _limit_projection("parser_timeout_seconds"),
-        (_R, _RX, _E),
-    ),
-    ("limits.temporary_bytes", _limit_projection("temporary_bytes"), (_R, _E)),
-    ("inventory.page_size", _inventory_projection("page_size"), (_R, _I)),
-    ("inventory.max_pages", _inventory_projection("max_pages"), (_R, _I)),
-    ("inventory.max_items", _inventory_projection("max_items"), (_R, _I)),
-    (
-        "inventory.max_response_bytes",
-        _inventory_projection("max_response_bytes"),
-        (_R, _I),
-    ),
-    ("inventory.timeout_seconds", _inventory_projection("timeout_seconds"), (_R, _I)),
-    (
-        "inventory.stability_delay_seconds",
-        _inventory_projection("stability_delay_seconds"),
-        (_R, _I),
-    ),
-    ("inventory.poll_generation", _inventory_projection("poll_generation"), (_R, _I)),
-    ("inventory.max_attempts", _inventory_projection("max_attempts"), (_R, _I)),
-    (
-        "inventory.max_elapsed_seconds",
-        _inventory_projection("max_elapsed_seconds"),
-        (_R, _I),
-    ),
-    (
-        "inventory.initial_backoff_seconds",
-        _inventory_projection("initial_backoff_seconds"),
-        (_R, _I),
-    ),
-    (
-        "inventory.max_backoff_seconds",
-        _inventory_projection("max_backoff_seconds"),
-        (_R, _I),
-    ),
-    (
-        "inventory.connect_timeout_seconds",
-        _inventory_projection("connect_timeout_seconds"),
-        (_R, _I),
-    ),
-    (
-        "inventory.read_timeout_seconds",
-        _inventory_projection("read_timeout_seconds"),
-        (_R, _I),
-    ),
-    (
-        "inventory.max_in_flight_requests",
-        _inventory_projection("max_in_flight_requests"),
-        (_R, _I),
-    ),
-    (
-        "evidence.enabled_formats",
-        _evidence_projection("enabled_formats"),
-        (_R, _X, _E, _C, _V),
-    ),
-    (
-        "evidence.maximum_document_bytes",
-        _evidence_projection("maximum_document_bytes"),
-        (_R, _RX, _E),
-    ),
-    (
-        "evidence.maximum_text_characters",
-        _evidence_projection("maximum_text_characters"),
-        (_R, _E),
-    ),
-    (
-        "hardcover_provider.enabled",
-        lambda configuration: configuration.hardcover_provider.enabled,
-        (_R, _C, _V),
-    ),
-    (
-        "hardcover_provider.secret_reference",
-        lambda configuration: configuration.hardcover_provider.secret_reference,
-        (_R, _C, _V),
-    ),
-    (
-        "hardcover_provider.authority_revision",
-        lambda configuration: configuration.hardcover_provider.authority_revision,
-        (_R, _C, _V),
-    ),
-    *(
-        (
-            f"evidence.epub_package.{name}",
-            lambda configuration, attribute=name: getattr(
-                configuration.evidence.epub_package, attribute
-            ),
-            (_R, _RX),
-        )
-        for name in EpubPackageLimits.HARD_CAPS
-    ),
-    *(
-        (
-            f"evidence.epub_opening.{name}",
-            lambda configuration, attribute=name: getattr(
-                configuration.evidence.epub_opening, attribute
-            ),
-            (_R, _RX),
-        )
-        for name in EpubOpeningLimits.HARD_CAPS
-    ),
-    ("providers", _projection("providers"), (_R, _C, _V)),
-    ("reviewers", _projection("reviewers"), (_R, _V)),
-    (
-        "policy.policy_version",
-        lambda configuration: configuration.policy.policy_version,
-        (_R, _V),
-    ),
-    ("notifications", _projection("notifications"), (_R, _N)),
-    ("backups_enabled", _projection("backups_enabled"), (_R, _B, _V)),
-    ("retention.evidence_days", _retention_projection("evidence_days"), (_R,)),
-    ("retention.job_log_days", _retention_projection("job_log_days"), (_R,)),
-    (
-        "retention.maximum_artifact_bytes",
-        _retention_projection("maximum_artifact_bytes"),
-        (_R,),
-    ),
-)
-
-
-def plan_projected_import(
-    current: ApplicationConfiguration, proposed: ApplicationConfiguration
-) -> ConfigurationImportPlan:
-    """Compare two strictly validated immutable configurations."""
-
-    if (
-        type(current) is not ApplicationConfiguration
-        or type(proposed) is not ApplicationConfiguration
-    ):
-        raise ConfigurationError("configuration import requires validated projections")
-    changes = tuple(
-        ConfigurationChange(path, impacts)
-        for path, project, impacts in _IMPACT_MATRIX
-        if project(current) != project(proposed)
-    )
-    return ConfigurationImportPlan(changes)
-
-
-def _connection(value: object) -> ConnectionConfiguration:
-    _only(value, _CONNECTION_FIELDS, "connection")
-    return ConnectionConfiguration(
-        adapter=_required_text(value, "adapter", 64),
-        endpoint=ServiceEndpoint(_required_text(value, "endpoint", 256)),
-        secret=SecretReference(_required_text(value, "secret_reference", 256)),
-        enabled_libraries=_set_text_tuple(
-            value.get("enabled_libraries"), "enabled libraries", required=True
-        ),
-        capability_overrides=_capability_overrides(
-            value.get("capability_overrides", ())
-        ),
-        connection_id=(
-            None
-            if value.get("id") is None
-            else ConnectionId(_required_text(value, "id", 64))
-        ),
-    )
-
-
-def _mount(value: object) -> MediaMountConfiguration:
-    _only(value, _MOUNT_FIELDS, "media mount")
-    name = _required_text(value, "name", 64)
-    library_type = _required_text(value, "library_type", 64)
-    container_path = _required_text(value, "container_path", 1024)
-    service_path = _required_text(value, "service_path", 1024)
-    read_only = _boolean(value.get("read_only", True), "media mount read only")
-    if not read_only:
-        raise ConfigurationError("media mounts must be read-only")
-    if not container_path.startswith("/") or not service_path.startswith("/"):
-        raise ConfigurationError(
-            "media mount paths must be absolute container/service paths"
-        )
-    return MediaMountConfiguration(
-        name, library_type, container_path, service_path, True
-    )
-
-
-def _only(value: object, allowed: frozenset[str], location: str) -> None:
-    if not isinstance(value, Mapping):
-        raise ConfigurationError(f"{location} must be a mapping")
-    if any(type(key) is not str for key in value):
-        raise ConfigurationError(f"unknown {location} field")
-    if set(value) - allowed:
-        raise ConfigurationError(f"unknown {location} field")
-
-
-def _required_text(source: Mapping[str, Any], key: str, maximum: int) -> str:
-    if key not in source:
-        raise ConfigurationError("configuration is malformed")
-    return _text(source[key], key.replace("_", " "), maximum)
-
-
-def _text(value: object, label: str, maximum: int = 128) -> str:
-    if (
-        type(value) is not str
-        or not value
-        or value.strip() != value
-        or len(value) > maximum
-        or any(
-            ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
-            for character in value
-        )
-    ):
-        raise ConfigurationError(f"{label} is malformed")
-    return value
-
-
-def _sequence(value: object, label: str, *, required: bool = False) -> Sequence[object]:
-    if type(value) not in {list, tuple} or (required and not value):
-        raise ConfigurationError(f"{label} must be a bounded sequence")
-    if len(value) > 64:
-        raise ConfigurationError(f"{label} exceeds its size limit")
-    return value
-
-
-def _text_tuple(
-    value: object, label: str, *, required: bool = False
-) -> tuple[str, ...]:
-    values = tuple(
-        _text(item, label) for item in _sequence(value, label, required=required)
-    )
-    if len(set(values)) != len(values):
-        raise ConfigurationError(f"{label} must not contain duplicates")
-    return values
-
-
-def _set_text_tuple(
-    value: object, label: str, *, required: bool = False
-) -> tuple[str, ...]:
-    return tuple(sorted(_text_tuple(value, label, required=required)))
-
-
-def _capability_overrides(value: object) -> tuple[str, ...]:
-    overrides = _set_text_tuple(value, "capability overrides")
-    if any(override not in _READ_ONLY_CAPABILITY_OVERRIDES for override in overrides):
-        raise ConfigurationError("capability override is unsupported")
-    return overrides
-
-
-def _boolean(value: object, label: str) -> bool:
-    if type(value) is not bool:
-        raise ConfigurationError(f"{label} must be a boolean")
-    return value
+__all__ = [
+    "ApplicationConfiguration", "ConfigurationError", "LibraryConfiguration",
+    "MediaMountConfiguration", "ProviderConnectionConfiguration", "ReportLimits",
+    "TargetConnectionConfiguration",
+]

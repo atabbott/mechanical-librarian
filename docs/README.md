@@ -1,88 +1,38 @@
 # Documentation
 
-Documentation is part of the product and follows the same review, testing, and
-release standards as code.
+## Current 0.4 runtime
 
-## Project policies
-
-- [Contributing](../CONTRIBUTING.md)
-- [Governance](../GOVERNANCE.md)
-- [Security reporting](../SECURITY.md)
-- [Support](../SUPPORT.md)
-- [Code of Conduct](../CODE_OF_CONDUCT.md)
-
-## Product
-
-- [Vision](product/vision.md)
-- [Scope and non-goals](product/scope.md)
-- [Automation policy](product/automation-policy.md)
-- [Bounded EPUB package and opening-matter evidence](product/opening-ebook-evidence.md)
-- [Bounded opening-audio evidence](product/opening-audio-evidence.md)
-- [Review experience](product/review-experience.md)
-- [Post-1.0 reviewer backends](product/future-reviewer-backends.md)
-- [Roadmap](product/roadmap.md)
-- [Initial build plan](product/initial-build-plan.md)
-- [Delivery slices](product/delivery-slices.md)
-- [Licence decision](product/license-decision.md)
-
-## Architecture
-
-- [Overview](architecture/overview.md)
-- [Domain model](architecture/domain-model.md)
+- [Metadata report operation](operations/metadata-report.md)
+- [Configuration](reference/configuration.md)
+- [Compatibility and clean-state boundary](reference/compatibility.md)
+- [Architecture overview](architecture/overview.md)
 - [Security and threat model](architecture/security.md)
 - [Data privacy](architecture/data-privacy.md)
-- [AI trust boundary](architecture/ai-boundary.md)
-- [HTTP API contract](architecture/http-api.md)
-- [Architecture decisions](architecture/decisions/README.md)
-- [0.4 clean-state neutral evidence baseline](architecture/decisions/0010-0-4-neutral-evidence-baseline.md)
+- [ADR-0010: clean-state neutral evidence baseline](architecture/decisions/0010-0-4-neutral-evidence-baseline.md)
+- [ADR-0011: isolated EPUB inspector](architecture/decisions/0011-isolated-epub-inspector.md)
+- [ADR-0012: metadata-report activation](architecture/decisions/0012-metadata-report-activation.md)
 
 ## Development
 
 - [Quality strategy](development/quality-strategy.md)
-- [Runtime dependency review](development/dependency-review.md)
 - [Testing strategy](development/testing-strategy.md)
-- [Documentation standards](development/documentation-standards.md)
+- [Repository structure](development/repository-structure.md)
 - [Functional slice delivery](development/slice-delivery.md)
-- [Public CI and exact-head merge boundary](development/exact-head-merging.md)
+- [Exact-head merging](development/exact-head-merging.md)
 - [Work management](development/work-management.md)
 - [Release engineering](development/release-engineering.md)
-- [Repository structure](development/repository-structure.md)
-- [Prototype extraction policy](development/prototype-extraction.md)
-- [DUX prototype extraction record](development/dux-extraction.md)
-- [DUX fixture and regression corpus](development/dux-fixture-corpus.md)
 
-## Operations
+## Product and governance
 
-- [Durable state check](operations/state-check.md)
-- [Recoverable synthetic job heartbeat](operations/job-heartbeat.md)
-- [Synthetic inventory round trip](operations/synthetic-inventory.md)
-- [Audiobookshelf inventory](operations/audiobookshelf-inventory.md)
-- [Audiobookshelf connection check](operations/audiobookshelf-connection.md)
-- [Live title proposal report](operations/live-title-proposal-report.md)
-- [Hardcover identity report](operations/hardcover-identity-report.md)
-- [Deployment model](operations/deployment.md)
-- [Backups and recovery](operations/backups-and-recovery.md)
-- [Observability and supportability](operations/observability.md)
-- [Upgrades and migrations](operations/upgrades.md)
+- [Vision](product/vision.md)
+- [Scope](product/scope.md)
+- [Roadmap](product/roadmap.md)
+- [Delivery slices](product/delivery-slices.md)
+- [Architecture decisions](architecture/decisions/README.md)
+- [Contributing](../CONTRIBUTING.md)
+- [Security reporting](../SECURITY.md)
+- [Support](../SUPPORT.md)
 
-## Reference
-
-- [Configuration contract](reference/configuration.md)
-- [Compatibility policy](reference/compatibility.md)
-- [F09b Hardcover proof-of-concept contract](reference/hardcover-f09b-contract.md)
-- [F09f Hardcover configuration contract](reference/hardcover-config-v1.json)
-- [F09f private query contract](reference/hardcover-private-query-v1.json)
-- [Lifecycle and state machines](reference/state-machines.md)
-- [Glossary](reference/glossary.md)
-
-## Documentation types
-
-- Product documents explain outcomes, scope, and sequencing.
-- Architecture documents explain boundaries, constraints, and system shape.
-- ADRs record durable decisions and their consequences.
-- Development documents define contribution and quality expectations.
-- Operations documents define deployment, recovery, and diagnosis.
-- Reference documents specify exact contracts and vocabulary.
-
-New documents must have one clear owner and purpose. Avoid duplicating the same
-rule in multiple files; link to the authoritative source instead.
+Historical product and architecture documents describe future direction, not
+installed 0.4 authority. Current operations and compatibility are defined only
+by the first section above.

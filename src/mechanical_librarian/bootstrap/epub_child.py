@@ -29,7 +29,7 @@ from mechanical_librarian.domain.identifiers import (
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.epub_inspection import EpubPackageLimits, EpubInspectionOutcome
-from mechanical_librarian.domain.inventory import FileReference
+from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageCancellation,
     EpubPackageCapability,

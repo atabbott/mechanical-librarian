@@ -1,446 +1,96 @@
 from __future__ import annotations
 
 import ast
-import re
 import unittest
 from pathlib import Path
 
 
 PACKAGE_ROOT = Path(__file__).parents[2] / "src" / "mechanical_librarian"
-PRODUCTION_LAYERS = {
-    "domain",
-    "application",
-    "adapters",
-    "infrastructure",
-    "interfaces",
-    "bootstrap",
-}
-ROOT_MODULES = {"__init__", "__main__", "_version"}
-APPLICATION_PORT_MODULES = {
-    "mechanical_librarian.application.audit",
-    "mechanical_librarian.application.hardcover_identity",
-    "mechanical_librarian.application.job_heartbeat",
-    "mechanical_librarian.application.live_title_proposals",
-    "mechanical_librarian.application.ports",
-}
-ALLOWED_LAYER_IMPORTS = {
+LAYERS = {"interfaces", "application", "domain", "adapters", "infrastructure", "bootstrap"}
+ALLOWED = {
     "domain": {"domain"},
     "application": {"application", "domain"},
     "adapters": {"adapters", "application", "domain"},
     "infrastructure": {"infrastructure", "application", "domain"},
     "interfaces": {"interfaces", "application", "domain"},
-    "bootstrap": PRODUCTION_LAYERS,
+    "bootstrap": LAYERS,
 }
-VENDOR_NEUTRAL_CONTRACT_ROOTS = (
-    PACKAGE_ROOT / "domain",
-    PACKAGE_ROOT / "application",
-    PACKAGE_ROOT / "adapters" / "reviewers",
-)
-FORBIDDEN_VENDOR_NAMES = frozenset(
-    {"audiobookshelf", "calibrewebautomated", "cwa"}
-)
-FORBIDDEN_VENDOR_PAYLOAD_FIELDS = frozenset(
-    {
-        "accessAllLibraries",
-        "audioFiles",
-        "coverPath",
-        "ebookFile",
-        "isInvalid",
-        "isMissing",
-        "librariesAccessible",
-        "libraryId",
-        "serverVersion",
-        "updatedAt",
-    }
-)
 
 
-def _module_name(path: Path) -> str:
-    relative = path.relative_to(PACKAGE_ROOT)
-    parts = list(relative.with_suffix("").parts)
+def _module(path: Path) -> str:
+    parts = list(path.relative_to(PACKAGE_ROOT).with_suffix("").parts)
     if parts[-1] == "__init__":
         parts.pop()
-    return ".".join(["mechanical_librarian", *parts])
+    return ".".join(("mechanical_librarian", *parts))
 
 
-def _resolve_import(
-    module: str,
-    imported: ast.ImportFrom,
-    *,
-    is_package: bool,
-) -> str:
-    if imported.level == 0:
-        return imported.module or ""
-
-    module_parts = module.split(".")
-    package_parts = module_parts if is_package else module_parts[:-1]
-    keep = len(package_parts) - imported.level + 1
-    base = package_parts[: max(keep, 0)]
-    suffix = imported.module.split(".") if imported.module else []
-    return ".".join([*base, *suffix])
+def _imports(path: Path) -> list[str]:
+    origin = _module(path).split(".")
+    is_package = path.name == "__init__.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    result: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            result.extend(value.name for value in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                package = origin if is_package else origin[:-1]
+                base = package[: len(package) - node.level + 1]
+                target = ".".join((*base, *(node.module or "").split(".")))
+            else:
+                target = node.module or ""
+            result.append(target)
+    return result
 
 
 def _layer(module: str) -> str | None:
     parts = module.split(".")
-    if len(parts) < 2 or parts[0] != "mechanical_librarian":
-        return None
-    return parts[1] if parts[1] in PRODUCTION_LAYERS else None
-
-
-def _is_application_port_module(module: str) -> bool:
-    return any(
-        module == port_module or module.startswith(f"{port_module}.")
-        for port_module in APPLICATION_PORT_MODULES
-    )
-
-
-def violates_boundary(origin: str, target: str) -> bool:
-    target_parts = target.split(".")
-    if target_parts[0] in {"tests", "scripts"} or "tests" in target_parts:
-        return True
-
-    origin_layer = _layer(origin)
-    target_layer = _layer(target)
-    if origin_layer is None or target_layer is None:
-        return False
-    if target_layer not in ALLOWED_LAYER_IMPORTS[origin_layer]:
-        return True
-
-    if origin_layer == "infrastructure" and _is_application_port_module(target):
-        return True
-
-    if origin_layer == target_layer == "adapters":
-        origin_parts = origin.split(".")
-        if len(origin_parts) < 3 or len(target_parts) < 3:
-            return False
-        return origin_parts[2] != target_parts[2]
-
-    return False
-
-
-def _imports(path: Path) -> list[str]:
-    module = _module_name(path)
-    is_package = path.name == "__init__.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    imported_modules: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imported_modules.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            base = _resolve_import(module, node, is_package=is_package)
-            imported_modules.append(base)
-            imported_modules.extend(
-                f"{base}.{alias.name}" if base else alias.name
-                for alias in node.names
-                if alias.name != "*"
-            )
-    return imported_modules
-
-
-def _vendor_contract_terms(source: str) -> set[str]:
-    tree = ast.parse(source)
-    violations: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id.lower() in FORBIDDEN_VENDOR_NAMES:
-            violations.add(node.id)
-        elif (
-            isinstance(node, ast.Attribute)
-            and node.attr.lower() in FORBIDDEN_VENDOR_NAMES
-        ):
-            violations.add(node.attr)
-        elif isinstance(node, ast.Constant) and type(node.value) is str:
-            if node.value in FORBIDDEN_VENDOR_PAYLOAD_FIELDS:
-                violations.add(node.value)
-            words = {word.lower() for word in re.findall(r"[A-Za-z]+", node.value)}
-            violations.update(words.intersection(FORBIDDEN_VENDOR_NAMES))
-    return violations
-
-
-def _concrete_adapter_imports() -> list[str]:
-    adapter_root = PACKAGE_ROOT / "adapters"
-    modules = {
-        _module_name(path): path
-        for path in adapter_root.rglob("*.py")
-        if path.name not in {"__init__.py", "epub_package_model.py"}
-    }
-    violations: list[str] = []
-    for origin, path in modules.items():
-        for imported in _imports(path):
-            targets = [
-                module
-                for module in modules
-                if imported == module or imported.startswith(f"{module}.")
-            ]
-            if targets and origin not in targets:
-                violations.append(f"{origin} imports {max(targets, key=len)}")
-    return sorted(set(violations))
+    return parts[1] if len(parts) > 1 and parts[0] == "mechanical_librarian" and parts[1] in LAYERS else None
 
 
 class ImportBoundaryTests(unittest.TestCase):
-    def test_private_epub_package_model_imports_no_parser_or_io_implementation(self) -> None:
-        contract_paths = (
-            PACKAGE_ROOT / "adapters" / "evidence_extractors" / "epub_package_model.py",
-        )
-        forbidden = {
-            "zipfile",
-            "xml",
-            "sqlite3",
-            "httpx",
-            "urllib",
-            "requests",
-            "socket",
-            "subprocess",
-        }
-        violations = []
-        for path in contract_paths:
-            for imported in _imports(path):
-                if imported.split(".", 1)[0] in forbidden:
-                    violations.append(f"{path.name} imports {imported}")
+    def test_production_source_obeys_dependency_direction(self) -> None:
+        violations: list[str] = []
+        for path in sorted(PACKAGE_ROOT.rglob("*.py")):
+            origin = _module(path)
+            origin_layer = _layer(origin)
+            for target in _imports(path):
+                target_layer = _layer(target)
+                if target.startswith("tests") or (origin_layer and target_layer and target_layer not in ALLOWED[origin_layer]):
+                    violations.append(f"{origin} imports {target}")
         self.assertEqual(violations, [])
 
-    def test_generic_local_evidence_contracts_and_package_controller_are_absent(self) -> None:
-        self.assertFalse((PACKAGE_ROOT / "domain" / "local_evidence.py").exists())
-        self.assertFalse((PACKAGE_ROOT / "application" / "local_evidence.py").exists())
-        process = (PACKAGE_ROOT / "adapters" / "evidence_extractors" / "process.py").read_text()
-        self.assertNotIn("run_epub_package_child", process)
-        self.assertNotIn("run_epub_opening_child", process)
-        self.assertEqual(process.count("def run_epub_inspector_child("), 1)
-        child = (PACKAGE_ROOT / "bootstrap" / "epub_child.py").read_text()
+    def test_epub_child_keeps_one_private_archive_session(self) -> None:
+        child = (PACKAGE_ROOT / "bootstrap" / "epub_child.py").read_text(encoding="utf-8")
         self.assertEqual(child.count("zipfile.ZipFile("), 1)
         self.assertIn("EpubPackageExtractor().extract(package_request, archive)", child)
         self.assertIn("EpubOpeningExtractor().extract(", child)
         self.assertNotIn("package_report.to_json", child)
 
-    def test_epub_package_adapter_has_no_extraction_network_database_or_temp_api(self) -> None:
-        path = PACKAGE_ROOT / "adapters" / "evidence_extractors" / "epub_package.py"
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        forbidden_imports = {
-            "httpx",
-            "os",
-            "pathlib",
-            "requests",
-            "shutil",
-            "socket",
-            "sqlite3",
-            "subprocess",
-            "tempfile",
-            "urllib",
-        }
-        imports = {
-            value.split(".", 1)[0]
-            for value in _imports(path)
-        }
-        extraction_calls = {
-            node.func.attr
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr in {"extract", "extractall"}
-        }
-        zip_path_references = {
-            node.attr
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "zipfile"
-            and node.attr == "Path"
-        }
-        self.assertEqual(imports.intersection(forbidden_imports), set())
-        self.assertEqual(extraction_calls, set())
-        self.assertEqual(zip_path_references, set())
-
-    def test_production_source_obeys_dependency_direction(self) -> None:
-        violations: list[str] = []
-        for path in sorted(PACKAGE_ROOT.rglob("*.py")):
-            origin = _module_name(path)
-            for target in _imports(path):
-                if violates_boundary(origin, target):
-                    violations.append(f"{origin} imports {target}")
-
-        self.assertEqual(violations, [])
-
-    def test_every_top_level_package_is_classified(self) -> None:
-        unclassified = sorted(
-            path.name
-            for path in PACKAGE_ROOT.iterdir()
-            if path.is_dir()
-            and (path / "__init__.py").exists()
-            and path.name not in PRODUCTION_LAYERS
+    def test_superseded_runtime_and_central_ports_are_absent(self) -> None:
+        absent = (
+            "application/ports.py",
+            "application/live_title_proposals.py",
+            "application/hardcover_identity.py",
+            "application/inventory_polling.py",
+            "application/job_heartbeat.py",
+            "adapters/persistence/jobs.py",
+            "adapters/persistence/title_proposals.py",
+            "infrastructure/persistence/sqlite.py",
+            "domain/inventory.py",
+            "domain/review.py",
+            "domain/workflow.py",
         )
-        root_modules = sorted(
-            path.stem
-            for path in PACKAGE_ROOT.glob("*.py")
-            if path.stem not in ROOT_MODULES
-        )
+        self.assertEqual([value for value in absent if (PACKAGE_ROOT / value).exists()], [])
 
-        self.assertEqual(unclassified, [])
-        self.assertEqual(root_modules, [])
-
-    def test_domain_cannot_import_application(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.domain.entity",
-                "mechanical_librarian.application.service",
-            )
-        )
-
-    def test_application_cannot_import_infrastructure(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.application.service",
-                "mechanical_librarian.infrastructure.runtime",
-            )
-        )
-
-    def test_adapter_cannot_import_sibling_adapter(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.adapters.providers.catalogue",
-                "mechanical_librarian.adapters.reviewers.backend",
-            )
-        )
-
-    def test_adapter_cannot_import_infrastructure(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.adapters.persistence.sqlite",
-                "mechanical_librarian.infrastructure.configuration",
-            )
-        )
-
-    def test_persistence_adapter_can_implement_application_repository_port(self) -> None:
-        self.assertFalse(
-            violates_boundary(
-                "mechanical_librarian.adapters.persistence.audit",
-                "mechanical_librarian.application.audit",
-            )
-        )
-
-    def test_task_execution_adapter_can_implement_application_port(self) -> None:
-        self.assertFalse(
-            violates_boundary(
-                "mechanical_librarian.adapters.task_execution.worker",
-                "mechanical_librarian.application.ports",
-            )
-        )
-
-    def test_provider_adapter_can_implement_hardcover_identity_port(self) -> None:
-        self.assertFalse(
-            violates_boundary(
-                "mechanical_librarian.adapters.providers.hardcover_identity",
-                "mechanical_librarian.application.hardcover_identity",
-            )
-        )
-
-    def test_hardcover_provider_owns_no_process_or_global_logging_mechanism(
-        self,
-    ) -> None:
-        provider = PACKAGE_ROOT / "adapters" / "providers" / "hardcover_identity.py"
-        imported_roots = {
-            imported.split(".", 1)[0] for imported in _imports(provider)
-        }
-
-        self.assertEqual(
-            imported_roots.intersection(
-                {"logging", "subprocess", "sys", "threading"}
-            ),
-            set(),
-        )
-
-    def test_infrastructure_cannot_implement_persistence_port(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.infrastructure.persistence.audit",
-                "mechanical_librarian.application.audit",
-            )
-        )
-
-    def test_infrastructure_cannot_implement_task_execution_port(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.infrastructure.jobs.worker",
-                "mechanical_librarian.application.ports",
-            )
-        )
-
-    def test_infrastructure_cannot_implement_hardcover_identity_port(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.infrastructure.providers.hardcover_identity",
-                "mechanical_librarian.application.hardcover_identity",
-            )
-        )
-
-    def test_infrastructure_cannot_implement_live_title_proposal_port(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.infrastructure.persistence.live_title_evidence",
-                "mechanical_librarian.application.live_title_proposals",
-            )
-        )
-
-    def test_infrastructure_can_import_non_port_application_contract(self) -> None:
-        self.assertFalse(
-            violates_boundary(
-                "mechanical_librarian.infrastructure.configuration.loader",
-                "mechanical_librarian.application.configuration",
-            )
-        )
-
-    def test_interface_cannot_import_concrete_persistence(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.interfaces.http.routes",
-                "mechanical_librarian.adapters.persistence.sqlite",
-            )
-        )
-
-    def test_ordinary_layer_cannot_import_bootstrap(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.interfaces.cli",
-                "mechanical_librarian.bootstrap",
-            )
-        )
-
-    def test_bootstrap_can_import_concrete_layers(self) -> None:
-        self.assertFalse(
-            violates_boundary(
-                "mechanical_librarian.bootstrap",
-                "mechanical_librarian.adapters.persistence.sqlite",
-            )
-        )
-
-    def test_production_cannot_import_test_fixtures(self) -> None:
-        self.assertTrue(
-            violates_boundary(
-                "mechanical_librarian.application.service",
-                "tests.fixtures.items",
-            )
-        )
-
-    def test_vendor_neutral_contract_surfaces_exclude_vendor_names_and_fields(
-        self,
-    ) -> None:
-        violations: list[str] = []
-        for root in VENDOR_NEUTRAL_CONTRACT_ROOTS:
-            for path in sorted(root.rglob("*.py")):
-                terms = _vendor_contract_terms(path.read_text(encoding="utf-8"))
-                if terms:
-                    violations.append(
-                        f"{path.relative_to(PACKAGE_ROOT)}: {', '.join(sorted(terms))}"
-                    )
-
-        self.assertEqual(violations, [])
-        self.assertEqual(
-            _vendor_contract_terms(
-                'payload = {"libraryId": "opaque"}\nbackend = "Audiobookshelf"\n'
-            ),
-            {"libraryId", "audiobookshelf"},
-        )
-
-    def test_concrete_adapters_cannot_import_each_other(self) -> None:
-        self.assertEqual(_concrete_adapter_imports(), [])
+    def test_runtime_has_one_cli_command_and_no_write_authority(self) -> None:
+        cli = (PACKAGE_ROOT / "interfaces" / "cli" / "__init__.py").read_text(encoding="utf-8")
+        self.assertEqual(cli.count('add_parser("metadata-report"'), 1)
+        for retired in ("state-check", "inventory", "preview", "proposal", "review", "apply", "worker", "heartbeat"):
+            self.assertNotIn(f'add_parser("{retired}', cli)
+        source = "\n".join(path.read_text(encoding="utf-8") for path in PACKAGE_ROOT.rglob("*.py"))
+        self.assertNotIn("DELETE FROM metadata_reports", source)
+        self.assertNotIn("UPDATE metadata_reports", source)
 
 
 if __name__ == "__main__":

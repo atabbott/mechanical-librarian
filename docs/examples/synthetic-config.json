@@ -1,44 +1,37 @@
 {
-  "backups_enabled": true,
+  "schema_version": "config-v2",
   "connections": [
     {
-      "adapter": "synthetic",
-      "capability_overrides": [
-        "inventory-read"
-      ],
-      "enabled_libraries": [
-        "synthetic-library"
-      ],
-      "endpoint": "https://synthetic.invalid",
-      "id": "synthetic-connection",
-      "secret_reference": "unused-synthetic-reference"
+      "name": "primary",
+      "adapter": "audiobookshelf",
+      "endpoint": "https://library.example.invalid",
+      "secret_file": "/run/secrets/audiobookshelf-token"
     }
   ],
-  "destructive_actions_enabled": false,
-  "evidence": {
-    "enabled_formats": [
-      "epub"
-    ],
-    "maximum_document_bytes": 1048576,
-    "maximum_text_characters": 1024
-  },
-  "instance_name": "synthetic-demo",
-  "limits": {
-    "parser_concurrency": 1,
-    "parser_timeout_seconds": 60,
-    "temporary_bytes": 1048576
-  },
-  "media_mounts": [],
-  "notifications": [],
-  "policy": {
-    "policy_version": "policy-v1"
-  },
-  "providers": [],
-  "retention": {
-    "evidence_days": 30,
-    "job_log_days": 7,
-    "maximum_artifact_bytes": 1048576
-  },
-  "reviewers": [],
-  "schema_version": "config-v1"
+  "libraries": [
+    {
+      "name": "ebooks",
+      "connection": "primary",
+      "library_id": "01234567-89ab-4def-8123-456789abcdef",
+      "media_kind": "ebook",
+      "mount": "books",
+      "provider_connections": ["hardcover-main"]
+    }
+  ],
+  "mounts": [
+    {
+      "name": "books",
+      "container_path": "/media/books",
+      "service_path": "/library/books",
+      "read_only": true
+    }
+  ],
+  "providers": [
+    {
+      "name": "hardcover-main",
+      "adapter": "hardcover",
+      "enabled": false,
+      "secret_file": null
+    }
+  ]
 }

@@ -23,9 +23,10 @@ context and consequences rather than reproducing code.
 | [0006](0006-port-adapters-and-composition-root.md) | accepted | Separate port adapters from runtime infrastructure and use one composition root |
 | [0007](0007-transient-epub-package-child.md) | superseded by 0011 | Isolate EPUB package extraction in a transient descriptor-bound child |
 | [0008](0008-transient-epub-opening-parser.md) | accepted | Extend transient EPUB evidence with bounded opening parsing |
-| [0009](0009-durable-epub-opening-evidence.md) | accepted | Bind durable EPUB opening evidence to inventory snapshots |
+| [0009](0009-durable-epub-opening-evidence.md) | superseded by 0012 | Bind durable EPUB opening evidence to inventory snapshots |
 | [0010](0010-0-4-neutral-evidence-baseline.md) | accepted | Set the 0.4 clean-state neutral evidence baseline |
 | [0011](0011-isolated-epub-inspector.md) | accepted | Keep EPUB package inspection private to its isolated child |
+| [0012](0012-metadata-report-activation.md) | accepted | Activate one clean-state neutral metadata-report runtime |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

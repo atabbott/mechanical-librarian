@@ -45,11 +45,13 @@ committed lockfile:
 uv sync --frozen --no-editable --all-groups --reinstall-package mechanical-librarian
 uv run --frozen --no-editable python -m unittest discover -s tests -p 'test_*.py'
 uv build
-uv run --frozen --no-editable mechanical-librarian state-check --database ./state.sqlite
+uv run --frozen --no-editable mechanical-librarian metadata-report --help
 ```
 
-The final command exercises the current supported operator diagnostic and
-creates local SQLite state; remove that generated state before committing.
+The final command verifies that the installed artifact exposes the sole current
+operator command without creating local state. The integration suite exercises
+that command end to end against disposable synthetic target, media, credential,
+and database fixtures.
 Issue #36 owns the future platform-neutral bootstrap and one-command
 verification wrapper. Re-run the cache-safe non-editable sync after changing
 package source. The explicit project-package reinstall prevents the stable

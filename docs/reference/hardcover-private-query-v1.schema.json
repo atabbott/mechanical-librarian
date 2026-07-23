@@ -1,1 +1,0 @@
-{"additionalProperties":false,"properties":{"isbn":{"type":"string"},"title":{"type":"string"}},"required":["isbn","title"],"type":"object"}
