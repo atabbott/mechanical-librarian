@@ -21,6 +21,7 @@ from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, vali
 
 
 HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
+HARDCOVER_SCHEMA_COMMIT = "2c03110845765c32af945ed550a942330c394a3e"
 MAX_RESPONSE_BYTES = 262_144
 _QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
@@ -271,4 +272,4 @@ class _ResponseOversized(ValueError):
     pass
 
 
-__all__ = ["HARDCOVER_URL", "HardcoverMetadataProvider"]
+__all__ = ["HARDCOVER_SCHEMA_COMMIT", "HARDCOVER_URL", "HardcoverMetadataProvider"]

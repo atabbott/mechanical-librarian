@@ -24,6 +24,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     Comparison,
     ComparisonLink,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
@@ -839,6 +840,35 @@ class ProviderAdapterTests(unittest.TestCase):
         rows = [{"id": index, "book_id": index, "isbn_10": None, "isbn_13": None} for index in range(1, 7)]
         overflow = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=self._envelope(rows, [{"id": index, "title": None} for index in range(1, 7)])))), 65_536)
         self.assertEqual(overflow.observe((self._claim(),)).status, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
+        for size, expected in ((262_144, ProviderStatus.MALFORMED), (262_145, ProviderStatus.OVERSIZED)):
+            provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, length=size: httpx.Response(200, headers={"content-type": "application/json"}, content=b"x" * length))), 262_144)
+            self.assertEqual(provider.observe((self._claim(),)).status, expected)
+
+    def test_exact_rich_caps_and_pinned_schema_are_admitted(self) -> None:
+        self.assertEqual(hardcover_metadata.HARDCOVER_SCHEMA_COMMIT, "2c03110845765c32af945ed550a942330c394a3e")
+        self.assertIn("contributions(order_by:{id:asc},limit:17){id contribution author{id name}}", hardcover_metadata._QUERY)
+        self.assertIn("book_series(order_by:{id:asc},limit:17){id position series{id name}}", hardcover_metadata._QUERY)
+        self.assertIn("taggings(order_by:{id:asc},limit:33){id tag{id tag}}", hardcover_metadata._QUERY)
+        for scalar, description, expected in (("x" * 512, "d" * 16384, "valid"), ("x" * 513, "d" * 16385, "oversized")):
+            with self.subTest(expected=expected):
+                payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "title": scalar}], [{"id": 1, "title": None, "description": description}])
+                claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", () )[0].claims
+                self.assertEqual(next(claim.state.value for claim in claims if claim.kind is ClaimKind.TITLE), expected)
+                self.assertEqual(next(claim.state.value for claim in claims if claim.kind is ClaimKind.DESCRIPTION), expected)
+        for count, kind, scope, key in ((16, ClaimKind.CREATOR, ClaimScope.EDITION, "edition"), (17, ClaimKind.CREATOR, ClaimScope.EDITION, "edition"), (16, ClaimKind.CREATOR, ClaimScope.WORK, "work"), (17, ClaimKind.CREATOR, ClaimScope.WORK, "work"), (16, ClaimKind.SERIES, ClaimScope.WORK, "series"), (17, ClaimKind.SERIES, ClaimScope.WORK, "series"), (32, ClaimKind.TAG, ClaimScope.WORK, "tag"), (33, ClaimKind.TAG, ClaimScope.WORK, "tag")):
+            contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": f"A{index}"}} for index in range(count)]
+            series = [{"id": index, "position": str(index), "series": {"id": index, "name": f"S{index}"}} for index in range(count)]
+            tags = [{"id": index, "tag": {"id": index, "tag": f"T{index}"}} for index in range(count)]
+            row = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions if key == "edition" else []}
+            book = {"id": 1, "title": None, "contributions": contributions if key == "work" else [], "book_series": series if key == "series" else [], "taggings": tags if key == "tag" else []}
+            claims = hardcover_metadata._parse_candidates(json.dumps(self._envelope([row], [book])).encode(), "catalogue", ())[0].claims
+            relevant = [claim for claim in claims if claim.kind is kind and claim.scope is scope]
+            if count in {17, 33}:
+                self.assertEqual(len(relevant), 1)
+                self.assertEqual(relevant[0].state, FieldState.OVERSIZED)
+            else:
+                self.assertEqual(len(relevant), count)
+                self.assertTrue(all(claim.state is FieldState.VALID for claim in relevant))
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
