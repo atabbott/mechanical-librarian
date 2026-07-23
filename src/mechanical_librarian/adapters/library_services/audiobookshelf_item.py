@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import posixpath
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
@@ -65,6 +66,32 @@ class AudiobookshelfItemReader:
             raise
         except (UnicodeError, ValueError, TypeError, KeyError, RecursionError, json.JSONDecodeError) as error:
             raise MetadataReportError("target response is invalid") from error
+
+    def read_cover(self, cover: TargetCover, *, deadline: float | None = None) -> bytes | None:
+        """One deliberately credential-free raw cover request.
+
+        The caller owns the surrounding item-detail reads and drift decision.
+        """
+        if type(cover) is not TargetCover or not cover.path.startswith("/"):
+            raise MetadataReportError("target cover is invalid")
+        if deadline is not None and time.monotonic() >= deadline:
+            raise MetadataReportError("target cover timed out")
+        try:
+            with httpx.Client(trust_env=False, follow_redirects=False, headers={}) as client:
+                host = httpx.URL(self._endpoint).host
+                with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=5.0) as response:
+                    if response.status_code == 404:
+                        return None
+                    if response.status_code != 200:
+                        raise MetadataReportError("target cover is unavailable")
+                    content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
+                    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+                        raise MetadataReportError("target cover is invalid")
+                    return _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
+        except MetadataReportError:
+            raise
+        except (httpx.HTTPError, OSError, ValueError) as error:
+            raise MetadataReportError("target cover is unavailable") from error
 
 
 def _snapshot(source: object, item: str, library_id: str, service_path: str) -> TargetSnapshot:
@@ -157,10 +184,12 @@ def _relative_service_path(path: str, service_path: str) -> str:
     return path[len(prefix) :]
 
 
-def _bounded_body(response: httpx.Response, maximum: int) -> bytes:
+def _bounded_body(response: httpx.Response, maximum: int, *, deadline: float | None = None) -> bytes:
     chunks: list[bytes] = []
     length = 0
     for chunk in response.iter_bytes():
+        if deadline is not None and time.monotonic() >= deadline:
+            raise MetadataReportError("target cover timed out")
         length += len(chunk)
         if length > maximum:
             raise MetadataReportError("target response is oversized")
