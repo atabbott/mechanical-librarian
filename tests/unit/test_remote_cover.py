@@ -182,6 +182,21 @@ class RemoteCoverTests(unittest.TestCase):
         self.assertEqual(b"close-delimited-cover", result.content)
         self.assertEqual(len(result.content), secured.body_bytes_read)
 
+    def test_close_delimited_body_obeys_cap_and_deadline(self) -> None:
+        oversized = _FakeSocket(
+            b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n",
+            b"x" * (remote_cover.MAX_BYTES + 1),
+        )
+        with self.assertRaises(RemoteCoverError):
+            remote_cover._response_body(oversized, {}, time.monotonic() + 1)
+        with self.assertRaises(RemoteCoverTimeout):
+            remote_cover._response_body(_FakeSocket(b"", b"cover"), {}, time.monotonic() - 1)
+
+    def test_native_socket_timeout_is_timeout_disposition(self) -> None:
+        with patch.object(remote_cover, "_pinned_fetch", side_effect=socket.timeout()):
+            with self.assertRaises(RemoteCoverTimeout):
+                fetch_remote_cover("https://example.com/cover.png")
+
     def test_production_path_bounds_unterminated_chunk_framing(self) -> None:
         secured = _FakeSocket(
             b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nTransfer-Encoding: chunked\r\n\r\n",
