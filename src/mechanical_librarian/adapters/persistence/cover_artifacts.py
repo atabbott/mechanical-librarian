@@ -53,6 +53,49 @@ class CoverArtifactStore:
             except OSError:
                 pass
 
+    def recover_unreferenced(self, referenced: tuple[str, ...]) -> None:
+        """Verify retained blobs, then remove only unreferenced digest-named blobs.
+
+        The repository supplies the complete history of durable references.  A
+        missing or mismatched retained blob is an integrity failure: cleanup
+        does not run in that case, so recovery never conceals the evidence.
+        """
+        if type(referenced) is not tuple or any(
+            type(digest) is not str
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+            for digest in referenced
+        ):
+            raise MetadataReportError("artifact references are invalid")
+        retained = frozenset(referenced)
+        for digest in retained:
+            self._read(digest, 8 * 1024 * 1024)
+        try:
+            directory = self._directory()
+            try:
+                for name in os.listdir(directory):
+                    if (
+                        len(name) != 64
+                        or any(character not in "0123456789abcdef" for character in name)
+                        or name in retained
+                    ):
+                        continue
+                    try:
+                        information = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                        if stat.S_ISREG(information.st_mode):
+                            os.unlink(name, dir_fd=directory)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as error:
+                        raise MetadataReportError("artifact store is unavailable") from error
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except MetadataReportError:
+            raise
+        except OSError as error:
+            raise MetadataReportError("artifact store is unavailable") from error
+
     def _put(self, digest: str, content: bytes) -> None:
         if hashlib.sha256(content).hexdigest() != digest:
             raise MetadataReportError("artifact digest is invalid")

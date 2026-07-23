@@ -187,7 +187,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if library.media_kind != "ebook" or mount is None:
         raise UnsupportedMediaError("unsupported media")
-    CoverArtifactStore(artifact_store_path, create=False)
+    artifacts = CoverArtifactStore(artifact_store_path, create=False)
     target = AudiobookshelfItemReader(
         client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds),
         endpoint=connection.endpoint,
@@ -206,16 +206,25 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
                 configuration.limits.provider_response_bytes,
             )
         bindings.append(ProviderBinding(provider.name, provider.enabled, factory))
+    def repository_factory():
+        repository = open_repository(database_path)
+        try:
+            artifacts.recover_unreferenced(repository.referenced_artifact_digests())
+            return repository
+        except Exception:
+            repository.close()
+            raise
+
     service = GenerateMetadataReport(
         target=target,
-        inspector=_IsolatedEpubInspector(CoverArtifactStore(artifact_store_path, create=False)),
-        repository_factory=lambda: open_repository(database_path),
+        inspector=_IsolatedEpubInspector(artifacts),
+        repository_factory=repository_factory,
         providers=tuple(bindings),
         connection=connection,
         library=library,
         mount=mount,
         limits=configuration.limits,
-        cover_observer=_CoverEvidenceObserver(target, CoverArtifactStore(artifact_store_path, create=False), tuple(provider_configs)),
+        cover_observer=_CoverEvidenceObserver(target, artifacts, tuple(provider_configs)),
     )
     return service.run(item, file_index)
 

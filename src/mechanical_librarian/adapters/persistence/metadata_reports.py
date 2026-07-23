@@ -607,6 +607,29 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise MetadataReportError("persisted cover is unavailable") from error
 
+    def referenced_artifact_digests(self) -> tuple[str, ...]:
+        """Return every exact original and preview digest retained by reports."""
+        try:
+            rows = tuple(self._connection.execute(
+                "SELECT artifact_id,preview_digest FROM metadata_report_cover_references WHERE artifact_id IS NOT NULL ORDER BY artifact_id,preview_digest"
+            ))
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted cover references are invalid") from error
+        digests: set[str] = set()
+        for artifact_id, preview_digest in rows:
+            if (
+                type(artifact_id) is not str
+                or len(artifact_id) != 70
+                or not artifact_id.startswith("cover_")
+                or any(value not in "0123456789abcdef" for value in artifact_id[6:])
+                or type(preview_digest) is not str
+                or len(preview_digest) != 64
+                or any(value not in "0123456789abcdef" for value in preview_digest)
+            ):
+                raise MetadataReportError("persisted cover references are invalid")
+            digests.update((artifact_id[6:], preview_digest))
+        return tuple(sorted(digests))
+
     def close(self) -> None:
         try:
             self._connection.close()
