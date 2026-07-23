@@ -36,7 +36,7 @@ SQLite stores immutable canonical documents in `metadata_reports` and one
 separate pointer per target/file scope in `current_metadata_reports`. Report
 insert and pointer advance share one transaction. The sole baseline uses
 rollback-journal `DELETE` mode. It recognizes neither WAL/recovery sidecars nor
-prior schemas, and has no migration ledger, workflow, audit, job, attempt,
+prior schemas except the exact metadata-report-v1 widening to v2, and has no migration ledger, workflow, audit, job, attempt,
 cache, normalized claim table, or deletion surface.
 
 On supported Linux deployments, the repository retains a no-follow,

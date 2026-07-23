@@ -13,6 +13,8 @@ A source-attributed target-title, package-metadata, or opening-matter field
 fact with a stable content-derived reference. The v2 field-state vocabulary is
 closed: `valid`, `absent`, `malformed`, `oversized`, `unsupported`, `untyped`,
 and `inapplicable`.
+Its bounded occurrence ordinal preserves duplicate source/DOM occurrences in
+canonical v2 replay.
 
 **Neutral provider observation**
 One provider's independent status and complete bounded candidate set. It has no

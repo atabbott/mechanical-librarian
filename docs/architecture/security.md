@@ -6,7 +6,8 @@
 EPUB, owner-only credential files, and one fixed request per applicable
 provider. It may append a neutral report and update its current pointer. It has
 no target-write, media-write, review, decision, apply, background, retry,
-deletion, migration, or repair authority.
+deletion, repair, or general migration authority. The sole bounded exception is
+the verified exact metadata-report-v1 to v2 schema widening.
 
 ## External actors
 

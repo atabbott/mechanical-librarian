@@ -89,6 +89,10 @@ human or AI decision, approval, production write, or destructive authority.
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Increment branch stem/example |
 | --- | --- | --- | --- | --- |
 | F09a Provider-neutral title proposal | #145 | Historical retired surface: `synthetic-title-proposal-report` formerly ran closed generated scenarios through the real F06 EPUB child, a synthetic snapshot, and a deterministic provider-neutral fake. The installed CLI now rejects the command name. | #222 | `slice/f09a-title-proposal` |
+
+F09i retains the exact pre-release metadata-report-v1 to v2 widening solely to
+preserve immutable report/current-pointer replay; it does not establish a
+general migration surface.
 | F09b Bounded Hardcover title evidence | #204 | Historical retired surface: `hardcover-title-proposal-report` formerly ran only the fixed generated `agree-empty` case. The installed CLI now rejects the command name; F09f owns current configured Hardcover identity operation. | #223 | `slice/f09b-hardcover-title` |
 | F10a Synthetic title review case | #146 | Historical retired surface: `synthetic-title-review-case-report` formerly admitted one deterministic synthetic case from a qualifying F09a lineage. The installed CLI now rejects the command name. | #224 | `slice/f10a-title-review-case` |
 
