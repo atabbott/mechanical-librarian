@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import unicodedata
+from datetime import date
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
@@ -22,16 +24,18 @@ MAX_RESPONSE_BYTES = 262_144
 _QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
     f"{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
-    "{id book_id isbn_10 isbn_13 asin title subtitle release_date publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){author{id name}}} "
+    "{id book_id isbn_10 isbn_13 asin title subtitle release_date publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
     "books:books_through_editions(where:{editions:{_or:[{isbn_13:{_in:$isbns}},{isbn_10:{_in:$isbns}}]}}},order_by:{id:asc},limit:6)"
-    "{id title description contributions(order_by:{id:asc},limit:17){author{id name}} book_series(order_by:{id:asc},limit:17){position series{id name}} taggings(order_by:{id:asc},limit:33){tag{id tag}}}}}"
+    "{id title description contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag{id tag}}}}}"
 )
 
 
 class HardcoverMetadataProvider:
     def __init__(self, name: str, client: httpx.Client, maximum_bytes: int) -> None:
+        if type(maximum_bytes) is not int or isinstance(maximum_bytes, bool) or maximum_bytes < 1:
+            raise ValueError("provider response bound is invalid")
         self._name, self._client = name, client
-        self._maximum_bytes = MAX_RESPONSE_BYTES
+        self._maximum_bytes = min(maximum_bytes, MAX_RESPONSE_BYTES)
         self._called = False
 
     def observe(self, local_claims: tuple[LocalClaim, ...]) -> ProviderObservation:
@@ -84,7 +88,7 @@ def _body(response: httpx.Response, maximum: int) -> bytes:
 
 
 def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalClaim, ...]) -> tuple[ProviderCandidate, ...]:
-    source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=_reject_number)
+    source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
     root = _closed(source, {"data"})
     data = _closed(root["data"], {"editions", "books"})
     rows, books = data["editions"], data["books"]
@@ -115,10 +119,10 @@ def _edition_claims(provider: str, identity: str, row: dict[str, Any], local: tu
     def add(kind: ClaimKind, value: object, scope: ClaimScope = ClaimScope.EDITION, applicability: str = "not_applicable") -> None:
         claims.append(_claim(provider, identity, kind, value, scope, applicability, None, local, len(claims)))
     for key, kind in (("isbn_10", ClaimKind.ISBN), ("isbn_13", ClaimKind.ISBN), ("asin", ClaimKind.ASIN), ("title", ClaimKind.TITLE), ("subtitle", ClaimKind.SUBTITLE), ("release_date", ClaimKind.PUBLICATION_DATE)):
-        add(kind, row[key], ClaimScope.EDITION if kind in {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE} else ClaimScope.WORK, "ebook" if kind is ClaimKind.ISBN else "not_applicable")
+        add(kind, row[key], ClaimScope.EDITION, "ebook" if kind is ClaimKind.ISBN else "not_applicable")
     publisher = _closed_or_none(row["publisher"], {"id", "name", "parent_id"})
     add(ClaimKind.PUBLISHER, None if publisher is None else publisher["name"])
-    add(ClaimKind.IMPRINT, None, ClaimScope.EDITION)
+    claims.append(_state_claim(provider, identity, ClaimKind.IMPRINT, FieldState.UNSUPPORTED, ClaimScope.EDITION, local, len(claims)))
     language = _closed_or_none(row["language"], {"id", "code2", "code3", "language"})
     add(ClaimKind.LANGUAGE, None if language is None else language["code2"])
     claims.extend(_contributions(provider, identity, row["contributions"], ClaimScope.EDITION, local, len(claims)))
@@ -128,31 +132,37 @@ def _edition_claims(provider: str, identity: str, row: dict[str, Any], local: tu
 def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tuple[LocalClaim, ...], offset: int) -> list[ProviderClaim]:
     claims = [_claim(provider, identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, local, offset), _claim(provider, identity, ClaimKind.DESCRIPTION, book["description"], ClaimScope.WORK, "not_applicable", None, local, offset + 1)]
     claims.extend(_contributions(provider, identity, book["contributions"], ClaimScope.WORK, local, len(claims) + offset))
-    series, series_overflow = _bounded_list(book["book_series"], MAX_SERIES, {"position", "series"})
+    series, series_overflow = _bounded_list(book["book_series"], MAX_SERIES, {"id", "position", "series"})
     if series_overflow:
         claims.extend((_state_claim(provider, identity, ClaimKind.SERIES, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset), _state_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset + 1)))
     for item in series:
         series = _closed_or_none(item["series"], {"id", "name"})
         claims.append(_claim(provider, identity, ClaimKind.SERIES, None if series is None else series["name"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
         claims.append(_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, item["position"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
-    taggings, taggings_overflow = _bounded_list(book["taggings"], MAX_TAGS, {"tag"})
+    taggings, taggings_overflow = _bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"})
     if taggings_overflow:
         claims.append(_state_claim(provider, identity, ClaimKind.TAG, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset))
     for item in taggings:
         tag = _closed_or_none(item["tag"], {"id", "tag"})
         claims.append(_claim(provider, identity, ClaimKind.TAG, None if tag is None else tag["tag"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
-    claims.append(_claim(provider, identity, ClaimKind.GENRE, None, ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
+    claims.append(_state_claim(provider, identity, ClaimKind.GENRE, FieldState.UNSUPPORTED, ClaimScope.WORK, local, len(claims) + offset))
     return claims
 
 
 def _contributions(provider: str, identity: str, value: object, scope: ClaimScope, local: tuple[LocalClaim, ...], offset: int) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
-    contributions, overflow = _bounded_list(value, MAX_CONTRIBUTIONS, {"author"})
+    contributions, overflow = _bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"})
     if overflow:
         return [_state_claim(provider, identity, ClaimKind.CREATOR, FieldState.OVERSIZED, scope, local, offset)]
     for item in contributions:
         author = _closed_or_none(item["author"], {"id", "name"})
-        claims.append(_claim(provider, identity, ClaimKind.CREATOR, None if author is None else author["name"], scope, "not_applicable", "author", local, offset + len(claims)))
+        try:
+            role = _text(item["contribution"], 64).casefold()
+        except ValueError:
+            claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
+            continue
+        kind = ClaimKind.CREATOR if role == "author" else ClaimKind.CONTRIBUTOR
+        claims.append(_claim(provider, identity, kind, None if author is None else author["name"], scope, "not_applicable", "author" if kind is ClaimKind.CREATOR else role, local, offset + len(claims)))
     return claims
 
 
@@ -172,9 +182,17 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
         return FieldState.ABSENT, None
     maximum = MAX_DESCRIPTION_CHARACTERS if kind is ClaimKind.DESCRIPTION else MAX_SCALAR_CHARACTERS
     try:
+        if kind is ClaimKind.SERIES_SEQUENCE and type(value) is Decimal:
+            return FieldState.VALID, _position(value)
         text = _text(value, maximum)
         if kind is ClaimKind.ISBN:
             text = _isbn(text, len(text.replace("-", "").replace(" ", "")))
+        if kind is ClaimKind.ASIN and (len(text) != 10 or not text.isascii() or not text.isalnum()):
+            raise ValueError("provider ASIN invalid")
+        if kind is ClaimKind.PUBLICATION_DATE:
+            date.fromisoformat(text)
+        if kind is ClaimKind.SERIES_SEQUENCE:
+            text = _position(text)
         return FieldState.VALID, text
     except ValueError:
         return (FieldState.OVERSIZED if type(value) is str and len(value) > maximum else FieldState.MALFORMED), None
@@ -219,6 +237,16 @@ def _isbn(value: str, length: int) -> str:
     if length == 10 and sum((10 - index) * (10 if character == "X" else int(character)) for index, character in enumerate(text)) % 11:
         raise ValueError("provider ISBN invalid")
     return text
+
+
+def _position(value: str | Decimal) -> str:
+    try:
+        decimal = Decimal(value)
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError("provider position invalid") from error
+    if not decimal.is_finite() or decimal.adjusted() > 12:
+        raise ValueError("provider position invalid")
+    return format(decimal.normalize(), "f").rstrip("0").rstrip(".") or "0"
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
