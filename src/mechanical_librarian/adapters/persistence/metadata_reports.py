@@ -469,7 +469,7 @@ class SQLiteMetadataReportRepository:
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
         try:
             row = self._connection.execute(
-                "SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?",
+                "SELECT c.report_id,r.schema_version,r.connection_name,r.library_name,r.item_id,r.file_identity FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
                 (connection, library, item, file_identity),
             ).fetchone()
         except sqlite3.Error as error:
@@ -477,6 +477,10 @@ class SQLiteMetadataReportRepository:
         if row is None or type(row[0]) is not str:
             raise MetadataReportError("persisted current report is unavailable")
         document = self.get(row[0])
+        if row[1] == "metadata-report-v1":
+            if tuple(row[2:]) != (connection, library, item, file_identity):
+                raise MetadataReportError("persisted current report scope disagrees")
+            return document
         try:
             report = MetadataReport.from_json(document)
         except ReportValueError as error:
@@ -561,7 +565,7 @@ def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportR
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
         _migrate_v1(connection)
-        _validate_schema(connection)
+        _validate_schema_or_v1(connection)
         if binding is None:
             os.close(descriptor)
             descriptor = -1
@@ -854,6 +858,14 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     expected_triggers = sorted((("metadata_reports_no_delete", _NO_DELETE_SQL), ("metadata_reports_no_update", _NO_UPDATE_SQL)))
     if tables != expected_tables or triggers != expected_triggers or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
+
+
+def _validate_schema_or_v1(connection: sqlite3.Connection) -> None:
+    legacy = _REPORTS_SQL.replace("IN ('metadata-report-v1','metadata-report-v2')", "= 'metadata-report-v1'")
+    tables = dict(connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"))
+    if tables.get("metadata_reports") == legacy and tables.get("current_metadata_reports") == _CURRENT_SQL:
+        return
+    _validate_schema(connection)
 
 
 __all__ = ["SQLiteMetadataReportRepository", "open_repository"]
