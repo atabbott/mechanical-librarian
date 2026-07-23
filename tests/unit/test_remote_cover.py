@@ -1,7 +1,9 @@
 import unittest
 from unittest.mock import patch
 
-from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverError, _public_https
+import httpx
+
+from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverError, _public_https, fetch_remote_cover
 
 
 class RemoteCoverTests(unittest.TestCase):
@@ -25,3 +27,27 @@ class RemoteCoverTests(unittest.TestCase):
         for value in ("https://user@example.com/a.jpg", "https://example.com/a.jpg#fragment"):
             with self.assertRaises(RemoteCoverError):
                 _public_https(value)
+
+    def test_fetch_uses_only_explicit_host_and_identity_headers(self) -> None:
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, headers={"content-type": "image/png"}, content=b"cover")
+
+        with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]):
+            value = fetch_remote_cover("https://example.com/cover.png", client=httpx.Client(headers={"User-Agent": ""}, transport=httpx.MockTransport(handler)))
+        self.assertEqual(b"cover", value.content)
+        self.assertEqual("example.com", seen[0].headers["host"])
+        self.assertEqual("identity", seen[0].headers["accept-encoding"])
+        self.assertNotIn("authorization", seen[0].headers)
+        self.assertNotIn("cookie", seen[0].headers)
+        self.assertNotIn("referer", seen[0].headers)
+        self.assertFalse(seen[0].headers.get("user-agent"))
+
+    def test_rejects_content_encoding_and_redirect_limit(self) -> None:
+        with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]):
+            with self.assertRaises(RemoteCoverError):
+                fetch_remote_cover("https://example.com/cover.png", client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "image/png", "content-encoding": "gzip"}, content=b"x"))))
+            with self.assertRaises(RemoteCoverError):
+                fetch_remote_cover("https://example.com/cover.png", client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(302, headers={"location": "/again"}))))

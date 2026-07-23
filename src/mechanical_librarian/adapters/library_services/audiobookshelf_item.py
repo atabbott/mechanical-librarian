@@ -78,7 +78,7 @@ class AudiobookshelfItemReader:
         if deadline is not None and time.monotonic() >= deadline:
             raise CoverTimeoutError("target cover timed out")
         try:
-            with httpx.Client(trust_env=False, follow_redirects=False, headers={}) as client:
+            with httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""}) as client:
                 host = httpx.URL(self._endpoint).host
                 with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=5.0) as response:
                     if response.status_code == 404:

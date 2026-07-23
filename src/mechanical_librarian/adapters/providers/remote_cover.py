@@ -45,7 +45,7 @@ def _public_https(url: str) -> tuple[str, int]:
 def fetch_remote_cover(url: str, *, deadline: float | None = None, client: httpx.Client | None = None) -> RemoteCover:
     """One no-retry request chain; every redirect is revalidated before use."""
     own = client is None
-    active = client or httpx.Client(trust_env=False, follow_redirects=False, headers={})
+    active = client or httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""})
     current = url
     try:
         for _ in range(4):
@@ -61,6 +61,8 @@ def fetch_remote_cover(url: str, *, deadline: float | None = None, client: httpx
                     current = str(response.url.join(location)); continue
                 if response.status_code != 200:
                     raise RemoteCoverError("remote cover unavailable")
+                if response.headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}:
+                    raise RemoteCoverError("remote cover encoding is unsupported")
                 media_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
                 if media_type not in {"image/jpeg", "image/png", "image/webp"}:
                     raise RemoteCoverError("remote cover format is unsupported")
