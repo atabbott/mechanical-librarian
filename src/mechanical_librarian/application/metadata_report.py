@@ -47,6 +47,10 @@ class CoverTimeoutError(MetadataReportError):
     """The bounded cover-acquisition aggregate deadline elapsed."""
 
 
+class CoverSourceChangedError(MetadataReportError):
+    """The target's declared cover changed during its raw acquisition bracket."""
+
+
 @dataclass(frozen=True, slots=True)
 class TargetFile:
     identity: str
@@ -59,6 +63,7 @@ class TargetCover:
     """Opaque target cover tuple retained solely for a before/after drift check."""
     identity: str
     path: str
+    item: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,7 +314,7 @@ class GenerateMetadataReport:
 
 
 __all__ = [
-    "CoverObserver", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
+    "CoverObserver", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
     "InspectionResult", "MetadataProvider", "MetadataReportError", "ProviderBinding",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",

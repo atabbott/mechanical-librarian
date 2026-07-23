@@ -22,6 +22,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     ProviderBinding,
     CoverTimeoutError,
+    CoverSourceChangedError,
     TargetCoverReader,
     TargetSnapshot,
     UnsupportedMediaError,
@@ -138,6 +139,8 @@ class _CoverEvidenceObserver:
                 source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.RETRIEVED, decoded.artifact)
         except CoverTimeoutError:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.TIMEOUT, timeout_scope="attempted")
+        except CoverSourceChangedError:
+            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.SOURCE_CHANGED)
         except CoverDecodeRejected as error:
             source = CoverSource(source_id, CoverSourceKind.ABS, error.state)
         except MetadataReportError:

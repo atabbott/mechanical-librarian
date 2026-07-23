@@ -14,6 +14,7 @@ import httpx
 
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
+    CoverSourceChangedError,
     CoverTimeoutError,
     TargetFile,
     TargetCover,
@@ -73,22 +74,30 @@ class AudiobookshelfItemReader:
 
         The caller owns the surrounding item-detail reads and drift decision.
         """
-        if type(cover) is not TargetCover or not cover.path.startswith("/"):
+        if type(cover) is not TargetCover or not cover.path.startswith("/") or not cover.item:
             raise MetadataReportError("target cover is invalid")
         if deadline is not None and time.monotonic() >= deadline:
             raise CoverTimeoutError("target cover timed out")
+        before = self.read(cover.item)
+        if before.cover != cover:
+            raise CoverSourceChangedError("target cover changed")
         try:
             with httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""}) as client:
                 host = httpx.URL(self._endpoint).host
                 with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=5.0) as response:
                     if response.status_code == 404:
-                        return None
-                    if response.status_code != 200:
+                        value = None
+                    elif response.status_code != 200:
                         raise MetadataReportError("target cover is unavailable")
-                    content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
-                    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
-                        raise MetadataReportError("target cover is invalid")
-                    return _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
+                    else:
+                        content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
+                        if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+                            raise MetadataReportError("target cover is invalid")
+                        value = _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
+            after = self.read(cover.item)
+            if after.cover != before.cover:
+                raise CoverSourceChangedError("target cover changed")
+            return value
         except MetadataReportError:
             raise
         except (httpx.HTTPError, OSError, ValueError) as error:
@@ -139,6 +148,7 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
         cover = TargetCover(
             hashlib.sha256(cover_path.encode()).hexdigest(),
             f"/api/items/{quote(item, safe='')}/cover?raw=1",
+            item,
         )
     return TargetSnapshot(media_kind, title, files, cover)
 

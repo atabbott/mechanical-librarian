@@ -6,7 +6,7 @@ from pathlib import Path
 from PIL import Image
 
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
-from mechanical_librarian.application.metadata_report import CoverTimeoutError, TargetCover, TargetSnapshot
+from mechanical_librarian.application.metadata_report import CoverSourceChangedError, CoverTimeoutError, TargetCover, TargetSnapshot
 from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind, CoverSourceState
 
@@ -59,3 +59,10 @@ class CoverObserverTests(unittest.TestCase):
                 TargetSnapshot("ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")), (), ()
             )
         self.assertEqual((CoverSourceState.TIMEOUT, "attempted"), (value[0].state, value[0].timeout_scope))
+
+    def test_changed_abs_source_is_recorded_without_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            value = _CoverEvidenceObserver(_Target(CoverSourceChangedError("changed")), CoverArtifactStore(Path(directory))).observe(
+                TargetSnapshot("ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")), (), ()
+            )
+        self.assertEqual(CoverSourceState.SOURCE_CHANGED, value[0].state)
