@@ -130,12 +130,21 @@ def reopen_metadata_report(database_path: Path, report_id: str) -> str:
         repository.close()
 
 
+def reopen_current_metadata_report(database_path: Path, connection: str, library: str, item: str, file_identity: str) -> str:
+    repository = open_repository(database_path, create=False)
+    try:
+        return repository.current(connection, library, item, file_identity)
+    finally:
+        repository.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     return cli_main(
         argv,
         runner=run_metadata_report,
         reopen_runner=reopen_metadata_report,
+        current_reopen_runner=reopen_current_metadata_report,
     )
 
 
-__all__ = ["main", "reopen_metadata_report", "run_metadata_report"]
+__all__ = ["main", "reopen_current_metadata_report", "reopen_metadata_report", "run_metadata_report"]
