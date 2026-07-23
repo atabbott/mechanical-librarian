@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import hashlib
 import json
 import os
 import shutil
@@ -18,7 +17,6 @@ from unittest.mock import patch
 import httpx
 
 import mechanical_librarian.bootstrap.composition as composition
-import mechanical_librarian.adapters.persistence.metadata_reports as metadata_persistence
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     UnsupportedMediaError,
@@ -133,43 +131,6 @@ def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool 
     }
 
 
-def _write_exact_v1_fixture(database: Path, source: bytes) -> tuple[str, str]:
-    """Create the only accepted predecessor for installed-artifact migration proof."""
-    identity = hashlib.sha256(
-        json.dumps(
-            {"format": "epub", "inode": "opaque-inode", "relative": "book.epub", "size": len(source)},
-            separators=(",", ":"), sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
-    document = {
-        "file": {"content_digest": hashlib.sha256(source).hexdigest(), "format": "epub", "identity": identity, "selected_index": 0},
-        "local": {"claims": [], "reasons": ["no_opening_claims"], "status": "no_candidate"},
-        "providers": [],
-        "schema_version": "metadata-report-v1",
-        "target": {"connection": "primary", "current_title": "Legacy title", "item": "item-1", "library": "books"},
-    }
-    report_id = "report_" + hashlib.sha256(
-        json.dumps(document, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    ).hexdigest()
-    document["report_id"] = report_id
-    serialized = json.dumps(document, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    connection = sqlite3.connect(database)
-    try:
-        connection.execute(metadata_persistence._REPORTS_SQL.replace("IN ('metadata-report-v1','metadata-report-v2')", "= 'metadata-report-v1'"))
-        connection.execute(metadata_persistence._CURRENT_SQL)
-        connection.execute(metadata_persistence._NO_UPDATE_SQL)
-        connection.execute(metadata_persistence._NO_DELETE_SQL)
-        connection.execute(
-            "INSERT INTO metadata_reports VALUES(?,?,?,?,?,?,?,?,?)",
-            (report_id, "primary", "books", "item-1", identity, hashlib.sha256(source).hexdigest(), "metadata-report-v1", hashlib.sha256(serialized.encode("utf-8")).hexdigest(), serialized),
-        )
-        connection.execute("INSERT INTO current_metadata_reports VALUES(?,?,?,?,?)", ("primary", "books", "item-1", identity, report_id))
-        connection.commit()
-    finally:
-        connection.close()
-    return serialized, identity
-
-
 def _installed_cli(
     config: Path,
     database: Path,
@@ -201,51 +162,6 @@ def _installed_cli(
 
 
 class MetadataReportCommandTests(unittest.TestCase):
-    def test_installed_wheel_migrates_exact_v1_current_and_publishes_v2_successor(self) -> None:
-        uv = shutil.which("uv")
-        self.assertIsNotNone(uv)
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            wheels = root / "wheels"
-            built = subprocess.run(
-                [uv, "build", "--wheel", "--out-dir", str(wheels)],
-                cwd=Path(__file__).parents[2], capture_output=True, text=True,
-                check=False, timeout=60,
-            )
-            self.assertEqual(built.returncode, 0, built.stderr)
-            wheel = next(wheels.glob("mechanical_librarian-*.whl"))
-            command = [uv, "run", "--isolated", "--with", str(wheel), "mechanical-librarian"]
-            media = root / "media"
-            media.mkdir()
-            source = media / "book.epub"
-            source_bytes = opening_title_isbn_applicability()
-            source.write_bytes(source_bytes)
-            database = root / "reports.sqlite"
-            legacy, identity = _write_exact_v1_fixture(database, source_bytes)
-            target_secret = root / "target.secret"
-            target_secret.write_text("target-token", encoding="ascii")
-            target_secret.chmod(0o600)
-            with _Server(_item(len(source_bytes))) as server:
-                config = root / "config.json"
-                config.write_text(json.dumps(_config(server.endpoint, media, target_secret)), encoding="utf-8")
-                current = subprocess.run(
-                    [*command, "metadata-report-get", "--database", str(database), "--current", "--connection", "primary", "--library", "books", "--item", "item-1", "--file-identity", identity],
-                    cwd=root, capture_output=True, text=True, check=False, timeout=20,
-                )
-                successor = subprocess.run(
-                    [*command, "metadata-report", "--config", str(config), "--database", str(database), "--connection", "primary", "--library", "books", "--item", "item-1", "--file-index", "0"],
-                    cwd=root, capture_output=True, text=True, check=False, timeout=20,
-                )
-            self.assertEqual(current.returncode, 0, current.stderr)
-            self.assertEqual(current.stdout, legacy + "\n")
-            self.assertEqual(successor.returncode, 0, successor.stderr)
-            v2 = MetadataReport.from_json(successor.stdout.removesuffix("\n"))
-            connection = sqlite3.connect(database)
-            self.assertEqual(connection.execute("SELECT COUNT(*) FROM metadata_reports").fetchone(), (2,))
-            self.assertEqual(connection.execute("SELECT document FROM metadata_reports WHERE schema_version='metadata-report-v1'").fetchone(), (legacy,))
-            self.assertEqual(connection.execute("SELECT report_id FROM current_metadata_reports").fetchone(), (v2.report_id,))
-            connection.close()
-
     def test_hostile_target_title_is_rejected_before_database_with_value_free_error(self) -> None:
         hostile = "Authorization: Bearer abcd1234"
         with tempfile.TemporaryDirectory() as directory:

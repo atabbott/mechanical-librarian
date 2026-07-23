@@ -14,7 +14,6 @@ from urllib.parse import quote
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import MetadataReport, REPORT_SCHEMA, ReportValueError
-from mechanical_librarian.domain import metadata_report_v1 as v1
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -28,7 +27,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version IN ('metadata-report-v1','metadata-report-v2')), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v2'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -447,11 +446,8 @@ class SQLiteMetadataReportRepository:
             if row is None:
                 raise MetadataReportError("persisted report is unavailable")
             connection, library, item, file_identity, content_digest, schema, digest, document = row
-            if type(document) is not str or schema not in {"metadata-report-v1", REPORT_SCHEMA} or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest:
+            if type(document) is not str or schema != REPORT_SCHEMA or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest:
                 raise MetadataReportError("persisted report is invalid")
-            if schema == "metadata-report-v1":
-                _validate_v1_document(document, report_id, connection, library, item, file_identity, content_digest, schema, digest)
-                return document
             report = MetadataReport.from_json(document)
             if (
                 report.report_id != report_id
@@ -479,10 +475,6 @@ class SQLiteMetadataReportRepository:
         if row is None or type(row[0]) is not str:
             raise MetadataReportError("persisted current report is unavailable")
         document = self.get(row[0])
-        if row[1] == "metadata-report-v1":
-            if tuple(row[2:]) != (connection, library, item, file_identity):
-                raise MetadataReportError("persisted current report scope disagrees")
-            return document
         try:
             report = MetadataReport.from_json(document)
         except ReportValueError as error:
@@ -566,8 +558,7 @@ def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportR
             connection.execute(_NO_UPDATE_SQL)
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
-        _migrate_v1(connection)
-        _validate_schema_or_v1(connection)
+        _validate_schema(connection)
         if binding is None:
             os.close(descriptor)
             descriptor = -1
@@ -611,7 +602,7 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
         _validate_connection_binding(connection, path, descriptor, before)
         connection.execute("PRAGMA schema_version").fetchone()
-        _validate_schema_or_v1(connection)
+        _validate_schema(connection)
     finally:
         if connection is not None:
             connection.close()
@@ -825,48 +816,6 @@ def _unlink_created(path: Path, expected: tuple[int, int]) -> None:
         pass
 
 
-def _migrate_v1(connection: sqlite3.Connection) -> None:
-    """Perform the sole supported pre-release schema widening atomically."""
-    if not _is_exact_v1_schema(connection):
-        return
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        rows = connection.execute(
-            "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports"
-        ).fetchall()
-        for report_id, connection_name, library_name, item_id, file_identity, content_digest, schema, digest, document in rows:
-            _validate_v1_document(
-                document,
-                report_id,
-                connection_name,
-                library_name,
-                item_id,
-                file_identity,
-                content_digest,
-                schema,
-                digest,
-            )
-        connection.execute("DROP TRIGGER metadata_reports_no_update")
-        connection.execute("DROP TRIGGER metadata_reports_no_delete")
-        connection.execute("ALTER TABLE current_metadata_reports RENAME TO current_metadata_reports_v1")
-        connection.execute("ALTER TABLE metadata_reports RENAME TO metadata_reports_v1")
-        connection.execute(_REPORTS_SQL)
-        connection.execute(_CURRENT_SQL)
-        connection.execute("INSERT INTO metadata_reports SELECT * FROM metadata_reports_v1")
-        connection.execute("INSERT INTO current_metadata_reports SELECT * FROM current_metadata_reports_v1")
-        if connection.execute("PRAGMA foreign_key_check").fetchall():
-            raise MetadataReportError("database migration failed")
-        connection.execute("DROP TABLE current_metadata_reports_v1")
-        connection.execute("DROP TABLE metadata_reports_v1")
-        connection.execute(_NO_UPDATE_SQL)
-        connection.execute(_NO_DELETE_SQL)
-        _validate_schema(connection)
-        connection.commit()
-    except Exception:
-        connection.rollback()
-        raise MetadataReportError("database migration failed") from None
-
-
 def _validate_schema(connection: sqlite3.Connection) -> None:
     tables = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
     triggers = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall()
@@ -874,42 +823,5 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     expected_triggers = sorted((("metadata_reports_no_delete", _NO_DELETE_SQL), ("metadata_reports_no_update", _NO_UPDATE_SQL)))
     if tables != expected_tables or triggers != expected_triggers or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
-
-
-def _validate_schema_or_v1(connection: sqlite3.Connection) -> None:
-    if _is_exact_v1_schema(connection):
-        return
-    _validate_schema(connection)
-
-
-def _is_exact_v1_schema(connection: sqlite3.Connection) -> bool:
-    legacy = _REPORTS_SQL.replace("IN ('metadata-report-v1','metadata-report-v2')", "= 'metadata-report-v1'")
-    tables = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
-    triggers = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall()
-    return tables == sorted((("current_metadata_reports", _CURRENT_SQL), ("metadata_reports", legacy))) and triggers == sorted((("metadata_reports_no_delete", _NO_DELETE_SQL), ("metadata_reports_no_update", _NO_UPDATE_SQL)))
-
-
-def _validate_v1_document(document: str, report_id: str, connection: str, library: str, item: str, file_identity: str, content_digest: str, schema: str, digest: str) -> None:
-    """Parse the complete frozen v1 model and bind it to its stored envelope."""
-    try:
-        if (
-            schema != v1.REPORT_SCHEMA
-            or type(document) is not str
-            or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest
-        ):
-            raise ValueError
-        report = v1.MetadataReport.from_json(document)
-        if (
-            report.report_id != report_id
-            or report.target.connection != connection
-            or report.target.library != library
-            or report.target.item != item
-            or report.file.identity != file_identity
-            or report.file.content_digest != content_digest
-        ):
-            raise ValueError
-    except (TypeError, ValueError, UnicodeError) as error:
-        raise MetadataReportError("persisted report is invalid") from error
-
 
 __all__ = ["SQLiteMetadataReportRepository", "open_repository"]

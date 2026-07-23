@@ -140,17 +140,7 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
 
 
 def _persisted_report_id(serialized: object) -> str:
-    """Validate only the immutable v1 envelope, or the full current v2 model."""
-    if type(serialized) is not str:
-        raise ReportValueError("report output is invalid")
-    try:
-        raw = json.loads(serialized)
-    except (TypeError, ValueError, json.JSONDecodeError) as error:
-        raise ReportValueError("report output is invalid") from error
-    if type(raw) is not dict or type(raw.get("schema_version")) is not str or type(raw.get("report_id")) is not str:
-        raise ReportValueError("report output is invalid")
-    if raw["schema_version"] == "metadata-report-v1":
-        return raw["report_id"]
+    """Validate the one supported persisted report model."""
     report = MetadataReport.from_json(serialized)
     if report.to_json() != serialized:
         raise ReportValueError("report output is invalid")
