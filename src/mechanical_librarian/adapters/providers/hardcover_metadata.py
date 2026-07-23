@@ -85,6 +85,8 @@ class HardcoverMetadataProvider:
             return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
         try:
             candidates = _parse_candidates(payload, self._name, local_claims)
+        except _CandidateLimit:
+            return ProviderObservation(self._name, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, references)
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
             return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
         return ProviderObservation(
@@ -118,8 +120,10 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
     root = _closed(source, {"data"})
     data = _closed(root["data"], {"editions"})
     rows = data["editions"]
-    if type(rows) is not list or len(rows) > MAX_CANDIDATES:
+    if type(rows) is not list:
         raise ValueError("provider rows invalid")
+    if len(rows) > MAX_CANDIDATES:
+        raise _CandidateLimit
     candidates: list[ProviderCandidate] = []
     for row_value in rows:
         row = _closed(row_value, {"book", "id", "isbn_10", "isbn_13"})
@@ -195,6 +199,10 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 def _reject_number(_: str) -> float:
     raise ValueError("provider number invalid")
+
+
+class _CandidateLimit(ValueError):
+    pass
 
 
 __all__ = ["HARDCOVER_URL", "HardcoverMetadataProvider"]

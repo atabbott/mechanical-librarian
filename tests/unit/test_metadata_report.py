@@ -29,7 +29,15 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     LocalClaim,
     MetadataReport,
+    MAX_CANDIDATES,
+    MAX_CONTRIBUTIONS,
+    MAX_DESCRIPTION_CHARACTERS,
+    MAX_REPORT_BYTES,
+    MAX_SCALAR_CHARACTERS,
+    MAX_SERIES,
+    MAX_TAGS,
     ProviderObservation,
+    ProviderCandidate,
     ProviderClaim,
     ProviderStatus,
     RearClaimProvenance,
@@ -38,6 +46,7 @@ from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     derive_field_results,
     normalize_title,
+    stable_reference,
 )
 from mechanical_librarian.interfaces.cli import main
 
@@ -86,6 +95,28 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_f09j_exact_max_shape_fits_one_mebibyte(self) -> None:
+        """The admitted provider envelope fits before its parser is widened."""
+        def claim(candidate: str, kind: ClaimKind, value: str) -> ProviderClaim:
+            return ProviderClaim(
+                stable_reference("provider", {"candidate": candidate, "kind": kind.value, "provider": "catalogue", "value": value}),
+                kind, value, Comparison.NOT_COMPARABLE, (),
+            )
+        candidates = []
+        for number in range(MAX_CANDIDATES):
+            identity = f"hardcover-edition-{number:010d}"
+            claims = [claim(identity, ClaimKind.DESCRIPTION, "d" * MAX_DESCRIPTION_CHARACTERS)]
+            claims += [claim(identity, ClaimKind.CONTRIBUTOR, f"c{number:03d}-{index:03d}" + "x" * (MAX_SCALAR_CHARACTERS - 8)) for index in range(MAX_CONTRIBUTIONS)]
+            claims += [claim(identity, ClaimKind.SERIES, f"s{number:03d}-{index:03d}" + "x" * (MAX_SCALAR_CHARACTERS - 8)) for index in range(MAX_SERIES)]
+            claims += [claim(identity, ClaimKind.TAG, f"t{number:03d}-{index:03d}" + "x" * (MAX_SCALAR_CHARACTERS - 8)) for index in range(MAX_TAGS)]
+            candidates.append(ProviderCandidate(identity, tuple(claims)))
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, (), tuple(candidates)),),
+        )
+        self.assertLessEqual(len(report.to_json().encode("utf-8")), MAX_REPORT_BYTES)
     def test_field_results_are_complete_canonical_and_separate_from_claims(self) -> None:
         results = derive_field_results(())
         report = MetadataReport.create(
@@ -278,7 +309,8 @@ class MetadataReportTests(unittest.TestCase):
         reference = "provider_" + "a" * 64
         self.assertEqual(ProviderClaim(reference, ClaimKind.TITLE, "A title", Comparison.AGREEMENT, ()).kind, ClaimKind.TITLE)
         self.assertEqual(ProviderClaim(reference, ClaimKind.ISBN, "9780306406157", Comparison.AGREEMENT, ()).kind, ClaimKind.ISBN)
-        for kind, value in ((ClaimKind.PUBLISHER, "Example Press"), (ClaimKind.TITLE, "/Users/private/title"), (ClaimKind.TITLE, "Authorization: Bearer abcdefgh")):
+        self.assertEqual(ProviderClaim(reference, ClaimKind.PUBLISHER, "Example Press", Comparison.NOT_COMPARABLE, ()).kind, ClaimKind.PUBLISHER)
+        for kind, value in ((ClaimKind.TITLE, "/Users/private/title"), (ClaimKind.TITLE, "Authorization: Bearer abcdefgh")):
             with self.subTest(provider_kind=kind, value=value), self.assertRaises(ReportValueError):
                 ProviderClaim(reference, kind, value, Comparison.AGREEMENT, ())
         provenance = RearClaimProvenance("a" * 64, 1, 1, "copyright", "Copyright 2026")

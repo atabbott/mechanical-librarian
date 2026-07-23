@@ -702,7 +702,7 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(observation.input_references, (self._claim().reference,))
         self.assertEqual(len(requests), 1)
         self.assertEqual(str(requests[0].url), HARDCOVER_URL)
-        self.assertIn("limit:5", json.loads(requests[0].content)["query"])
+        self.assertIn("limit:6", json.loads(requests[0].content)["query"])
         self.assertEqual(provider.observe((self._claim(), self._title_claim())).status, ProviderStatus.UNAVAILABLE)
         self.assertEqual(len(requests), 1)
 
@@ -860,10 +860,10 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(observation.status, ProviderStatus.CANDIDATES)
         self.assertEqual(observation.candidates[0].claims, ())
 
-        rows = [{"id": index, "isbn_10": None, "isbn_13": None, "book": None} for index in range(1, 6)]
+        rows = [{"id": index, "isbn_10": None, "isbn_13": None, "book": None} for index in range(1, 7)]
         overflow = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json={"data": {"editions": rows}})))
         observation = HardcoverMetadataProvider("catalogue", overflow, 65_536).observe((self._claim(),))
-        self.assertEqual(observation.status, ProviderStatus.MALFORMED)
+        self.assertEqual(observation.status, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
         self.assertEqual(observation.candidates, ())
 
     def test_same_candidate_from_two_provider_connections_has_globally_unique_refs(self) -> None:

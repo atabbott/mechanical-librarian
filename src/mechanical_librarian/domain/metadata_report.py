@@ -18,8 +18,16 @@ from mechanical_librarian.domain.evidence_bounds import (
 
 
 REPORT_SCHEMA = "metadata-report-v2"
-MAX_REPORT_BYTES = 262_144
-MAX_CANDIDATES = 4
+# F09j's report contract admits rich, source-attributed candidates.  The
+# physical SQLite schema separately fingerprints this exact shape, so an F09i
+# database cannot be opened as this schema despite the stable document label.
+MAX_REPORT_BYTES = 1_048_576
+MAX_CANDIDATES = 5
+MAX_CONTRIBUTIONS = 16
+MAX_SERIES = 16
+MAX_TAGS = 32
+MAX_SCALAR_CHARACTERS = 512
+MAX_DESCRIPTION_CHARACTERS = 16_384
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^(?:local|provider)_[0-9a-f]{64}$")
@@ -43,6 +51,9 @@ class ClaimKind(StrEnum):
     DESCRIPTION = "description"
     LANGUAGE = "language"
     SUBJECT = "subject"
+    IMPRINT = "imprint"
+    GENRE = "genre"
+    TAG = "tag"
 
 
 class FieldState(StrEnum):
@@ -121,6 +132,8 @@ class ProviderStatus(StrEnum):
     RATE_LIMITED = "rate_limited"
     UNAVAILABLE = "unavailable"
     MALFORMED = "malformed"
+    OVERSIZED = "oversized"
+    CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"
 
 
 class Comparison(StrEnum):
@@ -350,9 +363,11 @@ class ProviderClaim:
             raise ReportValueError("provider claim reference is invalid")
         if type(self.kind) is not ClaimKind or type(self.comparison) is not Comparison:
             raise ReportValueError("provider claim is invalid")
-        if self.kind not in {ClaimKind.TITLE, ClaimKind.ISBN}:
-            raise ReportValueError("provider claim kind is invalid")
-        _projection_text(self.value, "provider claim value", 512)
+        _projection_text(
+            self.value,
+            "provider claim value",
+            MAX_DESCRIPTION_CHARACTERS if self.kind is ClaimKind.DESCRIPTION else MAX_SCALAR_CHARACTERS,
+        )
         if self.kind is ClaimKind.ISBN and not (
             _valid_isbn(self.value, "valid_isbn_10")
             or _valid_isbn(self.value, "valid_isbn_13")
@@ -603,6 +618,10 @@ def compare_claim(kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) ->
             if matching
             else (Comparison.DISAGREEMENT, references)
         )
+    if kind is not ClaimKind.ISBN:
+        normalized = normalize_title(value).casefold()
+        matching = tuple(sorted(item.reference for item in relevant if normalize_title(item.canonical or "").casefold() == normalized))
+        return ((Comparison.AGREEMENT, matching) if matching else (Comparison.DISAGREEMENT, references))
     digits = "".join(character for character in value if character.isdigit() or character in "Xx").upper()
     matching = tuple(
         sorted(item.reference for item in relevant if item.canonical == digits)
