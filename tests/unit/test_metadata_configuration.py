@@ -68,6 +68,12 @@ class MetadataConfigurationTests(unittest.TestCase):
             missing_provider_secret = _source(root)
             missing_provider_secret["providers"][0]["enabled"] = True
             cases.append(missing_provider_secret)
+            multiple_cover_providers = _source(root)
+            for provider in multiple_cover_providers["providers"]:
+                provider["enabled"] = True
+                provider["cover_enabled"] = True
+                provider["secret_file"] = str(root / f"{provider['name']}.secret")
+            cases.append(multiple_cover_providers)
             for index, source in enumerate(cases):
                 path = root / f"bad-{index}.json"
                 path.write_text(json.dumps(source), encoding="utf-8")

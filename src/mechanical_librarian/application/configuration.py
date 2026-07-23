@@ -149,11 +149,17 @@ class ApplicationConfiguration:
         connection_names = {value.name for value in self.connections}
         mount_names = {value.name for value in self.mounts}
         provider_names = {value.name for value in self.providers}
+        providers_by_name = {value.name: value for value in self.providers}
         for library in self.libraries:
             if library.connection not in connection_names or (library.mount is not None and library.mount not in mount_names) or not set(library.provider_connections).issubset(provider_names):
                 raise ConfigurationError("library references are invalid")
             if library.media_kind == "ebook" and library.mount is None:
                 raise ConfigurationError("ebook library requires a read-only media mount")
+            if sum(
+                providers_by_name[name].cover_enabled
+                for name in library.provider_connections
+            ) > 1:
+                raise ConfigurationError("library permits only one cover-enabled provider")
 
     def __repr__(self) -> str:
         return "ApplicationConfiguration(<redacted>)"
