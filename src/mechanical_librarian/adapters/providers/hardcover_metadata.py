@@ -153,12 +153,13 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
 
 
 def _claim(provider: str, identity: str, kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) -> ProviderClaim:
-    comparison, references = compare_claim(kind, value, local)
+    applicability = "ebook" if kind is ClaimKind.ISBN else "not_applicable"
+    comparison, references = compare_claim(kind, value, tuple(item for item in local if item.applicability == applicability and item.role is None))
     reference = stable_reference(
         "provider",
         {"candidate": identity, "kind": kind.value, "provider": provider, "value": value},
     )
-    return ProviderClaim(reference, kind, value, comparison, references)
+    return ProviderClaim(reference, kind, value, comparison, references, applicability)
 
 
 def _closed(value: object, keys: set[str]) -> dict[str, Any]:

@@ -358,12 +358,20 @@ class ProviderClaim:
     value: str
     comparison: Comparison
     local_references: tuple[str, ...]
+    applicability: str = "unknown"
+    role: str | None = None
+    state: FieldState = FieldState.VALID
+    raw_order: int = 0
 
     def __post_init__(self) -> None:
         if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("provider_"):
             raise ReportValueError("provider claim reference is invalid")
         if type(self.kind) is not ClaimKind or type(self.comparison) is not Comparison:
             raise ReportValueError("provider claim is invalid")
+        if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"} or type(self.state) is not FieldState or type(self.raw_order) is not int or self.raw_order < 0:
+            raise ReportValueError("provider claim scope is invalid")
+        if self.role is not None and (self.kind not in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR} or not self.role):
+            raise ReportValueError("provider claim role is invalid")
         _projection_text(
             self.value,
             "provider claim value",
@@ -386,6 +394,10 @@ class ProviderClaim:
             "kind": self.kind.value,
             "local_references": list(self.local_references),
             "reference": self.reference,
+            "applicability": self.applicability,
+            "role": self.role,
+            "state": self.state.value,
+            "raw_order": self.raw_order,
             "value": self.value,
         }
 
@@ -402,6 +414,8 @@ class ProviderCandidate:
         references = tuple(value.reference for value in self.claims)
         if len(set(references)) != len(references):
             raise ReportValueError("provider candidate claim references are duplicated")
+        if tuple(value.raw_order for value in self.claims) != tuple(sorted(value.raw_order for value in self.claims)):
+            raise ReportValueError("provider candidate claims are not in raw source order")
 
     def to_data(self) -> dict[str, object]:
         return {"claims": [value.to_data() for value in self.claims], "identity": self.identity}
@@ -514,6 +528,10 @@ class MetadataReport:
             not set(claim.local_references).issubset(known) for claim in provider_claims
         ):
             raise ReportValueError("provider candidate claim references are invalid")
+        for claim in provider_claims:
+            expected, links = compare_claim(claim.kind, claim.value, tuple(item for item in self.local_claims if item.applicability == claim.applicability and item.role == claim.role))
+            if (claim.comparison, claim.local_references) != (expected, links):
+                raise ReportValueError("provider comparison links are inconsistent")
         expected = f"report_{hashlib.sha256(canonical_json(self._identity_data()).encode('utf-8')).hexdigest()}"
         if self.report_id != expected:
             raise ReportValueError("report identity is inconsistent")
@@ -699,8 +717,8 @@ def _candidate_from_data(value: object) -> ProviderCandidate:
 
 
 def _provider_claim_from_data(value: object) -> ProviderClaim:
-    item = _object(value, {"comparison", "kind", "local_references", "reference", "value"})
-    return ProviderClaim(item["reference"], ClaimKind(item["kind"]), item["value"], Comparison(item["comparison"]), tuple(_strings(item["local_references"])))
+    item = _object(value, {"applicability", "comparison", "kind", "local_references", "raw_order", "reference", "role", "state", "value"})
+    return ProviderClaim(item["reference"], ClaimKind(item["kind"]), item["value"], Comparison(item["comparison"]), tuple(_strings(item["local_references"])), item["applicability"], item["role"], FieldState(item["state"]), item["raw_order"])
 
 
 def _object(value: object, keys: set[str]) -> dict[str, Any]:
