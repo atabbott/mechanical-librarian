@@ -65,6 +65,10 @@ file. Adding or enabling a provider does nothing until a library explicitly
 references it. The same named provider connection and credential may be
 referenced by several libraries.
 
+Target and enabled-provider `secret_file` values are bounded absolute paths.
+Relative secret paths are rejected by both the generated schema and runtime
+configuration loader.
+
 Optional `limits` fields are fixed bounded resource limits, not behavior or
 ranking policy:
 

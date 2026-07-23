@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -8,15 +9,23 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
+import httpx
+
+import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     UnsupportedMediaError,
 )
 from mechanical_librarian.bootstrap.composition import run_metadata_report
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.infrastructure.security.credentials import (
+    hardcover_client as real_hardcover_client,
+)
 from tests.support.epub_packages import opening_no_applicable, opening_title_isbn_applicability
 
 
@@ -122,6 +131,36 @@ def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool 
     }
 
 
+def _installed_cli(
+    config: Path,
+    database: Path,
+    *,
+    library: str = "books",
+    file_index: int = 0,
+) -> tuple[int, str, str]:
+    output = io.StringIO()
+    errors = io.StringIO()
+    with redirect_stdout(output), redirect_stderr(errors):
+        result = composition.main(
+            [
+                "metadata-report",
+                "--config",
+                str(config),
+                "--database",
+                str(database),
+                "--connection",
+                "primary",
+                "--library",
+                library,
+                "--item",
+                "item-1",
+                "--file-index",
+                str(file_index),
+            ]
+        )
+    return result, output.getvalue(), errors.getvalue()
+
+
 class MetadataReportCommandTests(unittest.TestCase):
     def test_hostile_target_title_is_rejected_before_database_with_value_free_error(self) -> None:
         hostile = "Authorization: Bearer abcd1234"
@@ -213,6 +252,259 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertEqual(missing.stdout, "")
             self.assertEqual(missing.stderr, "Metadata report failed: invalid invocation.\n")
             self.assertEqual(source.read_bytes(), original_media)
+
+    def test_installed_cli_invalid_file_index_publishes_nothing(self) -> None:
+        self.assertIsNotNone(shutil.which("mechanical-librarian"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            source.write_bytes(opening_no_applicable())
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            database = root / "reports.sqlite"
+            activity: list[str] = []
+
+            class Inspector:
+                def inspect(self, *args, **kwargs):
+                    activity.append("parser")
+                    raise AssertionError("invalid selection reached parser")
+
+            with _Server(_item(source.stat().st_size)) as server:
+                config = root / "config.json"
+                config.write_text(
+                    json.dumps(_config(server.endpoint, media, target_secret)),
+                    encoding="utf-8",
+                )
+                with patch.object(
+                    composition, "_IsolatedEpubInspector", return_value=Inspector()
+                ), patch.object(
+                    composition,
+                    "hardcover_client",
+                    side_effect=lambda *args, **kwargs: activity.append("provider"),
+                ):
+                    result, output, errors = _installed_cli(
+                        config, database, file_index=1
+                    )
+            self.assertEqual(result, 4)
+            self.assertEqual(output, "")
+            self.assertEqual(errors, "Metadata report failed: unsupported media.\n")
+            self.assertEqual(activity, [])
+            self.assertFalse(database.exists())
+            self.assertEqual(server.requests, 1)
+
+    def test_installed_cli_selected_non_epub_has_zero_downstream_activity(self) -> None:
+        self.assertIsNotNone(shutil.which("mechanical-librarian"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.pdf"
+            original = b"%PDF-1.4\nsynthetic\n"
+            source.write_bytes(original)
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            payload = _item(source.stat().st_size)
+            payload["media"]["ebookFile"]["ebookFormat"] = "pdf"
+            payload["media"]["ebookFile"]["metadata"].update(
+                {"relPath": "book.pdf", "path": "/library/book.pdf"}
+            )
+            database = root / "reports.sqlite"
+            activity: list[str] = []
+
+            class Inspector:
+                def inspect(self, *args, **kwargs):
+                    activity.append("parser")
+                    raise AssertionError("non-EPUB reached parser")
+
+            with _Server(payload) as server:
+                config = root / "config.json"
+                config.write_text(
+                    json.dumps(
+                        _config(
+                            server.endpoint,
+                            media,
+                            target_secret,
+                            provider_secret="/definitely/absent/provider.secret",
+                        )
+                    ),
+                    encoding="utf-8",
+                )
+                with patch.object(
+                    composition, "_IsolatedEpubInspector", return_value=Inspector()
+                ), patch.object(
+                    composition,
+                    "hardcover_client",
+                    side_effect=lambda *args, **kwargs: activity.append("provider"),
+                ):
+                    result, output, errors = _installed_cli(config, database)
+            self.assertEqual(result, 4)
+            self.assertEqual(output, "")
+            self.assertEqual(errors, "Metadata report failed: unsupported media.\n")
+            self.assertEqual(activity, [])
+            self.assertFalse(database.exists())
+            self.assertEqual(server.requests, 1)
+            self.assertEqual(source.read_bytes(), original)
+
+    def test_installed_cli_referenced_media_unsupported_provider_is_absent(self) -> None:
+        self.assertIsNotNone(shutil.which("mechanical-librarian"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.json"
+            source = _config(
+                "http://127.0.0.1:9",
+                root,
+                root / "absent-target.secret",
+                audiobook=True,
+                provider_secret="/definitely/absent/provider.secret",
+            )
+            self.assertEqual(
+                source["libraries"][0]["provider_connections"], ["catalogue"]
+            )
+            config.write_text(json.dumps(source), encoding="utf-8")
+            database = root / "reports.sqlite"
+            activity: list[str] = []
+            with patch.object(
+                composition,
+                "target_client",
+                side_effect=lambda *args, **kwargs: activity.append("target"),
+            ), patch.object(
+                composition,
+                "hardcover_client",
+                side_effect=lambda *args, **kwargs: activity.append("provider"),
+            ), patch.object(
+                composition,
+                "_IsolatedEpubInspector",
+                side_effect=lambda: activity.append("parser"),
+            ):
+                result, output, errors = _installed_cli(config, database)
+            self.assertEqual(result, 4)
+            self.assertEqual(output, "")
+            self.assertEqual(errors, "Metadata report failed: unsupported media.\n")
+            self.assertEqual(activity, [])
+            self.assertFalse(database.exists())
+
+    def test_installed_cli_reuses_one_provider_credential_across_libraries(self) -> None:
+        self.assertIsNotNone(shutil.which("mechanical-librarian"))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            source.write_bytes(opening_title_isbn_applicability())
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            provider_secret = root / "provider.secret"
+            provider_secret.write_text("provider-token", encoding="ascii")
+            provider_secret.chmod(0o600)
+            provider_requests: list[httpx.Request] = []
+            provider_secret_uses: list[str] = []
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                provider_requests.append(request)
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={
+                        "data": {
+                            "editions": [
+                                {
+                                    "id": 1,
+                                    "isbn_10": None,
+                                    "isbn_13": "9780306406157",
+                                    "book": {
+                                        "id": 1,
+                                        "title": "Current service title",
+                                    },
+                                }
+                            ]
+                        }
+                    },
+                )
+
+            def client(secret_file: str, timeout_seconds: int) -> httpx.Client:
+                provider_secret_uses.append(secret_file)
+                return real_hardcover_client(
+                    secret_file,
+                    timeout_seconds,
+                    transport=httpx.MockTransport(handler),
+                )
+
+            database = root / "reports.sqlite"
+            with _Server(_item(source.stat().st_size)) as server:
+                source_config = _config(
+                    server.endpoint,
+                    media,
+                    target_secret,
+                    provider_secret=str(provider_secret),
+                )
+                source_config["libraries"].append(
+                    {
+                        "name": "other",
+                        "connection": "primary",
+                        "library_id": "library-id",
+                        "media_kind": "ebook",
+                        "mount": "books",
+                        "provider_connections": ["catalogue"],
+                    }
+                )
+                self.assertEqual(len(source_config["providers"]), 1)
+                self.assertEqual(
+                    source_config["providers"][0]["secret_file"],
+                    str(provider_secret),
+                )
+                config = root / "config.json"
+                config.write_text(json.dumps(source_config), encoding="utf-8")
+                with patch.object(composition, "hardcover_client", side_effect=client):
+                    first = _installed_cli(config, database, library="books")
+                    second = _installed_cli(config, database, library="other")
+
+            self.assertEqual([first[0], second[0]], [0, 0])
+            self.assertEqual([first[2], second[2]], ["", ""])
+            reports = [
+                MetadataReport.from_json(value[1].removesuffix("\n"))
+                for value in (first, second)
+            ]
+            self.assertEqual(
+                [report.target.library for report in reports], ["books", "other"]
+            )
+            self.assertEqual(
+                [report.providers[0].status.value for report in reports],
+                ["candidates", "candidates"],
+            )
+            self.assertEqual(
+                provider_secret_uses,
+                [str(provider_secret), str(provider_secret)],
+            )
+            self.assertEqual(len(provider_requests), 2)
+            self.assertTrue(
+                all(
+                    request.headers.get("authorization")
+                    == "Bearer provider-token"
+                    for request in provider_requests
+                )
+            )
+            self.assertEqual(server.requests, 4)
+            public_output = "".join(value for result in (first, second) for value in result[1:])
+            self.assertNotIn("provider-token", public_output)
+            self.assertNotIn("target-token", public_output)
+            self.assertNotIn(str(provider_secret), public_output)
+            connection = sqlite3.connect(database)
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM metadata_reports").fetchone(),
+                (2,),
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM current_metadata_reports"
+                ).fetchone(),
+                (2,),
+            )
+            connection.close()
 
     def test_real_child_clean_database_exact_replay_and_successor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

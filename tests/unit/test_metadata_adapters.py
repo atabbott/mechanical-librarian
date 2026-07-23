@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -156,6 +157,46 @@ class MetadataPersistenceTests(unittest.TestCase):
             with self.assertRaises(MetadataReportError):
                 open_repository(path)
             after = {value.name: value.read_bytes() for value in root.iterdir()}
+            self.assertEqual(after, before)
+
+    def test_incompatible_hot_journal_is_rejected_and_preserved_byte_for_byte(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "other.sqlite"
+            connection = sqlite3.connect(path)
+            connection.execute("PRAGMA journal_mode=DELETE")
+            connection.execute("CREATE TABLE legacy(value TEXT)")
+            connection.execute("INSERT INTO legacy VALUES('original')")
+            connection.commit()
+            connection.close()
+            child = (
+                "import os,sqlite3,sys\n"
+                "connection=sqlite3.connect(sys.argv[1])\n"
+                "connection.execute('PRAGMA journal_mode=DELETE')\n"
+                "connection.execute('PRAGMA synchronous=FULL')\n"
+                "connection.execute('BEGIN IMMEDIATE')\n"
+                "connection.execute(\"UPDATE legacy SET value='uncommitted'\")\n"
+                "os._exit(0)\n"
+            )
+            subprocess.run(
+                [sys.executable, "-c", child, str(path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            journal = Path(f"{path}-journal")
+            self.assertTrue(journal.is_file())
+            self.assertGreater(journal.stat().st_size, 512)
+            before = {
+                path.name: path.read_bytes(),
+                journal.name: journal.read_bytes(),
+            }
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
+            after = {
+                path.name: path.read_bytes(),
+                journal.name: journal.read_bytes(),
+            }
             self.assertEqual(after, before)
 
     def test_path_swap_to_symlink_cannot_bind_or_write_alternate_database(self) -> None:

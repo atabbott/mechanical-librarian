@@ -8,7 +8,11 @@ from pathlib import Path
 
 import httpx
 
-from mechanical_librarian.application.configuration import ConfigurationError
+from mechanical_librarian.application.configuration import (
+    ConfigurationError,
+    ProviderConnectionConfiguration,
+    TargetConnectionConfiguration,
+)
 from mechanical_librarian.infrastructure.configuration import configuration_schema_json, load_configuration_file
 from mechanical_librarian.infrastructure.security.credentials import read_secret, target_client
 
@@ -90,6 +94,42 @@ class MetadataConfigurationTests(unittest.TestCase):
                 path.write_text(json.dumps(source), encoding="utf-8")
                 with self.subTest(field=field), self.assertRaises(ConfigurationError):
                     load_configuration_file(path)
+
+    def test_secret_paths_are_absolute_in_generated_schema_and_runtime(self) -> None:
+        schema = json.loads(configuration_schema_json())["$defs"]
+        self.assertEqual(
+            schema["ConnectionInput"]["properties"]["secret_file"]["pattern"],
+            "^/",
+        )
+        provider_secret = schema["ProviderInput"]["properties"]["secret_file"]
+        absolute_variant = next(
+            value for value in provider_secret["anyOf"] if value.get("type") == "string"
+        )
+        self.assertEqual(absolute_variant["pattern"], "^/")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cases = []
+            relative_target = _source(root)
+            relative_target["connections"][0]["secret_file"] = "target.secret"
+            cases.append(relative_target)
+            relative_provider = _source(root)
+            relative_provider["providers"][0].update(
+                {"enabled": True, "secret_file": "provider.secret"}
+            )
+            cases.append(relative_provider)
+            for index, source in enumerate(cases):
+                path = root / f"relative-secret-{index}.json"
+                path.write_text(json.dumps(source), encoding="utf-8")
+                with self.subTest(index=index), self.assertRaises(ConfigurationError):
+                    load_configuration_file(path)
+
+        with self.assertRaises(ConfigurationError):
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "target.secret"
+            )
+        with self.assertRaises(ConfigurationError):
+            ProviderConnectionConfiguration("catalogue", True, "provider.secret")
 
 
 class CredentialBoundaryTests(unittest.TestCase):

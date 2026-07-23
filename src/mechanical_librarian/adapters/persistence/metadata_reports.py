@@ -164,7 +164,10 @@ def open_repository(path: Path) -> SQLiteMetadataReportRepository:
             information = os.fstat(descriptor)
             if not stat.S_ISREG(information.st_mode):
                 raise MetadataReportError("database path is invalid")
+            _reject_database_sidecars(path)
+            _validate_delete_mode_header(descriptor)
             _validate_existing_read_only(path, descriptor)
+            _reject_database_sidecars(path)
         else:
             descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
             information = os.fstat(descriptor)
@@ -207,7 +210,7 @@ def open_repository(path: Path) -> SQLiteMetadataReportRepository:
 
 def _validate_existing_read_only(path: Path, descriptor: int) -> None:
     absolute = str(path.absolute())
-    uri = f"file:{quote(absolute, safe='/')}?mode=ro&immutable=1"
+    uri = f"file:{quote(absolute, safe='/')}?mode=ro"
     connection: sqlite3.Connection | None = None
     try:
         before = _regular_descriptors(descriptor)
@@ -224,6 +227,7 @@ def _connect_bound(path: Path, descriptor: int) -> sqlite3.Connection:
     absolute = str(path.absolute())
     uri = f"file:{quote(absolute, safe='/')}?mode=rw"
     before = _regular_descriptors(descriptor)
+    _reject_database_sidecars(path)
     connection = sqlite3.connect(uri, uri=True, isolation_level=None)
     try:
         _validate_connection_binding(connection, path, descriptor, before)
@@ -231,6 +235,33 @@ def _connect_bound(path: Path, descriptor: int) -> sqlite3.Connection:
     except Exception:
         connection.close()
         raise
+
+
+def _reject_database_sidecars(path: Path) -> None:
+    for suffix in ("-journal", "-wal", "-shm"):
+        sidecar = Path(f"{path}{suffix}")
+        try:
+            sidecar.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise MetadataReportError(
+                "database recovery state is unavailable"
+            ) from error
+        raise MetadataReportError("database recovery state is unsupported")
+
+
+def _validate_delete_mode_header(descriptor: int) -> None:
+    try:
+        header = os.pread(descriptor, 20, 0)
+    except OSError as error:
+        raise MetadataReportError("database header is unavailable") from error
+    if (
+        len(header) != 20
+        or header[:16] != b"SQLite format 3\x00"
+        or header[18:20] != b"\x01\x01"
+    ):
+        raise MetadataReportError("database recovery mode is unsupported")
 
 
 def _validate_connection_binding(

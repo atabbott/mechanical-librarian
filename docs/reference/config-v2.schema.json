@@ -22,6 +22,7 @@
         "secret_file": {
           "maxLength": 1024,
           "minLength": 1,
+          "pattern": "^/",
           "title": "Secret File",
           "type": "string"
         }
@@ -189,6 +190,7 @@
             {
               "maxLength": 1024,
               "minLength": 1,
+              "pattern": "^/",
               "type": "string"
             },
             {

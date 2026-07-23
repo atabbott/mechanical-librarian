@@ -18,6 +18,15 @@ def _name(value: object, label: str) -> None:
         raise ConfigurationError(f"{label} is invalid")
 
 
+def _absolute_path(value: object, label: str) -> None:
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= 1024
+        or not value.startswith("/")
+    ):
+        raise ConfigurationError(f"{label} is invalid")
+
+
 @dataclass(frozen=True, repr=False, slots=True)
 class TargetConnectionConfiguration:
     name: str
@@ -27,8 +36,9 @@ class TargetConnectionConfiguration:
 
     def __post_init__(self) -> None:
         _name(self.name, "target connection name")
-        if self.adapter != "audiobookshelf" or type(self.endpoint) is not str or type(self.secret_file) is not str:
+        if self.adapter != "audiobookshelf" or type(self.endpoint) is not str:
             raise ConfigurationError("target connection is invalid")
+        _absolute_path(self.secret_file, "target secret file")
 
     def __repr__(self) -> str:
         return "TargetConnectionConfiguration(<redacted>)"
@@ -47,6 +57,8 @@ class ProviderConnectionConfiguration:
             raise ConfigurationError("provider connection is invalid")
         if self.enabled != (self.secret_file is not None):
             raise ConfigurationError("provider enablement and secret configuration disagree")
+        if self.secret_file is not None:
+            _absolute_path(self.secret_file, "provider secret file")
 
     def __repr__(self) -> str:
         return "ProviderConnectionConfiguration(<redacted>)"

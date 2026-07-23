@@ -23,7 +23,6 @@ from mechanical_librarian.application.configuration import (
 
 _MAX_CONFIG_BYTES = 262_144
 Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
-BoundedPath = Annotated[StrictStr, Field(min_length=1, max_length=1024)]
 BoundedAbsolutePath = Annotated[
     StrictStr,
     Field(min_length=1, max_length=1024, pattern=r"^/"),
@@ -38,14 +37,14 @@ class ConnectionInput(_Closed):
     name: Name
     adapter: Literal["audiobookshelf"]
     endpoint: Annotated[StrictStr, Field(min_length=1, max_length=2048)]
-    secret_file: BoundedPath
+    secret_file: BoundedAbsolutePath
 
 
 class ProviderInput(_Closed):
     name: Name
     adapter: Literal["hardcover"]
     enabled: StrictBool
-    secret_file: BoundedPath | None
+    secret_file: BoundedAbsolutePath | None
 
 
 class MountInput(_Closed):
