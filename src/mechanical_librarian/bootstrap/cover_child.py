@@ -11,6 +11,8 @@ import socket
 import sys
 import warnings
 import ctypes
+import errno
+import platform
 
 from PIL import Image, ImageOps, UnidentifiedImageError, features
 
@@ -44,8 +46,25 @@ def _no_network() -> None:
 def _isolate_network() -> None:
     if not sys.platform.startswith("linux"):
         return
-    if ctypes.CDLL(None, use_errno=True).unshare(0x40000000) != 0:
-        raise OSError(ctypes.get_errno(), "network namespace unavailable")
+    numbers = {
+        "x86_64": (41, 53),
+        "aarch64": (198, 199),
+    }.get(platform.machine())
+    if numbers is None:
+        raise OSError("network syscall filter is unavailable")
+    class Filter(ctypes.Structure):
+        _fields_ = (("code", ctypes.c_ushort), ("jt", ctypes.c_ubyte), ("jf", ctypes.c_ubyte), ("k", ctypes.c_uint))
+    class Program(ctypes.Structure):
+        _fields_ = (("length", ctypes.c_ushort), ("filter", ctypes.POINTER(Filter)))
+    instructions = [Filter(0x20, 0, 0, 0)]
+    for number in numbers:
+        instructions.extend((Filter(0x15, 0, 1, number), Filter(0x06, 0, 0, 0x00050000 | errno.EPERM)))
+    instructions.append(Filter(0x06, 0, 0, 0x7FFF0000))
+    array = (Filter * len(instructions))(*instructions)
+    program = Program(len(instructions), array)
+    library = ctypes.CDLL(None, use_errno=True)
+    if library.prctl(38, 1, 0, 0, 0) != 0 or library.prctl(22, 2, ctypes.byref(program)) != 0:
+        raise OSError(ctypes.get_errno(), "network syscall filter is unavailable")
 
 
 def _decode(data: bytes) -> dict[str, object]:
