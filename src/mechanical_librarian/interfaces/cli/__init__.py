@@ -21,6 +21,7 @@ from mechanical_librarian.domain.metadata_report import MetadataReport, ReportVa
 
 
 Runner = Callable[[Path, Path, str, str, str, int], str]
+ReopenRunner = Callable[[Path, str], str]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -65,10 +66,19 @@ def _parser() -> _Parser:
     report.add_argument("--library", required=True, metavar="NAME", type=_name)
     report.add_argument("--item", required=True, metavar="ITEM_ID", type=_item)
     report.add_argument("--file-index", required=True, metavar="INDEX", type=_index)
+    reopen = commands.add_parser("metadata-report-get", help="reopen one persisted metadata report")
+    reopen.add_argument("--database", required=True, metavar="PATH", type=Path)
+    reopen.add_argument("--report-id", required=True, metavar="REPORT_ID", type=_report_id)
     return parser
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def _report_id(value: str) -> str:
+    if re.fullmatch(r"report_[0-9a-f]{64}", value) is None:
+        raise argparse.ArgumentTypeError("invalid report id")
+    return value
+
+
+def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     try:
@@ -76,6 +86,21 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, std
     except _ArgumentFailure:
         errors.write("Metadata report failed: invalid invocation.\n")
         return 2
+    if arguments.command == "metadata-report-get":
+        if reopen_runner is None:
+            errors.write("Metadata report failed safely.\n")
+            return 1
+        try:
+            serialized = reopen_runner(arguments.database, arguments.report_id)
+            report = MetadataReport.from_json(serialized)
+            if report.report_id != arguments.report_id or report.to_json() != serialized:
+                raise ReportValueError("report output is invalid")
+        except Exception:
+            errors.write("Metadata report failed safely.\n")
+            return 1
+        output.write(serialized)
+        output.write("\n")
+        return 0
     if runner is None:
         errors.write("Metadata report failed safely.\n")
         return 1

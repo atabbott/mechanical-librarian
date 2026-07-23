@@ -16,7 +16,7 @@ from mechanical_librarian.domain.evidence_bounds import (
 )
 
 
-REPORT_SCHEMA = "metadata-report-v1"
+REPORT_SCHEMA = "metadata-report-v2"
 MAX_REPORT_BYTES = 262_144
 MAX_CANDIDATES = 4
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -31,7 +31,44 @@ class ReportValueError(ValueError):
 
 class ClaimKind(StrEnum):
     TITLE = "title"
+    SUBTITLE = "subtitle"
+    CREATOR = "creator"
+    CONTRIBUTOR = "contributor"
+    SERIES = "series"
+    SERIES_SEQUENCE = "series_sequence"
     ISBN = "isbn"
+    PUBLICATION_DATE = "publication_date"
+    PUBLISHER = "publisher"
+    DESCRIPTION = "description"
+    LANGUAGE = "language"
+    SUBJECT = "subject"
+
+
+class FieldState(StrEnum):
+    """Closed outcome vocabulary for each local metadata field."""
+
+    VALID = "valid"
+    ABSENT = "absent"
+    MALFORMED = "malformed"
+    OVERSIZED = "oversized"
+    UNSUPPORTED = "unsupported"
+    UNTYPED = "untyped"
+    INAPPLICABLE = "inapplicable"
+
+
+@dataclass(frozen=True, slots=True)
+class FieldResult:
+    """Closed aggregate state for one field, independent of source claims."""
+
+    kind: ClaimKind
+    state: FieldState
+
+    def __post_init__(self) -> None:
+        if type(self.kind) is not ClaimKind or type(self.state) is not FieldState:
+            raise ReportValueError("field result is invalid")
+
+    def to_data(self) -> dict[str, str]:
+        return {"kind": self.kind.value, "state": self.state.value}
 
 
 class ProviderStatus(StrEnum):
@@ -144,13 +181,14 @@ class LocalClaim:
     basis: str
     checksum: str
     applicability_basis: str
+    state: FieldState = FieldState.VALID
 
     def __post_init__(self) -> None:
         if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("local_"):
             raise ReportValueError("local claim reference is invalid")
-        if type(self.kind) is not ClaimKind:
+        if type(self.kind) is not ClaimKind or type(self.state) is not FieldState:
             raise ReportValueError("local claim kind is invalid")
-        maximum = 512 if self.kind is ClaimKind.TITLE else 280
+        maximum = 512 if self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.DESCRIPTION} else 280
         _text(self.observed, "observed claim", maximum)
         if self.canonical is not None:
             _text(self.canonical, "canonical claim", 512)
@@ -159,18 +197,18 @@ class LocalClaim:
             raise ReportValueError("claim excerpt does not support its observation")
         if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"}:
             raise ReportValueError("claim applicability is invalid")
-        if self.basis not in {"opening_matter", "target_metadata"}:
+        if self.basis not in {"opening_matter", "package_metadata", "target_metadata"}:
             raise ReportValueError("claim basis is invalid")
         if self.checksum not in {"valid_isbn_10", "valid_isbn_13", "invalid", "not_applicable"}:
             raise ReportValueError("claim checksum is invalid")
         if self.applicability_basis not in {"ebook", "paperback", "hardcover", "print", "unlabelled", "ambiguous", "not_applicable"}:
             raise ReportValueError("claim applicability basis is invalid")
-        if self.kind is ClaimKind.TITLE and (
+        if self.kind is not ClaimKind.ISBN and (
             self.checksum != "not_applicable"
             or self.applicability != "not_applicable"
             or self.applicability_basis != "not_applicable"
         ):
-            raise ReportValueError("title claim has identifier fields")
+            raise ReportValueError("non-identifier claim has identifier fields")
         if self.kind is ClaimKind.ISBN and (
             self.checksum.startswith("valid_") != (self.canonical is not None)
             or self.applicability == "not_applicable"
@@ -179,7 +217,7 @@ class LocalClaim:
             raise ReportValueError("ISBN claim typing is inconsistent")
         if self.kind is ClaimKind.ISBN and self.canonical is not None and not _valid_isbn(self.canonical, self.checksum):
             raise ReportValueError("ISBN claim checksum is inconsistent")
-        if self.kind is ClaimKind.TITLE and self.canonical != normalize_title(self.observed):
+        if self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE} and self.canonical != normalize_title(self.observed):
             raise ReportValueError("title claim normalization is inconsistent")
         expected = stable_reference("local", self._reference_data())
         if self.reference != expected:
@@ -197,6 +235,7 @@ class LocalClaim:
         basis: str = "opening_matter",
         checksum: str,
         applicability_basis: str,
+        state: FieldState = FieldState.VALID,
     ) -> Self:
         value = {
             "applicability": applicability,
@@ -207,8 +246,9 @@ class LocalClaim:
             "kind": kind.value,
             "observed": observed,
             "applicability_basis": applicability_basis,
+            "state": state.value if type(state) is FieldState else "",
         }
-        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis)
+        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis, state)
 
     def _reference_data(self) -> dict[str, object]:
         return {
@@ -220,10 +260,11 @@ class LocalClaim:
             "kind": self.kind.value,
             "observed": self.observed,
             "applicability_basis": self.applicability_basis,
+            "state": self.state.value,
         }
 
     def to_data(self) -> dict[str, object]:
-        return {"reference": self.reference, **self._reference_data()}
+        return {"reference": self.reference, "state": self.state.value, **self._reference_data()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,6 +383,7 @@ class MetadataReport:
     local_status: str
     local_reasons: tuple[str, ...]
     providers: tuple[ProviderObservation, ...]
+    field_results: tuple[FieldResult, ...]
     schema_version: str = REPORT_SCHEMA
 
     def __post_init__(self) -> None:
@@ -366,6 +408,12 @@ class MetadataReport:
         names = tuple(value.provider for value in self.providers)
         if names != tuple(sorted(set(names))):
             raise ReportValueError("provider observations are not in canonical order")
+        if (
+            type(self.field_results) is not tuple
+            or any(type(value) is not FieldResult for value in self.field_results)
+            or tuple(value.kind for value in self.field_results) != tuple(ClaimKind)
+        ):
+            raise ReportValueError("field results are incomplete or unordered")
         known = set(references)
         if any(not set(provider.input_references).issubset(known) for provider in self.providers):
             raise ReportValueError("provider inputs do not reference local claims")
@@ -394,12 +442,14 @@ class MetadataReport:
         local_claims: tuple[LocalClaim, ...],
         local_reasons: tuple[str, ...],
         providers: tuple[ProviderObservation, ...],
+        field_results: tuple[FieldResult, ...] | None = None,
     ) -> Self:
         local_status = "candidate" if any(value.basis == "opening_matter" for value in local_claims) else "no_candidate"
-        data = _report_data("", target, file, local_claims, local_status, local_reasons, providers)
+        results = field_results if field_results is not None else derive_field_results(local_claims)
+        data = _report_data("", target, file, local_claims, local_status, local_reasons, providers, results)
         data.pop("report_id")
         identity = f"report_{hashlib.sha256(canonical_json(data).encode('utf-8')).hexdigest()}"
-        return cls(identity, target, file, local_claims, local_status, local_reasons, providers)
+        return cls(identity, target, file, local_claims, local_status, local_reasons, providers, results)
 
     def _identity_data(self) -> dict[str, object]:
         value = self.to_data()
@@ -407,7 +457,7 @@ class MetadataReport:
         return value
 
     def to_data(self) -> dict[str, object]:
-        return _report_data(self.report_id, self.target, self.file, self.local_claims, self.local_status, self.local_reasons, self.providers)
+        return _report_data(self.report_id, self.target, self.file, self.local_claims, self.local_status, self.local_reasons, self.providers, self.field_results)
 
     def to_json(self) -> str:
         return canonical_json(self.to_data())
@@ -430,6 +480,26 @@ class MetadataReport:
         if report.to_json() != serialized:
             raise ReportValueError("report document is not canonical")
         return report
+
+
+def derive_field_results(local_claims: tuple[LocalClaim, ...]) -> tuple[FieldResult, ...]:
+    """Summarise observed field states without making claims a decision surface."""
+    precedence = (
+        FieldState.MALFORMED, FieldState.OVERSIZED, FieldState.UNSUPPORTED,
+        FieldState.UNTYPED, FieldState.INAPPLICABLE, FieldState.VALID,
+    )
+    return tuple(
+        FieldResult(
+            kind,
+            next(
+                (state for state in precedence if any(
+                    claim.kind is kind and claim.state is state for claim in local_claims
+                )),
+                FieldState.ABSENT,
+            ),
+        )
+        for kind in ClaimKind
+    )
 
 
 def compare_claim(kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) -> tuple[Comparison, tuple[str, ...]]:
@@ -462,9 +532,10 @@ def compare_claim(kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) ->
     )
 
 
-def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...]) -> dict[str, object]:
+def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...], field_results: tuple[FieldResult, ...]) -> dict[str, object]:
     return {
         "file": file.to_data(),
+        "field_results": [value.to_data() for value in field_results],
         "local": {
             "claims": [value.to_data() for value in local_claims],
             "reasons": list(local_reasons),
@@ -478,12 +549,13 @@ def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_cla
 
 
 def _report_from_data(value: object) -> MetadataReport:
-    root = _object(value, {"file", "local", "providers", "report_id", "schema_version", "target"})
+    root = _object(value, {"field_results", "file", "local", "providers", "report_id", "schema_version", "target"})
     target = _object(root["target"], {"connection", "current_title", "item", "library"})
     file = _object(root["file"], {"content_digest", "format", "identity", "selected_index"})
     local = _object(root["local"], {"claims", "reasons", "status"})
     claims = tuple(_local_claim_from_data(item) for item in _list(local["claims"]))
     providers = tuple(_provider_from_data(item) for item in _list(root["providers"]))
+    field_results = tuple(_field_result_from_data(item) for item in _list(root["field_results"]))
     reasons = tuple(_strings(local["reasons"]))
     return MetadataReport(
         root["report_id"],
@@ -493,13 +565,19 @@ def _report_from_data(value: object) -> MetadataReport:
         local["status"],
         reasons,
         providers,
+        field_results,
         root["schema_version"],
     )
 
 
+def _field_result_from_data(value: object) -> FieldResult:
+    item = _object(value, {"kind", "state"})
+    return FieldResult(ClaimKind(item["kind"]), FieldState(item["state"]))
+
+
 def _local_claim_from_data(value: object) -> LocalClaim:
-    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference"})
-    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"])
+    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference", "state"})
+    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"], FieldState(item["state"]))
 
 
 def _provider_from_data(value: object) -> ProviderObservation:
@@ -570,7 +648,7 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 
 
 __all__ = [
-    "ClaimKind", "Comparison", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
+    "ClaimKind", "Comparison", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
     "ProviderObservation", "ProviderStatus", "REPORT_SCHEMA", "ReportValueError",
     "TargetFacts", "canonical_json", "compare_claim", "normalize_title",

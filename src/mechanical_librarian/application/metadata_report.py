@@ -171,7 +171,7 @@ class GenerateMetadataReport:
 
         reasons = tuple(
             sorted(
-                {f"opening_{claim.kind.value}" for claim in local.claims}
+                {f"{claim.basis}_{claim.kind.value}" for claim in local.claims}
                 or {"no_opening_claims"}
             )
         )

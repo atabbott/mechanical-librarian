@@ -21,6 +21,8 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    FieldResult,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
@@ -77,6 +79,93 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_field_results_are_complete_canonical_and_separate_from_claims(self) -> None:
+        states = tuple(FieldState)
+        results = tuple(
+            FieldResult(kind, states[index % len(states)])
+            for index, kind in enumerate(ClaimKind)
+        )
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(),
+            field_results=results,
+        )
+        self.assertEqual(report.field_results, results)
+        self.assertEqual(MetadataReport.from_json(report.to_json()), report)
+        with self.assertRaises(ReportValueError):
+            MetadataReport.create(
+                target=report.target, file=report.file, local_claims=(),
+                local_reasons=("no_opening_claims",), providers=(),
+                field_results=results[:-1],
+            )
+
+    def test_non_valid_observation_state_is_projected_to_its_field_result(self) -> None:
+        claim = LocalClaim.create(
+            kind=ClaimKind.DESCRIPTION,
+            observed="oversized-source-text-sha256:" + "a" * 64,
+            canonical=None,
+            excerpt="oversized-source-text-sha256:" + "a" * 64,
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            basis="package_metadata",
+            state=FieldState.OVERSIZED,
+        )
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(claim,), local_reasons=("package_metadata_description",), providers=(),
+        )
+        self.assertEqual(
+            dict((value.kind, value.state) for value in report.field_results)[ClaimKind.DESCRIPTION],
+            FieldState.OVERSIZED,
+        )
+
+    def test_malformed_and_inapplicable_claims_derive_independent_field_results(self) -> None:
+        claims = (
+            LocalClaim.create(kind=ClaimKind.ISBN, observed="not-an-isbn", canonical=None,
+                              excerpt="not-an-isbn", applicability="unknown", checksum="invalid",
+                              applicability_basis="unlabelled", state=FieldState.MALFORMED),
+            LocalClaim.create(kind=ClaimKind.PUBLISHER, observed="not supplied", canonical="not supplied",
+                              excerpt="not supplied", applicability="not_applicable", checksum="not_applicable",
+                              applicability_basis="not_applicable", state=FieldState.INAPPLICABLE),
+        )
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64), local_claims=claims,
+            local_reasons=("no_opening_claims",), providers=(),
+        )
+        states = {value.kind: value.state for value in report.field_results}
+        self.assertEqual(states[ClaimKind.ISBN], FieldState.MALFORMED)
+        self.assertEqual(states[ClaimKind.PUBLISHER], FieldState.INAPPLICABLE)
+
+    def test_closed_local_field_vocabulary_accepts_package_and_contextual_evidence(self) -> None:
+        publisher = LocalClaim.create(
+            kind=ClaimKind.PUBLISHER,
+            observed="Example Press",
+            canonical="Example Press",
+            excerpt="Publisher: Example Press",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            basis="package_metadata",
+        )
+        subject = LocalClaim.create(
+            kind=ClaimKind.SUBJECT,
+            observed="Speculative fiction",
+            canonical=None,
+            excerpt="Subject: Speculative fiction",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            basis="package_metadata",
+        )
+        self.assertEqual(publisher.kind, ClaimKind.PUBLISHER)
+        self.assertIsNone(subject.canonical)
+
     def test_report_is_closed_canonical_and_content_addressed(self) -> None:
         claim = LocalClaim.create(
             kind=ClaimKind.TITLE,

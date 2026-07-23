@@ -21,7 +21,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionOutcome
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
-from mechanical_librarian.domain.metadata_report import ClaimKind, LocalClaim
+from mechanical_librarian.domain.metadata_report import ClaimKind, FieldState, LocalClaim
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -45,7 +45,7 @@ class _IsolatedEpubInspector:
                 EpubOpeningLimits(),
                 logical_identity=digest,
             )
-            inspection = EpubInspection.from_opening_report(report)
+            inspection = report
             if inspection.outcome not in {EpubInspectionOutcome.SUCCESS, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE}:
                 raise MetadataReportError("EPUB inspection failed")
             claims_by_reference: dict[str, LocalClaim] = {}
@@ -56,8 +56,10 @@ class _IsolatedEpubInspector:
                     canonical=fact.canonical_value,
                     excerpt=fact.supporting_context,
                     applicability=fact.media,
+                    basis=fact.basis,
                     checksum=fact.checksum,
                     applicability_basis=fact.classification_basis,
+                    state=FieldState(fact.state),
                 )
                 claims_by_reference[claim.reference] = claim
             return InspectionResult(digest, tuple(sorted(claims_by_reference.values(), key=lambda value: value.reference)))
@@ -117,8 +119,21 @@ def run_metadata_report(config_path: Path, database_path: Path, connection_name:
     return service.run(item, file_index)
 
 
+def reopen_metadata_report(database_path: Path, report_id: str) -> str:
+    """Read one exact persisted report without loading operational configuration."""
+    repository = open_repository(database_path)
+    try:
+        return repository.get(report_id)
+    finally:
+        repository.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    return cli_main(argv, runner=run_metadata_report)
+    return cli_main(
+        argv,
+        runner=run_metadata_report,
+        reopen_runner=reopen_metadata_report,
+    )
 
 
-__all__ = ["main", "run_metadata_report"]
+__all__ = ["main", "reopen_metadata_report", "run_metadata_report"]

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added `metadata-report-v2` local-field evidence: complete ordered field
+  states, package/opening evidence, and bounded rear-spine copyright evidence.
+  Exact persisted reports can be reopened by report ID without operational
+  configuration, credentials, target access, or network access.
+
 - Activated the clean-state 0.4 neutral metadata-evidence runtime. The installed
   package now exposes only `metadata-report` with required config, database,
   connection, library, item, and file-index inputs.

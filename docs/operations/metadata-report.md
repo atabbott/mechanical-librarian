@@ -16,6 +16,15 @@ Every option is required. There are no default paths, current-directory lookup,
 implicit filenames, environment fallbacks, presentation flags, or alternate
 output formats.
 
+An exact persisted report can be reopened without operational configuration,
+credentials, target access, provider construction, or network access:
+
+```text
+mechanical-librarian metadata-report-get \
+  --database /data/reports.sqlite \
+  --report-id report_<64-lowercase-hex-characters>
+```
+
 On success stdout is exactly the persisted canonical JSON report followed by
 one newline. On failure stdout is empty, stderr contains one fixed bounded
 diagnostic, and the exit status is nonzero. Diagnostics never include paths,
@@ -64,12 +73,25 @@ so a harmless file-list reorder does not change the target.
 The isolated child receives only the already-open read-only EPUB descriptor,
 source fingerprint, and fixed limits. It first captures one bounded immutable
 byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
-parsing. It returns bounded title and ISBN facts.
+ parsing. It returns only bounded, source-attributed local metadata facts:
+ explicit package fields, bounded opening matter, and an independent rear-spine
+ copyright pass. The rear pass considers only the final eight accepted spine
+ slots in reverse order, opens at most four XHTML/HTML resources, and never
+ substitutes an excluded, missing, encrypted, image, unsupported, or duplicate
+ slot. It admits only explicit title/creator cues and checksum-valid ISBNs when
+ the same resource has a copyright marker; it is not whole-book mining.
+ Across both pools there are at most nine content opens, 9 MiB of expanded
+ content, 786432 projected characters, 150000 nodes, and 80 claims.
 Each ISBN fact keeps its exact observed substring, a directly supporting
 excerpt, checksum result, canonical value only when valid, and an explicit
 ebook, print, unknown, or ambiguous classification with its nonnumeric label
 basis. ISBN-10 remains ISBN-10; print and invalid identifiers are retained as
 evidence but are never sent merely as ebook inputs.
+Every report contains every supported local field in fixed order with one closed
+state: `valid`, `absent`, `malformed`, `oversized`, `unsupported`, `untyped`, or
+`inapplicable`. These field results are independent evidence summaries, not a
+rank or decision.
+
 The credential-bearing parent combines those facts with the exact current
 target title. Every referenced, enabled Hardcover connection makes at most one
 fresh request. Disabled references produce one `disabled` observation without

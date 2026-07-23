@@ -2,15 +2,17 @@
 
 **Canonical report**
 The exact compact, key-sorted UTF-8 JSON document validated by the closed
-`metadata-report-v1` model.
+`metadata-report-v2` model.
 
 **Current pointer**
 The separate mutable reference from one connection/library/item/file identity
 scope to its latest immutable report. It does not mutate or delete predecessors.
 
 **Local claim**
-A source-attributed target-title or opening-matter title/ISBN fact with a stable
-content-derived reference.
+A source-attributed target-title, package-metadata, or opening-matter field
+fact with a stable content-derived reference. The v2 field-state vocabulary is
+closed: `valid`, `absent`, `malformed`, `oversized`, `unsupported`, `untyped`,
+and `inapplicable`.
 
 **Neutral provider observation**
 One provider's independent status and complete bounded candidate set. It has no
