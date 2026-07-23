@@ -5,8 +5,9 @@ from __future__ import annotations
 import ipaddress
 import socket
 import ssl
-import http.client
 import time
+import threading
+import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urljoin
 
@@ -14,6 +15,8 @@ import httpx
 
 
 MAX_BYTES = 8 * 1024 * 1024
+_MAX_HEADER_BYTES = 65_536
+_STATUS = re.compile(r"^HTTP/1\.[01] ([0-9]{3}) [\x20-\x7e]*$")
 
 
 class RemoteCoverError(RuntimeError):
@@ -56,6 +59,7 @@ class CoverDeadline:
 
 
 def _public_https(url: str) -> tuple[str, int]:
+    _validate_url(url)
     parts = urlsplit(url)
     if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443) or parts.username or parts.password or parts.fragment:
         raise RemoteCoverError("unsafe remote cover")
@@ -68,16 +72,39 @@ def _public_https(url: str) -> tuple[str, int]:
     return parts.hostname, 443
 
 
-def _pinned_address(url: str) -> tuple[str, str, str]:
+def _pinned_address(url: str, deadline: float | CoverDeadline | None = None) -> tuple[str, str, str]:
+    _validate_url(url)
     parts = urlsplit(url)
     if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443) or parts.username or parts.password or parts.fragment:
         raise RemoteCoverError("unsafe remote cover")
     host = parts.hostname
-    addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    addresses = _resolve(host, deadline)
     if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
         raise RemoteCoverError("unsafe remote cover")
     selected = addresses[0][4][0]
     return host, selected, urlsplit(url).path or "/"
+
+
+def _resolve(host: str, deadline: float | CoverDeadline | None) -> list[tuple[object, ...]]:
+    result: list[object] = []
+    def resolve() -> None:
+        try:
+            result.append(socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM))
+        except BaseException as error:
+            result.append(error)
+    worker = threading.Thread(target=resolve, daemon=True)
+    worker.start()
+    worker.join(_remaining(deadline))
+    if worker.is_alive():
+        raise RemoteCoverTimeout("remote cover timed out")
+    if not result or isinstance(result[0], BaseException):
+        raise RemoteCoverError("remote cover unavailable")
+    return result[0]  # type: ignore[return-value]
+
+
+def _validate_url(url: str) -> None:
+    if type(url) is not str or not url or any(ord(value) < 0x21 or ord(value) > 0x7E for value in url) or "\\" in url:
+        raise RemoteCoverError("unsafe remote cover")
 
 
 def _remaining(deadline: float | CoverDeadline | None) -> float:
@@ -89,8 +116,99 @@ def _remaining(deadline: float | CoverDeadline | None) -> float:
     return value
 
 
+def _receive(secured: ssl.SSLSocket, maximum: int, deadline: float | CoverDeadline | None) -> bytes:
+    secured.settimeout(_remaining(deadline))
+    value = secured.recv(maximum)
+    return value
+
+
+def _response(secured: ssl.SSLSocket, deadline: float | CoverDeadline | None) -> tuple[int, dict[str, str], bytes]:
+    buffer = bytearray()
+    while b"\r\n\r\n" not in buffer:
+        if len(buffer) >= _MAX_HEADER_BYTES:
+            raise RemoteCoverError("remote cover headers are oversized")
+        chunk = _receive(secured, min(4096, _MAX_HEADER_BYTES + 1 - len(buffer)), deadline)
+        if not chunk:
+            raise RemoteCoverError("remote cover response is invalid")
+        buffer.extend(chunk)
+    raw_headers, body_start = bytes(buffer).split(b"\r\n\r\n", 1)
+    try:
+        lines = raw_headers.decode("ascii", "strict").split("\r\n")
+    except UnicodeError as error:
+        raise RemoteCoverError("remote cover response is invalid") from error
+    match = _STATUS.fullmatch(lines[0])
+    if match is None:
+        raise RemoteCoverError("remote cover response is invalid")
+    headers: dict[str, str] = {}
+    for line in lines[1:]:
+        name, separator, value = line.partition(":")
+        if value.startswith(" "):
+            value = value[1:]
+        lowered = name.lower()
+        if not separator or not name or lowered in headers or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in lowered) or value != value.strip(" \t"):
+            raise RemoteCoverError("remote cover response is invalid")
+        headers[lowered] = value
+    transfer = headers.get("transfer-encoding")
+    length_text = headers.get("content-length")
+    if transfer is not None:
+        if transfer.lower() != "chunked" or length_text is not None:
+            raise RemoteCoverError("remote cover response is invalid")
+        body = _chunked_body(secured, body_start, deadline)
+    elif length_text is not None:
+        if not length_text.isascii() or not length_text.isdigit() or len(length_text) > 10:
+            raise RemoteCoverError("remote cover response is invalid")
+        length = int(length_text)
+        if length > MAX_BYTES or len(body_start) > length:
+            raise RemoteCoverError("remote cover is oversized")
+        body = bytearray(body_start)
+        while len(body) < length:
+            chunk = _receive(secured, min(65_536, length - len(body)), deadline)
+            if not chunk:
+                raise RemoteCoverError("remote cover response is invalid")
+            body.extend(chunk)
+        body = bytes(body)
+    else:
+        body = bytearray(body_start)
+        while True:
+            if len(body) > MAX_BYTES:
+                raise RemoteCoverError("remote cover is oversized")
+            chunk = _receive(secured, min(65_536, MAX_BYTES + 1 - len(body)), deadline)
+            if not chunk:
+                break
+            body.extend(chunk)
+        body = bytes(body)
+    return int(match.group(1)), headers, body
+
+
+def _chunked_body(secured: ssl.SSLSocket, initial: bytes, deadline: float | CoverDeadline | None) -> bytes:
+    buffer = bytearray(initial); output = bytearray()
+    def fill(marker: bytes) -> None:
+        while marker not in buffer:
+            chunk = _receive(secured, 4096, deadline)
+            if not chunk: raise RemoteCoverError("remote cover response is invalid")
+            buffer.extend(chunk)
+    while True:
+        fill(b"\r\n")
+        line, remainder = bytes(buffer).split(b"\r\n", 1); buffer[:] = remainder
+        size_text = line.split(b";", 1)[0]
+        if not size_text or len(size_text) > 8 or any(value not in b"0123456789abcdefABCDEF" for value in size_text):
+            raise RemoteCoverError("remote cover response is invalid")
+        size = int(size_text, 16)
+        if size == 0:
+            fill(b"\r\n")
+            if bytes(buffer).split(b"\r\n", 1)[0]: raise RemoteCoverError("remote cover response is invalid")
+            return bytes(output)
+        if len(output) + size > MAX_BYTES: raise RemoteCoverError("remote cover is oversized")
+        while len(buffer) < size + 2:
+            chunk = _receive(secured, min(65_536, size + 2 - len(buffer)), deadline)
+            if not chunk: raise RemoteCoverError("remote cover response is invalid")
+            buffer.extend(chunk)
+        if buffer[size:size + 2] != b"\r\n": raise RemoteCoverError("remote cover response is invalid")
+        output.extend(buffer[:size]); del buffer[:size + 2]
+
+
 def _pinned_fetch(url: str, deadline: float | CoverDeadline | None) -> tuple[int, dict[str, str], bytes]:
-    host, address, path = _pinned_address(url)
+    host, address, path = _pinned_address(url, deadline)
     query = urlsplit(url).query
     if query:
         path += "?" + query
@@ -103,20 +221,7 @@ def _pinned_fetch(url: str, deadline: float | CoverDeadline | None) -> tuple[int
             secured.settimeout(_remaining(deadline))
             request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n".encode("ascii")
             secured.sendall(request)
-            response = http.client.HTTPResponse(secured)
-            response.begin()
-            headers = {key.lower(): value for key, value in response.getheaders()}
-            chunks: list[bytes] = []; size = 0
-            while True:
-                secured.settimeout(_remaining(deadline))
-                chunk = response.read(min(65_536, MAX_BYTES + 1 - size))
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > MAX_BYTES:
-                    raise RemoteCoverError("remote cover is oversized")
-                chunks.append(chunk)
-            return response.status, headers, b"".join(chunks)
+            return _response(secured, deadline)
     finally:
         try:
             raw.close()
@@ -175,7 +280,7 @@ def fetch_remote_cover(url: str, *, deadline: float | CoverDeadline | None = Non
         raise RemoteCoverError("remote redirect limit exceeded")
     except httpx.TimeoutException as error:
         raise RemoteCoverTimeout("remote cover timed out") from error
-    except (httpx.HTTPError, OSError, ssl.SSLError, http.client.HTTPException) as error:
+    except (httpx.HTTPError, OSError, ssl.SSLError, UnicodeError) as error:
         raise RemoteCoverError("remote cover unavailable") from error
     finally:
         if own: active.close()

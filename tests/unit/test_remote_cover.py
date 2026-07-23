@@ -30,6 +30,14 @@ class RemoteCoverTests(unittest.TestCase):
         for value in ("https://user@example.com/a.jpg", "https://example.com/a.jpg#fragment"):
             with self.assertRaises(RemoteCoverError):
                 _public_https(value)
+        for value in (
+            "https://example.com/a b.jpg",
+            "https://example.com/a\x00b.jpg",
+            "https://example.com/café.jpg",
+            "https://example.com/a\\b.jpg",
+        ):
+            with self.assertRaises(RemoteCoverError):
+                _public_https(value)
 
     def test_fetch_uses_only_explicit_host_and_identity_headers(self) -> None:
         seen: list[httpx.Request] = []
