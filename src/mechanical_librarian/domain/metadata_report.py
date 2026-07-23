@@ -18,8 +18,17 @@ from mechanical_librarian.domain.evidence_bounds import (
 
 
 REPORT_SCHEMA = "metadata-report-v2"
-MAX_REPORT_BYTES = 262_144
-MAX_CANDIDATES = 4
+COMPARISON_VERSION = "same-kind-v1"
+# F09j's report contract admits rich, source-attributed candidates.  The
+# physical SQLite schema separately fingerprints this exact shape, so an F09i
+# database cannot be opened as this schema despite the stable document label.
+MAX_REPORT_BYTES = 2_097_152
+MAX_CANDIDATES = 5
+MAX_CONTRIBUTIONS = 16
+MAX_SERIES = 16
+MAX_TAGS = 32
+MAX_SCALAR_CHARACTERS = 512
+MAX_DESCRIPTION_CHARACTERS = 16_384
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _REFERENCE = re.compile(r"^(?:local|provider)_[0-9a-f]{64}$")
@@ -38,11 +47,15 @@ class ClaimKind(StrEnum):
     SERIES = "series"
     SERIES_SEQUENCE = "series_sequence"
     ISBN = "isbn"
+    ASIN = "asin"
     PUBLICATION_DATE = "publication_date"
     PUBLISHER = "publisher"
     DESCRIPTION = "description"
     LANGUAGE = "language"
     SUBJECT = "subject"
+    IMPRINT = "imprint"
+    GENRE = "genre"
+    TAG = "tag"
 
 
 class FieldState(StrEnum):
@@ -121,6 +134,8 @@ class ProviderStatus(StrEnum):
     RATE_LIMITED = "rate_limited"
     UNAVAILABLE = "unavailable"
     MALFORMED = "malformed"
+    OVERSIZED = "oversized"
+    CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"
 
 
 class Comparison(StrEnum):
@@ -128,6 +143,24 @@ class Comparison(StrEnum):
     DISAGREEMENT = "disagreement"
     INCOMPATIBLE = "incompatible"
     NOT_COMPARABLE = "not_comparable"
+
+
+class ClaimScope(StrEnum):
+    WORK = "work"
+    EDITION = "edition"
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonLink:
+    local_reference: str
+    outcome: Comparison
+
+    def __post_init__(self) -> None:
+        if _REFERENCE.fullmatch(self.local_reference) is None or not self.local_reference.startswith("local_") or type(self.outcome) is not Comparison:
+            raise ReportValueError("comparison link is invalid")
+
+    def to_data(self) -> dict[str, str]:
+        return {"local_reference": self.local_reference, "outcome": self.outcome.value}
 
 
 def canonical_json(value: object) -> str:
@@ -221,6 +254,7 @@ class LocalClaim:
     basis: str
     checksum: str
     applicability_basis: str
+    scope: ClaimScope
     state: FieldState = FieldState.VALID
     role: str | None = None
     rear_provenance: RearClaimProvenance | None = None
@@ -229,7 +263,7 @@ class LocalClaim:
     def __post_init__(self) -> None:
         if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("local_"):
             raise ReportValueError("local claim reference is invalid")
-        if type(self.kind) is not ClaimKind or type(self.state) is not FieldState:
+        if type(self.kind) is not ClaimKind or type(self.state) is not FieldState or type(self.scope) is not ClaimScope:
             raise ReportValueError("local claim kind is invalid")
         if self.basis == "target_metadata" and self.kind is not ClaimKind.TITLE:
             raise ReportValueError("target metadata claim kind is invalid")
@@ -296,6 +330,7 @@ class LocalClaim:
         basis: str = "opening_matter",
         checksum: str,
         applicability_basis: str,
+        scope: ClaimScope | None = None,
         state: FieldState = FieldState.VALID,
         role: str | None = None,
         rear_provenance: RearClaimProvenance | None = None,
@@ -311,11 +346,13 @@ class LocalClaim:
             "observed": observed,
             "applicability_basis": applicability_basis,
             "state": state.value if type(state) is FieldState else "",
+            "scope": (scope if scope is not None else claim_scope(kind)).value if type(scope if scope is not None else claim_scope(kind)) is ClaimScope else "",
             "role": role,
             "rear_provenance": None if rear_provenance is None else rear_provenance.to_data(),
             "occurrence": occurrence,
         }
-        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis, state, role, rear_provenance, occurrence)
+        resolved_scope = scope if scope is not None else claim_scope(kind)
+        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis, resolved_scope, state, role, rear_provenance, occurrence)
 
     def _reference_data(self) -> dict[str, object]:
         return {
@@ -328,6 +365,7 @@ class LocalClaim:
             "observed": self.observed,
             "applicability_basis": self.applicability_basis,
             "state": self.state.value,
+            "scope": self.scope.value,
             "role": self.role,
             "rear_provenance": None if self.rear_provenance is None else self.rear_provenance.to_data(),
             "occurrence": self.occurrence,
@@ -341,35 +379,74 @@ class LocalClaim:
 class ProviderClaim:
     reference: str
     kind: ClaimKind
-    value: str
-    comparison: Comparison
-    local_references: tuple[str, ...]
+    value: str | None
+    state: FieldState
+    scope: ClaimScope
+    applicability: str
+    role: str | None = None
+    raw_order: int = 0
+    links: tuple[ComparisonLink, ...] = ()
 
     def __post_init__(self) -> None:
         if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("provider_"):
             raise ReportValueError("provider claim reference is invalid")
-        if type(self.kind) is not ClaimKind or type(self.comparison) is not Comparison:
+        if type(self.kind) is not ClaimKind:
             raise ReportValueError("provider claim is invalid")
-        if self.kind not in {ClaimKind.TITLE, ClaimKind.ISBN}:
-            raise ReportValueError("provider claim kind is invalid")
-        _projection_text(self.value, "provider claim value", 512)
-        if self.kind is ClaimKind.ISBN and not (
+        if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"} or type(self.state) is not FieldState or type(self.raw_order) is not int or self.raw_order < 0 or type(self.scope) is not ClaimScope or type(self.links) is not tuple or any(type(link) is not ComparisonLink for link in self.links):
+            raise ReportValueError("provider claim scope is invalid")
+        if self.role is not None:
+            if self.kind not in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}:
+                raise ReportValueError("provider claim role is invalid")
+            try:
+                validate_role_projection(self.role)
+            except EvidenceValueError as error:
+                raise ReportValueError("provider claim role is invalid") from error
+        if self.state is FieldState.VALID:
+            if self.value is None:
+                raise ReportValueError("valid provider claim has no value")
+            _projection_text(
+                self.value,
+                "provider claim value",
+                MAX_DESCRIPTION_CHARACTERS if self.kind is ClaimKind.DESCRIPTION else MAX_SCALAR_CHARACTERS,
+            )
+        elif self.value is not None:
+            raise ReportValueError("nonvalid provider claim has a value")
+        if self.kind is ClaimKind.ISBN and self.value is not None and not (
             _valid_isbn(self.value, "valid_isbn_10")
             or _valid_isbn(self.value, "valid_isbn_13")
         ):
             raise ReportValueError("provider ISBN claim is invalid")
-        if type(self.local_references) is not tuple or any(
-            _REFERENCE.fullmatch(value) is None or not value.startswith("local_")
-            for value in self.local_references
-        ) or tuple(sorted(set(self.local_references))) != self.local_references:
-            raise ReportValueError("provider claim references are invalid")
+        if tuple(link.local_reference for link in self.links) != tuple(sorted(link.local_reference for link in self.links)) or len({link.local_reference for link in self.links}) != len(self.links):
+            raise ReportValueError("provider comparison links are invalid")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        provider: str,
+        candidate: str,
+        kind: ClaimKind,
+        value: str | None,
+        state: FieldState,
+        scope: ClaimScope,
+        applicability: str,
+        role: str | None = None,
+        raw_order: int = 0,
+        links: tuple[ComparisonLink, ...] = (),
+    ) -> Self:
+        data = _provider_reference_data(provider, candidate, kind, value, state, scope, applicability, role, raw_order)
+        return cls(stable_reference("provider", data), kind, value, state, scope, applicability, role, raw_order, links)
 
     def to_data(self) -> dict[str, object]:
         return {
-            "comparison": self.comparison.value,
             "kind": self.kind.value,
-            "local_references": list(self.local_references),
             "reference": self.reference,
+            "applicability": self.applicability,
+            "role": self.role,
+            "state": self.state.value,
+            "raw_order": self.raw_order,
+            "scope": self.scope.value,
+            "links": [link.to_data() for link in self.links],
             "value": self.value,
         }
 
@@ -386,6 +463,8 @@ class ProviderCandidate:
         references = tuple(value.reference for value in self.claims)
         if len(set(references)) != len(references):
             raise ReportValueError("provider candidate claim references are duplicated")
+        if tuple(value.raw_order for value in self.claims) != tuple(sorted(value.raw_order for value in self.claims)):
+            raise ReportValueError("provider candidate claims are not in raw source order")
 
     def to_data(self) -> dict[str, object]:
         return {"claims": [value.to_data() for value in self.claims], "identity": self.identity}
@@ -420,12 +499,7 @@ class ProviderObservation:
             claim.reference
             != stable_reference(
                 "provider",
-                {
-                    "candidate": candidate.identity,
-                    "kind": claim.kind.value,
-                    "provider": self.provider,
-                    "value": claim.value,
-                },
+                _provider_reference_data(self.provider, candidate.identity, claim.kind, claim.value, claim.state, claim.scope, claim.applicability, claim.role, claim.raw_order),
             )
             for candidate in self.candidates
             for claim in candidate.claims
@@ -452,12 +526,15 @@ class MetadataReport:
     providers: tuple[ProviderObservation, ...]
     field_results: tuple[FieldResult, ...]
     schema_version: str = REPORT_SCHEMA
+    comparison_version: str = COMPARISON_VERSION
 
     def __post_init__(self) -> None:
         if _REPORT_ID.fullmatch(self.report_id) is None or type(self.target) is not TargetFacts or type(self.file) is not FileFacts:
             raise ReportValueError("report identity or target is invalid")
         if self.schema_version != REPORT_SCHEMA:
             raise ReportValueError("report schema is unsupported")
+        if self.comparison_version != COMPARISON_VERSION:
+            raise ReportValueError("report comparison version is unsupported")
         if type(self.local_claims) is not tuple or any(type(value) is not LocalClaim for value in self.local_claims):
             raise ReportValueError("local claims are invalid")
         references = tuple(value.reference for value in self.local_claims)
@@ -492,9 +569,13 @@ class MetadataReport:
             for claim in candidate.claims
         )
         if len({claim.reference for claim in provider_claims}) != len(provider_claims) or any(
-            not set(claim.local_references).issubset(known) for claim in provider_claims
+            not {link.local_reference for link in claim.links}.issubset(known) for claim in provider_claims
         ):
             raise ReportValueError("provider candidate claim references are invalid")
+        for claim in provider_claims:
+            expected = comparison_links(claim, self.local_claims)
+            if claim.links != expected:
+                raise ReportValueError("provider comparison links are inconsistent")
         expected = f"report_{hashlib.sha256(canonical_json(self._identity_data()).encode('utf-8')).hexdigest()}"
         if self.report_id != expected:
             raise ReportValueError("report identity is inconsistent")
@@ -584,34 +665,59 @@ def derive_field_results(local_claims: tuple[LocalClaim, ...]) -> tuple[FieldRes
     )
 
 
-def compare_claim(kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) -> tuple[Comparison, tuple[str, ...]]:
-    relevant = tuple(item for item in local if item.kind is kind and item.canonical is not None)
-    references = tuple(sorted(item.reference for item in relevant))
-    if not relevant:
-        return Comparison.NOT_COMPARABLE, ()
-    if kind is ClaimKind.TITLE:
-        normalized = normalize_title(value).casefold()
-        matching = tuple(
-            sorted(
-                item.reference
-                for item in relevant
-                if normalize_title(item.canonical or "").casefold() == normalized
-            )
-        )
-        return (
-            (Comparison.AGREEMENT, matching)
-            if matching
-            else (Comparison.DISAGREEMENT, references)
-        )
-    digits = "".join(character for character in value if character.isdigit() or character in "Xx").upper()
-    matching = tuple(
-        sorted(item.reference for item in relevant if item.canonical == digits)
-    )
-    return (
-        (Comparison.AGREEMENT, matching)
-        if matching
-        else (Comparison.INCOMPATIBLE, references)
-    )
+def _provider_reference_data(provider: str, candidate: str, kind: ClaimKind, value: str | None, state: FieldState, scope: ClaimScope, applicability: str, role: str | None, raw_order: int) -> dict[str, object]:
+    return {
+        "applicability": applicability,
+        "candidate": candidate,
+        "kind": kind.value,
+        "provider": provider,
+        "raw_order": raw_order,
+        "role": role,
+        "scope": scope.value,
+        "state": state.value,
+        "value": value,
+    }
+
+
+def claim_scope(kind: ClaimKind) -> ClaimScope:
+    if type(kind) is not ClaimKind:
+        raise ReportValueError("claim kind is invalid")
+    return ClaimScope.EDITION if kind in {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE} else ClaimScope.WORK
+
+
+def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> tuple[ComparisonLink, ...]:
+    """Compute one immutable comparison outcome for each same-kind local claim."""
+    links: list[ComparisonLink] = []
+    for claim in local:
+        if claim.kind is not provider.kind:
+            continue
+        if (
+            provider.state is not FieldState.VALID
+            or provider.value is None
+            or claim.state is not FieldState.VALID
+            or claim.canonical is None
+            or claim.scope is not provider.scope
+            or claim.applicability != provider.applicability
+            or claim.role != provider.role
+        ):
+            outcome = Comparison.NOT_COMPARABLE
+        elif _comparison_value(provider.kind, provider.value) == _comparison_value(claim.kind, claim.canonical):
+            outcome = Comparison.AGREEMENT
+        elif provider.kind in {ClaimKind.ISBN, ClaimKind.ASIN}:
+            outcome = Comparison.INCOMPATIBLE
+        else:
+            outcome = Comparison.DISAGREEMENT
+        links.append(ComparisonLink(claim.reference, outcome))
+    return tuple(sorted(links, key=lambda link: link.local_reference))
+
+
+def _comparison_value(kind: ClaimKind, value: str) -> str:
+    if kind is ClaimKind.ISBN:
+        return "".join(character for character in value if character.isdigit() or character in "Xx").upper()
+    if kind is ClaimKind.DESCRIPTION:
+        _projection_text(value, "comparison description", MAX_DESCRIPTION_CHARACTERS)
+        return " ".join(unicodedata.normalize("NFC", value).split()).casefold()
+    return normalize_title(value).casefold()
 
 
 def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...], field_results: tuple[FieldResult, ...]) -> dict[str, object]:
@@ -626,12 +732,13 @@ def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_cla
         "providers": [value.to_data() for value in providers],
         "report_id": report_id,
         "schema_version": REPORT_SCHEMA,
+        "comparison_version": COMPARISON_VERSION,
         "target": target.to_data(),
     }
 
 
 def _report_from_data(value: object) -> MetadataReport:
-    root = _object(value, {"field_results", "file", "local", "providers", "report_id", "schema_version", "target"})
+    root = _object(value, {"comparison_version", "field_results", "file", "local", "providers", "report_id", "schema_version", "target"})
     target = _object(root["target"], {"connection", "current_title", "item", "library"})
     file = _object(root["file"], {"content_digest", "format", "identity", "selected_index"})
     local = _object(root["local"], {"claims", "reasons", "status"})
@@ -648,7 +755,7 @@ def _report_from_data(value: object) -> MetadataReport:
         reasons,
         providers,
         field_results,
-        root["schema_version"],
+        root["schema_version"], root["comparison_version"],
     )
 
 
@@ -658,9 +765,9 @@ def _field_result_from_data(value: object) -> FieldResult:
 
 
 def _local_claim_from_data(value: object) -> LocalClaim:
-    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference", "state", "role", "rear_provenance", "occurrence"})
+    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference", "state", "scope", "role", "rear_provenance", "occurrence"})
     provenance = item["rear_provenance"]
-    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"], FieldState(item["state"]), item["role"], None if provenance is None else RearClaimProvenance(**_object(provenance, {"citation", "marker", "resource_identity", "spine_ordinal", "tail_slot"})), item["occurrence"])
+    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"], ClaimScope(item["scope"]), FieldState(item["state"]), item["role"], None if provenance is None else RearClaimProvenance(**_object(provenance, {"citation", "marker", "resource_identity", "spine_ordinal", "tail_slot"})), item["occurrence"])
 
 
 def _provider_from_data(value: object) -> ProviderObservation:
@@ -675,8 +782,9 @@ def _candidate_from_data(value: object) -> ProviderCandidate:
 
 
 def _provider_claim_from_data(value: object) -> ProviderClaim:
-    item = _object(value, {"comparison", "kind", "local_references", "reference", "value"})
-    return ProviderClaim(item["reference"], ClaimKind(item["kind"]), item["value"], Comparison(item["comparison"]), tuple(_strings(item["local_references"])))
+    item = _object(value, {"applicability", "kind", "links", "raw_order", "reference", "role", "scope", "state", "value"})
+    links = tuple(ComparisonLink(_object(link, {"local_reference", "outcome"})["local_reference"], Comparison(_object(link, {"local_reference", "outcome"})["outcome"])) for link in _list(item["links"]))
+    return ProviderClaim(item["reference"], ClaimKind(item["kind"]), item["value"], FieldState(item["state"]), ClaimScope(item["scope"]), item["applicability"], item["role"], item["raw_order"], links)
 
 
 def _object(value: object, keys: set[str]) -> dict[str, Any]:
@@ -746,9 +854,9 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 
 
 __all__ = [
-    "ClaimKind", "Comparison", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
+    "ClaimKind", "ClaimScope", "COMPARISON_VERSION", "Comparison", "ComparisonLink", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
     "ProviderObservation", "ProviderStatus", "REPORT_SCHEMA", "ReportValueError",
-    "TargetFacts", "canonical_json", "compare_claim", "normalize_title",
+    "TargetFacts", "canonical_json", "claim_scope", "comparison_links", "normalize_title",
     "stable_reference", "validate_observed_title",
 ]

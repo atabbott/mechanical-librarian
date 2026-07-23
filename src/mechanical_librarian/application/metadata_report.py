@@ -13,6 +13,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimScope,
     ClaimKind,
     FileFacts,
     LocalClaim,
@@ -75,8 +76,9 @@ class MetadataProvider(Protocol):
 
 
 class ReportRepository(Protocol):
-    def publish(self, report: MetadataReport, currentness: Callable[[], bool]) -> str: ...
+    def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None = None) -> str: ...
     def get(self, report_id: str) -> str: ...
+    def current(self, connection: str, library: str, item: str, file_identity: str) -> str: ...
     def close(self) -> None: ...
 
 
@@ -125,13 +127,24 @@ class GenerateMetadataReport:
         if selected.format != "epub":
             raise UnsupportedMediaError("unsupported media")
 
+        repository: ReportRepository | None = None
         try:
+            repository = self._repository_factory()
+            try:
+                expected_current = MetadataReport.from_json(repository.current(self._connection.name, self._library.name, item, selected.identity)).report_id
+            except MetadataReportError:
+                expected_current = None
+
             local = self._inspector.inspect(
                 self._mount, selected.relative_path, self._limits.source_archive_bytes
             )
         except MetadataReportError:
+            if repository is not None:
+                repository.close()
             raise
         except Exception as error:
+            if repository is not None:
+                repository.close()
             raise MetadataReportError("EPUB inspection failed") from error
 
         target_title_claim = LocalClaim.create(
@@ -143,6 +156,7 @@ class GenerateMetadataReport:
             basis="target_metadata",
             checksum="not_applicable",
             applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
             occurrence=0,
         )
         # Claims are evidence, not a set: retain the target observation first and
@@ -159,8 +173,10 @@ class GenerateMetadataReport:
             try:
                 provider = binding.factory()
             except CredentialError:
+                repository.close()
                 raise
             except Exception as error:
+                repository.close()
                 raise CredentialError("provider credential unavailable") from error
             try:
                 observation = provider.observe(combined_claims)
@@ -169,6 +185,7 @@ class GenerateMetadataReport:
                     binding.name, ProviderStatus.UNAVAILABLE
                 )
             if observation.provider != binding.name:
+                repository.close()
                 raise MetadataReportError("provider result is invalid")
             observations.append(observation)
 
@@ -178,21 +195,18 @@ class GenerateMetadataReport:
                 or {"no_opening_claims"}
             )
         )
-        report = MetadataReport.create(
-            target=TargetFacts(
-                self._connection.name, self._library.name, item, initial.title
-            ),
-            file=FileFacts(
-                file_index, selected.identity, local.content_digest
-            ),
-            local_claims=combined_claims,
-            local_reasons=reasons,
-            providers=tuple(sorted(observations, key=lambda value: value.provider)),
-            field_results=derive_field_results(combined_claims),
-        )
-        repository: ReportRepository | None = None
         try:
-            repository = self._repository_factory()
+            report = MetadataReport.create(
+                target=TargetFacts(self._connection.name, self._library.name, item, initial.title),
+                file=FileFacts(file_index, selected.identity, local.content_digest),
+                local_claims=combined_claims, local_reasons=reasons,
+                providers=tuple(sorted(observations, key=lambda value: value.provider)),
+                field_results=derive_field_results(combined_claims),
+            )
+        except Exception:
+            repository.close()
+            raise
+        try:
             persisted = repository.publish(
                 report,
                 lambda: self._is_current(
@@ -201,6 +215,7 @@ class GenerateMetadataReport:
                     selected,
                     local.content_digest,
                 ),
+                expected_current,
             )
             if persisted != report.to_json() or repository.get(report.report_id) != persisted:
                 raise MetadataReportError("persisted report readback failed")

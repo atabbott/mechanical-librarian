@@ -115,9 +115,9 @@ secret access or egress. Unreferenced providers are absent.
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order.
 The fixed request asks for one row beyond the retained cap so overflow remains
-observable. One malformed candidate or a cap overflow makes the entire
-observation `malformed`. No winner, score, merge, fallback search, retry, or
-cache exists.
+observable. Malformed or oversized provider fields remain explicit field-local
+claims; structural or join failures make the observation `malformed`. No
+winner, score, merge, fallback search, retry, or cache exists.
 
 The report ID is derived from the complete canonical document. Exact fresh
 re-observation returns the same ID and bytes without accumulating another row.

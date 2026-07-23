@@ -17,10 +17,14 @@ import mechanical_librarian.adapters.persistence.metadata_reports as metadata_pe
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.hardcover_metadata import HARDCOVER_URL, HardcoverMetadataProvider
+import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
     Comparison,
+    ComparisonLink,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
@@ -40,6 +44,7 @@ def _report(title: str = "Current title") -> MetadataReport:
         basis="target_metadata",
         checksum="not_applicable",
         applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
     )
     return MetadataReport.create(
         target=TargetFacts("primary", "ebooks", "item-1", title),
@@ -89,6 +94,32 @@ class MetadataPersistenceTests(unittest.TestCase):
             (
                 "legacy v1",
                 _create_legacy_schema,
+            ),
+            (
+                "F09i document bound",
+                lambda connection: (
+                    connection.execute(
+                        metadata_persistence._REPORTS_SQL.replace(
+                            "BETWEEN 2 AND 2097152", "BETWEEN 2 AND 262144"
+                        )
+                    ),
+                    connection.execute(metadata_persistence._CURRENT_SQL),
+                    connection.execute(metadata_persistence._NO_UPDATE_SQL),
+                    connection.execute(metadata_persistence._NO_DELETE_SQL),
+                ),
+            ),
+            (
+                "F09j one mebibyte bound",
+                lambda connection: (
+                    connection.execute(
+                        metadata_persistence._REPORTS_SQL.replace(
+                            "BETWEEN 2 AND 2097152", "BETWEEN 2 AND 1048576"
+                        )
+                    ),
+                    connection.execute(metadata_persistence._CURRENT_SQL),
+                    connection.execute(metadata_persistence._NO_UPDATE_SQL),
+                    connection.execute(metadata_persistence._NO_DELETE_SQL),
+                ),
             ),
             (
                 "intermediate extra column",
@@ -650,6 +681,26 @@ class MetadataPersistenceTests(unittest.TestCase):
 
 
 class ProviderAdapterTests(unittest.TestCase):
+    @staticmethod
+    def _envelope(rows: list[dict[str, object]], books: list[dict[str, object]]) -> dict[str, object]:
+        editions = [
+            {
+                "id": row["id"], "book_id": row["book_id"],
+                "isbn_10": row.get("isbn_10"), "isbn_13": row.get("isbn_13"),
+                "asin": row.get("asin"), "title": row.get("title"),
+                "subtitle": row.get("subtitle"), "release_date": row.get("release_date"),
+                "publisher": row.get("publisher"), "language": row.get("language"),
+                "contributions": row.get("contributions", []),
+            }
+            for row in rows
+        ]
+        works = [
+            {"id": book["id"], "title": book.get("title"), "description": book.get("description"),
+             "contributions": book.get("contributions", []), "book_series": book.get("book_series", []),
+             "taggings": book.get("taggings", [])}
+            for book in books
+        ]
+        return {"data": {"editions": editions, "books": works}}
     def _claim(self) -> LocalClaim:
         return LocalClaim.create(
             kind=ClaimKind.ISBN,
@@ -659,6 +710,7 @@ class ProviderAdapterTests(unittest.TestCase):
             applicability="ebook",
             checksum="valid_isbn_13",
             applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
         )
 
     def _title_claim(self) -> LocalClaim:
@@ -671,6 +723,7 @@ class ProviderAdapterTests(unittest.TestCase):
             basis="target_metadata",
             checksum="not_applicable",
             applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
         )
 
     def test_one_request_retains_all_candidates_in_identity_order(self) -> None:
@@ -681,14 +734,10 @@ class ProviderAdapterTests(unittest.TestCase):
             return httpx.Response(
                 200,
                 headers={"content-type": "application/json"},
-                json={
-                    "data": {
-                        "editions": [
-                            {"id": 2, "isbn_10": None, "isbn_13": "9780306406157", "book": {"id": 20, "title": "Other title"}},
-                            {"id": 1, "isbn_10": None, "isbn_13": "9780306406157", "book": {"id": 10, "title": None}},
-                        ]
-                    }
-                },
+                json=self._envelope(
+                    [{"id": 2, "book_id": 20, "isbn_10": None, "isbn_13": "9780306406157"}, {"id": 1, "book_id": 10, "isbn_10": None, "isbn_13": "9780306406157"}],
+                    [{"id": 20, "title": "Other title"}, {"id": 10, "title": None}],
+                ),
             )
 
         client = httpx.Client(transport=httpx.MockTransport(handler))
@@ -697,12 +746,12 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(observation.status, ProviderStatus.CANDIDATES)
         self.assertEqual([item.identity for item in observation.candidates], ["hardcover-edition-0000000001", "hardcover-edition-0000000002"])
         claims = {claim.kind: claim for claim in observation.candidates[1].claims}
-        self.assertEqual(claims[ClaimKind.ISBN].comparison, Comparison.AGREEMENT)
-        self.assertEqual(claims[ClaimKind.TITLE].comparison, Comparison.DISAGREEMENT)
+        self.assertEqual(claims[ClaimKind.ISBN].links[0].outcome, Comparison.AGREEMENT)
+        self.assertEqual(claims[ClaimKind.TITLE].links[0].outcome, Comparison.DISAGREEMENT)
         self.assertEqual(observation.input_references, (self._claim().reference,))
         self.assertEqual(len(requests), 1)
         self.assertEqual(str(requests[0].url), HARDCOVER_URL)
-        self.assertIn("limit:5", json.loads(requests[0].content)["query"])
+        self.assertIn("limit:6", json.loads(requests[0].content)["query"])
         self.assertEqual(provider.observe((self._claim(), self._title_claim())).status, ProviderStatus.UNAVAILABLE)
         self.assertEqual(len(requests), 1)
 
@@ -726,18 +775,10 @@ class ProviderAdapterTests(unittest.TestCase):
             checksum="valid_isbn_10",
             applicability_basis="unlabelled",
         )
-        payload = {
-            "data": {
-                "editions": [
-                    {
-                        "id": 1,
-                        "isbn_10": None,
-                        "isbn_13": "9780306406157",
-                        "book": {"id": 1, "title": "Current title"},
-                    }
-                ]
-            }
-        }
+        payload = self._envelope(
+            [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}],
+            [{"id": 1, "title": "Current title"}],
+        )
         observation = HardcoverMetadataProvider(
             "catalogue",
             httpx.Client(
@@ -754,16 +795,141 @@ class ProviderAdapterTests(unittest.TestCase):
         claims = {
             claim.kind: claim for claim in observation.candidates[0].claims
         }
-        self.assertEqual(claims[ClaimKind.TITLE].comparison, Comparison.AGREEMENT)
         self.assertEqual(
-            claims[ClaimKind.TITLE].local_references,
-            (self._title_claim().reference,),
+            {link.local_reference: link.outcome for link in claims[ClaimKind.TITLE].links},
+            {
+                self._title_claim().reference: Comparison.AGREEMENT,
+                other_title.reference: Comparison.DISAGREEMENT,
+            },
         )
-        self.assertEqual(claims[ClaimKind.ISBN].comparison, Comparison.AGREEMENT)
         self.assertEqual(
-            claims[ClaimKind.ISBN].local_references,
-            (self._claim().reference,),
+            {link.local_reference: link.outcome for link in claims[ClaimKind.ISBN].links},
+            {
+                self._claim().reference: Comparison.AGREEMENT,
+                other_isbn.reference: Comparison.NOT_COMPARABLE,
+            },
         )
+
+    def test_rich_schema_query_and_field_order_are_closed(self) -> None:
+        captured: list[dict[str, object]] = []
+        payload = self._envelope(
+            [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "Edition title", "subtitle": "Edition subtitle", "release_date": "2026-01-01", "publisher": {"id": 2, "name": "Example Press", "parent_id": 9}, "language": {"id": 3, "code2": "en", "code3": "eng", "language": "English"}, "contributions": [{"id": 7, "contribution": "Author", "author": {"id": 4, "name": "Ada Example"}}]}],
+            [{"id": 1, "title": "Work title", "description": "Description", "contributions": [{"id": 8, "contribution": "Translator", "author": {"id": 4, "name": "Ada Example"}}], "book_series": [{"id": 9, "position": "1", "series": {"id": 5, "name": "Series"}}], "taggings": [{"id": 10, "tag": {"id": 6, "tag": "Speculative"}}]}],
+        )
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(json.loads(request.content))
+            return httpx.Response(200, headers={"content-type": "application/json"}, json=payload)
+        observation = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536).observe((self._claim(), self._title_claim()))
+        self.assertEqual(observation.status, ProviderStatus.CANDIDATES)
+        claims = observation.candidates[0].claims
+        self.assertEqual([claim.raw_order for claim in claims], list(range(len(claims))))
+        self.assertEqual({claim.kind for claim in claims}, {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR, ClaimKind.DESCRIPTION, ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE, ClaimKind.TAG, ClaimKind.GENRE})
+        self.assertEqual(next(claim.scope for claim in claims if claim.kind is ClaimKind.PUBLISHER), ClaimScope.EDITION)
+        self.assertNotIn("parent_id", {claim.value for claim in claims if claim.value is not None})
+        self.assertIn("contributions(order_by:{id:asc},limit:17)", captured[0]["query"])
+        self.assertIn("taggings(order_by:{id:asc},limit:33)", captured[0]["query"])
+
+    def test_rich_field_boundaries_are_local_and_public_safe(self) -> None:
+        row = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "T" * 513, "subtitle": None, "release_date": "not-a-date", "publisher": None, "language": None, "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 1, "name": "Ada"}}, {"id": 2, "contribution": "/Users/private", "author": {"id": 2, "name": "Bea"}}]}
+        book = {"id": 1, "title": "/Users/private/title", "description": "D" * 16385, "contributions": [{"id": 3, "contribution": "Translator", "author": {"id": 3, "name": "Cy"}}], "book_series": [{"id": 4, "position": 1.5, "series": {"id": 4, "name": "Series"}}], "taggings": []}
+        payload = json.dumps(self._envelope([row], [book])).encode()
+        claims = hardcover_metadata._parse_candidates(payload, "catalogue", (self._claim(),)).__getitem__(0).claims
+        by_kind = {claim.kind: claim for claim in claims}
+        self.assertEqual(by_kind[ClaimKind.ASIN].state.value, "valid")
+        self.assertEqual(by_kind[ClaimKind.PUBLICATION_DATE].state.value, "malformed")
+        self.assertEqual(by_kind[ClaimKind.DESCRIPTION].state.value, "oversized")
+        self.assertEqual(by_kind[ClaimKind.TITLE].state.value, "malformed")
+        self.assertEqual(by_kind[ClaimKind.SERIES_SEQUENCE].value, "1.5")
+        self.assertEqual(by_kind[ClaimKind.IMPRINT].state.value, "unsupported")
+        self.assertEqual(by_kind[ClaimKind.GENRE].state.value, "unsupported")
+        contributors = [claim for claim in claims if claim.kind is ClaimKind.CONTRIBUTOR]
+        self.assertIn("translator", {claim.role for claim in contributors})
+        self.assertTrue(any(claim.state.value == "malformed" for claim in contributors))
+
+    def test_response_cap_and_candidate_probe_are_terminal(self) -> None:
+        payload = self._envelope([], [])
+        capped = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, content=b"{}" * 20))), 1)
+        self.assertEqual(capped.observe((self._claim(),)).status, ProviderStatus.OVERSIZED)
+        rows = [{"id": index, "book_id": index, "isbn_10": None, "isbn_13": None} for index in range(1, 7)]
+        overflow = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=self._envelope(rows, [{"id": index, "title": None} for index in range(1, 7)])))), 65_536)
+        self.assertEqual(overflow.observe((self._claim(),)).status, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
+        for size, expected in ((262_144, ProviderStatus.MALFORMED), (262_145, ProviderStatus.OVERSIZED)):
+            provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, length=size: httpx.Response(200, headers={"content-type": "application/json"}, content=b"x" * length))), 262_144)
+            self.assertEqual(provider.observe((self._claim(),)).status, expected)
+
+    def test_exact_rich_caps_and_pinned_schema_are_admitted(self) -> None:
+        self.assertEqual(hardcover_metadata.HARDCOVER_SCHEMA_COMMIT, "2c03110845765c32af945ed550a942330c394a3e")
+        self.assertIn("contributions(order_by:{id:asc},limit:17){id contribution author{id name}}", hardcover_metadata._QUERY)
+        self.assertIn("books:books(", hardcover_metadata._QUERY)
+        self.assertNotIn("books_through_editions", hardcover_metadata._QUERY)
+        self.assertIn("book_series(order_by:{id:asc},limit:17){id position series{id name}}", hardcover_metadata._QUERY)
+        self.assertIn("taggings(order_by:{id:asc},limit:33){id tag{id tag}}", hardcover_metadata._QUERY)
+        for scalar, description, expected in (("x" * 512, "d" * 16384, "valid"), ("x" * 513, "d" * 16385, "oversized")):
+            with self.subTest(expected=expected):
+                payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "title": scalar}], [{"id": 1, "title": None, "description": description}])
+                claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", () )[0].claims
+                self.assertEqual(next(claim.state.value for claim in claims if claim.kind is ClaimKind.TITLE), expected)
+                self.assertEqual(next(claim.state.value for claim in claims if claim.kind is ClaimKind.DESCRIPTION), expected)
+        for count, kind, scope, key in ((16, ClaimKind.CREATOR, ClaimScope.EDITION, "edition"), (17, ClaimKind.CREATOR, ClaimScope.EDITION, "edition"), (16, ClaimKind.CREATOR, ClaimScope.WORK, "work"), (17, ClaimKind.CREATOR, ClaimScope.WORK, "work"), (16, ClaimKind.SERIES, ClaimScope.WORK, "series"), (17, ClaimKind.SERIES, ClaimScope.WORK, "series"), (32, ClaimKind.TAG, ClaimScope.WORK, "tag"), (33, ClaimKind.TAG, ClaimScope.WORK, "tag")):
+            contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": f"A{index}"}} for index in range(count)]
+            series = [{"id": index, "position": str(index), "series": {"id": index, "name": f"S{index}"}} for index in range(count)]
+            tags = [{"id": index, "tag": {"id": index, "tag": f"T{index}"}} for index in range(count)]
+            row = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions if key == "edition" else []}
+            book = {"id": 1, "title": None, "contributions": contributions if key == "work" else [], "book_series": series if key == "series" else [], "taggings": tags if key == "tag" else []}
+            claims = hardcover_metadata._parse_candidates(json.dumps(self._envelope([row], [book])).encode(), "catalogue", ())[0].claims
+            relevant = [claim for claim in claims if claim.kind is kind and claim.scope is scope]
+            if count in {17, 33}:
+                self.assertEqual(len(relevant), 1)
+                self.assertEqual(relevant[0].state, FieldState.OVERSIZED)
+            else:
+                self.assertEqual(len(relevant), count)
+                self.assertTrue(all(claim.state is FieldState.VALID for claim in relevant))
+
+    def test_contribution_probe_preserves_roles_and_overflow_validates_rows(self) -> None:
+        for roles, expected in (((["Author"] * 16) + ["Translator"], {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}), ((["Translator"] * 16) + ["Author"], {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR})):
+            contributions = [{"id": index, "contribution": role, "author": {"id": index, "name": f"A{index}"}} for index, role in enumerate(roles, 1)]
+            payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions}], [{"id": 1, "title": None}])
+            claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
+            overflow = {claim.kind for claim in claims if claim.state is FieldState.OVERSIZED and claim.scope is ClaimScope.EDITION}
+            self.assertEqual(overflow, expected)
+        for bad in (0, 16):
+            contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}} for index in range(17)]
+            contributions[bad] = {"id": bad, "contribution": "Author"}
+            payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions}], [{"id": 1, "title": None}])
+            with self.assertRaises(ValueError):
+                hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())
+
+    def test_nested_overflow_probe_objects_are_structurally_validated(self) -> None:
+        cases = []
+        contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}} for index in range(17)]
+        contributions[16]["author"] = {"id": 17, "unexpected": "A"}
+        cases.append(({"contributions": contributions}, {}))
+        series = [{"id": index, "position": str(index), "series": {"id": index, "name": "S"}} for index in range(17)]
+        series[16]["series"] = {"id": 17, "unexpected": "S"}
+        cases.append(({}, {"book_series": series}))
+        tags = [{"id": index, "tag": {"id": index, "tag": "T"}} for index in range(33)]
+        tags[32]["tag"] = {"id": 33, "unexpected": "T"}
+        cases.append(({}, {"taggings": tags}))
+        for edition, work in cases:
+            with self.subTest(edition=bool(edition)):
+                payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", **edition}], [{"id": 1, "title": None, **work}])
+                provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, value=payload: httpx.Response(200, headers={"content-type": "application/json"}, json=value))), 65_536)
+                self.assertEqual(provider.observe((self._claim(),)).status, ProviderStatus.MALFORMED)
+
+    def test_series_positions_and_code3_are_retained_at_projection_bounds(self) -> None:
+        for position, expected in (("10", "10"), ("20.0", "20"), ("100", "100"), (10, "10")):
+            payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "language": {"id": 1, "code2": None, "code3": "eng", "language": "English"}}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": position, "series": {"id": 1, "name": "S"}}]}])
+            claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
+            self.assertEqual(next(claim.value for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE), expected)
+            self.assertEqual(next(claim.value for claim in claims if claim.kind is ClaimKind.LANGUAGE), "eng")
+        boundary = "1" * 512
+        payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": boundary, "series": {"id": 1, "name": "S"}}]}])
+        claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
+        self.assertEqual(next(claim.value for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE), boundary)
+        for position, state in (("9" * 513, FieldState.OVERSIZED), ("1e-999", FieldState.MALFORMED)):
+            payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": position, "series": {"id": 1, "name": "S"}}]}])
+            claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
+            self.assertEqual(next(claim.state for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE), state)
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
@@ -772,10 +938,21 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(provider.observe(()).status, ProviderStatus.INSUFFICIENT_INPUT)
         self.assertEqual(calls, [])
 
-        malformed = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json={"data": {"editions": [{"id": 1, "isbn_10": None, "isbn_13": "9780306406157", "book": {"id": 1, "title": "Fine"}}, {"id": "bad", "isbn_10": None, "isbn_13": None, "book": None}]}})))
+        malformed = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json={"data": {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}, {"id": "bad", "book_id": 2, "isbn_10": None, "isbn_13": None}], "books": [{"id": 1, "title": "Fine"}, {"id": 2, "title": None}]}})))
         observation = HardcoverMetadataProvider("catalogue", malformed, 65_536).observe((self._claim(),))
         self.assertEqual(observation.status, ProviderStatus.MALFORMED)
         self.assertEqual(observation.candidates, ())
+
+    def test_separate_root_join_rejects_missing_duplicate_and_unreferenced_work(self) -> None:
+        envelopes = (
+            {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], "books": []},
+            {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], "books": [{"id": 1, "title": None}, {"id": 1, "title": None}]},
+            {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], "books": [{"id": 1, "title": None}, {"id": 2, "title": None}]},
+        )
+        for data in envelopes:
+            with self.subTest(data=data):
+                client = httpx.Client(transport=httpx.MockTransport(lambda request, value=data: httpx.Response(200, headers={"content-type": "application/json"}, json={"data": value})))
+                self.assertEqual(HardcoverMetadataProvider("catalogue", client, 65_536).observe((self._claim(),)).status, ProviderStatus.MALFORMED)
 
     def test_multiple_inputs_are_selected_deterministically_and_statuses_do_not_retry(self) -> None:
         second = LocalClaim.create(
@@ -800,7 +977,7 @@ class ProviderAdapterTests(unittest.TestCase):
 
         def success(request: httpx.Request) -> httpx.Response:
             observed_bodies.append(json.loads(request.content))
-            return httpx.Response(200, headers={"content-type": "application/json"}, json={"data": {"editions": []}})
+            return httpx.Response(200, headers={"content-type": "application/json"}, json={"data": {"editions": [], "books": []}})
 
         observation = HardcoverMetadataProvider(
             "catalogue", httpx.Client(transport=httpx.MockTransport(success)), 65_536
@@ -838,13 +1015,13 @@ class ProviderAdapterTests(unittest.TestCase):
     def test_zero_one_and_multiple_candidates_are_neutral(self) -> None:
         for rows, expected in (
             ([], ProviderStatus.NO_MATCH),
-            ([{"id": 1, "isbn_10": None, "isbn_13": None, "book": None}], ProviderStatus.CANDIDATES),
+            ([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], ProviderStatus.CANDIDATES),
             ([
-                {"id": 2, "isbn_10": None, "isbn_13": None, "book": None},
-                {"id": 1, "isbn_10": None, "isbn_13": None, "book": None},
+                {"id": 2, "book_id": 2, "isbn_10": None, "isbn_13": None},
+                {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None},
             ], ProviderStatus.CANDIDATES),
         ):
-            client = httpx.Client(transport=httpx.MockTransport(lambda request, value=rows: httpx.Response(200, headers={"content-type": "application/json"}, json={"data": {"editions": value}})))
+            client = httpx.Client(transport=httpx.MockTransport(lambda request, value=rows: httpx.Response(200, headers={"content-type": "application/json"}, json=self._envelope(value, [{"id": row["book_id"], "title": None} for row in value]))))
             observation = HardcoverMetadataProvider("catalogue", client, 65_536).observe((self._claim(),))
             with self.subTest(count=len(rows)):
                 self.assertEqual(observation.status, expected)
@@ -855,30 +1032,19 @@ class ProviderAdapterTests(unittest.TestCase):
                 )
 
     def test_sparse_candidate_is_valid_but_result_cap_overflow_is_malformed(self) -> None:
-        sparse = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json={"data": {"editions": [{"id": 1, "isbn_10": None, "isbn_13": None, "book": None}]}})))
+        sparse = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None}]))))
         observation = HardcoverMetadataProvider("catalogue", sparse, 65_536).observe((self._claim(),))
         self.assertEqual(observation.status, ProviderStatus.CANDIDATES)
-        self.assertEqual(observation.candidates[0].claims, ())
+        self.assertTrue(observation.candidates[0].claims)
 
-        rows = [{"id": index, "isbn_10": None, "isbn_13": None, "book": None} for index in range(1, 6)]
-        overflow = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json={"data": {"editions": rows}})))
+        rows = [{"id": index, "book_id": index, "isbn_10": None, "isbn_13": None} for index in range(1, 7)]
+        overflow = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=self._envelope(rows, [{"id": index, "title": None} for index in range(1, 7)]))))
         observation = HardcoverMetadataProvider("catalogue", overflow, 65_536).observe((self._claim(),))
-        self.assertEqual(observation.status, ProviderStatus.MALFORMED)
+        self.assertEqual(observation.status, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
         self.assertEqual(observation.candidates, ())
 
     def test_same_candidate_from_two_provider_connections_has_globally_unique_refs(self) -> None:
-        payload = {
-            "data": {
-                "editions": [
-                    {
-                        "id": 1,
-                        "isbn_10": None,
-                        "isbn_13": "9780306406157",
-                        "book": {"id": 1, "title": "Current title"},
-                    }
-                ]
-            }
-        }
+        payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}], [{"id": 1, "title": "Current title"}])
 
         def observation(name: str) -> ProviderObservation:
             client = httpx.Client(
@@ -928,16 +1094,7 @@ class ProviderAdapterTests(unittest.TestCase):
                         200,
                         headers={"content-type": "application/json"},
                         json={
-                            "data": {
-                                "editions": [
-                                    {
-                                        "id": 1,
-                                        "isbn_10": None,
-                                        "isbn_13": "9780306406157",
-                                        "book": {"id": 1, "title": title},
-                                    }
-                                ]
-                            }
+                            "data": {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}], "books": [{"id": 1, "title": title}]}
                         },
                     )
                 )
