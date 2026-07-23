@@ -25,6 +25,13 @@ mechanical-librarian metadata-report-get \
   --report-id report_<64-lowercase-hex-characters>
 ```
 
+The current report for a known scope can also be reopened offline:
+
+```text
+mechanical-librarian metadata-report-get --database /data/reports.sqlite --current \
+  --connection primary --library ebooks --item ITEM_ID --file-identity <64-lowercase-hex>
+```
+
 On success stdout is exactly the persisted canonical JSON report followed by
 one newline. On failure stdout is empty, stderr contains one fixed bounded
 diagnostic, and the exit status is nonzero. Diagnostics never include paths,

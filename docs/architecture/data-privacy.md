@@ -11,6 +11,9 @@ filesystem paths, raw target/provider responses, arbitrary EPUB fragments,
 inventory, cover bytes, reviewer data, job history, request bodies, logs, or
 support bundles. Fixed stderr diagnostics contain no rejected values.
 
+The isolated child returns one bounded result for one EPUB session; neither its
+input snapshot nor source body is retained after the report projection.
+
 Reports are append-only and 0.4 provides no retention, pruning, purge, export,
 or deletion feature. Operators must account for that deliberate limitation
 when selecting the database location and backup policy.

@@ -827,9 +827,7 @@ def _unlink_created(path: Path, expected: tuple[int, int]) -> None:
 
 def _migrate_v1(connection: sqlite3.Connection) -> None:
     """Perform the sole supported pre-release schema widening atomically."""
-    legacy = _REPORTS_SQL.replace("IN ('metadata-report-v1','metadata-report-v2')", "= 'metadata-report-v1'")
-    row = connection.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='metadata_reports'").fetchone()
-    if row is None or row[0] != legacy:
+    if not _is_exact_v1_schema(connection):
         return
     connection.execute("BEGIN IMMEDIATE")
     try:
@@ -847,6 +845,7 @@ def _migrate_v1(connection: sqlite3.Connection) -> None:
         connection.execute("DROP TABLE metadata_reports_v1")
         connection.execute(_NO_UPDATE_SQL)
         connection.execute(_NO_DELETE_SQL)
+        _validate_schema(connection)
         connection.commit()
     except Exception:
         connection.rollback()
@@ -863,11 +862,16 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
 
 
 def _validate_schema_or_v1(connection: sqlite3.Connection) -> None:
-    legacy = _REPORTS_SQL.replace("IN ('metadata-report-v1','metadata-report-v2')", "= 'metadata-report-v1'")
-    tables = dict(connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"))
-    if tables.get("metadata_reports") == legacy and tables.get("current_metadata_reports") == _CURRENT_SQL:
+    if _is_exact_v1_schema(connection):
         return
     _validate_schema(connection)
+
+
+def _is_exact_v1_schema(connection: sqlite3.Connection) -> bool:
+    legacy = _REPORTS_SQL.replace("IN ('metadata-report-v1','metadata-report-v2')", "= 'metadata-report-v1'")
+    tables = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
+    triggers = connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall()
+    return tables == sorted((("current_metadata_reports", _CURRENT_SQL), ("metadata_reports", legacy))) and triggers == sorted((("metadata_reports_no_delete", _NO_DELETE_SQL), ("metadata_reports_no_update", _NO_UPDATE_SQL)))
 
 
 def _validate_v1_document(document: str, report_id: str, connection: str, library: str, item: str, file_identity: str, content_digest: str) -> None:
@@ -878,9 +882,19 @@ def _validate_v1_document(document: str, report_id: str, connection: str, librar
             raise ValueError
         identity = dict(value); identity.pop("report_id")
         expected = "report_" + hashlib.sha256(json.dumps(identity, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest()
-        target = value["target"]; file = value["file"]
-        if expected != report_id or type(target) is not dict or type(file) is not dict or tuple(target.get(key) for key in ("connection", "library", "item")) != (connection, library, item) or file.get("identity") != file_identity or file.get("content_digest") != content_digest:
+        target = value["target"]; file = value["file"]; local = value["local"]; providers = value["providers"]
+        if expected != report_id or type(target) is not dict or set(target) != {"connection", "current_title", "item", "library"} or type(file) is not dict or set(file) != {"content_digest", "format", "identity", "selected_index"} or type(local) is not dict or set(local) != {"claims", "reasons", "status"} or type(providers) is not list or tuple(target.get(key) for key in ("connection", "library", "item")) != (connection, library, item) or file.get("identity") != file_identity or file.get("content_digest") != content_digest:
             raise ValueError
+        if type(local["claims"]) is not list or type(local["reasons"]) is not list or local["status"] not in {"candidate", "no_candidate"}:
+            raise ValueError
+        references: set[str] = set()
+        for claim in local["claims"]:
+            if type(claim) is not dict or set(claim) != {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference"} or type(claim.get("reference")) is not str or claim["reference"] in references:
+                raise ValueError
+            identity_claim = dict(claim); identity_claim.pop("reference")
+            if claim["reference"] != "local_" + hashlib.sha256(json.dumps(identity_claim, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest():
+                raise ValueError
+            references.add(claim["reference"])
     except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as error:
         raise MetadataReportError("persisted report is invalid") from error
     if json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True) != document:

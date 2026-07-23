@@ -10,6 +10,10 @@ EPUB. It contains:
 - independent provider observations with stable input references and zero or
   more provider-identity-ordered candidates.
 
+The local field vocabulary is title/subtitle, creator/contributor and role,
+series/sequence, ISBN, date, publisher/imprint, description, language, and
+contextual subject evidence; typed field states remain evidence, not decisions.
+
 Title and ISBN are the only claim variants. ISBN claims retain the observed
 substring, canonical checksum-valid identifier when available, at most 280
 characters of directly supporting opening-matter context,
