@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import unicodedata
 from datetime import date
@@ -26,7 +27,7 @@ MAX_RESPONSE_BYTES = 262_144
 _QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
     f"{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
-    "{id book_id isbn_10 isbn_13 asin title subtitle release_date publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
+    "{id book_id isbn_10 isbn_13 asin title subtitle release_date image{url} publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
     "books:books(where:{editions:{_or:[{isbn_13:{_in:$isbns}},{isbn_10:{_in:$isbns}}]}},order_by:{id:asc},limit:6)"
     "{id title description contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag{id tag}}}}}"
 )
@@ -39,6 +40,7 @@ class HardcoverMetadataProvider:
         self._name, self._client = name, client
         self._maximum_bytes = min(maximum_bytes, MAX_RESPONSE_BYTES)
         self._called = False
+        self.cover_descriptors: tuple[tuple[str, str], ...] = ()
 
     def observe(self, local_claims: tuple[LocalClaim, ...]) -> ProviderObservation:
         if self._called:
@@ -68,7 +70,7 @@ class HardcoverMetadataProvider:
         except (httpx.HTTPError, OSError, ValueError):
             return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
         try:
-            candidates = _parse_candidates(payload, self._name, local_claims)
+            candidates, self.cover_descriptors = _parse_candidates(payload, self._name, local_claims)
         except _CandidateLimit:
             return ProviderObservation(self._name, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, references)
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
@@ -89,7 +91,7 @@ def _body(response: httpx.Response, maximum: int) -> bytes:
     return b"".join(chunks)
 
 
-def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalClaim, ...]) -> tuple[ProviderCandidate, ...]:
+def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalClaim, ...]) -> tuple[tuple[ProviderCandidate, ...], tuple[tuple[str, str], ...]]:
     source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
     root = _closed(source, {"data"})
     data = _closed(root["data"], {"editions", "books"})
@@ -102,7 +104,9 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
     candidates: list[ProviderCandidate] = []
     used: set[int] = set()
     for row_value in rows:
-        row = _closed(row_value, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "publisher", "language", "contributions"})
+        if type(row_value) is dict and "image" not in row_value:
+            row_value = {**row_value, "image": None}
+        row = _closed(row_value, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
         edition_id, book_id = _identifier(row["id"]), _identifier(row["book_id"])
         if book_id not in indexed:
             raise ValueError("provider unreferenced work")
@@ -113,7 +117,18 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
         candidates.append(ProviderCandidate(identity, tuple(claims)))
     if used != set(indexed) or len({candidate.identity for candidate in candidates}) != len(candidates):
         raise ValueError("provider join invalid")
-    return tuple(sorted(candidates, key=lambda candidate: candidate.identity))
+    descriptors: list[tuple[str, str]] = []
+    for row_value in rows:
+        if type(row_value) is dict and "image" not in row_value:
+            row_value = {**row_value, "image": None}
+        row = _closed(row_value, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
+        image = _closed_or_none(row["image"], {"url"})
+        if image is not None and (type(image["url"]) is not str or not image["url"] or len(image["url"]) > 2048):
+            raise ValueError("provider image invalid")
+        if image is not None:
+            source_identity = f"{row['id']}:{image['url']}"
+            descriptors.append(("hardcover_" + hashlib.sha256(source_identity.encode()).hexdigest(), image["url"]))
+    return tuple(sorted(candidates, key=lambda candidate: candidate.identity)), tuple(descriptors)
 
 
 def _edition_claims(provider: str, identity: str, row: dict[str, Any], local: tuple[LocalClaim, ...]) -> list[ProviderClaim]:

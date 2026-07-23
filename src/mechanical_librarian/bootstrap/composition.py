@@ -14,7 +14,6 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import A
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.providers.hardcover_metadata import HardcoverMetadataProvider
-from mechanical_librarian.adapters.providers.hardcover_cover import parse as parse_hardcover_covers, query as hardcover_cover_query
 from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverError, RemoteCoverTimeout, fetch_remote_cover
 from mechanical_librarian.application.configuration import ConfigurationError, MediaMountConfiguration, ProviderConnectionConfiguration
 from mechanical_librarian.application.metadata_report import (
@@ -123,10 +122,10 @@ class _CoverEvidenceObserver:
         self._artifacts = artifacts
         self._providers = {value.name: value for value in providers}
 
-    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...]) -> tuple[CoverSource, ...]:
+    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...], descriptors: tuple[tuple[str, str], ...] = ()) -> tuple[CoverSource, ...]:
         if target.cover is None:
             source = CoverSource(cover_source_id(CoverSourceKind.ABS, "absent"), CoverSourceKind.ABS, CoverSourceState.ABSENT)
-            return (source, *local_sources, *self._hardcover(providers, deadline=time.monotonic() + 60.0))
+            return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=time.monotonic() + 60.0))
         source_id = cover_source_id(CoverSourceKind.ABS, target.cover.identity)
         deadline = time.monotonic() + 60.0
         try:
@@ -143,9 +142,9 @@ class _CoverEvidenceObserver:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.DECODE_FAILED)
         except MetadataReportError:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
-        return (source, *local_sources, *self._hardcover(providers, deadline=deadline))
+        return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
 
-    def _hardcover(self, observations: tuple[ProviderObservation, ...], *, deadline: float) -> tuple[CoverSource, ...]:
+    def _hardcover(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[tuple[str, str], ...], *, deadline: float) -> tuple[CoverSource, ...]:
         results: list[CoverSource] = []
         for observation in observations:
             configuration = self._providers.get(observation.provider)
@@ -154,34 +153,15 @@ class _CoverEvidenceObserver:
             if not configuration.enabled:
                 results.append(CoverSource(cover_source_id(CoverSourceKind.HARDCOVER, observation.provider), CoverSourceKind.HARDCOVER, CoverSourceState.DISABLED))
                 continue
-            ids = tuple(int(candidate.identity.rsplit("-", 1)[1]) for candidate in observation.candidates if candidate.identity.startswith("hardcover-edition-"))
-            if not ids:
+            values = tuple(descriptors)
+            if not values:
                 continue
             if time.monotonic() >= deadline:
-                results.extend(CoverSource(cover_source_id(CoverSourceKind.HARDCOVER, str(value)), CoverSourceKind.HARDCOVER, CoverSourceState.TIMEOUT, timeout_scope="not_started_due_to_aggregate_deadline") for value in ids)
+                results.extend(CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.TIMEOUT, timeout_scope="not_started_due_to_aggregate_deadline") for source_id, _ in values)
                 continue
-            descriptors = self._descriptors(configuration, ids)
-            if descriptors is None:
-                results.extend(CoverSource(cover_source_id(CoverSourceKind.HARDCOVER, str(value)), CoverSourceKind.HARDCOVER, CoverSourceState.UNAVAILABLE) for value in ids)
-                continue
-            for descriptor in descriptors:
-                results.append(self._remote(descriptor.source_id, descriptor.url, deadline))
+            for source_id, url in values:
+                results.append(self._remote(source_id, url, deadline))
         return tuple(results)
-
-    def _descriptors(self, configuration: ProviderConnectionConfiguration, ids: tuple[int, ...]):
-        if configuration.secret_file is None:
-            return None
-        try:
-            with hardcover_client(configuration.secret_file, 5) as client:
-                with client.stream("POST", "https://api.hardcover.app/v1/graphql", content=hardcover_cover_query(ids), headers={"Accept": "application/json", "Content-Type": "application/json", "Accept-Encoding": "identity"}) as response:
-                    if response.status_code != 200 or response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
-                        return None
-                    payload = b"".join(response.iter_bytes())
-                    if not payload or len(payload) > 262_144:
-                        return None
-            return parse_hardcover_covers(payload)
-        except (OSError, ValueError, MetadataReportError):
-            return None
 
     def _remote(self, source_id: str, url: str, deadline: float) -> CoverSource:
         try:

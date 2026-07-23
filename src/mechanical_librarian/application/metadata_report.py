@@ -101,6 +101,7 @@ class CoverObserver(Protocol):
         target: TargetSnapshot,
         providers: tuple[ProviderObservation, ...],
         local_sources: tuple[CoverSource, ...],
+        descriptors: tuple[tuple[str, str], ...] = (),
     ) -> tuple[CoverSource, ...]: ...
 
 
@@ -195,6 +196,7 @@ class GenerateMetadataReport:
         # references are deliberately not an ordering key.
         combined_claims = (target_title_claim, *local.claims)
         observations: list[ProviderObservation] = []
+        descriptors: list[tuple[str, str]] = []
         for binding in self._providers:
             if not binding.enabled:
                 observations.append(
@@ -219,6 +221,9 @@ class GenerateMetadataReport:
                 repository.close()
                 raise MetadataReportError("provider result is invalid")
             observations.append(observation)
+            candidate_descriptors = getattr(provider, "cover_descriptors", ())
+            if type(candidate_descriptors) is tuple:
+                descriptors.extend(candidate_descriptors)
 
         reasons = tuple(
             sorted(
@@ -228,7 +233,7 @@ class GenerateMetadataReport:
         )
         try:
             cover_sources = local.cover_sources if self._cover_observer is None else self._cover_observer.observe(
-                initial, tuple(observations), local.cover_sources
+                initial, tuple(observations), local.cover_sources, tuple(descriptors)
             )
             report = MetadataReport.create(
                 target=TargetFacts(self._connection.name, self._library.name, item, initial.title),
