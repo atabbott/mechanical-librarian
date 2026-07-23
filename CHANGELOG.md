@@ -11,8 +11,6 @@
 - Preserve duplicate EPUB occurrences with bounded v2 ordinals and admit only
   the narrow exact-v1 to exact-v2 pre-release persistence migration.
 
-## Unreleased
-
 - Added `metadata-report-v2` local-field evidence: complete ordered field
   states, package/opening evidence, and bounded rear-spine copyright evidence.
   Exact persisted reports can be reopened by report ID without operational
