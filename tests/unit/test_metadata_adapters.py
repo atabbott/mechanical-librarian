@@ -14,11 +14,11 @@ import httpx
 
 import mechanical_librarian.adapters.persistence.metadata_reports as metadata_persistence
 
-from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader
+from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader, _raw_cover_authority
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.hardcover_metadata import HARDCOVER_URL, HardcoverMetadataProvider
 import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import MetadataReportError, TargetCover
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -1233,6 +1233,31 @@ class ProviderAdapterTests(unittest.TestCase):
 
 
 class AudiobookshelfItemTests(unittest.TestCase):
+    def test_raw_cover_authority_preserves_nondefault_port(self) -> None:
+        self.assertEqual("example.invalid:13378", _raw_cover_authority("http://example.invalid:13378"))
+        self.assertEqual("example.invalid", _raw_cover_authority("https://example.invalid"))
+
+    def test_raw_cover_request_uses_endpoint_authority(self) -> None:
+        seen: dict[str, str] = {}
+
+        class Response:
+            status_code = 404
+            headers: dict[str, str] = {}
+            def __enter__(self): return self
+            def __exit__(self, *_: object): return None
+
+        class Client:
+            def __enter__(self): return self
+            def __exit__(self, *_: object): return None
+            def stream(self, _method: str, _url: str, *, headers: dict[str, str], timeout: object):
+                del timeout
+                seen.update(headers)
+                return Response()
+
+        reader = AudiobookshelfItemReader(client_factory=lambda: httpx.Client(), endpoint="http://example.invalid:13378", library_id="library-id", service_path="/library", maximum_bytes=1)
+        with patch("mechanical_librarian.adapters.library_services.audiobookshelf_item.httpx.Client", return_value=Client()):
+            self.assertIsNone(reader._read_raw_cover(TargetCover("identity", "/cover", "item-1"), None))
+        self.assertEqual("example.invalid:13378", seen["Host"])
     def test_scoped_reader_derives_stable_opaque_file_identity(self) -> None:
         payload = {
             "id": "item-1",

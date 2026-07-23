@@ -97,7 +97,7 @@ class AudiobookshelfItemReader:
 
     def _read_raw_cover(self, cover: TargetCover, deadline: float | None) -> bytes | None:
         with httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""}) as client:
-            host = httpx.URL(self._endpoint).host
+            host = _raw_cover_authority(self._endpoint)
             with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=_phase_timeout(deadline)) as response:
                 if response.status_code == 404:
                     return None
@@ -107,6 +107,14 @@ class AudiobookshelfItemReader:
                 if content_type not in {"image/jpeg", "image/png", "image/webp"}:
                     raise MetadataReportError("target cover is invalid")
                 return _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
+
+
+def _raw_cover_authority(endpoint: str) -> str:
+    """Preserve the configured URL authority, including a non-default port."""
+    try:
+        return httpx.URL(endpoint).netloc.decode("ascii")
+    except (AttributeError, UnicodeError, ValueError) as error:
+        raise MetadataReportError("target cover is invalid") from error
 
 
 def _snapshot(source: object, item: str, library_id: str, service_path: str) -> TargetSnapshot:
