@@ -121,7 +121,7 @@ class MetadataReportTests(unittest.TestCase):
         with self.assertRaises(MetadataReportError):
             service.run("item-1", 0)
         self.assertTrue(repository.closed)
-    def test_f09j_exact_max_shape_fits_one_mebibyte(self) -> None:
+    def test_f09j_exact_max_shape_fits_two_mebibytes_and_round_trips(self) -> None:
         """The admitted provider envelope fits before its parser is widened."""
         def claim(candidate: str, kind: ClaimKind, value: str) -> ProviderClaim:
             return ProviderClaim.create(
@@ -145,6 +145,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, (), tuple(candidates)),),
         )
         self.assertLessEqual(len(report.to_json().encode("utf-8")), MAX_REPORT_BYTES)
+        self.assertEqual(MetadataReport.from_json(report.to_json()), report)
     def test_field_results_are_complete_canonical_and_separate_from_claims(self) -> None:
         results = derive_field_results(())
         report = MetadataReport.create(
