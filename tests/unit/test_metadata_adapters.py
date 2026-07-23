@@ -94,6 +94,19 @@ class MetadataPersistenceTests(unittest.TestCase):
                 _create_legacy_schema,
             ),
             (
+                "F09i document bound",
+                lambda connection: (
+                    connection.execute(
+                        metadata_persistence._REPORTS_SQL.replace(
+                            "BETWEEN 2 AND 1048576", "BETWEEN 2 AND 262144"
+                        )
+                    ),
+                    connection.execute(metadata_persistence._CURRENT_SQL),
+                    connection.execute(metadata_persistence._NO_UPDATE_SQL),
+                    connection.execute(metadata_persistence._NO_DELETE_SQL),
+                ),
+            ),
+            (
                 "intermediate extra column",
                 lambda connection: (
                     connection.execute(metadata_persistence._REPORTS_SQL),

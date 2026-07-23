@@ -76,8 +76,9 @@ class MetadataProvider(Protocol):
 
 
 class ReportRepository(Protocol):
-    def publish(self, report: MetadataReport, currentness: Callable[[], bool]) -> str: ...
+    def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None = None) -> str: ...
     def get(self, report_id: str) -> str: ...
+    def current(self, connection: str, library: str, item: str, file_identity: str) -> str: ...
     def close(self) -> None: ...
 
 
@@ -126,7 +127,14 @@ class GenerateMetadataReport:
         if selected.format != "epub":
             raise UnsupportedMediaError("unsupported media")
 
+        repository: ReportRepository | None = None
         try:
+            repository = self._repository_factory()
+            try:
+                expected_current = MetadataReport.from_json(repository.current(self._connection.name, self._library.name, item, selected.identity)).report_id
+            except MetadataReportError:
+                expected_current = None
+
             local = self._inspector.inspect(
                 self._mount, selected.relative_path, self._limits.source_archive_bytes
             )
@@ -192,9 +200,7 @@ class GenerateMetadataReport:
             providers=tuple(sorted(observations, key=lambda value: value.provider)),
             field_results=derive_field_results(combined_claims),
         )
-        repository: ReportRepository | None = None
         try:
-            repository = self._repository_factory()
             persisted = repository.publish(
                 report,
                 lambda: self._is_current(
@@ -203,6 +209,7 @@ class GenerateMetadataReport:
                     selected,
                     local.content_digest,
                 ),
+                expected_current,
             )
             if persisted != report.to_json() or repository.get(report.report_id) != persisted:
                 raise MetadataReportError("persisted report readback failed")

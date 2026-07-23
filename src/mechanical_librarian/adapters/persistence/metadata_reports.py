@@ -46,6 +46,7 @@ _NO_DELETE_SQL = (
     "CREATE TRIGGER metadata_reports_no_delete BEFORE DELETE ON metadata_reports "
     "BEGIN SELECT RAISE(ABORT, 'metadata reports are append-only'); END"
 )
+_UNSET = object()
 
 
 class _LinuxDirectoryChain:
@@ -385,7 +386,7 @@ class SQLiteMetadataReportRepository:
         self._connection = connection
         self._binding = binding
 
-    def publish(self, report: MetadataReport, currentness: Callable[[], bool]) -> str:
+    def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None | object = _UNSET) -> str:
         if type(report) is not MetadataReport or not callable(currentness):
             raise MetadataReportError("report publication failed")
         document = report.to_json()
@@ -416,6 +417,10 @@ class SQLiteMetadataReportRepository:
                 persisted = MetadataReport.from_json(document)
                 if (persisted.target.connection, persisted.target.library, persisted.target.item, persisted.file.identity) != values[1:5]:
                     raise MetadataReportError("persisted current report scope disagrees")
+                if expected_current is not _UNSET and persisted.report_id != expected_current:
+                    raise MetadataReportError("current report changed")
+            elif expected_current is not _UNSET and expected_current is not None:
+                raise MetadataReportError("current report changed")
             existing = self._connection.execute(
                 "SELECT connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
                 (report.report_id,),
