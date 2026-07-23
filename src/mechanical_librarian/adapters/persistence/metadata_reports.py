@@ -55,6 +55,14 @@ _NO_DELETE_SQL = (
     "CREATE TRIGGER metadata_reports_no_delete BEFORE DELETE ON metadata_reports "
     "BEGIN SELECT RAISE(ABORT, 'metadata reports are append-only'); END"
 )
+_COVER_NO_UPDATE_SQL = (
+    "CREATE TRIGGER metadata_report_cover_references_no_update BEFORE UPDATE ON metadata_report_cover_references "
+    "BEGIN SELECT RAISE(ABORT, 'metadata report cover references are append-only'); END"
+)
+_COVER_NO_DELETE_SQL = (
+    "CREATE TRIGGER metadata_report_cover_references_no_delete BEFORE DELETE ON metadata_report_cover_references "
+    "BEGIN SELECT RAISE(ABORT, 'metadata report cover references are append-only'); END"
+)
 _UNSET = object()
 
 
@@ -606,6 +614,8 @@ def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportR
             connection.execute(_CURRENT_SQL)
             connection.execute(_COVER_REFERENCES_SQL)
             connection.execute(_NO_UPDATE_SQL)
+            connection.execute(_COVER_NO_UPDATE_SQL)
+            connection.execute(_COVER_NO_DELETE_SQL)
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
         _validate_schema(connection)
@@ -868,7 +878,7 @@ def _unlink_created(path: Path, expected: tuple[int, int]) -> None:
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
     objects = connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
-    expected_objects = sorted((("index", "sqlite_autoindex_current_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_report_cover_references_1", None), ("index", "sqlite_autoindex_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_2", None), ("table", "current_metadata_reports", _CURRENT_SQL), ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL), ("table", "metadata_reports", _REPORTS_SQL), ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL), ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL)))
+    expected_objects = sorted((("index", "sqlite_autoindex_current_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_report_cover_references_1", None), ("index", "sqlite_autoindex_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_2", None), ("table", "current_metadata_reports", _CURRENT_SQL), ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL), ("table", "metadata_reports", _REPORTS_SQL), ("trigger", "metadata_report_cover_references_no_delete", _COVER_NO_DELETE_SQL), ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL), ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL), ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL)))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
 
