@@ -24,6 +24,7 @@ from mechanical_librarian.domain.metadata_report import MetadataReport, ReportVa
 Runner = Callable[[Path, Path, str, str, str, int], str]
 ReopenRunner = Callable[[Path, str], str]
 CurrentReopenRunner = Callable[[Path, str, str, str, str], str]
+PreviewRunner = Callable[[Path, Path, str, str], bytes]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -77,6 +78,11 @@ def _parser() -> _Parser:
     reopen.add_argument("--library", type=_name)
     reopen.add_argument("--item", type=_item)
     reopen.add_argument("--file-identity", metavar="SHA256")
+    preview = commands.add_parser("metadata-report-cover-preview", help="read one report-bound cover preview")
+    preview.add_argument("--database", required=True, metavar="PATH", type=Path)
+    preview.add_argument("--artifact-store", required=True, metavar="PATH", type=Path)
+    preview.add_argument("--report-id", required=True, metavar="REPORT_ID", type=_report_id)
+    preview.add_argument("--artifact-id", required=True, metavar="ARTIFACT_ID", type=_artifact_id)
     return parser
 
 
@@ -86,7 +92,13 @@ def _report_id(value: str) -> str:
     return value
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def _artifact_id(value: str) -> str:
+    if re.fullmatch(r"cover_[0-9a-f]{64}", value) is None:
+        raise argparse.ArgumentTypeError("invalid artifact id")
+    return value
+
+
+def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     try:
@@ -94,6 +106,19 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
     except _ArgumentFailure:
         errors.write("Metadata report failed: invalid invocation.\n")
         return 2
+    if arguments.command == "metadata-report-cover-preview":
+        if preview_runner is None or getattr(output, "isatty", lambda: False)():
+            errors.write("Metadata report failed safely.\n")
+            return 1
+        try:
+            preview = preview_runner(arguments.database, arguments.artifact_store, arguments.report_id, arguments.artifact_id)
+            if type(preview) is not bytes or not preview:
+                raise ValueError
+            output.buffer.write(preview) if hasattr(output, "buffer") else output.write(preview.decode("latin1"))
+        except Exception:
+            errors.write("Metadata report failed safely.\n")
+            return 1
+        return 0
     if arguments.command == "metadata-report-get":
         if (arguments.current and current_reopen_runner is None) or (not arguments.current and reopen_runner is None):
             errors.write("Metadata report failed safely.\n")

@@ -9,6 +9,7 @@ from pathlib import Path
 from mechanical_librarian.adapters.evidence_extractors.process import run_epub_inspector_child
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.providers.hardcover_metadata import HardcoverMetadataProvider
 from mechanical_librarian.application.configuration import ConfigurationError, MediaMountConfiguration
 from mechanical_librarian.application.metadata_report import (
@@ -140,13 +141,24 @@ def reopen_current_metadata_report(database_path: Path, connection: str, library
         repository.close()
 
 
+def reopen_cover_preview(database_path: Path, artifact_store_path: Path, report_id: str, artifact_id: str) -> bytes:
+    """Read the one report-bound preview; originals and discovery stay unavailable."""
+    repository = open_repository(database_path, create=False)
+    try:
+        digest = repository.preview_digest(report_id, artifact_id)
+        return CoverArtifactStore(artifact_store_path, create=False).read_preview_digest(digest)
+    finally:
+        repository.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     return cli_main(
         argv,
         runner=run_metadata_report,
         reopen_runner=reopen_metadata_report,
         current_reopen_runner=reopen_current_metadata_report,
+        preview_runner=reopen_cover_preview,
     )
 
 
-__all__ = ["main", "reopen_current_metadata_report", "reopen_metadata_report", "run_metadata_report"]
+__all__ = ["main", "reopen_cover_preview", "reopen_current_metadata_report", "reopen_metadata_report", "run_metadata_report"]

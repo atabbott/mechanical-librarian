@@ -37,6 +37,10 @@ class CoverArtifactStore:
             raise MetadataReportError("artifact is invalid")
         return self._read(artifact.preview_digest, 1_048_576)
 
+    def read_preview_digest(self, digest: str) -> bytes:
+        """Read a preview only after a repository has authorized its digest."""
+        return self._read(digest, 1_048_576)
+
     def remove_unreferenced(self, digests: tuple[str, ...]) -> None:
         """Best-effort recovery cleanup of artifacts not yet bound to a report."""
         for digest in digests:
