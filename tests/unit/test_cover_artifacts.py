@@ -29,4 +29,3 @@ class CoverArtifactTests(unittest.TestCase):
         decoded = decode_cover(_image("PNG", (640, 960)))
         self.assertLessEqual(Image.open(io.BytesIO(decoded.preview)).width, 320)
         self.assertLessEqual(Image.open(io.BytesIO(decoded.preview)).height, 480)
-

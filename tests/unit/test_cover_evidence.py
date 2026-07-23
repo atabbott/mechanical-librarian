@@ -35,4 +35,3 @@ class CoverEvidenceTests(unittest.TestCase):
         self.assertTrue(publication_ready((source,)))
         with self.assertRaises(CoverEvidenceError):
             CoverSource(source.source_id, source.kind, CoverSourceState.TIMEOUT)
-

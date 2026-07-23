@@ -23,4 +23,3 @@ class CoverArtifactStoreTests(unittest.TestCase):
             (Path(directory) / artifact.preview_digest).write_bytes(b"wrong")
             with self.assertRaises(MetadataReportError):
                 store.preview(artifact)
-

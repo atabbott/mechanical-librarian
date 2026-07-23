@@ -48,4 +48,3 @@ class CoverPreviewCliTests(unittest.TestCase):
         )
         self.assertEqual(1, result)
         self.assertFalse(called)
-
