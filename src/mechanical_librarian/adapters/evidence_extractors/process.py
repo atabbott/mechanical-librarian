@@ -151,6 +151,7 @@ def _run_epub_opening_protocol(
             },
             "limits": limits.to_data(),
             "logical_identity": expected_source.digest if logical_identity is None else logical_identity,
+            "capability": "opening",
         },
         separators=(",", ":"),
         sort_keys=True,

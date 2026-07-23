@@ -43,7 +43,10 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     EpubPackageSourceError,
     EpubPackageReport,
     epub_resource_identity,
+    EpubPackageDeclarationKind,
+    EpubPackageField,
 )
+import base64
 
 
 _ADDRESS_SPACE = 256 * 1024 * 1024
@@ -92,8 +95,11 @@ def _read_context() -> dict[str, object]:
     decoded = json.loads(value)
     if type(decoded) is not dict:
         raise ValueError("invalid child context")
-    expected = {"child_seconds", "expected_source", "limits", "logical_identity"}
-    if frozenset(decoded) != frozenset(expected):
+    expected = {"child_seconds", "expected_source", "limits", "logical_identity", "capability"}
+    legacy = expected - {"capability"}
+    if frozenset(decoded) == frozenset(legacy):
+        decoded["capability"] = "opening"
+    elif frozenset(decoded) != frozenset(expected):
         raise ValueError("invalid child context")
     return decoded
 
@@ -161,6 +167,40 @@ def _write_report(report: EpubInspection) -> None:
     offset = 0
     while offset < len(payload):
         offset += os.write(1, payload[offset:])
+
+
+def _write_cover(value: dict[str, object]) -> None:
+    payload = (json.dumps(value, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(payload) > _STDOUT_LIMIT:
+        raise ValueError("child cover exceeded protocol")
+    os.write(1, payload)
+
+
+def _selected_cover(package_request: EpubPackageRequest) -> dict[str, object]:
+    try:
+        rejected = EpubPackageExtractor().preflight(package_request)
+        if rejected is not None:
+            return {"state": "invalid_declaration"}
+        with zipfile.ZipFile(_SourceIO(package_request), "r", allowZip64=True) as archive:
+            report = EpubPackageExtractor().extract(package_request, archive)
+            if not report.succeeded:
+                return {"state": "invalid_declaration"}
+            values = [item.raw_value for item in report.observations if item.field is EpubPackageField.COVER]
+            if not values:
+                return {"state": "absent"}
+            if len(values) != 1:
+                return {"state": "invalid_declaration"}
+            media = [item.media_type for item in report.declarations if item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and item.resource_identity == values[0]]
+            names = [name for name in archive.namelist() if epub_resource_identity(name) == values[0]]
+            if len(media) != 1 or media[0] not in {"image/jpeg", "image/png", "image/webp"} or len(names) != 1:
+                return {"state": "invalid_declaration"}
+            with archive.open(names[0]) as member:
+                data = member.read(8 * 1024 * 1024 + 1)
+            if len(data) > 8 * 1024 * 1024:
+                return {"state": "oversized"}
+            return {"state": "declared", "media_type": media[0], "data": base64.b64encode(data).decode("ascii"), "identity": values[0]}
+    except (OSError, ValueError, zipfile.BadZipFile):
+        return {"state": "invalid_declaration"}
 
 
 def _inspect_opening(
@@ -287,7 +327,8 @@ def main(argv: list[str] | None = None) -> int:
         _apply_limits()
         signal.signal(signal.SIGXCPU, lambda *_arguments: os._exit(71))
         context = _read_context()
-        if "capability" in context:
+        capability = context.get("capability", "opening")
+        if capability not in {"opening", "cover"}:
             raise ValueError("invalid child context")
         limits = _opening_limits(context["limits"])
         package_limits = limits.package
@@ -331,6 +372,9 @@ def main(argv: list[str] | None = None) -> int:
             EpubPackageCapability.PACKAGE, request.limits, request.deadline,
             request.monotonic_deadline, request.cancellation,
         )
+        if capability == "cover":
+            _write_cover(_selected_cover(package_request))
+            return 0
         bundle = _inspect_bundle(request, package_request, limits)
         package_report, opening_report = bundle[:2]
         rear_facts = bundle[2] if len(bundle) == 3 else ()
