@@ -84,8 +84,8 @@ class _IsolatedEpubInspector:
                     decoded = decode_cover(declared.data or b"")
                     self._artifacts.stage(decoded.artifact, declared.data or b"", decoded.preview)
                     covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.RETRIEVED, decoded.artifact),)
-                except CoverDecodeRejected:
-                    covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.DECODE_FAILED),)
+                except CoverDecodeRejected as error:
+                    covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, error.state),)
             else:
                 covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, declared.state),)
             return InspectionResult(digest, tuple(claims), covers)
@@ -133,13 +133,13 @@ class _CoverEvidenceObserver:
             if original is None:
                 source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.ABSENT)
             else:
-                decoded = decode_cover(original)
+                decoded = decode_cover(original, deadline=deadline)
                 self._artifacts.stage(decoded.artifact, original, decoded.preview)
                 source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.RETRIEVED, decoded.artifact)
         except CoverTimeoutError:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.TIMEOUT, timeout_scope="attempted")
-        except CoverDecodeRejected:
-            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.DECODE_FAILED)
+        except CoverDecodeRejected as error:
+            source = CoverSource(source_id, CoverSourceKind.ABS, error.state)
         except MetadataReportError:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
         return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
@@ -166,7 +166,7 @@ class _CoverEvidenceObserver:
     def _remote(self, source_id: str, url: str, deadline: float) -> CoverSource:
         try:
             remote = fetch_remote_cover(url, deadline=deadline)
-            decoded = decode_cover(remote.content)
+            decoded = decode_cover(remote.content, deadline=deadline)
             self._artifacts.stage(decoded.artifact, remote.content, decoded.preview)
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.RETRIEVED, decoded.artifact)
         except RemoteCoverTimeout:
@@ -175,8 +175,8 @@ class _CoverEvidenceObserver:
             message = str(error)
             state = CoverSourceState.UNSAFE_REMOTE if "unsafe" in message else CoverSourceState.UNSUPPORTED_FORMAT if "format" in message else CoverSourceState.OVERSIZED if "oversized" in message else CoverSourceState.UNAVAILABLE
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, state)
-        except CoverDecodeRejected:
-            return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.DECODE_FAILED)
+        except CoverDecodeRejected as error:
+            return CoverSource(source_id, CoverSourceKind.HARDCOVER, error.state)
         except MetadataReportError:
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.UNAVAILABLE)
 

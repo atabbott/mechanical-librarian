@@ -7,6 +7,7 @@ import io
 import json
 import os
 import resource
+import socket
 import sys
 
 from PIL import Image, UnidentifiedImageError, features
@@ -18,7 +19,7 @@ _MAX_PIXELS = 16_777_216
 
 
 def _limits() -> None:
-    for limit, maximum in ((resource.RLIMIT_AS, 256 * 1024 * 1024), (resource.RLIMIT_CPU, 30), (resource.RLIMIT_NOFILE, 64), (resource.RLIMIT_CORE, 0)):
+    for limit, maximum in ((resource.RLIMIT_AS, 256 * 1024 * 1024), (resource.RLIMIT_CPU, 30), (resource.RLIMIT_NOFILE, 64), (resource.RLIMIT_NPROC, 1), (resource.RLIMIT_CORE, 0)):
         try:
             soft, hard = resource.getrlimit(limit)
             accepted = maximum if hard == resource.RLIM_INFINITY else min(maximum, hard)
@@ -28,31 +29,49 @@ def _limits() -> None:
                 raise
 
 
+def _deny_network(*_: object, **__: object) -> object:
+    raise OSError("network is unavailable in cover decoder")
+
+
+def _no_network() -> None:
+    socket.socket = _deny_network  # type: ignore[assignment]
+    socket.create_connection = _deny_network  # type: ignore[assignment]
+    socket.getaddrinfo = _deny_network  # type: ignore[assignment]
+
+
 def _decode(data: bytes) -> dict[str, object]:
     if not (features.check("jpg") and features.check("zlib") and features.check("webp")):
-        raise ValueError
-    with Image.open(io.BytesIO(data)) as image:
-        if image.format not in {"JPEG", "PNG", "WEBP"} or getattr(image, "n_frames", 1) != 1:
-            raise ValueError
+        return {"state": "decode_failed"}
+    try:
+        image = Image.open(io.BytesIO(data))
+    except UnidentifiedImageError:
+        return {"state": "unsupported_format"}
+    with image:
+        if getattr(image, "n_frames", 1) != 1:
+            return {"state": "animated_or_multiframe"}
+        if image.format not in {"JPEG", "PNG", "WEBP"}:
+            return {"state": "unsupported_format"}
         image.load()
         if image.width > 8192 or image.height > 8192 or image.width * image.height > _MAX_PIXELS:
-            raise ValueError
+            return {"state": "oversized"}
         preview = image.convert("RGBA")
         preview.thumbnail((320, 480), Image.Resampling.LANCZOS)
         output = io.BytesIO()
         preview.save(output, "PNG", optimize=False, compress_level=9)
     encoded = output.getvalue()
     if len(encoded) > _MAX_PREVIEW_BYTES:
-        raise ValueError
-    return {"format": {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}[image.format], "width": image.width, "height": image.height, "preview": base64.b64encode(encoded).decode("ascii")}
+        return {"state": "oversized"}
+    return {"state": "retrieved", "format": {"JPEG": "image/jpeg", "PNG": "image/png", "WEBP": "image/webp"}[image.format], "width": image.width, "height": image.height, "preview": base64.b64encode(encoded).decode("ascii")}
 
 
 def main() -> int:
     try:
         _limits()
+        _no_network()
         data = sys.stdin.buffer.read(_MAX_ORIGINAL_BYTES + 1)
         if not data or len(data) > _MAX_ORIGINAL_BYTES:
-            raise ValueError
+            os.write(sys.stdout.fileno(), b'{"state":"oversized"}')
+            return 0
         result = _decode(data)
         os.write(sys.stdout.fileno(), json.dumps(result, separators=(",", ":")).encode("ascii"))
         return 0
