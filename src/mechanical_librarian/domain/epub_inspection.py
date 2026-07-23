@@ -26,6 +26,7 @@ _MEDIA = frozenset({"ebook", "print", "unknown", "ambiguous", "not_applicable"})
 _CLASSIFICATION_BASES = frozenset({"ebook", "paperback", "hardcover", "print", "unlabelled", "ambiguous", "not_applicable"})
 _BASES = frozenset({"package_metadata", "opening_matter"})
 _FIELD_STATES = frozenset({"valid", "malformed", "oversized", "unsupported", "untyped", "inapplicable"})
+_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 EPUB_PACKAGE_LIMIT_PROFILE = "epub-package-limits-v1"
 MAX_PUBLIC_REPORT_BYTES = 524_288
@@ -163,6 +164,30 @@ class EpubInspectionField(StrEnum):
 
 
 @dataclass(frozen=True, repr=False)
+class EpubRearProvenance:
+    """Bounded, opaque provenance for a rear-spine observation."""
+
+    resource_identity: str
+    spine_ordinal: int
+    tail_slot: int
+    marker: str
+    citation: str
+
+    def __post_init__(self) -> None:
+        if (
+            _DIGEST.fullmatch(self.resource_identity) is None
+            or type(self.spine_ordinal) is not int or self.spine_ordinal < 1
+            or type(self.tail_slot) is not int or not 1 <= self.tail_slot <= 8
+            or type(self.marker) is not str or not self.marker or len(self.marker) > 64
+            or type(self.citation) is not str or not self.citation or len(self.citation) > 280
+        ):
+            raise ValueError("EPUB rear provenance is malformed")
+
+    def to_data(self) -> dict[str, object]:
+        return {"citation": self.citation, "marker": self.marker, "resource_identity": self.resource_identity, "spine_ordinal": self.spine_ordinal, "tail_slot": self.tail_slot}
+
+
+@dataclass(frozen=True, repr=False)
 class EpubInspectionFact:
     """One bounded fact with its source and non-authoritative supporting span."""
 
@@ -177,6 +202,8 @@ class EpubInspectionFact:
     basis: str
     outcome: EpubInspectionOutcome = EpubInspectionOutcome.SUCCESS
     state: str = "valid"
+    role: str | None = None
+    rear_provenance: EpubRearProvenance | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -195,10 +222,12 @@ class EpubInspectionFact:
             or self.basis not in _BASES
             or type(self.outcome) is not EpubInspectionOutcome
             or self.state not in _FIELD_STATES
+            or (self.role is not None and (type(self.role) is not str or not self.role or len(self.role) > 64))
+            or (self.rear_provenance is not None and type(self.rear_provenance) is not EpubRearProvenance)
         ):
             raise ValueError("EPUB inspection fact is malformed")
         if self.field is not EpubInspectionField.ISBN and (
-            self.canonical_value is None
+            (self.state == "valid" and self.canonical_value is None)
             or self.checksum != "not_applicable"
             or self.media != "not_applicable"
             or self.classification_basis != "not_applicable"
@@ -292,6 +321,8 @@ class EpubInspection:
                         "media": fact.media,
                         "observed": fact.observed_value,
                         "outcome": fact.outcome.value,
+                        "rear_provenance": None if fact.rear_provenance is None else fact.rear_provenance.to_data(),
+                        "role": fact.role,
                         "support": fact.supporting_context,
                         "state": fact.state,
                     }
@@ -322,7 +353,7 @@ class EpubInspection:
             source = None if source_data is None else Fingerprint(source_data["algorithm"], SchemaVersion(source_data["schema"]), source_data["digest"])
             facts = tuple(
                 EpubInspectionFact(
-                    EpubInspectionField(item["field"]), source, item["observed"], item["canonical"], item["support"], item["checksum"], item["media"], item["applicability_basis"], item["basis"], EpubInspectionOutcome(item["outcome"]), item["state"]
+                    EpubInspectionField(item["field"]), source, item["observed"], item["canonical"], item["support"], item["checksum"], item["media"], item["applicability_basis"], item["basis"], EpubInspectionOutcome(item["outcome"]), item["state"], item["role"], None if item["rear_provenance"] is None else EpubRearProvenance(**item["rear_provenance"])
                 )
                 for item in value["facts"]
             )

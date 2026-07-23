@@ -21,7 +21,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionOutcome
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
-from mechanical_librarian.domain.metadata_report import ClaimKind, FieldState, LocalClaim
+from mechanical_librarian.domain.metadata_report import ClaimKind, FieldState, LocalClaim, RearClaimProvenance
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -60,6 +60,8 @@ class _IsolatedEpubInspector:
                     checksum=fact.checksum,
                     applicability_basis=fact.classification_basis,
                     state=FieldState(fact.state),
+                    role=fact.role,
+                    rear_provenance=None if fact.rear_provenance is None else RearClaimProvenance(**fact.rear_provenance.to_data()),
                 )
                 claims_by_reference[claim.reference] = claim
             return InspectionResult(digest, tuple(sorted(claims_by_reference.values(), key=lambda value: value.reference)))
@@ -121,6 +123,8 @@ def run_metadata_report(config_path: Path, database_path: Path, connection_name:
 
 def reopen_metadata_report(database_path: Path, report_id: str) -> str:
     """Read one exact persisted report without loading operational configuration."""
+    if not database_path.is_file():
+        raise MetadataReportError("metadata report unavailable")
     repository = open_repository(database_path)
     try:
         return repository.get(report_id)

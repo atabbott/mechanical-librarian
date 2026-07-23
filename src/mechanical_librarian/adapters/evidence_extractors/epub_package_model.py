@@ -341,10 +341,13 @@ class EpubPackageDeclaration:
     identifier: str | None = None
     media_type: str | None = None
     properties: tuple[str, ...] = ()
+    linear: bool = True
 
     def __post_init__(self) -> None:
         if type(self.kind) is not EpubPackageDeclarationKind or type(self.citation) is not EpubPackageCitation:
             raise EvidenceValueError("local evidence declaration is malformed")
+        if type(self.linear) is not bool:
+            raise EvidenceValueError("declaration linearity is malformed")
         if type(self.source_ordinal) is not int or not 1 <= self.source_ordinal <= 1_000_000:
             raise EvidenceValueError("declaration source ordinal is invalid")
         if self.resource_identity is not None:

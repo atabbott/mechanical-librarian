@@ -20,6 +20,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderStatus,
     TargetFacts,
+    derive_field_results,
     normalize_title,
 )
 
@@ -185,6 +186,7 @@ class GenerateMetadataReport:
             local_claims=combined_claims,
             local_reasons=reasons,
             providers=tuple(sorted(observations, key=lambda value: value.provider)),
+            field_results=derive_field_results(local.claims),
         )
         repository: ReportRepository | None = None
         try:

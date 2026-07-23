@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.interfaces.cli import main
+from mechanical_librarian.bootstrap.composition import reopen_metadata_report
+from mechanical_librarian.application.metadata_report import MetadataReportError
 
 
 class MetadataReportReopenTests(unittest.TestCase):
@@ -41,6 +44,13 @@ class MetadataReportReopenTests(unittest.TestCase):
             stderr=io.StringIO(),
         )
         self.assertEqual(result, 2)
+
+    def test_missing_database_does_not_create_a_database_when_reopening(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "missing.sqlite"
+            with self.assertRaises(MetadataReportError):
+                reopen_metadata_report(database, "report_" + "a" * 64)
+            self.assertFalse(database.exists())
 
 
 if __name__ == "__main__":

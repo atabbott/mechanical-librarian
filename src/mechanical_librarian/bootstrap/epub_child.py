@@ -20,6 +20,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _Rejected,
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_opening import EpubOpeningExtractor
+from mechanical_librarian.adapters.evidence_extractors.epub_local import package_facts as _adapter_package_facts, rear_facts as _adapter_rear_facts
 from mechanical_librarian.adapters.evidence_extractors import epub_opening as opening_parser
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
@@ -188,7 +189,7 @@ def _inspect_bundle(
         with zipfile.ZipFile(_SourceIO(package_request), "r", allowZip64=True) as archive:
             package_report = EpubPackageExtractor().extract(package_request, archive)
             opening_report = EpubOpeningExtractor().extract(request, limits, package_report, archive)
-            return package_report, opening_report, _rear_facts(request, package_report, opening_report, archive)
+            return package_report, opening_report, _adapter_rear_facts(request, package_report, opening_report, archive)
     except _Rejected as rejected:
         return (
             None,
@@ -237,6 +238,10 @@ _PACKAGE_FIELDS = {
 
 
 def _package_facts(report, source: Fingerprint) -> tuple[EpubInspectionFact, ...]:
+    return _adapter_package_facts(report, source)
+
+    # Kept unreachable only until the next cleanup patch removes this legacy
+    # implementation; the operational projection is adapter-owned above.
     facts: list[EpubInspectionFact] = []
     for observation in report.observations:
         field = _PACKAGE_FIELDS.get(observation.field)
@@ -284,6 +289,11 @@ def _inspection(
         return EpubInspection(opening.outcome, None)
     if not package_report.succeeded:
         return EpubInspection(package_report.outcome, source)
+    if opening.outcome not in {
+        EpubInspectionOutcome.SUCCESS,
+        EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
+    }:
+        return EpubInspection(opening.outcome, source)
     facts = (*_package_facts(package_report, source), *opening.facts, *rear_facts)
     outcome = EpubInspectionOutcome.SUCCESS if facts else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
     return EpubInspection(outcome, source, tuple(sorted(facts, key=lambda fact: (fact.basis, fact.field.value, fact.observed_value))))
@@ -299,6 +309,8 @@ def _rear_facts(
     opening_report: EpubOpeningReport,
     archive: zipfile.ZipFile,
 ) -> tuple[EpubInspectionFact, ...]:
+    return _adapter_rear_facts(request, package_report, opening_report, archive)
+
     """Inspect the bounded tail pool without extending opening-matter selection.
 
     Package validation has already made spine identities opaque and unique.  The

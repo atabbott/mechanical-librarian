@@ -1777,6 +1777,7 @@ def _package_report(
             warnings.append(EpubPackageWarning("invalid_spine_item", citation))
             continue
         accepted_spine_ids.add(idref)
+        linear = _attribute(itemref, "linear")
         declarations.append(
             EpubPackageDeclaration(
                 EpubPackageDeclarationKind.SPINE_ITEM,
@@ -1784,6 +1785,7 @@ def _package_report(
                 citation,
                 manifest_ids[idref],
                 idref,
+                linear=linear != "no",
             )
         )
     toc = _attribute(spine, "toc")
