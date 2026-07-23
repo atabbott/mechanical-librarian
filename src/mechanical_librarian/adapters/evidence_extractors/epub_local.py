@@ -72,7 +72,10 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
     if not report.succeeded or report.source_fingerprint is None:
         return ()
     manifests = {d.resource_identity: d for d in report.declarations if d.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and d.resource_identity}
-    spine = [d for d in report.declarations if d.kind is EpubPackageDeclarationKind.SPINE_SLOT]
+    # Select the tail from the linear spine first. Non-linear declarations do
+    # not displace a linear tail position; every selected linear slot still
+    # consumes its fixed position before later eligibility checks.
+    spine = [d for d in report.declarations if d.kind is EpubPackageDeclarationKind.SPINE_SLOT and d.linear]
     encrypted = {d.resource_identity for d in report.declarations if d.kind is EpubPackageDeclarationKind.ENCRYPTION and d.resource_identity}
     opened = {r.resource_identity for r in opening_report.resources if r.opened}
     seen: set[str] = set()
@@ -82,7 +85,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
     for tail_slot, spine_item in enumerate(reversed(spine[-8:]), 1):
         opening._check(request)
         identity = spine_item.resource_identity
-        if identity is None or not spine_item.linear:
+        if identity is None:
             continue
         # A tail position is consumed before eligibility checks.  A repeated
         # identity therefore cannot re-open or re-emit evidence from an earlier

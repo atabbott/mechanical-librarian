@@ -1,8 +1,9 @@
 # Upgrades and compatibility
 
 0.4 is a deliberate pre-deployment clean-state reset. It recognizes neither
-pre-0.4 development schemas nor their configuration or commands. There is no
-migration, import, conversion, preservation, or tailored compatibility path.
+pre-0.4 development schemas nor their configuration or commands. The single
+exception is the exact pre-release metadata-report-v1 two-table schema: it is
+atomically widened to the exact v2 schema on the verified writable connection.
 
 To adopt this checkpoint, retain any older development database only as an
 offline historical artifact and supply an absent path for the new report
