@@ -408,7 +408,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         )
         self.assertFalse(
             any(
-                item.identifier == "chapter"
+                item.kind is EpubPackageDeclarationKind.SPINE_ITEM and item.identifier == "chapter"
                 for item in duplicate_manifest_report.declarations
             )
         )

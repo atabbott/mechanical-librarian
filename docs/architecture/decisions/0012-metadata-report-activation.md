@@ -21,9 +21,11 @@ provider references, one fresh request per enabled supported provider, final
 target/media currentness, and whole-report publication.
 
 Persist exactly two application tables: immutable canonical metadata reports
-and their separate current pointers. Accept only a new database or that exact
-schema. Provide no migration or compatibility path for pre-0.4 development
-state.
+and their separate current pointers. The sole supported compatibility action is
+one atomic pre-release `metadata-report-v1` to v2 table widening: it preserves
+the immutable documents and current pointers, permits exact reopen of v1
+documents, and allows v2 successors. There is no ledger, downgrade, repair,
+or general migration framework.
 
 Use SQLite rollback-journal `DELETE` mode for this sole baseline. WAL,
 migration-ledger, forward-migration, compatibility, recovery, and repair

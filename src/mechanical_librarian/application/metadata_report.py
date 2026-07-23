@@ -186,7 +186,7 @@ class GenerateMetadataReport:
             local_claims=combined_claims,
             local_reasons=reasons,
             providers=tuple(sorted(observations, key=lambda value: value.provider)),
-            field_results=derive_field_results(local.claims),
+            field_results=derive_field_results(combined_claims),
         )
         repository: ReportRepository | None = None
         try:

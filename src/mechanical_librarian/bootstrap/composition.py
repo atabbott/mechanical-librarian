@@ -123,9 +123,7 @@ def run_metadata_report(config_path: Path, database_path: Path, connection_name:
 
 def reopen_metadata_report(database_path: Path, report_id: str) -> str:
     """Read one exact persisted report without loading operational configuration."""
-    if not database_path.is_file():
-        raise MetadataReportError("metadata report unavailable")
-    repository = open_repository(database_path)
+    repository = open_repository(database_path, create=False)
     try:
         return repository.get(report_id)
     finally:

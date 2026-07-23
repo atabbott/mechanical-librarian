@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Preserve source-spine slot positions for bounded local EPUB rear evidence and
+  make exact-ID report reopening non-creating.
+- Add the one supported pre-release metadata-report v1 to v2 persistence
+  migration while retaining immutable historical report replay.
+
+## Unreleased
+
 - Added `metadata-report-v2` local-field evidence: complete ordered field
   states, package/opening evidence, and bounded rear-spine copyright evidence.
   Exact persisted reports can be reopened by report ID without operational

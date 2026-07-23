@@ -1759,7 +1759,7 @@ def _package_report(
         return False
 
     accepted_spine_ids: set[str] = set()
-    for itemref in spine.children:
+    for spine_position, itemref in enumerate(spine.children, 1):
         if itemref.name != f"{{{_OPF_NS}}}itemref":
             warnings.append(EpubPackageWarning("invalid_spine_item"))
             continue
@@ -1770,6 +1770,18 @@ def _package_report(
             warnings.append(EpubPackageWarning("invalid_spine_item", citation))
             continue
         idref = _attribute(itemref, "idref")
+        linear = _attribute(itemref, "linear")
+        declarations.append(
+            EpubPackageDeclaration(
+                EpubPackageDeclarationKind.SPINE_SLOT,
+                itemref.ordinal,
+                citation,
+                manifest_ids.get(idref) if idref else None,
+                idref,
+                linear=linear != "no",
+                spine_position=spine_position,
+            )
+        )
         if not idref or not has_compatible_spine_target(idref):
             warnings.append(EpubPackageWarning("invalid_spine_item"))
             continue
@@ -1777,7 +1789,6 @@ def _package_report(
             warnings.append(EpubPackageWarning("invalid_spine_item", citation))
             continue
         accepted_spine_ids.add(idref)
-        linear = _attribute(itemref, "linear")
         declarations.append(
             EpubPackageDeclaration(
                 EpubPackageDeclarationKind.SPINE_ITEM,
@@ -1786,6 +1797,7 @@ def _package_report(
                 manifest_ids[idref],
                 idref,
                 linear=linear != "no",
+                spine_position=spine_position,
             )
         )
     toc = _attribute(spine, "toc")

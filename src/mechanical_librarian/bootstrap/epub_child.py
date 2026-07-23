@@ -296,7 +296,7 @@ def _inspection(
         return EpubInspection(opening.outcome, source)
     facts = (*_package_facts(package_report, source), *opening.facts, *rear_facts)
     outcome = EpubInspectionOutcome.SUCCESS if facts else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
-    return EpubInspection(outcome, source, tuple(sorted(facts, key=lambda fact: (fact.basis, fact.field.value, fact.observed_value))))
+    return EpubInspection(outcome, source, facts)
 
 
 _REAR_MARKER = re.compile(r"(?:copyright|©|all rights reserved)", re.I)

@@ -70,7 +70,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
     if not report.succeeded or report.source_fingerprint is None:
         return ()
     manifests = {d.resource_identity: d for d in report.declarations if d.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and d.resource_identity}
-    spine = [d for d in report.declarations if d.kind is EpubPackageDeclarationKind.SPINE_ITEM and d.resource_identity and d.linear]
+    spine = [d for d in report.declarations if d.kind is EpubPackageDeclarationKind.SPINE_SLOT]
     encrypted = {d.resource_identity for d in report.declarations if d.kind is EpubPackageDeclarationKind.ENCRYPTION and d.resource_identity}
     opened = {r.resource_identity for r in opening_report.resources if r.opened}
     limits = EpubOpeningLimits(package=request.limits, selected_documents=4, expanded_bytes_per_resource=1_048_576, expanded_bytes_per_selection=4_194_304, text_characters_per_selection=262_144, nodes_per_resource=50_000, nodes_per_selection=50_000, facts=16)
@@ -79,6 +79,8 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
     for tail_slot, spine_item in enumerate(reversed(spine[-8:]), 1):
         opening._check(request)
         identity = spine_item.resource_identity
+        if identity is None or not spine_item.linear:
+            continue
         if identity in opened:
             continue
         declaration = manifests.get(identity)
@@ -98,7 +100,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
         except (opening._ResourceRejected, opening._MalformedMarkup, opening._UnsafeConstruct, opening._UnsupportedEncoding, ValueError): continue
         marker = _MARKER.search(projection.text)
         if marker is None: continue
-        provenance = EpubRearProvenance(identity, spine_item.source_ordinal, tail_slot, marker.group(0).lower(), marker.group(0))
+        provenance = EpubRearProvenance(identity, spine_item.spine_position or tail_slot, tail_slot, marker.group(0).lower(), marker.group(0))
         parents = {a for element in projection.elements for a in element.ancestors}; resource_isbns = 0
         for element in projection.elements:
             if element.ordinal in parents: continue

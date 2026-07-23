@@ -56,6 +56,24 @@ class FieldState(StrEnum):
     INAPPLICABLE = "inapplicable"
 
 
+class FieldSource(StrEnum):
+    EPUB = "epub"
+    TARGET_METADATA = "target_metadata"
+
+
+@dataclass(frozen=True, slots=True)
+class FieldSourceResult:
+    source: FieldSource
+    state: FieldState
+
+    def __post_init__(self) -> None:
+        if type(self.source) is not FieldSource or type(self.state) is not FieldState:
+            raise ReportValueError("field source result is invalid")
+
+    def to_data(self) -> dict[str, str]:
+        return {"source": self.source.value, "state": self.state.value}
+
+
 @dataclass(frozen=True, slots=True)
 class RearClaimProvenance:
     resource_identity: str
@@ -80,13 +98,16 @@ class FieldResult:
 
     kind: ClaimKind
     state: FieldState
+    sources: tuple[FieldSourceResult, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.kind) is not ClaimKind or type(self.state) is not FieldState:
             raise ReportValueError("field result is invalid")
+        if type(self.sources) is not tuple or any(type(value) is not FieldSourceResult for value in self.sources) or (self.sources and tuple(value.source for value in self.sources) != tuple(FieldSource)):
+            raise ReportValueError("field result sources are invalid")
 
     def to_data(self) -> dict[str, str]:
-        return {"kind": self.kind.value, "state": self.state.value}
+        return {"kind": self.kind.value, "state": self.state.value, "sources": [value.to_data() for value in self.sources]}
 
 
 class ProviderStatus(StrEnum):
@@ -519,15 +540,7 @@ def derive_field_results(local_claims: tuple[LocalClaim, ...]) -> tuple[FieldRes
         FieldState.UNTYPED, FieldState.INAPPLICABLE, FieldState.VALID,
     )
     return tuple(
-        FieldResult(
-            kind,
-            next(
-                (state for state in precedence if any(
-                    claim.kind is kind and claim.state is state for claim in local_claims
-                )),
-                FieldState.ABSENT,
-            ),
-        )
+        FieldResult(kind, next((state for state in precedence if any(claim.kind is kind and claim.state is state for claim in local_claims)), FieldState.ABSENT), tuple(FieldSourceResult(source, next((state for state in precedence if any(claim.kind is kind and claim.state is state and ((source is FieldSource.TARGET_METADATA) == (claim.basis == "target_metadata")) for claim in local_claims)), FieldState.ABSENT)) for source in FieldSource))
         for kind in ClaimKind
     )
 
@@ -601,8 +614,8 @@ def _report_from_data(value: object) -> MetadataReport:
 
 
 def _field_result_from_data(value: object) -> FieldResult:
-    item = _object(value, {"kind", "state"})
-    return FieldResult(ClaimKind(item["kind"]), FieldState(item["state"]))
+    item = _object(value, {"kind", "state", "sources"})
+    return FieldResult(ClaimKind(item["kind"]), FieldState(item["state"]), tuple(FieldSourceResult(FieldSource(source["source"]), FieldState(source["state"])) for source in _list(item["sources"])))
 
 
 def _local_claim_from_data(value: object) -> LocalClaim:
