@@ -79,7 +79,7 @@ class _IsolatedEpubInspector:
                     occurrence=occurrence,
                 )
                 claims.append(claim)
-            declared = read_declared_cover(opened.descriptor)
+            declared = read_declared_cover(opened.descriptor, digest)
             if declared.state is CoverSourceState.DECLARED:
                 try:
                     decoded = decode_cover(declared.data or b"")

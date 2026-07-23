@@ -1,4 +1,5 @@
 import os
+import hashlib
 import tempfile
 import unittest
 import zipfile
@@ -6,35 +7,47 @@ from pathlib import Path
 
 from mechanical_librarian.adapters.evidence_extractors.epub_cover import read_declared_cover
 from mechanical_librarian.domain.cover_evidence import CoverSourceState
+from tests.support.epub_packages import EPUB3_PACKAGE, epub_bytes
 
 
 class DeclaredEpubCoverTests(unittest.TestCase):
     def test_reads_only_declared_cover_member(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "book.epub"
-            with zipfile.ZipFile(path, "w") as archive:
-                archive.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="OPS/book.opf"/></rootfiles></container>')
-                archive.writestr("OPS/book.opf", '<package><manifest><item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/></manifest></package>')
-                archive.writestr("OPS/cover.png", b"declared")
-                archive.writestr("OPS/other.png", b"not selected")
+            path.write_bytes(epub_bytes())
             descriptor = os.open(path, os.O_RDONLY)
             try:
-                result = read_declared_cover(descriptor)
+                result = read_declared_cover(descriptor, hashlib.sha256(path.read_bytes()).hexdigest())
             finally:
                 os.close(descriptor)
             self.assertEqual(CoverSourceState.DECLARED, result.state)
-            self.assertEqual(b"declared", result.data)
+            self.assertEqual(b"TRAP: cover bytes must remain opaque", result.data)
 
     def test_absent_cover_is_not_heuristically_selected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "book.epub"
-            with zipfile.ZipFile(path, "w") as archive:
-                archive.writestr("META-INF/container.xml", '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>')
-                archive.writestr("book.opf", '<package><manifest><item id="image" href="cover.png" media-type="image/png"/></manifest></package>')
-                archive.writestr("cover.png", b"not declared")
+            package = EPUB3_PACKAGE.replace(b' properties="cover-image"', b"")
+            path.write_bytes(epub_bytes(package=package))
             descriptor = os.open(path, os.O_RDONLY)
             try:
-                result = read_declared_cover(descriptor)
+                result = read_declared_cover(descriptor, hashlib.sha256(path.read_bytes()).hexdigest())
             finally:
                 os.close(descriptor)
             self.assertEqual(CoverSourceState.ABSENT, result.state)
+
+    def test_exact_eight_mebibyte_cover_uses_bounded_binary_pipe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "book.epub"
+            cover = b"x" * (8 * 1024 * 1024)
+            path.write_bytes(epub_bytes(include_default_content=False, extra_entries=(
+                ("EPUB/nav.xhtml", b"nav", zipfile.ZIP_DEFLATED),
+                ("EPUB/chapter.xhtml", b"chapter", zipfile.ZIP_DEFLATED),
+                ("EPUB/cover.jpg", cover, zipfile.ZIP_STORED),
+            )))
+            descriptor = os.open(path, os.O_RDONLY)
+            try:
+                result = read_declared_cover(descriptor, hashlib.sha256(path.read_bytes()).hexdigest())
+            finally:
+                os.close(descriptor)
+            self.assertEqual(CoverSourceState.DECLARED, result.state)
+            self.assertEqual(cover, result.data)
