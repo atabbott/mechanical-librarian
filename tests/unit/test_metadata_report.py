@@ -98,6 +98,9 @@ class _Repository:
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
         raise CurrentnessError("persisted current report is unavailable")
 
+    def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
+        return None
+
     def close(self) -> None:
         self.closed = True
 

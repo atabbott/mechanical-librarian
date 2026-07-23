@@ -471,9 +471,9 @@ class SQLiteMetadataReportRepository:
             document,
         )
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
             if currentness() is not True:
                 raise MetadataReportError("target or media changed")
+            self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
             current = self._connection.execute(
@@ -564,6 +564,12 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("persisted report is invalid") from error
 
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
+        document = self.current_optional(connection, library, item, file_identity)
+        if document is None:
+            raise MetadataReportError("persisted current report is unavailable")
+        return document
+
+    def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
         try:
             row = self._connection.execute(
                 "SELECT c.report_id,r.schema_version,r.connection_name,r.library_name,r.item_id,r.file_identity FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
@@ -571,8 +577,10 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
         except sqlite3.Error as error:
             raise MetadataReportError("persisted current report is invalid") from error
-        if row is None or type(row[0]) is not str:
-            raise MetadataReportError("persisted current report is unavailable")
+        if row is None:
+            return None
+        if type(row[0]) is not str:
+            raise MetadataReportError("persisted current report is invalid")
         document = self.get(row[0])
         try:
             report = MetadataReport.from_json(document)

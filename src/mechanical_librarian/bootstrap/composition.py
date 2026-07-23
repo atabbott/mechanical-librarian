@@ -83,8 +83,11 @@ class _IsolatedEpubInspector:
             if declared.state is CoverSourceState.DECLARED:
                 try:
                     decoded = decode_cover(declared.data or b"")
-                    self._artifacts.stage(decoded.artifact, declared.data or b"", decoded.preview)
-                    covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.RETRIEVED, decoded.artifact),)
+                    try:
+                        self._artifacts.stage(decoded.artifact, declared.data or b"", decoded.preview)
+                        covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.RETRIEVED, decoded.artifact),)
+                    except MetadataReportError:
+                        covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.UNAVAILABLE),)
                 except CoverDecodeRejected as error:
                     covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, error.state),)
             else:
@@ -123,10 +126,10 @@ class _CoverEvidenceObserver:
         self._artifacts = artifacts
         self._providers = {value.name: value for value in providers}
 
-    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...], descriptors: tuple[tuple[str, str | None], ...] = ()) -> tuple[CoverSource, ...]:
+    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...], descriptors: tuple[tuple[str, str, str | None], ...] = ()) -> tuple[CoverSource, ...]:
         if target.cover is None:
             source = CoverSource(cover_source_id(CoverSourceKind.ABS, "absent"), CoverSourceKind.ABS, CoverSourceState.ABSENT)
-            return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=time.monotonic() + 60.0))
+            return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=CoverDeadline.start()))
         source_id = cover_source_id(CoverSourceKind.ABS, target.cover.identity)
         deadline = CoverDeadline.start()
         try:
@@ -147,7 +150,7 @@ class _CoverEvidenceObserver:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
         return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
 
-    def _hardcover(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[tuple[str, str | None], ...], *, deadline: CoverDeadline) -> tuple[CoverSource, ...]:
+    def _hardcover(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[tuple[str, str, str | None], ...], *, deadline: CoverDeadline) -> tuple[CoverSource, ...]:
         results: list[CoverSource] = []
         for observation in observations:
             configuration = self._providers.get(observation.provider)
@@ -156,7 +159,7 @@ class _CoverEvidenceObserver:
             if not configuration.cover_enabled:
                 results.append(CoverSource(cover_source_id(CoverSourceKind.HARDCOVER, observation.provider), CoverSourceKind.HARDCOVER, CoverSourceState.DISABLED))
                 continue
-            values = tuple(descriptors)
+            values = tuple((source_id, url) for provider, source_id, url in descriptors if provider == observation.provider)
             if not values:
                 continue
             if time.monotonic() >= deadline.aggregate_deadline:

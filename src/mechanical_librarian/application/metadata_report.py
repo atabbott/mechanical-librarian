@@ -106,7 +106,7 @@ class CoverObserver(Protocol):
         target: TargetSnapshot,
         providers: tuple[ProviderObservation, ...],
         local_sources: tuple[CoverSource, ...],
-        descriptors: tuple[tuple[str, str | None], ...] = (),
+        descriptors: tuple[tuple[str, str, str | None], ...] = (),
     ) -> tuple[CoverSource, ...]: ...
 
 
@@ -114,6 +114,7 @@ class ReportRepository(Protocol):
     def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None = None) -> str: ...
     def get(self, report_id: str) -> str: ...
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str: ...
+    def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None: ...
     def close(self) -> None: ...
 
 
@@ -167,10 +168,14 @@ class GenerateMetadataReport:
         repository: ReportRepository | None = None
         try:
             repository = self._repository_factory()
-            try:
-                expected_current = MetadataReport.from_json(repository.current(self._connection.name, self._library.name, item, selected.identity)).report_id
-            except MetadataReportError:
-                expected_current = None
+            current_document = repository.current_optional(
+                self._connection.name, self._library.name, item, selected.identity
+            )
+            expected_current = (
+                None
+                if current_document is None
+                else MetadataReport.from_json(current_document).report_id
+            )
 
             local = self._inspector.inspect(
                 self._mount, selected.relative_path, self._limits.source_archive_bytes
@@ -201,7 +206,7 @@ class GenerateMetadataReport:
         # references are deliberately not an ordering key.
         combined_claims = (target_title_claim, *local.claims)
         observations: list[ProviderObservation] = []
-        descriptors: list[tuple[str, str]] = []
+        descriptors: list[tuple[str, str, str | None]] = []
         for binding in self._providers:
             if not binding.enabled:
                 observations.append(
@@ -228,7 +233,7 @@ class GenerateMetadataReport:
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())
             if type(candidate_descriptors) is tuple:
-                descriptors.extend(candidate_descriptors)
+                descriptors.extend((binding.name, source_id, url) for source_id, url in candidate_descriptors)
 
         reasons = tuple(
             sorted(
