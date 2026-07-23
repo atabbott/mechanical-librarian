@@ -22,11 +22,12 @@ explicit per-library provider references, one fresh request per enabled
 supported provider, final target/media currentness, and whole-report publication.
 
 Persist exactly two application tables: immutable canonical metadata reports
-and their separate current pointers. The sole supported compatibility action is
-one atomic pre-release `metadata-report-v1` to v2 table widening: it preserves
-the immutable documents and current pointers, permits exact reopen of v1
-documents, and allows v2 successors. There is no ledger, downgrade, repair,
-or general migration framework.
+and their separate current pointers. Initialize an absent database or open only
+the exact schema required by the installed increment. `metadata-report-v1`,
+prior 0.5 increment schemas, and all earlier development schemas fail closed
+before mutation. There is no migration, import, preservation, compatibility
+parser, ledger, downgrade, recovery, or repair framework. Exact-ID and
+current-scope replay remain supported only within the exact current schema.
 
 The v2 report preserves local evidence occurrence order and records source
 capability state separately from aggregate field state. Target metadata is
@@ -73,6 +74,7 @@ execution provisions are replaced. ADR-0009 is superseded in full.
 The installed surface is small, neutral, synchronous, and report-only. Exact
 content replay supplies stable identity without retry/cache/work machinery.
 Operators who want to retain older development state must keep it offline;
-0.4 neither reads nor transforms it. Review, decisions, automation, AI, apply,
-production writes, retention, pruning, purge, repair, and broader migration
-remain future work.
+neither 0.4 nor any 0.5 increment reads or transforms it. A clean database plus
+supported report regeneration is the only recovery path. Review, decisions,
+automation, AI, apply, production writes, retention, pruning, purge, repair, and
+broader migration remain future work.

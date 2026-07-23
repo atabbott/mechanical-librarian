@@ -89,12 +89,6 @@ human or AI decision, approval, production write, or destructive authority.
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Increment branch stem/example |
 | --- | --- | --- | --- | --- |
 | F09a Provider-neutral title proposal | #145 | Historical retired surface: `synthetic-title-proposal-report` formerly ran closed generated scenarios through the real F06 EPUB child, a synthetic snapshot, and a deterministic provider-neutral fake. The installed CLI now rejects the command name. | #222 | `slice/f09a-title-proposal` |
-
-F09i retains the exact pre-release metadata-report-v1 to v2 widening solely to
-preserve immutable report/current-pointer replay; it does not establish a
-general migration surface. The activation proof reopens both exact-ID and
-current-scope v1 bytes after widening, then publishes a v2 successor without
-rewriting the predecessor; it carries no repair, import, or retention work.
 | F09b Bounded Hardcover title evidence | #204 | Historical retired surface: `hardcover-title-proposal-report` formerly ran only the fixed generated `agree-empty` case. The installed CLI now rejects the command name; F09f owns current configured Hardcover identity operation. | #223 | `slice/f09b-hardcover-title` |
 | F10a Synthetic title review case | #146 | Historical retired surface: `synthetic-title-review-case-report` formerly admitted one deterministic synthetic case from a qualifying F09a lineage. The installed CLI now rejects the command name. | #224 | `slice/f10a-title-review-case` |
 
@@ -299,8 +293,7 @@ identity agree, and the closed typed document is validated on write and read.
 Exact re-observation replays the same whole report identity and bytes; changed
 evidence creates a successor without changing the prior document.
 
-Only a new database is a supported 0.4 starting state, apart from F09i's exact
-pre-release v1 report/current-pointer widening. Other pre-0.4 development
+Only a new database is a supported 0.4 starting state. Pre-0.4 development
 databases have no recognition, migration, import, preservation, or tailored
 compatibility path. No partial 0.4 runtime is exposed before #197. The existing
 final-0.3 report stays report-only during the contributor work.
@@ -319,6 +312,17 @@ final-0.3 report stays report-only during the contributor work.
 
 Completing this internal checkpoint does not create a release train, supported
 version, tag, GitHub Release, or published artifact.
+
+## Delivery checkpoint 0.5.0: complete ebook metadata and cover evidence
+
+F09i #293, F09j #294, and F09k #295 complete local, configured Hardcover, and
+validated cover evidence in order. Throughout this checkpoint, each increment
+recognizes only an absent database or its own exact current schema.
+`metadata-report-v1`, prior 0.5 increment schemas, and all earlier development
+schemas are rejected before mutation. There is no migration, import,
+preservation, or compatibility parser. Recovery is a clean database plus
+supported report regeneration; old databases may be retained offline.
+Exact-ID/current-scope replay is required only within the exact current schema.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 

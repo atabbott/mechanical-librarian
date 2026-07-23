@@ -19,6 +19,11 @@ Reports are append-only and 0.4 provides no retention, pruning, purge, export,
 or deletion feature. Operators must account for that deliberate limitation
 when selecting the database location and backup policy.
 
+Prior and intermediate development databases are never imported, migrated, or
+rewritten. Operators may retain them offline, subject to the same data-handling
+obligations, but recovery for a current 0.5 increment uses a clean database and
+supported report regeneration.
+
 The retained local vocabulary includes bounded title/subtitle, creator/contributor
 roles, series/sequence, ISBN, dates, publisher/imprint, description, language,
 and contextual subject evidence; it retains no paths or source bodies.

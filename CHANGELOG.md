@@ -4,14 +4,13 @@
 
 - Preserve source-spine slot positions for bounded local EPUB rear evidence and
   make exact-ID report reopening non-creating.
-- Add the one supported pre-release metadata-report v1 to v2 persistence
-  migration while retaining immutable historical report replay.
 - Preserve local EPUB source/DOM evidence order, explicit source capabilities,
   and non-canonical oversized or unsafe sentinel states through report replay.
-- Preserve duplicate EPUB occurrences with bounded v2 ordinals and admit only
-  the narrow exact-v1 to exact-v2 pre-release persistence migration.
-- Add exact-ID and current-scope offline reopen proof for preserved v1 bytes,
-  followed by a v2 successor, without widening migration or retention scope.
+- Preserve duplicate EPUB occurrences with bounded v2 ordinals.
+- Require every 0.5 increment to accept only an absent database or its exact
+  current schema. Prior and intermediate schemas are rejected without mutation;
+  same-schema exact-ID/current-scope replay remains available, and recovery is a
+  clean database plus supported report regeneration.
 
 - Added `metadata-report-v2` local-field evidence: complete ordered field
   states, package/opening evidence, and bounded rear-spine copyright evidence.

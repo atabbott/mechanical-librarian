@@ -6,8 +6,9 @@
 EPUB, owner-only credential files, and one fixed request per applicable
 provider. It may append a neutral report and update its current pointer. It has
 no target-write, media-write, review, decision, apply, background, retry,
-deletion, repair, or general migration authority. The sole bounded exception is
-the verified exact metadata-report-v1 to v2 schema widening.
+deletion, repair, import, schema-migration, or backward-compatibility authority.
+An existing database must match the installed increment's exact current schema
+before any writable connection or mutation.
 
 ## External actors
 
@@ -57,9 +58,10 @@ target/media currentness precondition before inserting the report or advancing
 the pointer. The separate pointer may advance, but predecessor reports remain
 unchanged.
 
-The v1 exception is admission-only: the repository accepts only the exact
-two-table, two-trigger predecessor after validating its canonical document and
-relational envelope, then widens it in one transaction. Extra objects, altered
-SQL, malformed nested v1 content, failed foreign-key/integrity checks, and any
-other schema fail closed without a partial migration. It grants no repair,
-import, retention, deletion, or broader compatibility authority.
+Every 0.5 increment accepts only an absent database or its own exact current
+schema. `metadata-report-v1`, prior 0.5 increment schemas, extra objects,
+altered SQL, malformed content, failed foreign-key/integrity checks, and all
+other schemas fail closed before mutation. They are not migrated, imported,
+preserved, or passed through a compatibility parser. Recovery uses a clean
+database and supported report regeneration; same-schema exact-ID and
+current-scope replay retain their existing transaction and validation controls.

@@ -20,11 +20,11 @@ and `inapplicable`.
 Its bounded occurrence ordinal preserves duplicate source/DOM occurrences in
 canonical v2 replay.
 
-**Narrow v1 widening**
-The sole compatibility action: an exact canonical `metadata-report-v1`
-two-table/two-trigger database is atomically widened to v2 while retaining its
-historical documents and current pointers. It is not a repair, import,
-downgrade, retention, or general migration mechanism.
+**Exact current schema**
+The sole database shape recognized by an installed 0.5 increment after
+initialization. Prior and intermediate schemas are rejected before mutation;
+same-schema report replay remains supported, but no backward migration, import,
+preservation, or compatibility parser exists.
 
 **Neutral provider observation**
 One provider's independent status and complete bounded candidate set. It has no

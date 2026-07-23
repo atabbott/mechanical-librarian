@@ -40,11 +40,11 @@ credentials, target values, provider bodies, or EPUB text.
 ## Preconditions
 
 - The database path is absent for the first invocation or already contains the
-exact 0.4 two-table schema.
-
-The only compatibility action accepts an exact v1 schema, migrates it atomically
-on the verified writable bound connection, then validates exact v2; any other
-schema is rejected without partial migration.
+  exact current schema required by the installed increment.
+- `metadata-report-v1`, prior 0.5 increment schemas, and all earlier development
+  schemas are rejected before mutation. There is no migration, import,
+  preservation, or compatibility parser. Keep an old database offline if
+  required, initialize a clean database, and rerun the supported report command.
 - On supported Linux deployments, the database parent directory is owned by
   the process user and grants no group or other permissions. The configured
   database basename has no `-journal`, `-wal`, or `-shm` recovery sidecar.
@@ -122,14 +122,15 @@ cache exists.
 The report ID is derived from the complete canonical document. Exact fresh
 re-observation returns the same ID and bytes without accumulating another row.
 Changed evidence creates an immutable successor and advances only the separate
-current pointer. Earlier reports remain retrievable internally by stable ID.
+current pointer. Earlier reports in that exact current schema remain retrievable
+internally by stable ID.
 
 ## Authority
 
 The command can read configured target metadata, read the selected mounted
 EPUB, contact explicitly enabled referenced providers, and append neutral
-reports. Its repository may perform only the documented exact v1-to-v2
-atomic widening before normal use. It cannot browse inventory, review or decide
-claims, apply changes, write a service or media file, run background work,
-retry, prune, repair, import, downgrade, retain selectively, or migrate any
-other state.
+reports. Its repository may initialize an absent database or open an exact
+current-schema database; it has no backward-compatibility authority. It cannot
+browse inventory, review or decide claims, apply changes, write a service or
+media file, run background work, retry, prune, repair, import, downgrade, retain
+selectively, or migrate any state.

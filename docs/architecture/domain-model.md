@@ -34,3 +34,5 @@ Claim references and the report ID are derived from canonical content. Exact
 replay therefore preserves IDs and bytes without an idempotency subsystem.
 Every admitted EPUB occurrence, including identical values, retains source/DOM
 order through a bounded v2 occurrence ordinal in its claim identity.
+The replay guarantee applies within the exact current schema; the domain model
+does not interpret reports from prior or intermediate development schemas.

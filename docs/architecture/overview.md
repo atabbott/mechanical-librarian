@@ -36,14 +36,17 @@ retains every valid candidate without ranking.
 SQLite stores immutable canonical documents in `metadata_reports` and one
 separate pointer per target/file scope in `current_metadata_reports`. Report
 insert and pointer advance share one transaction. The sole baseline uses
-rollback-journal `DELETE` mode. It recognizes neither WAL/recovery sidecars nor
-prior schemas except the exact metadata-report-v1 widening to v2, and has no migration ledger, workflow, audit, job, attempt,
-cache, normalized claim table, or deletion surface.
+rollback-journal `DELETE` mode. Each 0.5 increment recognizes only an absent
+database or its own exact current schema. Prior and intermediate schemas are
+rejected before mutation; there is no migration, import, preservation,
+compatibility parser, ledger, workflow, audit, job, attempt, cache, normalized
+claim table, or deletion surface.
 The v2 document retains the closed ordered local-field states, source capability
 provenance, and bounded occurrence/rear-spine provenance needed to replay the
 observation; the relational envelope remains only its scope, identity, digest,
-and schema-version index. A current-scope lookup follows the separate pointer
-offline, while an exact-ID lookup never changes a predecessor.
+and schema-version index. Within the exact current schema, a current-scope
+lookup follows the separate pointer offline, while an exact-ID lookup never
+changes a predecessor.
 
 On supported Linux deployments, the repository retains a no-follow,
 identity-checked directory chain from the filesystem root, holds an exclusive
