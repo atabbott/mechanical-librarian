@@ -3,10 +3,8 @@ import time
 import socket
 from unittest.mock import patch
 
-import httpx
-
 from mechanical_librarian.adapters.providers import remote_cover
-from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverError, _public_https, fetch_remote_cover
+from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverError, _pinned_address, fetch_remote_cover
 from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverTimeout
 
 
@@ -16,6 +14,7 @@ class _FakeSocket:
         self.body = bytearray(body)
         self.body_bytes_read = 0
         self.maximum_recv = 0
+        self.sent = bytearray()
 
     def __enter__(self) -> "_FakeSocket":
         return self
@@ -41,8 +40,8 @@ class _FakeSocket:
             self.body_bytes_read += size
         return value
 
-    def sendall(self, _value: bytes) -> None:
-        return None
+    def sendall(self, value: bytes) -> None:
+        self.sent.extend(value)
 
     def settimeout(self, _value: float) -> None:
         return None
@@ -86,30 +85,30 @@ class _FakeContext:
 class RemoteCoverTests(unittest.TestCase):
     def test_rejects_non_https_and_private_address(self) -> None:
         with self.assertRaises(RemoteCoverError):
-            _public_https("http://example.com/a.jpg")
+            _pinned_address("http://example.com/a.jpg")
         with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("127.0.0.1", 443))]):
             with self.assertRaises(RemoteCoverError):
-                _public_https("https://example.com/a.jpg")
+                _pinned_address("https://example.com/a.jpg")
 
     def test_accepts_public_https_443_only(self) -> None:
         with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]):
-            self.assertEqual(("example.com", 443), _public_https("https://example.com/a.jpg"))
+            self.assertEqual(("example.com", "8.8.8.8", "/a.jpg"), _pinned_address("https://example.com/a.jpg"))
         with self.assertRaises(RemoteCoverError):
-            _public_https("https://example.com:444/a.jpg")
+            _pinned_address("https://example.com:444/a.jpg")
 
     def test_rejects_mixed_and_reserved_dns_answers_and_url_smuggling(self) -> None:
         with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443)), (2, 1, 6, "", ("192.168.1.1", 443))]):
             with self.assertRaises(RemoteCoverError):
-                _public_https("https://example.com/a.jpg")
+                _pinned_address("https://example.com/a.jpg")
         for value in ("https://user@example.com/a.jpg", "https://example.com/a.jpg#fragment"):
             with self.assertRaises(RemoteCoverError):
-                _public_https(value)
+                _pinned_address(value)
 
     def test_invalid_port_and_malformed_ipv6_fail_before_dns(self) -> None:
         for value in ("https://example.com:99999/cover.png", "https://[::1/cover.png"):
             with self.subTest(value=value), patch("socket.getaddrinfo") as lookup:
                 with self.assertRaisesRegex(RemoteCoverError, "unsafe remote cover"):
-                    _public_https(value)
+                    _pinned_address(value)
                 lookup.assert_not_called()
         for value in (
             "https://example.com/a b.jpg",
@@ -118,31 +117,39 @@ class RemoteCoverTests(unittest.TestCase):
             "https://example.com/a\\b.jpg",
         ):
             with self.assertRaises(RemoteCoverError):
-                _public_https(value)
+                _pinned_address(value)
 
     def test_fetch_uses_only_explicit_host_and_identity_headers(self) -> None:
-        seen: list[httpx.Request] = []
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            seen.append(request)
-            return httpx.Response(200, headers={"content-type": "image/png"}, content=b"cover")
-
-        with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]):
-            value = fetch_remote_cover("https://example.com/cover.png", client=httpx.Client(headers={"User-Agent": ""}, transport=httpx.MockTransport(handler)))
+        secured = _FakeSocket(
+            b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 5\r\n\r\n",
+            b"cover",
+        )
+        with (
+            patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]),
+            patch("socket.create_connection", return_value=secured),
+            patch("ssl.create_default_context", return_value=_FakeContext()),
+        ):
+            value = fetch_remote_cover("https://example.com/cover.png")
         self.assertEqual(b"cover", value.content)
-        self.assertEqual("example.com", seen[0].headers["host"])
-        self.assertEqual("identity", seen[0].headers["accept-encoding"])
-        self.assertNotIn("authorization", seen[0].headers)
-        self.assertNotIn("cookie", seen[0].headers)
-        self.assertNotIn("referer", seen[0].headers)
-        self.assertFalse(seen[0].headers.get("user-agent"))
+        request = bytes(secured.sent).decode("ascii")
+        self.assertIn("Host: example.com\r\n", request)
+        self.assertIn("Accept-Encoding: identity\r\n", request)
+        self.assertNotIn("Authorization:", request)
+        self.assertNotIn("Cookie:", request)
+        self.assertNotIn("Referer:", request)
+        self.assertNotIn("User-Agent:", request)
 
     def test_rejects_content_encoding_and_redirect_limit(self) -> None:
-        with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]):
-            with self.assertRaises(RemoteCoverError):
-                fetch_remote_cover("https://example.com/cover.png", client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "image/png", "content-encoding": "gzip"}, content=b"x"))))
-            with self.assertRaises(RemoteCoverError):
-                fetch_remote_cover("https://example.com/cover.png", client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(302, headers={"location": "/again"}))))
+        encoded = _FakeSocket(b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Encoding: gzip\r\nContent-Length: 1\r\n\r\n", b"x")
+        redirects = [
+            _FakeSocket(b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n")
+            for _ in range(4)
+        ]
+        with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]), patch("ssl.create_default_context", return_value=_FakeContext()):
+            with patch("socket.create_connection", return_value=encoded), self.assertRaises(RemoteCoverError):
+                fetch_remote_cover("https://example.com/cover.png")
+            with patch("socket.create_connection", side_effect=redirects), self.assertRaises(RemoteCoverError):
+                fetch_remote_cover("https://example.com/cover.png")
 
     def test_elapsed_aggregate_deadline_permits_no_dns_or_request(self) -> None:
         with patch("socket.getaddrinfo") as lookup:

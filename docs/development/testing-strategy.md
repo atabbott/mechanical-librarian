@@ -13,7 +13,7 @@ entire `unittest` suite. The suite covers:
 - provider input selection, no-input zero egress, one-request cardinality,
   observable cap overflow, cross-provider claim-reference uniqueness, sparse
   candidates, all-or-nothing malformed handling, and identity order;
-- exact two-table DELETE-mode schema, side-effect-free existing-file
+- exact three-table DELETE-mode schema, side-effect-free existing-file
   validation, no-follow connection binding, Linux owner-directory lock and
   root-to-parent chain validation, verified private-alias binding, raced
   configured-sidecar isolation, final-precommit parent replacement rollback,

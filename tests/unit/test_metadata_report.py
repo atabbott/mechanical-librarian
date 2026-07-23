@@ -16,9 +16,17 @@ from mechanical_librarian.application.metadata_report import (
     InspectionResult,
     ProviderBinding,
     TargetFile,
+    TargetCover,
     TargetSnapshot,
     UnsupportedMediaError,
     MetadataReportError,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -106,6 +114,46 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_final_currentness_rejects_same_path_abs_byte_drift(self) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        cover = TargetCover("descriptor", "/cover", "item-1")
+        snapshots = [
+            TargetSnapshot("ebook", "Title", (selected,), cover),
+            TargetSnapshot("ebook", "Title", (selected,), cover),
+        ]
+        class Target(_Target):
+            def read_cover(self, value: TargetCover, *, deadline=None) -> bytes:
+                if value != cover:
+                    raise AssertionError("unexpected cover")
+                return b"changed-after-staging"
+        target = Target(snapshots)
+        artifact = CoverArtifact.create(b"staged-original", b"preview", "image/png", 1, 1)
+        class Observer:
+            def observe(self, *_args, **_kwargs):
+                return (
+                    CoverSource(
+                        cover_source_id(CoverSourceKind.ABS, "descriptor"),
+                        CoverSourceKind.ABS,
+                        CoverSourceState.RETRIEVED,
+                        artifact,
+                    ),
+                )
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=target,
+            inspector=_Inspector(InspectionResult("c" * 64, ())),
+            repository_factory=lambda: repository,
+            providers=(),
+            connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
+            library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()),
+            mount=MediaMountConfiguration("books", "/media", "/library", True),
+            limits=ReportLimits(),
+            cover_observer=Observer(),
+        )
+        with self.assertRaises(CurrentnessError):
+            service.run("item-1", 0)
+        self.assertEqual({}, repository.values)
+
     def test_repository_closes_when_inspection_or_provider_validation_fails(self) -> None:
         selected = TargetFile("a" * 64, "book.epub", "epub")
         repository = _Repository()

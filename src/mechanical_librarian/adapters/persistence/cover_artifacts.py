@@ -41,18 +41,6 @@ class CoverArtifactStore:
         """Read a preview only after a repository has authorized its digest."""
         return self._read(digest, 1_048_576)
 
-    def remove_unreferenced(self, digests: tuple[str, ...]) -> None:
-        """Best-effort recovery cleanup of artifacts not yet bound to a report."""
-        for digest in digests:
-            if type(digest) is not str or len(digest) != 64:
-                continue
-            try:
-                (self._path / digest).unlink()
-            except FileNotFoundError:
-                pass
-            except OSError:
-                pass
-
     def recover_unreferenced(self, referenced: tuple[str, ...]) -> None:
         """Verify retained blobs, then remove only unreferenced digest-named blobs.
 

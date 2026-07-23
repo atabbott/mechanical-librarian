@@ -379,13 +379,13 @@ class MetadataPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reports.sqlite"
             repository = open_repository(path)
-            calls: list[str] = []
+            calls: list[bool] = []
             with self.assertRaises(MetadataReportError):
                 repository.publish(
                     _report(),
-                    lambda: calls.append("transactional-currentness") or False,
+                    lambda: calls.append(repository._connection.in_transaction) or False,
                 )
-            self.assertEqual(calls, ["transactional-currentness"])
+            self.assertEqual(calls, [True])
             self.assertEqual(
                 repository._connection.execute(
                     "SELECT COUNT(*) FROM metadata_reports"

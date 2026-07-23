@@ -3,8 +3,10 @@
 ## Authority
 
 `metadata-report` may read one configured target item, one selected read-only
-EPUB, owner-only credential files, and one fixed request per applicable
-provider. It may append a neutral report and update its current pointer. It has
+EPUB, owner-only credential files, one fixed credential-bearing metadata request
+per applicable provider, and separately credential-free bounded cover request
+chains for admitted descriptors. It may append a neutral report and update its
+current pointer. It has
 no target-write, media-write, review, decision, apply, background, retry,
 deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema

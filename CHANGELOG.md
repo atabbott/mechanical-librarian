@@ -33,9 +33,10 @@
   provider connections with per-library provider references and explicit
   enablement.
 - Added scoped current-item Audiobookshelf reading, the isolated EPUB inspector,
-  one fresh bounded Hardcover request per applicable provider, neutral
+  one fresh bounded credential-bearing Hardcover metadata request per applicable
+  provider, then separately credential-free bounded cover request chains, neutral
   all-candidate title/ISBN claims, exact canonical replay, final target/media
-  currentness, and an append-only two-table SQLite report baseline.
+  currentness, and an append-only three-table SQLite report baseline.
 - Removed the pre-0.4 inventory, workflow, job, preview, proposal, review,
   retry, cache, migration, and compatibility runtimes and their installed
   commands, schema, fixtures, scripts, and operational documentation.

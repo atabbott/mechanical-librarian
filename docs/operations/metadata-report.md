@@ -64,6 +64,9 @@ target, provider, or remote-cover transport and it cannot retrieve originals.
 - On supported Linux deployments, the database parent directory is owned by
   the process user and grants no group or other permissions. The configured
   database basename has no `-journal`, `-wal`, or `-shm` recovery sidecar.
+- The artifact-store path already exists as a directory owned by the process
+  user and grants no group or other permissions. The command does not create
+  this directory.
 - Every absolute parent-path component is a real directory rather than a
   symbolic link. Its directory entry is protected by root/process ownership
   and non-writable permissions, or by sticky-directory ownership.
@@ -125,8 +128,10 @@ reorder evidence. Unsafe and oversized sentinels remain non-canonical evidence.
 
 The credential-bearing parent combines those facts with the exact current
 target title. Every referenced, enabled Hardcover connection makes at most one
-fresh request. Disabled references produce one `disabled` observation without
-secret access or egress. Unreferenced providers are absent.
+fresh credential-bearing GraphQL metadata request. For admitted candidate cover
+descriptors, it may then make up to five separately credential-free bounded
+cover request chains. Disabled references produce one `disabled` observation
+without secret access or egress. Unreferenced providers are absent.
 
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order.

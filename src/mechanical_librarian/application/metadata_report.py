@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
-import time
 
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
@@ -25,7 +26,7 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     normalize_title,
 )
-from mechanical_librarian.domain.cover_evidence import CoverSource
+from mechanical_librarian.domain.cover_evidence import CoverSource, CoverSourceKind
 
 
 class MetadataReportError(RuntimeError):
@@ -279,6 +280,7 @@ class GenerateMetadataReport:
                     initial,
                     selected,
                     local.content_digest,
+                    cover_sources,
                 ),
                 expected_current,
             )
@@ -299,6 +301,7 @@ class GenerateMetadataReport:
         initial: TargetSnapshot,
         selected: TargetFile,
         expected_digest: str,
+        cover_sources: tuple[CoverSource, ...],
     ) -> bool:
         final = self._safe_read(item)
         matches = tuple(
@@ -319,6 +322,25 @@ class GenerateMetadataReport:
             )
         ):
             raise CurrentnessError("target or media changed")
+        expected_cover = next(
+            (
+                source.artifact.original_digest
+                for source in cover_sources
+                if source.kind is CoverSourceKind.ABS and source.artifact is not None
+            ),
+            None,
+        )
+        if expected_cover is not None:
+            reader = getattr(self._target, "read_cover", None)
+            try:
+                current_cover = reader(final.cover) if callable(reader) and final.cover is not None else None
+            except (MetadataReportError, OSError, ValueError):
+                raise CurrentnessError("target or media changed") from None
+            if (
+                type(current_cover) is not bytes
+                or hashlib.sha256(current_cover).hexdigest() != expected_cover
+            ):
+                raise CurrentnessError("target or media changed")
         return True
 
     def _safe_read(self, item: str) -> TargetSnapshot:

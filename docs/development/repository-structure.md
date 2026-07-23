@@ -8,7 +8,7 @@ src/mechanical_librarian/
 │   ├── library_services/    # scoped Audiobookshelf item reader
 │   ├── evidence_extractors/ # private EPUB package/opening implementation
 │   ├── providers/           # fixed Hardcover observation
-│   └── persistence/         # two-table SQLite reports
+│   └── persistence/         # three-table SQLite reports
 ├── infrastructure/  # strict config, private files, local media
 ├── interfaces/cli/  # sole metadata-report surface
 └── bootstrap/       # explicit composition and isolated child entrypoint

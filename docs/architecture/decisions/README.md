@@ -26,7 +26,7 @@ context and consequences rather than reproducing code.
 | [0009](0009-durable-epub-opening-evidence.md) | superseded by 0012 | Bind durable EPUB opening evidence to inventory snapshots |
 | [0010](0010-0-4-neutral-evidence-baseline.md) | accepted | Set the 0.4 clean-state neutral evidence baseline |
 | [0011](0011-isolated-epub-inspector.md) | accepted | Keep EPUB package inspection private to its isolated child |
-| [0012](0012-metadata-report-activation.md) | accepted | Activate one clean-state two-table DELETE-mode metadata-report runtime |
+| [0012](0012-metadata-report-activation.md) | accepted | Activate one clean-state three-table DELETE-mode metadata-report runtime |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.
