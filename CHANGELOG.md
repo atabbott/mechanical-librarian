@@ -8,6 +8,8 @@
   migration while retaining immutable historical report replay.
 - Preserve local EPUB source/DOM evidence order, explicit source capabilities,
   and non-canonical oversized or unsafe sentinel states through report replay.
+- Preserve duplicate EPUB occurrences with bounded v2 ordinals and admit only
+  the narrow exact-v1 to exact-v2 pre-release persistence migration.
 
 ## Unreleased
 

@@ -33,7 +33,11 @@ credentials, target values, provider bodies, or EPUB text.
 ## Preconditions
 
 - The database path is absent for the first invocation or already contains the
-  exact 0.4 two-table schema.
+exact 0.4 two-table schema.
+
+The only compatibility action accepts an exact v1 schema, migrates it atomically
+on the verified writable bound connection, then validates exact v2; any other
+schema is rejected without partial migration.
 - On supported Linux deployments, the database parent directory is owned by
   the process user and grants no group or other permissions. The configured
   database basename has no `-journal`, `-wal`, or `-shm` recovery sidecar.

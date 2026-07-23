@@ -609,7 +609,7 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
         _validate_connection_binding(connection, path, descriptor, before)
         connection.execute("PRAGMA schema_version").fetchone()
-        _validate_schema(connection)
+        _validate_schema_or_v1(connection)
     finally:
         if connection is not None:
             connection.close()

@@ -223,6 +223,7 @@ class LocalClaim:
     state: FieldState = FieldState.VALID
     role: str | None = None
     rear_provenance: RearClaimProvenance | None = None
+    occurrence: int = 0
 
     def __post_init__(self) -> None:
         if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("local_"):
@@ -233,6 +234,8 @@ class LocalClaim:
             _text(self.role, "contributor role", 64)
         if self.rear_provenance is not None and type(self.rear_provenance) is not RearClaimProvenance:
             raise ReportValueError("rear claim provenance is invalid")
+        if type(self.occurrence) is not int or not 0 <= self.occurrence <= 1_000_000:
+            raise ReportValueError("local claim occurrence is invalid")
         maximum = 512 if self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.DESCRIPTION} else 280
         _text(self.observed, "observed claim", maximum)
         if self.canonical is not None:
@@ -283,6 +286,7 @@ class LocalClaim:
         state: FieldState = FieldState.VALID,
         role: str | None = None,
         rear_provenance: RearClaimProvenance | None = None,
+        occurrence: int = 0,
     ) -> Self:
         value = {
             "applicability": applicability,
@@ -296,8 +300,9 @@ class LocalClaim:
             "state": state.value if type(state) is FieldState else "",
             "role": role,
             "rear_provenance": None if rear_provenance is None else rear_provenance.to_data(),
+            "occurrence": occurrence,
         }
-        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis, state, role, rear_provenance)
+        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis, state, role, rear_provenance, occurrence)
 
     def _reference_data(self) -> dict[str, object]:
         return {
@@ -312,6 +317,7 @@ class LocalClaim:
             "state": self.state.value,
             "role": self.role,
             "rear_provenance": None if self.rear_provenance is None else self.rear_provenance.to_data(),
+            "occurrence": self.occurrence,
         }
 
     def to_data(self) -> dict[str, object]:
@@ -641,9 +647,9 @@ def _field_result_from_data(value: object) -> FieldResult:
 
 
 def _local_claim_from_data(value: object) -> LocalClaim:
-    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference", "state", "role", "rear_provenance"})
+    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference", "state", "role", "rear_provenance", "occurrence"})
     provenance = item["rear_provenance"]
-    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"], FieldState(item["state"]), item["role"], None if provenance is None else RearClaimProvenance(**_object(provenance, {"citation", "marker", "resource_identity", "spine_ordinal", "tail_slot"})))
+    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"], FieldState(item["state"]), item["role"], None if provenance is None else RearClaimProvenance(**_object(provenance, {"citation", "marker", "resource_identity", "spine_ordinal", "tail_slot"})), item["occurrence"])
 
 
 def _provider_from_data(value: object) -> ProviderObservation:

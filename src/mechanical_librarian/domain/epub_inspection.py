@@ -309,7 +309,7 @@ class EpubInspection:
                     else "ambiguous" if classification_basis == "ambiguous"
                     else "unknown"
                 )
-                facts.append(EpubInspectionFact(EpubInspectionField.ISBN, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, f"valid_{checksum}" if checksum != "invalid" else checksum, media, classification_basis, "opening_matter"))
+                facts.append(EpubInspectionFact(EpubInspectionField.ISBN, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, f"valid_{checksum}" if checksum != "invalid" else checksum, media, classification_basis, "opening_matter", state="valid" if claim.normalized_value is not None else "malformed"))
         return cls(outcome, source, tuple(facts))
 
     def to_json(self) -> str:

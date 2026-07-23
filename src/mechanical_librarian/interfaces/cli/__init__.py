@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import unicodedata
@@ -104,8 +105,8 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
                 serialized = current_reopen_runner(arguments.database, arguments.connection, arguments.library, arguments.item, arguments.file_identity)
             else:
                 serialized = reopen_runner(arguments.database, arguments.report_id)
-            report = MetadataReport.from_json(serialized)
-            if (not arguments.current and report.report_id != arguments.report_id) or report.to_json() != serialized:
+            report_id = _persisted_report_id(serialized)
+            if not arguments.current and report_id != arguments.report_id:
                 raise ReportValueError("report output is invalid")
         except Exception:
             errors.write("Metadata report failed safely.\n")
@@ -136,6 +137,24 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
     output.write(serialized)
     output.write("\n")
     return 0
+
+
+def _persisted_report_id(serialized: object) -> str:
+    """Validate only the immutable v1 envelope, or the full current v2 model."""
+    if type(serialized) is not str:
+        raise ReportValueError("report output is invalid")
+    try:
+        raw = json.loads(serialized)
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ReportValueError("report output is invalid") from error
+    if type(raw) is not dict or type(raw.get("schema_version")) is not str or type(raw.get("report_id")) is not str:
+        raise ReportValueError("report output is invalid")
+    if raw["schema_version"] == "metadata-report-v1":
+        return raw["report_id"]
+    report = MetadataReport.from_json(serialized)
+    if report.to_json() != serialized:
+        raise ReportValueError("report output is invalid")
+    return report.report_id
 
 
 __all__ = ["main"]

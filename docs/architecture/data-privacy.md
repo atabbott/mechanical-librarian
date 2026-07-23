@@ -14,3 +14,7 @@ support bundles. Fixed stderr diagnostics contain no rejected values.
 Reports are append-only and 0.4 provides no retention, pruning, purge, export,
 or deletion feature. Operators must account for that deliberate limitation
 when selecting the database location and backup policy.
+
+The retained local vocabulary includes bounded title/subtitle, creator/contributor
+roles, series/sequence, ISBN, dates, publisher/imprint, description, language,
+and contextual subject evidence; it retains no paths or source bodies.

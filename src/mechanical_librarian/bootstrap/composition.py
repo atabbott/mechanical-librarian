@@ -48,8 +48,8 @@ class _IsolatedEpubInspector:
             inspection = report
             if inspection.outcome not in {EpubInspectionOutcome.SUCCESS, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE}:
                 raise MetadataReportError("EPUB inspection failed")
-            claims_by_reference: dict[str, LocalClaim] = {}
-            for fact in inspection.facts:
+            claims: list[LocalClaim] = []
+            for occurrence, fact in enumerate(inspection.facts, 1):
                 claim = LocalClaim.create(
                     kind=ClaimKind(fact.field.value),
                     observed=fact.observed_value,
@@ -62,9 +62,10 @@ class _IsolatedEpubInspector:
                     state=FieldState(fact.state),
                     role=fact.role,
                     rear_provenance=None if fact.rear_provenance is None else RearClaimProvenance(**fact.rear_provenance.to_data()),
+                    occurrence=occurrence,
                 )
-                claims_by_reference[claim.reference] = claim
-            return InspectionResult(digest, tuple(sorted(claims_by_reference.values(), key=lambda value: value.reference)))
+                claims.append(claim)
+            return InspectionResult(digest, tuple(claims))
         except MetadataReportError:
             raise
         except (LocalMediaError, OSError, ValueError) as error:

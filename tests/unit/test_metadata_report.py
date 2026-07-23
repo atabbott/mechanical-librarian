@@ -337,6 +337,12 @@ class MetadataReportTests(unittest.TestCase):
         report = MetadataReport.from_json(service.run("item-1", 0))
         self.assertEqual([claim.observed for claim in report.local_claims], ["Current title", "Second in source", "First by hash"])
 
+    def test_duplicate_occurrences_are_serialized_in_source_order_and_replay_stably(self) -> None:
+        claims = tuple(LocalClaim.create(kind=ClaimKind.CREATOR, observed="Repeated person", canonical="Repeated person", excerpt="Repeated person", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", occurrence=ordinal) for ordinal in (2, 1))
+        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=claims, local_reasons=("package_metadata_creator",), providers=())
+        self.assertEqual([claim.occurrence for claim in report.local_claims], [2, 1])
+        self.assertEqual(MetadataReport.from_json(report.to_json()).to_json(), report.to_json())
+
     def test_unsupported_media_precedes_inspector_provider_and_repository(self) -> None:
         target = _Target([TargetSnapshot("audiobook", "Audio", ())])
         inspector = _Inspector(InspectionResult("c" * 64, ()))

@@ -143,6 +143,7 @@ class GenerateMetadataReport:
             basis="target_metadata",
             checksum="not_applicable",
             applicability_basis="not_applicable",
+            occurrence=0,
         )
         # Claims are evidence, not a set: retain the target observation first and
         # then the inspector's DOM/source occurrence order.  Content-addressed
