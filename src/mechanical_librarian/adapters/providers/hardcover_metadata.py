@@ -35,11 +35,14 @@ _QUERY = (
 
 
 class HardcoverMetadataProvider:
-    def __init__(self, name: str, client: httpx.Client, maximum_bytes: int) -> None:
+    def __init__(self, name: str, client: httpx.Client, maximum_bytes: int, timeout_seconds: float = 5.0) -> None:
         if type(maximum_bytes) is not int or isinstance(maximum_bytes, bool) or maximum_bytes < 1:
             raise ValueError("provider response bound is invalid")
+        if type(timeout_seconds) not in {int, float} or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 60:
+            raise ValueError("provider timeout is invalid")
         self._name, self._client = name, client
         self._maximum_bytes = min(maximum_bytes, MAX_RESPONSE_BYTES)
+        self._timeout_seconds = float(timeout_seconds)
         self._called = False
         self.cover_descriptors: tuple[tuple[str, str | None], ...] = ()
 
@@ -54,7 +57,7 @@ class HardcoverMetadataProvider:
         references = tuple(sorted(claim.reference for claim in usable))
         body = {"operationName": "MetadataEvidenceByIsbn", "query": _QUERY, "variables": {"isbns": sorted({claim.canonical for claim in usable if claim.canonical is not None})}}
         try:
-            remaining = 5.0 if deadline is None else min(5.0, deadline - time.monotonic())
+            remaining = self._timeout_seconds if deadline is None else min(self._timeout_seconds, deadline - time.monotonic())
             if remaining <= 0:
                 return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
             with self._client, self._client.stream("POST", HARDCOVER_URL, content=canonical_json(body).encode(), headers={"Accept": "application/json", "Content-Type": "application/json", "Accept-Encoding": "identity"}, timeout=remaining) as response:
@@ -77,11 +80,14 @@ class HardcoverMetadataProvider:
             return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
         try:
             candidates = _parse_candidates(payload, self._name, local_claims)
-            self.cover_descriptors = _parse_cover_descriptors(payload)
         except _CandidateLimit:
             return ProviderObservation(self._name, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, references)
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
             return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
+        try:
+            self.cover_descriptors = _parse_cover_descriptors(payload)
+        except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
+            self.cover_descriptors = ()
         return ProviderObservation(self._name, ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH, references, candidates)
 
 

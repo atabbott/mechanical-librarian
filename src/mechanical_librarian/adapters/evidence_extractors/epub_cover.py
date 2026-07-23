@@ -28,7 +28,7 @@ _WALL_SECONDS = 60.0
 @dataclass(frozen=True, slots=True)
 class DeclaredEpubCover:
     source_id: str
-    state: CoverSourceState
+    state: CoverSourceState | None
     media_type: str | None = None
     data: bytes | None = None
 
@@ -127,7 +127,8 @@ def read_declared_cover(descriptor: int, expected_digest: str) -> DeclaredEpubCo
         value = json.loads(stdout)
         if type(value) is not dict:
             raise ValueError
-        state = CoverSourceState(value["state"])
+        state_value = value["state"]
+        state = None if state_value == "declared" else CoverSourceState(state_value)
         if state is CoverSourceState.ABSENT:
             return DeclaredEpubCover(
                 cover_source_id(CoverSourceKind.EPUB, "absent"),
@@ -138,7 +139,15 @@ def read_declared_cover(descriptor: int, expected_digest: str) -> DeclaredEpubCo
                 cover_source_id(CoverSourceKind.EPUB, "oversized"),
                 state,
             )
-        if (
+        if state in {
+            CoverSourceState.INVALID_DECLARATION,
+            CoverSourceState.UNSUPPORTED_FORMAT,
+        }:
+            return DeclaredEpubCover(
+                cover_source_id(CoverSourceKind.EPUB, state.value),
+                state,
+            )
+        if state is not None or (
             set(value) != {"state", "media_type", "length", "identity"}
             or value["media_type"] not in {"image/jpeg", "image/png", "image/webp"}
         ):

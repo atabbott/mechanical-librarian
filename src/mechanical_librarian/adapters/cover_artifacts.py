@@ -55,11 +55,18 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
     process: subprocess.Popen[bytes] | None = None
     try:
         process = subprocess.Popen(
-            [sys.executable, "-m", "mechanical_librarian.bootstrap.cover_child"],
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-m",
+                "mechanical_librarian.bootstrap.cover_child",
+            ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             env={"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1"},
+            cwd="/",
             start_new_session=True,
         )
         stdout, _ = process.communicate(original, timeout=timeout)

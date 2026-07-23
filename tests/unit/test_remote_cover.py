@@ -48,6 +48,34 @@ class _FakeSocket:
         return None
 
 
+class _PinnedPeerSocket:
+    """Expose one connected local test peer as the pinned TLS transport."""
+
+    def __init__(self, value: socket.socket) -> None:
+        self._value = value
+
+    def __enter__(self) -> "_PinnedPeerSocket":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def close(self) -> None:
+        self._value.close()
+
+    def getpeername(self) -> tuple[str, int]:
+        return ("8.8.8.8", 443)
+
+    def recv(self, maximum: int) -> bytes:
+        return self._value.recv(maximum)
+
+    def sendall(self, value: bytes) -> None:
+        self._value.sendall(value)
+
+    def settimeout(self, value: float) -> None:
+        self._value.settimeout(value)
+
+
 class _FakeContext:
     def wrap_socket(self, raw: _FakeSocket, *, server_hostname: str) -> _FakeSocket:
         if server_hostname != "example.com":
@@ -181,6 +209,23 @@ class RemoteCoverTests(unittest.TestCase):
             result = fetch_remote_cover("https://example.com/cover.png")
         self.assertEqual(b"close-delimited-cover", result.content)
         self.assertEqual(len(result.content), secured.body_bytes_read)
+
+    def test_pinned_fetch_times_out_when_a_peer_stalls_mid_body(self) -> None:
+        client, peer = socket.socketpair()
+        secured = _PinnedPeerSocket(client)
+        try:
+            peer.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 9\r\n\r\ncover"
+            )
+            with (
+                patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]),
+                patch("socket.create_connection", return_value=secured),
+                patch("ssl.create_default_context", return_value=_FakeContext()),
+                self.assertRaises(RemoteCoverTimeout),
+            ):
+                fetch_remote_cover("https://example.com/cover.png", deadline=time.monotonic() + 0.1)
+        finally:
+            peer.close()
 
     def test_close_delimited_body_obeys_cap_and_deadline(self) -> None:
         oversized = _FakeSocket(

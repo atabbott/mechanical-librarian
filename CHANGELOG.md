@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Add report-only, source-attributed ABS, declared EPUB, and bounded Hardcover
+- Add report-only, source-attributed ABS, EPUB-declared, and bounded Hardcover
   cover evidence. Valid JPEG, PNG, and static WebP inputs produce private
   content-addressed originals and deterministic offline preview artifacts; no
   cover selection or write capability is added.

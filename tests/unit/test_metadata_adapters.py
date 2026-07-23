@@ -71,17 +71,6 @@ def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(metadata_persistence._NO_DELETE_SQL)
 
 
-def _create_pre_projection_schema(connection: sqlite3.Connection) -> None:
-    """The immediately preceding exact schema, which 0.5 must reject."""
-    connection.execute(metadata_persistence._REPORTS_SQL)
-    connection.execute(metadata_persistence._CURRENT_SQL)
-    connection.execute(metadata_persistence._COVER_REFERENCES_SQL)
-    connection.execute(metadata_persistence._NO_UPDATE_SQL)
-    connection.execute(metadata_persistence._NO_DELETE_SQL)
-    connection.execute(metadata_persistence._COVER_NO_UPDATE_SQL)
-    connection.execute(metadata_persistence._COVER_NO_DELETE_SQL)
-
-
 def _leave_hot_journal(path: Path) -> Path:
     child = (
         "import os,sqlite3,sys\n"
@@ -137,7 +126,6 @@ class MetadataPersistenceTests(unittest.TestCase):
                     connection.execute(metadata_persistence._NO_DELETE_SQL),
                 ),
             ),
-            ("pre-projection exact schema", _create_pre_projection_schema),
             (
                 "intermediate extra column",
                 lambda connection: (
@@ -165,7 +153,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             self.assertEqual(repository.publish(first, lambda: True), first.to_json())
             self.assertEqual(repository.publish(first, lambda: True), first.to_json())
             second = _report("Changed title")
-            repository.publish(second, lambda: True)
+            repository.publish(second, lambda: True, first.report_id)
             repository.close()
 
             connection = sqlite3.connect(path)
@@ -177,10 +165,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 tables,
                 [
                     ("current_metadata_reports",),
-                    ("metadata_report_comparisons",),
                     ("metadata_report_cover_references",),
-                    ("metadata_report_fields",),
-                    ("metadata_report_sources",),
                     ("metadata_reports",),
                 ],
             )
@@ -192,73 +177,18 @@ class MetadataPersistenceTests(unittest.TestCase):
             self.assertEqual(reopened.current("primary", "ebooks", "item-1", "a" * 64), second.to_json())
             reopened.close()
 
-    def test_projection_round_trip_replay_and_tamper_fail_closed(self) -> None:
-        local = LocalClaim.create(
-            kind=ClaimKind.TITLE,
-            observed="Current title",
-            canonical="Current title",
-            excerpt="Current title",
-            applicability="not_applicable",
-            basis="target_metadata",
-            checksum="not_applicable",
-            applicability_basis="not_applicable",
-            scope=ClaimScope.WORK,
-        )
-        provider_claim = ProviderClaim.create(
-            provider="catalogue",
-            candidate="candidate-1",
-            kind=ClaimKind.TITLE,
-            value="Current title",
-            state=FieldState.VALID,
-            scope=ClaimScope.WORK,
-            applicability="not_applicable",
-            links=(ComparisonLink(local.reference, Comparison.AGREEMENT),),
-        )
-        report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
-            file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(local,),
-            local_reasons=("no_opening_claims",),
-            providers=(ProviderObservation(
-                "catalogue",
-                ProviderStatus.CANDIDATES,
-                (local.reference,),
-                (ProviderCandidate("candidate-1", (provider_claim,)),),
-            ),),
-        )
+    def test_same_candidate_replay_converges_after_a_stale_null_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "reports.sqlite"
-            repository = open_repository(path)
-            self.assertEqual(repository.publish(report, lambda: True), report.to_json())
-            self.assertEqual(repository.publish(report, lambda: True), report.to_json())
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = _report()
+            repository.publish(report, lambda: True)
             self.assertEqual(
-                repository._connection.execute(
-                    "SELECT source_key FROM metadata_report_sources WHERE report_id=? ORDER BY source_key",
-                    (report.report_id,),
-                ).fetchall(),
-                [("local",), ("provider:catalogue",)],
+                repository.publish(report, lambda: True, expected_current=None),
+                report.to_json(),
             )
-            self.assertEqual(
-                repository._connection.execute(
-                    "SELECT COUNT(*) FROM metadata_report_fields WHERE report_id=?",
-                    (report.report_id,),
-                ).fetchone(),
-                (2,),
-            )
-            self.assertEqual(
-                repository._connection.execute(
-                    "SELECT COUNT(*) FROM metadata_report_comparisons WHERE report_id=?",
-                    (report.report_id,),
-                ).fetchone(),
-                (1,),
-            )
-            repository._connection.execute("DROP TRIGGER metadata_report_fields_no_update")
-            repository._connection.execute(
-                "UPDATE metadata_report_fields SET payload='{}',payload_digest=? WHERE report_id=? AND field_key=?",
-                (hashlib.sha256(b"{}").hexdigest(), report.report_id, local.reference),
-            )
-            with self.assertRaises(MetadataReportError):
-                repository.get(report.report_id)
+            changed = _report("Changed title")
+            with self.assertRaisesRegex(MetadataReportError, "current report changed"):
+                repository.publish(changed, lambda: True, expected_current=None)
             repository.close()
 
     def test_preexisting_unknown_database_is_rejected_without_change(self) -> None:
@@ -296,6 +226,15 @@ class MetadataPersistenceTests(unittest.TestCase):
                 repository.referenced_artifact_digests(),
                 tuple(sorted((artifact.original_digest, artifact.preview_digest))),
             )
+            repository._connection.execute(
+                "DROP TRIGGER metadata_report_cover_references_no_delete"
+            )
+            repository._connection.execute(
+                "DELETE FROM metadata_report_cover_references WHERE report_id=?",
+                (report.report_id,),
+            )
+            with self.assertRaisesRegex(MetadataReportError, "cover references"):
+                repository.referenced_artifact_digests()
             with self.assertRaises(MetadataReportError):
                 repository.preview_digest(report.report_id, "cover_" + "0" * 64, artifact.preview_variant)
             repository.close()
@@ -879,6 +818,21 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertIn("limit:6", json.loads(requests[0].content)["query"])
         self.assertEqual(provider.observe((self._claim(), self._title_claim())).status, ProviderStatus.UNAVAILABLE)
         self.assertEqual(len(requests), 1)
+
+    def test_malformed_optional_cover_descriptor_does_not_discard_metadata(self) -> None:
+        payload = self._envelope(
+            [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}],
+            [{"id": 1, "title": "Current title"}],
+        )
+        payload["data"]["editions"][0]["image"] = {"url": "x" * 2049}  # type: ignore[index]
+        provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=payload))),
+            65_536,
+        )
+        observation = provider.observe((self._claim(), self._title_claim()))
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual((), provider.cover_descriptors)
 
     def test_agreement_references_only_matching_title_and_isbn_claims(self) -> None:
         other_title = LocalClaim.create(

@@ -30,8 +30,6 @@ class CoverSourceKind(StrEnum):
 
 class CoverSourceState(StrEnum):
     ABSENT = "absent"
-    DISABLED = "disabled"
-    DECLARED = "declared"
     RETRIEVED = "retrieved"
     INVALID_DECLARATION = "invalid_declaration"
     UNSUPPORTED_FORMAT = "unsupported_format"
@@ -140,12 +138,12 @@ def cover_source_id(kind: CoverSourceKind, identity: str) -> str:
 
 
 def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
-    """True only when every source has left the declaration intermediate state."""
+    """Validate the closed set of published terminal source outcomes."""
     if type(sources) is not tuple or any(type(source) is not CoverSource for source in sources):
         raise CoverEvidenceError("cover sources are invalid")
     if len(sources) > 7 or len({source.source_id for source in sources}) != len(sources):
         raise CoverEvidenceError("cover sources are invalid")
-    return all(source.state is not CoverSourceState.DECLARED for source in sources)
+    return True
 
 
 __all__ = [

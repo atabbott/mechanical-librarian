@@ -24,6 +24,7 @@ from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
     MetadataReportError,
+    CoverReadError,
     ProviderBinding,
     CoverTimeoutError,
     CoverSourceChangedError,
@@ -84,7 +85,7 @@ class _IsolatedEpubInspector:
                 )
                 claims.append(claim)
             declared = read_declared_cover(opened.descriptor, digest)
-            if declared.state is CoverSourceState.DECLARED:
+            if declared.state is None:
                 try:
                     decoded = decode_cover(declared.data or b"")
                     try:
@@ -104,6 +105,7 @@ class _IsolatedEpubInspector:
                         ),
                     )
             else:
+                assert declared.state is not None
                 covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, declared.state),)
             return InspectionResult(digest, tuple(claims), covers)
         except MetadataReportError:
@@ -166,6 +168,8 @@ class _CoverEvidenceObserver:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.SOURCE_CHANGED)
         except CoverDecodeRejected as error:
             source = CoverSource(source_id, CoverSourceKind.ABS, error.state)
+        except CoverReadError as error:
+            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState(error.state))
         except MetadataReportError:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
         return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
@@ -229,6 +233,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
         library_id=library.library_id,
         service_path=mount.service_path,
         maximum_bytes=configuration.limits.target_response_bytes,
+        timeout_seconds=configuration.limits.timeout_seconds,
     )
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
@@ -239,6 +244,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
                 value.name,
                 hardcover_client(value.secret_file, configuration.limits.timeout_seconds),
                 configuration.limits.provider_response_bytes,
+                configuration.limits.timeout_seconds,
             )
         bindings.append(ProviderBinding(provider.name, provider.enabled, factory))
     def repository_factory():

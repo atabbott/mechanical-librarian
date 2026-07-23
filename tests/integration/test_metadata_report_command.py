@@ -248,7 +248,11 @@ class MetadataReportCommandTests(unittest.TestCase):
             exact_title = "Cafe\u0301  Story"
             payload = _item(source.stat().st_size)
             payload["media"]["metadata"]["title"] = exact_title
-            with _Server(payload) as server:
+            image = io.BytesIO()
+            from PIL import Image
+            Image.new("RGB", (10, 20), "red").save(image, "PNG")
+            payload["coverPath"] = "/ignored-cover-route"
+            with _Server(payload, image.getvalue()) as server:
                 config = root / "explicit-config.json"
                 config.write_text(json.dumps(_config(server.endpoint, media, target_secret)), encoding="utf-8")
                 command = [
@@ -291,6 +295,25 @@ class MetadataReportCommandTests(unittest.TestCase):
             persisted = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
             connection.close()
             self.assertEqual(completed.stdout, persisted + "\n")
+            artifact = next(source.artifact for source in emitted.cover_sources if source.artifact is not None)
+            self.assertIsNotNone(artifact)
+            preview = subprocess.run(
+                [
+                    executable,
+                    "metadata-report-cover-preview",
+                    "--database", str(database),
+                    "--artifact-store", str(artifact_store),
+                    "--report-id", emitted.report_id,
+                    "--artifact-id", artifact.artifact_id,
+                    "--preview-variant", PREVIEW_VARIANT,
+                ],
+                cwd=root,
+                capture_output=True,
+                check=False,
+                timeout=20,
+            )
+            self.assertEqual(0, preview.returncode, preview.stderr.decode())
+            self.assertTrue(preview.stdout.startswith(b"\x89PNG\r\n\x1a\n"))
             self.assertEqual(missing.returncode, 2)
             self.assertEqual(missing.stdout, "")
             self.assertEqual(missing.stderr, "Metadata report failed: invalid invocation.\n")

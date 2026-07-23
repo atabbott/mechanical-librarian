@@ -17,14 +17,6 @@ class CoverEvidenceTests(unittest.TestCase):
         )
         self.assertTrue(publication_ready((source,)))
 
-    def test_declared_source_cannot_be_published(self) -> None:
-        source = CoverSource(
-            cover_source_id(CoverSourceKind.EPUB, "OPS/cover.png"),
-            CoverSourceKind.EPUB,
-            CoverSourceState.DECLARED,
-        )
-        self.assertFalse(publication_ready((source,)))
-
     def test_timeout_has_explicit_scope(self) -> None:
         source = CoverSource(
             cover_source_id(CoverSourceKind.HARDCOVER, "candidate-1"),

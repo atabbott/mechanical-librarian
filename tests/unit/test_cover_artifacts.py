@@ -1,7 +1,9 @@
 import io
+import struct
 import subprocess
 import sys
 import unittest
+import zlib
 
 from PIL import Image
 from PIL import features
@@ -14,6 +16,18 @@ def _image(kind: str, size: tuple[int, int] = (640, 960)) -> bytes:
     output = io.BytesIO()
     Image.new("RGB", size, "red").save(output, kind)
     return output.getvalue()
+
+
+def _huge_png_header(width: int, height: int) -> bytes:
+    payload = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + struct.pack(">I", len(payload))
+        + b"IHDR"
+        + payload
+        + struct.pack(">I", zlib.crc32(b"IHDR" + payload) & 0xFFFFFFFF)
+        + b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
 
 
 class CoverArtifactTests(unittest.TestCase):
@@ -45,6 +59,15 @@ class CoverArtifactTests(unittest.TestCase):
             decode_cover(b"x" * (8 * 1024 * 1024 + 1))
         self.assertEqual(CoverSourceState.OVERSIZED, raised.exception.state)
 
+    def test_real_decoder_child_rejects_pixel_and_decompression_bombs(self) -> None:
+        for payload in (
+            _image("PNG", (4097, 4096)),
+            _huge_png_header(100_000, 100_000),
+        ):
+            with self.subTest(size=len(payload)), self.assertRaises(CoverDecodeRejected) as raised:
+                decode_cover(payload)
+            self.assertEqual(CoverSourceState.OVERSIZED, raised.exception.state)
+
     def test_accepts_static_webp_and_rejects_multiframe_input(self) -> None:
         self.assertEqual("image/webp", decode_cover(_image("WEBP")).artifact.media_type)
         animation = io.BytesIO()
@@ -55,14 +78,29 @@ class CoverArtifactTests(unittest.TestCase):
             decode_cover(animation.getvalue())
         self.assertEqual(CoverSourceState.ANIMATED_OR_MULTIFRAME, raised.exception.state)
 
-    def test_decoder_child_denies_network_authority(self) -> None:
+    def test_decoder_child_main_starts_with_network_isolation(self) -> None:
         probe = (
-            "from mechanical_librarian.bootstrap.cover_child import _no_network\n"
-            "import socket\n"
-            "_no_network()\n"
-            "try: socket.create_connection(('8.8.8.8', 53))\n"
-            "except OSError: raise SystemExit(0)\n"
-            "raise SystemExit(1)\n"
+            "import ctypes, os, platform, socket, sys\n"
+            "from mechanical_librarian.bootstrap import cover_child\n"
+            "def probe_decode(data):\n"
+            "  try: socket.create_connection(('8.8.8.8', 53))\n"
+            "  except OSError: pass\n"
+            "  else: raise SystemExit(7)\n"
+            "  if sys.platform.startswith('linux'):\n"
+            "    numbers={'x86_64':41,'aarch64':198}\n"
+            "    number=numbers.get(platform.machine())\n"
+            "    if number is not None:\n"
+            "      ctypes.set_errno(0); result=ctypes.CDLL(None, use_errno=True).syscall(number, 2, 1, 0)\n"
+            "      if result != -1 or ctypes.get_errno() != 1: raise SystemExit(8)\n"
+            "  return {'state':'oversized'}\n"
+            "cover_child._decode=probe_decode\n"
+            "raise SystemExit(cover_child.main())\n"
         )
-        result = subprocess.run([sys.executable, "-c", probe], capture_output=True)
+        result = subprocess.run(
+            [sys.executable, "-I", "-B", "-c", probe],
+            input=b"x",
+            capture_output=True,
+            cwd="/",
+        )
         self.assertEqual(0, result.returncode)
+        self.assertEqual(b'{"state":"oversized"}', result.stdout)

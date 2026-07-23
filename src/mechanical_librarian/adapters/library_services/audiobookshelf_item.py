@@ -14,6 +14,7 @@ import httpx
 
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
+    CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
     TargetFile,
@@ -27,12 +28,15 @@ from mechanical_librarian.domain.metadata_report import (
 
 
 class AudiobookshelfItemReader:
-    def __init__(self, *, client_factory: Callable[[], httpx.Client], endpoint: str, library_id: str, service_path: str, maximum_bytes: int) -> None:
+    def __init__(self, *, client_factory: Callable[[], httpx.Client], endpoint: str, library_id: str, service_path: str, maximum_bytes: int, timeout_seconds: float = 5.0) -> None:
+        if type(timeout_seconds) not in {int, float} or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 60:
+            raise ValueError("target timeout is invalid")
         self._client_factory = client_factory
         self._endpoint = endpoint.rstrip("/")
         self._library_id = library_id
         self._service_path = service_path.rstrip("/") or "/"
         self._maximum_bytes = maximum_bytes
+        self._timeout_seconds = float(timeout_seconds)
 
     def read(self, item: str, *, deadline: float | None = None) -> TargetSnapshot:
         if type(item) is not str or not 1 <= len(item) <= 512 or item.strip() != item or any(character in item for character in "\x00/\\"):
@@ -44,7 +48,7 @@ class AudiobookshelfItemReader:
                 f"{self._endpoint}/api/items/{quote(item, safe='')}",
                 params={"expanded": "1"},
                 headers={"Accept": "application/json", "Accept-Encoding": "identity"},
-                timeout=_phase_timeout(deadline),
+                timeout=_phase_timeout(deadline, self._timeout_seconds),
             ) as response:
                 if response.status_code in {401, 403, 404}:
                     raise MetadataReportError("target item is unavailable")
@@ -98,14 +102,14 @@ class AudiobookshelfItemReader:
     def _read_raw_cover(self, cover: TargetCover, deadline: float | None) -> bytes | None:
         with httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""}) as client:
             host = _raw_cover_authority(self._endpoint)
-            with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=_phase_timeout(deadline)) as response:
+            with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=_phase_timeout(deadline, self._timeout_seconds)) as response:
                 if response.status_code == 404:
                     return None
                 if response.status_code != 200:
                     raise MetadataReportError("target cover is unavailable")
                 content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
                 if content_type not in {"image/jpeg", "image/png", "image/webp"}:
-                    raise MetadataReportError("target cover is invalid")
+                    raise CoverReadError("unsupported_format")
                 return _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
 
 
@@ -222,17 +226,17 @@ def _bounded_body(response: httpx.Response, maximum: int, *, deadline: float | N
             raise CoverTimeoutError("target cover timed out")
         length += len(chunk)
         if length > maximum:
-            raise MetadataReportError("target response is oversized")
+            raise CoverReadError("oversized")
         chunks.append(chunk)
     if not chunks:
         raise MetadataReportError("target response is invalid")
     return b"".join(chunks)
 
 
-def _phase_timeout(deadline: float | None) -> float:
+def _phase_timeout(deadline: float | None, configured: float) -> float:
     if deadline is None:
-        return 5.0
-    remaining = min(5.0, deadline - time.monotonic())
+        return configured
+    remaining = min(configured, deadline - time.monotonic())
     if remaining <= 0:
         raise CoverTimeoutError("target cover timed out")
     return remaining

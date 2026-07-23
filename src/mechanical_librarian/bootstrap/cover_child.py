@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import base64
+import ctypes
+import errno
 import io
 import json
 import os
+import platform
 import resource
 import socket
 import sys
 import warnings
-import ctypes
-import errno
-import platform
 
 from PIL import Image, ImageOps, UnidentifiedImageError, features
 
@@ -76,6 +76,8 @@ def _decode(data: bytes) -> dict[str, object]:
             image = Image.open(io.BytesIO(data))
         except UnidentifiedImageError:
             return {"state": "unsupported_format"}
+        except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+            return {"state": "oversized"}
         with image:
             if getattr(image, "n_frames", 1) != 1:
                 return {"state": "animated_or_multiframe"}
@@ -83,7 +85,10 @@ def _decode(data: bytes) -> dict[str, object]:
                 return {"state": "unsupported_format"}
             if image.width > 8192 or image.height > 8192 or image.width * image.height > _MAX_PIXELS:
                 return {"state": "oversized"}
-            image.load()
+            try:
+                image.load()
+            except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+                return {"state": "oversized"}
             preview = ImageOps.exif_transpose(image).convert("RGBA")
             preview.thumbnail((320, 480), Image.Resampling.LANCZOS)
             output = io.BytesIO()

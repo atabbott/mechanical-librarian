@@ -199,8 +199,10 @@ def _selected_cover(package_request: EpubPackageRequest) -> tuple[dict[str, obje
                 return {"state": "invalid_declaration"}, None
             media = [item.media_type for item in report.declarations if item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and item.resource_identity == values[0]]
             names = [name for name in archive.namelist() if epub_resource_identity(name) == values[0]]
-            if len(media) != 1 or media[0] not in {"image/jpeg", "image/png", "image/webp"} or len(names) != 1:
+            if len(media) != 1 or len(names) != 1:
                 return {"state": "invalid_declaration"}, None
+            if media[0] not in {"image/jpeg", "image/png", "image/webp"}:
+                return {"state": "unsupported_format"}, None
             with archive.open(names[0]) as member:
                 data = member.read(8 * 1024 * 1024 + 1)
             if len(data) > 8 * 1024 * 1024:

@@ -10,7 +10,7 @@ from PIL import Image
 from mechanical_librarian.adapters.cover_artifacts import CoverDecodeTimeout
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.providers.remote_cover import CoverDeadline, RemoteCover
-from mechanical_librarian.application.metadata_report import CoverSourceChangedError, CoverTimeoutError, TargetCover, TargetSnapshot
+from mechanical_librarian.application.metadata_report import CoverReadError, CoverSourceChangedError, CoverTimeoutError, TargetCover, TargetSnapshot
 from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
 from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
@@ -74,6 +74,22 @@ class CoverObserverTests(unittest.TestCase):
                 TargetSnapshot("ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")), (), ()
             )
         self.assertEqual(CoverSourceState.SOURCE_CHANGED, value[0].state)
+
+    def test_abs_terminal_read_classifications_are_preserved(self) -> None:
+        for state, expected in (
+            ("oversized", CoverSourceState.OVERSIZED),
+            ("unsupported_format", CoverSourceState.UNSUPPORTED_FORMAT),
+        ):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                value = _CoverEvidenceObserver(
+                    _Target(CoverReadError(state)),
+                    CoverArtifactStore(Path(directory)),
+                ).observe(
+                    TargetSnapshot("ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")),
+                    (),
+                    (),
+                )
+            self.assertEqual(expected, value[0].state)
 
     def test_abs_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout(self) -> None:
         aggregate = time.monotonic() + 10.0

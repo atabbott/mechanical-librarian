@@ -39,7 +39,7 @@ class DeclaredEpubCoverTests(unittest.TestCase):
                 result = read_declared_cover(descriptor, hashlib.sha256(path.read_bytes()).hexdigest())
             finally:
                 os.close(descriptor)
-            self.assertEqual(CoverSourceState.DECLARED, result.state)
+            self.assertIsNone(result.state)
             self.assertEqual(b"TRAP: cover bytes must remain opaque", result.data)
 
     def test_absent_cover_is_not_heuristically_selected(self) -> None:
@@ -68,7 +68,7 @@ class DeclaredEpubCoverTests(unittest.TestCase):
                 result = read_declared_cover(descriptor, hashlib.sha256(path.read_bytes()).hexdigest())
             finally:
                 os.close(descriptor)
-            self.assertEqual(CoverSourceState.DECLARED, result.state)
+            self.assertIsNone(result.state)
             self.assertEqual(cover, result.data)
 
     def test_repeated_child_timeouts_close_every_parent_pipe(self) -> None:

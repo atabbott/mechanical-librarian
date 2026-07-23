@@ -52,6 +52,14 @@ class CoverSourceChangedError(MetadataReportError):
     """The target's declared cover changed during its raw acquisition bracket."""
 
 
+class CoverReadError(MetadataReportError):
+    """A raw target cover reached a closed terminal acquisition outcome."""
+
+    def __init__(self, state: str) -> None:
+        self.state = state
+        super().__init__("target cover is unavailable")
+
+
 @dataclass(frozen=True, slots=True)
 class TargetFile:
     identity: str
@@ -326,7 +334,7 @@ class GenerateMetadataReport:
 
 
 __all__ = [
-    "CoverObserver", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
+    "CoverObserver", "CoverReadError", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
     "InspectionResult", "MetadataProvider", "MetadataReportError", "ProviderBinding",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",

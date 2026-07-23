@@ -9,7 +9,7 @@ The current installed contract is intentionally narrow:
   libraries;
 - an explicitly selected EPUB on a mapped read-only mount; and
 - the fixed Hardcover metadata operation for referenced enabled providers.
-- report-only bounded cover evidence from ABS, a declared EPUB cover, and up to
+- report-only bounded cover evidence from ABS, an EPUB-declared cover, and up to
   five candidate-bound Hardcover cover descriptors.
 
 Pre-0.4 databases, `config-v1`, inventory selectors, proposal/review state,
