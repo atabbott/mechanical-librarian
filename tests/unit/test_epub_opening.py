@@ -32,7 +32,7 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     TargetId,
 )
-from mechanical_librarian.domain.inventory import FileReference
+from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageCancellation,
     EpubPackageCapability,
@@ -529,7 +529,7 @@ class EpubOpeningTests(unittest.TestCase):
             for claim in conflicting.claims
             if claim.field is OpeningField.IDENTIFIER
         )
-        self.assertEqual(conflicting_identifier.applicability_label, "unlabelled")
+        self.assertEqual(conflicting_identifier.applicability_label, "ambiguous")
         self.assertIs(
             conflicting_identifier.applicability,
             EpubObservationApplicability.UNKNOWN,
@@ -714,6 +714,17 @@ class EpubOpeningTests(unittest.TestCase):
                 EpubObservationApplicability.INAPPLICABLE,
             },
         )
+        invalid = _extract(
+            self._single(
+                _xhtml('<section epub:type="copyright-page"><p>ISBN 9780306406158</p></section>')
+            )
+        )
+        invalid_identifier = next(
+            claim for claim in invalid.claims if claim.field is OpeningField.IDENTIFIER
+        )
+        self.assertIsNone(invalid_identifier.normalized_value)
+        self.assertEqual(invalid_identifier.identifier_type, "isbn_13")
+        self.assertEqual(invalid_identifier.applicability_label, "unlabelled")
 
     def test_equal_precedence_conflict_no_claim_and_limit_partitions_are_distinct(self) -> None:
         conflict = _extract(opening_epub3_landmark_conflict())

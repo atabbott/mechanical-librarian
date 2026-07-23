@@ -49,7 +49,5 @@ jobs:
       - name: Build the distribution
         run: uv build
 
-      - name: Exercise the installed operator diagnostic
-        run: |
-          database="$(mktemp -d)/state.sqlite"
-          uv run --frozen --no-editable mechanical-librarian state-check --database "$database"
+      - name: Exercise the installed operator command
+        run: uv run --frozen --no-editable mechanical-librarian metadata-report --help

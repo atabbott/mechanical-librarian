@@ -1,10 +1,10 @@
 # ADR-0009: Bind durable EPUB opening evidence to inventory snapshots
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-07-16
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: none
+- Superseded by: ADR-0012
 
 ## Context
 

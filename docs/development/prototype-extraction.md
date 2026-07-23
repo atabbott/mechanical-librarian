@@ -18,9 +18,8 @@ requirements or synthetic test categories, but they are not extraction or
 fixture sources and must not contribute observed titles, identifiers, paths,
 records, thresholds, or implementation details.
 
-The completed DUX dashboard work has a frozen source revision, verification
-evidence, inclusion matrix, and explicit exclusions in the
-[DUX extraction record](dux-extraction.md). The production
+The completed prototype work has a frozen source revision and verification
+evidence in its historical tracking record. The production
 [review-experience contract](../product/review-experience.md) is authoritative
 where it intentionally differs from the prototype.
 
@@ -82,8 +81,8 @@ Each extracted component should have a short record in its pull request:
 - licence and attribution conclusion;
 - tests proving parity and new safety behavior.
 
-DUX-derived pull requests also cite the frozen prototype commit and tag recorded
-in [the DUX extraction record](dux-extraction.md). Do not replace that revision
+Prototype-derived pull requests cite the frozen prototype commit and tag from
+the relevant historical tracking record. Do not replace that revision
 with a filesystem path or an uncommitted workspace description.
 
 Pull requests preserving a post-DUX operational scenario cite the applicable

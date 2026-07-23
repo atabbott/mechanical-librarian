@@ -1,0 +1,273 @@
+{
+  "$defs": {
+    "ConnectionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "audiobookshelf",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "endpoint": {
+          "maxLength": 2048,
+          "minLength": 1,
+          "title": "Endpoint",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Secret File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "adapter",
+        "endpoint",
+        "secret_file"
+      ],
+      "title": "ConnectionInput",
+      "type": "object"
+    },
+    "LibraryInput": {
+      "additionalProperties": false,
+      "properties": {
+        "connection": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Connection",
+          "type": "string"
+        },
+        "library_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Library Id",
+          "type": "string"
+        },
+        "media_kind": {
+          "enum": [
+            "ebook",
+            "audiobook"
+          ],
+          "title": "Media Kind",
+          "type": "string"
+        },
+        "mount": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mount"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "provider_connections": {
+          "items": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Provider Connections",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "connection",
+        "library_id",
+        "media_kind",
+        "mount",
+        "provider_connections"
+      ],
+      "title": "LibraryInput",
+      "type": "object"
+    },
+    "LimitsInput": {
+      "additionalProperties": false,
+      "properties": {
+        "provider_response_bytes": {
+          "default": 65536,
+          "maximum": 262144,
+          "minimum": 1024,
+          "title": "Provider Response Bytes",
+          "type": "integer"
+        },
+        "source_archive_bytes": {
+          "default": 268435456,
+          "maximum": 268435456,
+          "minimum": 1024,
+          "title": "Source Archive Bytes",
+          "type": "integer"
+        },
+        "target_response_bytes": {
+          "default": 1048576,
+          "maximum": 4194304,
+          "minimum": 1024,
+          "title": "Target Response Bytes",
+          "type": "integer"
+        },
+        "timeout_seconds": {
+          "default": 30,
+          "maximum": 60,
+          "minimum": 1,
+          "title": "Timeout Seconds",
+          "type": "integer"
+        }
+      },
+      "title": "LimitsInput",
+      "type": "object"
+    },
+    "MountInput": {
+      "additionalProperties": false,
+      "properties": {
+        "container_path": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Container Path",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "read_only": {
+          "const": true,
+          "title": "Read Only",
+          "type": "boolean"
+        },
+        "service_path": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Service Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "container_path",
+        "service_path",
+        "read_only"
+      ],
+      "title": "MountInput",
+      "type": "object"
+    },
+    "ProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "hardcover",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Secret File"
+        }
+      },
+      "required": [
+        "name",
+        "adapter",
+        "enabled",
+        "secret_file"
+      ],
+      "title": "ProviderInput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "connections": {
+      "items": {
+        "$ref": "#/$defs/ConnectionInput"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "title": "Connections",
+      "type": "array"
+    },
+    "libraries": {
+      "items": {
+        "$ref": "#/$defs/LibraryInput"
+      },
+      "maxItems": 128,
+      "minItems": 1,
+      "title": "Libraries",
+      "type": "array"
+    },
+    "limits": {
+      "$ref": "#/$defs/LimitsInput",
+      "default": {
+        "provider_response_bytes": 65536,
+        "source_archive_bytes": 268435456,
+        "target_response_bytes": 1048576,
+        "timeout_seconds": 30
+      }
+    },
+    "mounts": {
+      "items": {
+        "$ref": "#/$defs/MountInput"
+      },
+      "maxItems": 32,
+      "title": "Mounts",
+      "type": "array"
+    },
+    "providers": {
+      "items": {
+        "$ref": "#/$defs/ProviderInput"
+      },
+      "maxItems": 32,
+      "title": "Providers",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "config-v2",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "connections",
+    "libraries",
+    "mounts",
+    "providers"
+  ],
+  "title": "ConfigurationInput",
+  "type": "object"
+}

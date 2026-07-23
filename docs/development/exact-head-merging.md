@@ -25,8 +25,8 @@ to `main`. It has read-only repository contents permission and:
 4. synchronizes all locked groups in frozen, non-editable mode;
 5. runs the complete public test suite;
 6. builds the distribution; and
-7. exercises the installed `state-check` operator command against synthetic
-   temporary state.
+7. verifies the installed `metadata-report` command surface without implicit
+   inputs or editable source.
 
 The concurrency key distinguishes pull-request work from `main` push events. A
 new head may cancel obsolete work for the same pull request. Each push event

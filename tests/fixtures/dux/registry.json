@@ -1,1 +1,0 @@
-{"coverage":{"destructive_cases":"dux-synthetic-11","evidence_only_input":"dux-synthetic-02","independent_siblings":"dux-synthetic-10","no_ops":"dux-synthetic-05"},"scenario_files":["dux-synthetic-02.json","dux-synthetic-05.json","dux-synthetic-10.json","dux-synthetic-11.json"],"schema":"dux-corpus-v2"}

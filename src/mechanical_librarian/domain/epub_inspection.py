@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 
 
 _CHECKSUMS = frozenset({"valid_isbn_10", "valid_isbn_13", "invalid", "not_applicable"})
-_MEDIA = frozenset({"ebook", "print", "unknown", "not_applicable"})
+_MEDIA = frozenset({"ebook", "print", "unknown", "ambiguous", "not_applicable"})
+_CLASSIFICATION_BASES = frozenset({"ebook", "paperback", "hardcover", "print", "unlabelled", "ambiguous", "not_applicable"})
 _BASES = frozenset({"package_metadata", "opening_matter"})
 
 EPUB_PACKAGE_LIMIT_PROFILE = "epub-package-limits-v1"
@@ -160,6 +161,7 @@ class EpubInspectionFact:
     supporting_context: str
     checksum: str
     media: str
+    classification_basis: str
     basis: str
     outcome: EpubInspectionOutcome = EpubInspectionOutcome.SUCCESS
 
@@ -176,6 +178,7 @@ class EpubInspectionFact:
             or len(self.supporting_context) > 280
             or self.checksum not in _CHECKSUMS
             or self.media not in _MEDIA
+            or self.classification_basis not in _CLASSIFICATION_BASES
             or self.basis not in _BASES
             or type(self.outcome) is not EpubInspectionOutcome
         ):
@@ -184,6 +187,7 @@ class EpubInspectionFact:
             self.canonical_value is None
             or self.checksum != "not_applicable"
             or self.media != "not_applicable"
+            or self.classification_basis != "not_applicable"
         ):
             raise ValueError("EPUB title fact has identifier fields")
         if self.field is EpubInspectionField.ISBN and self.checksum.startswith("valid_") != (self.canonical_value is not None):
@@ -235,13 +239,18 @@ class EpubInspection:
             return cls(outcome, None)
         facts: list[EpubInspectionFact] = []
         for claim in report.claims:
-            if claim.applicability in {EpubObservationApplicability.INAPPLICABLE, EpubObservationApplicability.UNKNOWN}:
-                continue
-            if claim.field is OpeningField.TITLE and claim.normalized_value is not None:
-                facts.append(EpubInspectionFact(EpubInspectionField.TITLE, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "opening_matter"))
-            elif claim.field is OpeningField.IDENTIFIER:
+            if claim.field is OpeningField.TITLE and claim.normalized_value is not None and claim.applicability not in {EpubObservationApplicability.INAPPLICABLE, EpubObservationApplicability.UNKNOWN}:
+                facts.append(EpubInspectionFact(EpubInspectionField.TITLE, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter"))
+            elif claim.field is OpeningField.IDENTIFIER and claim.identifier_type in {"isbn_10", "isbn_13"}:
                 checksum = claim.identifier_type if claim.identifier_type in {"isbn_10", "isbn_13"} and claim.normalized_value is not None else "invalid"
-                facts.append(EpubInspectionFact(EpubInspectionField.ISBN, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, f"valid_{checksum}" if checksum != "invalid" else checksum, claim.applicability_label if claim.applicability_label in {"ebook", "print"} else "unknown", "opening_matter"))
+                classification_basis = claim.applicability_label or "unlabelled"
+                media = (
+                    "ebook" if classification_basis == "ebook"
+                    else "print" if classification_basis in {"paperback", "hardcover", "print"}
+                    else "ambiguous" if classification_basis == "ambiguous"
+                    else "unknown"
+                )
+                facts.append(EpubInspectionFact(EpubInspectionField.ISBN, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, f"valid_{checksum}" if checksum != "invalid" else checksum, media, classification_basis, "opening_matter"))
         return cls(outcome, source, tuple(facts))
 
     def __repr__(self) -> str:

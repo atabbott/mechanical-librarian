@@ -1,106 +1,26 @@
 # Glossary
 
-## Adapter
+**Canonical report**
+The exact compact, key-sorted UTF-8 JSON document validated by the closed
+`metadata-report-v1` model.
 
-Implementation that translates an external service or provider into a contract
-owned by the application.
+**Current pointer**
+The separate mutable reference from one connection/library/item/file identity
+scope to its latest immutable report. It does not mutate or delete predecessors.
 
-## Apply attempt
+**Local claim**
+A source-attributed target-title or opening-matter title/ISBN fact with a stable
+content-derived reference.
 
-One bounded attempt to execute an immutable apply plan and verify the result.
+**Neutral provider observation**
+One provider's independent status and complete bounded candidate set. It has no
+winner, score, merge, or decision meaning.
 
-## Apply plan
+**Opaque file identity**
+An adapter-derived digest of stable Audiobookshelf file facts. It is scoped by
+the named target and allows final currentness after file-list reorder without
+persisting a private host path.
 
-Validated set of field changes for one target and one expected fingerprint.
-
-## Audit event
-
-Append-only user-facing record of a meaningful product decision, action, or
-state transition.
-
-## Candidate
-
-Normalized external or derived source of one or more possible metadata values.
-
-## Capability
-
-Field or action that a configured service adapter supports through an approved
-integration path.
-
-## Circuit breaker
-
-State that blocks production writes after unsafe or repeated failures while
-allowing safe read-only work to continue.
-
-## Decision
-
-AI, human, or deterministic conclusion about one proposal. A decision is not
-itself an apply authorization.
-
-## Decision authorization
-
-Immutable basis allowing selected changes to enter an apply plan: either a
-qualified automatic policy disposition or an applicable human decision.
-
-## Disposition
-
-Policy result for current work: `auto_apply`, `needs_review`,
-`closed_rejected`, or `unsupported`.
-
-## Evidence
-
-Immutable bounded observation supporting or contradicting a candidate or field
-proposal.
-
-## Fingerprint
-
-Versioned digest of canonical observed item state used for change detection and
-optimistic concurrency.
-
-## Item snapshot
-
-Immutable normalized observation of an external library item at a point in
-time.
-
-## Job
-
-Durable, retryable unit of background work with leases and a deduplication key.
-
-## Proposal
-
-Candidate value for one field on one item snapshot with evidence references.
-
-## Reviewer
-
-Replaceable AI backend that receives bounded evidence and returns
-schema-constrained recommendations without production authority.
-
-## Review case
-
-Immutable decision surface grouping field proposals for one target snapshot and
-proposal-set version. Historical cases remain immutable when a new fingerprint
-or proposal set supersedes them.
-
-## Review group
-
-Display/query projection for confirmed sibling targets representing the same
-work. It cannot own or propagate decisions, selections, or apply state.
-
-## Review notice
-
-Human-facing interpretation of a risk or diagnostic condition classified as
-blocking, needing attention, resolved, or attached to a rejected alternative.
-
-## Shadow mode
-
-Mode in which the system makes and records complete decisions but production
-writes are disabled. Used to evaluate a reviewer or policy version.
-
-## Target
-
-Stable internal identity for one adapter-scoped external library item.
-
-## Verification
-
-Independent read-back comparison proving whether an apply plan produced the
-expected service state.
+**Report-only**
+Authority to observe and persist evidence, never to review, approve, apply, or
+write target/media metadata.

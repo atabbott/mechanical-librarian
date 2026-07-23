@@ -1811,8 +1811,15 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
     citation_end = citation_start + len(citation_excerpt)
     if not citation_excerpt or raw not in citation_excerpt:
         return None
-    normalized_value = _normal(raw, field) if normalized is None else normalized
-    if len(normalized_value) > excerpt_characters:
+    normalized_value = (
+        None
+        if field is OpeningField.IDENTIFIER
+        and identifier_type in {"isbn_10", "isbn_13"}
+        and normalized is None
+        and not _isbn_valid(raw)
+        else _normal(raw, field) if normalized is None else normalized
+    )
+    if normalized_value is not None and len(normalized_value) > excerpt_characters:
         return None
     try:
         citation = OpeningCitation(
@@ -2182,8 +2189,10 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
         isbn_matches = list(_ISBN.finditer(text))
         for match_index, match in enumerate(isbn_matches):
             identifier = match.group(0)
-            if not _isbn_valid(identifier):
+            compact = _normal(identifier, OpeningField.IDENTIFIER)
+            if len(compact) not in {10, 13}:
                 continue
+            identifier_valid = _isbn_valid(identifier)
             left_boundary = isbn_matches[match_index - 1].end() if match_index else max(0, match.start() - 64)
             right_boundary = isbn_matches[match_index + 1].start() if match_index + 1 < len(isbn_matches) else min(len(text), match.end() + 64)
             separator = r"[;,|/\n\u2022]"
@@ -2256,6 +2265,9 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             elif printed and not ebook:
                 applicability = EpubObservationApplicability.INAPPLICABLE
                 applicability_label = "paperback" if _PAPERBACK_LABEL.search(vicinity) else "hardcover" if _HARDCOVER_LABEL.search(vicinity) else "print"
+            elif ebook and printed:
+                applicability = EpubObservationApplicability.UNKNOWN
+                applicability_label = "ambiguous"
             else:
                 applicability = EpubObservationApplicability.UNKNOWN
                 applicability_label = "unlabelled"
@@ -2298,12 +2310,11 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                 else:
                     applicability = EpubObservationApplicability.UNKNOWN
                     applicability_label = "unlabelled"
-            compact = _normal(identifier, OpeningField.IDENTIFIER)
             add(
                 OpeningField.IDENTIFIER,
                 identifier,
                 applicability,
-                compact,
+                compact if identifier_valid else None,
                 "isbn_10" if len(compact) == 10 else "isbn_13",
                 applicability_label,
                 citation_context,

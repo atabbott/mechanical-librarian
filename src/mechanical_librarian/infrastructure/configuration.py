@@ -1,474 +1,119 @@
-"""Strict, bounded config-v1 source loading and transport validation."""
+"""Strict bounded JSON configuration boundary for the report command."""
 
 from __future__ import annotations
 
 import json
 import os
 import stat
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Literal
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    StrictBool,
-    StrictInt,
-    StringConstraints,
-    ValidationError,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError
 
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     ConfigurationError,
-    ConfigurationImportPlan,
-    HardcoverProviderConfiguration,
-    plan_projected_import,
-    project_configuration,
-)
-from mechanical_librarian.domain.identifiers import (
-    CANONICAL_UUID4_PATTERN,
-    LIBRARY_ID_PATTERN,
-    is_canonical_uuid4,
+    LibraryConfiguration,
+    MediaMountConfiguration,
+    ProviderConnectionConfiguration,
+    ReportLimits,
+    TargetConnectionConfiguration,
 )
 
 
-_MAX_CONFIGURATION_BYTES = 1_048_576
-_MODEL_CONFIG = ConfigDict(
-    extra="forbid",
-    frozen=True,
-    strict=True,
-    hide_input_in_errors=True,
-)
-IdentifierText = Annotated[
-    str,
-    StringConstraints(
-        strict=True,
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z][a-z0-9_-]{0,63}$",
-    ),
+_MAX_CONFIG_BYTES = 262_144
+Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
+BoundedAbsolutePath = Annotated[
+    StrictStr,
+    Field(min_length=1, max_length=1024, pattern=r"^/"),
 ]
-LibraryIdentifierText = Annotated[
-    str,
-    StringConstraints(
-        strict=True,
-        min_length=1,
-        max_length=64,
-        pattern=LIBRARY_ID_PATTERN,
-    ),
-]
-VersionText = Annotated[
-    str,
-    StringConstraints(
-        strict=True,
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$",
-    ),
-]
-BoundedText64 = Annotated[
-    str, StringConstraints(strict=True, min_length=1, max_length=64)
-]
-EndpointText = Annotated[
-    str,
-    StringConstraints(strict=True, min_length=8, max_length=256, pattern=r"^https?://"),
-]
-SecretReferenceText = Annotated[
-    str, StringConstraints(strict=True, min_length=1, max_length=256)
-]
-_HARDCOVER_SECRET_REFERENCE_PATTERN = (
-    r"^/(?!.*(?:/\.{1,2})(?:/|$))(?!.*://)"
-    r"(?!.*[\u0000-\u001f\u007f-\u009f\u00ad\u0600-\u0605\u061c"
-    r"\u06dd\u070f\u0890-\u0891\u08e2\u180e\u200b-\u200f"
-    r"\u202a-\u202e\u2060-\u2064\u2066-\u206f\ud800-\udfff"
-    r"\ufeff\ufff9-\ufffb"
-    "\U000110bd\U000110cd\U00013430-\U0001343f\U0001bca0-\U0001bca3"
-    "\U0001d173-\U0001d17a\U000e0001\U000e0020-\U000e007f"
-    r"])(?!.*[\s\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f"
-    r"\u205f\u3000]$).{0,255}$"
-)
-HardcoverSecretReferenceText = Annotated[
-    str,
-    StringConstraints(strict=True, min_length=1, max_length=256),
-    Field(
-        json_schema_extra={
-            "pattern": _HARDCOVER_SECRET_REFERENCE_PATTERN,
-            "x-maxUtf8Bytes": 1024,
-            "x-forbiddenUnicodeCategories": ["Cc", "Cf", "Cs"],
-        }
-    ),
-]
-AbsolutePathText = Annotated[
-    str, StringConstraints(strict=True, min_length=1, max_length=1024, pattern=r"^/")
-]
-ReadCapability = Literal[
-    "inventory-read",
-    "metadata-read",
-    "media-file-read",
-    "notifications",
-    "pagination",
-    "concurrency-tokens",
-    "cover-read",
-]
-EvidenceFormat = Literal["epub", "m4b", "mp3"]
 
 
-class ConnectionInput(BaseModel):
-    model_config = ConfigDict(
-        strict=True,
-        extra="forbid",
-        frozen=True,
-        json_schema_extra={
-            "allOf": [
-                {
-                    "if": {
-                        "properties": {"adapter": {"const": "audiobookshelf"}},
-                        "required": ["adapter"],
-                    },
-                    "then": {
-                        "properties": {
-                            "enabled_libraries": {
-                                "items": {"pattern": CANONICAL_UUID4_PATTERN}
-                            }
-                        }
-                    },
-                }
-            ]
-        },
-    )
-
-    id: IdentifierText | None = None
-    adapter: IdentifierText
-    endpoint: EndpointText
-    secret_reference: SecretReferenceText
-    enabled_libraries: Annotated[
-        list[LibraryIdentifierText],
-        Field(min_length=1, max_length=64, json_schema_extra={"uniqueItems": True}),
-    ]
-    capability_overrides: Annotated[
-        list[ReadCapability],
-        Field(max_length=7, json_schema_extra={"uniqueItems": True}),
-    ] = []
-
-    @model_validator(mode="after")
-    def validate_adapter_library_ids(self) -> Self:
-        if self.adapter == "audiobookshelf" and any(
-            not is_canonical_uuid4(value) for value in self.enabled_libraries
-        ):
-            raise ValueError("Audiobookshelf library identifiers are invalid")
-        return self
+class _Closed(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
-class MediaMountInput(BaseModel):
-    model_config = _MODEL_CONFIG
-
-    name: IdentifierText
-    library_type: Literal["ebook", "audiobook"]
-    container_path: AbsolutePathText
-    service_path: AbsolutePathText
-    read_only: Literal[True] = True
+class ConnectionInput(_Closed):
+    name: Name
+    adapter: Literal["audiobookshelf"]
+    endpoint: Annotated[StrictStr, Field(min_length=1, max_length=2048)]
+    secret_file: BoundedAbsolutePath
 
 
-class ResourceLimitsInput(BaseModel):
-    model_config = _MODEL_CONFIG
-
-    parser_concurrency: Annotated[StrictInt, Field(ge=1, le=8)] = 1
-    parser_timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 60
-    temporary_bytes: Annotated[StrictInt, Field(ge=1_048_576, le=17_179_869_184)] = (
-        1_073_741_824
-    )
-
-
-class InventoryInput(BaseModel):
-    model_config = _MODEL_CONFIG
-
-    page_size: Annotated[StrictInt, Field(ge=1, le=500)] = 100
-    max_pages: Annotated[StrictInt, Field(ge=2, le=10_000)] = 512
-    max_items: Annotated[StrictInt, Field(ge=2, le=10_000)] = 10_000
-    max_response_bytes: Annotated[StrictInt, Field(ge=1_024, le=67_108_864)] = (
-        67_108_864
-    )
-    timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 300
-    stability_delay_seconds: Annotated[StrictInt, Field(ge=0, le=86_400)] = 0
-    poll_generation: Annotated[StrictInt, Field(ge=0, le=1_000_000)] = 0
-    max_attempts: Annotated[StrictInt, Field(ge=1, le=16)] = 3
-    max_elapsed_seconds: Annotated[StrictInt, Field(ge=1, le=86_400)] = 900
-    initial_backoff_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 5
-    max_backoff_seconds: Annotated[StrictInt, Field(ge=1, le=86_400)] = 300
-    connect_timeout_seconds: Annotated[StrictInt, Field(ge=1, le=300)] = 10
-    read_timeout_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 30
-    max_in_flight_requests: Literal[1] = 1
-
-    @model_validator(mode="after")
-    def validate_poll_backoff(self) -> Self:
-        if self.max_backoff_seconds < self.initial_backoff_seconds:
-            raise ValueError("inventory poll backoff is invalid")
-        return self
-
-
-class EpubPackageInput(BaseModel):
-    model_config = _MODEL_CONFIG
-
-    profile: Literal["epub-package-limits-v1"] = "epub-package-limits-v1"
-    source_archive_bytes: Annotated[StrictInt, Field(ge=1, le=536_870_912)] = 268_435_456
-    archive_entries: Annotated[StrictInt, Field(ge=1, le=8_192)] = 2_048
-    compressed_bytes_per_member: Annotated[
-        StrictInt, Field(ge=1, le=536_870_912)
-    ] = 268_435_456
-    expanded_bytes_per_member: Annotated[
-        StrictInt, Field(ge=1, le=536_870_912)
-    ] = 268_435_456
-    expanded_bytes_per_archive: Annotated[
-        StrictInt, Field(ge=1, le=2_147_483_648)
-    ] = 1_073_741_824
-    compression_ratio_per_member: Annotated[StrictInt, Field(ge=1, le=1_000)] = 200
-    container_xml_bytes: Annotated[StrictInt, Field(ge=1, le=1_048_576)] = 65_536
-    opf_package_bytes: Annotated[StrictInt, Field(ge=1, le=16_777_216)] = 4_194_304
-    xml_nodes_per_document: Annotated[StrictInt, Field(ge=1, le=200_000)] = 50_000
-    xml_attributes_per_document: Annotated[
-        StrictInt, Field(ge=1, le=400_000)
-    ] = 100_000
-    attributes_per_element: Annotated[StrictInt, Field(ge=1, le=256)] = 64
-    xml_depth: Annotated[StrictInt, Field(ge=1, le=128)] = 64
-    decoded_xml_text_characters: Annotated[
-        StrictInt, Field(ge=1, le=4_194_304)
-    ] = 262_144
-    metadata_nodes: Annotated[StrictInt, Field(ge=1, le=2_048)] = 512
-    manifest_items: Annotated[StrictInt, Field(ge=1, le=8_192)] = 4_096
-    spine_items: Annotated[StrictInt, Field(ge=1, le=8_192)] = 4_096
-    guide_references: Annotated[StrictInt, Field(ge=1, le=512)] = 256
-    prefix_mappings: Annotated[StrictInt, Field(ge=1, le=256)] = 64
-
-
-class EpubOpeningInput(BaseModel):
-    model_config = _MODEL_CONFIG
-
-    profile: Literal["epub-opening-limits-v1"] = "epub-opening-limits-v1"
-    selected_documents: Annotated[StrictInt, Field(ge=1, le=8)] = 5
-    expanded_bytes_per_resource: Annotated[StrictInt, Field(ge=1, le=4_194_304)] = 1_048_576
-    expanded_bytes_per_selection: Annotated[StrictInt, Field(ge=1, le=33_554_432)] = 5_242_880
-    text_characters_per_selection: Annotated[StrictInt, Field(ge=1, le=2_097_152)] = 524_288
-    nodes_per_resource: Annotated[StrictInt, Field(ge=1, le=100_000)] = 25_000
-    nodes_per_selection: Annotated[StrictInt, Field(ge=1, le=400_000)] = 100_000
-    document_depth: Annotated[StrictInt, Field(ge=1, le=128)] = 64
-    navigation_links: Annotated[StrictInt, Field(ge=1, le=8_192)] = 2_048
-    wall_seconds: Annotated[StrictInt, Field(ge=1, le=3_600)] = 60
-    child_cpu_seconds: Literal[30] = 30
-    termination_grace_seconds: Literal[2] = 2
-    facts: Literal[64] = 64
-    warnings: Literal[32] = 32
-    excerpt_characters: Literal[280] = 280
-    report_bytes: Literal[524_288] = 524_288
-
-
-class EvidenceInput(BaseModel):
-    model_config = _MODEL_CONFIG
-
-    enabled_formats: Annotated[
-        list[EvidenceFormat],
-        Field(min_length=1, max_length=3, json_schema_extra={"uniqueItems": True}),
-    ] = ["epub", "m4b", "mp3"]
-    maximum_document_bytes: Annotated[
-        StrictInt, Field(ge=1_048_576, le=536_870_912)
-    ] = 67_108_864
-    maximum_text_characters: Annotated[StrictInt, Field(ge=1_024, le=4_194_304)] = (
-        524_288
-    )
-    epub_package: EpubPackageInput = EpubPackageInput()
-    epub_opening: EpubOpeningInput = EpubOpeningInput()
-
-
-class PolicyInput(BaseModel):
-    model_config = _MODEL_CONFIG
-
-    policy_version: VersionText = "policy-v1"
-
-
-class RetentionInput(BaseModel):
-    model_config = _MODEL_CONFIG
-
-    evidence_days: Annotated[StrictInt, Field(ge=1, le=3_650)] = 90
-    job_log_days: Annotated[StrictInt, Field(ge=1, le=365)] = 30
-    maximum_artifact_bytes: Annotated[
-        StrictInt, Field(ge=1_048_576, le=17_179_869_184)
-    ] = 1_073_741_824
-
-
-class HardcoverProviderInput(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-        frozen=True,
-        strict=True,
-        hide_input_in_errors=True,
-        json_schema_extra={
-            "allOf": [
-                {
-                    "if": {
-                        "properties": {"enabled": {"const": False}},
-                        "required": ["enabled"],
-                    },
-                    "then": {
-                        "properties": {"secret_reference": {"type": "null"}}
-                    },
-                },
-                {
-                    "if": {
-                        "properties": {"enabled": {"const": True}},
-                        "required": ["enabled"],
-                    },
-                    "then": {
-                        "properties": {"secret_reference": {"type": "string"}}
-                    },
-                },
-            ]
-        },
-    )
-
+class ProviderInput(_Closed):
+    name: Name
+    adapter: Literal["hardcover"]
     enabled: StrictBool
-    secret_reference: HardcoverSecretReferenceText | None
-    authority_revision: Annotated[StrictInt, Field(ge=1, le=2_147_483_647)]
+    secret_file: BoundedAbsolutePath | None
 
 
-class ConfigurationInput(BaseModel):
-    """The single strict transport schema used by every supported config source."""
-
-    model_config = _MODEL_CONFIG
-
-    schema_version: Literal["config-v1"]
-    instance_name: BoundedText64
-    connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=64)]
-    media_mounts: Annotated[list[MediaMountInput], Field(max_length=64)] = []
-    limits: ResourceLimitsInput = ResourceLimitsInput()
-    inventory: InventoryInput = InventoryInput()
-    evidence: EvidenceInput = EvidenceInput()
-    hardcover_provider: HardcoverProviderInput = HardcoverProviderInput(
-        enabled=False,
-        secret_reference=None,
-        authority_revision=1,
-    )
-    providers: Annotated[
-        list[IdentifierText],
-        Field(max_length=64, json_schema_extra={"uniqueItems": True}),
-    ] = []
-    reviewers: Annotated[
-        list[IdentifierText],
-        Field(max_length=64, json_schema_extra={"uniqueItems": True}),
-    ] = []
-    policy: PolicyInput = PolicyInput()
-    notifications: Annotated[
-        list[IdentifierText],
-        Field(max_length=64, json_schema_extra={"uniqueItems": True}),
-    ] = []
-    backups_enabled: StrictBool = True
-    retention: RetentionInput = RetentionInput()
-    destructive_actions_enabled: Literal[False] = False
+class MountInput(_Closed):
+    name: Name
+    container_path: BoundedAbsolutePath
+    service_path: BoundedAbsolutePath
+    read_only: Literal[True]
 
 
-def validate_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
-    """Validate untrusted transport data and project immutable application values."""
-
-    try:
-        validated = ConfigurationInput.model_validate(source)
-        return project_configuration(validated.model_dump(mode="python"))
-    except ConfigurationError:
-        raise
-    except (TypeError, ValueError, ValidationError):
-        raise ConfigurationError("configuration is invalid") from None
+class LibraryInput(_Closed):
+    name: Name
+    connection: Name
+    library_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+    media_kind: Literal["ebook", "audiobook"]
+    mount: Name | None
+    provider_connections: Annotated[list[Name], Field(max_length=32)]
 
 
-def load_configuration(source: Mapping[str, Any]) -> ApplicationConfiguration:
-    """Compatibility name for the single supported strict mapping boundary."""
-
-    return validate_configuration(source)
-
-
-def validate_hardcover_provider(
-    source: Mapping[str, Any],
-) -> HardcoverProviderConfiguration:
-    """Validate the exact provider block through the production transport seam."""
-
-    try:
-        validated = HardcoverProviderInput.model_validate(source)
-        return HardcoverProviderConfiguration(**validated.model_dump(mode="python"))
-    except ConfigurationError:
-        raise
-    except (TypeError, ValueError, ValidationError):
-        raise ConfigurationError(
-            "Hardcover provider configuration is invalid"
-        ) from None
+class LimitsInput(_Closed):
+    target_response_bytes: Annotated[StrictInt, Field(ge=1024, le=4_194_304)] = 1_048_576
+    provider_response_bytes: Annotated[StrictInt, Field(ge=1024, le=262_144)] = 65_536
+    source_archive_bytes: Annotated[StrictInt, Field(ge=1024, le=268_435_456)] = 268_435_456
+    timeout_seconds: Annotated[StrictInt, Field(ge=1, le=60)] = 30
 
 
-def plan_import(
-    current_source: Mapping[str, Any], proposed_source: Mapping[str, Any]
-) -> ConfigurationImportPlan:
-    """Strictly validate both sources through one path before comparing values."""
-
-    return plan_projected_import(
-        validate_configuration(current_source),
-        validate_configuration(proposed_source),
-    )
+class ConfigurationInput(_Closed):
+    schema_version: Literal["config-v2"]
+    connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
+    libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]
+    mounts: Annotated[list[MountInput], Field(max_length=32)]
+    providers: Annotated[list[ProviderInput], Field(max_length=32)]
+    limits: LimitsInput = LimitsInput()
 
 
 def load_configuration_file(path: Path) -> ApplicationConfiguration:
-    """Load one bounded regular UTF-8 JSON file without exposing path or values."""
-
     try:
-        payload = _read_bounded_regular_file(path)
+        payload = _read_regular(path)
         source = json.loads(
-            payload.decode("utf-8"),
+            payload.decode("utf-8", "strict"),
             object_pairs_hook=_unique_object,
+            parse_constant=_reject_number,
         )
-        if not isinstance(source, dict):
-            raise ConfigurationError("configuration document is invalid")
-        return validate_configuration(source)
+        value = ConfigurationInput.model_validate(source)
+        return ApplicationConfiguration(
+            tuple(sorted((TargetConnectionConfiguration(**item.model_dump()) for item in value.connections), key=lambda item: item.name)),
+            tuple(sorted((LibraryConfiguration(**{**item.model_dump(), "provider_connections": tuple(item.provider_connections)}) for item in value.libraries), key=lambda item: item.name)),
+            tuple(sorted((MediaMountConfiguration(**item.model_dump()) for item in value.mounts), key=lambda item: item.name)),
+            tuple(sorted((ProviderConnectionConfiguration(**item.model_dump()) for item in value.providers), key=lambda item: item.name)),
+            ReportLimits(**value.limits.model_dump()),
+            value.schema_version,
+        )
     except ConfigurationError:
         raise
-    except (OSError, UnicodeError, ValueError, RecursionError):
+    except (OSError, UnicodeError, ValueError, ValidationError, RecursionError):
         raise ConfigurationError("configuration document is invalid") from None
 
 
 def configuration_schema_json() -> str:
-    """Return the deterministic generated config-v1 JSON Schema artifact."""
-
-    return (
-        json.dumps(
-            ConfigurationInput.model_json_schema(),
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n"
-    )
+    return json.dumps(ConfigurationInput.model_json_schema(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
-def _read_bounded_regular_file(path: Path) -> bytes:
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-    )
-    descriptor = os.open(path, flags)
+def _read_regular(path: Path) -> bytes:
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
     try:
         information = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(information.st_mode)
-            or information.st_size > _MAX_CONFIGURATION_BYTES
-        ):
+        if not stat.S_ISREG(information.st_mode) or not 1 <= information.st_size <= _MAX_CONFIG_BYTES:
             raise ConfigurationError("configuration document is invalid")
-        chunks: list[bytes] = []
-        remaining = _MAX_CONFIGURATION_BYTES + 1
-        while remaining:
-            chunk = os.read(descriptor, min(65_536, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        payload = b"".join(chunks)
-        if not payload or len(payload) > _MAX_CONFIGURATION_BYTES:
+        payload = os.read(descriptor, information.st_size + 1)
+        if len(payload) != information.st_size:
             raise ConfigurationError("configuration document is invalid")
         return payload
     finally:
@@ -479,19 +124,13 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
-            raise ConfigurationError(
-                "configuration document contains a duplicate field"
-            )
+            raise ConfigurationError("configuration document contains a duplicate field")
         result[key] = value
     return result
 
 
-__all__ = [
-    "ConfigurationInput",
-    "configuration_schema_json",
-    "load_configuration",
-    "load_configuration_file",
-    "plan_import",
-    "validate_hardcover_provider",
-    "validate_configuration",
-]
+def _reject_number(_: str) -> float:
+    raise ConfigurationError("configuration document is invalid")
+
+
+__all__ = ["ConfigurationInput", "configuration_schema_json", "load_configuration_file"]

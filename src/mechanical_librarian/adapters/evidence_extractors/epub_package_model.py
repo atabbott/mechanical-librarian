@@ -28,7 +28,7 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     TargetId,
 )
-from mechanical_librarian.domain.inventory import FileReference
+from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.domain.epub_inspection import (
     EpubInspectionOutcome,
     EpubObservationApplicability,

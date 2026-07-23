@@ -1,1 +1,0 @@
-"""Reusable adapter contract tests."""
