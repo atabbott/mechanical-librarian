@@ -13,7 +13,12 @@ from pathlib import Path
 from urllib.parse import quote
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.domain.metadata_report import MetadataReport, REPORT_SCHEMA, ReportValueError
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    REPORT_SCHEMA,
+    ReportValueError,
+    canonical_json,
+)
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -47,6 +52,27 @@ _COVER_REFERENCES_SQL = (
     "(length(artifact_id) = 70 AND artifact_id GLOB 'cover_[0-9a-f]*' "
     "AND length(preview_digest) = 64 AND preview_digest NOT GLOB '*[^0-9a-f]*' AND preview_variant = 'preview-320x480-rgba-png-v1')))"
 )
+_SOURCES_SQL = (
+    "CREATE TABLE metadata_report_sources ("
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "source_key TEXT NOT NULL, payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64 AND payload_digest NOT GLOB '*[^0-9a-f]*'), "
+    "payload TEXT NOT NULL CHECK (typeof(payload) = 'text' AND length(CAST(payload AS BLOB)) BETWEEN 2 AND 2097152), "
+    "PRIMARY KEY (report_id, source_key))"
+)
+_FIELDS_SQL = (
+    "CREATE TABLE metadata_report_fields ("
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "field_key TEXT NOT NULL, source_key TEXT NOT NULL, payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64 AND payload_digest NOT GLOB '*[^0-9a-f]*'), "
+    "payload TEXT NOT NULL CHECK (typeof(payload) = 'text' AND length(CAST(payload AS BLOB)) BETWEEN 2 AND 2097152), "
+    "PRIMARY KEY (report_id, field_key))"
+)
+_COMPARISONS_SQL = (
+    "CREATE TABLE metadata_report_comparisons ("
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "comparison_key TEXT NOT NULL, payload_digest TEXT NOT NULL CHECK (length(payload_digest) = 64 AND payload_digest NOT GLOB '*[^0-9a-f]*'), "
+    "payload TEXT NOT NULL CHECK (typeof(payload) = 'text' AND length(CAST(payload AS BLOB)) BETWEEN 2 AND 2097152), "
+    "PRIMARY KEY (report_id, comparison_key))"
+)
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
     "BEGIN SELECT RAISE(ABORT, 'metadata reports are append-only'); END"
@@ -62,6 +88,30 @@ _COVER_NO_UPDATE_SQL = (
 _COVER_NO_DELETE_SQL = (
     "CREATE TRIGGER metadata_report_cover_references_no_delete BEFORE DELETE ON metadata_report_cover_references "
     "BEGIN SELECT RAISE(ABORT, 'metadata report cover references are append-only'); END"
+)
+_SOURCES_NO_UPDATE_SQL = (
+    "CREATE TRIGGER metadata_report_sources_no_update BEFORE UPDATE ON metadata_report_sources "
+    "BEGIN SELECT RAISE(ABORT, 'metadata report sources are append-only'); END"
+)
+_SOURCES_NO_DELETE_SQL = (
+    "CREATE TRIGGER metadata_report_sources_no_delete BEFORE DELETE ON metadata_report_sources "
+    "BEGIN SELECT RAISE(ABORT, 'metadata report sources are append-only'); END"
+)
+_FIELDS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER metadata_report_fields_no_update BEFORE UPDATE ON metadata_report_fields "
+    "BEGIN SELECT RAISE(ABORT, 'metadata report fields are append-only'); END"
+)
+_FIELDS_NO_DELETE_SQL = (
+    "CREATE TRIGGER metadata_report_fields_no_delete BEFORE DELETE ON metadata_report_fields "
+    "BEGIN SELECT RAISE(ABORT, 'metadata report fields are append-only'); END"
+)
+_COMPARISONS_NO_UPDATE_SQL = (
+    "CREATE TRIGGER metadata_report_comparisons_no_update BEFORE UPDATE ON metadata_report_comparisons "
+    "BEGIN SELECT RAISE(ABORT, 'metadata report comparisons are append-only'); END"
+)
+_COMPARISONS_NO_DELETE_SQL = (
+    "CREATE TRIGGER metadata_report_comparisons_no_delete BEFORE DELETE ON metadata_report_comparisons "
+    "BEGIN SELECT RAISE(ABORT, 'metadata report comparisons are append-only'); END"
 )
 _UNSET = object()
 
@@ -408,6 +458,7 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("report publication failed")
         document = report.to_json()
         digest = hashlib.sha256(document.encode("utf-8")).hexdigest()
+        projection = _projection_rows(report)
         values = (
             report.report_id,
             report.target.connection,
@@ -458,6 +509,7 @@ class SQLiteMetadataReportRepository:
                             None if source.artifact is None else source.artifact.preview_variant,
                         ),
                     )
+                _insert_projection(self._connection, report.report_id, projection)
             else:
                 if existing != values[1:]:
                     raise MetadataReportError("persisted report identity conflicts")
@@ -471,6 +523,7 @@ class SQLiteMetadataReportRepository:
                 ))
                 if tuple(sorted(expected_references)) != actual_references:
                     raise MetadataReportError("persisted report cover references conflict")
+                _require_projection(self._connection, report.report_id, projection)
             self._connection.execute(
                 "INSERT INTO current_metadata_reports(connection_name,library_name,item_id,file_identity,report_id) VALUES(?,?,?,?,?) "
                 "ON CONFLICT(connection_name,library_name,item_id,file_identity) DO UPDATE SET report_id=excluded.report_id",
@@ -498,7 +551,13 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if row is None:
                 raise MetadataReportError("persisted report is unavailable")
-            return _validate_report_row(row)
+            document = _validate_report_row(row)
+            _require_projection(
+                self._connection,
+                row[0],
+                _projection_rows(MetadataReport.from_json(document)),
+            )
+            return document
         except (sqlite3.Error, ReportValueError, UnicodeError) as error:
             if isinstance(error, MetadataReportError):
                 raise
@@ -539,7 +598,7 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if row is None or len(row) != 2 or type(row[0]) is not str or type(row[1]) is not str:
                 raise MetadataReportError("persisted cover is unavailable")
-            report = MetadataReport.from_json(row[1])
+            report = MetadataReport.from_json(self.get(report_id))
             if not any(source.artifact is not None and source.artifact.artifact_id == artifact_id and source.artifact.preview_variant == preview_variant and source.artifact.preview_digest == row[0] for source in report.cover_sources):
                 raise MetadataReportError("persisted cover is unavailable")
             return row[0]
@@ -616,10 +675,19 @@ def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportR
             connection.execute(_REPORTS_SQL)
             connection.execute(_CURRENT_SQL)
             connection.execute(_COVER_REFERENCES_SQL)
+            connection.execute(_SOURCES_SQL)
+            connection.execute(_FIELDS_SQL)
+            connection.execute(_COMPARISONS_SQL)
             connection.execute(_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_DELETE_SQL)
             connection.execute(_NO_DELETE_SQL)
+            connection.execute(_SOURCES_NO_UPDATE_SQL)
+            connection.execute(_SOURCES_NO_DELETE_SQL)
+            connection.execute(_FIELDS_NO_UPDATE_SQL)
+            connection.execute(_FIELDS_NO_DELETE_SQL)
+            connection.execute(_COMPARISONS_NO_UPDATE_SQL)
+            connection.execute(_COMPARISONS_NO_DELETE_SQL)
             connection.commit()
         _validate_schema(connection)
         if binding is None:
@@ -879,9 +947,147 @@ def _unlink_created(path: Path, expected: tuple[int, int]) -> None:
         pass
 
 
+def _projection_payload(value: object) -> tuple[str, str]:
+    payload = canonical_json(value)
+    return payload, hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _projection_rows(
+    report: MetadataReport,
+) -> tuple[
+    tuple[tuple[str, str, str], ...],
+    tuple[tuple[str, str, str, str], ...],
+    tuple[tuple[str, str, str], ...],
+]:
+    """Derive the narrow, deterministic relational projection of one report."""
+    sources: list[tuple[str, str, str]] = []
+    fields: list[tuple[str, str, str, str]] = []
+    comparisons: list[tuple[str, str, str]] = []
+
+    local_key = "local"
+    payload, digest = _projection_payload(
+        {"reasons": list(report.local_reasons), "status": report.local_status}
+    )
+    sources.append((local_key, digest, payload))
+    for claim in report.local_claims:
+        payload, digest = _projection_payload(claim.to_data())
+        fields.append((claim.reference, local_key, digest, payload))
+
+    for provider in report.providers:
+        source_key = f"provider:{provider.provider}"
+        payload, digest = _projection_payload(
+            {
+                "input_references": list(provider.input_references),
+                "provider": provider.provider,
+                "status": provider.status.value,
+            }
+        )
+        sources.append((source_key, digest, payload))
+        for candidate in provider.candidates:
+            for claim in candidate.claims:
+                payload, digest = _projection_payload(
+                    {"candidate": candidate.identity, **claim.to_data()}
+                )
+                fields.append((claim.reference, source_key, digest, payload))
+                for link in claim.links:
+                    comparison = {
+                        "local_reference": link.local_reference,
+                        "outcome": link.outcome.value,
+                        "provider_reference": claim.reference,
+                    }
+                    payload, digest = _projection_payload(comparison)
+                    comparisons.append(
+                        (
+                            hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+                            digest,
+                            payload,
+                        )
+                    )
+    return (
+        tuple(sorted(sources)),
+        tuple(sorted(fields)),
+        tuple(sorted(comparisons)),
+    )
+
+
+def _insert_projection(
+    connection: sqlite3.Connection,
+    report_id: str,
+    projection: tuple[
+        tuple[tuple[str, str, str], ...],
+        tuple[tuple[str, str, str, str], ...],
+        tuple[tuple[str, str, str], ...],
+    ],
+) -> None:
+    sources, fields, comparisons = projection
+    connection.executemany(
+        "INSERT INTO metadata_report_sources(report_id,source_key,payload_digest,payload) VALUES(?,?,?,?)",
+        ((report_id, *row) for row in sources),
+    )
+    connection.executemany(
+        "INSERT INTO metadata_report_fields(report_id,field_key,source_key,payload_digest,payload) VALUES(?,?,?,?,?)",
+        ((report_id, *row) for row in fields),
+    )
+    connection.executemany(
+        "INSERT INTO metadata_report_comparisons(report_id,comparison_key,payload_digest,payload) VALUES(?,?,?,?)",
+        ((report_id, *row) for row in comparisons),
+    )
+
+
+def _require_projection(
+    connection: sqlite3.Connection,
+    report_id: str,
+    expected: tuple[
+        tuple[tuple[str, str, str], ...],
+        tuple[tuple[str, str, str, str], ...],
+        tuple[tuple[str, str, str], ...],
+    ],
+) -> None:
+    actual = (
+        tuple(connection.execute(
+            "SELECT source_key,payload_digest,payload FROM metadata_report_sources WHERE report_id=? ORDER BY source_key",
+            (report_id,),
+        )),
+        tuple(connection.execute(
+            "SELECT field_key,source_key,payload_digest,payload FROM metadata_report_fields WHERE report_id=? ORDER BY field_key",
+            (report_id,),
+        )),
+        tuple(connection.execute(
+            "SELECT comparison_key,payload_digest,payload FROM metadata_report_comparisons WHERE report_id=? ORDER BY comparison_key",
+            (report_id,),
+        )),
+    )
+    if actual != expected:
+        raise MetadataReportError("persisted report projection conflicts")
+
+
 def _validate_schema(connection: sqlite3.Connection) -> None:
     objects = connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
-    expected_objects = sorted((("index", "sqlite_autoindex_current_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_report_cover_references_1", None), ("index", "sqlite_autoindex_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_2", None), ("table", "current_metadata_reports", _CURRENT_SQL), ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL), ("table", "metadata_reports", _REPORTS_SQL), ("trigger", "metadata_report_cover_references_no_delete", _COVER_NO_DELETE_SQL), ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL), ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL), ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL)))
+    expected_objects = sorted((
+        ("index", "sqlite_autoindex_current_metadata_reports_1", None),
+        ("index", "sqlite_autoindex_metadata_report_comparisons_1", None),
+        ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
+        ("index", "sqlite_autoindex_metadata_report_fields_1", None),
+        ("index", "sqlite_autoindex_metadata_report_sources_1", None),
+        ("index", "sqlite_autoindex_metadata_reports_1", None),
+        ("index", "sqlite_autoindex_metadata_reports_2", None),
+        ("table", "current_metadata_reports", _CURRENT_SQL),
+        ("table", "metadata_report_comparisons", _COMPARISONS_SQL),
+        ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
+        ("table", "metadata_report_fields", _FIELDS_SQL),
+        ("table", "metadata_report_sources", _SOURCES_SQL),
+        ("table", "metadata_reports", _REPORTS_SQL),
+        ("trigger", "metadata_report_comparisons_no_delete", _COMPARISONS_NO_DELETE_SQL),
+        ("trigger", "metadata_report_comparisons_no_update", _COMPARISONS_NO_UPDATE_SQL),
+        ("trigger", "metadata_report_cover_references_no_delete", _COVER_NO_DELETE_SQL),
+        ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL),
+        ("trigger", "metadata_report_fields_no_delete", _FIELDS_NO_DELETE_SQL),
+        ("trigger", "metadata_report_fields_no_update", _FIELDS_NO_UPDATE_SQL),
+        ("trigger", "metadata_report_sources_no_delete", _SOURCES_NO_DELETE_SQL),
+        ("trigger", "metadata_report_sources_no_update", _SOURCES_NO_UPDATE_SQL),
+        ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
+        ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
+    ))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
 
