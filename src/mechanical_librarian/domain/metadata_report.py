@@ -47,6 +47,7 @@ class ClaimKind(StrEnum):
     SERIES = "series"
     SERIES_SEQUENCE = "series_sequence"
     ISBN = "isbn"
+    ASIN = "asin"
     PUBLICATION_DATE = "publication_date"
     PUBLISHER = "publisher"
     DESCRIPTION = "description"
@@ -393,8 +394,13 @@ class ProviderClaim:
             raise ReportValueError("provider claim is invalid")
         if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"} or type(self.state) is not FieldState or type(self.raw_order) is not int or self.raw_order < 0 or type(self.scope) is not ClaimScope or type(self.links) is not tuple or any(type(link) is not ComparisonLink for link in self.links):
             raise ReportValueError("provider claim scope is invalid")
-        if self.role is not None and (self.kind not in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR} or not self.role):
-            raise ReportValueError("provider claim role is invalid")
+        if self.role is not None:
+            if self.kind not in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}:
+                raise ReportValueError("provider claim role is invalid")
+            try:
+                validate_role_projection(self.role)
+            except EvidenceValueError as error:
+                raise ReportValueError("provider claim role is invalid") from error
         if self.state is FieldState.VALID:
             if self.value is None:
                 raise ReportValueError("valid provider claim has no value")
@@ -676,7 +682,7 @@ def _provider_reference_data(provider: str, candidate: str, kind: ClaimKind, val
 def claim_scope(kind: ClaimKind) -> ClaimScope:
     if type(kind) is not ClaimKind:
         raise ReportValueError("claim kind is invalid")
-    return ClaimScope.EDITION if kind is ClaimKind.ISBN else ClaimScope.WORK
+    return ClaimScope.EDITION if kind in {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE} else ClaimScope.WORK
 
 
 def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> tuple[ComparisonLink, ...]:
@@ -697,7 +703,7 @@ def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> 
             outcome = Comparison.NOT_COMPARABLE
         elif _comparison_value(provider.kind, provider.value) == _comparison_value(claim.kind, claim.canonical):
             outcome = Comparison.AGREEMENT
-        elif provider.kind is ClaimKind.ISBN:
+        elif provider.kind in {ClaimKind.ISBN, ClaimKind.ASIN}:
             outcome = Comparison.INCOMPATIBLE
         else:
             outcome = Comparison.DISAGREEMENT
