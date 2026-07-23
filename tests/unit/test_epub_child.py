@@ -535,6 +535,18 @@ class EpubChildRearSpineTests(unittest.TestCase):
                 continue
             self.assertEqual(child.EpubInspection.from_opening_report(EpubOpeningReport(outcome, EpubOpeningLimits())).outcome, outcome)
 
+    def test_child_projects_explicit_creator_and_contributor_as_distinct_local_fields(self) -> None:
+        package = _opening_package(items=(("opening", "opening.xhtml", "application/xhtml+xml", ""),), spine=("opening",))
+        value = _opening_epub(package=package, entries=(("EPUB/opening.xhtml", _xhtml('<section epub:type="contributors"><p epub:type="creator">Ada Creator</p><p epub:type="contributor">Bea Contributor</p></section>'), 8),))
+        request = self._request(value)
+        package_request = EpubPackageRequest(request.target, request.file, request.source, request.expected_source, EpubPackageCapability.PACKAGE, request.limits, request.deadline, request.monotonic_deadline, request.cancellation)
+        package_report, opening_report, rear = child._inspect_bundle(request, package_request, EpubOpeningLimits())
+        inspection = child._inspection(package_report, opening_report, rear)
+        self.assertEqual([(fact.field.value, fact.canonical_value) for fact in inspection.facts if fact.field.value in {"creator", "contributor"}], [("creator", "Ada Creator"), ("contributor", "Bea Contributor")])
+        claims = tuple(LocalClaim.create(kind=ClaimKind(fact.field.value), observed=fact.observed_value, canonical=fact.canonical_value, excerpt=fact.supporting_context, applicability=fact.media, checksum=fact.checksum, applicability_basis=fact.classification_basis, basis=fact.basis, state=FieldState(fact.state), role=fact.role) for fact in inspection.facts if fact.field.value in {"creator", "contributor"})
+        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=claims, local_reasons=("opening_matter",), providers=())
+        self.assertEqual({field.kind: field.state for field in report.field_results if field.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}}, {ClaimKind.CREATOR: FieldState.VALID, ClaimKind.CONTRIBUTOR: FieldState.VALID})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -83,6 +83,7 @@ def opening_selection_digest(
 class OpeningField(StrEnum):
     TITLE = "title"
     SUBTITLE = "subtitle"
+    CREATOR = "creator"
     CONTRIBUTOR = "contributor"
     CONTRIBUTOR_ROLE = "contributor_role"
     PUBLISHER = "publisher"

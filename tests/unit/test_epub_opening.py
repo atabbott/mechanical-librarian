@@ -637,7 +637,7 @@ class EpubOpeningTests(unittest.TestCase):
 
     def test_every_controlled_claim_family_and_contributor_role_is_recognized(self) -> None:
         report = _extract(opening_claim_families())
-        self.assertEqual({claim.field for claim in report.claims}, set(OpeningField))
+        self.assertEqual({claim.field for claim in report.claims}, set(OpeningField) - {OpeningField.CREATOR})
         self.assertEqual(
             {
                 claim.normalized_value
@@ -680,10 +680,13 @@ class EpubOpeningTests(unittest.TestCase):
             },
             {
                 "Casey Designer",
-                "Chris Creator",
                 "Alex Adapter",
                 "Morgan Example",
             },
+        )
+        self.assertEqual(
+            [claim.normalized_value for claim in roles.claims if claim.field is OpeningField.CREATOR],
+            ["Chris Creator"],
         )
 
     def test_strict_recovery_and_active_content_are_inert_and_visible(self) -> None:

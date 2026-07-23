@@ -2164,7 +2164,10 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             )
             add(OpeningField.CONTRIBUTOR, value, EpubObservationApplicability.WORK)
             add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "other")
-        elif semantic & {"contributor", "creator"}:
+        explicit_semantics = _tokens(element.attributes)
+        if "creator" in explicit_semantics:
+            add(OpeningField.CREATOR, text, EpubObservationApplicability.WORK)
+        elif "contributor" in explicit_semantics:
             add(OpeningField.CONTRIBUTOR, text, EpubObservationApplicability.WORK)
         if "edition" in lowered:
             add(OpeningField.EDITION, text, EpubObservationApplicability.EDITION)

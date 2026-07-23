@@ -280,6 +280,7 @@ class EpubInspection:
         fields = {
             OpeningField.TITLE: EpubInspectionField.TITLE,
             OpeningField.SUBTITLE: EpubInspectionField.SUBTITLE,
+            OpeningField.CREATOR: EpubInspectionField.CREATOR,
             OpeningField.CONTRIBUTOR: EpubInspectionField.CONTRIBUTOR,
             OpeningField.SERIES: EpubInspectionField.SERIES,
             OpeningField.SERIES_ORDER: EpubInspectionField.SERIES_SEQUENCE,
