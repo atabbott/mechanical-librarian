@@ -338,6 +338,65 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(provider.observe((self._claim(), self._title_claim())).status, ProviderStatus.UNAVAILABLE)
         self.assertEqual(len(requests), 1)
 
+    def test_agreement_references_only_matching_title_and_isbn_claims(self) -> None:
+        other_title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Other title",
+            canonical="Other title",
+            excerpt="Other title",
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+        )
+        other_isbn = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="0306406152",
+            canonical="0306406152",
+            excerpt="ISBN: 0306406152",
+            applicability="unknown",
+            checksum="valid_isbn_10",
+            applicability_basis="unlabelled",
+        )
+        payload = {
+            "data": {
+                "editions": [
+                    {
+                        "id": 1,
+                        "isbn_10": None,
+                        "isbn_13": "9780306406157",
+                        "book": {"id": 1, "title": "Current title"},
+                    }
+                ]
+            }
+        }
+        observation = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            65_536,
+        ).observe((self._claim(), other_isbn, self._title_claim(), other_title))
+        claims = {
+            claim.kind: claim for claim in observation.candidates[0].claims
+        }
+        self.assertEqual(claims[ClaimKind.TITLE].comparison, Comparison.AGREEMENT)
+        self.assertEqual(
+            claims[ClaimKind.TITLE].local_references,
+            (self._title_claim().reference,),
+        )
+        self.assertEqual(claims[ClaimKind.ISBN].comparison, Comparison.AGREEMENT)
+        self.assertEqual(
+            claims[ClaimKind.ISBN].local_references,
+            (self._claim().reference,),
+        )
+
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
         client = httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(1) or httpx.Response(200)))
@@ -554,6 +613,44 @@ class AudiobookshelfItemTests(unittest.TestCase):
         self.assertEqual(first.title, "Current title")
         self.assertEqual(first.files[0].identity, second.files[1].identity)
         self.assertEqual(len(requests), 2)
+
+    def test_safe_noncanonical_title_is_preserved_exactly(self) -> None:
+        title = "Cafe\u0301  Story"
+        payload = {
+            "id": "item-1",
+            "libraryId": "library-id",
+            "isInvalid": False,
+            "isMissing": False,
+            "mediaType": "book",
+            "media": {
+                "metadata": {"title": title},
+                "ebookFile": {
+                    "ebookFormat": "epub",
+                    "ino": "inode-1",
+                    "metadata": {
+                        "relPath": "book.epub",
+                        "path": "/library/book.epub",
+                        "size": 1,
+                    },
+                },
+            },
+        }
+        reader = AudiobookshelfItemReader(
+            client_factory=lambda: httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            ),
+            endpoint="https://example.invalid",
+            library_id="library-id",
+            service_path="/library",
+            maximum_bytes=65_536,
+        )
+        self.assertEqual(reader.read("item-1").title, title)
 
     def test_duplicate_and_oversized_target_responses_fail_closed(self) -> None:
         duplicate = b'{"id":"item-1","id":"item-1"}'

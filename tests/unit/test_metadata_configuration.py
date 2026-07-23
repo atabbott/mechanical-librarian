@@ -74,6 +74,23 @@ class MetadataConfigurationTests(unittest.TestCase):
         expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v2.schema.json").read_text(encoding="utf-8")
         self.assertEqual(configuration_schema_json(), expected)
 
+    def test_mount_paths_are_absolute_in_generated_schema_and_runtime(self) -> None:
+        mount_properties = json.loads(configuration_schema_json())["$defs"]["MountInput"][
+            "properties"
+        ]
+        self.assertEqual(mount_properties["container_path"]["pattern"], "^/")
+        self.assertEqual(mount_properties["service_path"]["pattern"], "^/")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for field in ("container_path", "service_path"):
+                source = _source(root)
+                source["mounts"][0][field] = "relative/path"
+                path = root / f"relative-{field}.json"
+                path.write_text(json.dumps(source), encoding="utf-8")
+                with self.subTest(field=field), self.assertRaises(ConfigurationError):
+                    load_configuration_file(path)
+
 
 class CredentialBoundaryTests(unittest.TestCase):
     def test_private_regular_file_is_required(self) -> None:

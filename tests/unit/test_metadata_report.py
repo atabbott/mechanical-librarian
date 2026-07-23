@@ -28,6 +28,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     ReportValueError,
     TargetFacts,
+    normalize_title,
 )
 from mechanical_librarian.interfaces.cli import main
 
@@ -121,6 +122,42 @@ class MetadataReportTests(unittest.TestCase):
                 checksum="invalid",
                 applicability_basis="unlabelled",
             )
+
+    def test_safe_observed_titles_preserve_exact_text_and_canonicalize_claims(self) -> None:
+        for title, canonical in (
+            ("Cafe\u0301", "Café"),
+            ("An  intentional  title", "An intentional title"),
+        ):
+            claim = LocalClaim.create(
+                kind=ClaimKind.TITLE,
+                observed=title,
+                canonical=normalize_title(title),
+                excerpt=title,
+                applicability="not_applicable",
+                basis="target_metadata",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+            )
+            report = MetadataReport.create(
+                target=TargetFacts("primary", "ebooks", "item-1", title),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=(claim,),
+                local_reasons=("no_opening_claims",),
+                providers=(),
+            )
+            replay = MetadataReport.create(
+                target=TargetFacts("primary", "ebooks", "item-1", title),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=(claim,),
+                local_reasons=("no_opening_claims",),
+                providers=(),
+            )
+            with self.subTest(title=title):
+                self.assertEqual(report.target.current_title, title)
+                self.assertEqual(report.local_claims[0].observed, title)
+                self.assertEqual(report.local_claims[0].canonical, canonical)
+                self.assertEqual(report.report_id, replay.report_id)
+                self.assertEqual(MetadataReport.from_json(report.to_json()), report)
 
     def test_application_replays_after_file_reorder_and_constructs_provider_once(self) -> None:
         first_file = TargetFile("a" * 64, "one.epub", "epub")

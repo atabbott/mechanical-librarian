@@ -16,7 +16,10 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
 )
-from mechanical_librarian.domain.metadata_report import canonical_json, normalize_title
+from mechanical_librarian.domain.metadata_report import (
+    canonical_json,
+    validate_observed_title,
+)
 
 
 class AudiobookshelfItemReader:
@@ -78,9 +81,7 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
     media = _mapping(root.get("media"))
     metadata = _mapping(media.get("metadata"))
     title_value = metadata.get("title")
-    title = normalize_title(title_value)
-    if title != title_value:
-        raise MetadataReportError("target response is invalid")
+    title = validate_observed_title(title_value)
     files_value = media.get("ebookFiles")
     single = media.get("ebookFile")
     if files_value is not None and single is not None:

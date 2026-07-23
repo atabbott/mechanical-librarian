@@ -78,6 +78,15 @@ def normalize_title(value: str) -> str:
     return normalized
 
 
+def validate_observed_title(value: object) -> str:
+    try:
+        exact = validate_projection_text(value, "observed title", 512)
+    except EvidenceValueError as error:
+        raise ReportValueError("observed title is not public-safe") from error
+    normalize_title(exact)
+    return exact
+
+
 @dataclass(frozen=True, slots=True)
 class TargetFacts:
     connection: str
@@ -89,9 +98,7 @@ class TargetFacts:
         _name(self.connection, "connection")
         _name(self.library, "library")
         _text(self.item, "item", 512)
-        _text(self.current_title, "current title", 512)
-        if normalize_title(self.current_title) != self.current_title:
-            raise ReportValueError("current title is invalid")
+        validate_observed_title(self.current_title)
 
     def to_data(self) -> dict[str, str]:
         return {
@@ -432,11 +439,27 @@ def compare_claim(kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) ->
         return Comparison.NOT_COMPARABLE, ()
     if kind is ClaimKind.TITLE:
         normalized = normalize_title(value).casefold()
-        local_values = {normalize_title(item.canonical or "").casefold() for item in relevant}
-        return (Comparison.AGREEMENT if normalized in local_values else Comparison.DISAGREEMENT), references
+        matching = tuple(
+            sorted(
+                item.reference
+                for item in relevant
+                if normalize_title(item.canonical or "").casefold() == normalized
+            )
+        )
+        return (
+            (Comparison.AGREEMENT, matching)
+            if matching
+            else (Comparison.DISAGREEMENT, references)
+        )
     digits = "".join(character for character in value if character.isdigit() or character in "Xx").upper()
-    local_values = {item.canonical for item in relevant}
-    return (Comparison.AGREEMENT if digits in local_values else Comparison.INCOMPATIBLE), references
+    matching = tuple(
+        sorted(item.reference for item in relevant if item.canonical == digits)
+    )
+    return (
+        (Comparison.AGREEMENT, matching)
+        if matching
+        else (Comparison.INCOMPATIBLE, references)
+    )
 
 
 def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...]) -> dict[str, object]:
@@ -550,5 +573,6 @@ __all__ = [
     "ClaimKind", "Comparison", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
     "ProviderObservation", "ProviderStatus", "REPORT_SCHEMA", "ReportValueError",
-    "TargetFacts", "canonical_json", "compare_claim", "normalize_title", "stable_reference",
+    "TargetFacts", "canonical_json", "compare_claim", "normalize_title",
+    "stable_reference", "validate_observed_title",
 ]

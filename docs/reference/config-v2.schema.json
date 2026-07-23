@@ -136,6 +136,7 @@
         "container_path": {
           "maxLength": 1024,
           "minLength": 1,
+          "pattern": "^/",
           "title": "Container Path",
           "type": "string"
         },
@@ -152,6 +153,7 @@
         "service_path": {
           "maxLength": 1024,
           "minLength": 1,
+          "pattern": "^/",
           "title": "Service Path",
           "type": "string"
         }

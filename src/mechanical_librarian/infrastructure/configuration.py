@@ -24,6 +24,10 @@ from mechanical_librarian.application.configuration import (
 _MAX_CONFIG_BYTES = 262_144
 Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 BoundedPath = Annotated[StrictStr, Field(min_length=1, max_length=1024)]
+BoundedAbsolutePath = Annotated[
+    StrictStr,
+    Field(min_length=1, max_length=1024, pattern=r"^/"),
+]
 
 
 class _Closed(BaseModel):
@@ -46,8 +50,8 @@ class ProviderInput(_Closed):
 
 class MountInput(_Closed):
     name: Name
-    container_path: BoundedPath
-    service_path: BoundedPath
+    container_path: BoundedAbsolutePath
+    service_path: BoundedAbsolutePath
     read_only: Literal[True]
 
 

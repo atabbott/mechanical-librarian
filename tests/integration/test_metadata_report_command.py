@@ -164,7 +164,10 @@ class MetadataReportCommandTests(unittest.TestCase):
             target_secret.write_text("target-token", encoding="ascii")
             target_secret.chmod(0o600)
             database = root / "reports.sqlite"
-            with _Server(_item(source.stat().st_size)) as server:
+            exact_title = "Cafe\u0301  Story"
+            payload = _item(source.stat().st_size)
+            payload["media"]["metadata"]["title"] = exact_title
+            with _Server(payload) as server:
                 config = root / "explicit-config.json"
                 config.write_text(json.dumps(_config(server.endpoint, media, target_secret)), encoding="utf-8")
                 command = [
@@ -193,6 +196,15 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertTrue(completed.stdout.endswith("\n"))
             self.assertNotEqual(completed.stdout, "\n")
             self.assertEqual(completed.stdout, replay.stdout)
+            emitted = MetadataReport.from_json(completed.stdout.removesuffix("\n"))
+            self.assertEqual(emitted.target.current_title, exact_title)
+            target_title = next(
+                claim
+                for claim in emitted.local_claims
+                if claim.kind.value == "title" and claim.basis == "target_metadata"
+            )
+            self.assertEqual(target_title.observed, exact_title)
+            self.assertEqual(target_title.canonical, "Café Story")
             connection = sqlite3.connect(database)
             persisted = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
             connection.close()
