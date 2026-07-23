@@ -163,8 +163,8 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             if is_ancestor and not admitted_cue: continue
             if element.semantics & {"title", "fulltitle"}: field, canonical = EpubInspectionField.TITLE, normalize_title(value)
             elif element.semantics & {"contributor"}: field, canonical = EpubInspectionField.CONTRIBUTOR, value
-            elif element.semantics & {"creator"}: field, canonical, role = EpubInspectionField.CREATOR, value, "author"
             elif byline is not None and len(byline.group(1)) <= 280: field, canonical, role = EpubInspectionField.CREATOR, byline.group(1), "author"
+            elif element.semantics & {"creator"}: field, canonical, role = EpubInspectionField.CREATOR, value, "author"
             if field is not None: facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
             for match in () if is_ancestor else opening._ISBN.finditer(value):
                 if resource_isbns >= 4: break

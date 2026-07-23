@@ -1823,7 +1823,9 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
         citation_excerpt = raw
         citation_end = citation_start + len(citation_excerpt)
     normalized_value = (
-        None
+        normalized
+        if state != "valid" and field in {OpeningField.CREATOR_ROLE, OpeningField.CONTRIBUTOR_ROLE}
+        else None
         if state != "valid"
         else None
         if field is OpeningField.IDENTIFIER

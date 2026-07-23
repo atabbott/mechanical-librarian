@@ -407,6 +407,15 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("target or media changed")
             if self._binding is not None:
                 self._binding.require_current()
+            current = self._connection.execute(
+                "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,r.file_identity,r.content_digest,r.schema_version,r.document_digest,r.document FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
+                values[1:5],
+            ).fetchone()
+            if current is not None:
+                document = _validate_report_row(current)
+                persisted = MetadataReport.from_json(document)
+                if (persisted.target.connection, persisted.target.library, persisted.target.item, persisted.file.identity) != values[1:5]:
+                    raise MetadataReportError("persisted current report scope disagrees")
             existing = self._connection.execute(
                 "SELECT connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
                 (report.report_id,),
