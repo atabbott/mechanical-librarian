@@ -22,7 +22,9 @@ from mechanical_librarian.application.metadata_report import (
     UnsupportedMediaError,
 )
 from mechanical_librarian.bootstrap.composition import run_metadata_report
+from mechanical_librarian.bootstrap.composition import reopen_cover_preview
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.cover_evidence import PREVIEW_VARIANT
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client as real_hardcover_client,
 )
@@ -30,14 +32,22 @@ from tests.support.epub_packages import opening_no_applicable, opening_title_isb
 
 
 class _Server:
-    def __init__(self, payload: dict[str, object]) -> None:
+    def __init__(self, payload: dict[str, object], cover: bytes | None = None) -> None:
         self.payload = payload
+        self.cover = cover
         self.requests = 0
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 owner.requests += 1
+                if self.path == "/api/items/item-1/cover?raw=1" and owner.cover is not None:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(owner.cover)))
+                    self.end_headers()
+                    self.wfile.write(owner.cover)
+                    return
                 if self.path != "/api/items/item-1?expanded=1" or self.headers.get("Authorization") != "Bearer target-token":
                     self.send_response(403)
                     self.end_headers()
@@ -168,6 +178,28 @@ def _installed_cli(
 
 
 class MetadataReportCommandTests(unittest.TestCase):
+    def test_cover_artifact_replay_successor_and_historical_preview(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); media = root / "media"; media.mkdir()
+            source = media / "book.epub"; source.write_bytes(opening_no_applicable())
+            secret = root / "target.secret"; secret.write_text("target-token"); secret.chmod(0o600)
+            image = io.BytesIO(); Image.new("RGB", (10, 20), "red").save(image, "PNG")
+            payload = _item(source.stat().st_size); payload["coverPath"] = "/ignored-cover-route"
+            database = root / "reports.sqlite"; artifacts = root / "artifacts"; artifacts.mkdir(mode=0o700)
+            with _Server(payload, image.getvalue()) as server:
+                config = root / "config.json"; config.write_text(json.dumps(_config(server.endpoint, media, secret)))
+                first = MetadataReport.from_json(run_metadata_report(config, database, artifacts, "primary", "books", "item-1", 0))
+                replay = MetadataReport.from_json(run_metadata_report(config, database, artifacts, "primary", "books", "item-1", 0))
+                payload["media"]["metadata"]["title"] = "Successor"  # type: ignore[index]
+                successor = MetadataReport.from_json(run_metadata_report(config, database, artifacts, "primary", "books", "item-1", 0))
+            self.assertEqual(first.report_id, replay.report_id)
+            self.assertNotEqual(first.report_id, successor.report_id)
+            artifact = first.cover_sources[0].artifact
+            self.assertIsNotNone(artifact)
+            preview = reopen_cover_preview(database, artifacts, first.report_id, artifact.artifact_id, PREVIEW_VARIANT)
+            self.assertTrue(preview.startswith(b"\x89PNG\r\n\x1a\n"))
     def test_hostile_target_title_is_rejected_before_database_with_value_free_error(self) -> None:
         hostile = "Authorization: Bearer abcd1234"
         with tempfile.TemporaryDirectory() as directory:
