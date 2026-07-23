@@ -48,15 +48,18 @@ class TargetConnectionConfiguration:
 class ProviderConnectionConfiguration:
     name: str
     enabled: bool
+    cover_enabled: bool
     secret_file: str | None
     adapter: str = "hardcover"
 
     def __post_init__(self) -> None:
         _name(self.name, "provider connection name")
-        if self.adapter != "hardcover" or type(self.enabled) is not bool:
+        if self.adapter != "hardcover" or type(self.enabled) is not bool or type(self.cover_enabled) is not bool:
             raise ConfigurationError("provider connection is invalid")
         if self.enabled != (self.secret_file is not None):
             raise ConfigurationError("provider enablement and secret configuration disagree")
+        if self.cover_enabled and not self.enabled:
+            raise ConfigurationError("cover enablement requires provider enablement")
         if self.secret_file is not None:
             _absolute_path(self.secret_file, "provider secret file")
 

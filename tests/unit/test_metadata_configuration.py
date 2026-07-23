@@ -33,8 +33,8 @@ def _source(root: Path) -> dict[str, object]:
             {"name": "books", "container_path": "/media/books", "service_path": "/books", "read_only": True},
         ],
         "providers": [
-            {"name": "second", "adapter": "hardcover", "enabled": False, "secret_file": None},
-            {"name": "first", "adapter": "hardcover", "enabled": False, "secret_file": None},
+            {"name": "second", "adapter": "hardcover", "enabled": False, "cover_enabled": False, "secret_file": None},
+            {"name": "first", "adapter": "hardcover", "enabled": False, "cover_enabled": False, "secret_file": None},
         ],
     }
 
@@ -129,7 +129,7 @@ class MetadataConfigurationTests(unittest.TestCase):
                 "primary", "https://example.invalid", "target.secret"
             )
         with self.assertRaises(ConfigurationError):
-            ProviderConnectionConfiguration("catalogue", True, "provider.secret")
+            ProviderConnectionConfiguration("catalogue", True, True, "provider.secret")
 
 
 class CredentialBoundaryTests(unittest.TestCase):

@@ -150,7 +150,7 @@ class _CoverEvidenceObserver:
             configuration = self._providers.get(observation.provider)
             if configuration is None:
                 continue
-            if not configuration.enabled:
+            if not configuration.cover_enabled:
                 results.append(CoverSource(cover_source_id(CoverSourceKind.HARDCOVER, observation.provider), CoverSourceKind.HARDCOVER, CoverSourceState.DISABLED))
                 continue
             values = tuple(descriptors)

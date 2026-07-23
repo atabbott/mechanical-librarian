@@ -44,6 +44,7 @@ class ProviderInput(_Closed):
     name: Name
     adapter: Literal["hardcover"]
     enabled: StrictBool
+    cover_enabled: StrictBool
     secret_file: BoundedAbsolutePath | None
 
 

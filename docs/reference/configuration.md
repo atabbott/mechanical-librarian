@@ -44,6 +44,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
       "name": "hardcover-main",
       "adapter": "hardcover",
       "enabled": false,
+      "cover_enabled": false,
       "secret_file": null
     }
   ]

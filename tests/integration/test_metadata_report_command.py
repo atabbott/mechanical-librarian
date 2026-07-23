@@ -125,6 +125,7 @@ def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool 
                 "name": "catalogue",
                 "adapter": "hardcover",
                 "enabled": provider_secret is not None,
+                "cover_enabled": provider_secret is not None,
                 "secret_file": provider_secret,
             }
         ],
@@ -581,6 +582,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                         "name": "unreferenced",
                         "adapter": "hardcover",
                         "enabled": True,
+                        "cover_enabled": True,
                         "secret_file": "/definitely/absent/unreferenced.secret",
                     }
                 )
