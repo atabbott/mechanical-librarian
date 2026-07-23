@@ -68,20 +68,17 @@ provider secret, and permits no provider egress.
 
 ### 0.2 title technical-preview boundary
 
-The 0.2 path remains report-only. F09a supplies a deterministic fake candidate
-through an application-owned provider-neutral port and obtains its other inputs
-only from a licence-safe generated EPUB passed by descriptor to the real F06
-child and an in-memory Audiobookshelf-shaped synthetic snapshot. Its CLI parser
-accepts only a database path, a closed scenario, and an output format before
-state is opened. It accepts no configuration, target/media identifiers, title
-values, paths, provider payloads, endpoints, or credentials. F09b preserves that
-mode and adds `hardcover-title-proposal-report` for only the generated
-`agree-empty` case. Omitting its optional secret-file reference creates no
-adapter or network client, resolves no secret, performs no DNS lookup, and
-permits no provider egress. It adds no `config-v1` field. A malformed reference
-fails before state access. A valid reference whose file is missing, insecure,
-unreadable, or invalid makes no request and records `provider_failed` while
-preserving local F06 evidence.
+The 0.2 path was report-only. F09a formerly supplied a deterministic fake
+candidate through an application-owned provider-neutral port and obtained its
+other inputs only from a licence-safe generated EPUB passed by descriptor to the
+real F06 child and an in-memory Audiobookshelf-shaped synthetic snapshot. Its
+retired CLI parser accepted only a database path, a closed scenario, and an
+output format before state was opened; it accepted no configuration,
+target/media identifiers, title values, paths, provider payloads, endpoints, or
+credentials. F09b formerly preserved that mode. The retired F09a/F09b/F10a
+preview commands and their secret-file compatibility surface are not installed.
+The retained configured F09f identity report owns provider credentials,
+transport, persistence, and report-only behavior.
 
 The enabled adapter owns one fixed read-only GraphQL query sent only by HTTPS
 POST to `https://api.hardcover.app/v1/graphql`. The origin, path, method, and
@@ -392,13 +389,13 @@ required XML members retain their separate small byte/tree limits, and the
 child address-space and public-report caps are unchanged.
 
 Fresh Expat parsers reject DOCTYPE/entity declarations, external resolution,
-and XInclude while enforcing XML and package-graph counters. F06 keeps opaque
-navigation, content, cover, and linked-resource declarations undereferenced.
-F07a composes the completed F06 report into a separate adapter and opens only
-bounded package-local navigation plus selected declared XHTML/HTML resources.
+and XInclude while enforcing XML and package-graph counters. The isolated EPUB
+child keeps opaque navigation, content, cover, and linked-resource declarations
+private, then opens only bounded package-local navigation plus selected declared
+XHTML/HTML resources through the same archive session.
 The hostile-parser and process extension is governed by
-[ADR-0008](decisions/0008-transient-epub-opening-parser.md); ADR-0007 remains
-the accepted package-only isolation decision.
+[ADR-0008](decisions/0008-transient-epub-opening-parser.md) and the private
+opening-result boundary in [ADR-0011](decisions/0011-isolated-epub-inspector.md).
 Strict XHTML uses a fresh Expat parser; recovery uses a fresh standard-library
 `HTMLParser` over only those bounded bytes. Neither parser has a renderer,
 network client, URL/base resolver, stylesheet engine, script runtime, XSLT,
@@ -464,8 +461,8 @@ memory boundary is available. The Linux F06 cohort is qualified non-root with
 networking disabled and the container root, repository, and installed Python
 environment read-only.
 
-F07a does not treat tolerant parsing as additional authority and does not
-weaken F06 archive, path, codec, encryption, CRC, source-stability, output,
+Opening parsing does not treat tolerant parsing as additional authority and
+does not weaken archive, path, codec, encryption, CRC, source-stability, output,
 process, cancellation, or reaping controls. Complete decoded resources,
 navigation trees, recovered trees, and diagnostic markup are never retained.
 The exact local command response is private owner output; CI and private-shadow
@@ -647,7 +644,7 @@ strict opaque references and a bounded file index. Resolution requires one
 current binding under the material configuration digest; media access uses
 no-follow descriptor traversal, and publication revalidates the current
 binding, source generation, lease owner, attempt, fence, and cancellation in
-one transaction. The extractor retains ADR-0007/0008 process isolation. No
+one transaction. The extractor retains ADR-0008/0011 process isolation. No
 credential, network, service-write, media-write, renderer, script, or browser
 authority is added.
 

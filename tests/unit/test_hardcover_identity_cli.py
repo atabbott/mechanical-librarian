@@ -91,7 +91,6 @@ class _AuthorityTrap(AssertionError):
 @contextmanager
 def _zero_authority() -> object:
     targets = (
-        "mechanical_librarian.bootstrap.composition.HardcoverTitleProvider",
         "mechanical_librarian.bootstrap.composition.PrivateFileProviderCredentials",
         "mechanical_librarian.bootstrap.composition.httpx.AsyncClient",
         "mechanical_librarian.bootstrap.composition.httpx.Client",
@@ -108,9 +107,6 @@ def _zero_authority() -> object:
         "PrivateFileProviderCredentials",
         "mechanical_librarian.infrastructure.persistence.sqlite.connect",
         "mechanical_librarian.infrastructure.persistence.sqlite.connect_existing",
-        "mechanical_librarian.adapters.providers.hardcover_title."
-        "HardcoverTitleProvider",
-        "mechanical_librarian.adapters.providers.hardcover_title._system_resolver",
         "socket.getaddrinfo",
         "socket.create_connection",
         "socket.socket",
@@ -488,7 +484,6 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "SQLiteInventoryPollingRepository",
             "SQLiteEpubOpeningEvidenceRepository",
             "SQLiteTitleProposalRepository",
-            "SQLiteTitleReviewCaseRepository",
             "SQLiteJobHeartbeatRepository",
         )
         outputs: list[str] = []
@@ -791,7 +786,6 @@ class HardcoverIdentityCliTests(unittest.TestCase):
 
     def test_composition_lookup_authority_traps_are_executable(self) -> None:
         invocations = (
-            ("provider", lambda: composition_module.HardcoverTitleProvider(None)),
             (
                 "credentials",
                 lambda: composition_module.PrivateFileProviderCredentials(),
@@ -1325,8 +1319,6 @@ class HardcoverIdentityCliTests(unittest.TestCase):
             "mechanical_librarian.bootstrap.composition."
             "SQLiteEpubOpeningEvidenceRepository",
             "mechanical_librarian.bootstrap.composition.SQLiteTitleProposalRepository",
-            "mechanical_librarian.bootstrap.composition."
-            "SQLiteTitleReviewCaseRepository",
             "mechanical_librarian.bootstrap.composition.SQLiteJobHeartbeatRepository",
         )
         with ExitStack() as stack:

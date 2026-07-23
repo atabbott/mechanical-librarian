@@ -12,7 +12,7 @@ from mechanical_librarian.application.job_heartbeat import JobClaim, JobHeartbea
 from mechanical_librarian.application.ports import (
     AdapterDiagnostics, BackupReadinessReport, BackupReadinessRequest, BackupState,
     CancellationId, CancellationProbe, Capability, CapabilitySet, CompatibilityReport, CompatibilityStatus,
-    CoverCandidate, CoverMutation, CurrentFieldState, CurrentFieldStateKind, Deadline, EvidenceExtractor, ExpectedState, ExtractorRequest,
+    CoverCandidate, CoverMutation, CurrentFieldState, CurrentFieldStateKind, Deadline, ExpectedState,
     FailureKind, HealthReport, HealthStatus, LibraryListRequest, LibraryReadRequest,
     MetadataCandidate, MetadataMutation, Notification, OperationContext, Page, PageRequest,
     PortFailure, PortResult, ProviderFact, ProviderFactCode, ProviderProvenance, ProviderQuery,
@@ -121,14 +121,6 @@ class SyntheticCoverProvider:
 class SyntheticUnsupportedProvider:
     def lookup(self, query: ProviderQuery, page: PageRequest, context: OperationContext) -> PortResult[Page[MetadataCandidate]]:
         return PortResult.failed(_failure(FailureKind.UNSUPPORTED, False))
-
-
-class SyntheticExtractor:
-    def extract(self, request: ExtractorRequest) -> PortResult[EvidenceRecord]:
-        preflight = request.preflight_result()
-        if preflight.failure is not None:
-            return PortResult.failed(preflight.failure)
-        return PortResult.success(EvidenceRecord(EvidenceId("evidence-extracted"), request.target, request.snapshot, request.fingerprint, ExtractorVersion("extractor-v1"), SchemaVersion("evidence-v1"), "epub", (ConfidenceFact("title", "Synthetic title"),)))
 
 
 class SyntheticLibraryReader:
@@ -399,7 +391,7 @@ class ServicePortContractTests(unittest.TestCase):
             "transaction": SyntheticTransaction(),
             "durable-scheduler": SyntheticScheduler(), "diagnostics": SyntheticDiagnostics(),
             "library-reader": SyntheticLibraryReader(), "supported-writer": SyntheticWriter(),
-            "extractor": SyntheticExtractor(), "metadata-provider": SyntheticProvider(()),
+            "metadata-provider": SyntheticProvider(()),
             "cover-provider": SyntheticCoverProvider(), "reviewer": SyntheticReviewer(),
             "secret-resolver": SyntheticSecretResolver(), "backup": SyntheticBackup(),
             "audit": SyntheticAudit(), "notifier": SyntheticNotifier(),
@@ -453,8 +445,6 @@ class ServicePortContractTests(unittest.TestCase):
         self.contract.require_result_value(diagnostics.compatibility(context), CompatibilityReport)
         self.contract.require_failure_result(SyntheticLibraryReader().read_snapshot(read_request), FailureKind.NOT_FOUND)
         self.contract.require_result_value(SyntheticWriter().apply(_write_request(context=context)), WriteReceipt)
-        extractor_request = ExtractorRequest(target, SnapshotId("snapshot-one"), _fingerprint(), MediaType.EBOOK, (FileReference("library", "books/item.epub"),), context)
-        self.contract.require_result_value(SyntheticExtractor().extract(extractor_request), EvidenceRecord)
         query = ProviderQuery(MediaType.EBOOK, None, (ProviderFact(ProviderFactCode.TITLE, ("Title",)),), SchemaVersion("provider-query-v1"))
         self.contract.require_page_result(SyntheticProvider(()).lookup(query, PageRequest(None, 1), context), MetadataCandidate, PageRequest(None, 1))
         self.contract.require_page_result(SyntheticCoverProvider().lookup_covers(query, PageRequest(None, 1), context), CoverCandidate, PageRequest(None, 1))
@@ -493,7 +483,6 @@ class ServicePortContractTests(unittest.TestCase):
             "transaction-manager": SyntheticTransactionManager(),
             "transaction": SyntheticTransaction(),
             "supported-writer": SyntheticWriter(),
-            "extractor": SyntheticExtractor(),
             "reviewer": SyntheticReviewer(),
             "secret-resolver": SyntheticSecretResolver(),
         }
@@ -668,19 +657,6 @@ class ServicePortContractTests(unittest.TestCase):
                 break
         self.assertEqual(tuple(collected), candidates)
 
-    def test_local_extractor_round_trip_is_bounded_canonical_evidence(self) -> None:
-        request = ExtractorRequest(_target(), SnapshotId("snapshot-one"), _fingerprint(), MediaType.EBOOK, (FileReference("library", "books/item.epub"),), _context())
-        record = self.contract.require_result_value(SyntheticExtractor().extract(request), EvidenceRecord)
-        self.assertEqual(record.target, request.target)
-        self.assertEqual(record.snapshot_fingerprint, request.fingerprint)
-        with self.assertRaises(ValueError):
-            ExtractorRequest(request.target, request.snapshot, request.fingerprint, request.media_type, ("/private/book.epub",), request.context)  # type: ignore[arg-type]
-        many_files = tuple(FileReference("library", f"books/{index}.epub") for index in range(32))
-        with self.assertRaises(ValueError):
-            ExtractorRequest(request.target, request.snapshot, request.fingerprint, request.media_type, many_files, _context(items=1))
-        with self.assertRaises(ValueError):
-            ExtractorRequest(request.target, request.snapshot, request.fingerprint, request.media_type, request.files, _context(size=1))
-
     def test_before_and_inflight_cancellation_deadline_and_resources(self) -> None:
         query = ProviderQuery(MediaType.EBOOK, None, (ProviderFact(ProviderFactCode.TITLE, ("Title",)),), SchemaVersion("provider-query-v1"))
         owner = CancellationOwner()
@@ -701,12 +677,7 @@ class ServicePortContractTests(unittest.TestCase):
         self.assertEqual(exhausted.lookup(query, PageRequest(None, 2), _context(items=1)).failure.kind, FailureKind.RESOURCE_EXHAUSTED)  # type: ignore[union-attr]
         self.assertEqual(SyntheticTransaction().commit(context).failure.kind, FailureKind.CANCELLED)  # type: ignore[union-attr]
 
-    def test_extractor_and_reviewer_repeat_live_preflight_at_invocation(self) -> None:
-        extractor_owner = CancellationOwner()
-        extractor_request = ExtractorRequest(_target(), SnapshotId("snapshot-one"), _fingerprint(), MediaType.EBOOK, (FileReference("library", "books/item.epub"),), _context(owner=extractor_owner))
-        extractor_owner.cancel()
-        self.assertEqual(SyntheticExtractor().extract(extractor_request).failure.kind, FailureKind.CANCELLED)  # type: ignore[union-attr]
-
+    def test_reviewer_repeats_live_preflight_at_invocation(self) -> None:
         reviewer_owner = CancellationOwner()
         review = _review_request()
         live_review = replace(review, context=_context(owner=reviewer_owner))

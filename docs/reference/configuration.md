@@ -294,23 +294,14 @@ Configuration allowlists query capabilities and bounds; it does not contain a
 raw target row or reusable provider request. The application builds each minimal
 bounded `ProviderQuery` from canonical allowlisted facts at execution time.
 
-### F09b proof-of-concept boundary
+### Retired F09b proof-of-concept boundary
 
-F09b does not extend `config-v1`. Its separate
-`hardcover-title-proposal-report` command accepts only a database path, optional
-absolute secret-file reference, and output format. The fixed endpoint, query,
-operation, headers, transport bounds, and generated title are not configurable.
-Omitting the reference records `provider_disabled` without secret access, DNS,
-or egress. There is no hidden environment-variable, encrypted-store, provider
-registry, or generic egress configuration. Current `config-v1` accepts only the
-exact installed `hardcover_provider` block and rejects every
-other detailed Hardcover or provider-secret field as unknown.
-
-The live-compatible command and transport/parser contract is
-[documented separately](hardcover-f09b-contract.md). Its credentialed path is
-retired; configured F09f owns the versioned operation, persisted-work,
-freshness/reuse, and restart contracts without turning the proof of concept
-into an implicit schema extension.
+F09b's `hardcover-title-proposal-report` command and its credentialed preview
+surface are retired and are not configuration or operator interfaces. Current
+`config-v1` accepts only the exact installed `hardcover_provider` block and
+rejects other detailed Hardcover or provider-secret fields as unknown. Configured
+F09f owns the versioned identity operation, persisted work, freshness/reuse,
+and restart contracts.
 
 ### Installed F09f activation boundary
 

@@ -48,20 +48,10 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_inventory imp
     AudiobookshelfInventoryReader,
 )
 from mechanical_librarian.adapters.evidence_extractors.process import (
-    run_epub_opening_child,
-    run_epub_package_child,
-)
-from mechanical_librarian.adapters.evidence_extractors.synthetic_epub import (
-    generated_synthetic_epub,
+    run_epub_inspector_child,
 )
 from mechanical_librarian.adapters.persistence.title_proposals import (
     SQLiteTitleProposalRepository,
-)
-from mechanical_librarian.adapters.persistence.title_review_cases import (
-    SQLiteTitleReviewCaseRepository,
-)
-from mechanical_librarian.adapters.providers.synthetic_title import (
-    SyntheticTitleProvider,
 )
 from mechanical_librarian.adapters.providers.synthetic_hardcover_identity import (
     SyntheticBookIdentityProvider,
@@ -70,10 +60,6 @@ from mechanical_librarian.adapters.providers.hardcover_identity import (
     HttpxIdentityByteChannel,
     LiveHardcoverIdentityProvider,
     StructuralHardcoverIdentityPreview,
-)
-from mechanical_librarian.adapters.providers.hardcover_title import (
-    AddressResolver,
-    HardcoverTitleProvider,
 )
 from mechanical_librarian.application.connection_probe import (
     ConnectionProbeOutcome,
@@ -160,21 +146,9 @@ from mechanical_librarian.application.synthetic_inventory import (
     SyntheticInventoryOutcome,
     SyntheticInventoryResult,
 )
-from mechanical_librarian.application.title_proposals import (
-    ProviderPreviewProfile,
-    ProposeSyntheticTitle,
-    SyntheticScenario,
-    SyntheticTitleProposalReport,
-    scenario_lineage,
-    scenario_named,
-)
 from mechanical_librarian.application.live_title_proposals import (
     LiveTitleProposalReport,
     ProposeLiveTitle,
-)
-from mechanical_librarian.application.title_review_cases import (
-    InspectSyntheticTitleReviewCase,
-    SyntheticTitleReviewCaseReport,
 )
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
@@ -193,12 +167,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     ResolvedEpubSource,
     epub_governing_digest,
 )
-from mechanical_librarian.domain.local_evidence import (
-    EpubPackageLimits,
-    LocalEvidenceCapability,
-    LocalEvidenceOutcome,
-    LocalEvidenceReport,
-)
+from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.inventory import (
     AdapterCapabilities,
     LibraryConnection,
@@ -1053,103 +1022,8 @@ def _inventory_inspection_outcome(state: ScanState) -> InventoryOutcome:
     }[state]
 
 
-def _local_evidence_failure(
-    outcome: LocalEvidenceOutcome,
-    limits: EpubPackageLimits | None = None,
-) -> LocalEvidenceReport:
-    return LocalEvidenceReport(
-        outcome,
-        LocalEvidenceCapability.PACKAGE,
-        EpubPackageLimits() if limits is None else limits,
-    )
-
-
-def _run_epub_package_report(
-    configuration_path: Path, mount_name: str, relative_reference: str
-) -> LocalEvidenceReport:
-    """Validate one logical reference and extract it through a transient child."""
-
-    try:
-        configuration = load_configuration_file(configuration_path)
-    except ConfigurationError:
-        return _local_evidence_failure(LocalEvidenceOutcome.INVALID_CONFIGURATION)
-    limits = replace(
-        configuration.evidence.epub_package,
-        source_archive_bytes=min(
-            configuration.evidence.epub_package.source_archive_bytes,
-            configuration.evidence.maximum_document_bytes,
-        ),
-    )
-    if "epub" not in configuration.evidence.enabled_formats:
-        return _local_evidence_failure(LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE, limits)
-    try:
-        validate_relative_reference(relative_reference)
-    except LocalMediaError:
-        return _local_evidence_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
-    mounts = tuple(mount for mount in configuration.media_mounts if mount.name == mount_name)
-    if len(mounts) != 1 or not mounts[0].read_only:
-        return _local_evidence_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
-    opened = None
-    replacement = None
-    baseline_established = False
-    try:
-        opened = open_local_media(mounts[0].container_path, relative_reference)
-        if opened.length > limits.source_archive_bytes:
-            return _local_evidence_failure(LocalEvidenceOutcome.RESOURCE_LIMIT, limits)
-        before_identity = opened.identity
-        before_digest = sha256_descriptor(
-            opened.descriptor, opened.length, maximum=limits.source_archive_bytes
-        )
-        baseline_established = True
-        expected = Fingerprint("sha256", SchemaVersion("source-v1"), before_digest)
-        logical_identity = hashlib.sha256(
-            f"{mount_name}\x00{relative_reference}".encode("utf-8")
-        ).hexdigest()
-        report = run_epub_package_child(
-            opened.descriptor,
-            expected,
-            limits,
-            logical_identity=logical_identity,
-            wall_seconds=min(configuration.limits.parser_timeout_seconds, 60),
-        )
-        after_digest = sha256_descriptor(
-            opened.descriptor, opened.length, maximum=limits.source_archive_bytes
-        )
-        after_identity = descriptor_identity(opened.descriptor)
-        replacement = open_local_media(mounts[0].container_path, relative_reference)
-        replacement_digest = sha256_descriptor(
-            replacement.descriptor,
-            replacement.length,
-            maximum=limits.source_archive_bytes,
-        )
-        if (
-            before_identity != after_identity
-            or replacement.identity != before_identity
-            or before_digest != after_digest
-            or replacement_digest != before_digest
-        ):
-            return _local_evidence_failure(LocalEvidenceOutcome.UNSTABLE_SOURCE, limits)
-        return report
-    except LocalMediaError:
-        return _local_evidence_failure(
-            LocalEvidenceOutcome.UNSTABLE_SOURCE
-            if baseline_established
-            else LocalEvidenceOutcome.UNAVAILABLE_SOURCE,
-            limits,
-        )
-    except Exception:
-        return _local_evidence_failure(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
-    finally:
-        for value in (opened, replacement):
-            if value is not None:
-                try:
-                    os.close(value.descriptor)
-                except OSError:
-                    pass
-
-
 def _opening_failure(
-    outcome: LocalEvidenceOutcome,
+    outcome: EpubInspectionOutcome,
     limits: EpubOpeningLimits | None = None,
 ) -> EpubOpeningReport:
     return EpubOpeningReport(
@@ -1189,7 +1063,7 @@ def _run_epub_opening_execution(
         try:
             configuration = load_configuration_file(configuration_path)
         except ConfigurationError:
-            return _opening_failure(LocalEvidenceOutcome.INVALID_CONFIGURATION)
+            return _opening_failure(EpubInspectionOutcome.INVALID_CONFIGURATION)
     else:
         configuration = frozen_configuration
     package_limits = replace(
@@ -1208,22 +1082,22 @@ def _run_epub_opening_execution(
         ),
     )
     if "epub" not in configuration.evidence.enabled_formats:
-        return _opening_failure(LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE, limits)
+        return _opening_failure(EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE, limits)
     try:
         validate_relative_reference(relative_reference)
     except LocalMediaError:
-        return _opening_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
+        return _opening_failure(EpubInspectionOutcome.INVALID_REFERENCE, limits)
     mounts = tuple(
         mount for mount in configuration.media_mounts if mount.name == mount_name
     )
     if len(mounts) != 1 or not mounts[0].read_only:
-        return _opening_failure(LocalEvidenceOutcome.INVALID_REFERENCE, limits)
+        return _opening_failure(EpubInspectionOutcome.INVALID_REFERENCE, limits)
     opened = replacement = None
     baseline_established = False
     try:
         opened = open_local_media(mounts[0].container_path, relative_reference)
         if opened.length > package_limits.source_archive_bytes:
-            return _opening_failure(LocalEvidenceOutcome.RESOURCE_LIMIT, limits)
+            return _opening_failure(EpubInspectionOutcome.RESOURCE_LIMIT, limits)
         before_identity = opened.identity
         before_digest = sha256_descriptor(
             opened.descriptor,
@@ -1235,7 +1109,7 @@ def _run_epub_opening_execution(
         logical_identity = hashlib.sha256(
             f"{mount_name}\x00{relative_reference}".encode("utf-8")
         ).hexdigest()
-        report = run_epub_opening_child(
+        report = run_epub_inspector_child(
             opened.descriptor,
             expected,
             limits,
@@ -1259,17 +1133,17 @@ def _run_epub_opening_execution(
             or before_digest != after_digest
             or replacement_digest != before_digest
         ):
-            return _opening_failure(LocalEvidenceOutcome.UNSTABLE_SOURCE, limits)
+            return _opening_failure(EpubInspectionOutcome.UNSTABLE_SOURCE, limits)
         return EpubOpeningExecution(report, before_digest)
     except LocalMediaError:
         return _opening_failure(
-            LocalEvidenceOutcome.UNSTABLE_SOURCE
+            EpubInspectionOutcome.UNSTABLE_SOURCE
             if baseline_established
-            else LocalEvidenceOutcome.UNAVAILABLE_SOURCE,
+            else EpubInspectionOutcome.UNAVAILABLE_SOURCE,
             limits,
         )
     except Exception:
-        return _opening_failure(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
+        return _opening_failure(EpubInspectionOutcome.INTERNAL_FAILURE, limits)
     finally:
         for value in (opened, replacement):
             if value is not None:
@@ -1595,205 +1469,6 @@ def _live_title_provider_is_configured(
 ) -> bool:
     provider = load_configuration_file(configuration_path).hardcover_provider
     return provider == expected_provider
-
-
-def _run_synthetic_title_proposal_report(
-    database: Path, scenario_name: str
-) -> SyntheticTitleProposalReport:
-    """Run the closed generated-EPUB preview before opening durable state."""
-
-    scenario = scenario_named(scenario_name)
-    limits = EpubPackageLimits(source_archive_bytes=4 * 1024 * 1024)
-    with generated_synthetic_epub(scenario) as generated:
-        expected = Fingerprint("sha256", SchemaVersion("source-v1"), generated.digest)
-        local_report = run_epub_package_child(
-            generated.descriptor,
-            expected,
-            limits,
-            wall_seconds=30,
-            logical_identity=generated.opaque_identity,
-        )
-        # The child has consumed only the descriptor.  The generated resource is
-        # closed by the context manager before this function returns on any path.
-        epub_digest = generated.digest
-        opaque_identity = generated.opaque_identity
-    if local_report.outcome is not LocalEvidenceOutcome.SUCCESS:
-        raise SchemaError("synthetic title evidence extraction failed")
-    return _persist_synthetic_title_proposal(
-        database, scenario, local_report, epub_digest, opaque_identity
-    )
-
-
-def _run_hardcover_title_proposal_report(
-    database: Path,
-    secret_reference: Path | None,
-    *,
-    transport: httpx.AsyncBaseTransport | None = None,
-    resolver: AddressResolver | None = None,
-) -> SyntheticTitleProposalReport:
-    """Run one fixed generated-title proof of concept without live target authority."""
-
-    scenario = scenario_named("agree-empty")
-    limits = EpubPackageLimits(source_archive_bytes=4 * 1024 * 1024)
-    with generated_synthetic_epub(scenario) as generated:
-        expected = Fingerprint("sha256", SchemaVersion("source-v1"), generated.digest)
-        local_report = run_epub_package_child(
-            generated.descriptor,
-            expected,
-            limits,
-            wall_seconds=30,
-            logical_identity=generated.opaque_identity,
-        )
-        epub_digest = generated.digest
-        opaque_identity = generated.opaque_identity
-    if local_report.outcome is not LocalEvidenceOutcome.SUCCESS:
-        raise SchemaError("Hardcover title evidence extraction failed")
-
-    provider = None
-    unavailable_kind = None
-    client: httpx.AsyncClient | None = None
-    if secret_reference is not None:
-        try:
-            handle = SecretHandle(
-                SecretReference(str(secret_reference)),
-                SecretScope.METADATA_PROVIDER,
-            )
-            client = PrivateFileProviderCredentials().hardcover_client(
-                handle, transport=transport
-            )
-            provider = HardcoverTitleProvider(client, resolver=resolver)
-        except (ProviderSecretUnavailable, TypeError, ValueError):
-            unavailable_kind = FailureKind.UNAVAILABLE
-    try:
-        return _persist_synthetic_title_proposal(
-            database,
-            scenario,
-            local_report,
-            epub_digest,
-            opaque_identity,
-            profile=ProviderPreviewProfile.HARDCOVER_POC,
-            provider=provider,
-            unavailable_kind=unavailable_kind,
-        )
-    finally:
-        if client is not None:
-            asyncio.run(client.aclose())
-
-
-def _persist_synthetic_title_proposal(
-    database: Path,
-    scenario: SyntheticScenario,
-    local_report: LocalEvidenceReport,
-    epub_digest: str,
-    opaque_identity: str,
-    *,
-    profile: ProviderPreviewProfile = ProviderPreviewProfile.SYNTHETIC,
-    provider: _MetadataProvider | None = None,
-    unavailable_kind: FailureKind | None = None,
-) -> SyntheticTitleProposalReport:
-    def service(repository: SQLiteTitleProposalRepository) -> ProposeSyntheticTitle:
-        selected_provider = (
-            SyntheticTitleProvider(scenario)
-            if profile is ProviderPreviewProfile.SYNTHETIC
-            else provider
-        )
-        return ProposeSyntheticTitle(
-            selected_provider,
-            repository,
-            profile=profile,
-            unavailable_kind=unavailable_kind,
-        )
-
-    preflight(database)
-    if path_entry_exists(database):
-        preflight(database)
-        connection = None
-        try:
-            connection = connect_existing(database)
-            migrate(connection)
-            return service(SQLiteTitleProposalRepository(connection)).run(
-                scenario,
-                local_report,
-                epub_digest=epub_digest,
-                opaque_file_identity=opaque_identity,
-            )
-        finally:
-            if connection is not None:
-                connection.close()
-
-    with staged_state(database) as staged:
-        connection = None
-        try:
-            connection = connect(staged)
-            migrate(connection)
-            report = service(SQLiteTitleProposalRepository(connection)).run(
-                scenario,
-                local_report,
-                epub_digest=epub_digest,
-                opaque_file_identity=opaque_identity,
-            )
-            finalize_staged_state(connection)
-        finally:
-            if connection is not None:
-                connection.close()
-        published = publish_staged_state(staged, database)
-    if published:
-        return report
-    if profile is ProviderPreviewProfile.HARDCOVER_POC:
-        return _store_precomputed_title_proposal(database, report)
-    # A concurrent complete initializer won. Reuse the already-extracted,
-    # deterministic input against that winner without regenerating resources.
-    return _persist_synthetic_title_proposal(
-        database,
-        scenario,
-        local_report,
-        epub_digest,
-        opaque_identity,
-        profile=profile,
-        provider=provider,
-        unavailable_kind=unavailable_kind,
-    )
-
-
-def _store_precomputed_title_proposal(
-    database: Path, report: SyntheticTitleProposalReport
-) -> SyntheticTitleProposalReport:
-    preflight(database)
-    connection = None
-    try:
-        connection = connect_existing(database)
-        migrate(connection)
-        persistence = SQLiteTitleProposalRepository(connection).store(
-            report.proposal_set
-        )
-        restored = SyntheticTitleProposalReport(persistence)
-        restored.to_json()
-        return restored
-    finally:
-        if connection is not None:
-            connection.close()
-
-
-def _run_synthetic_title_review_case_report(
-    database: Path, scenario_name: str
-) -> SyntheticTitleReviewCaseReport:
-    """Admit only the already-persisted current F09a lineage selected by scenario."""
-
-    lineage = scenario_lineage(scenario_name)
-    preflight(database)
-    if not path_entry_exists(database):
-        raise SchemaError("synthetic title review state is unavailable")
-    preflight(database)
-    connection = None
-    try:
-        connection = connect_existing(database)
-        migrate(connection)
-        return InspectSyntheticTitleReviewCase(
-            SQLiteTitleReviewCaseRepository(connection)
-        ).run(lineage)
-    finally:
-        if connection is not None:
-            connection.close()
 
 
 def _run_hardcover_identity_report(
@@ -3268,13 +2943,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         inventory_inspection_runner=_inspect_audiobookshelf_inventory,
         audiobookshelf_poll_runner=_run_audiobookshelf_poll,
         inventory_poll_inspection_runner=_inspect_audiobookshelf_poll,
-        epub_package_report_runner=_run_epub_package_report,
-        epub_opening_report_runner=_run_epub_opening_report,
-        epub_opening_evidence_runner=_run_epub_opening_evidence,
         live_title_proposal_runner=_run_live_title_proposal_report,
-        synthetic_title_proposal_runner=_run_synthetic_title_proposal_report,
-        hardcover_title_proposal_runner=_run_hardcover_title_proposal_report,
-        synthetic_title_review_case_runner=_run_synthetic_title_review_case_report,
         hardcover_identity_runner=_run_hardcover_identity_report,
         hardcover_inert_preview_runner=_run_hardcover_inert_preview,
         hardcover_identity_decision_preview_runner=(

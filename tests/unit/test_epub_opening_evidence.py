@@ -28,7 +28,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     epub_governing_digest,
     epub_work_key,
 )
-from mechanical_librarian.domain.local_evidence import LocalEvidenceOutcome
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import EpubInspectionOutcome
 
 
 class EpubOpeningEvidenceDomainTests(unittest.TestCase):
@@ -91,7 +91,7 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
 
     def test_evidence_identity_binds_canonical_report_and_actual_outcome(self) -> None:
         report = EpubOpeningReport(
-            LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+            EpubInspectionOutcome.UNSUPPORTED_FORMAT,
             EpubOpeningLimits(),
         )
         values = epub_evidence_identity(
@@ -113,7 +113,7 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
                 source_fingerprint="3" * 64,
                 governing_digest="4" * 64,
                 report=EpubOpeningReport(
-                    LocalEvidenceOutcome.RESOURCE_LIMIT,
+                    EpubInspectionOutcome.RESOURCE_LIMIT,
                     EpubOpeningLimits(),
                 ),
             )
@@ -269,7 +269,7 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
             lambda _source: next(fingerprints),
             lambda _source: EpubOpeningExecution(
                 EpubOpeningReport(
-                    LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+                    EpubInspectionOutcome.UNSUPPORTED_FORMAT,
                     EpubOpeningLimits(),
                 ),
                 "5" * 64,
@@ -303,7 +303,7 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
                 EpubSourceFingerprintError(EpubEvidenceFailure.RESOURCE_LIMIT)
             ),
             lambda _source: EpubOpeningReport(
-                LocalEvidenceOutcome.UNSUPPORTED_FORMAT,
+                EpubInspectionOutcome.UNSUPPORTED_FORMAT,
                 EpubOpeningLimits(),
             ),
         )
@@ -364,7 +364,7 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
                 return EpubEvidenceResult(EpubEvidenceMode.FAILED, failure=failure)
 
         report = EpubOpeningReport(
-            LocalEvidenceOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
+            EpubInspectionOutcome.UNSUPPORTED_FORMAT, EpubOpeningLimits()
         )
         cases = (
             (
@@ -440,10 +440,10 @@ class EpubOpeningEvidenceDomainTests(unittest.TestCase):
                 return EpubEvidenceResult(EpubEvidenceMode.FAILED, failure=failure)
 
         cases = {
-            LocalEvidenceOutcome.TIMEOUT: EpubEvidenceFailure.TIMEOUT,
-            LocalEvidenceOutcome.CANCELLATION: EpubEvidenceFailure.CANCELLED,
-            LocalEvidenceOutcome.RESOURCE_LIMIT: EpubEvidenceFailure.RESOURCE_LIMIT,
-            LocalEvidenceOutcome.CHILD_FAILURE: EpubEvidenceFailure.INTERNAL_FAILURE,
+            EpubInspectionOutcome.TIMEOUT: EpubEvidenceFailure.TIMEOUT,
+            EpubInspectionOutcome.CANCELLATION: EpubEvidenceFailure.CANCELLED,
+            EpubInspectionOutcome.RESOURCE_LIMIT: EpubEvidenceFailure.RESOURCE_LIMIT,
+            EpubInspectionOutcome.CHILD_FAILURE: EpubEvidenceFailure.INTERNAL_FAILURE,
         }
         for outcome, expected in cases.items():
             with self.subTest(outcome=outcome):

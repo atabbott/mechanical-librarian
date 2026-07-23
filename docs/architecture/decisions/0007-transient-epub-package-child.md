@@ -1,10 +1,10 @@
 # ADR-0007: Isolate EPUB package extraction in a transient child
 
-- Status: accepted
+- Status: superseded
 - Date: 2026-07-14
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: none
+- Superseded by: [ADR-0011](0011-isolated-epub-inspector.md)
 
 ## Context
 

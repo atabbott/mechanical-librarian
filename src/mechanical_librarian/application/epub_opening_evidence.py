@@ -22,7 +22,7 @@ from mechanical_librarian.domain.epub_opening_evidence import (
     ResolvedEpubSource,
     epub_work_key,
 )
-from mechanical_librarian.domain.local_evidence import LocalEvidenceOutcome
+from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -424,43 +424,43 @@ class RunEpubOpeningEvidence:
 
 
 def _operational_failure(
-    outcome: LocalEvidenceOutcome,
+    outcome: EpubInspectionOutcome,
 ) -> tuple[EpubEvidenceFailure, bool]:
     return {
-        LocalEvidenceOutcome.INVALID_INVOCATION: (
+        EpubInspectionOutcome.INVALID_INVOCATION: (
             EpubEvidenceFailure.INVALID_INVOCATION,
             False,
         ),
-        LocalEvidenceOutcome.INVALID_CONFIGURATION: (
+        EpubInspectionOutcome.INVALID_CONFIGURATION: (
             EpubEvidenceFailure.INVALID_CONFIGURATION,
             False,
         ),
-        LocalEvidenceOutcome.INVALID_REFERENCE: (
+        EpubInspectionOutcome.INVALID_REFERENCE: (
             EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE,
             False,
         ),
-        LocalEvidenceOutcome.UNAVAILABLE_SOURCE: (
+        EpubInspectionOutcome.UNAVAILABLE_SOURCE: (
             EpubEvidenceFailure.SOURCE_REFERENCE_UNAVAILABLE,
             True,
         ),
-        LocalEvidenceOutcome.RESOURCE_LIMIT: (
+        EpubInspectionOutcome.RESOURCE_LIMIT: (
             EpubEvidenceFailure.RESOURCE_LIMIT,
             False,
         ),
-        LocalEvidenceOutcome.TIMEOUT: (EpubEvidenceFailure.TIMEOUT, True),
-        LocalEvidenceOutcome.CANCELLATION: (
+        EpubInspectionOutcome.TIMEOUT: (EpubEvidenceFailure.TIMEOUT, True),
+        EpubInspectionOutcome.CANCELLATION: (
             EpubEvidenceFailure.CANCELLED,
             False,
         ),
-        LocalEvidenceOutcome.UNSTABLE_SOURCE: (
+        EpubInspectionOutcome.UNSTABLE_SOURCE: (
             EpubEvidenceFailure.SOURCE_CHANGED,
             True,
         ),
-        LocalEvidenceOutcome.CHILD_FAILURE: (
+        EpubInspectionOutcome.CHILD_FAILURE: (
             EpubEvidenceFailure.INTERNAL_FAILURE,
             True,
         ),
-        LocalEvidenceOutcome.INTERNAL_FAILURE: (
+        EpubInspectionOutcome.INTERNAL_FAILURE: (
             EpubEvidenceFailure.INTERNAL_FAILURE,
             True,
         ),

@@ -14,12 +14,12 @@ from xml.parsers import expat
 
 from .evidence_bounds import EvidenceValueError, validate_code, validate_projection_text
 from .identifiers import Fingerprint, SchemaVersion
-from .local_evidence import (
+from .epub_inspection import (
+    EpubInspectionOutcome,
+    EpubObservationApplicability,
     EpubPackageLimits,
-    LocalEvidenceOutcome,
     MAX_PUBLIC_REPORT_BYTES,
-    ObservationApplicability,
-    local_file_lineage,
+    epub_file_lineage,
 )
 
 
@@ -261,7 +261,7 @@ class OpeningClaim:
     field: OpeningField
     raw_value: str
     normalized_value: str | None
-    applicability: ObservationApplicability
+    applicability: EpubObservationApplicability
     citation: OpeningCitation
     identifier_type: str | None = None
     applicability_label: str | None = None
@@ -269,7 +269,7 @@ class OpeningClaim:
     def __post_init__(self) -> None:
         if (
             type(self.field) is not OpeningField
-            or type(self.applicability) is not ObservationApplicability
+            or type(self.applicability) is not EpubObservationApplicability
             or type(self.citation) is not OpeningCitation
         ):
             raise EvidenceValueError("opening claim is malformed")
@@ -406,7 +406,7 @@ class EpubOpeningUsage:
 
 @dataclass(frozen=True)
 class EpubOpeningReport:
-    outcome: LocalEvidenceOutcome
+    outcome: EpubInspectionOutcome
     limits: EpubOpeningLimits
     source_fingerprint: Fingerprint | None = None
     claims: tuple[OpeningClaim, ...] = ()
@@ -419,7 +419,7 @@ class EpubOpeningReport:
 
     def __post_init__(self) -> None:
         if (
-            type(self.outcome) is not LocalEvidenceOutcome
+            type(self.outcome) is not EpubInspectionOutcome
             or type(self.limits) is not EpubOpeningLimits
             or type(self.usage) is not EpubOpeningUsage
             or self.schema_version != EPUB_OPENING_REPORT_SCHEMA
@@ -492,7 +492,7 @@ class EpubOpeningReport:
             raise EvidenceValueError("EPUB opening usage exceeds its closed envelope")
         for value in self.warnings:
             validate_code(value, "opening report warning")
-        if self.outcome is LocalEvidenceOutcome.SUCCESS and self.source_fingerprint is None:
+        if self.outcome is EpubInspectionOutcome.SUCCESS and self.source_fingerprint is None:
             raise EvidenceValueError("successful opening report requires a source fingerprint")
         if not self.outcome.succeeded and (
             self.source_fingerprint is not None
@@ -503,9 +503,9 @@ class EpubOpeningReport:
             or self.same_file_lineage is not None
         ):
             raise EvidenceValueError("failed opening report cannot contain partial results")
-        if self.outcome is LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE and self.claims:
+        if self.outcome is EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE and self.claims:
             raise EvidenceValueError("no-applicable opening report cannot contain claims")
-        if self.outcome is LocalEvidenceOutcome.SUCCESS and not self.claims:
+        if self.outcome is EpubInspectionOutcome.SUCCESS and not self.claims:
             raise EvidenceValueError("successful opening report requires claims")
         if self.source_fingerprint is not None and any(
             claim.citation.source_fingerprint != self.source_fingerprint for claim in self.claims
@@ -521,7 +521,7 @@ class EpubOpeningReport:
         if (
             self.source_fingerprint is not None
             and self.same_file_lineage is not None
-            and self.same_file_lineage != local_file_lineage(self.source_fingerprint)
+            and self.same_file_lineage != epub_file_lineage(self.source_fingerprint)
         ):
             raise EvidenceValueError("opening report file lineage is not derived")
         content_resources = tuple(
@@ -695,7 +695,7 @@ def _claim_data(value: OpeningClaim) -> dict[str, object]:
 
 def _claim_from_data(value: object) -> OpeningClaim:
     item = _object(value, {"applicability", "applicability_label", "citation", "field", "identifier_type", "normalized_value", "raw_value"})
-    return OpeningClaim(OpeningField(item["field"]), item["raw_value"], item["normalized_value"], ObservationApplicability(item["applicability"]), _citation_from_data(item["citation"]), item["identifier_type"], item["applicability_label"])
+    return OpeningClaim(OpeningField(item["field"]), item["raw_value"], item["normalized_value"], EpubObservationApplicability(item["applicability"]), _citation_from_data(item["citation"]), item["identifier_type"], item["applicability_label"])
 
 
 def _resource_data(value: OpeningResourceResult) -> dict[str, object]:
@@ -724,7 +724,7 @@ def _report_from_data(value: object) -> EpubOpeningReport:
         raise EvidenceValueError("EPUB opening report schema is unsupported")
     usage = _object(item["usage"], set(EpubOpeningUsage().to_data()))
     return EpubOpeningReport(
-        LocalEvidenceOutcome(item["outcome"]), _limits_from_data(item["limits"]),
+        EpubInspectionOutcome(item["outcome"]), _limits_from_data(item["limits"]),
         None if item["source_fingerprint"] is None else _fingerprint_from_data(item["source_fingerprint"]),
         tuple(_claim_from_data(value) for value in _list(item["claims"])),
         tuple(_resource_from_data(value) for value in _list(item["resources"])),

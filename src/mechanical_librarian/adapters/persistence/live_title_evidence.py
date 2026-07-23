@@ -17,6 +17,7 @@ from mechanical_librarian.application.live_title_proposals import (
     LiveTitleProviderMatchValidator,
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningReport
+from mechanical_librarian.domain.epub_inspection import EpubInspection
 from mechanical_librarian.domain.epub_opening_evidence import (
     EpubEvidenceFailure,
     EpubEvidenceLocator,
@@ -191,7 +192,7 @@ class SQLiteLiveTitleEvidenceReader:
             current_title=current_title,
             evidence_id=str(evidence[0]),
             source_fingerprint=str(evidence[1]),
-            report=report,
+            inspection=EpubInspection.from_opening_report(report),
         )
 
     def inspect_title_provider(

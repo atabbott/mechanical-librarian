@@ -49,8 +49,8 @@ capable lanes.
 
 ## F07a EPUB opening compatibility
 
-`epub-opening-report-v1` is a transient local compatibility surface for EPUBs
-that first pass the F06 package gate. EPUB 3.3 package/navigation semantics and
+The internal typed opening result is produced for EPUBs that first pass the
+private package inspection gate. EPUB 3.3 package/navigation semantics and
 Structural Semantics Vocabulary 1.1 landmarks are supported. Legacy EPUB 2
 OPF/OPS 2.0.1 guide declarations participate in opening selection. Candidate
 content media are declared `application/xhtml+xml` and `text/html`; image
@@ -112,31 +112,16 @@ active charset declarations remain available for decoding before malformed
 classification and foreign meta remains inert. Duplicate href anchors are
 charged before target validation.
 
-The reusable generated registry is `epub-evidence-f07a-v2`. Its F07a
-file-backed cohort is materialized offline and every declared consumer runs
-through the exact installed wheel in normal tests. The external private gate is
-348 EPUBs, of which the F06 baseline identifies 347 safely readable packages.
-Every eligible F06-readable resource within the hard F07a profile must be
+Hostile synthetic EPUB fixtures are exercised directly through the exact child
+and retained live-report path. Every eligible readable resource within the
+hard opening profile must be
 `success` or `no_applicable_evidence`; only root-caused encrypted, unsupported
 media/encoding, unsafe external/active construct, unstable source, or hard
-resource/time/output rejection categories are permitted. Only aggregate
-categories may be published. Private qualification requires an external closed
-root-cause record that exactly covers every permitted rejection and cannot
-publish its case identities. This is not a promise that every book contains an
-opening claim. To reproduce the closed F06 denominator, the private qualifier
-sets the shared document ceiling to the EPUB package profile's 268,435,456-byte
-default; this does not change the ordinary deployment default. The safe
-aggregate records that accepted qualification profile and allowlisted usage
-totals and maxima, without case names, resource names, citations, excerpts,
-identifiers, or source hashes.
-The qualifier independently validates the complete registry schema, nested F06
-and F07 limit profiles, exact opened/parser/resource/path/citation equations,
-exit/outcome mapping, and the closed resource-rejection decision table before
-aggregation. Rejected parser work is charged by the nodes and projected text
-actually consumed before rejection, including both a failed strict attempt and
-the following recovery attempt. A safe sibling remains eligible at the exact
-aggregate boundary and is rejected only above it. Ordered selection paths are
-bound to the source-derived lineage with the versioned selection digest.
+resource/time/output rejection categories are permitted. This is not a promise
+that every book contains an opening claim. Rejected parser work is charged by
+the nodes and projected text consumed before rejection, including strict and
+recovery attempts. Ordered selection paths remain bound to source-derived
+lineage with the versioned selection digest.
 
 ## 0.2 title technical-preview contract
 
@@ -171,13 +156,11 @@ or unjoinable input its exact typed no-proposal result. Provider failure never
 erases local evidence or
 becomes negative bibliographic evidence. Identical inputs replay without
 duplication; changed inputs produce a superseding set without rewriting
-history. F10a's `synthetic-title-review-case-report` accepts only the
-already-persisted current F09a lineage selected by a closed scenario. Exactly
-one current immutable synthetic-preview set containing one `needs_review` title
-proposal creates a deterministic undecided case. Exact replay creates no
-duplicate; a qualifying current successor supersedes it, and a nonqualifying
-current successor retires it without an empty replacement. No other proposal or
-set creates or revives a case.
+history. F10a's `synthetic-title-review-case-report` formerly accepted only the
+already-persisted current F09a lineage selected by a closed scenario. It is now
+retired and the installed CLI rejects its name; this case-history description is
+historical only. No current proposal or set creates or revives a case through
+that retired command.
 
 F09a supplies a deterministic fake candidate through the application-owned
 provider port. The closed `synthetic_preview` mode and derived false production

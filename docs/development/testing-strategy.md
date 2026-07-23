@@ -1,15 +1,10 @@
 # Testing Strategy
 
-F07b qualification builds and installs the exact wheel, prepares disposable
-schema-8 inventory state through the installed package, obtains selectors from
-the installed `inventory-inspect` command, and runs the whole F07a public or
-approved private cohort through `epub-opening-evidence`. A second process pass
-must reuse every durable identity. One shadow source is changed to prove
-isolated invalidation, restored to prove reverse replay cannot move current
-state backwards, and made unavailable to prove per-book failure isolation.
-The qualifier parses the complete redacted CLI envelope and can require named
-aggregate outcome and strict/recovered parser-mode partitions. Only aggregate
-counts leave the temporary directory.
+The EPUB inspector is qualified directly through hostile synthetic archives,
+the real descriptor-only child, source-stability checks, and the retained live
+title-report path. There is no public package/opening command or fixture
+registry qualifier. Tests prove one controller, one shared archive session,
+and that private package declarations never cross the child boundary.
 
 ## Goals
 
@@ -465,7 +460,7 @@ Fixture families include:
   or substitute one owned target for a different evidence row.
   Normal CI builds the exact wheel, installs it without repository test
   support, and drives every materialized F07a consumer through the installed
-  `epub-opening-report` command. Property tests use the pinned development-only
+  isolated inspector path. Property tests use the pinned development-only
   Hypothesis dependency; private corpus runs publish aggregate categories only;
 - bounded synthetic audio tags and chapter data;
 - generated opening-credit audio covering speech, silence, music, delayed

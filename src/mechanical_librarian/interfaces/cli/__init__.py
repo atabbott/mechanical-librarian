@@ -39,33 +39,9 @@ from mechanical_librarian.application.inventory_polling import (
     InventoryPollOutcome,
     InventoryPollResult,
 )
-from mechanical_librarian.application.local_evidence import (
-    EpubPackageReportRunner,
-    internal_failure_report,
-    render_local_evidence_text,
-)
-from mechanical_librarian.application.epub_opening import (
-    EpubOpeningReportRunner,
-    internal_opening_failure_report,
-    render_epub_opening_text,
-)
-from mechanical_librarian.domain.epub_opening_evidence import (
-    EpubEvidenceFailure,
-    EpubEvidenceMode,
-    EpubEvidenceResult,
-)
-from mechanical_librarian.application.title_proposals import (
-    SCENARIOS,
-    SyntheticTitleProposalReport,
-    render_title_proposal_text,
-)
 from mechanical_librarian.application.live_title_proposals import (
     LiveTitleProposalReport,
     render_live_title_proposal_text,
-)
-from mechanical_librarian.application.title_review_cases import (
-    SyntheticTitleReviewCaseReport,
-    render_title_review_case_text,
 )
 from mechanical_librarian.application.hardcover_identity import (
     DurableWorkPreviewReport,
@@ -79,13 +55,7 @@ from mechanical_librarian.application.hardcover_identity import (
     SafeExecutorPreviewReport,
     render_report_text as render_hardcover_identity_text,
 )
-from mechanical_librarian.domain.local_evidence import (
-    EpubPackageLimits,
-    LocalEvidenceCapability,
-    LocalEvidenceOutcome,
-    LocalEvidenceReport,
-)
-from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
+from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.inventory import SecretReference
 
 
@@ -96,10 +66,6 @@ ConnectionProbeRunner = Callable[[Path], ConnectionProbeResult]
 AudiobookshelfInventoryRunner = Callable[[Path, Path], InventoryRunResult]
 AudiobookshelfPollRunner = Callable[[Path, Path, str], InventoryPollResult]
 InventoryPollInspectionRunner = Callable[[Path, str], InventoryPollResult]
-SyntheticTitleProposalRunner = Callable[[Path, str], SyntheticTitleProposalReport]
-HardcoverTitleProposalRunner = Callable[[Path, Path | None], SyntheticTitleProposalReport]
-SyntheticTitleReviewCaseRunner = Callable[[Path, str], SyntheticTitleReviewCaseReport]
-EpubOpeningEvidenceRunner = Callable[[Path, Path, str, str, int], EpubEvidenceResult]
 LiveTitleProposalRunner = Callable[[Path, Path, str, str, int], LiveTitleProposalReport]
 HardcoverIdentityRunner = Callable[
     [Path, Path, Path, HardcoverExecutionPolicy], HardcoverIdentityReport
@@ -145,38 +111,27 @@ _CONNECTION_FAILURE = (
 )
 _ABS_INVENTORY_FAILURE = "Audiobookshelf inventory failed safely.\n"
 _ABS_POLL_FAILURE = "Audiobookshelf poll failed safely.\n"
-_TITLE_PROPOSAL_FAILURE = "Synthetic title preview failed safely.\n"
-_TITLE_PROPOSAL_INVALID = "Synthetic title preview invocation is invalid.\n"
-_HARDCOVER_TITLE_PROPOSAL_FAILURE = "Hardcover title preview failed safely.\n"
-_HARDCOVER_TITLE_PROPOSAL_INVALID = "Hardcover title preview invocation is invalid.\n"
-_HARDCOVER_TITLE_RETIRED = (
-    "Credentialed Hardcover title preview is unsupported; use "
-    "hardcover-identity-report with configured provider authority.\n"
-)
-_TITLE_REVIEW_CASE_FAILURE = "Synthetic title review case failed safely.\n"
-_TITLE_REVIEW_CASE_INVALID = "Synthetic title review case invocation is invalid.\n"
 _EPUB_PACKAGE_EXIT = {
-    LocalEvidenceOutcome.INVALID_INVOCATION: 2,
-    LocalEvidenceOutcome.SUCCESS: 0,
-    LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE: 0,
-    LocalEvidenceOutcome.INVALID_CONFIGURATION: 3,
-    LocalEvidenceOutcome.INVALID_REFERENCE: 3,
-    LocalEvidenceOutcome.UNAVAILABLE_SOURCE: 3,
-    LocalEvidenceOutcome.UNSUPPORTED_FORMAT: 4,
-    LocalEvidenceOutcome.UNSUPPORTED_VERSION: 4,
-    LocalEvidenceOutcome.UNSUPPORTED_COMPRESSION: 4,
-    LocalEvidenceOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS: 4,
-    LocalEvidenceOutcome.ENCRYPTED: 4,
-    LocalEvidenceOutcome.MALFORMED: 5,
-    LocalEvidenceOutcome.INTEGRITY_FAILURE: 5,
-    LocalEvidenceOutcome.RESOURCE_LIMIT: 5,
-    LocalEvidenceOutcome.TIMEOUT: 5,
-    LocalEvidenceOutcome.CANCELLATION: 5,
-    LocalEvidenceOutcome.UNSTABLE_SOURCE: 5,
-    LocalEvidenceOutcome.CHILD_FAILURE: 70,
-    LocalEvidenceOutcome.INTERNAL_FAILURE: 70,
+    EpubInspectionOutcome.INVALID_INVOCATION: 2,
+    EpubInspectionOutcome.SUCCESS: 0,
+    EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE: 0,
+    EpubInspectionOutcome.INVALID_CONFIGURATION: 3,
+    EpubInspectionOutcome.INVALID_REFERENCE: 3,
+    EpubInspectionOutcome.UNAVAILABLE_SOURCE: 3,
+    EpubInspectionOutcome.UNSUPPORTED_FORMAT: 4,
+    EpubInspectionOutcome.UNSUPPORTED_VERSION: 4,
+    EpubInspectionOutcome.UNSUPPORTED_COMPRESSION: 4,
+    EpubInspectionOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS: 4,
+    EpubInspectionOutcome.ENCRYPTED: 4,
+    EpubInspectionOutcome.MALFORMED: 5,
+    EpubInspectionOutcome.INTEGRITY_FAILURE: 5,
+    EpubInspectionOutcome.RESOURCE_LIMIT: 5,
+    EpubInspectionOutcome.TIMEOUT: 5,
+    EpubInspectionOutcome.CANCELLATION: 5,
+    EpubInspectionOutcome.UNSTABLE_SOURCE: 5,
+    EpubInspectionOutcome.CHILD_FAILURE: 70,
+    EpubInspectionOutcome.INTERNAL_FAILURE: 70,
 }
-_EPUB_EVIDENCE_FAILURE = "EPUB opening evidence failed safely.\n"
 _LIVE_TITLE_PROPOSAL_FAILURE = "Live title proposal report failed safely.\n"
 _HARDCOVER_IDENTITY_FAILURE = "Hardcover identity report failed safely.\n"
 
@@ -256,39 +211,6 @@ def _read_synthetic_input(stream: TextIO | None) -> Mapping[str, object]:
     return source
 
 
-def _epub_parser() -> argparse.ArgumentParser:
-    parser = _EpubArgumentParser(prog="mechanical-librarian epub-package-report")
-    parser.add_argument("--config", required=True, metavar="PATH", type=Path)
-    parser.add_argument("--mount", required=True, metavar="NAME", type=_bounded_identifier)
-    parser.add_argument("--file", required=True, metavar="RELATIVE")
-    parser.add_argument("--format", choices=("json", "text"), default="json")
-    return parser
-
-
-def _epub_opening_parser() -> argparse.ArgumentParser:
-    parser = _EpubArgumentParser(prog="mechanical-librarian epub-opening-report")
-    parser.add_argument("--config", required=True, metavar="PATH", type=Path)
-    parser.add_argument("--mount", required=True, metavar="NAME", type=_bounded_identifier)
-    parser.add_argument("--file", required=True, metavar="RELATIVE")
-    parser.add_argument("--format", choices=("json", "text"), default="json")
-    return parser
-
-
-def _epub_opening_evidence_parser() -> argparse.ArgumentParser:
-    parser = _EpubArgumentParser(
-        prog="mechanical-librarian epub-opening-evidence"
-    )
-    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
-    parser.add_argument("--config", required=True, metavar="PATH", type=Path)
-    parser.add_argument("--target", metavar="OPAQUE", type=_opaque_target)
-    parser.add_argument(
-        "--snapshot", metavar="OPAQUE", type=_opaque_snapshot
-    )
-    parser.add_argument("--file-index", metavar="INDEX", type=int)
-    parser.add_argument("--resume", action="store_true")
-    return parser
-
-
 def _opaque_target(value: str) -> str:
     if re.fullmatch(r"target_[0-9a-f]{32}", value) is None:
         raise argparse.ArgumentTypeError("invalid opaque target")
@@ -299,16 +221,6 @@ def _opaque_snapshot(value: str) -> str:
     if re.fullmatch(r"snapshot_[0-9a-f]{32}", value) is None:
         raise argparse.ArgumentTypeError("invalid opaque snapshot")
     return value
-
-
-def _title_proposal_parser() -> argparse.ArgumentParser:
-    parser = _TitleArgumentParser(
-        prog="mechanical-librarian synthetic-title-proposal-report"
-    )
-    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
-    parser.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
-    parser.add_argument("--format", choices=("json", "text"), default="json")
-    return parser
 
 
 def _live_title_proposal_parser() -> argparse.ArgumentParser:
@@ -322,60 +234,6 @@ def _live_title_proposal_parser() -> argparse.ArgumentParser:
     parser.add_argument("--file-index", required=True, metavar="INDEX", type=int)
     parser.add_argument("--format", choices=("json", "text"), default="json")
     return parser
-
-
-def _hardcover_title_proposal_parser() -> argparse.ArgumentParser:
-    parser = _TitleArgumentParser(
-        prog="mechanical-librarian hardcover-title-proposal-report"
-    )
-    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
-    parser.add_argument(
-        "--secret-reference", metavar="PATH", type=_provider_secret_reference
-    )
-    parser.add_argument("--format", choices=("json", "text"), default="json")
-    return parser
-
-
-def _title_review_case_parser() -> argparse.ArgumentParser:
-    parser = _TitleArgumentParser(
-        prog="mechanical-librarian synthetic-title-review-case-report"
-    )
-    parser.add_argument("--database", required=True, metavar="PATH", type=_database_path)
-    parser.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
-    parser.add_argument("--format", choices=("json", "text"), default="json")
-    return parser
-
-
-def _write_epub_report(
-    report: LocalEvidenceReport,
-    output_format: str,
-    output: TextIO,
-    errors: TextIO,
-) -> int:
-    exit_status = _EPUB_PACKAGE_EXIT[report.outcome]
-    destination = output if exit_status == 0 else errors
-    destination.write(
-        report.to_json() + "\n"
-        if output_format == "json"
-        else render_local_evidence_text(report)
-    )
-    return exit_status
-
-
-def _write_epub_opening_report(
-    report: EpubOpeningReport,
-    output_format: str,
-    output: TextIO,
-    errors: TextIO,
-) -> int:
-    exit_status = _EPUB_PACKAGE_EXIT[report.outcome]
-    destination = output if exit_status == 0 else errors
-    destination.write(
-        report.to_json() + "\n"
-        if output_format == "json"
-        else render_epub_opening_text(report)
-    )
-    return exit_status
 
 
 def _database_path(value: str) -> Path:
@@ -478,23 +336,6 @@ def _parser() -> argparse.ArgumentParser:
     inventory_inspect.add_argument(
         "--database", required=True, metavar="PATH", type=_database_path
     )
-    epub_evidence = commands.add_parser(
-        "epub-opening-evidence",
-        help="execute or reuse durable EPUB opening evidence from an opaque selector",
-    )
-    epub_evidence.add_argument(
-        "--database", required=True, metavar="PATH", type=_database_path
-    )
-    epub_evidence.add_argument("--config", required=True, metavar="PATH", type=Path)
-    epub_evidence.add_argument(
-        "--target", required=True, metavar="OPAQUE", type=_opaque_target
-    )
-    epub_evidence.add_argument(
-        "--snapshot", required=True, metavar="OPAQUE", type=_opaque_snapshot
-    )
-    epub_evidence.add_argument(
-        "--file-index", required=True, metavar="INDEX", type=int
-    )
     poll = commands.add_parser(
         "audiobookshelf-poll",
         help="run or resume one durable bounded Audiobookshelf poll trigger",
@@ -516,39 +357,6 @@ def _parser() -> argparse.ArgumentParser:
     poll_inspect.add_argument(
         "--poll-id", required=True, metavar="ID", type=_bounded_identifier
     )
-    epub_package = commands.add_parser(
-        "epub-package-report",
-        help="emit one bounded cited EPUB package-evidence report",
-    )
-    epub_package.add_argument("--config", required=True, metavar="PATH", type=Path)
-    epub_package.add_argument(
-        "--mount", required=True, metavar="NAME", type=_bounded_identifier
-    )
-    epub_package.add_argument("--file", required=True, metavar="RELATIVE")
-    epub_package.add_argument(
-        "--format", choices=("json", "text"), default="json"
-    )
-    epub_opening = commands.add_parser(
-        "epub-opening-report",
-        help="emit one bounded cited EPUB opening-matter report",
-    )
-    epub_opening.add_argument("--config", required=True, metavar="PATH", type=Path)
-    epub_opening.add_argument(
-        "--mount", required=True, metavar="NAME", type=_bounded_identifier
-    )
-    epub_opening.add_argument("--file", required=True, metavar="RELATIVE")
-    epub_opening.add_argument(
-        "--format", choices=("json", "text"), default="json"
-    )
-    title_proposal = commands.add_parser(
-        "synthetic-title-proposal-report",
-        help="emit one persisted apply-ineligible synthetic title proposal preview",
-    )
-    title_proposal.add_argument(
-        "--database", required=True, metavar="PATH", type=_database_path
-    )
-    title_proposal.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
-    title_proposal.add_argument("--format", choices=("json", "text"), default="json")
     live_title = commands.add_parser(
         "live-title-proposal-report",
         help="publish one current report-only live title proposal result",
@@ -559,26 +367,6 @@ def _parser() -> argparse.ArgumentParser:
     live_title.add_argument("--snapshot", required=True, metavar="OPAQUE", type=_opaque_snapshot)
     live_title.add_argument("--file-index", required=True, metavar="INDEX", type=int)
     live_title.add_argument("--format", choices=("json", "text"), default="json")
-    hardcover_title = commands.add_parser(
-        "hardcover-title-proposal-report",
-        help="emit one persisted apply-ineligible Hardcover title proof of concept",
-    )
-    hardcover_title.add_argument(
-        "--database", required=True, metavar="PATH", type=_database_path
-    )
-    hardcover_title.add_argument(
-        "--secret-reference", metavar="PATH", type=_provider_secret_reference
-    )
-    hardcover_title.add_argument("--format", choices=("json", "text"), default="json")
-    title_review = commands.add_parser(
-        "synthetic-title-review-case-report",
-        help="admit and inspect one apply-ineligible synthetic title review case",
-    )
-    title_review.add_argument(
-        "--database", required=True, metavar="PATH", type=_database_path
-    )
-    title_review.add_argument("--scenario", required=True, choices=tuple(SCENARIOS))
-    title_review.add_argument("--format", choices=("json", "text"), default="json")
     commands.add_parser(
         "hardcover-identity-report",
         help="run one configured report-only Hardcover ISBN identity lookup",
@@ -597,13 +385,7 @@ def main(
     inventory_inspection_runner: AudiobookshelfInventoryRunner | None = None,
     audiobookshelf_poll_runner: AudiobookshelfPollRunner | None = None,
     inventory_poll_inspection_runner: InventoryPollInspectionRunner | None = None,
-    epub_package_report_runner: EpubPackageReportRunner | None = None,
-    epub_opening_report_runner: EpubOpeningReportRunner | None = None,
-    epub_opening_evidence_runner: EpubOpeningEvidenceRunner | None = None,
     live_title_proposal_runner: LiveTitleProposalRunner | None = None,
-    synthetic_title_proposal_runner: SyntheticTitleProposalRunner | None = None,
-    hardcover_title_proposal_runner: HardcoverTitleProposalRunner | None = None,
-    synthetic_title_review_case_runner: SyntheticTitleReviewCaseRunner | None = None,
     hardcover_identity_runner: HardcoverIdentityRunner | None = None,
     hardcover_inert_preview_runner: HardcoverInertPreviewRunner | None = None,
     hardcover_identity_decision_preview_runner: (
@@ -630,6 +412,18 @@ def main(
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = list(sys.argv[1:] if argv is None else argv)
+    # These former diagnostics are deliberately not compatibility aliases: the
+    # live title report remains the only retained public consumer.
+    if raw_arguments[:1] in (
+        ["epub-package-report"],
+        ["epub-opening-report"],
+        ["epub-opening-evidence"],
+        ["synthetic-title-proposal-report"],
+        ["hardcover-title-proposal-report"],
+        ["synthetic-title-review-case-report"],
+    ):
+        errors.write("unknown command\n")
+        return 2
     if raw_arguments[:1] == ["live-title-proposal-report"]:
         try:
             live_arguments = _live_title_proposal_parser().parse_args(raw_arguments[1:])
@@ -821,270 +615,6 @@ def main(
         except Exception:
             errors.write(_HARDCOVER_IDENTITY_FAILURE)
             return 2
-    if raw_arguments[:1] == ["epub-opening-evidence"]:
-        try:
-            arguments = _epub_opening_evidence_parser().parse_args(raw_arguments[1:])
-            supplied = (
-                arguments.target is not None,
-                arguments.snapshot is not None,
-                arguments.file_index is not None,
-            )
-            if arguments.resume == any(supplied) or (not arguments.resume and not all(supplied)):
-                raise _EpubArgumentError("choose either resume or one complete selector")
-            if not arguments.resume and not 0 <= arguments.file_index <= 10_000:
-                raise _EpubArgumentError("file index is outside the supported range")
-        except (_EpubArgumentError, ValueError):
-            errors.write(_EPUB_EVIDENCE_FAILURE)
-            errors.write(f"failure={EpubEvidenceFailure.INVALID_INVOCATION.value}\n")
-            return 2
-        try:
-            result = (
-                EpubEvidenceResult(
-                    EpubEvidenceMode.FAILED,
-                    failure=EpubEvidenceFailure.INTERNAL_FAILURE,
-                )
-                if epub_opening_evidence_runner is None
-                else epub_opening_evidence_runner(
-                    arguments.config,
-                    arguments.database,
-                    "" if arguments.resume else arguments.target,
-                    "" if arguments.resume else arguments.snapshot,
-                    -1 if arguments.resume else arguments.file_index,
-                )
-            )
-        except (KeyboardInterrupt, Exception):
-            result = EpubEvidenceResult(
-                EpubEvidenceMode.FAILED,
-                failure=EpubEvidenceFailure.INTERNAL_FAILURE,
-            )
-        if type(result) is not EpubEvidenceResult or not result.succeeded:
-            failure = (
-                EpubEvidenceFailure.INTERNAL_FAILURE
-                if type(result) is not EpubEvidenceResult or result.failure is None
-                else result.failure
-            )
-            errors.write(_EPUB_EVIDENCE_FAILURE)
-            errors.write(f"failure={failure.value}\n")
-            return 1
-        output.write("EPUB opening evidence passed.\n")
-        output.write(
-            f"mode={result.mode.value} evidence={result.evidence_id} "
-            f"current={'true' if result.current_applicable else 'false'} "
-            f"outcome={result.outcome.value}\n"
-        )
-        output.write(
-            f"claims={result.claim_count} citations={result.citation_count} "
-            f"selected={result.selected_count} rejected={result.rejected_count} "
-            f"warnings={result.warning_count} parser={result.parser_mode}\n"
-        )
-        return 0
-    if raw_arguments[:1] == ["epub-opening-report"]:
-        requested_format = "json"
-        index = 1
-        while index < len(raw_arguments):
-            argument = raw_arguments[index]
-            candidate: str | None = None
-            if argument.startswith("--format="):
-                candidate = argument.partition("=")[2]
-            elif argument == "--format" and index + 1 < len(raw_arguments):
-                index += 1
-                candidate = raw_arguments[index]
-            if candidate in {"json", "text"}:
-                requested_format = candidate
-            index += 1
-        try:
-            epub_arguments = _epub_opening_parser().parse_args(raw_arguments[1:])
-        except _EpubArgumentError:
-            return _write_epub_opening_report(
-                EpubOpeningReport(
-                    LocalEvidenceOutcome.INVALID_INVOCATION,
-                    EpubOpeningLimits(),
-                ),
-                requested_format,
-                output,
-                errors,
-            )
-        try:
-            report = (
-                internal_opening_failure_report()
-                if epub_opening_report_runner is None
-                else epub_opening_report_runner(
-                    epub_arguments.config,
-                    epub_arguments.mount,
-                    epub_arguments.file,
-                )
-            )
-        except KeyboardInterrupt:
-            report = EpubOpeningReport(
-                LocalEvidenceOutcome.CANCELLATION,
-                EpubOpeningLimits(),
-            )
-        except Exception:
-            report = internal_opening_failure_report()
-        if type(report) is not EpubOpeningReport:
-            report = internal_opening_failure_report()
-        return _write_epub_opening_report(
-            report,
-            epub_arguments.format,
-            output,
-            errors,
-        )
-    if raw_arguments[:1] == ["synthetic-title-review-case-report"]:
-        try:
-            review_arguments = _title_review_case_parser().parse_args(raw_arguments[1:])
-        except _TitleArgumentError:
-            errors.write(_TITLE_REVIEW_CASE_INVALID)
-            return 2
-        if synthetic_title_review_case_runner is None:
-            errors.write(_TITLE_REVIEW_CASE_FAILURE)
-            return 1
-        try:
-            report = synthetic_title_review_case_runner(
-                review_arguments.database, review_arguments.scenario
-            )
-        except (KeyboardInterrupt, Exception):
-            errors.write(_TITLE_REVIEW_CASE_FAILURE)
-            return 1
-        if type(report) is not SyntheticTitleReviewCaseReport:
-            errors.write(_TITLE_REVIEW_CASE_FAILURE)
-            return 1
-        try:
-            rendered = (
-                report.to_json() + "\n"
-                if review_arguments.format == "json"
-                else render_title_review_case_text(report)
-            )
-        except Exception:
-            errors.write(_TITLE_REVIEW_CASE_FAILURE)
-            return 1
-        output.write(rendered)
-        return 0
-    if raw_arguments[:1] == ["hardcover-title-proposal-report"]:
-        credentialed = any(
-            argument == "--secret-reference"
-            or argument.startswith("--secret-reference=")
-            for argument in raw_arguments[1:]
-        )
-        if credentialed:
-            errors.write(_HARDCOVER_TITLE_RETIRED)
-            return 2
-        try:
-            title_arguments = _hardcover_title_proposal_parser().parse_args(
-                raw_arguments[1:]
-            )
-        except _TitleArgumentError:
-            errors.write(_HARDCOVER_TITLE_PROPOSAL_INVALID)
-            return 2
-        if title_arguments.secret_reference is not None:
-            errors.write(_HARDCOVER_TITLE_RETIRED)
-            return 2
-        if hardcover_title_proposal_runner is None:
-            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
-            return 1
-        try:
-            report = hardcover_title_proposal_runner(
-                title_arguments.database, title_arguments.secret_reference
-            )
-        except Exception:
-            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
-            return 1
-        if type(report) is not SyntheticTitleProposalReport:
-            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
-            return 1
-        try:
-            rendered = (
-                report.to_json() + "\n"
-                if title_arguments.format == "json"
-                else render_title_proposal_text(report)
-            )
-        except Exception:
-            errors.write(_HARDCOVER_TITLE_PROPOSAL_FAILURE)
-            return 1
-        output.write(rendered)
-        return 0
-    if raw_arguments[:1] == ["synthetic-title-proposal-report"]:
-        try:
-            title_arguments = _title_proposal_parser().parse_args(raw_arguments[1:])
-        except _TitleArgumentError:
-            errors.write(_TITLE_PROPOSAL_INVALID)
-            return 2
-        if synthetic_title_proposal_runner is None:
-            errors.write(_TITLE_PROPOSAL_FAILURE)
-            return 1
-        try:
-            report = synthetic_title_proposal_runner(
-                title_arguments.database, title_arguments.scenario
-            )
-        except (KeyboardInterrupt, Exception):
-            errors.write(_TITLE_PROPOSAL_FAILURE)
-            return 1
-        if type(report) is not SyntheticTitleProposalReport:
-            errors.write(_TITLE_PROPOSAL_FAILURE)
-            return 1
-        try:
-            rendered = (
-                report.to_json() + "\n"
-                if title_arguments.format == "json"
-                else render_title_proposal_text(report)
-            )
-        except Exception:
-            errors.write(_TITLE_PROPOSAL_FAILURE)
-            return 1
-        output.write(rendered)
-        return 0
-    if raw_arguments[:1] == ["epub-package-report"]:
-        requested_format = "json"
-        index = 1
-        while index < len(raw_arguments):
-            argument = raw_arguments[index]
-            candidate: str | None = None
-            if argument.startswith("--format="):
-                candidate = argument.partition("=")[2]
-            elif argument == "--format" and index + 1 < len(raw_arguments):
-                index += 1
-                candidate = raw_arguments[index]
-            if candidate in {"json", "text"}:
-                requested_format = candidate
-            index += 1
-        try:
-            epub_arguments = _epub_parser().parse_args(raw_arguments[1:])
-        except _EpubArgumentError:
-            return _write_epub_report(
-                LocalEvidenceReport(
-                    LocalEvidenceOutcome.INVALID_INVOCATION,
-                    LocalEvidenceCapability.PACKAGE,
-                    EpubPackageLimits(),
-                ),
-                requested_format,
-                output,
-                errors,
-            )
-        try:
-            report = (
-                internal_failure_report()
-                if epub_package_report_runner is None
-                else epub_package_report_runner(
-                    epub_arguments.config,
-                    epub_arguments.mount,
-                    epub_arguments.file,
-                )
-            )
-        except KeyboardInterrupt:
-            report = LocalEvidenceReport(
-                LocalEvidenceOutcome.CANCELLATION,
-                LocalEvidenceCapability.PACKAGE,
-                EpubPackageLimits(),
-            )
-        except Exception:
-            report = internal_failure_report()
-        if type(report) is not LocalEvidenceReport:
-            report = internal_failure_report()
-        return _write_epub_report(
-            report,
-            epub_arguments.format,
-            output,
-            errors,
-        )
     arguments = _parser().parse_args(argv)
     if arguments.command in {"audiobookshelf-poll", "inventory-poll-inspect"}:
         runner = (
@@ -1340,9 +870,6 @@ __all__ = [
     "StateCheckRunner",
     "SyntheticInventoryRunner",
     "AudiobookshelfInventoryRunner",
-    "EpubPackageReportRunner",
     "LiveTitleProposalRunner",
-    "SyntheticTitleProposalRunner",
-    "SyntheticTitleReviewCaseRunner",
     "main",
 ]

@@ -15,12 +15,10 @@ from mechanical_librarian.application.live_title_proposals import (
     LiveSourceEvidence,
     LiveSourceState,
     ProposeLiveTitle,
-)
-from mechanical_librarian.application.title_proposals import (
     ProposalPersistence,
-    SyntheticTitleProposalReport,
 )
 from mechanical_librarian.bootstrap.composition import _run_epub_opening_report
+from mechanical_librarian.domain.epub_inspection import EpubInspection
 from mechanical_librarian.domain.epub_opening import OpeningField
 from mechanical_librarian.domain.epub_opening_evidence import EpubEvidenceLocator
 from mechanical_librarian.domain.title_proposals import LiveTitleProposalSet
@@ -95,19 +93,18 @@ class _Repository:
 
 
 class LiveTitleProposalTests(unittest.TestCase):
-    def test_live_persistence_cannot_be_rendered_as_a_synthetic_report(self) -> None:
-        proposal_set = self._execute(_Repository(self.source)).proposal_set
-        persistence = ProposalPersistence(
-            proposal_set,
-            replayed=False,
-            current=True,
-            current_set_id=proposal_set.set_id,
-            superseded_set_id=None,
-            history_count=proposal_set.lineage_revision,
-        )
-
-        with self.assertRaisesRegex(ValueError, "synthetic proposal report is malformed"):
-            SyntheticTitleProposalReport(persistence)
+    def test_retired_title_commands_are_absent(self) -> None:
+        for command in (
+            "synthetic-title-proposal-report",
+            "hardcover-title-proposal-report",
+            "synthetic-title-review-case-report",
+        ):
+            errors = StringIO()
+            self.assertEqual(
+                cli_main([command], state_check_runner=lambda _database: None, stderr=errors),
+                2,
+            )
+            self.assertEqual(errors.getvalue(), "unknown command\n")
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -149,7 +146,7 @@ class LiveTitleProposalTests(unittest.TestCase):
             current_title=None,
             evidence_id="evidence_" + "3" * 32,
             source_fingerprint=self.report.source_fingerprint.digest,
-            report=self.report,
+            inspection=EpubInspection.from_opening_report(self.report),
         )
         self.now = datetime(2026, 7, 21, tzinfo=timezone.utc)
 
@@ -224,7 +221,7 @@ class LiveTitleProposalTests(unittest.TestCase):
                 for claim in self.report.claims
             ),
         )
-        source = replace(self.source, report=report)
+        source = replace(self.source, inspection=EpubInspection.from_opening_report(report))
         repository = _Repository(source)
         self.source = source
 

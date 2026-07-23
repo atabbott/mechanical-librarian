@@ -66,11 +66,10 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
   request must not be repeated. F09f now owns configured provider-work persistence,
   freshness/reuse, restart, and strict ISBN-backed Hardcover identity; F09g
   retains the later live-target join and proposal authority.
-- F10a adds `synthetic-title-review-case-report`. It persists, restarts,
-  inspects, and replays one visibly synthetic undecided case only from one
-  current immutable proposal set containing exactly one `needs_review` title
-  proposal. A qualifying current successor supersedes the case; a
-  nonqualifying current successor retires it without an empty replacement.
+- F10a historically added `synthetic-title-review-case-report` for one visibly
+  synthetic undecided case. The command is retired and the installed CLI rejects
+  its name; its persistence, replay, supersession, and retirement behavior is
+  historical only.
 - Keep AI, human decisions, approval, covers, rich fields, multi-provider
   fusion, and production writes outside the preview.
 

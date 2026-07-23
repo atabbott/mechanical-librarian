@@ -9,6 +9,7 @@ import re
 import time
 import unicodedata
 import zipfile
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from urllib.parse import unquote
@@ -27,16 +28,16 @@ from mechanical_librarian.domain.epub_opening import (
     OpeningResourceResult,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
-from mechanical_librarian.domain.local_evidence import (
-    DeclarationKind,
-    LocalEvidenceCapability,
-    LocalEvidenceOutcome,
-    LocalEvidenceReport,
-    LocalEvidenceRequest,
-    LocalEvidenceSourceError,
-    ObservationApplicability,
-    local_file_lineage,
-    local_resource_identity,
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+    EpubPackageDeclarationKind,
+    EpubPackageCapability,
+    EpubInspectionOutcome,
+    EpubPackageReport,
+    EpubPackageRequest,
+    EpubPackageSourceError,
+    EpubObservationApplicability,
+    epub_file_lineage,
+    epub_resource_identity,
 )
 
 
@@ -129,7 +130,7 @@ _PACKAGE_WARNING_CODES = {
 
 
 class _AggregateRejected(Exception):
-    def __init__(self, outcome: LocalEvidenceOutcome) -> None:
+    def __init__(self, outcome: EpubInspectionOutcome) -> None:
         self.outcome = outcome
 
 
@@ -224,7 +225,7 @@ class _RecognitionContext:
 
 
 class _SourceIO(io.RawIOBase):
-    def __init__(self, request: LocalEvidenceRequest) -> None:
+    def __init__(self, request: EpubPackageRequest) -> None:
         self._request = request
         self._position = 0
 
@@ -256,11 +257,11 @@ class _SourceIO(io.RawIOBase):
         return value
 
 
-def _check(request: LocalEvidenceRequest) -> None:
+def _check(request: EpubPackageRequest) -> None:
     if request.cancellation.is_cancelled():
-        raise _AggregateRejected(LocalEvidenceOutcome.CANCELLATION)
+        raise _AggregateRejected(EpubInspectionOutcome.CANCELLATION)
     if time.monotonic() >= request.monotonic_deadline:
-        raise _AggregateRejected(LocalEvidenceOutcome.TIMEOUT)
+        raise _AggregateRejected(EpubInspectionOutcome.TIMEOUT)
 
 
 def _tokens(attributes: dict[str, str]) -> set[str]:
@@ -500,7 +501,7 @@ def _preflight_declarations(data: bytes) -> None:
         index = end
 
 
-def _project_strict(data: bytes, limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> _Projection:
+def _project_strict(data: bytes, limits: EpubOpeningLimits, request: EpubPackageRequest) -> _Projection:
     elements: list[_Element] = []
     stack: list[_Element] = []
     events: list[tuple[str, tuple[int, ...]]] = []
@@ -509,7 +510,7 @@ def _project_strict(data: bytes, limits: EpubOpeningLimits, request: LocalEviden
         if not parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER):
             raise ValueError("entity parsing could not be disabled")
     except (AttributeError, MemoryError):
-        raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT) from None
+        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from None
 
     def expanded(value: str) -> str:
         return "{" + value if "}" in value else value
@@ -599,7 +600,7 @@ def _project_strict(data: bytes, limits: EpubOpeningLimits, request: LocalEviden
 
 
 class _RecoveryParser(HTMLParser):
-    def __init__(self, limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> None:
+    def __init__(self, limits: EpubOpeningLimits, request: EpubPackageRequest) -> None:
         super().__init__(convert_charrefs=True)
         self.limits = limits
         self.request = request
@@ -1024,7 +1025,7 @@ def _recovery_codec(data: bytes) -> tuple[str, bool]:
     return codec, namespace_invalid
 
 
-def _project_recovered(data: bytes, limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> _Projection:
+def _project_recovered(data: bytes, limits: EpubOpeningLimits, request: EpubPackageRequest) -> _Projection:
     codec, namespace_invalid = _recovery_codec(data)
     try:
         text = data.decode(codec, "strict")
@@ -1084,7 +1085,7 @@ def _finalize_projection(
                 ends[ordinal] = position + 1
             prior = current
             if len(parts) > limits.text_characters_per_selection:
-                raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+                raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
     text = "".join(parts)
     for element in elements:
         if element.ordinal not in starts or element.active:
@@ -1103,7 +1104,7 @@ def _finalize_projection(
     )
 
 
-def _parse(data: bytes, media_type: str, limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> _Projection:
+def _parse(data: bytes, media_type: str, limits: EpubOpeningLimits, request: EpubPackageRequest) -> _Projection:
     if _looks_wide_encoded(data):
         raise _UnsupportedEncoding(
             "unsupported encoding", nodes=0, text_characters=0
@@ -1158,7 +1159,7 @@ def _parse(data: bytes, media_type: str, limits: EpubOpeningLimits, request: Loc
     return _project_recovered(data, limits, request)
 
 
-def _read_member(archive: zipfile.ZipFile, name: str, maximum: int, request: LocalEvidenceRequest) -> bytes:
+def _read_member(archive: zipfile.ZipFile, name: str, maximum: int, request: EpubPackageRequest) -> bytes:
     try:
         info = archive.getinfo(name)
         if info.file_size > maximum:
@@ -1216,26 +1217,26 @@ def _safe_target(
     return normalized, boundary
 
 
-def _manifest(package_report: LocalEvidenceReport) -> tuple[dict[str, tuple[str, str, tuple[str, ...]]], dict[str, str], set[str], str | None]:
+def _manifest(package_report: EpubPackageReport) -> tuple[dict[str, tuple[str, str, tuple[str, ...]]], dict[str, str], set[str], str | None]:
     by_id: dict[str, tuple[str, str, tuple[str, ...]]] = {}
     spine: dict[str, str] = {}
     encrypted: set[str] = set()
     package_identity: str | None = None
     for declaration in package_report.declarations:
-        if declaration.kind is DeclarationKind.MANIFEST_ITEM and declaration.identifier and declaration.resource_identity and declaration.media_type:
+        if declaration.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and declaration.identifier and declaration.resource_identity and declaration.media_type:
             by_id[declaration.identifier] = (declaration.resource_identity, declaration.media_type, declaration.properties)
-        elif declaration.kind is DeclarationKind.SPINE_ITEM and declaration.identifier and declaration.resource_identity:
+        elif declaration.kind is EpubPackageDeclarationKind.SPINE_ITEM and declaration.identifier and declaration.resource_identity:
             spine[declaration.identifier] = declaration.resource_identity
-        elif declaration.kind is DeclarationKind.ENCRYPTION and declaration.resource_identity:
+        elif declaration.kind is EpubPackageDeclarationKind.ENCRYPTION and declaration.resource_identity:
             encrypted.add(declaration.resource_identity)
-        elif declaration.kind is DeclarationKind.PACKAGE:
+        elif declaration.kind is EpubPackageDeclarationKind.PACKAGE:
             package_identity = declaration.resource_identity
     return by_id, spine, encrypted, package_identity
 
 
 def _raw_package_annotations(
     package_data: bytes,
-    package_report: LocalEvidenceReport,
+    package_report: EpubPackageReport,
 ) -> tuple[
     tuple[tuple[str, bool], ...] | None,
     dict[int, str | None],
@@ -1253,21 +1254,21 @@ def _raw_package_annotations(
     accepted_manifest = {
         declaration.source_ordinal: declaration
         for declaration in package_report.declarations
-        if declaration.kind is DeclarationKind.MANIFEST_ITEM
+        if declaration.kind is EpubPackageDeclarationKind.MANIFEST_ITEM
         and declaration.identifier
         and declaration.resource_identity
     }
     accepted_spine = {
         declaration.source_ordinal: declaration
         for declaration in package_report.declarations
-        if declaration.kind is DeclarationKind.SPINE_ITEM
+        if declaration.kind is EpubPackageDeclarationKind.SPINE_ITEM
         and declaration.identifier
         and declaration.resource_identity
     }
     accepted_guides = {
         declaration.source_ordinal: declaration
         for declaration in package_report.declarations
-        if declaration.kind is DeclarationKind.GUIDE_REFERENCE
+        if declaration.kind is EpubPackageDeclarationKind.GUIDE_REFERENCE
         and declaration.identifier
         and declaration.resource_identity
     }
@@ -1373,7 +1374,7 @@ def _navigation_targets(projection: _Projection, nav_name: str, names: set[str],
             continue
         links += 1
         if links > limits.navigation_links:
-            raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+            raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
         if invalid_href:
             warnings.append("invalid_navigation_target")
             continue
@@ -1437,7 +1438,7 @@ def _navigation_targets(projection: _Projection, nav_name: str, names: set[str],
     return targets, warnings, links, body_targets, excluded_targets
 
 
-def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFile, names_by_identity: dict[str, str], limits: EpubOpeningLimits, request: LocalEvidenceRequest) -> tuple[list[_Candidate], list[str], list[OpeningResourceResult], int, set[str], list[_RoleAssociation], list[_RoleAssociation], tuple[int, int, int, int, int, int]]:
+def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile, names_by_identity: dict[str, str], limits: EpubOpeningLimits, request: EpubPackageRequest) -> tuple[list[_Candidate], list[str], list[OpeningResourceResult], int, set[str], list[_RoleAssociation], list[_RoleAssociation], tuple[int, int, int, int, int, int]]:
     by_id, declared_spine, encrypted, package_identity = _manifest(package_report)
     declarations_by_identity: dict[str, set[tuple[str, tuple[str, ...]]]] = {}
     for identity, media, properties in by_id.values():
@@ -1463,7 +1464,7 @@ def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFi
     navigation_opened = navigation_strict = navigation_recovered = 0
     body_targets: list[_RoleAssociation] = []
     excluded_targets: list[_RoleAssociation] = []
-    navigation = [value for value in package_report.declarations if value.kind is DeclarationKind.NAVIGATION and value.resource_identity]
+    navigation = [value for value in package_report.declarations if value.kind is EpubPackageDeclarationKind.NAVIGATION and value.resource_identity]
     if (
         len(navigation) == 1
         and navigation[0].resource_identity in names_by_identity
@@ -1600,7 +1601,7 @@ def _candidate_graph(package_report: LocalEvidenceReport, archive: zipfile.ZipFi
         except (_ResourceRejected, ValueError):
             warnings.append("unusable_spine_relationship")
     for declaration in package_report.declarations:
-        if declaration.kind is not DeclarationKind.GUIDE_REFERENCE or not declaration.resource_identity or not declaration.identifier:
+        if declaration.kind is not EpubPackageDeclarationKind.GUIDE_REFERENCE or not declaration.resource_identity or not declaration.identifier:
             continue
         semantic = declaration.identifier.casefold()
         target_fragment = guide_fragments.get(declaration.source_ordinal)
@@ -1773,7 +1774,7 @@ def _isbn_valid(value: str) -> bool:
     return False
 
 
-def _claim(field: OpeningField, value: str, applicability: ObservationApplicability, element: _Element, projection: _Projection, source, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int, *, normalized: str | None = None, identifier_type: str | None = None, applicability_label: str | None = None, citation_context: tuple[_Element, int, int] | None = None) -> OpeningClaim | None:
+def _claim(field: OpeningField, value: str, applicability: EpubObservationApplicability, element: _Element, projection: _Projection, source, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int, *, normalized: str | None = None, identifier_type: str | None = None, applicability_label: str | None = None, citation_context: tuple[_Element, int, int] | None = None) -> OpeningClaim | None:
     raw = _SPACE.sub(" ", value).strip()[:excerpt_characters]
     if not raw:
         return None
@@ -2091,7 +2092,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             tuple[
                 OpeningField,
                 str,
-                ObservationApplicability,
+                EpubObservationApplicability,
                 str | None,
                 str | None,
                 str | None,
@@ -2102,7 +2103,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
         def add(
             field: OpeningField,
             value: str,
-            applicability: ObservationApplicability,
+            applicability: EpubObservationApplicability,
             normalized: str | None = None,
             identifier_type: str | None = None,
             applicability_label: str | None = None,
@@ -2121,63 +2122,63 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             )
 
         if "subtitle" in semantic:
-            add(OpeningField.SUBTITLE, text, ObservationApplicability.WORK)
+            add(OpeningField.SUBTITLE, text, EpubObservationApplicability.WORK)
         elif semantic & {"fulltitle", "title"} or (
             element.name == "h1" and (title_context or title_ancestor)
         ):
-            add(OpeningField.TITLE, text, ObservationApplicability.WORK)
+            add(OpeningField.TITLE, text, EpubObservationApplicability.WORK)
         if "publisher" in semantic:
-            add(OpeningField.PUBLISHER, text, ObservationApplicability.EDITION)
+            add(OpeningField.PUBLISHER, text, EpubObservationApplicability.EDITION)
         if "imprint" in semantic or lowered.endswith(" imprint"):
-            add(OpeningField.IMPRINT, text, ObservationApplicability.EDITION)
+            add(OpeningField.IMPRINT, text, EpubObservationApplicability.EDITION)
         if lowered.startswith(("by ", "author: ", "written by ")):
             value = re.sub(r"^(?:by|author:|written by)\s+", "", text, flags=re.I)
-            add(OpeningField.CONTRIBUTOR, value, ObservationApplicability.WORK)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, ObservationApplicability.WORK, "author")
+            add(OpeningField.CONTRIBUTOR, value, EpubObservationApplicability.WORK)
+            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "author")
         elif lowered.startswith("edited by "):
-            add(OpeningField.CONTRIBUTOR, text[10:], ObservationApplicability.WORK)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, ObservationApplicability.WORK, "editor")
+            add(OpeningField.CONTRIBUTOR, text[10:], EpubObservationApplicability.WORK)
+            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "editor")
         elif "translated by" in lowered:
-            add(OpeningField.TRANSLATION, text, ObservationApplicability.EDITION)
+            add(OpeningField.TRANSLATION, text, EpubObservationApplicability.EDITION)
             translator = re.split(r"translated by", text, flags=re.I, maxsplit=1)[-1].strip()
-            add(OpeningField.CONTRIBUTOR, translator, ObservationApplicability.EDITION)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, ObservationApplicability.EDITION, "translator")
+            add(OpeningField.CONTRIBUTOR, translator, EpubObservationApplicability.EDITION)
+            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.EDITION, "translator")
         elif "illustrated by" in lowered or "illustrations by" in lowered:
-            add(OpeningField.ILLUSTRATION, text, ObservationApplicability.EDITION)
+            add(OpeningField.ILLUSTRATION, text, EpubObservationApplicability.EDITION)
             illustrator = re.split(r"illustrat(?:ed|ions) by", text, flags=re.I, maxsplit=1)[-1].strip()
-            add(OpeningField.CONTRIBUTOR, illustrator, ObservationApplicability.EDITION)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, ObservationApplicability.EDITION, "illustrator")
+            add(OpeningField.CONTRIBUTOR, illustrator, EpubObservationApplicability.EDITION)
+            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.EDITION, "illustrator")
         elif lowered.startswith("adapted by "):
-            add(OpeningField.CONTRIBUTOR, text[11:], ObservationApplicability.WORK)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, ObservationApplicability.WORK, "adapter")
+            add(OpeningField.CONTRIBUTOR, text[11:], EpubObservationApplicability.WORK)
+            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "adapter")
         elif lowered.startswith(("contributions by ", "contributor: ")):
             value = re.sub(
                 r"^(?:contributions by|contributor:)\s+", "", text, flags=re.I
             )
-            add(OpeningField.CONTRIBUTOR, value, ObservationApplicability.WORK)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, ObservationApplicability.WORK, "other")
+            add(OpeningField.CONTRIBUTOR, value, EpubObservationApplicability.WORK)
+            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "other")
         elif semantic & {"contributor", "creator"}:
-            add(OpeningField.CONTRIBUTOR, text, ObservationApplicability.WORK)
+            add(OpeningField.CONTRIBUTOR, text, EpubObservationApplicability.WORK)
         if "edition" in lowered:
-            add(OpeningField.EDITION, text, ObservationApplicability.EDITION)
+            add(OpeningField.EDITION, text, EpubObservationApplicability.EDITION)
         if "printing" in lowered or "impression" in lowered:
-            add(OpeningField.PRINTING, text, ObservationApplicability.EDITION)
+            add(OpeningField.PRINTING, text, EpubObservationApplicability.EDITION)
         if "revision" in lowered or "revised" in lowered:
-            add(OpeningField.REVISION, text, ObservationApplicability.EDITION)
+            add(OpeningField.REVISION, text, EpubObservationApplicability.EDITION)
         if "copyright" in lowered or "©" in text:
             for match in _DATE.finditer(text):
-                add(OpeningField.COPYRIGHT_DATE, match.group(0), ObservationApplicability.EDITION)
+                add(OpeningField.COPYRIGHT_DATE, match.group(0), EpubObservationApplicability.EDITION)
         elif lowered.startswith(("published ", "first published ", "publication date")):
             for match in _DATE.finditer(text):
-                add(OpeningField.PUBLICATION_DATE, match.group(0), ObservationApplicability.EDITION)
+                add(OpeningField.PUBLICATION_DATE, match.group(0), EpubObservationApplicability.EDITION)
         series = _SERIES.search(text)
         if series:
-            add(OpeningField.SERIES_ORDER, series.group(1), ObservationApplicability.WORK)
-            add(OpeningField.SERIES, series.group(2), ObservationApplicability.WORK)
+            add(OpeningField.SERIES_ORDER, series.group(1), EpubObservationApplicability.WORK)
+            add(OpeningField.SERIES, series.group(2), EpubObservationApplicability.WORK)
         if "omnibus" in lowered:
-            add(OpeningField.OMNIBUS_MEMBERSHIP, text, ObservationApplicability.WORK)
+            add(OpeningField.OMNIBUS_MEMBERSHIP, text, EpubObservationApplicability.WORK)
         if "anthology" in lowered:
-            add(OpeningField.ANTHOLOGY_MEMBERSHIP, text, ObservationApplicability.WORK)
+            add(OpeningField.ANTHOLOGY_MEMBERSHIP, text, EpubObservationApplicability.WORK)
         isbn_matches = list(_ISBN.finditer(text))
         for match_index, match in enumerate(isbn_matches):
             identifier = match.group(0)
@@ -2250,13 +2251,13 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             ebook = bool(_EBOOK_LABEL.search(vicinity))
             printed = bool(_PRINT_LABEL.search(vicinity))
             if ebook and not printed:
-                applicability = ObservationApplicability.EDITION
+                applicability = EpubObservationApplicability.EDITION
                 applicability_label = "ebook"
             elif printed and not ebook:
-                applicability = ObservationApplicability.INAPPLICABLE
+                applicability = EpubObservationApplicability.INAPPLICABLE
                 applicability_label = "paperback" if _PAPERBACK_LABEL.search(vicinity) else "hardcover" if _HARDCOVER_LABEL.search(vicinity) else "print"
             else:
-                applicability = ObservationApplicability.UNKNOWN
+                applicability = EpubObservationApplicability.UNKNOWN
                 applicability_label = "unlabelled"
             citation_context: tuple[_Element, int, int] | None = None
             if left_has_labels or right_has_labels:
@@ -2295,7 +2296,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                         context_end,
                     )
                 else:
-                    applicability = ObservationApplicability.UNKNOWN
+                    applicability = EpubObservationApplicability.UNKNOWN
                     applicability_label = "unlabelled"
             compact = _normal(identifier, OpeningField.IDENTIFIER)
             add(
@@ -2307,7 +2308,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
                 applicability_label,
                 citation_context,
             )
-            if applicability is ObservationApplicability.UNKNOWN:
+            if applicability is EpubObservationApplicability.UNKNOWN:
                 warnings.append("identifier_applicability_unknown")
         for (
             field,
@@ -2353,43 +2354,46 @@ class EpubOpeningExtractor:
 
     def extract(
         self,
-        request: LocalEvidenceRequest,
+        request: EpubPackageRequest,
         limits: EpubOpeningLimits,
-        package_report: LocalEvidenceReport,
+        package_report: EpubPackageReport,
+        archive: zipfile.ZipFile | None = None,
     ) -> EpubOpeningReport:
         if (
-            type(request) is not LocalEvidenceRequest
+            type(request) is not EpubPackageRequest
             or type(limits) is not EpubOpeningLimits
-            or type(package_report) is not LocalEvidenceReport
-            or request.capability is not LocalEvidenceCapability.OPENING_MATTER
+            or type(package_report) is not EpubPackageReport
+            or request.capability is not EpubPackageCapability.OPENING_MATTER
             or request.limits != limits.package
-            or package_report.capability is not LocalEvidenceCapability.PACKAGE
+            or package_report.capability is not EpubPackageCapability.PACKAGE
             or package_report.limits != limits.package
             or (
                 package_report.source_fingerprint is not None
                 and package_report.source_fingerprint != request.expected_source
             )
         ):
-            return EpubOpeningReport(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
+            return EpubOpeningReport(EpubInspectionOutcome.INTERNAL_FAILURE, limits)
         if not package_report.succeeded:
             return EpubOpeningReport(package_report.outcome, limits)
-        if package_report.outcome is LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE:
-            return EpubOpeningReport(LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE, limits, request.expected_source)
+        if package_report.outcome is EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE:
+            return EpubOpeningReport(EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE, limits, request.expected_source)
         try:
-            return self._extract_validated(request, limits, package_report)
+            return self._extract_validated(request, limits, package_report, archive)
         except _AggregateRejected as error:
             return EpubOpeningReport(error.outcome, limits)
-        except LocalEvidenceSourceError:
-            return EpubOpeningReport(LocalEvidenceOutcome.UNAVAILABLE_SOURCE, limits)
+        except EpubPackageSourceError:
+            return EpubOpeningReport(EpubInspectionOutcome.UNAVAILABLE_SOURCE, limits)
         except (MemoryError, RecursionError):
-            return EpubOpeningReport(LocalEvidenceOutcome.RESOURCE_LIMIT, limits)
+            return EpubOpeningReport(EpubInspectionOutcome.RESOURCE_LIMIT, limits)
         except Exception:
-            return EpubOpeningReport(LocalEvidenceOutcome.INTERNAL_FAILURE, limits)
+            return EpubOpeningReport(EpubInspectionOutcome.INTERNAL_FAILURE, limits)
 
-    def _extract_validated(self, request: LocalEvidenceRequest, limits: EpubOpeningLimits, package_report: LocalEvidenceReport) -> EpubOpeningReport:
-        with zipfile.ZipFile(_SourceIO(request), "r") as archive:
-            package_lineage = local_file_lineage(request.expected_source)
-            names_by_identity = {local_resource_identity(info.filename): info.filename for info in archive.infolist() if not info.is_dir()}
+    def _extract_validated(self, request: EpubPackageRequest, limits: EpubOpeningLimits, package_report: EpubPackageReport, archive: zipfile.ZipFile | None = None) -> EpubOpeningReport:
+        archive_context = nullcontext(archive) if archive is not None else zipfile.ZipFile(_SourceIO(request), "r")
+        with archive_context as archive:
+            assert archive is not None
+            package_lineage = epub_file_lineage(request.expected_source)
+            names_by_identity = {epub_resource_identity(info.filename): info.filename for info in archive.infolist() if not info.is_dir()}
             (
                 candidates,
                 warnings,
@@ -2418,7 +2422,7 @@ class EpubOpeningExtractor:
                 or text_characters > limits.text_characters_per_selection
                 or nodes > limits.nodes_per_selection
             ):
-                raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+                raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
 
             for candidate in candidates:
                 _check(request)
@@ -2449,12 +2453,12 @@ class EpubOpeningExtractor:
                     expanded += len(data)
                     opened += 1
                     if expanded > limits.expanded_bytes_per_selection:
-                        raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
                     projection = _parse(data, candidate.media_type, limits, request)
                     nodes += projection.work_nodes
                     text_characters += projection.work_text_characters
                     if nodes > limits.nodes_per_selection or text_characters > limits.text_characters_per_selection:
-                        raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
                     if projection.mode is OpeningParseMode.STRICT:
                         strict += 1
                     else:
@@ -2495,7 +2499,7 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
                     code = "selected_resource_limit"
                     resources.append(
                         OpeningResourceResult(
@@ -2514,7 +2518,7 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
                     code = "unsafe_construct"
                     resources.append(
                         OpeningResourceResult(
@@ -2533,7 +2537,7 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
                     code = "unsupported_encoding"
                     resources.append(
                         OpeningResourceResult(
@@ -2552,7 +2556,7 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
                     code = "malformed_selected_resource"
                     resources.append(
                         OpeningResourceResult(
@@ -2570,9 +2574,9 @@ class EpubOpeningExtractor:
                     warnings.append(code)
             unique_warnings = tuple(sorted(set(warnings)))
             if len(unique_warnings) > limits.warnings or len(claims) > limits.facts:
-                raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT)
+                raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
             usage = EpubOpeningUsage(selected, opened, expanded, text_characters, nodes, navigation_links, strict, recovered)
-            outcome = LocalEvidenceOutcome.SUCCESS if claims else LocalEvidenceOutcome.NO_APPLICABLE_EVIDENCE
+            outcome = EpubInspectionOutcome.SUCCESS if claims else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
             try:
                 return EpubOpeningReport(
                     outcome, limits, request.expected_source, tuple(claims),
@@ -2581,7 +2585,7 @@ class EpubOpeningExtractor:
                 )
             except EvidenceValueError as error:
                 if "byte limit" in str(error):
-                    raise _AggregateRejected(LocalEvidenceOutcome.RESOURCE_LIMIT) from None
+                    raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from None
                 raise
 
 

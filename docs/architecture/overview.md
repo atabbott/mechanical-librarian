@@ -170,33 +170,22 @@ bibliographic truth. Providerless report-only operation remains a planned valid
 flow: inventory, local evidence, deterministic no-op and rejection handling,
 bounded proposals, and human review do not require a catalogue provider.
 
-The narrower 0.2 title preview uses the same application-owned seams but F09a
-constructs all three inputs inside a closed synthetic harness: an in-memory
+The narrower 0.2 title preview used the same application-owned seams, with F09a
+constructing all three inputs inside a closed synthetic harness: an in-memory
 Audiobookshelf-shaped title snapshot, exactly one eligible `TITLE` from the real
 F06 child reading an application-generated EPUB, and one candidate from a
-provider-neutral port. F09a supplies a deterministic fake; F09b's separate
-`hardcover-title-proposal-report` substitutes bounded Hardcover for only the
-generated `agree-empty` case and is disabled when its optional secret-file
-reference is omitted. It changes no `config-v1` field. Agreement creates
-at most one `needs_review` proposal whose value is the exact F06
-`normalized_value`; F06 `raw_value` remains evidence/provenance and provider
-evidence only corroborates. A current title field that is present and loaded
-with an empty value is a valid fill-empty case, and a materially different
-current title remains eligible. A missing, unloaded, or unavailable current
-title, equivalence, disagreement, an empty or unusable F06/provider title, or
-another unavailable input records a typed no-proposal result without hiding
-valid local evidence. Immutable versioned sets replay
-identical inputs and supersede changed inputs. F10a's
-`synthetic-title-review-case-report` reads only an already-persisted current
-F09a lineage. It admits one deterministic undecided case from one qualifying
-set, replays without duplication, supersedes for a qualifying successor, and
-retires for a nonqualifying successor without creating an empty case. AI,
-human decisions, covers, rich fields, multi-provider fusion, and writes remain
-outside the preview.
+provider-neutral port. F09a's `synthetic-title-proposal-report`, F09b's
+`hardcover-title-proposal-report`, and F10a's
+`synthetic-title-review-case-report` were retired with that preview boundary;
+the installed CLI rejects all three command names. Their former synthetic
+proposal and case behavior is historical only. Current configured Hardcover
+operation is the F09f `hardcover-identity-report` surface. AI, human decisions,
+covers, rich fields, multi-provider fusion, and writes remain outside the
+preview.
 
-The harness persists only identity-bound `synthetic_preview` sets with derived
-false production applicability and a separate synthetic current pointer. It
-never adds rows to inventory history or current inventory pointers, and it has
+The retired harness persisted only identity-bound `synthetic_preview` sets with
+derived false production applicability and a separate synthetic current pointer.
+It never added rows to inventory history or current inventory pointers, and had
 no review or apply adapter. Connecting a configured media item and current live
 snapshot to local evidence is a later application use case, not an implicit
 adapter hidden inside F09a.

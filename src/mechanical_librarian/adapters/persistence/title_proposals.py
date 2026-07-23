@@ -15,14 +15,13 @@ from mechanical_librarian.application.live_title_proposals import (
     LiveSourceEvidence,
     LiveSourceState,
     LiveTitleSourceReader,
+    ProposalPersistence,
     mount_configuration_set_digest,
 )
-from mechanical_librarian.application.title_proposals import ProposalPersistence
 from mechanical_librarian.domain.epub_opening_evidence import EpubEvidenceLocator
 from mechanical_librarian.domain.title_proposals import (
     LiveTitleProposalSet,
     ProposalExecutionMode,
-    TitleProposalSet,
     TitleProposalValueError,
 )
 
@@ -31,7 +30,6 @@ class TitleProposalPersistenceError(RuntimeError):
     """Proposal history is unavailable, corrupt, or inconsistent."""
 
 
-_MAX_SYNTHETIC_LINEAGE_REVISIONS = 2
 _MAX_LIVE_LINEAGE_REVISIONS = 1_000
 
 
@@ -56,29 +54,6 @@ class SQLiteTitleProposalRepository:
         self._provider_reader = provider_reader
         self._publication_clock = publication_clock
         self._provider_configuration_is_current = provider_configuration_is_current
-
-    def current(self, lineage: str) -> TitleProposalSet | None:
-        try:
-            with _read_transaction(self._connection):
-                _history, current = self._validate_lineage(lineage)
-            if current is not None and type(current) is not TitleProposalSet:
-                raise TitleProposalPersistenceError("synthetic proposal lineage has a live mode")
-            return current
-        except TitleProposalPersistenceError:
-            raise
-        except (sqlite3.Error, TypeError, ValueError, RecursionError):
-            raise TitleProposalPersistenceError("proposal state could not be read") from None
-
-    def store(self, proposal_set: TitleProposalSet) -> ProposalPersistence:
-        if type(proposal_set) is not TitleProposalSet:
-            raise TitleProposalPersistenceError("proposal publication input is invalid")
-        try:
-            with _transaction(self._connection):
-                return self._store(proposal_set)
-        except TitleProposalPersistenceError:
-            raise
-        except (sqlite3.Error, TitleProposalValueError, TypeError, ValueError, RecursionError):
-            raise TitleProposalPersistenceError("proposal publication failed safely") from None
 
     def current_live(self, lineage: str) -> LiveTitleProposalSet | None:
         try:
@@ -228,9 +203,7 @@ class SQLiteTitleProposalRepository:
             raise TitleProposalPersistenceError("live proposal source is ambiguous")
         return ready[0] if ready else sources[0]
 
-    def _store(
-        self, proposal_set: TitleProposalSet | LiveTitleProposalSet
-    ) -> ProposalPersistence:
+    def _store(self, proposal_set: LiveTitleProposalSet) -> ProposalPersistence:
         canonical = proposal_set.to_json()
         history, current = self._validate_lineage(proposal_set.lineage)
         by_id = self._row_for_id(proposal_set.set_id)
@@ -245,7 +218,7 @@ class SQLiteTitleProposalRepository:
             (proposal_set.lineage, proposal_set.lineage_revision),
         ).fetchone()
         rows = [row for row in (by_id, by_digest, by_revision) if row is not None]
-        existing: TitleProposalSet | LiveTitleProposalSet | None = None
+        existing: LiveTitleProposalSet | None = None
         for row in rows:
             hydrated = _hydrate(row)
             if existing is not None and hydrated != existing:
@@ -273,7 +246,7 @@ class SQLiteTitleProposalRepository:
                 raise TitleProposalPersistenceError("proposal revision is not the exact successor")
             if proposal_set.previous_set_id != current.set_id:
                 raise TitleProposalPersistenceError("proposal predecessor does not match current state")
-            if proposal_set.lineage != current.lineage or type(current) is not type(proposal_set):
+            if proposal_set.lineage != current.lineage:
                 raise TitleProposalPersistenceError("proposal supersession crosses lineages")
 
         self._connection.execute(
@@ -330,10 +303,7 @@ class SQLiteTitleProposalRepository:
 
     def _validate_lineage(
         self, lineage: str
-    ) -> tuple[
-        tuple[TitleProposalSet | LiveTitleProposalSet, ...],
-        TitleProposalSet | LiveTitleProposalSet | None,
-    ]:
+    ) -> tuple[tuple[LiveTitleProposalSet, ...], LiveTitleProposalSet | None]:
         if (
             type(lineage) is not str
             or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", lineage) is None
@@ -358,12 +328,7 @@ class SQLiteTitleProposalRepository:
         if len(pointers) != 1:
             raise TitleProposalPersistenceError("proposal lineage requires one current pointer")
         history = tuple(_hydrate(row) for row in rows)
-        revision_bound = (
-            _MAX_SYNTHETIC_LINEAGE_REVISIONS
-            if type(history[0]) is TitleProposalSet
-            else _MAX_LIVE_LINEAGE_REVISIONS
-        )
-        if len(history) > revision_bound:
+        if len(history) > _MAX_LIVE_LINEAGE_REVISIONS:
             raise TitleProposalPersistenceError("proposal lineage exceeds its revision bound")
         expected_revisions = tuple(range(1, len(history) + 1))
         if tuple(item.lineage_revision for item in history) != expected_revisions:
@@ -380,15 +345,12 @@ class SQLiteTitleProposalRepository:
         return history, history[-1]
 
 
-def _hydrate(row: tuple[object, ...]) -> TitleProposalSet | LiveTitleProposalSet:
+def _hydrate(row: tuple[object, ...]) -> LiveTitleProposalSet:
     if len(row) != 7 or type(row[6]) is not str:
         raise TitleProposalPersistenceError("proposal history row is malformed")
-    mode = ProposalExecutionMode(str(row[5]))
-    proposal_set = (
-        TitleProposalSet.from_json(row[6])
-        if mode is ProposalExecutionMode.SYNTHETIC_PREVIEW
-        else LiveTitleProposalSet.from_json(row[6])
-    )
+    if row[5] != ProposalExecutionMode.PRODUCTION_REPORT_ONLY.value:
+        raise TitleProposalPersistenceError("proposal history has a retired execution mode")
+    proposal_set = LiveTitleProposalSet.from_json(row[6])
     if (
         row[0] != proposal_set.set_id
         or row[1] != proposal_set.identity_digest

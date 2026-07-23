@@ -44,9 +44,8 @@ the complete schema-6 prefix, and F10a publication failure preserves both the
 already-committed F09a proposal input and the prior authoritative case state.
 Downgrade is restore-only: stop the newer process, restore the verified copy,
 and never delete the new tables or start an older binary against schema 7.
-After restore, verify integrity with `state-check`, replay the applicable F09a
-proposal scenario, and inspect it with `synthetic-title-review-case-report`
-before resuming report-only operation.
+After restore, verify integrity with `state-check` before resuming report-only
+operation.
 
 Before the forward-only F07b schema-8 migration of important state, retain and
 verify a pre-schema-8 curator-data copy. Migration 8 is additive, but the new
@@ -55,8 +54,10 @@ Interruption rolls the complete migration transaction back to schema 7. A
 failed evidence publication leaves the prior current pointer and immutable
 history unchanged. Downgrade is restore-only: stop the newer process, restore
 the verified copy, run `state-check`, run a new read-only inventory
-reconciliation, confirm selectors with `inventory-inspect`, and execute one
-`epub-opening-evidence` canary against isolated fixtures.
+reconciliation, confirm selectors with `inventory-inspect`, and run the
+retained report-only `live-title-proposal-report` against isolated fixtures.
+Opening extraction qualification remains an internal, fixture-only boundary;
+it is not an operator command.
 
 Before the forward-only F09f schema-9, schema-10, and schema-11 migrations of important
 state, stop identity workers and retain a verified pre-F09f curator-data copy.

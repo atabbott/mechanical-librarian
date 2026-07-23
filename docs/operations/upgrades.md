@@ -101,9 +101,8 @@ partial proposal set. A clean retry applies migration 6 once and identical
 scenario replay reuses history. Downgrade requires stopping the service and
 restoring a verified pre-F09a schema-5 state copy; an older binary must not open
 schema-6 state, and operators must not delete preview tables or edit
-`schema_migrations`. After upgrade or restore, run `state-check` and one
-[`synthetic-title-proposal-report`](synthetic-title-proposal-report.md) scenario
-against non-production state before resuming normal operation.
+`schema_migrations`. After upgrade or restore, run `state-check` before
+resuming normal operation.
 
 The F10a review-case migration is additive and forward-only from genuine
 schema 6. Migration 7 preserves all proposal, inventory, poll, job, workflow,
@@ -117,9 +116,7 @@ likewise roll the F10a transaction back without changing the already-committed
 F09a input. Before upgrading important state, retain a verified pre-schema-7
 copy. Downgrade requires stopping the service and restoring that copy; an older
 binary must not open schema-7 state, and operators must not delete review tables
-or edit `schema_migrations`. After upgrade or restore, run `state-check`, the
-applicable F09a proposal scenario, and
-[`synthetic-title-review-case-report`](synthetic-title-review-case-report.md)
+or edit `schema_migrations`. After upgrade or restore, run `state-check`
 against non-production state.
 
 The F07b evidence migration is additive and forward-only from every genuine
@@ -132,8 +129,9 @@ reconciliation. Migration interruption rolls all schema-8 objects and its
 version row back together. Before upgrading important state, retain a verified
 pre-schema-8 copy. Downgrade requires restoring that copy; never delete the new
 tables or edit `schema_migrations`. After upgrade, run `state-check`,
-`inventory-inspect`, and one isolated `epub-opening-evidence` execution plus
-restart reuse.
+`inventory-inspect`, and the retained report-only `live-title-proposal-report`
+against isolated fixtures. EPUB opening extraction qualification remains an
+internal fixture-only boundary, not an operator command.
 
 The F09f durable-identity migration is additive and forward-only from every
 genuine schema prefix through schema 8. Migration 9 adds bounded generations,
