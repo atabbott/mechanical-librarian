@@ -16,9 +16,17 @@ from mechanical_librarian.application.metadata_report import (
     InspectionResult,
     ProviderBinding,
     TargetFile,
+    TargetCover,
     TargetSnapshot,
     UnsupportedMediaError,
     MetadataReportError,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -98,11 +106,84 @@ class _Repository:
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
         raise CurrentnessError("persisted current report is unavailable")
 
+    def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
+        return None
+
     def close(self) -> None:
         self.closed = True
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_final_currentness_rejects_absent_abs_source_that_becomes_bytes(self) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        cover = TargetCover("descriptor", "/cover", "item-1")
+        class Target(_Target):
+            def read_cover(self, _value: TargetCover, *, deadline=None) -> bytes:
+                return b"appeared-after-observation"
+        target = Target([
+            TargetSnapshot("ebook", "Title", (selected,), cover),
+            TargetSnapshot("ebook", "Title", (selected,), cover),
+        ])
+        class Observer:
+            def observe(self, *_args, **_kwargs):
+                return (CoverSource(
+                    cover_source_id(CoverSourceKind.ABS, "descriptor"),
+                    CoverSourceKind.ABS,
+                    CoverSourceState.ABSENT,
+                ),)
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=target, inspector=_Inspector(InspectionResult("c" * 64, ())),
+            repository_factory=lambda: repository, providers=(),
+            connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
+            library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()),
+            mount=MediaMountConfiguration("books", "/media", "/library", True),
+            limits=ReportLimits(), cover_observer=Observer(),
+        )
+        with self.assertRaises(CurrentnessError):
+            service.run("item-1", 0)
+        self.assertEqual({}, repository.values)
+
+    def test_final_currentness_rejects_same_path_abs_byte_drift(self) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        cover = TargetCover("descriptor", "/cover", "item-1")
+        snapshots = [
+            TargetSnapshot("ebook", "Title", (selected,), cover),
+            TargetSnapshot("ebook", "Title", (selected,), cover),
+        ]
+        class Target(_Target):
+            def read_cover(self, value: TargetCover, *, deadline=None) -> bytes:
+                if value != cover:
+                    raise AssertionError("unexpected cover")
+                return b"changed-after-staging"
+        target = Target(snapshots)
+        artifact = CoverArtifact.create(b"staged-original", b"preview", "image/png", 1, 1)
+        class Observer:
+            def observe(self, *_args, **_kwargs):
+                return (
+                    CoverSource(
+                        cover_source_id(CoverSourceKind.ABS, "descriptor"),
+                        CoverSourceKind.ABS,
+                        CoverSourceState.RETRIEVED,
+                        artifact,
+                    ),
+                )
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=target,
+            inspector=_Inspector(InspectionResult("c" * 64, ())),
+            repository_factory=lambda: repository,
+            providers=(),
+            connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
+            library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()),
+            mount=MediaMountConfiguration("books", "/media", "/library", True),
+            limits=ReportLimits(),
+            cover_observer=Observer(),
+        )
+        with self.assertRaises(CurrentnessError):
+            service.run("item-1", 0)
+        self.assertEqual({}, repository.values)
+
     def test_repository_closes_when_inspection_or_provider_validation_fails(self) -> None:
         selected = TargetFile("a" * 64, "book.epub", "epub")
         repository = _Repository()
@@ -675,7 +756,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(),
         )
         arguments = [
-            "metadata-report", "--config", "/private/config.json", "--database", "/private/reports.sqlite",
+            "metadata-report", "--config", "/private/config.json", "--database", "/private/reports.sqlite", "--artifact-store", "/private/artifacts",
             "--connection", "primary", "--library", "ebooks", "--item", "item-1", "--file-index", "0",
         ]
         output = io.StringIO()
@@ -689,6 +770,13 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(main(arguments, runner=lambda *args: (_ for _ in ()).throw(RuntimeError("token=/private/secret")), stdout=output, stderr=errors), 1)
         self.assertEqual(output.getvalue(), "")
         self.assertEqual(errors.getvalue(), "Metadata report failed safely.\n")
+
+    def test_cli_rejects_missing_artifact_store_before_runner(self) -> None:
+        arguments = [
+            "metadata-report", "--config", "config", "--database", "reports", "--connection", "primary",
+            "--library", "ebooks", "--item", "item-1", "--file-index", "0",
+        ]
+        self.assertEqual(2, main(arguments, runner=lambda *_: (_ for _ in ()).throw(AssertionError()), stdout=io.StringIO(), stderr=io.StringIO()))
 
 
 if __name__ == "__main__":

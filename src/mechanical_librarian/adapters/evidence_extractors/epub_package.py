@@ -1657,7 +1657,7 @@ def _package_report(
             "cover-image" in properties
             and identifier in local_manifest_ids
             and media_type
-            in {"image/gif", "image/jpeg", "image/png", "image/svg+xml"}
+            in {"image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp"}
         )
         if "nav" in properties and not valid_navigation:
             warnings.append(EpubPackageWarning("invalid_navigation_declaration"))
@@ -1919,7 +1919,7 @@ def _package_report(
                 not cover_id
                 or cover_id not in local_manifest_ids
                 or manifest_media_types.get(cover_id)
-                not in {"image/gif", "image/jpeg", "image/png", "image/svg+xml"}
+                not in {"image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp"}
             ):
                 warnings.append(EpubPackageWarning("invalid_cover_declaration"))
                 continue

@@ -6,6 +6,7 @@ The 0.4 runtime supports one synchronous report-only operation:
 mechanical-librarian metadata-report \
   --config /run/secrets/mechanical-librarian.json \
   --database /data/reports.sqlite \
+  --artifact-store /data/cover-artifacts \
   --connection primary \
   --library ebooks \
   --item ITEM_ID \
@@ -37,6 +38,21 @@ one newline. On failure stdout is empty, stderr contains one fixed bounded
 diagnostic, and the exit status is nonzero. Diagnostics never include paths,
 credentials, target values, provider bodies, or EPUB text.
 
+Cover evidence is report-only. Where valid cover bytes are available, the report
+contains a source outcome and a private artifact reference. The only supported
+offline read is a report-bound preview:
+
+```text
+mechanical-librarian metadata-report-cover-preview \
+  --database /data/reports.sqlite --artifact-store /data/cover-artifacts \
+  --report-id report_<64-lowercase-hex-characters> \
+  --artifact-id cover_<64-lowercase-hex-characters> \
+  --preview-variant preview-320x480-rgba-png-v1
+```
+
+It writes raw preview bytes only to non-interactive stdout. It never performs
+target, provider, or remote-cover transport and it cannot retrieve originals.
+
 ## Preconditions
 
 - The database path is absent for the first invocation or already contains the
@@ -48,6 +64,9 @@ credentials, target values, provider bodies, or EPUB text.
 - On supported Linux deployments, the database parent directory is owned by
   the process user and grants no group or other permissions. The configured
   database basename has no `-journal`, `-wal`, or `-shm` recovery sidecar.
+- The artifact-store path already exists as a directory owned by the process
+  user and grants no group or other permissions. The command does not create
+  this directory.
 - Every absolute parent-path component is a real directory rather than a
   symbolic link. Its directory entry is protected by root/process ownership
   and non-writable permissions, or by sticky-directory ownership.
@@ -109,8 +128,10 @@ reorder evidence. Unsafe and oversized sentinels remain non-canonical evidence.
 
 The credential-bearing parent combines those facts with the exact current
 target title. Every referenced, enabled Hardcover connection makes at most one
-fresh request. Disabled references produce one `disabled` observation without
-secret access or egress. Unreferenced providers are absent.
+fresh credential-bearing GraphQL metadata request. For admitted candidate cover
+descriptors, it may then make up to five separately credential-free bounded
+cover request chains. Disabled references produce one `disabled` observation
+without secret access or egress. Unreferenced providers are absent.
 
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order.

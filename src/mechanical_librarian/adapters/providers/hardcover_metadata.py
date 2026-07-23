@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import time
 import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -26,21 +28,25 @@ MAX_RESPONSE_BYTES = 262_144
 _QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
     f"{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
-    "{id book_id isbn_10 isbn_13 asin title subtitle release_date publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
+    "{id book_id isbn_10 isbn_13 asin title subtitle release_date image{url} publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
     "books:books(where:{editions:{_or:[{isbn_13:{_in:$isbns}},{isbn_10:{_in:$isbns}}]}},order_by:{id:asc},limit:6)"
     "{id title description contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag{id tag}}}}}"
 )
 
 
 class HardcoverMetadataProvider:
-    def __init__(self, name: str, client: httpx.Client, maximum_bytes: int) -> None:
+    def __init__(self, name: str, client: httpx.Client, maximum_bytes: int, timeout_seconds: float = 5.0) -> None:
         if type(maximum_bytes) is not int or isinstance(maximum_bytes, bool) or maximum_bytes < 1:
             raise ValueError("provider response bound is invalid")
+        if type(timeout_seconds) not in {int, float} or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 60:
+            raise ValueError("provider timeout is invalid")
         self._name, self._client = name, client
         self._maximum_bytes = min(maximum_bytes, MAX_RESPONSE_BYTES)
+        self._timeout_seconds = float(timeout_seconds)
         self._called = False
+        self.cover_descriptors: tuple[tuple[str, str | None], ...] = ()
 
-    def observe(self, local_claims: tuple[LocalClaim, ...]) -> ProviderObservation:
+    def observe(self, local_claims: tuple[LocalClaim, ...], *, deadline: float | None = None) -> ProviderObservation:
         if self._called:
             return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE)
         self._called = True
@@ -51,7 +57,10 @@ class HardcoverMetadataProvider:
         references = tuple(sorted(claim.reference for claim in usable))
         body = {"operationName": "MetadataEvidenceByIsbn", "query": _QUERY, "variables": {"isbns": sorted({claim.canonical for claim in usable if claim.canonical is not None})}}
         try:
-            with self._client, self._client.stream("POST", HARDCOVER_URL, content=canonical_json(body).encode(), headers={"Accept": "application/json", "Content-Type": "application/json", "Accept-Encoding": "identity"}) as response:
+            remaining = self._timeout_seconds if deadline is None else min(self._timeout_seconds, deadline - time.monotonic())
+            if remaining <= 0:
+                return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
+            with self._client, self._client.stream("POST", HARDCOVER_URL, content=canonical_json(body).encode(), headers={"Accept": "application/json", "Content-Type": "application/json", "Accept-Encoding": "identity"}, timeout=remaining) as response:
                 if response.status_code == 401:
                     return ProviderObservation(self._name, ProviderStatus.AUTHENTICATION, references)
                 if response.status_code == 403:
@@ -62,7 +71,9 @@ class HardcoverMetadataProvider:
                     return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
                 if response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
                     return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
-                payload = _body(response, self._maximum_bytes)
+                if response.headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}:
+                    return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
+                payload = _body(response, self._maximum_bytes, deadline=deadline)
         except _ResponseOversized:
             return ProviderObservation(self._name, ProviderStatus.OVERSIZED, references)
         except (httpx.HTTPError, OSError, ValueError):
@@ -73,13 +84,19 @@ class HardcoverMetadataProvider:
             return ProviderObservation(self._name, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, references)
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
             return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
+        try:
+            self.cover_descriptors = _parse_cover_descriptors(payload)
+        except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
+            self.cover_descriptors = ()
         return ProviderObservation(self._name, ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH, references, candidates)
 
 
-def _body(response: httpx.Response, maximum: int) -> bytes:
+def _body(response: httpx.Response, maximum: int, *, deadline: float | None = None) -> bytes:
     chunks: list[bytes] = []
     size = 0
     for chunk in response.iter_bytes():
+        if deadline is not None and time.monotonic() >= deadline:
+            raise httpx.ReadTimeout("provider deadline elapsed")
         size += len(chunk)
         if size > maximum:
             raise _ResponseOversized
@@ -102,7 +119,9 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
     candidates: list[ProviderCandidate] = []
     used: set[int] = set()
     for row_value in rows:
-        row = _closed(row_value, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "publisher", "language", "contributions"})
+        if type(row_value) is dict and "image" not in row_value:
+            row_value = {**row_value, "image": None}
+        row = _closed(row_value, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
         edition_id, book_id = _identifier(row["id"]), _identifier(row["book_id"])
         if book_id not in indexed:
             raise ValueError("provider unreferenced work")
@@ -114,6 +133,25 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
     if used != set(indexed) or len({candidate.identity for candidate in candidates}) != len(candidates):
         raise ValueError("provider join invalid")
     return tuple(sorted(candidates, key=lambda candidate: candidate.identity))
+
+
+def _parse_cover_descriptors(payload: bytes) -> tuple[tuple[str, str | None], ...]:
+    source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
+    rows = _closed(_closed(source, {"data"})["data"], {"editions", "books"})["editions"]
+    if type(rows) is not list or len(rows) > MAX_CANDIDATES:
+        raise ValueError("provider rows invalid")
+    descriptors: list[tuple[str, str | None]] = []
+    for row_value in rows:
+        if type(row_value) is dict and "image" not in row_value:
+            row_value = {**row_value, "image": None}
+        row = _closed(row_value, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
+        image = _closed_or_none(row["image"], {"url"})
+        if image is not None and (type(image["url"]) is not str or not image["url"] or len(image["url"]) > 2048):
+            raise ValueError("provider image invalid")
+        url = None if image is None else image["url"]
+        source_identity = f"{row['id']}:{url if url is not None else 'absent'}"
+        descriptors.append(("hardcover_" + hashlib.sha256(source_identity.encode()).hexdigest(), url))
+    return tuple(descriptors)
 
 
 def _edition_claims(provider: str, identity: str, row: dict[str, Any], local: tuple[LocalClaim, ...]) -> list[ProviderClaim]:

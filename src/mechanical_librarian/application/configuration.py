@@ -48,15 +48,18 @@ class TargetConnectionConfiguration:
 class ProviderConnectionConfiguration:
     name: str
     enabled: bool
+    cover_enabled: bool
     secret_file: str | None
     adapter: str = "hardcover"
 
     def __post_init__(self) -> None:
         _name(self.name, "provider connection name")
-        if self.adapter != "hardcover" or type(self.enabled) is not bool:
+        if self.adapter != "hardcover" or type(self.enabled) is not bool or type(self.cover_enabled) is not bool:
             raise ConfigurationError("provider connection is invalid")
         if self.enabled != (self.secret_file is not None):
             raise ConfigurationError("provider enablement and secret configuration disagree")
+        if self.cover_enabled and not self.enabled:
+            raise ConfigurationError("cover enablement requires provider enablement")
         if self.secret_file is not None:
             _absolute_path(self.secret_file, "provider secret file")
 
@@ -146,11 +149,17 @@ class ApplicationConfiguration:
         connection_names = {value.name for value in self.connections}
         mount_names = {value.name for value in self.mounts}
         provider_names = {value.name for value in self.providers}
+        providers_by_name = {value.name: value for value in self.providers}
         for library in self.libraries:
             if library.connection not in connection_names or (library.mount is not None and library.mount not in mount_names) or not set(library.provider_connections).issubset(provider_names):
                 raise ConfigurationError("library references are invalid")
             if library.media_kind == "ebook" and library.mount is None:
                 raise ConfigurationError("ebook library requires a read-only media mount")
+            if sum(
+                providers_by_name[name].cover_enabled
+                for name in library.provider_connections
+            ) > 1:
+                raise ConfigurationError("library permits only one cover-enabled provider")
 
     def __repr__(self) -> str:
         return "ApplicationConfiguration(<redacted>)"

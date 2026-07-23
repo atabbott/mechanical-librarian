@@ -1,4 +1,4 @@
-"""Clean-state, two-table SQLite metadata report repository."""
+"""Clean-state, exact three-table SQLite metadata report repository."""
 
 from __future__ import annotations
 
@@ -13,7 +13,11 @@ from pathlib import Path
 from urllib.parse import quote
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.domain.metadata_report import MetadataReport, REPORT_SCHEMA, ReportValueError
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    REPORT_SCHEMA,
+    ReportValueError,
+)
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -27,7 +31,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v2'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v3'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -38,6 +42,23 @@ _CURRENT_SQL = (
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
     "PRIMARY KEY (connection_name, library_name, item_id, file_identity))"
 )
+_COVER_REFERENCES_SQL = (
+    "CREATE TABLE metadata_report_cover_references ("
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "source_id TEXT NOT NULL, artifact_id TEXT, preview_digest TEXT, preview_variant TEXT, "
+    "PRIMARY KEY (report_id, source_id), "
+    "CHECK ((artifact_id IS NULL AND preview_digest IS NULL AND preview_variant IS NULL) OR "
+    "(length(artifact_id) = 70 AND artifact_id GLOB 'cover_[0-9a-f]*' "
+    "AND length(preview_digest) = 64 AND preview_digest NOT GLOB '*[^0-9a-f]*' AND preview_variant = 'preview-320x480-rgba-png-v1')))"
+)
+_COVER_ARTIFACT_INDEX_SQL = (
+    "CREATE INDEX metadata_report_cover_references_artifact_id "
+    "ON metadata_report_cover_references(artifact_id) WHERE artifact_id IS NOT NULL"
+)
+_COVER_PREVIEW_INDEX_SQL = (
+    "CREATE INDEX metadata_report_cover_references_preview_digest "
+    "ON metadata_report_cover_references(preview_digest) WHERE preview_digest IS NOT NULL"
+)
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
     "BEGIN SELECT RAISE(ABORT, 'metadata reports are append-only'); END"
@@ -46,9 +67,14 @@ _NO_DELETE_SQL = (
     "CREATE TRIGGER metadata_reports_no_delete BEFORE DELETE ON metadata_reports "
     "BEGIN SELECT RAISE(ABORT, 'metadata reports are append-only'); END"
 )
-_UNSET = object()
-
-
+_COVER_NO_UPDATE_SQL = (
+    "CREATE TRIGGER metadata_report_cover_references_no_update BEFORE UPDATE ON metadata_report_cover_references "
+    "BEGIN SELECT RAISE(ABORT, 'metadata report cover references are append-only'); END"
+)
+_COVER_NO_DELETE_SQL = (
+    "CREATE TRIGGER metadata_report_cover_references_no_delete BEFORE DELETE ON metadata_report_cover_references "
+    "BEGIN SELECT RAISE(ABORT, 'metadata report cover references are append-only'); END"
+)
 class _LinuxDirectoryChain:
     def __init__(
         self,
@@ -386,7 +412,7 @@ class SQLiteMetadataReportRepository:
         self._connection = connection
         self._binding = binding
 
-    def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None | object = _UNSET) -> str:
+    def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None = None) -> str:
         if type(report) is not MetadataReport or not callable(currentness):
             raise MetadataReportError("report publication failed")
         document = report.to_json()
@@ -404,10 +430,10 @@ class SQLiteMetadataReportRepository:
         )
         try:
             self._connection.execute("BEGIN IMMEDIATE")
-            if currentness() is not True:
-                raise MetadataReportError("target or media changed")
             if self._binding is not None:
                 self._binding.require_current()
+            if currentness() is not True:
+                raise MetadataReportError("target or media changed")
             current = self._connection.execute(
                 "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,r.file_identity,r.content_digest,r.schema_version,r.document_digest,r.document FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
                 values[1:5],
@@ -417,9 +443,12 @@ class SQLiteMetadataReportRepository:
                 persisted = MetadataReport.from_json(document)
                 if (persisted.target.connection, persisted.target.library, persisted.target.item, persisted.file.identity) != values[1:5]:
                     raise MetadataReportError("persisted current report scope disagrees")
-                if expected_current is not _UNSET and persisted.report_id != expected_current:
+                if (
+                    persisted.report_id != report.report_id
+                    and persisted.report_id != expected_current
+                ):
                     raise MetadataReportError("current report changed")
-            elif expected_current is not _UNSET and expected_current is not None:
+            elif expected_current is not None:
                 raise MetadataReportError("current report changed")
             existing = self._connection.execute(
                 "SELECT connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
@@ -430,8 +459,30 @@ class SQLiteMetadataReportRepository:
                     "INSERT INTO metadata_reports(report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document) VALUES(?,?,?,?,?,?,?,?,?)",
                     values,
                 )
-            elif existing != values[1:]:
-                raise MetadataReportError("persisted report identity conflicts")
+                for source in report.cover_sources:
+                    self._connection.execute(
+                    "INSERT INTO metadata_report_cover_references(report_id,source_id,artifact_id,preview_digest,preview_variant) VALUES(?,?,?,?,?)",
+                        (
+                            report.report_id,
+                            source.source_id,
+                            None if source.artifact is None else source.artifact.artifact_id,
+                            None if source.artifact is None else source.artifact.preview_digest,
+                            None if source.artifact is None else source.artifact.preview_variant,
+                        ),
+                    )
+            else:
+                if existing != values[1:]:
+                    raise MetadataReportError("persisted report identity conflicts")
+                expected_references = tuple(
+                    (source.source_id, None if source.artifact is None else source.artifact.artifact_id, None if source.artifact is None else source.artifact.preview_digest, None if source.artifact is None else source.artifact.preview_variant)
+                    for source in report.cover_sources
+                )
+                actual_references = tuple(self._connection.execute(
+                    "SELECT source_id,artifact_id,preview_digest,preview_variant FROM metadata_report_cover_references WHERE report_id=? ORDER BY source_id",
+                    (report.report_id,),
+                ))
+                if tuple(sorted(expected_references)) != actual_references:
+                    raise MetadataReportError("persisted report cover references conflict")
             self._connection.execute(
                 "INSERT INTO current_metadata_reports(connection_name,library_name,item_id,file_identity,report_id) VALUES(?,?,?,?,?) "
                 "ON CONFLICT(connection_name,library_name,item_id,file_identity) DO UPDATE SET report_id=excluded.report_id",
@@ -459,13 +510,20 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if row is None:
                 raise MetadataReportError("persisted report is unavailable")
-            return _validate_report_row(row)
+            document = _validate_report_row(row)
+            return document
         except (sqlite3.Error, ReportValueError, UnicodeError) as error:
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("persisted report is invalid") from error
 
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
+        document = self.current_optional(connection, library, item, file_identity)
+        if document is None:
+            raise MetadataReportError("persisted current report is unavailable")
+        return document
+
+    def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
         try:
             row = self._connection.execute(
                 "SELECT c.report_id,r.schema_version,r.connection_name,r.library_name,r.item_id,r.file_identity FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
@@ -473,8 +531,10 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
         except sqlite3.Error as error:
             raise MetadataReportError("persisted current report is invalid") from error
-        if row is None or type(row[0]) is not str:
-            raise MetadataReportError("persisted current report is unavailable")
+        if row is None:
+            return None
+        if type(row[0]) is not str:
+            raise MetadataReportError("persisted current report is invalid")
         document = self.get(row[0])
         try:
             report = MetadataReport.from_json(document)
@@ -488,6 +548,67 @@ class SQLiteMetadataReportRepository:
         ):
             raise MetadataReportError("persisted current report scope disagrees")
         return document
+
+    def preview_digest(self, report_id: str, artifact_id: str, preview_variant: str) -> str:
+        """Return only a preview explicitly referenced by one exact report."""
+        if type(report_id) is not str or type(artifact_id) is not str or preview_variant != "preview-320x480-rgba-png-v1":
+            raise MetadataReportError("persisted cover is unavailable")
+        try:
+            row = self._connection.execute(
+                "SELECT c.preview_digest,r.document FROM metadata_report_cover_references c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.report_id=? AND c.artifact_id=? AND c.preview_variant=?",
+                (report_id, artifact_id, preview_variant),
+            ).fetchone()
+            if row is None or len(row) != 2 or type(row[0]) is not str or type(row[1]) is not str:
+                raise MetadataReportError("persisted cover is unavailable")
+            report = MetadataReport.from_json(self.get(report_id))
+            if not any(source.artifact is not None and source.artifact.artifact_id == artifact_id and source.artifact.preview_variant == preview_variant and source.artifact.preview_digest == row[0] for source in report.cover_sources):
+                raise MetadataReportError("persisted cover is unavailable")
+            return row[0]
+        except MetadataReportError:
+            raise
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted cover is unavailable") from error
+
+    def artifact_is_referenced(self, digest: str) -> bool:
+        """Check one cleanup candidate without semantically auditing history."""
+        if (
+            type(digest) is not str
+            or len(digest) != 64
+            or any(value not in "0123456789abcdef" for value in digest)
+        ):
+            raise MetadataReportError("persisted cover references are invalid")
+        try:
+            row = self._connection.execute(
+                "SELECT 1 FROM metadata_report_cover_references WHERE artifact_id=? OR preview_digest=? LIMIT 1",
+                ("cover_" + digest, digest),
+            ).fetchone()
+            if row is not None:
+                return True
+            documents = tuple(self._connection.execute(
+                "SELECT report_id,document FROM metadata_reports WHERE document LIKE ? ORDER BY report_id",
+                ("%" + digest + "%",),
+            ))
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted cover references are invalid") from error
+        for report_id, document in documents:
+            if type(report_id) is not str or type(document) is not str:
+                raise MetadataReportError("persisted cover references are invalid")
+            try:
+                report = MetadataReport.from_json(document)
+            except (ReportValueError, TypeError) as error:
+                raise MetadataReportError("persisted cover references are invalid") from error
+            if report.report_id != report_id:
+                raise MetadataReportError("persisted cover references are invalid")
+            if any(
+                source.artifact is not None
+                and digest in {
+                    source.artifact.original_digest,
+                    source.artifact.preview_digest,
+                }
+                for source in report.cover_sources
+            ):
+                raise MetadataReportError("persisted cover references are invalid")
+        return False
 
     def close(self) -> None:
         try:
@@ -556,7 +677,12 @@ def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportR
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(_REPORTS_SQL)
             connection.execute(_CURRENT_SQL)
+            connection.execute(_COVER_REFERENCES_SQL)
+            connection.execute(_COVER_ARTIFACT_INDEX_SQL)
+            connection.execute(_COVER_PREVIEW_INDEX_SQL)
             connection.execute(_NO_UPDATE_SQL)
+            connection.execute(_COVER_NO_UPDATE_SQL)
+            connection.execute(_COVER_NO_DELETE_SQL)
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
         _validate_schema(connection)
@@ -819,7 +945,21 @@ def _unlink_created(path: Path, expected: tuple[int, int]) -> None:
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
     objects = connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
-    expected_objects = sorted((("index", "sqlite_autoindex_current_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_2", None), ("table", "current_metadata_reports", _CURRENT_SQL), ("table", "metadata_reports", _REPORTS_SQL), ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL), ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL)))
+    expected_objects = sorted((
+        ("index", "sqlite_autoindex_current_metadata_reports_1", None),
+        ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
+        ("index", "metadata_report_cover_references_artifact_id", _COVER_ARTIFACT_INDEX_SQL),
+        ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
+        ("index", "sqlite_autoindex_metadata_reports_1", None),
+        ("index", "sqlite_autoindex_metadata_reports_2", None),
+        ("table", "current_metadata_reports", _CURRENT_SQL),
+        ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
+        ("table", "metadata_reports", _REPORTS_SQL),
+        ("trigger", "metadata_report_cover_references_no_delete", _COVER_NO_DELETE_SQL),
+        ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL),
+        ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
+        ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
+    ))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
 

@@ -33,8 +33,9 @@ network, matching, persistence, and currentness authority. The provider adapter
 selects only the ISBN inputs supported by its fixed one-request operation and
 retains every valid candidate without ranking.
 
-SQLite stores immutable canonical documents in `metadata_reports` and one
-separate pointer per target/file scope in `current_metadata_reports`. Report
+SQLite stores immutable canonical documents in `metadata_reports`, one separate
+pointer per target/file scope in `current_metadata_reports`, and immutable
+report-bound cover references in `metadata_report_cover_references`. Report
 insert and pointer advance share one transaction. The sole baseline uses
 rollback-journal `DELETE` mode. Each 0.5 increment recognizes only an absent
 database or its own exact current schema. Prior and intermediate schemas are

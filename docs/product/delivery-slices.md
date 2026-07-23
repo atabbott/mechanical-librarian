@@ -278,8 +278,8 @@ proposal gate with the neutral evidence-report contract.
 | Activation | #197 | Sole runtime/schema reset after all four contributors. |
 
 The installed activation observation command is exactly
-`metadata-report --config PATH --database PATH --connection NAME --library NAME --item ITEM_ID --file-index INDEX`.
-Both path inputs are required; no defaults, CWD discovery, implicit filenames,
+`metadata-report --config PATH --database PATH --artifact-store PATH --connection NAME --library NAME --item ITEM_ID --file-index INDEX`.
+All three path inputs are required; no defaults, CWD discovery, implicit filenames,
 or undocumented environment fallbacks exist. Success emits exactly the
 persisted canonical JSON report plus a newline; failure emits no stdout, one
 bounded redacted stderr diagnostic, and a nonzero exit.

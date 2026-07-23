@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -24,6 +26,11 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     normalize_title,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+)
 
 
 class MetadataReportError(RuntimeError):
@@ -42,6 +49,22 @@ class CredentialError(MetadataReportError):
     pass
 
 
+class CoverTimeoutError(MetadataReportError):
+    """The bounded cover-acquisition aggregate deadline elapsed."""
+
+
+class CoverSourceChangedError(MetadataReportError):
+    """The target's declared cover changed during its raw acquisition bracket."""
+
+
+class CoverReadError(MetadataReportError):
+    """A raw target cover reached a closed terminal acquisition outcome."""
+
+    def __init__(self, state: str) -> None:
+        self.state = state
+        super().__init__("target cover is unavailable")
+
+
 @dataclass(frozen=True, slots=True)
 class TargetFile:
     identity: str
@@ -50,20 +73,34 @@ class TargetFile:
 
 
 @dataclass(frozen=True, slots=True)
+class TargetCover:
+    """Opaque target cover tuple retained solely for a before/after drift check."""
+    identity: str
+    path: str
+    item: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class TargetSnapshot:
     media_kind: str
     title: str
     files: tuple[TargetFile, ...]
+    cover: TargetCover | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class InspectionResult:
     content_digest: str
     claims: tuple[LocalClaim, ...]
+    cover_sources: tuple[CoverSource, ...] = ()
 
 
 class TargetReader(Protocol):
     def read(self, item: str) -> TargetSnapshot: ...
+
+
+class TargetCoverReader(TargetReader, Protocol):
+    def read_cover(self, cover: TargetCover, *, deadline: float | None = None) -> bytes | None: ...
 
 
 class EpubInspector(Protocol):
@@ -75,10 +112,24 @@ class MetadataProvider(Protocol):
     def observe(self, local_claims: tuple[LocalClaim, ...]) -> ProviderObservation: ...
 
 
+class CoverObserver(Protocol):
+    """Collect bounded report-only cover outcomes before final publication."""
+
+    def observe(
+        self,
+        target: TargetSnapshot,
+        providers: tuple[ProviderObservation, ...],
+        local_sources: tuple[CoverSource, ...],
+        descriptors: tuple[tuple[str, str, str | None], ...] = (),
+        aggregate_deadline: float | None = None,
+    ) -> tuple[CoverSource, ...]: ...
+
+
 class ReportRepository(Protocol):
     def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None = None) -> str: ...
     def get(self, report_id: str) -> str: ...
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str: ...
+    def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None: ...
     def close(self) -> None: ...
 
 
@@ -103,6 +154,7 @@ class GenerateMetadataReport:
         library: LibraryConfiguration,
         mount: MediaMountConfiguration | None,
         limits: ReportLimits,
+        cover_observer: CoverObserver | None = None,
     ) -> None:
         self._target = target
         self._inspector = inspector
@@ -112,6 +164,7 @@ class GenerateMetadataReport:
         self._library = library
         self._mount = mount
         self._limits = limits
+        self._cover_observer = cover_observer
 
     def run(self, item: str, file_index: int) -> str:
         if self._library.media_kind != "ebook" or self._mount is None:
@@ -130,10 +183,14 @@ class GenerateMetadataReport:
         repository: ReportRepository | None = None
         try:
             repository = self._repository_factory()
-            try:
-                expected_current = MetadataReport.from_json(repository.current(self._connection.name, self._library.name, item, selected.identity)).report_id
-            except MetadataReportError:
-                expected_current = None
+            current_document = repository.current_optional(
+                self._connection.name, self._library.name, item, selected.identity
+            )
+            expected_current = (
+                None
+                if current_document is None
+                else MetadataReport.from_json(current_document).report_id
+            )
 
             local = self._inspector.inspect(
                 self._mount, selected.relative_path, self._limits.source_archive_bytes
@@ -164,6 +221,8 @@ class GenerateMetadataReport:
         # references are deliberately not an ordering key.
         combined_claims = (target_title_claim, *local.claims)
         observations: list[ProviderObservation] = []
+        descriptors: list[tuple[str, str, str | None]] = []
+        cover_aggregate_deadline = time.monotonic() + 60.0
         for binding in self._providers:
             if not binding.enabled:
                 observations.append(
@@ -179,7 +238,11 @@ class GenerateMetadataReport:
                 repository.close()
                 raise CredentialError("provider credential unavailable") from error
             try:
-                observation = provider.observe(combined_claims)
+                observation = (
+                    provider.observe(combined_claims, deadline=cover_aggregate_deadline)
+                    if hasattr(provider, "cover_descriptors")
+                    else provider.observe(combined_claims)
+                )
             except Exception:
                 observation = ProviderObservation(
                     binding.name, ProviderStatus.UNAVAILABLE
@@ -188,6 +251,9 @@ class GenerateMetadataReport:
                 repository.close()
                 raise MetadataReportError("provider result is invalid")
             observations.append(observation)
+            candidate_descriptors = getattr(provider, "cover_descriptors", ())
+            if type(candidate_descriptors) is tuple:
+                descriptors.extend((binding.name, source_id, url) for source_id, url in candidate_descriptors)
 
         reasons = tuple(
             sorted(
@@ -196,12 +262,16 @@ class GenerateMetadataReport:
             )
         )
         try:
+            cover_sources = local.cover_sources if self._cover_observer is None else self._cover_observer.observe(
+                initial, tuple(observations), local.cover_sources, tuple(descriptors), cover_aggregate_deadline
+            )
             report = MetadataReport.create(
                 target=TargetFacts(self._connection.name, self._library.name, item, initial.title),
                 file=FileFacts(file_index, selected.identity, local.content_digest),
                 local_claims=combined_claims, local_reasons=reasons,
                 providers=tuple(sorted(observations, key=lambda value: value.provider)),
                 field_results=derive_field_results(combined_claims),
+                cover_sources=cover_sources,
             )
         except Exception:
             repository.close()
@@ -214,6 +284,7 @@ class GenerateMetadataReport:
                     initial,
                     selected,
                     local.content_digest,
+                    cover_sources,
                 ),
                 expected_current,
             )
@@ -234,6 +305,7 @@ class GenerateMetadataReport:
         initial: TargetSnapshot,
         selected: TargetFile,
         expected_digest: str,
+        cover_sources: tuple[CoverSource, ...],
     ) -> bool:
         final = self._safe_read(item)
         matches = tuple(
@@ -242,6 +314,7 @@ class GenerateMetadataReport:
         if (
             final.media_kind != "ebook"
             or final.title != initial.title
+            or final.cover != initial.cover
             or len(matches) != 1
             or matches[0].format != "epub"
             or matches[0].relative_path != selected.relative_path
@@ -253,6 +326,32 @@ class GenerateMetadataReport:
             )
         ):
             raise CurrentnessError("target or media changed")
+        expected_cover = next(
+            (
+                source.artifact.original_digest
+                for source in cover_sources
+                if source.kind is CoverSourceKind.ABS and source.artifact is not None
+            ),
+            None,
+        )
+        expected_absent = any(
+            source.kind is CoverSourceKind.ABS
+            and source.state is CoverSourceState.ABSENT
+            for source in cover_sources
+        )
+        if expected_cover is not None or expected_absent:
+            reader = getattr(self._target, "read_cover", None)
+            try:
+                current_cover = reader(final.cover) if callable(reader) and final.cover is not None else None
+            except (MetadataReportError, OSError, ValueError):
+                raise CurrentnessError("target or media changed") from None
+            if expected_absent and current_cover is not None:
+                raise CurrentnessError("target or media changed")
+            if expected_cover is not None and (
+                type(current_cover) is not bytes
+                or hashlib.sha256(current_cover).hexdigest() != expected_cover
+            ):
+                raise CurrentnessError("target or media changed")
         return True
 
     def _safe_read(self, item: str) -> TargetSnapshot:
@@ -268,7 +367,7 @@ class GenerateMetadataReport:
 
 
 __all__ = [
-    "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
+    "CoverObserver", "CoverReadError", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
     "InspectionResult", "MetadataProvider", "MetadataReportError", "ProviderBinding",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",

@@ -22,7 +22,9 @@ from mechanical_librarian.application.metadata_report import (
     UnsupportedMediaError,
 )
 from mechanical_librarian.bootstrap.composition import run_metadata_report
+from mechanical_librarian.bootstrap.composition import reopen_cover_preview
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.cover_evidence import PREVIEW_VARIANT
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client as real_hardcover_client,
 )
@@ -30,14 +32,22 @@ from tests.support.epub_packages import opening_no_applicable, opening_title_isb
 
 
 class _Server:
-    def __init__(self, payload: dict[str, object]) -> None:
+    def __init__(self, payload: dict[str, object], cover: bytes | None = None) -> None:
         self.payload = payload
+        self.cover = cover
         self.requests = 0
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 owner.requests += 1
+                if self.path == "/api/items/item-1/cover?raw=1" and owner.cover is not None:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(owner.cover)))
+                    self.end_headers()
+                    self.wfile.write(owner.cover)
+                    return
                 if self.path != "/api/items/item-1?expanded=1" or self.headers.get("Authorization") != "Bearer target-token":
                     self.send_response(403)
                     self.end_headers()
@@ -125,6 +135,7 @@ def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool 
                 "name": "catalogue",
                 "adapter": "hardcover",
                 "enabled": provider_secret is not None,
+                "cover_enabled": provider_secret is not None,
                 "secret_file": provider_secret,
             }
         ],
@@ -134,10 +145,13 @@ def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool 
 def _installed_cli(
     config: Path,
     database: Path,
+    artifact_store: Path | None = None,
     *,
     library: str = "books",
     file_index: int = 0,
 ) -> tuple[int, str, str]:
+    artifact_store = database.parent / "artifacts" if artifact_store is None else artifact_store
+    artifact_store.mkdir(mode=0o700, exist_ok=True)
     output = io.StringIO()
     errors = io.StringIO()
     with redirect_stdout(output), redirect_stderr(errors):
@@ -148,6 +162,8 @@ def _installed_cli(
                 str(config),
                 "--database",
                 str(database),
+                "--artifact-store",
+                str(artifact_store),
                 "--connection",
                 "primary",
                 "--library",
@@ -162,6 +178,28 @@ def _installed_cli(
 
 
 class MetadataReportCommandTests(unittest.TestCase):
+    def test_cover_artifact_replay_successor_and_historical_preview(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); media = root / "media"; media.mkdir()
+            source = media / "book.epub"; source.write_bytes(opening_no_applicable())
+            secret = root / "target.secret"; secret.write_text("target-token"); secret.chmod(0o600)
+            image = io.BytesIO(); Image.new("RGB", (10, 20), "red").save(image, "PNG")
+            payload = _item(source.stat().st_size); payload["coverPath"] = "/ignored-cover-route"
+            database = root / "reports.sqlite"; artifacts = root / "artifacts"; artifacts.mkdir(mode=0o700)
+            with _Server(payload, image.getvalue()) as server:
+                config = root / "config.json"; config.write_text(json.dumps(_config(server.endpoint, media, secret)))
+                first = MetadataReport.from_json(run_metadata_report(config, database, artifacts, "primary", "books", "item-1", 0))
+                replay = MetadataReport.from_json(run_metadata_report(config, database, artifacts, "primary", "books", "item-1", 0))
+                payload["media"]["metadata"]["title"] = "Successor"  # type: ignore[index]
+                successor = MetadataReport.from_json(run_metadata_report(config, database, artifacts, "primary", "books", "item-1", 0))
+            self.assertEqual(first.report_id, replay.report_id)
+            self.assertNotEqual(first.report_id, successor.report_id)
+            artifact = first.cover_sources[0].artifact
+            self.assertIsNotNone(artifact)
+            preview = reopen_cover_preview(database, artifacts, first.report_id, artifact.artifact_id, PREVIEW_VARIANT)
+            self.assertTrue(preview.startswith(b"\x89PNG\r\n\x1a\n"))
     def test_hostile_target_title_is_rejected_before_database_with_value_free_error(self) -> None:
         hostile = "Authorization: Bearer abcd1234"
         with tempfile.TemporaryDirectory() as directory:
@@ -182,9 +220,11 @@ class MetadataReportCommandTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 database = root / "reports.sqlite"
+                artifact_store = root / "artifacts"
+                artifact_store.mkdir(mode=0o700)
                 with self.assertRaises(MetadataReportError) as raised:
                     run_metadata_report(
-                        config, database, "primary", "books", "item-1", 0
+                        config, database, artifact_store, "primary", "books", "item-1", 0
                     )
             self.assertFalse(database.exists())
             self.assertNotIn(hostile, str(raised.exception))
@@ -203,10 +243,16 @@ class MetadataReportCommandTests(unittest.TestCase):
             target_secret.write_text("target-token", encoding="ascii")
             target_secret.chmod(0o600)
             database = root / "reports.sqlite"
+            artifact_store = root / "artifacts"
+            artifact_store.mkdir(mode=0o700)
             exact_title = "Cafe\u0301  Story"
             payload = _item(source.stat().st_size)
             payload["media"]["metadata"]["title"] = exact_title
-            with _Server(payload) as server:
+            image = io.BytesIO()
+            from PIL import Image
+            Image.new("RGB", (10, 20), "red").save(image, "PNG")
+            payload["coverPath"] = "/ignored-cover-route"
+            with _Server(payload, image.getvalue()) as server:
                 config = root / "explicit-config.json"
                 config.write_text(json.dumps(_config(server.endpoint, media, target_secret)), encoding="utf-8")
                 command = [
@@ -214,6 +260,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                     "metadata-report",
                     "--config", str(config),
                     "--database", str(database),
+                    "--artifact-store", str(artifact_store),
                     "--connection", "primary",
                     "--library", "books",
                     "--item", "item-1",
@@ -248,6 +295,25 @@ class MetadataReportCommandTests(unittest.TestCase):
             persisted = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
             connection.close()
             self.assertEqual(completed.stdout, persisted + "\n")
+            artifact = next(source.artifact for source in emitted.cover_sources if source.artifact is not None)
+            self.assertIsNotNone(artifact)
+            preview = subprocess.run(
+                [
+                    executable,
+                    "metadata-report-cover-preview",
+                    "--database", str(database),
+                    "--artifact-store", str(artifact_store),
+                    "--report-id", emitted.report_id,
+                    "--artifact-id", artifact.artifact_id,
+                    "--preview-variant", PREVIEW_VARIANT,
+                ],
+                cwd=root,
+                capture_output=True,
+                check=False,
+                timeout=20,
+            )
+            self.assertEqual(0, preview.returncode, preview.stderr.decode())
+            self.assertTrue(preview.stdout.startswith(b"\x89PNG\r\n\x1a\n"))
             self.assertEqual(missing.returncode, 2)
             self.assertEqual(missing.stdout, "")
             self.assertEqual(missing.stderr, "Metadata report failed: invalid invocation.\n")
@@ -509,13 +575,15 @@ class MetadataReportCommandTests(unittest.TestCase):
             target_secret.write_text("target-token", encoding="ascii")
             target_secret.chmod(0o600)
             database = root / "reports.sqlite"
+            artifact_store = root / "artifacts"
+            artifact_store.mkdir(mode=0o700)
             with _Server(_item(source.stat().st_size)) as server:
                 config = root / "config.json"
                 config.write_text(json.dumps(_config(server.endpoint, media, target_secret)), encoding="utf-8")
-                first = run_metadata_report(config, database, "primary", "books", "item-1", 0)
-                replay = run_metadata_report(config, database, "primary", "books", "item-1", 0)
+                first = run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0)
+                replay = run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0)
                 server.payload["media"]["metadata"]["title"] = "Changed service title"
-                successor = run_metadata_report(config, database, "primary", "books", "item-1", 0)
+                successor = run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0)
 
             first_report = MetadataReport.from_json(first)
             successor_report = MetadataReport.from_json(successor)
@@ -533,6 +601,59 @@ class MetadataReportCommandTests(unittest.TestCase):
             connection.close()
             self.assertEqual(server.requests, 6)
             self.assertEqual(source.read_bytes(), original_media)
+
+    def test_six_metadata_only_providers_do_not_consume_cover_source_capacity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            source.write_bytes(opening_no_applicable())
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            with _Server(_item(source.stat().st_size)) as server:
+                source_config = _config(server.endpoint, media, target_secret)
+                provider_names = [f"catalogue-{index}" for index in range(6)]
+                source_config["libraries"][0]["provider_connections"] = provider_names
+                source_config["providers"] = [
+                    {
+                        "name": name,
+                        "adapter": "hardcover",
+                        "enabled": False,
+                        "cover_enabled": False,
+                        "secret_file": None,
+                    }
+                    for name in provider_names
+                ]
+                config = root / "config.json"
+                config.write_text(json.dumps(source_config), encoding="utf-8")
+                database = root / "reports.sqlite"
+                artifact_store = root / "artifacts"
+                artifact_store.mkdir(mode=0o700)
+                report = MetadataReport.from_json(
+                    run_metadata_report(
+                        config,
+                        database,
+                        artifact_store,
+                        "primary",
+                        "books",
+                        "item-1",
+                        0,
+                    )
+                )
+            self.assertEqual(6, len(report.providers))
+            self.assertEqual({"disabled"}, {value.status.value for value in report.providers})
+            self.assertEqual(
+                {"abs", "epub"},
+                {value.kind.value for value in report.cover_sources},
+            )
+            connection = sqlite3.connect(database)
+            self.assertEqual(
+                (1,),
+                connection.execute("SELECT COUNT(*) FROM metadata_reports").fetchone(),
+            )
+            connection.close()
 
     def test_no_candidate_and_overlapping_item_ids_remain_explicitly_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -569,17 +690,20 @@ class MetadataReportCommandTests(unittest.TestCase):
                         "name": "unreferenced",
                         "adapter": "hardcover",
                         "enabled": True,
+                        "cover_enabled": True,
                         "secret_file": "/definitely/absent/unreferenced.secret",
                     }
                 )
                 config = root / "config.json"
                 config.write_text(json.dumps(source_config), encoding="utf-8")
                 database = root / "reports.sqlite"
+                artifact_store = root / "artifacts"
+                artifact_store.mkdir(mode=0o700)
                 primary = MetadataReport.from_json(
-                    run_metadata_report(config, database, "primary", "books", "item-1", 0)
+                    run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0)
                 )
                 secondary = MetadataReport.from_json(
-                    run_metadata_report(config, database, "secondary", "other", "item-1", 0)
+                    run_metadata_report(config, database, artifact_store, "secondary", "other", "item-1", 0)
                 )
             self.assertEqual(primary.local_status, "no_candidate")
             self.assertEqual(
@@ -606,7 +730,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                 config.write_text(json.dumps(_config(server.endpoint, root, target_secret, audiobook=True, provider_secret="/definitely/absent/provider.secret")), encoding="utf-8")
                 database = root / "reports.sqlite"
                 with self.assertRaises(UnsupportedMediaError):
-                    run_metadata_report(config, database, "primary", "books", "item-1", 0)
+                    run_metadata_report(config, database, root / "artifacts", "primary", "books", "item-1", 0)
             self.assertFalse(database.exists())
             self.assertEqual(server.requests, 0)
 

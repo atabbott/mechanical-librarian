@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import posixpath
+import time
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
@@ -13,7 +14,11 @@ import httpx
 
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
+    CoverReadError,
+    CoverSourceChangedError,
+    CoverTimeoutError,
     TargetFile,
+    TargetCover,
     TargetSnapshot,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -23,14 +28,17 @@ from mechanical_librarian.domain.metadata_report import (
 
 
 class AudiobookshelfItemReader:
-    def __init__(self, *, client_factory: Callable[[], httpx.Client], endpoint: str, library_id: str, service_path: str, maximum_bytes: int) -> None:
+    def __init__(self, *, client_factory: Callable[[], httpx.Client], endpoint: str, library_id: str, service_path: str, maximum_bytes: int, timeout_seconds: float = 5.0) -> None:
+        if type(timeout_seconds) not in {int, float} or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 60:
+            raise ValueError("target timeout is invalid")
         self._client_factory = client_factory
         self._endpoint = endpoint.rstrip("/")
         self._library_id = library_id
         self._service_path = service_path.rstrip("/") or "/"
         self._maximum_bytes = maximum_bytes
+        self._timeout_seconds = float(timeout_seconds)
 
-    def read(self, item: str) -> TargetSnapshot:
+    def read(self, item: str, *, deadline: float | None = None) -> TargetSnapshot:
         if type(item) is not str or not 1 <= len(item) <= 512 or item.strip() != item or any(character in item for character in "\x00/\\"):
             raise MetadataReportError("target item is invalid")
         try:
@@ -40,6 +48,7 @@ class AudiobookshelfItemReader:
                 f"{self._endpoint}/api/items/{quote(item, safe='')}",
                 params={"expanded": "1"},
                 headers={"Accept": "application/json", "Accept-Encoding": "identity"},
+                timeout=_phase_timeout(deadline, self._timeout_seconds),
             ) as response:
                 if response.status_code in {401, 403, 404}:
                     raise MetadataReportError("target item is unavailable")
@@ -48,7 +57,7 @@ class AudiobookshelfItemReader:
                 content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
                 if content_type != "application/json":
                     raise MetadataReportError("target response is invalid")
-                payload = _bounded_body(response, self._maximum_bytes)
+                payload = _bounded_body(response, self._maximum_bytes, deadline=deadline)
         except MetadataReportError:
             raise
         except (httpx.HTTPError, OSError, ValueError) as error:
@@ -64,6 +73,52 @@ class AudiobookshelfItemReader:
             raise
         except (UnicodeError, ValueError, TypeError, KeyError, RecursionError, json.JSONDecodeError) as error:
             raise MetadataReportError("target response is invalid") from error
+
+    def read_cover(self, cover: TargetCover, *, deadline: float | None = None) -> bytes | None:
+        """One deliberately credential-free raw cover request.
+
+        The caller owns the surrounding item-detail reads and drift decision.
+        """
+        if type(cover) is not TargetCover or not cover.path.startswith("/") or not cover.item:
+            raise MetadataReportError("target cover is invalid")
+        if deadline is not None and time.monotonic() >= deadline:
+            raise CoverTimeoutError("target cover timed out")
+        before = self.read(cover.item, deadline=deadline)
+        if before.cover != cover:
+            raise CoverSourceChangedError("target cover changed")
+        try:
+            value = self._read_raw_cover(cover, deadline)
+            after = self.read(cover.item, deadline=deadline)
+            if after.cover != before.cover:
+                raise CoverSourceChangedError("target cover changed")
+            if self._read_raw_cover(cover, deadline) != value:
+                raise CoverSourceChangedError("target cover changed")
+            return value
+        except MetadataReportError:
+            raise
+        except (httpx.HTTPError, OSError, ValueError) as error:
+            raise MetadataReportError("target cover is unavailable") from error
+
+    def _read_raw_cover(self, cover: TargetCover, deadline: float | None) -> bytes | None:
+        with httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""}) as client:
+            host = _raw_cover_authority(self._endpoint)
+            with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=_phase_timeout(deadline, self._timeout_seconds)) as response:
+                if response.status_code == 404:
+                    return None
+                if response.status_code != 200:
+                    raise MetadataReportError("target cover is unavailable")
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
+                if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+                    raise CoverReadError("unsupported_format")
+                return _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
+
+
+def _raw_cover_authority(endpoint: str) -> str:
+    """Preserve the configured URL authority, including a non-default port."""
+    try:
+        return httpx.URL(endpoint).netloc.decode("ascii")
+    except (AttributeError, UnicodeError, ValueError) as error:
+        raise MetadataReportError("target cover is invalid") from error
 
 
 def _snapshot(source: object, item: str, library_id: str, service_path: str) -> TargetSnapshot:
@@ -99,7 +154,20 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
     if len(set(identities)) != len(identities):
         raise MetadataReportError("target file identities are duplicated")
     media_kind = "ebook" if files else "audiobook" if type(media.get("audioFiles")) is list else "unsupported"
-    return TargetSnapshot(media_kind, title, files)
+    cover_path = root.get("coverPath")
+    cover = None
+    if cover_path is not None:
+        if type(cover_path) is not str or not cover_path.startswith("/") or len(cover_path) > 1024:
+            raise MetadataReportError("target response is invalid")
+        # The service's metadata-provided route is evidence of presence only.
+        # Acquisition is pinned to its one documented raw endpoint so a hostile
+        # detail response cannot redirect this credential-free request.
+        cover = TargetCover(
+            hashlib.sha256(cover_path.encode()).hexdigest(),
+            f"/api/items/{quote(item, safe='')}/cover?raw=1",
+            item,
+        )
+    return TargetSnapshot(media_kind, title, files, cover)
 
 
 def _file(source: object, service_path: str) -> TargetFile:
@@ -150,17 +218,28 @@ def _relative_service_path(path: str, service_path: str) -> str:
     return path[len(prefix) :]
 
 
-def _bounded_body(response: httpx.Response, maximum: int) -> bytes:
+def _bounded_body(response: httpx.Response, maximum: int, *, deadline: float | None = None) -> bytes:
     chunks: list[bytes] = []
     length = 0
     for chunk in response.iter_bytes():
+        if deadline is not None and time.monotonic() >= deadline:
+            raise CoverTimeoutError("target cover timed out")
         length += len(chunk)
         if length > maximum:
-            raise MetadataReportError("target response is oversized")
+            raise CoverReadError("oversized")
         chunks.append(chunk)
     if not chunks:
         raise MetadataReportError("target response is invalid")
     return b"".join(chunks)
+
+
+def _phase_timeout(deadline: float | None, configured: float) -> float:
+    if deadline is None:
+        return configured
+    remaining = min(configured, deadline - time.monotonic())
+    if remaining <= 0:
+        raise CoverTimeoutError("target cover timed out")
+    return remaining
 
 
 def _mapping(value: object) -> dict[str, Any]:

@@ -15,9 +15,13 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
     validate_role_projection,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact, CoverEvidenceError, CoverSource, CoverSourceKind,
+    CoverSourceState, publication_ready,
+)
 
 
-REPORT_SCHEMA = "metadata-report-v2"
+REPORT_SCHEMA = "metadata-report-v3"
 COMPARISON_VERSION = "same-kind-v1"
 # F09j's report contract admits rich, source-attributed candidates.  The
 # physical SQLite schema separately fingerprints this exact shape, so an F09i
@@ -525,6 +529,7 @@ class MetadataReport:
     local_reasons: tuple[str, ...]
     providers: tuple[ProviderObservation, ...]
     field_results: tuple[FieldResult, ...]
+    cover_sources: tuple[CoverSource, ...] = ()
     schema_version: str = REPORT_SCHEMA
     comparison_version: str = COMPARISON_VERSION
 
@@ -559,6 +564,11 @@ class MetadataReport:
             or self.field_results != derive_field_results(self.local_claims)
         ):
             raise ReportValueError("field results are inconsistent")
+        try:
+            if not publication_ready(self.cover_sources):
+                raise ReportValueError("cover evidence is incomplete")
+        except CoverEvidenceError as error:
+            raise ReportValueError("cover evidence is invalid") from error
         known = set(references)
         if any(not set(provider.input_references).issubset(known) for provider in self.providers):
             raise ReportValueError("provider inputs do not reference local claims")
@@ -592,13 +602,14 @@ class MetadataReport:
         local_reasons: tuple[str, ...],
         providers: tuple[ProviderObservation, ...],
         field_results: tuple[FieldResult, ...] | None = None,
+        cover_sources: tuple[CoverSource, ...] = (),
     ) -> Self:
         local_status = "candidate" if any(value.basis == "opening_matter" for value in local_claims) else "no_candidate"
         results = field_results if field_results is not None else derive_field_results(local_claims)
-        data = _report_data("", target, file, local_claims, local_status, local_reasons, providers, results)
+        data = _report_data("", target, file, local_claims, local_status, local_reasons, providers, results, cover_sources)
         data.pop("report_id")
         identity = f"report_{hashlib.sha256(canonical_json(data).encode('utf-8')).hexdigest()}"
-        return cls(identity, target, file, local_claims, local_status, local_reasons, providers, results)
+        return cls(identity, target, file, local_claims, local_status, local_reasons, providers, results, cover_sources)
 
     def _identity_data(self) -> dict[str, object]:
         value = self.to_data()
@@ -606,7 +617,7 @@ class MetadataReport:
         return value
 
     def to_data(self) -> dict[str, object]:
-        return _report_data(self.report_id, self.target, self.file, self.local_claims, self.local_status, self.local_reasons, self.providers, self.field_results)
+        return _report_data(self.report_id, self.target, self.file, self.local_claims, self.local_status, self.local_reasons, self.providers, self.field_results, self.cover_sources)
 
     def to_json(self) -> str:
         return canonical_json(self.to_data())
@@ -720,7 +731,7 @@ def _comparison_value(kind: ClaimKind, value: str) -> str:
     return normalize_title(value).casefold()
 
 
-def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...], field_results: tuple[FieldResult, ...]) -> dict[str, object]:
+def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...], field_results: tuple[FieldResult, ...], cover_sources: tuple[CoverSource, ...]) -> dict[str, object]:
     return {
         "file": file.to_data(),
         "field_results": [value.to_data() for value in field_results],
@@ -733,12 +744,13 @@ def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_cla
         "report_id": report_id,
         "schema_version": REPORT_SCHEMA,
         "comparison_version": COMPARISON_VERSION,
+        "covers": [value.to_data() for value in cover_sources],
         "target": target.to_data(),
     }
 
 
 def _report_from_data(value: object) -> MetadataReport:
-    root = _object(value, {"comparison_version", "field_results", "file", "local", "providers", "report_id", "schema_version", "target"})
+    root = _object(value, {"comparison_version", "covers", "field_results", "file", "local", "providers", "report_id", "schema_version", "target"})
     target = _object(root["target"], {"connection", "current_title", "item", "library"})
     file = _object(root["file"], {"content_digest", "format", "identity", "selected_index"})
     local = _object(root["local"], {"claims", "reasons", "status"})
@@ -746,6 +758,7 @@ def _report_from_data(value: object) -> MetadataReport:
     providers = tuple(_provider_from_data(item) for item in _list(root["providers"]))
     field_results = tuple(_field_result_from_data(item) for item in _list(root["field_results"]))
     reasons = tuple(_strings(local["reasons"]))
+    covers = tuple(_cover_source_from_data(item) for item in _list(root["covers"]))
     return MetadataReport(
         root["report_id"],
         TargetFacts(target["connection"], target["library"], target["item"], target["current_title"]),
@@ -755,13 +768,21 @@ def _report_from_data(value: object) -> MetadataReport:
         reasons,
         providers,
         field_results,
-        root["schema_version"], root["comparison_version"],
+        covers, root["schema_version"], root["comparison_version"],
     )
 
 
 def _field_result_from_data(value: object) -> FieldResult:
     item = _object(value, {"kind", "state", "sources"})
     return FieldResult(ClaimKind(item["kind"]), FieldState(item["state"]), tuple(FieldSourceResult(FieldSource(source["source"]), FieldState(source["state"])) for source in _list(item["sources"])))
+
+
+def _cover_source_from_data(value: object) -> CoverSource:
+    item = _object(value, {"artifact", "kind", "source_id", "state", "timeout_scope"})
+    artifact = None
+    if item["artifact"] is not None:
+        artifact = CoverArtifact(**_object(item["artifact"], {"artifact_id", "height", "media_type", "original_digest", "preview_digest", "preview_variant", "width"}))
+    return CoverSource(item["source_id"], CoverSourceKind(item["kind"]), CoverSourceState(item["state"]), artifact, item["timeout_scope"])
 
 
 def _local_claim_from_data(value: object) -> LocalClaim:

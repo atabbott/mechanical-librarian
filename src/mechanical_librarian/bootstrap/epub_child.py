@@ -43,6 +43,8 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     EpubPackageSourceError,
     EpubPackageReport,
     epub_resource_identity,
+    EpubPackageDeclarationKind,
+    EpubPackageField,
 )
 
 
@@ -92,8 +94,11 @@ def _read_context() -> dict[str, object]:
     decoded = json.loads(value)
     if type(decoded) is not dict:
         raise ValueError("invalid child context")
-    expected = {"child_seconds", "expected_source", "limits", "logical_identity"}
-    if frozenset(decoded) != frozenset(expected):
+    expected = {"child_seconds", "expected_source", "limits", "logical_identity", "capability"}
+    legacy = expected - {"capability"}
+    if frozenset(decoded) == frozenset(legacy):
+        decoded["capability"] = "opening"
+    elif frozenset(decoded) != frozenset(expected):
         raise ValueError("invalid child context")
     return decoded
 
@@ -161,6 +166,50 @@ def _write_report(report: EpubInspection) -> None:
     offset = 0
     while offset < len(payload):
         offset += os.write(1, payload[offset:])
+
+
+def _write_cover(value: dict[str, object], data: bytes | None, descriptor: int) -> None:
+    payload = (json.dumps(value, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(payload) > _STDOUT_LIMIT:
+        raise ValueError("child cover exceeded protocol")
+    os.write(1, payload)
+    if data is not None:
+        offset = 0
+        while offset < len(data):
+            written = os.write(descriptor, data[offset:])
+            if written <= 0:
+                raise OSError("cover pipe write failed")
+            offset += written
+
+
+def _selected_cover(package_request: EpubPackageRequest) -> tuple[dict[str, object], bytes | None]:
+    try:
+        rejected = EpubPackageExtractor().preflight(package_request)
+        if rejected is not None:
+            return {"state": "invalid_declaration"}, None
+        archive_class = zipfile.ZipFile
+        with archive_class(_SourceIO(package_request), "r", allowZip64=True) as archive:
+            report = EpubPackageExtractor().extract(package_request, archive)
+            if not report.succeeded:
+                return {"state": "invalid_declaration"}, None
+            values = [item.raw_value for item in report.observations if item.field is EpubPackageField.COVER]
+            if not values:
+                return {"state": "absent"}, None
+            if len(values) != 1:
+                return {"state": "invalid_declaration"}, None
+            media = [item.media_type for item in report.declarations if item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and item.resource_identity == values[0]]
+            names = [name for name in archive.namelist() if epub_resource_identity(name) == values[0]]
+            if len(media) != 1 or len(names) != 1:
+                return {"state": "invalid_declaration"}, None
+            if media[0] not in {"image/jpeg", "image/png", "image/webp"}:
+                return {"state": "unsupported_format"}, None
+            with archive.open(names[0]) as member:
+                data = member.read(8 * 1024 * 1024 + 1)
+            if len(data) > 8 * 1024 * 1024:
+                return {"state": "oversized"}, None
+            return {"state": "declared", "media_type": media[0], "length": len(data), "identity": values[0]}, data
+    except (OSError, ValueError, zipfile.BadZipFile):
+        return {"state": "invalid_declaration"}, None
 
 
 def _inspect_opening(
@@ -274,7 +323,7 @@ def _snapshot_source(descriptor: int, maximum: int) -> bytes:
 
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
-    if len(arguments) != 3:
+    if len(arguments) not in {3, 4}:
         return 70
     source_descriptor = int(arguments[0])
     control_descriptor = int(arguments[1])
@@ -287,7 +336,8 @@ def main(argv: list[str] | None = None) -> int:
         _apply_limits()
         signal.signal(signal.SIGXCPU, lambda *_arguments: os._exit(71))
         context = _read_context()
-        if "capability" in context:
+        capability = context.get("capability", "opening")
+        if capability not in {"opening", "cover"}:
             raise ValueError("invalid child context")
         limits = _opening_limits(context["limits"])
         package_limits = limits.package
@@ -331,6 +381,12 @@ def main(argv: list[str] | None = None) -> int:
             EpubPackageCapability.PACKAGE, request.limits, request.deadline,
             request.monotonic_deadline, request.cancellation,
         )
+        if capability == "cover":
+            if len(arguments) != 4:
+                raise ValueError("cover descriptor is unavailable")
+            result, data = _selected_cover(package_request)
+            _write_cover(result, data, int(arguments[3]))
+            return 0
         bundle = _inspect_bundle(request, package_request, limits)
         package_report, opening_report = bundle[:2]
         rear_facts = bundle[2] if len(bundle) == 3 else ()
@@ -357,6 +413,11 @@ def main(argv: list[str] | None = None) -> int:
             os.close(source_descriptor)
         except OSError:
             pass
+        if len(arguments) == 4:
+            try:
+                os.close(int(arguments[3]))
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

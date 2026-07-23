@@ -18,12 +18,17 @@ Activate one installed `metadata-report` observation command and its
 configuration-free `metadata-report-get` exact-ID/current-scope replay surface,
 then remove every superseded runtime surface in the same change. The application
 directly composes one scoped current-item read, the isolated EPUB inspector,
-explicit per-library provider references, one fresh request per enabled
-supported provider, final target/media currentness, and whole-report publication.
+explicit per-library provider references, one fresh credential-bearing Hardcover
+GraphQL metadata request per enabled supported provider, then up to five
+separate credential-free bounded cover request chains for admitted candidate
+descriptors, final target/media currentness, and whole-report publication.
 
-Persist exactly two application tables: immutable canonical metadata reports
-and their separate current pointers. Initialize an absent database or open only
-the exact schema required by the installed increment. `metadata-report-v1`,
+Persist exactly three application tables: immutable canonical metadata reports,
+their separate current pointers, and immutable report-bound cover-artifact
+references. The reference table authorizes preview reopening and supplies the
+exact artifact liveness set used for safe orphan cleanup. Initialize an absent
+database or open only the exact schema required by the installed increment.
+`metadata-report-v1`,
 prior 0.5 increment schemas, and all earlier development schemas fail closed
 before mutation. There is no migration, import, preservation, compatibility
 parser, ledger, downgrade, recovery, or repair framework. Exact-ID and
