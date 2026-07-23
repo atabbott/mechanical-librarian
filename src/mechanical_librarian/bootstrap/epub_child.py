@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     EpubPackageExtractor,
     _SourceIO,
+    _Rejected,
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_opening import EpubOpeningExtractor
 from mechanical_librarian.domain.identifiers import (
@@ -34,6 +35,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     EpubPackageCapability,
     EpubPackageRequest,
     EpubPackageSource,
+    EpubPackageSourceError,
 )
 
 
@@ -154,6 +156,28 @@ def _write_report(report: EpubOpeningReport) -> None:
         offset += os.write(1, payload[offset:])
 
 
+def _inspect_opening(
+    request: EpubPackageRequest,
+    package_request: EpubPackageRequest,
+    limits: EpubOpeningLimits,
+) -> EpubOpeningReport:
+    try:
+        rejected = EpubPackageExtractor().preflight(package_request)
+        if rejected is not None:
+            return EpubOpeningReport(rejected, limits)
+        with zipfile.ZipFile(_SourceIO(package_request), "r", allowZip64=True) as archive:
+            package_report = EpubPackageExtractor().extract(package_request, archive)
+            return EpubOpeningExtractor().extract(request, limits, package_report, archive)
+    except _Rejected as rejected:
+        return EpubOpeningReport(rejected.outcome, limits)
+    except EpubPackageSourceError:
+        return EpubOpeningReport(EpubInspectionOutcome.UNAVAILABLE_SOURCE, limits)
+    except zipfile.BadZipFile:
+        return EpubOpeningReport(EpubInspectionOutcome.UNSUPPORTED_FORMAT, limits)
+    except (OSError, ValueError):
+        return EpubOpeningReport(EpubInspectionOutcome.INTEGRITY_FAILURE, limits)
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     if len(arguments) != 3:
@@ -202,18 +226,7 @@ def main(argv: list[str] | None = None) -> int:
             EpubPackageCapability.PACKAGE, request.limits, request.deadline,
             request.monotonic_deadline, request.cancellation,
         )
-        try:
-            rejected = EpubPackageExtractor().preflight(package_request)
-            if rejected is not None:
-                report = EpubOpeningReport(rejected, limits)
-            else:
-                with zipfile.ZipFile(_SourceIO(package_request), "r", allowZip64=True) as archive:
-                    package_report = EpubPackageExtractor().extract(package_request, archive)
-                    report = EpubOpeningExtractor().extract(request, limits, package_report, archive)
-        except zipfile.BadZipFile:
-            report = EpubOpeningReport(EpubInspectionOutcome.UNSUPPORTED_FORMAT, limits)
-        except (OSError, ValueError):
-            report = EpubOpeningReport(EpubInspectionOutcome.INTEGRITY_FAILURE, limits)
+        report = _inspect_opening(request, package_request, limits)
         _write_report(report)
         return 0
     except BaseException:
