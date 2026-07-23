@@ -163,6 +163,15 @@ class MetadataPersistenceTests(unittest.TestCase):
             repository._connection.execute("UPDATE metadata_reports SET connection_name='other'")
             with self.assertRaises(MetadataReportError):
                 repository.get(report.report_id)
+            unsafe = json.loads(report.to_json())
+            unsafe["local"]["claims"][0]["canonical"] = "/Users/private/title"
+            document = json.dumps(unsafe, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            repository._connection.execute(
+                "UPDATE metadata_reports SET connection_name=?,document=?,document_digest=?",
+                ("primary", document, hashlib.sha256(document.encode()).hexdigest()),
+            )
+            with self.assertRaises(MetadataReportError):
+                repository.get(report.report_id)
             repository.close()
 
     def test_existing_schema_rejects_unexpected_objects_without_mutation(self) -> None:
@@ -190,8 +199,39 @@ class MetadataPersistenceTests(unittest.TestCase):
                 self.assertEqual(connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone(), expected_counts)
                 connection.close()
 
+    def test_existing_schema_rejects_persistent_sqlite_master_system_objects_without_mutation(self) -> None:
+        for kind in ("analyze", "sequence", "arbitrary"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "reports.sqlite"
+                repository = open_repository(path)
+                repository.publish(_report(), lambda: True)
+                repository.close()
+                connection = sqlite3.connect(path)
+                if kind == "analyze":
+                    connection.execute("ANALYZE")
+                elif kind == "sequence":
+                    connection.execute("CREATE TABLE fixture_sequence(id INTEGER PRIMARY KEY AUTOINCREMENT)")
+                    connection.execute("DROP TABLE fixture_sequence")
+                else:
+                    connection.execute("CREATE TABLE fixture_extra(value TEXT)")
+                    connection.execute("PRAGMA writable_schema=ON")
+                    connection.execute("UPDATE sqlite_master SET name='sqlite_fixture_extra',tbl_name='sqlite_fixture_extra',sql='CREATE TABLE sqlite_fixture_extra(value TEXT)' WHERE name='fixture_extra'")
+                    connection.execute("PRAGMA writable_schema=OFF")
+                connection.commit()
+                expected_objects = connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
+                expected_counts = connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone()
+                connection.close()
+                before = path.read_bytes()
+                with self.assertRaises(MetadataReportError):
+                    open_repository(path)
+                self.assertEqual(path.read_bytes(), before)
+                connection = sqlite3.connect(path)
+                self.assertEqual(connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall(), expected_objects)
+                self.assertEqual(connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone(), expected_counts)
+                connection.close()
+
     def test_existing_schema_validates_every_row_and_current_pointer_before_opening(self) -> None:
-        cases = ("malformed", "canonical_contradiction", "envelope", "digest", "pointer")
+        cases = ("malformed", "canonical_contradiction", "envelope", "digest", "private_canonical", "pointer")
         for kind in cases:
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "reports.sqlite"
@@ -217,6 +257,11 @@ class MetadataPersistenceTests(unittest.TestCase):
                     connection.execute("UPDATE metadata_reports SET connection_name='other' WHERE report_id=?", (primary.report_id,))
                 elif kind == "digest":
                     connection.execute("UPDATE metadata_reports SET document_digest=? WHERE report_id=?", ("0" * 64, primary.report_id))
+                elif kind == "private_canonical":
+                    payload = json.loads(primary.to_json())
+                    payload["local"]["claims"][0]["canonical"] = "/Users/private/title"
+                    document = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+                    connection.execute("UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?", (document, hashlib.sha256(document.encode()).hexdigest(), primary.report_id))
                 else:
                     connection.execute("UPDATE current_metadata_reports SET connection_name='other'")
                 connection.commit()

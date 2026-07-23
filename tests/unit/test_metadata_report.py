@@ -30,8 +30,10 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
+    RearClaimProvenance,
     ReportValueError,
     TargetFacts,
+    canonical_json,
     derive_field_results,
     normalize_title,
 )
@@ -184,6 +186,59 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(fields[ClaimKind.TITLE][FieldSource.TARGET_METADATA], FieldState.VALID)
         self.assertEqual(fields[ClaimKind.TITLE][FieldSource.EPUB], FieldState.ABSENT)
         self.assertTrue(all(fields[kind][FieldSource.TARGET_METADATA] is FieldState.UNSUPPORTED for kind in ClaimKind if kind is not ClaimKind.TITLE))
+
+    def test_local_claim_source_sentinels_and_public_evidence_are_closed(self) -> None:
+        valid = LocalClaim.create(
+            kind=ClaimKind.TITLE, observed="Current title", canonical="Current title",
+            excerpt="Current title", applicability="not_applicable", basis="target_metadata",
+            checksum="not_applicable", applicability_basis="not_applicable",
+        )
+        with self.assertRaises(ReportValueError):
+            LocalClaim.create(
+                kind=ClaimKind.PUBLISHER, observed="Example Press", canonical="Example Press",
+                excerpt="Example Press", applicability="not_applicable", basis="target_metadata",
+                checksum="not_applicable", applicability_basis="not_applicable",
+            )
+        for prefix, state in (("unsafe-source-text-sha256:", FieldState.UNSUPPORTED), ("oversized-source-text-sha256:", FieldState.OVERSIZED)):
+            sentinel = prefix + "a" * 64
+            with self.subTest(prefix=prefix):
+                claim = LocalClaim.create(
+                    kind=ClaimKind.TITLE, observed=sentinel, canonical=None, excerpt=sentinel,
+                    applicability="not_applicable", basis="package_metadata",
+                    checksum="not_applicable", applicability_basis="not_applicable", state=state,
+                )
+                self.assertEqual(claim.state, state)
+                opposite = FieldState.OVERSIZED if state is FieldState.UNSUPPORTED else FieldState.UNSUPPORTED
+                for forged_state, canonical in ((FieldState.VALID, None), (opposite, None), (state, "Forged")):
+                    with self.assertRaises(ReportValueError):
+                        LocalClaim.create(
+                            kind=ClaimKind.TITLE, observed=sentinel, canonical=canonical, excerpt=sentinel,
+                            applicability="not_applicable", basis="package_metadata",
+                            checksum="not_applicable", applicability_basis="not_applicable", state=forged_state,
+                        )
+        for field, value in (("observed", "/Users/private/title"), ("canonical", "Authorization: Bearer abcdefgh"), ("excerpt", "/Users/private/title"), ("role", "Authorization: Bearer abcdefgh")):
+            values = {"observed": "Ada Example", "canonical": "Ada Example", "excerpt": "Ada Example", "role": None}
+            values[field] = value
+            with self.subTest(field=field), self.assertRaises(ReportValueError):
+                LocalClaim.create(
+                    kind=ClaimKind.CREATOR, observed=values["observed"], canonical=values["canonical"],
+                    excerpt=values["excerpt"], applicability="not_applicable", basis="package_metadata",
+                    checksum="not_applicable", applicability_basis="not_applicable", role=values["role"],
+                )
+        for field in ("marker", "citation"):
+            values = {"marker": "copyright", "citation": "Copyright 2026"}
+            values[field] = "/Users/private/title"
+            with self.subTest(rear_field=field), self.assertRaises(ReportValueError):
+                RearClaimProvenance("a" * 64, 1, 1, values["marker"], values["citation"])
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(valid,),
+            local_reasons=("no_opening_claims",), providers=(),
+        )
+        data = report.to_data()
+        data["local"]["claims"][0]["canonical"] = "/Users/private/title"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(data))
 
     def test_non_valid_title_sentinel_cannot_become_canonical(self) -> None:
         sentinel = "unsafe-source-text-sha256:" + "a" * 64

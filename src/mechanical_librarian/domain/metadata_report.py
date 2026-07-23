@@ -85,8 +85,8 @@ class RearClaimProvenance:
     def __post_init__(self) -> None:
         if (_DIGEST.fullmatch(self.resource_identity) is None or type(self.spine_ordinal) is not int or self.spine_ordinal < 1 or type(self.tail_slot) is not int or not 1 <= self.tail_slot <= 8):
             raise ReportValueError("rear claim provenance is invalid")
-        _text(self.marker, "rear marker", 64)
-        _text(self.citation, "rear citation", 280)
+        _projection_text(self.marker, "rear marker", 64)
+        _projection_text(self.citation, "rear citation", 280)
 
     def to_data(self) -> dict[str, object]:
         return {"citation": self.citation, "marker": self.marker, "resource_identity": self.resource_identity, "spine_ordinal": self.spine_ordinal, "tail_slot": self.tail_slot}
@@ -230,17 +230,19 @@ class LocalClaim:
             raise ReportValueError("local claim reference is invalid")
         if type(self.kind) is not ClaimKind or type(self.state) is not FieldState:
             raise ReportValueError("local claim kind is invalid")
+        if self.basis == "target_metadata" and self.kind is not ClaimKind.TITLE:
+            raise ReportValueError("target metadata claim kind is invalid")
         if self.role is not None:
-            _text(self.role, "contributor role", 64)
+            _projection_text(self.role, "contributor role", 64)
         if self.rear_provenance is not None and type(self.rear_provenance) is not RearClaimProvenance:
             raise ReportValueError("rear claim provenance is invalid")
         if type(self.occurrence) is not int or not 0 <= self.occurrence <= 1_000_000:
             raise ReportValueError("local claim occurrence is invalid")
         maximum = 512 if self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.DESCRIPTION} else 280
-        _text(self.observed, "observed claim", maximum)
+        _projection_text(self.observed, "observed claim", maximum)
         if self.canonical is not None:
-            _text(self.canonical, "canonical claim", 512)
-        _text(self.excerpt, "claim excerpt", maximum)
+            _projection_text(self.canonical, "canonical claim", 512)
+        _projection_text(self.excerpt, "claim excerpt", maximum)
         if self.observed not in self.excerpt:
             raise ReportValueError("claim excerpt does not support its observation")
         if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"}:
@@ -265,6 +267,9 @@ class LocalClaim:
             raise ReportValueError("ISBN claim typing is inconsistent")
         if self.kind is ClaimKind.ISBN and self.canonical is not None and not _valid_isbn(self.canonical, self.checksum):
             raise ReportValueError("ISBN claim checksum is inconsistent")
+        sentinel = _sentinel_state(self.observed)
+        if sentinel is not None and (self.state is not sentinel or self.canonical is not None):
+            raise ReportValueError("source sentinel claim is inconsistent")
         if self.state is FieldState.VALID and self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE} and self.canonical != normalize_title(self.observed):
             raise ReportValueError("title claim normalization is inconsistent")
         expected = stable_reference("local", self._reference_data())
@@ -709,6 +714,21 @@ def _name(value: object, label: str) -> None:
 def _text(value: object, label: str, maximum: int) -> None:
     if type(value) is not str or not value or len(value) > maximum or value.strip() != value or "\x00" in value or any(unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value):
         raise ReportValueError(f"{label} is invalid")
+
+
+def _projection_text(value: object, label: str, maximum: int) -> None:
+    try:
+        validate_projection_text(value, label, maximum)
+    except EvidenceValueError as error:
+        raise ReportValueError(f"{label} is invalid") from error
+
+
+def _sentinel_state(value: str) -> FieldState | None:
+    if re.fullmatch(r"unsafe-source-text-sha256:[0-9a-f]{64}", value):
+        return FieldState.UNSUPPORTED
+    if re.fullmatch(r"oversized-source-text-sha256:[0-9a-f]{64}", value):
+        return FieldState.OVERSIZED
+    return None
 
 
 def _valid_isbn(value: str, checksum: str) -> bool:
