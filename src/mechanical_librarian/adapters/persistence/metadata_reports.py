@@ -27,7 +27,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v2'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v3'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -37,6 +37,15 @@ _CURRENT_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, file_identity TEXT NOT NULL, "
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
     "PRIMARY KEY (connection_name, library_name, item_id, file_identity))"
+)
+_COVER_REFERENCES_SQL = (
+    "CREATE TABLE metadata_report_cover_references ("
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "source_id TEXT NOT NULL, artifact_id TEXT, preview_digest TEXT, "
+    "PRIMARY KEY (report_id, source_id), "
+    "CHECK ((artifact_id IS NULL AND preview_digest IS NULL) OR "
+    "(length(artifact_id) = 70 AND artifact_id GLOB 'cover_[0-9a-f]*' "
+    "AND length(preview_digest) = 64 AND preview_digest NOT GLOB '*[^0-9a-f]*')))"
 )
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
@@ -432,6 +441,16 @@ class SQLiteMetadataReportRepository:
                 )
             elif existing != values[1:]:
                 raise MetadataReportError("persisted report identity conflicts")
+            for source in report.cover_sources:
+                self._connection.execute(
+                    "INSERT INTO metadata_report_cover_references(report_id,source_id,artifact_id,preview_digest) VALUES(?,?,?,?)",
+                    (
+                        report.report_id,
+                        source.source_id,
+                        None if source.artifact is None else source.artifact.artifact_id,
+                        None if source.artifact is None else source.artifact.preview_digest,
+                    ),
+                )
             self._connection.execute(
                 "INSERT INTO current_metadata_reports(connection_name,library_name,item_id,file_identity,report_id) VALUES(?,?,?,?,?) "
                 "ON CONFLICT(connection_name,library_name,item_id,file_identity) DO UPDATE SET report_id=excluded.report_id",
@@ -488,6 +507,23 @@ class SQLiteMetadataReportRepository:
         ):
             raise MetadataReportError("persisted current report scope disagrees")
         return document
+
+    def preview_digest(self, report_id: str, artifact_id: str) -> str:
+        """Return only a preview explicitly referenced by one exact report."""
+        if type(report_id) is not str or type(artifact_id) is not str:
+            raise MetadataReportError("persisted cover is unavailable")
+        try:
+            row = self._connection.execute(
+                "SELECT preview_digest FROM metadata_report_cover_references WHERE report_id=? AND artifact_id=?",
+                (report_id, artifact_id),
+            ).fetchone()
+            if row is None or len(row) != 1 or type(row[0]) is not str:
+                raise MetadataReportError("persisted cover is unavailable")
+            return row[0]
+        except MetadataReportError:
+            raise
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted cover is unavailable") from error
 
     def close(self) -> None:
         try:
@@ -556,6 +592,7 @@ def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportR
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(_REPORTS_SQL)
             connection.execute(_CURRENT_SQL)
+            connection.execute(_COVER_REFERENCES_SQL)
             connection.execute(_NO_UPDATE_SQL)
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
@@ -819,7 +856,7 @@ def _unlink_created(path: Path, expected: tuple[int, int]) -> None:
 
 def _validate_schema(connection: sqlite3.Connection) -> None:
     objects = connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
-    expected_objects = sorted((("index", "sqlite_autoindex_current_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_2", None), ("table", "current_metadata_reports", _CURRENT_SQL), ("table", "metadata_reports", _REPORTS_SQL), ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL), ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL)))
+    expected_objects = sorted((("index", "sqlite_autoindex_current_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_report_cover_references_1", None), ("index", "sqlite_autoindex_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_2", None), ("table", "current_metadata_reports", _CURRENT_SQL), ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL), ("table", "metadata_reports", _REPORTS_SQL), ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL), ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL)))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
 
