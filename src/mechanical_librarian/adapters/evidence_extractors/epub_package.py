@@ -1347,8 +1347,6 @@ def _package_report(
                     continue
                 if attribute_name == "scheme" and local != "identifier":
                     continue
-                if attribute_name == "scheme" and invalid_identifier:
-                    continue
                 if attribute_name == "event" and local != "date":
                     continue
                 qualifier_node = _Node(node.name, node.attributes, text_parts=[qualifier], ordinal=node.ordinal)

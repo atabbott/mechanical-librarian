@@ -897,7 +897,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         self.assertIn(
             "invalid_identifier", {item.code for item in declared_report.warnings}
         )
-        self.assertNotIn(
+        self.assertIn(
             "ISBN",
             {
                 item.normalized_value

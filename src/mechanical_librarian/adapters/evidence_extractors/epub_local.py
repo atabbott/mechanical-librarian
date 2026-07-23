@@ -28,12 +28,14 @@ _PACKAGE_FIELDS = {
 }
 _MARKER = re.compile(r"(?:copyright|©|all rights reserved)", re.I)
 _BYLINE = re.compile(r"^(?:by|author\s*[:\-]?|written by)\s+(.+)$", re.I)
+_SENTINEL = re.compile(r"(?:unsafe|oversized)-source-text-sha256:[0-9a-f]{64}")
+_ISBN_LABEL = re.compile(r"^(?:urn:isbn:|isbn(?:-1[03])?\s*:?)", re.I)
 
 
 def _bounded(value: str) -> tuple[str, str | None]:
-    if value.startswith("unsafe-source-text-sha256:"):
+    if _SENTINEL.fullmatch(value) and value.startswith("unsafe-"):
         return value, "unsupported"
-    if value.startswith("oversized-source-text-sha256:"):
+    if _SENTINEL.fullmatch(value) and value.startswith("oversized-"):
         return value, "oversized"
     if len(value) <= 280:
         return value, None
@@ -52,6 +54,11 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
                 ordinal, _ = values[target][-1]
                 values[target][-1] = (ordinal, observation.normalized_value)
     roles = {ordinal: role for entries in values.values() for ordinal, role in entries}
+    identifier_schemes = {
+        observation.citation.source_ordinal: observation.normalized_value
+        for observation in report.observations
+        if observation.field is EpubPackageField.IDENTIFIER_SCHEME
+    }
     for observation in report.observations:
         field = _PACKAGE_FIELDS.get(observation.field)
         if field is None and observation.field is not EpubPackageField.IDENTIFIER:
@@ -61,9 +68,13 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         if observation.field is EpubPackageField.IDENTIFIER:
             field = EpubInspectionField.ISBN
             valid = canonical is not None and len(canonical) in {10, 13} and opening._isbn_valid(canonical)
-            if not valid:
+            scheme = identifier_schemes.get(observation.citation.source_ordinal)
+            explicit_isbn = _ISBN_LABEL.match(observation.raw_value) is not None or scheme in {"ISBN", "ISBN-10", "ISBN-13"}
+            if not valid and not explicit_isbn:
                 continue
-            facts.append(EpubInspectionFact(field, source, observed, canonical, observed, f"valid_isbn_{len(canonical)}", "unknown", "unlabelled", "package_metadata", state="valid"))
+            if not valid:
+                canonical = None
+            facts.append(EpubInspectionFact(field, source, observed, canonical, observed, f"valid_isbn_{len(canonical)}" if valid else "invalid", "unknown", "unlabelled", "package_metadata", state=forced_state or ("valid" if valid else "malformed")))
             continue
         if canonical is not None and field in {EpubInspectionField.TITLE, EpubInspectionField.SUBTITLE}:
             canonical = normalize_title(observed)
@@ -82,6 +93,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
     spine = [d for d in report.declarations if d.kind is EpubPackageDeclarationKind.SPINE_SLOT and d.linear]
     encrypted = {d.resource_identity for d in report.declarations if d.kind is EpubPackageDeclarationKind.ENCRYPTION and d.resource_identity}
     opened = {r.resource_identity for r in opening_report.resources if r.opened}
+    rear_capacity = min(4, max(0, 9 - len(opened)))
     seen: set[str] = set()
     limits = EpubOpeningLimits(package=request.limits, selected_documents=4, expanded_bytes_per_resource=1_048_576, expanded_bytes_per_selection=4_194_304, text_characters_per_selection=262_144, nodes_per_resource=50_000, nodes_per_selection=50_000, facts=16)
     names = {epub_resource_identity(info.filename): info.filename for info in archive.infolist() if not info.is_dir()}
@@ -102,7 +114,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
         declaration = manifests.get(identity)
         if declaration is None or identity in encrypted or declaration.media_type not in {"application/xhtml+xml", "text/html"} or identity not in names:
             continue
-        if opens >= 4:
+        if opens >= rear_capacity:
             break
         opens += 1
         try:

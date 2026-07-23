@@ -40,7 +40,7 @@ from mechanical_librarian.domain.identifiers import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind, FieldState, FileFacts, LocalClaim, MetadataReport, TargetFacts,
 )
-from tests.support.epub_packages import EPUB3_PACKAGE, _opening_epub, _opening_package, _xhtml, epub_bytes
+from tests.support.epub_packages import EPUB2_PACKAGE, EPUB3_PACKAGE, _opening_epub, _opening_package, _xhtml, epub_bytes
 
 
 class EpubChildCompositionTests(unittest.TestCase):
@@ -290,6 +290,23 @@ class EpubChildRearSpineTests(unittest.TestCase):
         )
         self.assertEqual(report.field_results[0].state, FieldState.OVERSIZED)
 
+    def test_package_sentinels_and_explicit_invalid_isbns_preserve_only_the_admitted_forms(self) -> None:
+        exact = "unsafe-source-text-sha256:" + "a" * 64
+        nonexact = "unsafe-source-text-sha256:" + "A" * 64
+        for value, expected_state, expected_canonical in ((exact, "unsupported", None), (nonexact, "valid", nonexact)):
+            with self.subTest(value=value):
+                facts = self._package_facts(EPUB3_PACKAGE.replace(b"A Synthetic Book", value.encode()))
+                title = next(fact for fact in facts if fact.field.value == "title")
+                self.assertEqual((title.state, title.canonical_value), (expected_state, expected_canonical))
+        epub2 = EPUB2_PACKAGE.replace(b"0-306-40615-2", b"0-306-40615-3")
+        urn = EPUB3_PACKAGE.replace(b"</metadata>", b"<dc:identifier>urn:isbn:9780306406158</dc:identifier></metadata>")
+        for package in (epub2, urn):
+            with self.subTest(package=package[:32]):
+                invalid = [fact for fact in self._package_facts(package) if fact.field.value == "isbn" and fact.canonical_value is None]
+                self.assertEqual([(fact.checksum, fact.state) for fact in invalid], [("invalid", "malformed")])
+        non_isbn = EPUB3_PACKAGE.replace(b'<dc:identifier id="pub-id">9780306406157</dc:identifier>', b'<dc:identifier id="pub-id">urn:uuid:00000000-0000-4000-8000-000000000007</dc:identifier>')
+        self.assertEqual([fact for fact in self._package_facts(non_isbn) if fact.field.value == "isbn"], [])
+
     def test_rear_pool_reads_only_tail_evidence_with_marker_and_explicit_cues(self) -> None:
         request, (package, opening, _) = self._bundle(_xhtml('<p>Copyright 2026</p><h1 epub:type="fulltitle">Rear Clock</h1><p>by Ada Example</p><p>ISBN 9780306406157</p>'))
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
@@ -308,6 +325,27 @@ class EpubChildRearSpineTests(unittest.TestCase):
                 with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
                     facts = child._rear_facts(request, package, opening, archive)
                 self.assertEqual([(fact.field.value, fact.canonical_value) for fact in facts], [("creator", "Ada Example")])
+
+    def test_rear_pool_caps_combined_navigation_opening_and_rear_resources_at_nine(self) -> None:
+        items = (("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'),) + tuple(
+            (f"slot{index}", f"slot{index}.xhtml", "application/xhtml+xml", "") for index in range(9)
+        )
+        package = _opening_package(items=items, spine=tuple(f"slot{index}" for index in range(9)))
+        value = _opening_epub(
+            package=package,
+            entries=(("EPUB/nav.xhtml", _xhtml("<nav epub:type=\"toc\"></nav>"), 8),) + tuple(
+                (f"EPUB/slot{index}.xhtml", _xhtml(f'<p>Copyright 2026</p><h1 epub:type="fulltitle">Slot {index}</h1>'), 8)
+                for index in range(9)
+            ),
+        )
+        request = self._request(value)
+        package_request = EpubPackageRequest(request.target, request.file, request.source, request.expected_source, EpubPackageCapability.PACKAGE, request.limits, request.deadline, request.monotonic_deadline, request.cancellation)
+        package_report, opening_report, _ = child._inspect_bundle(request, package_request, EpubOpeningLimits())
+        self.assertEqual(sum(resource.opened for resource in opening_report.resources), 6)
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package_report, opening_report, archive)
+        self.assertEqual([(fact.field.value, fact.canonical_value) for fact in facts], [("title", "Slot 8"), ("title", "Slot 7"), ("title", "Slot 6")])
+        self.assertEqual(sum(resource.opened for resource in opening_report.resources) + len(facts), 9)
 
     def test_rear_pool_preserves_cancellation_terminal(self) -> None:
         value = _opening_epub(

@@ -233,9 +233,13 @@ class LocalClaim:
         if self.basis == "target_metadata" and self.kind is not ClaimKind.TITLE:
             raise ReportValueError("target metadata claim kind is invalid")
         if self.role is not None:
+            if self.kind not in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}:
+                raise ReportValueError("local claim role is invalid")
             _projection_text(self.role, "contributor role", 64)
         if self.rear_provenance is not None and type(self.rear_provenance) is not RearClaimProvenance:
             raise ReportValueError("rear claim provenance is invalid")
+        if self.rear_provenance is not None and (self.basis != "opening_matter" or self.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR, ClaimKind.ISBN}):
+            raise ReportValueError("rear claim provenance is inapplicable")
         if type(self.occurrence) is not int or not 0 <= self.occurrence <= 1_000_000:
             raise ReportValueError("local claim occurrence is invalid")
         maximum = 512 if self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.DESCRIPTION} else 280
@@ -342,12 +346,9 @@ class ProviderClaim:
             raise ReportValueError("provider claim reference is invalid")
         if type(self.kind) is not ClaimKind or type(self.comparison) is not Comparison:
             raise ReportValueError("provider claim is invalid")
-        _text(self.value, "provider claim value", 512)
-        if self.kind is ClaimKind.TITLE:
-            try:
-                validate_projection_text(self.value, "provider title", 512)
-            except EvidenceValueError as error:
-                raise ReportValueError("provider title is not public-safe") from error
+        if self.kind not in {ClaimKind.TITLE, ClaimKind.ISBN}:
+            raise ReportValueError("provider claim kind is invalid")
+        _projection_text(self.value, "provider claim value", 512)
         if self.kind is ClaimKind.ISBN and not (
             _valid_isbn(self.value, "valid_isbn_10")
             or _valid_isbn(self.value, "valid_isbn_13")

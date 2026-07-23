@@ -21,6 +21,7 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    Comparison,
     FieldResult,
     FieldSource,
     FieldSourceResult,
@@ -29,6 +30,7 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     ProviderObservation,
+    ProviderClaim,
     ProviderStatus,
     RearClaimProvenance,
     ReportValueError,
@@ -239,6 +241,28 @@ class MetadataReportTests(unittest.TestCase):
         data["local"]["claims"][0]["canonical"] = "/Users/private/title"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(data))
+
+    def test_provider_claim_and_local_role_rear_provenance_are_closed(self) -> None:
+        reference = "provider_" + "a" * 64
+        self.assertEqual(ProviderClaim(reference, ClaimKind.TITLE, "A title", Comparison.AGREEMENT, ()).kind, ClaimKind.TITLE)
+        self.assertEqual(ProviderClaim(reference, ClaimKind.ISBN, "9780306406157", Comparison.AGREEMENT, ()).kind, ClaimKind.ISBN)
+        for kind, value in ((ClaimKind.PUBLISHER, "Example Press"), (ClaimKind.TITLE, "/Users/private/title"), (ClaimKind.TITLE, "Authorization: Bearer abcdefgh")):
+            with self.subTest(provider_kind=kind, value=value), self.assertRaises(ReportValueError):
+                ProviderClaim(reference, kind, value, Comparison.AGREEMENT, ())
+        provenance = RearClaimProvenance("a" * 64, 1, 1, "copyright", "Copyright 2026")
+        valid_rear = LocalClaim.create(
+            kind=ClaimKind.CREATOR, observed="Ada Example", canonical="Ada Example", excerpt="Ada Example",
+            applicability="not_applicable", basis="opening_matter", checksum="not_applicable",
+            applicability_basis="not_applicable", role="author", rear_provenance=provenance,
+        )
+        self.assertEqual(valid_rear.rear_provenance, provenance)
+        for kind, basis, role, rear in ((ClaimKind.TITLE, "opening_matter", "author", None), (ClaimKind.PUBLISHER, "opening_matter", None, provenance), (ClaimKind.TITLE, "package_metadata", None, provenance), (ClaimKind.TITLE, "target_metadata", None, provenance)):
+            with self.subTest(kind=kind, basis=basis, role=role, rear=rear is not None), self.assertRaises(ReportValueError):
+                LocalClaim.create(
+                    kind=kind, observed="A title", canonical="A title", excerpt="A title",
+                    applicability="not_applicable", basis=basis, checksum="not_applicable",
+                    applicability_basis="not_applicable", role=role, rear_provenance=rear,
+                )
 
     def test_non_valid_title_sentinel_cannot_become_canonical(self) -> None:
         sentinel = "unsafe-source-text-sha256:" + "a" * 64
