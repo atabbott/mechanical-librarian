@@ -165,6 +165,73 @@ class MetadataPersistenceTests(unittest.TestCase):
                 repository.get(report.report_id)
             repository.close()
 
+    def test_existing_schema_rejects_unexpected_objects_without_mutation(self) -> None:
+        for statement in (
+            "CREATE VIEW unexpected_view AS SELECT report_id FROM metadata_reports",
+            "CREATE INDEX unexpected_index ON metadata_reports(connection_name)",
+        ):
+            with self.subTest(statement=statement), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "reports.sqlite"
+                repository = open_repository(path)
+                repository.publish(_report(), lambda: True)
+                repository.close()
+                connection = sqlite3.connect(path)
+                connection.execute(statement)
+                connection.commit()
+                expected_objects = connection.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall()
+                expected_counts = connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone()
+                connection.close()
+                before = path.read_bytes()
+                with self.assertRaises(MetadataReportError):
+                    open_repository(path)
+                self.assertEqual(path.read_bytes(), before)
+                connection = sqlite3.connect(path)
+                self.assertEqual(connection.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall(), expected_objects)
+                self.assertEqual(connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone(), expected_counts)
+                connection.close()
+
+    def test_existing_schema_validates_every_row_and_current_pointer_before_opening(self) -> None:
+        cases = ("malformed", "canonical_contradiction", "envelope", "digest", "pointer")
+        for kind in cases:
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "reports.sqlite"
+                repository = open_repository(path)
+                primary = _report()
+                other = MetadataReport.create(
+                    target=TargetFacts("secondary", "other", "item-2", "Other title"),
+                    file=FileFacts(0, "c" * 64, "d" * 64),
+                    local_claims=(), local_reasons=("no_opening_claims",), providers=(),
+                )
+                repository.publish(primary, lambda: True)
+                repository.publish(other, lambda: True)
+                repository.close()
+                connection = sqlite3.connect(path)
+                connection.execute("DROP TRIGGER metadata_reports_no_update")
+                if kind == "malformed":
+                    document = "{}"
+                    connection.execute("UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?", (document, hashlib.sha256(document.encode()).hexdigest(), primary.report_id))
+                elif kind == "canonical_contradiction":
+                    document = other.to_json()
+                    connection.execute("UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?", (document, hashlib.sha256(document.encode()).hexdigest(), primary.report_id))
+                elif kind == "envelope":
+                    connection.execute("UPDATE metadata_reports SET connection_name='other' WHERE report_id=?", (primary.report_id,))
+                elif kind == "digest":
+                    connection.execute("UPDATE metadata_reports SET document_digest=? WHERE report_id=?", ("0" * 64, primary.report_id))
+                else:
+                    connection.execute("UPDATE current_metadata_reports SET connection_name='other'")
+                connection.commit()
+                expected_objects = connection.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall()
+                expected_counts = connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone()
+                connection.close()
+                before = path.read_bytes()
+                with self.assertRaises(MetadataReportError):
+                    open_repository(path)
+                self.assertEqual(path.read_bytes(), before)
+                connection = sqlite3.connect(path)
+                self.assertEqual(connection.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall(), expected_objects)
+                self.assertEqual(connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone(), expected_counts)
+                connection.close()
+
     def test_pointer_failure_rolls_back_new_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reports.sqlite"

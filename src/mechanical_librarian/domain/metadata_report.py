@@ -469,8 +469,9 @@ class MetadataReport:
             type(self.field_results) is not tuple
             or any(type(value) is not FieldResult for value in self.field_results)
             or tuple(value.kind for value in self.field_results) != tuple(ClaimKind)
+            or self.field_results != derive_field_results(self.local_claims)
         ):
-            raise ReportValueError("field results are incomplete or unordered")
+            raise ReportValueError("field results are inconsistent")
         known = set(references)
         if any(not set(provider.input_references).issubset(known) for provider in self.providers):
             raise ReportValueError("provider inputs do not reference local claims")

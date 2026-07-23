@@ -33,6 +33,8 @@ _BYLINE = re.compile(r"^(?:by|author\s*[:\-]?|written by)\s+(.+)$", re.I)
 def _bounded(value: str) -> tuple[str, str | None]:
     if value.startswith("unsafe-source-text-sha256:"):
         return value, "unsupported"
+    if value.startswith("oversized-source-text-sha256:"):
+        return value, "oversized"
     if len(value) <= 280:
         return value, None
     return "oversized-source-text-sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest(), "oversized"

@@ -37,6 +37,9 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
 from mechanical_librarian.domain.identifiers import (
     AdapterId, ConnectionId, ExternalItemId, LibraryId, TargetId,
 )
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind, FieldState, FileFacts, LocalClaim, MetadataReport, TargetFacts,
+)
 from tests.support.epub_packages import EPUB3_PACKAGE, _opening_epub, _opening_package, _xhtml, epub_bytes
 
 
@@ -265,6 +268,27 @@ class EpubChildRearSpineTests(unittest.TestCase):
         states = {fact.field.value: fact.state for fact in facts}
         self.assertEqual(states["publication_date"], "malformed")
         self.assertEqual(states["language"], "malformed")
+
+    def test_package_oversized_sentinel_reaches_report_as_noncanonical_oversized_evidence(self) -> None:
+        package = EPUB3_PACKAGE.replace(b"A Synthetic Book", b"x" * 4_097)
+        facts = self._package_facts(package)
+        title = next(fact for fact in facts if fact.field.value == "title")
+        self.assertTrue(title.observed_value.startswith("oversized-source-text-sha256:"))
+        self.assertIsNone(title.canonical_value)
+        self.assertEqual(title.state, "oversized")
+        claim = LocalClaim.create(
+            kind=ClaimKind(title.field.value), observed=title.observed_value,
+            canonical=title.canonical_value, excerpt=title.supporting_context,
+            applicability=title.media, checksum=title.checksum,
+            applicability_basis=title.classification_basis, basis=title.basis,
+            state=FieldState(title.state),
+        )
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(claim,),
+            local_reasons=("package_metadata_title",), providers=(),
+        )
+        self.assertEqual(report.field_results[0].state, FieldState.OVERSIZED)
 
     def test_rear_pool_reads_only_tail_evidence_with_marker_and_explicit_cues(self) -> None:
         request, (package, opening, _) = self._bundle(_xhtml('<p>Copyright 2026</p><h1 epub:type="fulltitle">Rear Clock</h1><p>by Ada Example</p><p>ISBN 9780306406157</p>'))

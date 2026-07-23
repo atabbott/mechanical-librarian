@@ -23,6 +23,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     FieldResult,
     FieldSource,
+    FieldSourceResult,
     FieldState,
     FileFacts,
     LocalClaim,
@@ -31,6 +32,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     ReportValueError,
     TargetFacts,
+    derive_field_results,
     normalize_title,
 )
 from mechanical_librarian.interfaces.cli import main
@@ -81,11 +83,7 @@ class _Repository:
 
 class MetadataReportTests(unittest.TestCase):
     def test_field_results_are_complete_canonical_and_separate_from_claims(self) -> None:
-        states = tuple(FieldState)
-        results = tuple(
-            FieldResult(kind, states[index % len(states)])
-            for index, kind in enumerate(ClaimKind)
-        )
+        results = derive_field_results(())
         report = MetadataReport.create(
             target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
             file=FileFacts(0, "a" * 64, "b" * 64),
@@ -101,6 +99,34 @@ class MetadataReportTests(unittest.TestCase):
                 target=report.target, file=report.file, local_claims=(),
                 local_reasons=("no_opening_claims",), providers=(),
                 field_results=results[:-1],
+            )
+        contradictory = tuple(
+            FieldResult(value.kind, FieldState.VALID, value.sources)
+            if value.kind is ClaimKind.TITLE else value
+            for value in results
+        )
+        with self.assertRaises(ReportValueError):
+            MetadataReport.create(
+                target=report.target, file=report.file, local_claims=(),
+                local_reasons=("no_opening_claims",), providers=(),
+                field_results=contradictory,
+            )
+        source_contradiction = tuple(
+            FieldResult(
+                value.kind,
+                value.state,
+                (
+                    FieldSourceResult(FieldSource.EPUB, FieldState.ABSENT),
+                    FieldSourceResult(FieldSource.TARGET_METADATA, FieldState.VALID),
+                ),
+            ) if value.kind is ClaimKind.TITLE else value
+            for value in results
+        )
+        with self.assertRaises(ReportValueError):
+            MetadataReport.create(
+                target=report.target, file=report.file, local_claims=(),
+                local_reasons=("no_opening_claims",), providers=(),
+                field_results=source_contradiction,
             )
 
     def test_non_valid_observation_state_is_projected_to_its_field_result(self) -> None:
