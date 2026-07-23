@@ -37,7 +37,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
 from mechanical_librarian.domain.identifiers import (
     AdapterId, ConnectionId, ExternalItemId, LibraryId, TargetId,
 )
-from tests.support.epub_packages import _opening_epub, _opening_package, _xhtml
+from tests.support.epub_packages import EPUB3_PACKAGE, _opening_epub, _opening_package, _xhtml, epub_bytes
 
 
 class EpubChildCompositionTests(unittest.TestCase):
@@ -224,6 +224,48 @@ class EpubChildRearSpineTests(unittest.TestCase):
         package_request = EpubPackageRequest(request.target, request.file, request.source, request.expected_source, EpubPackageCapability.PACKAGE, request.limits, request.deadline, request.monotonic_deadline, request.cancellation)
         return request, child._inspect_bundle(request, package_request, EpubOpeningLimits())
 
+    def _package_facts(self, package: bytes):
+        value = epub_bytes(package=package)
+        request = self._request(value)
+        package_request = EpubPackageRequest(request.target, request.file, request.source, request.expected_source, EpubPackageCapability.PACKAGE, request.limits, request.deadline, request.monotonic_deadline, request.cancellation)
+        report = EpubPackageExtractor().extract(package_request)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
+        self.assertIsNotNone(report.source_fingerprint)
+        return child._package_facts(report, report.source_fingerprint)
+
+    def test_package_facts_projects_only_recognized_valid_isbns_and_normalizes_titles(self) -> None:
+        package = EPUB3_PACKAGE.replace(
+            b'<dc:title id="title">A Synthetic Book</dc:title>',
+            "<dc:title id=\"main\">  Cafe\u0301   Registry  </dc:title>".encode(),
+        ).replace(
+            b'<dc:identifier id="pub-id">9780306406157</dc:identifier>',
+            b'<dc:identifier id="pub-id">urn:uuid:00000000-0000-4000-8000-000000000007</dc:identifier>',
+        ).replace(
+            b"</metadata>",
+            b'''<dc:title id="subtitle">  The   Sequel  </dc:title>
+    <meta refines="#subtitle" property="title-type">subtitle</meta>
+    <dc:identifier>10.1234/synthetic.1</dc:identifier>
+    <dc:identifier>ASIN:B012345678</dc:identifier>
+    <dc:identifier>urn:synthetic:alternate</dc:identifier>
+    <dc:identifier>9780306406157</dc:identifier></metadata>''',
+        )
+        facts = self._package_facts(package)
+        self.assertEqual(
+            [(fact.field.value, fact.canonical_value) for fact in facts if fact.field.value in {"title", "subtitle", "isbn"}],
+            [("title", "Caf\u00e9 Registry"), ("subtitle", "The Sequel"), ("isbn", "9780306406157")],
+        )
+
+    def test_package_facts_mark_missing_invalid_date_and_language_canonicals_malformed(self) -> None:
+        package = EPUB3_PACKAGE.replace(
+            b"<dc:language>en-GB</dc:language>", b"<dc:language>not a language!</dc:language>"
+        ).replace(
+            b"</metadata>", b"<dc:date>2026-02-30</dc:date></metadata>"
+        )
+        facts = self._package_facts(package)
+        states = {fact.field.value: fact.state for fact in facts}
+        self.assertEqual(states["publication_date"], "malformed")
+        self.assertEqual(states["language"], "malformed")
+
     def test_rear_pool_reads_only_tail_evidence_with_marker_and_explicit_cues(self) -> None:
         request, (package, opening, _) = self._bundle(_xhtml('<p>Copyright 2026</p><h1 epub:type="fulltitle">Rear Clock</h1><p>by Ada Example</p><p>ISBN 9780306406157</p>'))
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
@@ -234,6 +276,14 @@ class EpubChildRearSpineTests(unittest.TestCase):
         request, (package, opening, _) = self._bundle(_xhtml('<h1 epub:type="fulltitle">Unmarked Tail</h1><p>ISBN 9780306406157</p>'))
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
             self.assertEqual(child._rear_facts(request, package, opening, archive), ())
+
+    def test_rear_pool_suppresses_unsafe_cues_without_losing_safe_facts(self) -> None:
+        for unsafe in ("/Users/private/title", "Authorization: Bearer abcdefgh"):
+            with self.subTest(unsafe=unsafe):
+                request, (package, opening, _) = self._bundle(_xhtml(f'<p>Copyright 2026</p><h1 epub:type="fulltitle">{unsafe}</h1><p>by Ada Example</p>'))
+                with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+                    facts = child._rear_facts(request, package, opening, archive)
+                self.assertEqual([(fact.field.value, fact.canonical_value) for fact in facts], [("creator", "Ada Example")])
 
     def test_rear_pool_preserves_cancellation_terminal(self) -> None:
         value = _opening_epub(

@@ -13,8 +13,10 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
 from mechanical_librarian.domain.epub_inspection import (
     EpubInspectionFact, EpubInspectionField, EpubPackageLimits, EpubRearProvenance,
 )
+from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.identifiers import Fingerprint
+from mechanical_librarian.domain.metadata_report import normalize_title
 
 _PACKAGE_FIELDS = {
     EpubPackageField.TITLE: EpubInspectionField.TITLE, EpubPackageField.SUBTITLE: EpubInspectionField.SUBTITLE,
@@ -57,13 +59,13 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         if observation.field is EpubPackageField.IDENTIFIER:
             field = EpubInspectionField.ISBN
             valid = canonical is not None and len(canonical) in {10, 13} and opening._isbn_valid(canonical)
-            checksum = f"valid_isbn_{len(canonical)}" if valid else "invalid"
             if not valid:
-                canonical = None
-            state = forced_state or ("valid" if valid else "malformed")
-            facts.append(EpubInspectionFact(field, source, observed, canonical, observed, checksum, "unknown", "unlabelled", "package_metadata", state=state))
+                continue
+            facts.append(EpubInspectionFact(field, source, observed, canonical, observed, f"valid_isbn_{len(canonical)}", "unknown", "unlabelled", "package_metadata", state="valid"))
             continue
-        state = forced_state or ("inapplicable" if observation.applicability.value == "inapplicable" else "untyped" if field is EpubInspectionField.SUBJECT else "malformed" if canonical is None else "valid")
+        if canonical is not None and field in {EpubInspectionField.TITLE, EpubInspectionField.SUBTITLE}:
+            canonical = normalize_title(observed)
+        state = forced_state or ("untyped" if field is EpubInspectionField.SUBJECT else "malformed" if canonical is None else "inapplicable" if observation.applicability.value == "inapplicable" else "valid")
         facts.append(EpubInspectionFact(field, source, observed, canonical, observed, "not_applicable", "not_applicable", "not_applicable", "package_metadata", state=state, role=roles.get(observation.citation.source_ordinal)))
     return tuple(facts)
 
@@ -118,8 +120,12 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             if element.ordinal in parents: continue
             value = " ".join(element.exact_text.split())
             if not value or len(value) > 280: continue
+            try:
+                value = validate_projection_text(value, "rear-spine cue", 280)
+            except EvidenceValueError:
+                continue
             field = canonical = None; role = None
-            if element.semantics & {"title", "fulltitle"}: field, canonical = EpubInspectionField.TITLE, value
+            if element.semantics & {"title", "fulltitle"}: field, canonical = EpubInspectionField.TITLE, normalize_title(value)
             elif element.semantics & {"contributor"}: field, canonical = EpubInspectionField.CONTRIBUTOR, value
             elif element.semantics & {"creator"}: field, canonical = EpubInspectionField.CREATOR, value
             elif (byline := _BYLINE.match(value)) is not None and len(byline.group(1)) <= 280: field, canonical = EpubInspectionField.CREATOR, byline.group(1)

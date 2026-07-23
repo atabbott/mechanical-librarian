@@ -532,9 +532,9 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertNotEqual(first_report.report_id, successor_report.report_id)
             self.assertEqual({claim.kind.value for claim in first_report.local_claims}, {"title", "isbn", "language"})
             isbn_claims = [claim for claim in first_report.local_claims if claim.kind.value == "isbn"]
-            self.assertEqual({claim.checksum for claim in isbn_claims}, {"valid_isbn_13", "invalid"})
-            self.assertEqual({claim.applicability for claim in isbn_claims}, {"ebook", "print", "unknown"})
-            self.assertEqual({claim.applicability_basis for claim in isbn_claims}, {"ebook", "paperback", "unlabelled"})
+            self.assertEqual({claim.checksum for claim in isbn_claims}, {"valid_isbn_13"})
+            self.assertEqual({claim.applicability for claim in isbn_claims}, {"ebook", "print"})
+            self.assertEqual({claim.applicability_basis for claim in isbn_claims}, {"ebook", "paperback"})
             self.assertEqual(first_report.providers[0].status.value, "disabled")
             connection = sqlite3.connect(database)
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM metadata_reports").fetchone(), (2,))
@@ -593,7 +593,7 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertEqual(primary.local_status, "no_candidate")
             self.assertEqual(
                 primary.local_reasons,
-                ("package_metadata_isbn", "package_metadata_language", "package_metadata_title"),
+                ("package_metadata_language", "package_metadata_title"),
             )
             self.assertEqual(primary.providers[0].status.value, "disabled")
             self.assertEqual(secondary.local_status, "no_candidate")
