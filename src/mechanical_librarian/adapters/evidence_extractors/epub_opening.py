@@ -1783,7 +1783,8 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
         state = "valid"
     except EvidenceValueError:
         state = "oversized" if len(original) > excerpt_characters else "unsupported"
-    raw = original[:excerpt_characters] if state == "valid" else f"{state}-source-text-sha256:" + hashlib.sha256(original.encode("utf-8")).hexdigest()
+    prefix = "unsafe" if state == "unsupported" else state
+    raw = original[:excerpt_characters] if state == "valid" else f"{prefix}-source-text-sha256:" + hashlib.sha256(original.encode("utf-8")).hexdigest()
     if not raw:
         return None
     start = element.start

@@ -707,6 +707,15 @@ class EpubOpeningTests(unittest.TestCase):
         self.assertEqual(claim.state, "oversized")
         self.assertRegex(claim.raw_value, r"^oversized-source-text-sha256:[0-9a-f]{64}$")
         self.assertEqual(claim.raw_value, claim.citation.exact_excerpt)
+        unsafe = _extract(self._single(_xhtml('<p epub:type="creator">By /Users/private/Ada</p>')))
+        creator = next(claim for claim in unsafe.claims if claim.field is OpeningField.CREATOR)
+        self.assertEqual(creator.state, "unsupported")
+        self.assertRegex(creator.raw_value, r"^unsafe-source-text-sha256:[0-9a-f]{64}$")
+        self.assertEqual(creator.raw_value, creator.citation.exact_excerpt)
+        self.assertEqual(
+            [claim.normalized_value for claim in unsafe.claims if claim.field is OpeningField.CREATOR_ROLE],
+            ["author"],
+        )
 
     def test_strict_recovery_and_active_content_are_inert_and_visible(self) -> None:
         strict = _extract(opening_strict_xhtml())
