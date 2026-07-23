@@ -17,6 +17,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation, ProviderStatus, canonical_json,
     comparison_links,
 )
+from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
 
 
 HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
@@ -157,8 +158,8 @@ def _contributions(provider: str, identity: str, value: object, scope: ClaimScop
     for item in contributions:
         author = _closed_or_none(item["author"], {"id", "name"})
         try:
-            role = _text(item["contribution"], 64).casefold()
-        except ValueError:
+            role = validate_role_projection(item["contribution"]).casefold()
+        except EvidenceValueError:
             claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
             continue
         kind = ClaimKind.CREATOR if role == "author" else ClaimKind.CONTRIBUTOR
@@ -184,7 +185,7 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
     try:
         if kind is ClaimKind.SERIES_SEQUENCE and type(value) is Decimal:
             return FieldState.VALID, _position(value)
-        text = _text(value, maximum)
+        text = validate_projection_text(value, "provider claim value", maximum)
         if kind is ClaimKind.ISBN:
             text = _isbn(text, len(text.replace("-", "").replace(" ", "")))
         if kind is ClaimKind.ASIN and (len(text) != 10 or not text.isascii() or not text.isalnum()):
@@ -194,7 +195,7 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
         if kind is ClaimKind.SERIES_SEQUENCE:
             text = _position(text)
         return FieldState.VALID, text
-    except ValueError:
+    except (ValueError, EvidenceValueError):
         return (FieldState.OVERSIZED if type(value) is str and len(value) > maximum else FieldState.MALFORMED), None
 
 

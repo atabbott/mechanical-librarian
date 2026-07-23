@@ -17,6 +17,7 @@ import mechanical_librarian.adapters.persistence.metadata_reports as metadata_pe
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.hardcover_metadata import HARDCOVER_URL, HardcoverMetadataProvider
+import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -813,6 +814,31 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertNotIn("parent_id", {claim.value for claim in claims if claim.value is not None})
         self.assertIn("contributions(order_by:{id:asc},limit:17)", captured[0]["query"])
         self.assertIn("taggings(order_by:{id:asc},limit:33)", captured[0]["query"])
+
+    def test_rich_field_boundaries_are_local_and_public_safe(self) -> None:
+        row = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "T" * 513, "subtitle": None, "release_date": "not-a-date", "publisher": None, "language": None, "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 1, "name": "Ada"}}, {"id": 2, "contribution": "/Users/private", "author": {"id": 2, "name": "Bea"}}]}
+        book = {"id": 1, "title": "/Users/private/title", "description": "D" * 16385, "contributions": [{"id": 3, "contribution": "Translator", "author": {"id": 3, "name": "Cy"}}], "book_series": [{"id": 4, "position": 1.5, "series": {"id": 4, "name": "Series"}}], "taggings": []}
+        payload = json.dumps(self._envelope([row], [book])).encode()
+        claims = hardcover_metadata._parse_candidates(payload, "catalogue", (self._claim(),)).__getitem__(0).claims
+        by_kind = {claim.kind: claim for claim in claims}
+        self.assertEqual(by_kind[ClaimKind.ASIN].state.value, "valid")
+        self.assertEqual(by_kind[ClaimKind.PUBLICATION_DATE].state.value, "malformed")
+        self.assertEqual(by_kind[ClaimKind.DESCRIPTION].state.value, "oversized")
+        self.assertEqual(by_kind[ClaimKind.TITLE].state.value, "malformed")
+        self.assertEqual(by_kind[ClaimKind.SERIES_SEQUENCE].value, "1.5")
+        self.assertEqual(by_kind[ClaimKind.IMPRINT].state.value, "unsupported")
+        self.assertEqual(by_kind[ClaimKind.GENRE].state.value, "unsupported")
+        contributors = [claim for claim in claims if claim.kind is ClaimKind.CONTRIBUTOR]
+        self.assertIn("translator", {claim.role for claim in contributors})
+        self.assertTrue(any(claim.state.value == "malformed" for claim in contributors))
+
+    def test_response_cap_and_candidate_probe_are_terminal(self) -> None:
+        payload = self._envelope([], [])
+        capped = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, content=b"{}" * 20))), 1)
+        self.assertEqual(capped.observe((self._claim(),)).status, ProviderStatus.OVERSIZED)
+        rows = [{"id": index, "book_id": index, "isbn_10": None, "isbn_13": None} for index in range(1, 7)]
+        overflow = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=self._envelope(rows, [{"id": index, "title": None} for index in range(1, 7)])))), 65_536)
+        self.assertEqual(overflow.observe((self._claim(),)).status, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
