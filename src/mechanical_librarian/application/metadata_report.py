@@ -51,10 +51,18 @@ class TargetFile:
 
 
 @dataclass(frozen=True, slots=True)
+class TargetCover:
+    """Opaque target cover tuple retained solely for a before/after drift check."""
+    identity: str
+    path: str
+
+
+@dataclass(frozen=True, slots=True)
 class TargetSnapshot:
     media_kind: str
     title: str
     files: tuple[TargetFile, ...]
+    cover: TargetCover | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +253,7 @@ class GenerateMetadataReport:
         if (
             final.media_kind != "ebook"
             or final.title != initial.title
+            or final.cover != initial.cover
             or len(matches) != 1
             or matches[0].format != "epub"
             or matches[0].relative_path != selected.relative_path

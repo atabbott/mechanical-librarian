@@ -14,6 +14,7 @@ import httpx
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     TargetFile,
+    TargetCover,
     TargetSnapshot,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -99,7 +100,13 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
     if len(set(identities)) != len(identities):
         raise MetadataReportError("target file identities are duplicated")
     media_kind = "ebook" if files else "audiobook" if type(media.get("audioFiles")) is list else "unsupported"
-    return TargetSnapshot(media_kind, title, files)
+    cover_path = root.get("coverPath")
+    cover = None
+    if cover_path is not None:
+        if type(cover_path) is not str or not cover_path.startswith("/") or len(cover_path) > 1024:
+            raise MetadataReportError("target response is invalid")
+        cover = TargetCover(hashlib.sha256(cover_path.encode()).hexdigest(), cover_path)
+    return TargetSnapshot(media_kind, title, files, cover)
 
 
 def _file(source: object, service_path: str) -> TargetFile:
