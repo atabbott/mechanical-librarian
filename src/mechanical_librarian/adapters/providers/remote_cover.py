@@ -31,6 +31,30 @@ class RemoteCover:
     content: bytes
 
 
+@dataclass(frozen=True, slots=True)
+class CoverDeadline:
+    """One aggregate cover window plus a fresh bounded attempt window."""
+
+    aggregate_deadline: float
+    attempt_deadline: float
+
+    @classmethod
+    def start(cls, *, now: float | None = None) -> "CoverDeadline":
+        started = time.monotonic() if now is None else now
+        return cls(started + 60.0, started + 20.0)
+
+    def next_attempt(self, *, now: float | None = None) -> "CoverDeadline":
+        started = time.monotonic() if now is None else now
+        return type(self)(self.aggregate_deadline, min(self.aggregate_deadline, started + 20.0))
+
+    def remaining_phase(self, *, now: float | None = None) -> float:
+        current = time.monotonic() if now is None else now
+        value = min(5.0, self.aggregate_deadline - current, self.attempt_deadline - current)
+        if value <= 0:
+            raise RemoteCoverTimeout("aggregate deadline elapsed")
+        return value
+
+
 def _public_https(url: str) -> tuple[str, int]:
     parts = urlsplit(url)
     if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443) or parts.username or parts.password or parts.fragment:
@@ -56,14 +80,16 @@ def _pinned_address(url: str) -> tuple[str, str, str]:
     return host, selected, urlsplit(url).path or "/"
 
 
-def _remaining(deadline: float | None) -> float:
+def _remaining(deadline: float | CoverDeadline | None) -> float:
+    if type(deadline) is CoverDeadline:
+        return deadline.remaining_phase()
     value = 5.0 if deadline is None else min(5.0, deadline - time.monotonic())
     if value <= 0:
         raise RemoteCoverTimeout("aggregate deadline elapsed")
     return value
 
 
-def _pinned_fetch(url: str, deadline: float | None) -> tuple[int, dict[str, str], bytes]:
+def _pinned_fetch(url: str, deadline: float | CoverDeadline | None) -> tuple[int, dict[str, str], bytes]:
     host, address, path = _pinned_address(url)
     query = urlsplit(url).query
     if query:
@@ -98,20 +124,20 @@ def _pinned_fetch(url: str, deadline: float | None) -> tuple[int, dict[str, str]
             pass
 
 
-def fetch_remote_cover(url: str, *, deadline: float | None = None, client: httpx.Client | None = None) -> RemoteCover:
+def fetch_remote_cover(url: str, *, deadline: float | CoverDeadline | None = None, client: httpx.Client | None = None) -> RemoteCover:
     """One no-retry request chain; every redirect is revalidated before use."""
     own = client is None
     active = client or httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""})
     current = url
     try:
         for _ in range(4):
-            if deadline is not None and time.monotonic() >= deadline:
+            if type(deadline) is CoverDeadline and deadline.remaining_phase() <= 0:
+                raise RemoteCoverTimeout("aggregate deadline elapsed")
+            if type(deadline) is float and time.monotonic() >= deadline:
                 raise RemoteCoverTimeout("aggregate deadline elapsed")
             if client is not None:
                 host, _ = _public_https(current)
-            remaining = 5.0 if deadline is None else deadline - time.monotonic()
-            if remaining <= 0:
-                raise RemoteCoverTimeout("aggregate deadline elapsed")
+            remaining = _remaining(deadline)
             if client is None:
                 status, headers, content = _pinned_fetch(current, deadline)
                 if status in {301, 302, 303, 307, 308}:
@@ -140,7 +166,7 @@ def fetch_remote_cover(url: str, *, deadline: float | None = None, client: httpx
                     raise RemoteCoverError("remote cover format is unsupported")
                 chunks: list[bytes] = []; size = 0
                 for chunk in response.iter_bytes():
-                    if deadline is not None and time.monotonic() >= deadline: raise RemoteCoverTimeout("aggregate deadline elapsed")
+                    _remaining(deadline)
                     size += len(chunk)
                     if size > MAX_BYTES: raise RemoteCoverError("remote cover is oversized")
                     chunks.append(chunk)

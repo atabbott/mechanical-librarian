@@ -14,7 +14,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import A
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.providers.hardcover_metadata import HardcoverMetadataProvider
-from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverError, RemoteCoverTimeout, fetch_remote_cover
+from mechanical_librarian.adapters.providers.remote_cover import CoverDeadline, RemoteCoverError, RemoteCoverTimeout, fetch_remote_cover
 from mechanical_librarian.application.configuration import ConfigurationError, MediaMountConfiguration, ProviderConnectionConfiguration
 from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
@@ -128,13 +128,13 @@ class _CoverEvidenceObserver:
             source = CoverSource(cover_source_id(CoverSourceKind.ABS, "absent"), CoverSourceKind.ABS, CoverSourceState.ABSENT)
             return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=time.monotonic() + 60.0))
         source_id = cover_source_id(CoverSourceKind.ABS, target.cover.identity)
-        deadline = time.monotonic() + 60.0
+        deadline = CoverDeadline.start()
         try:
-            original = self._target.read_cover(target.cover, deadline=deadline)
+            original = self._target.read_cover(target.cover, deadline=deadline.aggregate_deadline)
             if original is None:
                 source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.ABSENT)
             else:
-                decoded = decode_cover(original, deadline=deadline)
+                decoded = decode_cover(original, deadline=deadline.aggregate_deadline)
                 self._artifacts.stage(decoded.artifact, original, decoded.preview)
                 source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.RETRIEVED, decoded.artifact)
         except CoverTimeoutError:
@@ -147,7 +147,7 @@ class _CoverEvidenceObserver:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
         return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
 
-    def _hardcover(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[tuple[str, str | None], ...], *, deadline: float) -> tuple[CoverSource, ...]:
+    def _hardcover(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[tuple[str, str | None], ...], *, deadline: CoverDeadline) -> tuple[CoverSource, ...]:
         results: list[CoverSource] = []
         for observation in observations:
             configuration = self._providers.get(observation.provider)
@@ -159,7 +159,7 @@ class _CoverEvidenceObserver:
             values = tuple(descriptors)
             if not values:
                 continue
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= deadline.aggregate_deadline:
                 results.extend(CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.TIMEOUT, timeout_scope="not_started_due_to_aggregate_deadline") for source_id, _ in values)
                 continue
             for source_id, url in values:
@@ -170,10 +170,11 @@ class _CoverEvidenceObserver:
                 )
         return tuple(results)
 
-    def _remote(self, source_id: str, url: str, deadline: float) -> CoverSource:
+    def _remote(self, source_id: str, url: str, deadline: CoverDeadline) -> CoverSource:
         try:
-            remote = fetch_remote_cover(url, deadline=deadline)
-            decoded = decode_cover(remote.content, deadline=deadline)
+            attempt = deadline.next_attempt()
+            remote = fetch_remote_cover(url, deadline=attempt)
+            decoded = decode_cover(remote.content, deadline=min(attempt.attempt_deadline, attempt.aggregate_deadline))
             self._artifacts.stage(decoded.artifact, remote.content, decoded.preview)
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.RETRIEVED, decoded.artifact)
         except RemoteCoverTimeout:
