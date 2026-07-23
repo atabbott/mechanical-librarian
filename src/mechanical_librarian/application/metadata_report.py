@@ -144,9 +144,10 @@ class GenerateMetadataReport:
             checksum="not_applicable",
             applicability_basis="not_applicable",
         )
-        combined_claims = tuple(
-            sorted((target_title_claim, *local.claims), key=lambda value: value.reference)
-        )
+        # Claims are evidence, not a set: retain the target observation first and
+        # then the inspector's DOM/source occurrence order.  Content-addressed
+        # references are deliberately not an ordering key.
+        combined_claims = (target_title_claim, *local.claims)
         observations: list[ProviderObservation] = []
         for binding in self._providers:
             if not binding.enabled:

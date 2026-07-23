@@ -29,6 +29,8 @@ _BYLINE = re.compile(r"^(?:by|author\s*[:\-]?|written by)\s+(.+)$", re.I)
 
 
 def _bounded(value: str) -> tuple[str, str | None]:
+    if value.startswith("unsafe-source-text-sha256:"):
+        return value, "unsupported"
     if len(value) <= 280:
         return value, None
     return "oversized-source-text-sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest(), "oversized"
@@ -73,6 +75,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
     spine = [d for d in report.declarations if d.kind is EpubPackageDeclarationKind.SPINE_SLOT]
     encrypted = {d.resource_identity for d in report.declarations if d.kind is EpubPackageDeclarationKind.ENCRYPTION and d.resource_identity}
     opened = {r.resource_identity for r in opening_report.resources if r.opened}
+    seen: set[str] = set()
     limits = EpubOpeningLimits(package=request.limits, selected_documents=4, expanded_bytes_per_resource=1_048_576, expanded_bytes_per_selection=4_194_304, text_characters_per_selection=262_144, nodes_per_resource=50_000, nodes_per_selection=50_000, facts=16)
     names = {epub_resource_identity(info.filename): info.filename for info in archive.infolist() if not info.is_dir()}
     facts: list[EpubInspectionFact] = []; expanded = text = nodes = opens = 0
@@ -81,6 +84,12 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
         identity = spine_item.resource_identity
         if identity is None or not spine_item.linear:
             continue
+        # A tail position is consumed before eligibility checks.  A repeated
+        # identity therefore cannot re-open or re-emit evidence from an earlier
+        # tail slot.
+        if identity in seen:
+            continue
+        seen.add(identity)
         if identity in opened:
             continue
         declaration = manifests.get(identity)

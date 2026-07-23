@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Callable, ClassVar, Mapping
@@ -289,12 +289,17 @@ class EpubInspection:
             OpeningField.SERIES_ORDER: EpubInspectionField.SERIES_SEQUENCE,
             OpeningField.PUBLICATION_DATE: EpubInspectionField.PUBLICATION_DATE,
             OpeningField.PUBLISHER: EpubInspectionField.PUBLISHER,
+            OpeningField.IMPRINT: EpubInspectionField.PUBLISHER,
         }
+        contributor_index: int | None = None
         for claim in report.claims:
             if claim.field is OpeningField.TITLE and claim.normalized_value is not None and claim.applicability not in {EpubObservationApplicability.INAPPLICABLE, EpubObservationApplicability.UNKNOWN}:
                 facts.append(EpubInspectionFact(EpubInspectionField.TITLE, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter"))
             elif claim.field in fields and claim.normalized_value is not None:
                 facts.append(EpubInspectionFact(fields[claim.field], source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter"))
+                contributor_index = len(facts) - 1 if claim.field is OpeningField.CONTRIBUTOR else contributor_index
+            elif claim.field is OpeningField.CONTRIBUTOR_ROLE and contributor_index is not None:
+                facts[contributor_index] = replace(facts[contributor_index], role=claim.normalized_value or claim.raw_value)
             elif claim.field is OpeningField.IDENTIFIER and claim.identifier_type in {"isbn_10", "isbn_13"}:
                 checksum = claim.identifier_type if claim.identifier_type in {"isbn_10", "isbn_13"} and claim.normalized_value is not None else "invalid"
                 classification_basis = claim.applicability_label or "unlabelled"

@@ -6,6 +6,8 @@
   make exact-ID report reopening non-creating.
 - Add the one supported pre-release metadata-report v1 to v2 persistence
   migration while retaining immutable historical report replay.
+- Preserve local EPUB source/DOM evidence order, explicit source capabilities,
+  and non-canonical oversized or unsafe sentinel states through report replay.
 
 ## Unreleased
 

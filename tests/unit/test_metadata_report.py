@@ -22,6 +22,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     FieldResult,
+    FieldSource,
     FieldState,
     FileFacts,
     LocalClaim,
@@ -141,6 +142,37 @@ class MetadataReportTests(unittest.TestCase):
         states = {value.kind: value.state for value in report.field_results}
         self.assertEqual(states[ClaimKind.ISBN], FieldState.MALFORMED)
         self.assertEqual(states[ClaimKind.PUBLISHER], FieldState.INAPPLICABLE)
+
+    def test_source_capabilities_keep_target_title_only_and_epub_exact(self) -> None:
+        title = LocalClaim.create(
+            kind=ClaimKind.TITLE, observed="Current title", canonical="Current title",
+            excerpt="Current title", applicability="not_applicable", basis="target_metadata",
+            checksum="not_applicable", applicability_basis="not_applicable",
+        )
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(title,),
+            local_reasons=("no_opening_claims",), providers=(),
+        )
+        fields = {value.kind: {source.source: source.state for source in value.sources} for value in report.field_results}
+        self.assertEqual(fields[ClaimKind.TITLE][FieldSource.TARGET_METADATA], FieldState.VALID)
+        self.assertEqual(fields[ClaimKind.TITLE][FieldSource.EPUB], FieldState.ABSENT)
+        self.assertTrue(all(fields[kind][FieldSource.TARGET_METADATA] is FieldState.UNSUPPORTED for kind in ClaimKind if kind is not ClaimKind.TITLE))
+
+    def test_non_valid_title_sentinel_cannot_become_canonical(self) -> None:
+        sentinel = "unsafe-source-text-sha256:" + "a" * 64
+        claim = LocalClaim.create(
+            kind=ClaimKind.TITLE, observed=sentinel, canonical=None, excerpt=sentinel,
+            applicability="not_applicable", basis="package_metadata", checksum="not_applicable",
+            applicability_basis="not_applicable", state=FieldState.UNSUPPORTED,
+        )
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(claim,),
+            local_reasons=("package_metadata_title",), providers=(),
+        )
+        self.assertIsNone(report.local_claims[0].canonical)
+        self.assertEqual(report.field_results[0].state, FieldState.UNSUPPORTED)
 
     def test_closed_local_field_vocabulary_accepts_package_and_contextual_evidence(self) -> None:
         publisher = LocalClaim.create(
@@ -290,6 +322,20 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(constructions, ["one"])
         self.assertEqual((inspector.inspections, inspector.verifications), (1, 1))
         self.assertTrue(repository.closed)
+
+    def test_application_preserves_inspector_occurrence_order_after_target_title(self) -> None:
+        claims = tuple(
+            LocalClaim.create(kind=ClaimKind.CREATOR, observed=value, canonical=value, excerpt=value,
+                              applicability="not_applicable", checksum="not_applicable",
+                              applicability_basis="not_applicable")
+            for value in ("Second in source", "First by hash")
+        )
+        target = _Target([TargetSnapshot("ebook", "Current title", (TargetFile("a" * 64, "one.epub", "epub"),))] * 2)
+        inspector = _Inspector(InspectionResult("c" * 64, claims))
+        repository = _Repository()
+        service = GenerateMetadataReport(target=target, inspector=inspector, repository_factory=lambda: repository, providers=(), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
+        report = MetadataReport.from_json(service.run("item-1", 0))
+        self.assertEqual([claim.observed for claim in report.local_claims], ["Current title", "Second in source", "First by hash"])
 
     def test_unsupported_media_precedes_inspector_provider_and_repository(self) -> None:
         target = _Target([TargetSnapshot("audiobook", "Audio", ())])

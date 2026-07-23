@@ -27,6 +27,11 @@ the immutable documents and current pointers, permits exact reopen of v1
 documents, and allows v2 successors. There is no ledger, downgrade, repair,
 or general migration framework.
 
+The v2 report preserves local evidence occurrence order and records source
+capability state separately from aggregate field state. Target metadata is
+title-only; EPUB remains the complete local source. Oversized or unsafe source
+sentinels are retained only as typed non-canonical evidence.
+
 Use SQLite rollback-journal `DELETE` mode for this sole baseline. WAL,
 migration-ledger, forward-migration, compatibility, recovery, and repair
 machinery are outside the accepted contract. On supported Linux deployments,

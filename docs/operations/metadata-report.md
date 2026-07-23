@@ -90,7 +90,11 @@ evidence but are never sent merely as ebook inputs.
 Every report contains every supported local field in fixed order with one closed
 state: `valid`, `absent`, `malformed`, `oversized`, `unsupported`, `untyped`, or
 `inapplicable`. These field results are independent evidence summaries, not a
-rank or decision.
+rank or decision. Each field also carries source states: Audiobookshelf target
+metadata supports only title in this slice, while EPUB supports the complete
+local field vocabulary. Source and DOM occurrence order is retained from the
+isolated inspector through persisted replay; content-derived references never
+reorder evidence. Unsafe and oversized sentinels remain non-canonical evidence.
 
 The credential-bearing parent combines those facts with the exact current
 target title. Every referenced, enabled Hardcover connection makes at most one

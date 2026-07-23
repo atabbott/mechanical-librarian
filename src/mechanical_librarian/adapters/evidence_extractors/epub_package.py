@@ -1436,7 +1436,9 @@ def _package_report(
                 if referenced.name not in allowed_targets[resolved_property]:
                     warnings.append(EpubPackageWarning("inapplicable_metadata_refinement"))
                     continue
-                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+                # Associate an EPUB3 refinement with its explicit DC target so
+                # projection never attaches it to a merely preceding person.
+                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=referenced.ordinal)
                 observations.append(
                     _observation(
                         request,

@@ -262,7 +262,7 @@ class LocalClaim:
             raise ReportValueError("ISBN claim typing is inconsistent")
         if self.kind is ClaimKind.ISBN and self.canonical is not None and not _valid_isbn(self.canonical, self.checksum):
             raise ReportValueError("ISBN claim checksum is inconsistent")
-        if self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE} and self.canonical != normalize_title(self.observed):
+        if self.state is FieldState.VALID and self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE} and self.canonical != normalize_title(self.observed):
             raise ReportValueError("title claim normalization is inconsistent")
         expected = stable_reference("local", self._reference_data())
         if self.reference != expected:
@@ -539,8 +539,30 @@ def derive_field_results(local_claims: tuple[LocalClaim, ...]) -> tuple[FieldRes
         FieldState.MALFORMED, FieldState.OVERSIZED, FieldState.UNSUPPORTED,
         FieldState.UNTYPED, FieldState.INAPPLICABLE, FieldState.VALID,
     )
+    def source_state(kind: ClaimKind, source: FieldSource) -> FieldState:
+        if source is FieldSource.TARGET_METADATA and kind is not ClaimKind.TITLE:
+            return FieldState.UNSUPPORTED
+        basis = "target_metadata" if source is FieldSource.TARGET_METADATA else None
+        return next(
+            (
+                state
+                for state in precedence
+                if any(
+                    claim.kind is kind
+                    and claim.state is state
+                    and ((claim.basis == basis) if basis is not None else claim.basis != "target_metadata")
+                    for claim in local_claims
+                )
+            ),
+            FieldState.ABSENT,
+        )
+
     return tuple(
-        FieldResult(kind, next((state for state in precedence if any(claim.kind is kind and claim.state is state for claim in local_claims)), FieldState.ABSENT), tuple(FieldSourceResult(source, next((state for state in precedence if any(claim.kind is kind and claim.state is state and ((source is FieldSource.TARGET_METADATA) == (claim.basis == "target_metadata")) for claim in local_claims)), FieldState.ABSENT)) for source in FieldSource))
+        FieldResult(
+            kind,
+            next((state for state in precedence if any(claim.kind is kind and claim.state is state for claim in local_claims)), FieldState.ABSENT),
+            tuple(FieldSourceResult(source, source_state(kind, source)) for source in FieldSource),
+        )
         for kind in ClaimKind
     )
 

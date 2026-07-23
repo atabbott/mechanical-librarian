@@ -105,7 +105,7 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
             else:
                 serialized = reopen_runner(arguments.database, arguments.report_id)
             report = MetadataReport.from_json(serialized)
-            if report.report_id != arguments.report_id or report.to_json() != serialized:
+            if (not arguments.current and report.report_id != arguments.report_id) or report.to_json() != serialized:
                 raise ReportValueError("report output is invalid")
         except Exception:
             errors.write("Metadata report failed safely.\n")

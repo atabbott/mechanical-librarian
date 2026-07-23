@@ -52,6 +52,13 @@ class MetadataReportReopenTests(unittest.TestCase):
                 reopen_metadata_report(database, "report_" + "a" * 64)
             self.assertFalse(database.exists())
 
+    def test_current_scope_reopen_does_not_require_an_exact_report_id(self) -> None:
+        report = MetadataReport.create(target=TargetFacts("primary", "books", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+        output = io.StringIO()
+        result = main(["metadata-report-get", "--database", "/private/reports.sqlite", "--current", "--connection", "primary", "--library", "books", "--item", "item-1", "--file-identity", "a" * 64], current_reopen_runner=lambda *_arguments: report.to_json(), stdout=output, stderr=io.StringIO())
+        self.assertEqual(result, 0)
+        self.assertEqual(output.getvalue(), report.to_json() + "\n")
+
 
 if __name__ == "__main__":
     unittest.main()
