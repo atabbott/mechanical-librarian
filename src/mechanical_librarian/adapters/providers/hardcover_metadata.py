@@ -26,7 +26,7 @@ HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
 _QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
     f"{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
-    "{id isbn_10 isbn_13 book{id title}}}"
+    "{id book_id isbn_10 isbn_13} books:books_through_editions(where:{editions:{_or:[{isbn_13:{_in:$isbns}},{isbn_10:{_in:$isbns}}]}}},order_by:{id:asc},limit:6){id title}}}"
 )
 
 
@@ -118,27 +118,35 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
         parse_float=_reject_number,
     )
     root = _closed(source, {"data"})
-    data = _closed(root["data"], {"editions"})
+    data = _closed(root["data"], {"editions", "books"})
     rows = data["editions"]
-    if type(rows) is not list:
+    books = data["books"]
+    if type(rows) is not list or type(books) is not list:
         raise ValueError("provider rows invalid")
     if len(rows) > MAX_CANDIDATES:
         raise _CandidateLimit
+    indexed_books: dict[int, dict[str, Any]] = {}
+    for value in books:
+        book = _closed(value, {"id", "title"})
+        if type(book["id"]) is not int or type(book["id"]) is bool or book["id"] in indexed_books:
+            raise ValueError("provider work invalid")
+        indexed_books[book["id"]] = book
     candidates: list[ProviderCandidate] = []
+    referenced_books: set[int] = set()
     for row_value in rows:
-        row = _closed(row_value, {"book", "id", "isbn_10", "isbn_13"})
+        row = _closed(row_value, {"book_id", "id", "isbn_10", "isbn_13"})
         identity_value = row["id"]
         if type(identity_value) is not int or type(identity_value) is bool or not 1 <= identity_value <= 2_147_483_647:
             raise ValueError("provider identity invalid")
         identity = f"hardcover-edition-{identity_value:010d}"
         claims: list[ProviderClaim] = []
-        book_value = row["book"]
-        if book_value is not None:
-            book = _closed(book_value, {"id", "title"})
-            if type(book["id"]) is not int or type(book["id"]) is bool or not 1 <= book["id"] <= 2_147_483_647:
-                raise ValueError("provider book invalid")
-            if book["title"] is not None:
-                claims.append(_claim(provider, identity, ClaimKind.TITLE, _text(book["title"], 512), local_claims))
+        book_id = row["book_id"]
+        if type(book_id) is not int or type(book_id) is bool or book_id not in indexed_books:
+            raise ValueError("provider unreferenced work")
+        referenced_books.add(book_id)
+        book = indexed_books[book_id]
+        if book["title"] is not None:
+            claims.append(_claim(provider, identity, ClaimKind.TITLE, _text(book["title"], 512), local_claims))
         for key in ("isbn_10", "isbn_13"):
             value = row[key]
             if value is not None:
@@ -147,6 +155,8 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
         claims.sort(key=lambda value: (value.kind.value, value.value, value.reference))
         candidates.append(ProviderCandidate(identity, tuple(claims)))
     candidates.sort(key=lambda value: value.identity)
+    if referenced_books != set(indexed_books):
+        raise ValueError("provider unreferenced work")
     if len({value.identity for value in candidates}) != len(candidates):
         raise ValueError("provider identities duplicated")
     return tuple(candidates)

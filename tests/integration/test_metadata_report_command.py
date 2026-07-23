@@ -410,19 +410,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                     200,
                     headers={"content-type": "application/json"},
                     json={
-                        "data": {
-                            "editions": [
-                                {
-                                    "id": 1,
-                                    "isbn_10": None,
-                                    "isbn_13": "9780306406157",
-                                    "book": {
-                                        "id": 1,
-                                        "title": "Current service title",
-                                    },
-                                }
-                            ]
-                        }
+                        "data": {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}], "books": [{"id": 1, "title": "Current service title"}]}
                     },
                 )
 
