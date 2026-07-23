@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import secrets
 import sqlite3
@@ -15,6 +14,7 @@ from urllib.parse import quote
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import MetadataReport, REPORT_SCHEMA, ReportValueError
+from mechanical_librarian.domain import metadata_report_v1 as v1
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -450,7 +450,7 @@ class SQLiteMetadataReportRepository:
             if type(document) is not str or schema not in {"metadata-report-v1", REPORT_SCHEMA} or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest:
                 raise MetadataReportError("persisted report is invalid")
             if schema == "metadata-report-v1":
-                _validate_v1_document(document, report_id, connection, library, item, file_identity, content_digest)
+                _validate_v1_document(document, report_id, connection, library, item, file_identity, content_digest, schema, digest)
                 return document
             report = MetadataReport.from_json(document)
             if (
@@ -835,12 +835,6 @@ def _migrate_v1(connection: sqlite3.Connection) -> None:
             "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports"
         ).fetchall()
         for report_id, connection_name, library_name, item_id, file_identity, content_digest, schema, digest, document in rows:
-            if (
-                schema != "metadata-report-v1"
-                or type(document) is not str
-                or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest
-            ):
-                raise MetadataReportError("database migration failed")
             _validate_v1_document(
                 document,
                 report_id,
@@ -849,6 +843,8 @@ def _migrate_v1(connection: sqlite3.Connection) -> None:
                 item_id,
                 file_identity,
                 content_digest,
+                schema,
+                digest,
             )
         connection.execute("DROP TRIGGER metadata_reports_no_update")
         connection.execute("DROP TRIGGER metadata_reports_no_delete")
@@ -893,44 +889,27 @@ def _is_exact_v1_schema(connection: sqlite3.Connection) -> bool:
     return tables == sorted((("current_metadata_reports", _CURRENT_SQL), ("metadata_reports", legacy))) and triggers == sorted((("metadata_reports_no_delete", _NO_DELETE_SQL), ("metadata_reports_no_update", _NO_UPDATE_SQL)))
 
 
-def _validate_v1_document(document: str, report_id: str, connection: str, library: str, item: str, file_identity: str, content_digest: str) -> None:
-    """Bounded exact-v1 canonical/envelope check; this is not a compatibility API."""
+def _validate_v1_document(document: str, report_id: str, connection: str, library: str, item: str, file_identity: str, content_digest: str, schema: str, digest: str) -> None:
+    """Parse the complete frozen v1 model and bind it to its stored envelope."""
     try:
-        value = json.loads(document, object_pairs_hook=_unique_json_object, parse_constant=_reject_json_number)
-        if type(value) is not dict or set(value) != {"file", "local", "providers", "report_id", "schema_version", "target"} or value["schema_version"] != "metadata-report-v1" or value["report_id"] != report_id:
+        if (
+            schema != v1.REPORT_SCHEMA
+            or type(document) is not str
+            or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest
+        ):
             raise ValueError
-        identity = dict(value); identity.pop("report_id")
-        expected = "report_" + hashlib.sha256(json.dumps(identity, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest()
-        target = value["target"]; file = value["file"]; local = value["local"]; providers = value["providers"]
-        if expected != report_id or type(target) is not dict or set(target) != {"connection", "current_title", "item", "library"} or type(file) is not dict or set(file) != {"content_digest", "format", "identity", "selected_index"} or type(local) is not dict or set(local) != {"claims", "reasons", "status"} or type(providers) is not list or tuple(target.get(key) for key in ("connection", "library", "item")) != (connection, library, item) or file.get("identity") != file_identity or file.get("content_digest") != content_digest:
+        report = v1.MetadataReport.from_json(document)
+        if (
+            report.report_id != report_id
+            or report.target.connection != connection
+            or report.target.library != library
+            or report.target.item != item
+            or report.file.identity != file_identity
+            or report.file.content_digest != content_digest
+        ):
             raise ValueError
-        if type(local["claims"]) is not list or type(local["reasons"]) is not list or local["status"] not in {"candidate", "no_candidate"}:
-            raise ValueError
-        references: set[str] = set()
-        for claim in local["claims"]:
-            if type(claim) is not dict or set(claim) != {"applicability", "applicability_basis", "basis", "canonical", "checksum", "excerpt", "kind", "observed", "reference"} or type(claim.get("reference")) is not str or claim["reference"] in references:
-                raise ValueError
-            identity_claim = dict(claim); identity_claim.pop("reference")
-            if claim["reference"] != "local_" + hashlib.sha256(json.dumps(identity_claim, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest():
-                raise ValueError
-            references.add(claim["reference"])
-    except (TypeError, ValueError, UnicodeError, json.JSONDecodeError) as error:
+    except (TypeError, ValueError, UnicodeError) as error:
         raise MetadataReportError("persisted report is invalid") from error
-    if json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True) != document:
-        raise MetadataReportError("persisted report is invalid")
-
-
-def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError
-        result[key] = value
-    return result
-
-
-def _reject_json_number(_: str) -> None:
-    raise ValueError
 
 
 __all__ = ["SQLiteMetadataReportRepository", "open_repository"]

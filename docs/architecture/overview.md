@@ -26,8 +26,9 @@ provider registry. Bootstrap explicitly composes Audiobookshelf, the isolated
 EPUB inspector, Hardcover, private-file credentials, and SQLite.
 
 The target adapter reads only `/api/items/{id}?expanded=1`; it persists no
-inventory. The EPUB child owns its package model, opens one archive once, and
-returns only bounded opening facts. The parent retains all credentials,
+inventory. The EPUB child owns its package, opening-matter, and bounded
+rear-spine evidence passes, opens one archive once, and returns only their
+bounded facts. The parent retains all credentials,
 network, matching, persistence, and currentness authority. The provider adapter
 selects only the ISBN inputs supported by its fixed one-request operation and
 retains every valid candidate without ranking.
