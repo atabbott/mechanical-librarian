@@ -181,7 +181,8 @@ def _selected_cover(package_request: EpubPackageRequest) -> dict[str, object]:
         rejected = EpubPackageExtractor().preflight(package_request)
         if rejected is not None:
             return {"state": "invalid_declaration"}
-        with zipfile.ZipFile(_SourceIO(package_request), "r", allowZip64=True) as archive:
+        archive_class = zipfile.ZipFile
+        with archive_class(_SourceIO(package_request), "r", allowZip64=True) as archive:
             report = EpubPackageExtractor().extract(package_request, archive)
             if not report.succeeded:
                 return {"state": "invalid_declaration"}
