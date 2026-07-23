@@ -51,6 +51,14 @@ _COVER_REFERENCES_SQL = (
     "(length(artifact_id) = 70 AND artifact_id GLOB 'cover_[0-9a-f]*' "
     "AND length(preview_digest) = 64 AND preview_digest NOT GLOB '*[^0-9a-f]*' AND preview_variant = 'preview-320x480-rgba-png-v1')))"
 )
+_COVER_ARTIFACT_INDEX_SQL = (
+    "CREATE INDEX metadata_report_cover_references_artifact_id "
+    "ON metadata_report_cover_references(artifact_id) WHERE artifact_id IS NOT NULL"
+)
+_COVER_PREVIEW_INDEX_SQL = (
+    "CREATE INDEX metadata_report_cover_references_preview_digest "
+    "ON metadata_report_cover_references(preview_digest) WHERE preview_digest IS NOT NULL"
+)
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
     "BEGIN SELECT RAISE(ABORT, 'metadata reports are append-only'); END"
@@ -561,19 +569,27 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise MetadataReportError("persisted cover is unavailable") from error
 
-    def referenced_artifact_digests(self) -> tuple[str, ...]:
-        """Return every exact original and preview digest retained by reports."""
+    def artifact_is_referenced(self, digest: str) -> bool:
+        """Check one cleanup candidate without semantically auditing history."""
+        if (
+            type(digest) is not str
+            or len(digest) != 64
+            or any(value not in "0123456789abcdef" for value in digest)
+        ):
+            raise MetadataReportError("persisted cover references are invalid")
         try:
+            row = self._connection.execute(
+                "SELECT 1 FROM metadata_report_cover_references WHERE artifact_id=? OR preview_digest=? LIMIT 1",
+                ("cover_" + digest, digest),
+            ).fetchone()
+            if row is not None:
+                return True
             documents = tuple(self._connection.execute(
-                "SELECT report_id,document FROM metadata_reports ORDER BY report_id"
-            ))
-            actual = tuple(self._connection.execute(
-                "SELECT report_id,source_id,artifact_id,preview_digest,preview_variant FROM metadata_report_cover_references ORDER BY report_id,source_id"
+                "SELECT report_id,document FROM metadata_reports WHERE document LIKE ? ORDER BY report_id",
+                ("%" + digest + "%",),
             ))
         except sqlite3.Error as error:
             raise MetadataReportError("persisted cover references are invalid") from error
-        expected: list[tuple[str, str, str | None, str | None, str | None]] = []
-        digests: set[str] = set()
         for report_id, document in documents:
             if type(report_id) is not str or type(document) is not str:
                 raise MetadataReportError("persisted cover references are invalid")
@@ -583,34 +599,16 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("persisted cover references are invalid") from error
             if report.report_id != report_id:
                 raise MetadataReportError("persisted cover references are invalid")
-            for source in report.cover_sources:
-                artifact = source.artifact
-                expected.append((
-                    report_id,
-                    source.source_id,
-                    None if artifact is None else artifact.artifact_id,
-                    None if artifact is None else artifact.preview_digest,
-                    None if artifact is None else artifact.preview_variant,
-                ))
-                if artifact is not None:
-                    digests.update((artifact.original_digest, artifact.preview_digest))
-        if tuple(sorted(expected)) != actual:
-            raise MetadataReportError("persisted cover references are invalid")
-        for _report_id, _source_id, artifact_id, preview_digest, preview_variant in actual:
-            if artifact_id is None and preview_digest is None and preview_variant is None:
-                continue
-            if (
-                type(artifact_id) is not str
-                or len(artifact_id) != 70
-                or not artifact_id.startswith("cover_")
-                or any(value not in "0123456789abcdef" for value in artifact_id[6:])
-                or type(preview_digest) is not str
-                or len(preview_digest) != 64
-                or any(value not in "0123456789abcdef" for value in preview_digest)
-                or preview_variant != "preview-320x480-rgba-png-v1"
+            if any(
+                source.artifact is not None
+                and digest in {
+                    source.artifact.original_digest,
+                    source.artifact.preview_digest,
+                }
+                for source in report.cover_sources
             ):
                 raise MetadataReportError("persisted cover references are invalid")
-        return tuple(sorted(digests))
+        return False
 
     def close(self) -> None:
         try:
@@ -680,6 +678,8 @@ def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportR
             connection.execute(_REPORTS_SQL)
             connection.execute(_CURRENT_SQL)
             connection.execute(_COVER_REFERENCES_SQL)
+            connection.execute(_COVER_ARTIFACT_INDEX_SQL)
+            connection.execute(_COVER_PREVIEW_INDEX_SQL)
             connection.execute(_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_DELETE_SQL)
@@ -948,6 +948,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     expected_objects = sorted((
         ("index", "sqlite_autoindex_current_metadata_reports_1", None),
         ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
+        ("index", "metadata_report_cover_references_artifact_id", _COVER_ARTIFACT_INDEX_SQL),
+        ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
         ("index", "sqlite_autoindex_metadata_reports_1", None),
         ("index", "sqlite_autoindex_metadata_reports_2", None),
         ("table", "current_metadata_reports", _CURRENT_SQL),

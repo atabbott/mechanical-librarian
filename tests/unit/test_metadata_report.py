@@ -114,6 +114,36 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_final_currentness_rejects_absent_abs_source_that_becomes_bytes(self) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        cover = TargetCover("descriptor", "/cover", "item-1")
+        class Target(_Target):
+            def read_cover(self, _value: TargetCover, *, deadline=None) -> bytes:
+                return b"appeared-after-observation"
+        target = Target([
+            TargetSnapshot("ebook", "Title", (selected,), cover),
+            TargetSnapshot("ebook", "Title", (selected,), cover),
+        ])
+        class Observer:
+            def observe(self, *_args, **_kwargs):
+                return (CoverSource(
+                    cover_source_id(CoverSourceKind.ABS, "descriptor"),
+                    CoverSourceKind.ABS,
+                    CoverSourceState.ABSENT,
+                ),)
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=target, inspector=_Inspector(InspectionResult("c" * 64, ())),
+            repository_factory=lambda: repository, providers=(),
+            connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
+            library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()),
+            mount=MediaMountConfiguration("books", "/media", "/library", True),
+            limits=ReportLimits(), cover_observer=Observer(),
+        )
+        with self.assertRaises(CurrentnessError):
+            service.run("item-1", 0)
+        self.assertEqual({}, repository.values)
+
     def test_final_currentness_rejects_same_path_abs_byte_drift(self) -> None:
         selected = TargetFile("a" * 64, "book.epub", "epub")
         cover = TargetCover("descriptor", "/cover", "item-1")

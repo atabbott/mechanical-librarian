@@ -222,10 +222,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             repository = open_repository(path)
             repository.publish(report, lambda: True)
             self.assertEqual(artifact.preview_digest, repository.preview_digest(report.report_id, artifact.artifact_id, artifact.preview_variant))
-            self.assertEqual(
-                repository.referenced_artifact_digests(),
-                tuple(sorted((artifact.original_digest, artifact.preview_digest))),
-            )
+            self.assertTrue(repository.artifact_is_referenced(artifact.original_digest))
             repository._connection.execute(
                 "DROP TRIGGER metadata_report_cover_references_no_delete"
             )
@@ -234,7 +231,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 (report.report_id,),
             )
             with self.assertRaisesRegex(MetadataReportError, "cover references"):
-                repository.referenced_artifact_digests()
+                repository.artifact_is_referenced(artifact.original_digest)
             with self.assertRaises(MetadataReportError):
                 repository.preview_digest(report.report_id, "cover_" + "0" * 64, artifact.preview_variant)
             repository.close()
@@ -291,6 +288,19 @@ class MetadataPersistenceTests(unittest.TestCase):
                 self.assertEqual(connection.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall(), expected_objects)
                 self.assertEqual(connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone(), expected_counts)
                 connection.close()
+
+    def test_candidate_cleanup_ignores_unrelated_malformed_history(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = _report()
+            repository.publish(report, lambda: True)
+            repository._connection.execute("DROP TRIGGER metadata_reports_no_update")
+            repository._connection.execute(
+                "UPDATE metadata_reports SET document='{}',document_digest=? WHERE report_id=?",
+                (hashlib.sha256(b"{}").hexdigest(), report.report_id),
+            )
+            self.assertFalse(repository.artifact_is_referenced("0" * 64))
+            repository.close()
 
     def test_existing_schema_rejects_persistent_sqlite_master_system_objects_without_mutation(self) -> None:
         for kind in ("analyze", "sequence", "arbitrary"):

@@ -1,7 +1,7 @@
 import tempfile
 import unittest
-import hashlib
 from pathlib import Path
+from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -33,24 +33,25 @@ class CoverArtifactStoreTests(unittest.TestCase):
             orphan = CoverArtifact.create(b"orphan source", b"orphan preview", "image/png", 1, 1)
             store.stage(retained, b"retained source", b"retained preview")
             store.stage(orphan, b"orphan source", b"orphan preview")
-            store.recover_unreferenced((retained.original_digest, retained.preview_digest))
+            store.recover_unreferenced(
+                lambda digest: digest in {
+                    retained.original_digest,
+                    retained.preview_digest,
+                }
+            )
             self.assertEqual(store.preview(retained), b"retained preview")
             self.assertFalse((root / orphan.original_digest).exists())
             self.assertFalse((root / orphan.preview_digest).exists())
 
-    def test_recovery_fails_before_cleanup_for_missing_or_mismatched_reference(self) -> None:
+    def test_recovery_keeps_references_without_reading_or_hashing_them(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             store = CoverArtifactStore(root)
             orphan = CoverArtifact.create(b"orphan source", b"orphan preview", "image/png", 1, 1)
             store.stage(orphan, b"orphan source", b"orphan preview")
-            missing = hashlib.sha256(b"missing").hexdigest()
-            with self.assertRaises(MetadataReportError):
-                store.recover_unreferenced((missing,))
+            with patch.object(store, "_read", side_effect=AssertionError("retained blob read")):
+                store.recover_unreferenced(lambda _digest: True)
             self.assertTrue((root / orphan.original_digest).is_file())
-            (root / orphan.original_digest).write_bytes(b"different bytes")
-            with self.assertRaises(MetadataReportError):
-                store.recover_unreferenced((orphan.original_digest,))
             self.assertTrue((root / orphan.preview_digest).is_file())
 
     def test_same_artifact_identity_with_different_bytes_is_rejected(self) -> None:

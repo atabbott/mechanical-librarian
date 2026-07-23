@@ -26,7 +26,11 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     normalize_title,
 )
-from mechanical_librarian.domain.cover_evidence import CoverSource, CoverSourceKind
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+)
 
 
 class MetadataReportError(RuntimeError):
@@ -330,13 +334,20 @@ class GenerateMetadataReport:
             ),
             None,
         )
-        if expected_cover is not None:
+        expected_absent = any(
+            source.kind is CoverSourceKind.ABS
+            and source.state is CoverSourceState.ABSENT
+            for source in cover_sources
+        )
+        if expected_cover is not None or expected_absent:
             reader = getattr(self._target, "read_cover", None)
             try:
                 current_cover = reader(final.cover) if callable(reader) and final.cover is not None else None
             except (MetadataReportError, OSError, ValueError):
                 raise CurrentnessError("target or media changed") from None
-            if (
+            if expected_absent and current_cover is not None:
+                raise CurrentnessError("target or media changed")
+            if expected_cover is not None and (
                 type(current_cover) is not bytes
                 or hashlib.sha256(current_cover).hexdigest() != expected_cover
             ):

@@ -6,6 +6,7 @@ import hashlib
 import os
 import stat
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -41,23 +42,10 @@ class CoverArtifactStore:
         """Read a preview only after a repository has authorized its digest."""
         return self._read(digest, 1_048_576)
 
-    def recover_unreferenced(self, referenced: tuple[str, ...]) -> None:
-        """Verify retained blobs, then remove only unreferenced digest-named blobs.
-
-        The repository supplies the complete history of durable references.  A
-        missing or mismatched retained blob is an integrity failure: cleanup
-        does not run in that case, so recovery never conceals the evidence.
-        """
-        if type(referenced) is not tuple or any(
-            type(digest) is not str
-            or len(digest) != 64
-            or any(character not in "0123456789abcdef" for character in digest)
-            for digest in referenced
-        ):
+    def recover_unreferenced(self, is_referenced: Callable[[str], bool]) -> None:
+        """Remove candidate crash orphans after one targeted reference check."""
+        if not callable(is_referenced):
             raise MetadataReportError("artifact references are invalid")
-        retained = frozenset(referenced)
-        for digest in retained:
-            self._read(digest, 8 * 1024 * 1024)
         try:
             directory = self._directory()
             try:
@@ -65,12 +53,11 @@ class CoverArtifactStore:
                     if (
                         len(name) != 64
                         or any(character not in "0123456789abcdef" for character in name)
-                        or name in retained
                     ):
                         continue
                     try:
                         information = os.stat(name, dir_fd=directory, follow_symlinks=False)
-                        if stat.S_ISREG(information.st_mode):
+                        if stat.S_ISREG(information.st_mode) and not is_referenced(name):
                             os.unlink(name, dir_fd=directory)
                     except FileNotFoundError:
                         pass

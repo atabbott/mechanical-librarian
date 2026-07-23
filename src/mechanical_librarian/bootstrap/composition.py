@@ -250,7 +250,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     def repository_factory():
         repository = open_repository(database_path)
         try:
-            artifacts.recover_unreferenced(repository.referenced_artifact_digests())
+            artifacts.recover_unreferenced(repository.artifact_is_referenced)
             return repository
         except Exception:
             repository.close()
