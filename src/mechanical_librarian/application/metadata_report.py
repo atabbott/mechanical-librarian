@@ -24,6 +24,7 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     normalize_title,
 )
+from mechanical_librarian.domain.cover_evidence import CoverSource
 
 
 class MetadataReportError(RuntimeError):
@@ -60,6 +61,7 @@ class TargetSnapshot:
 class InspectionResult:
     content_digest: str
     claims: tuple[LocalClaim, ...]
+    cover_sources: tuple[CoverSource, ...] = ()
 
 
 class TargetReader(Protocol):
@@ -202,6 +204,7 @@ class GenerateMetadataReport:
                 local_claims=combined_claims, local_reasons=reasons,
                 providers=tuple(sorted(observations, key=lambda value: value.provider)),
                 field_results=derive_field_results(combined_claims),
+                cover_sources=local.cover_sources,
             )
         except Exception:
             repository.close()

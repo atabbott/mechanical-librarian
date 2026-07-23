@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from mechanical_librarian.adapters.evidence_extractors.process import run_epub_inspector_child
+from mechanical_librarian.adapters.evidence_extractors.epub_cover import read_declared_cover
+from mechanical_librarian.adapters.cover_artifacts import CoverDecodeRejected, decode_cover
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
@@ -23,6 +25,7 @@ from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInsp
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, FieldState, LocalClaim, RearClaimProvenance, claim_scope
+from mechanical_librarian.domain.cover_evidence import CoverSource, CoverSourceKind, CoverSourceState
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -34,6 +37,9 @@ from mechanical_librarian.interfaces.cli import main as cli_main
 
 
 class _IsolatedEpubInspector:
+    def __init__(self, artifacts: CoverArtifactStore) -> None:
+        self._artifacts = artifacts
+
     def inspect(self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int) -> InspectionResult:
         opened = None
         try:
@@ -67,7 +73,17 @@ class _IsolatedEpubInspector:
                     occurrence=occurrence,
                 )
                 claims.append(claim)
-            return InspectionResult(digest, tuple(claims))
+            declared = read_declared_cover(opened.descriptor)
+            if declared.state is CoverSourceState.DECLARED:
+                try:
+                    decoded = decode_cover(declared.data or b"")
+                    self._artifacts.stage(decoded.artifact, declared.data or b"", decoded.preview)
+                    covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.RETRIEVED, decoded.artifact),)
+                except CoverDecodeRejected:
+                    covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.DECODE_FAILED),)
+            else:
+                covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, declared.state),)
+            return InspectionResult(digest, tuple(claims), covers)
         except MetadataReportError:
             raise
         except (LocalMediaError, OSError, ValueError) as error:
@@ -116,7 +132,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
         bindings.append(ProviderBinding(provider.name, provider.enabled, factory))
     service = GenerateMetadataReport(
         target=target,
-        inspector=_IsolatedEpubInspector(),
+        inspector=_IsolatedEpubInspector(CoverArtifactStore(artifact_store_path, create=False)),
         repository_factory=lambda: open_repository(database_path),
         providers=tuple(bindings),
         connection=connection,
