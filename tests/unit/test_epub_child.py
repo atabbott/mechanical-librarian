@@ -6,6 +6,7 @@ import sys
 import threading
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import ANY, Mock, patch
 
 import mechanical_librarian.bootstrap.epub_child as child
@@ -118,3 +119,7 @@ class EpubChildArchiveConstructionTests(unittest.TestCase):
             patch.object(child.zipfile, "ZipFile", side_effect=error),
         ):
             return child._inspect_opening(object(), object(), EpubOpeningLimits()).outcome
+
+
+if __name__ == "__main__":
+    unittest.main()
