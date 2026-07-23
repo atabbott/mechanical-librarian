@@ -899,6 +899,23 @@ class ProviderAdapterTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())
 
+    def test_nested_overflow_probe_objects_are_structurally_validated(self) -> None:
+        cases = []
+        contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}} for index in range(17)]
+        contributions[16]["author"] = {"id": 17, "unexpected": "A"}
+        cases.append(({"contributions": contributions}, {}))
+        series = [{"id": index, "position": str(index), "series": {"id": index, "name": "S"}} for index in range(17)]
+        series[16]["series"] = {"id": 17, "unexpected": "S"}
+        cases.append(({}, {"book_series": series}))
+        tags = [{"id": index, "tag": {"id": index, "tag": "T"}} for index in range(33)]
+        tags[32]["tag"] = {"id": 33, "unexpected": "T"}
+        cases.append(({}, {"taggings": tags}))
+        for edition, work in cases:
+            with self.subTest(edition=bool(edition)):
+                payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", **edition}], [{"id": 1, "title": None, **work}])
+                provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, value=payload: httpx.Response(200, headers={"content-type": "application/json"}, json=value))), 65_536)
+                self.assertEqual(provider.observe((self._claim(),)).status, ProviderStatus.MALFORMED)
+
     def test_series_positions_and_code3_are_retained_at_projection_bounds(self) -> None:
         for position, expected in (("10", "10"), ("20.0", "20"), ("100", "100"), (10, "10")):
             payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "language": {"id": 1, "code2": None, "code3": "eng", "language": "English"}}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": position, "series": {"id": 1, "name": "S"}}]}])

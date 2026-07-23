@@ -135,6 +135,8 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
     claims = [_claim(provider, identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, local, offset), _claim(provider, identity, ClaimKind.DESCRIPTION, book["description"], ClaimScope.WORK, "not_applicable", None, local, offset + 1)]
     claims.extend(_contributions(provider, identity, book["contributions"], ClaimScope.WORK, local, len(claims) + offset))
     series, series_overflow = _bounded_list(book["book_series"], MAX_SERIES, {"id", "position", "series"})
+    for item in series:
+        _closed_or_none(item["series"], {"id", "name"})
     if series_overflow:
         claims.extend((_state_claim(provider, identity, ClaimKind.SERIES, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset), _state_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset + 1)))
         series = []
@@ -143,6 +145,8 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
         claims.append(_claim(provider, identity, ClaimKind.SERIES, None if series is None else series["name"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
         claims.append(_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, item["position"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
     taggings, taggings_overflow = _bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"})
+    for item in taggings:
+        _closed_or_none(item["tag"], {"id", "tag"})
     if taggings_overflow:
         claims.append(_state_claim(provider, identity, ClaimKind.TAG, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset))
         taggings = []
@@ -156,6 +160,8 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
 def _contributions(provider: str, identity: str, value: object, scope: ClaimScope, local: tuple[LocalClaim, ...], offset: int) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
     contributions, overflow = _bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"})
+    for item in contributions:
+        _closed_or_none(item["author"], {"id", "name"})
     if overflow:
         # The admitted max+1 probe preserves every role family present without
         # retaining an unbounded contribution list.
