@@ -32,6 +32,9 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     TargetFacts,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact, CoverSource, CoverSourceKind, CoverSourceState, cover_source_id,
+)
 
 
 def _report(title: str = "Current title") -> MetadataReport:
@@ -58,7 +61,7 @@ def _report(title: str = "Current title") -> MetadataReport:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v2'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v3'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -140,7 +143,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                     open_repository(path)
                 self.assertEqual(path.read_bytes(), before)
 
-    def test_clean_database_has_exactly_two_tables_and_replays(self) -> None:
+    def test_clean_database_has_exact_current_tables_and_replays(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reports.sqlite"
             repository = open_repository(path)
@@ -156,7 +159,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             rows = connection.execute("SELECT report_id FROM metadata_reports ORDER BY report_id").fetchall()
             current = connection.execute("SELECT report_id FROM current_metadata_reports").fetchone()
             connection.close()
-            self.assertEqual(tables, [("current_metadata_reports",), ("metadata_reports",)])
+            self.assertEqual(tables, [("current_metadata_reports",), ("metadata_report_cover_references",), ("metadata_reports",)])
             self.assertEqual(len(rows), 2)
             self.assertEqual(current, (second.report_id,))
 
@@ -176,6 +179,29 @@ class MetadataPersistenceTests(unittest.TestCase):
             with self.assertRaises(MetadataReportError):
                 open_repository(path)
             self.assertEqual(path.read_bytes(), before)
+
+    def test_preview_digest_requires_exact_report_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            artifact = CoverArtifact.create(b"source", b"preview", "image/png", 1, 1)
+            source = CoverSource(
+                cover_source_id(CoverSourceKind.EPUB, "cover"),
+                CoverSourceKind.EPUB,
+                CoverSourceState.RETRIEVED,
+                artifact,
+            )
+            report = _report()
+            report = MetadataReport.create(
+                target=report.target, file=report.file, local_claims=report.local_claims,
+                local_reasons=report.local_reasons, providers=report.providers,
+                cover_sources=(source,),
+            )
+            repository = open_repository(path)
+            repository.publish(report, lambda: True)
+            self.assertEqual(artifact.preview_digest, repository.preview_digest(report.report_id, artifact.artifact_id))
+            with self.assertRaises(MetadataReportError):
+                repository.preview_digest(report.report_id, "cover_" + "0" * 64)
+            repository.close()
 
     def test_corrupt_document_and_envelope_disagreement_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
