@@ -9,7 +9,11 @@ from pathlib import Path
 
 from mechanical_librarian.adapters.evidence_extractors.process import run_epub_inspector_child
 from mechanical_librarian.adapters.evidence_extractors.epub_cover import read_declared_cover
-from mechanical_librarian.adapters.cover_artifacts import CoverDecodeRejected, decode_cover
+from mechanical_librarian.adapters.cover_artifacts import (
+    CoverDecodeRejected,
+    CoverDecodeTimeout,
+    decode_cover,
+)
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
@@ -90,6 +94,15 @@ class _IsolatedEpubInspector:
                         covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.UNAVAILABLE),)
                 except CoverDecodeRejected as error:
                     covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, error.state),)
+                except CoverDecodeTimeout:
+                    covers = (
+                        CoverSource(
+                            declared.source_id,
+                            CoverSourceKind.EPUB,
+                            CoverSourceState.TIMEOUT,
+                            timeout_scope="attempted",
+                        ),
+                    )
             else:
                 covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, declared.state),)
             return InspectionResult(digest, tuple(claims), covers)
@@ -139,10 +152,15 @@ class _CoverEvidenceObserver:
             if original is None:
                 source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.ABSENT)
             else:
-                decoded = decode_cover(original)
+                decoded = decode_cover(
+                    original,
+                    deadline=deadline.aggregate_deadline,
+                )
                 self._artifacts.stage(decoded.artifact, original, decoded.preview)
                 source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.RETRIEVED, decoded.artifact)
         except CoverTimeoutError:
+            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.TIMEOUT, timeout_scope="attempted")
+        except CoverDecodeTimeout:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.TIMEOUT, timeout_scope="attempted")
         except CoverSourceChangedError:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.SOURCE_CHANGED)
@@ -159,7 +177,6 @@ class _CoverEvidenceObserver:
             if configuration is None:
                 continue
             if not configuration.cover_enabled:
-                results.append(CoverSource(cover_source_id(CoverSourceKind.HARDCOVER, observation.provider), CoverSourceKind.HARDCOVER, CoverSourceState.DISABLED))
                 continue
             values = tuple((source_id, url) for provider, source_id, url in descriptors if provider == observation.provider)
             if not values:
@@ -179,10 +196,15 @@ class _CoverEvidenceObserver:
         try:
             attempt = deadline.next_attempt()
             remote = fetch_remote_cover(url, deadline=attempt)
-            decoded = decode_cover(remote.content)
+            decoded = decode_cover(
+                remote.content,
+                deadline=deadline.aggregate_deadline,
+            )
             self._artifacts.stage(decoded.artifact, remote.content, decoded.preview)
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.RETRIEVED, decoded.artifact)
         except RemoteCoverTimeout:
+            return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.TIMEOUT, timeout_scope="attempted")
+        except CoverDecodeTimeout:
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.TIMEOUT, timeout_scope="attempted")
         except RemoteCoverError as error:
             message = str(error)

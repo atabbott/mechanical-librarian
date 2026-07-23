@@ -579,6 +579,59 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertEqual(server.requests, 6)
             self.assertEqual(source.read_bytes(), original_media)
 
+    def test_six_metadata_only_providers_do_not_consume_cover_source_capacity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            source.write_bytes(opening_no_applicable())
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            with _Server(_item(source.stat().st_size)) as server:
+                source_config = _config(server.endpoint, media, target_secret)
+                provider_names = [f"catalogue-{index}" for index in range(6)]
+                source_config["libraries"][0]["provider_connections"] = provider_names
+                source_config["providers"] = [
+                    {
+                        "name": name,
+                        "adapter": "hardcover",
+                        "enabled": False,
+                        "cover_enabled": False,
+                        "secret_file": None,
+                    }
+                    for name in provider_names
+                ]
+                config = root / "config.json"
+                config.write_text(json.dumps(source_config), encoding="utf-8")
+                database = root / "reports.sqlite"
+                artifact_store = root / "artifacts"
+                artifact_store.mkdir(mode=0o700)
+                report = MetadataReport.from_json(
+                    run_metadata_report(
+                        config,
+                        database,
+                        artifact_store,
+                        "primary",
+                        "books",
+                        "item-1",
+                        0,
+                    )
+                )
+            self.assertEqual(6, len(report.providers))
+            self.assertEqual({"disabled"}, {value.status.value for value in report.providers})
+            self.assertEqual(
+                {"abs", "epub"},
+                {value.kind.value for value in report.cover_sources},
+            )
+            connection = sqlite3.connect(database)
+            self.assertEqual(
+                (1,),
+                connection.execute("SELECT COUNT(*) FROM metadata_reports").fetchone(),
+            )
+            connection.close()
+
     def test_no_candidate_and_overlapping_item_ids_remain_explicitly_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

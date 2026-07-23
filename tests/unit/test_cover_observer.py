@@ -1,14 +1,22 @@
 import io
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
+from mechanical_librarian.adapters.cover_artifacts import CoverDecodeTimeout
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.providers.remote_cover import CoverDeadline, RemoteCover
 from mechanical_librarian.application.metadata_report import CoverSourceChangedError, CoverTimeoutError, TargetCover, TargetSnapshot
 from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
-from mechanical_librarian.domain.cover_evidence import CoverSourceKind, CoverSourceState
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 
 
 def _jpeg() -> bytes:
@@ -66,3 +74,64 @@ class CoverObserverTests(unittest.TestCase):
                 TargetSnapshot("ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")), (), ()
             )
         self.assertEqual(CoverSourceState.SOURCE_CHANGED, value[0].state)
+
+    def test_abs_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout(self) -> None:
+        aggregate = time.monotonic() + 10.0
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "mechanical_librarian.bootstrap.composition.decode_cover",
+                side_effect=CoverDecodeTimeout("elapsed"),
+            ) as decode,
+        ):
+            value = _CoverEvidenceObserver(
+                _Target(_jpeg()),
+                CoverArtifactStore(Path(directory)),
+            ).observe(
+                TargetSnapshot(
+                    "ebook",
+                    "Title",
+                    (),
+                    TargetCover("descriptor", "/cover.jpg"),
+                ),
+                (),
+                (),
+                aggregate_deadline=aggregate,
+            )
+        decode.assert_called_once_with(_jpeg(), deadline=aggregate)
+        self.assertEqual(
+            (CoverSourceState.TIMEOUT, "attempted"),
+            (value[0].state, value[0].timeout_scope),
+        )
+
+    def test_remote_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout(self) -> None:
+        aggregate = time.monotonic() + 10.0
+        source_id = cover_source_id(CoverSourceKind.HARDCOVER, "candidate")
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+                return_value=RemoteCover(
+                    "https://example.com/cover.jpg",
+                    "image/jpeg",
+                    _jpeg(),
+                ),
+            ),
+            patch(
+                "mechanical_librarian.bootstrap.composition.decode_cover",
+                side_effect=CoverDecodeTimeout("elapsed"),
+            ) as decode,
+        ):
+            value = _CoverEvidenceObserver(
+                _Target(None),
+                CoverArtifactStore(Path(directory)),
+            )._remote(
+                source_id,
+                "https://example.com/cover.jpg",
+                CoverDeadline(aggregate, aggregate),
+            )
+        decode.assert_called_once_with(_jpeg(), deadline=aggregate)
+        self.assertEqual(
+            (CoverSourceState.TIMEOUT, "attempted"),
+            (value.state, value.timeout_scope),
+        )

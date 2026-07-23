@@ -24,6 +24,10 @@ class CoverDecodeError(RuntimeError):
     pass
 
 
+class CoverDecodeTimeout(CoverDecodeError):
+    pass
+
+
 class CoverDecodeRejected(CoverDecodeError):
     """The hostile image is unsupported or outside the closed bounds."""
 
@@ -42,6 +46,12 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
     """Decode one bounded image in a fresh child with no inherited environment."""
     if type(original) is not bytes or not original or len(original) > _MAX_ORIGINAL_BYTES:
         raise CoverDecodeRejected(CoverSourceState.OVERSIZED)
+    timeout = _WALL_SECONDS if deadline is None else min(
+        _WALL_SECONDS,
+        max(0.0, deadline - time.monotonic()),
+    )
+    if timeout <= 0:
+        raise CoverDecodeTimeout("cover decode timed out")
     process: subprocess.Popen[bytes] | None = None
     try:
         process = subprocess.Popen(
@@ -52,7 +62,6 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
             env={"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1"},
             start_new_session=True,
         )
-        timeout = _WALL_SECONDS if deadline is None else min(_WALL_SECONDS, max(0.0, deadline - time.monotonic()))
         stdout, _ = process.communicate(original, timeout=timeout)
     except subprocess.TimeoutExpired as error:
         if process is not None:
@@ -61,7 +70,7 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
             except OSError:
                 pass
             process.wait()
-        raise CoverDecodeRejected(CoverSourceState.DECODE_FAILED) from error
+        raise CoverDecodeTimeout("cover decode timed out") from error
     except OSError as error:
         raise CoverDecodeError("cover decoder is unavailable") from error
     if process.returncode != 0 or len(stdout) > _MAX_PREVIEW_BYTES * 2:
@@ -85,4 +94,10 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
     return DecodedCover(CoverArtifact.create(original, preview, value["format"], value["width"], value["height"]), preview)
 
 
-__all__ = ["CoverDecodeError", "CoverDecodeRejected", "DecodedCover", "decode_cover"]
+__all__ = [
+    "CoverDecodeError",
+    "CoverDecodeRejected",
+    "CoverDecodeTimeout",
+    "DecodedCover",
+    "decode_cover",
+]

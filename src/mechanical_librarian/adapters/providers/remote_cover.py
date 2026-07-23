@@ -16,6 +16,9 @@ import httpx
 
 MAX_BYTES = 8 * 1024 * 1024
 _MAX_HEADER_BYTES = 65_536
+_MAX_CHUNK_LINE_BYTES = 1_024
+_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _STATUS = re.compile(r"^HTTP/1\.[01] ([0-9]{3}) [\x20-\x7e]*$")
 
 
@@ -122,16 +125,19 @@ def _receive(secured: ssl.SSLSocket, maximum: int, deadline: float | CoverDeadli
     return value
 
 
-def _response(secured: ssl.SSLSocket, deadline: float | CoverDeadline | None) -> tuple[int, dict[str, str], bytes]:
+def _response_headers(
+    secured: ssl.SSLSocket,
+    deadline: float | CoverDeadline | None,
+) -> tuple[int, dict[str, str]]:
     buffer = bytearray()
     while b"\r\n\r\n" not in buffer:
         if len(buffer) >= _MAX_HEADER_BYTES:
             raise RemoteCoverError("remote cover headers are oversized")
-        chunk = _receive(secured, min(4096, _MAX_HEADER_BYTES + 1 - len(buffer)), deadline)
+        chunk = _receive(secured, 1, deadline)
         if not chunk:
             raise RemoteCoverError("remote cover response is invalid")
         buffer.extend(chunk)
-    raw_headers, body_start = bytes(buffer).split(b"\r\n\r\n", 1)
+    raw_headers = bytes(buffer[:-4])
     try:
         lines = raw_headers.decode("ascii", "strict").split("\r\n")
     except UnicodeError as error:
@@ -148,19 +154,27 @@ def _response(secured: ssl.SSLSocket, deadline: float | CoverDeadline | None) ->
         if not separator or not name or lowered in headers or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in lowered) or value != value.strip(" \t"):
             raise RemoteCoverError("remote cover response is invalid")
         headers[lowered] = value
+    return int(match.group(1)), headers
+
+
+def _response_body(
+    secured: ssl.SSLSocket,
+    headers: dict[str, str],
+    deadline: float | CoverDeadline | None,
+) -> bytes:
     transfer = headers.get("transfer-encoding")
     length_text = headers.get("content-length")
     if transfer is not None:
         if transfer.lower() != "chunked" or length_text is not None:
             raise RemoteCoverError("remote cover response is invalid")
-        body = _chunked_body(secured, body_start, deadline)
+        body = _chunked_body(secured, deadline)
     elif length_text is not None:
         if not length_text.isascii() or not length_text.isdigit() or len(length_text) > 10:
             raise RemoteCoverError("remote cover response is invalid")
         length = int(length_text)
-        if length > MAX_BYTES or len(body_start) > length:
+        if length > MAX_BYTES:
             raise RemoteCoverError("remote cover is oversized")
-        body = bytearray(body_start)
+        body = bytearray()
         while len(body) < length:
             chunk = _receive(secured, min(65_536, length - len(body)), deadline)
             if not chunk:
@@ -177,26 +191,39 @@ def _response(secured: ssl.SSLSocket, deadline: float | CoverDeadline | None) ->
                 break
             body.extend(chunk)
         body = bytes(body)
-    return int(match.group(1)), headers, body
+    return body
 
 
-def _chunked_body(secured: ssl.SSLSocket, initial: bytes, deadline: float | CoverDeadline | None) -> bytes:
-    buffer = bytearray(initial); output = bytearray()
-    def fill(marker: bytes) -> None:
-        while marker not in buffer:
-            chunk = _receive(secured, 4096, deadline)
-            if not chunk: raise RemoteCoverError("remote cover response is invalid")
-            buffer.extend(chunk)
+def _framing_line(
+    secured: ssl.SSLSocket,
+    buffer: bytearray,
+    deadline: float | CoverDeadline | None,
+) -> bytes:
+    while b"\r\n" not in buffer:
+        remaining = _MAX_CHUNK_LINE_BYTES - len(buffer)
+        if remaining <= 0:
+            raise RemoteCoverError("remote cover response is invalid")
+        chunk = _receive(secured, min(remaining, 4096), deadline)
+        if not chunk:
+            raise RemoteCoverError("remote cover response is invalid")
+        buffer.extend(chunk)
+    line, remainder = bytes(buffer).split(b"\r\n", 1)
+    buffer[:] = remainder
+    return line
+
+
+def _chunked_body(secured: ssl.SSLSocket, deadline: float | CoverDeadline | None) -> bytes:
+    buffer = bytearray()
+    output = bytearray()
     while True:
-        fill(b"\r\n")
-        line, remainder = bytes(buffer).split(b"\r\n", 1); buffer[:] = remainder
+        line = _framing_line(secured, buffer, deadline)
         size_text = line.split(b";", 1)[0]
         if not size_text or len(size_text) > 8 or any(value not in b"0123456789abcdefABCDEF" for value in size_text):
             raise RemoteCoverError("remote cover response is invalid")
         size = int(size_text, 16)
         if size == 0:
-            fill(b"\r\n")
-            if bytes(buffer).split(b"\r\n", 1)[0]: raise RemoteCoverError("remote cover response is invalid")
+            if _framing_line(secured, buffer, deadline):
+                raise RemoteCoverError("remote cover response is invalid")
             return bytes(output)
         if len(output) + size > MAX_BYTES: raise RemoteCoverError("remote cover is oversized")
         while len(buffer) < size + 2:
@@ -205,6 +232,28 @@ def _chunked_body(secured: ssl.SSLSocket, initial: bytes, deadline: float | Cove
             buffer.extend(chunk)
         if buffer[size:size + 2] != b"\r\n": raise RemoteCoverError("remote cover response is invalid")
         output.extend(buffer[:size]); del buffer[:size + 2]
+
+
+def _redirect_target(current: str, location: str | None) -> str:
+    if not location:
+        raise RemoteCoverError("remote redirect is invalid")
+    target = urljoin(current, location)
+    _validate_url(target)
+    parts = urlsplit(target)
+    if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443) or parts.username or parts.password or parts.fragment:
+        raise RemoteCoverError("remote redirect is invalid")
+    return target
+
+
+def _admitted_media_type(headers: object) -> str:
+    get = getattr(headers, "get")
+    encoding = get("content-encoding")
+    if encoding is not None and encoding.lower() != "identity":
+        raise RemoteCoverError("remote cover encoding is unsupported")
+    media_type = get("content-type")
+    if media_type is None or media_type.lower() not in _IMAGE_MEDIA_TYPES:
+        raise RemoteCoverError("remote cover format is unsupported")
+    return media_type.lower()
 
 
 def _pinned_fetch(url: str, deadline: float | CoverDeadline | None) -> tuple[int, dict[str, str], bytes]:
@@ -221,7 +270,14 @@ def _pinned_fetch(url: str, deadline: float | CoverDeadline | None) -> tuple[int
             secured.settimeout(_remaining(deadline))
             request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n".encode("ascii")
             secured.sendall(request)
-            return _response(secured, deadline)
+            status, headers = _response_headers(secured, deadline)
+            if status in _REDIRECT_STATUSES:
+                _redirect_target(url, headers.get("location"))
+                return status, headers, b""
+            if status != 200:
+                return status, headers, b""
+            _admitted_media_type(headers)
+            return status, headers, _response_body(secured, headers, deadline)
     finally:
         try:
             raw.close()
@@ -245,30 +301,19 @@ def fetch_remote_cover(url: str, *, deadline: float | CoverDeadline | None = Non
             remaining = _remaining(deadline)
             if client is None:
                 status, headers, content = _pinned_fetch(current, deadline)
-                if status in {301, 302, 303, 307, 308}:
-                    location = headers.get("location")
-                    if not location: raise RemoteCoverError("remote redirect is invalid")
-                    current = urljoin(current, location); continue
+                if status in _REDIRECT_STATUSES:
+                    current = _redirect_target(current, headers.get("location")); continue
                 if status != 200: raise RemoteCoverError("remote cover unavailable")
-                if headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}: raise RemoteCoverError("remote cover encoding is unsupported")
-                media_type = headers.get("content-type", "").split(";", 1)[0].lower().strip()
-                if media_type not in {"image/jpeg", "image/png", "image/webp"}: raise RemoteCoverError("remote cover format is unsupported")
+                media_type = _admitted_media_type(headers)
                 if not content: raise RemoteCoverError("remote cover unavailable")
                 return RemoteCover(current, media_type, content)
             timeout = httpx.Timeout(remaining, connect=remaining, read=remaining, write=remaining, pool=remaining)
             with active.stream("GET", current, headers={"Host": host, "Accept-Encoding": "identity"}, timeout=timeout) as response:
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise RemoteCoverError("remote redirect is invalid")
-                    current = str(response.url.join(location)); continue
+                if response.status_code in _REDIRECT_STATUSES:
+                    current = _redirect_target(current, response.headers.get("location")); continue
                 if response.status_code != 200:
                     raise RemoteCoverError("remote cover unavailable")
-                if response.headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}:
-                    raise RemoteCoverError("remote cover encoding is unsupported")
-                media_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
-                if media_type not in {"image/jpeg", "image/png", "image/webp"}:
-                    raise RemoteCoverError("remote cover format is unsupported")
+                media_type = _admitted_media_type(response.headers)
                 chunks: list[bytes] = []; size = 0
                 for chunk in response.iter_bytes():
                     _remaining(deadline)
