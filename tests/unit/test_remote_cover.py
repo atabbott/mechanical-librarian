@@ -1,5 +1,6 @@
 import unittest
 import time
+import socket
 from unittest.mock import patch
 
 import httpx
@@ -59,3 +60,9 @@ class RemoteCoverTests(unittest.TestCase):
             with self.assertRaises(RemoteCoverTimeout):
                 fetch_remote_cover("https://example.com/cover.png", deadline=time.monotonic() - 1)
         lookup.assert_not_called()
+
+    def test_production_path_connects_to_one_validated_address_without_reresolving(self) -> None:
+        with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]) as lookup, patch("socket.create_connection", side_effect=OSError):
+            with self.assertRaises(RemoteCoverError):
+                fetch_remote_cover("https://example.com/cover.png")
+        lookup.assert_called_once_with("example.com", 443, type=socket.SOCK_STREAM)

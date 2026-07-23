@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import ssl
+import http.client
 import time
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urljoin
 
 import httpx
 
@@ -42,6 +44,60 @@ def _public_https(url: str) -> tuple[str, int]:
     return parts.hostname, 443
 
 
+def _pinned_address(url: str) -> tuple[str, str, str]:
+    parts = urlsplit(url)
+    if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443) or parts.username or parts.password or parts.fragment:
+        raise RemoteCoverError("unsafe remote cover")
+    host = parts.hostname
+    addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+        raise RemoteCoverError("unsafe remote cover")
+    selected = addresses[0][4][0]
+    return host, selected, urlsplit(url).path or "/"
+
+
+def _remaining(deadline: float | None) -> float:
+    value = 5.0 if deadline is None else min(5.0, deadline - time.monotonic())
+    if value <= 0:
+        raise RemoteCoverTimeout("aggregate deadline elapsed")
+    return value
+
+
+def _pinned_fetch(url: str, deadline: float | None) -> tuple[int, dict[str, str], bytes]:
+    host, address, path = _pinned_address(url)
+    query = urlsplit(url).query
+    if query:
+        path += "?" + query
+    raw = socket.create_connection((address, 443), timeout=_remaining(deadline))
+    try:
+        if raw.getpeername()[0] != address:
+            raise RemoteCoverError("remote cover unavailable")
+        context = ssl.create_default_context()
+        with context.wrap_socket(raw, server_hostname=host) as secured:
+            secured.settimeout(_remaining(deadline))
+            request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n".encode("ascii")
+            secured.sendall(request)
+            response = http.client.HTTPResponse(secured)
+            response.begin()
+            headers = {key.lower(): value for key, value in response.getheaders()}
+            chunks: list[bytes] = []; size = 0
+            while True:
+                secured.settimeout(_remaining(deadline))
+                chunk = response.read(min(65_536, MAX_BYTES + 1 - size))
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_BYTES:
+                    raise RemoteCoverError("remote cover is oversized")
+                chunks.append(chunk)
+            return response.status, headers, b"".join(chunks)
+    finally:
+        try:
+            raw.close()
+        except OSError:
+            pass
+
+
 def fetch_remote_cover(url: str, *, deadline: float | None = None, client: httpx.Client | None = None) -> RemoteCover:
     """One no-retry request chain; every redirect is revalidated before use."""
     own = client is None
@@ -51,10 +107,23 @@ def fetch_remote_cover(url: str, *, deadline: float | None = None, client: httpx
         for _ in range(4):
             if deadline is not None and time.monotonic() >= deadline:
                 raise RemoteCoverTimeout("aggregate deadline elapsed")
-            host, _ = _public_https(current)
+            if client is not None:
+                host, _ = _public_https(current)
             remaining = 5.0 if deadline is None else deadline - time.monotonic()
             if remaining <= 0:
                 raise RemoteCoverTimeout("aggregate deadline elapsed")
+            if client is None:
+                status, headers, content = _pinned_fetch(current, deadline)
+                if status in {301, 302, 303, 307, 308}:
+                    location = headers.get("location")
+                    if not location: raise RemoteCoverError("remote redirect is invalid")
+                    current = urljoin(current, location); continue
+                if status != 200: raise RemoteCoverError("remote cover unavailable")
+                if headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}: raise RemoteCoverError("remote cover encoding is unsupported")
+                media_type = headers.get("content-type", "").split(";", 1)[0].lower().strip()
+                if media_type not in {"image/jpeg", "image/png", "image/webp"}: raise RemoteCoverError("remote cover format is unsupported")
+                if not content: raise RemoteCoverError("remote cover unavailable")
+                return RemoteCover(current, media_type, content)
             timeout = httpx.Timeout(remaining, connect=remaining, read=remaining, write=remaining, pool=remaining)
             with active.stream("GET", current, headers={"Host": host, "Accept-Encoding": "identity"}, timeout=timeout) as response:
                 if response.status_code in {301, 302, 303, 307, 308}:
@@ -80,7 +149,7 @@ def fetch_remote_cover(url: str, *, deadline: float | None = None, client: httpx
         raise RemoteCoverError("remote redirect limit exceeded")
     except httpx.TimeoutException as error:
         raise RemoteCoverTimeout("remote cover timed out") from error
-    except httpx.HTTPError as error:
+    except (httpx.HTTPError, OSError, ssl.SSLError, http.client.HTTPException) as error:
         raise RemoteCoverError("remote cover unavailable") from error
     finally:
         if own: active.close()
