@@ -70,6 +70,11 @@ class CoverArtifactStore:
             if written != len(content):
                 raise OSError("short artifact write")
             os.fsync(descriptor)
+            directory = os.open(self._path, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
         except OSError as error:
             try:
                 target.unlink()
