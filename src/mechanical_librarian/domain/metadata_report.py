@@ -18,6 +18,7 @@ from mechanical_librarian.domain.evidence_bounds import (
 
 
 REPORT_SCHEMA = "metadata-report-v2"
+COMPARISON_VERSION = "same-kind-v1"
 # F09j's report contract admits rich, source-attributed candidates.  The
 # physical SQLite schema separately fingerprints this exact shape, so an F09i
 # database cannot be opened as this schema despite the stable document label.
@@ -467,12 +468,15 @@ class MetadataReport:
     providers: tuple[ProviderObservation, ...]
     field_results: tuple[FieldResult, ...]
     schema_version: str = REPORT_SCHEMA
+    comparison_version: str = COMPARISON_VERSION
 
     def __post_init__(self) -> None:
         if _REPORT_ID.fullmatch(self.report_id) is None or type(self.target) is not TargetFacts or type(self.file) is not FileFacts:
             raise ReportValueError("report identity or target is invalid")
         if self.schema_version != REPORT_SCHEMA:
             raise ReportValueError("report schema is unsupported")
+        if self.comparison_version != COMPARISON_VERSION:
+            raise ReportValueError("report comparison version is unsupported")
         if type(self.local_claims) is not tuple or any(type(value) is not LocalClaim for value in self.local_claims):
             raise ReportValueError("local claims are invalid")
         references = tuple(value.reference for value in self.local_claims)
@@ -645,12 +649,13 @@ def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_cla
         "providers": [value.to_data() for value in providers],
         "report_id": report_id,
         "schema_version": REPORT_SCHEMA,
+        "comparison_version": COMPARISON_VERSION,
         "target": target.to_data(),
     }
 
 
 def _report_from_data(value: object) -> MetadataReport:
-    root = _object(value, {"field_results", "file", "local", "providers", "report_id", "schema_version", "target"})
+    root = _object(value, {"comparison_version", "field_results", "file", "local", "providers", "report_id", "schema_version", "target"})
     target = _object(root["target"], {"connection", "current_title", "item", "library"})
     file = _object(root["file"], {"content_digest", "format", "identity", "selected_index"})
     local = _object(root["local"], {"claims", "reasons", "status"})
@@ -667,7 +672,7 @@ def _report_from_data(value: object) -> MetadataReport:
         reasons,
         providers,
         field_results,
-        root["schema_version"],
+        root["schema_version"], root["comparison_version"],
     )
 
 
@@ -765,7 +770,7 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 
 
 __all__ = [
-    "ClaimKind", "Comparison", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
+    "ClaimKind", "COMPARISON_VERSION", "Comparison", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
     "ProviderObservation", "ProviderStatus", "REPORT_SCHEMA", "ReportValueError",
     "TargetFacts", "canonical_json", "compare_claim", "normalize_title",
