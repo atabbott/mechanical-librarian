@@ -675,7 +675,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(),
         )
         arguments = [
-            "metadata-report", "--config", "/private/config.json", "--database", "/private/reports.sqlite",
+            "metadata-report", "--config", "/private/config.json", "--database", "/private/reports.sqlite", "--artifact-store", "/private/artifacts",
             "--connection", "primary", "--library", "ebooks", "--item", "item-1", "--file-index", "0",
         ]
         output = io.StringIO()
@@ -689,6 +689,13 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(main(arguments, runner=lambda *args: (_ for _ in ()).throw(RuntimeError("token=/private/secret")), stdout=output, stderr=errors), 1)
         self.assertEqual(output.getvalue(), "")
         self.assertEqual(errors.getvalue(), "Metadata report failed safely.\n")
+
+    def test_cli_rejects_missing_artifact_store_before_runner(self) -> None:
+        arguments = [
+            "metadata-report", "--config", "config", "--database", "reports", "--connection", "primary",
+            "--library", "ebooks", "--item", "item-1", "--file-index", "0",
+        ]
+        self.assertEqual(2, main(arguments, runner=lambda *_: (_ for _ in ()).throw(AssertionError()), stdout=io.StringIO(), stderr=io.StringIO()))
 
 
 if __name__ == "__main__":

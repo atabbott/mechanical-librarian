@@ -88,7 +88,10 @@ class _IsolatedEpubInspector:
                 os.close(opened.descriptor)
 
 
-def run_metadata_report(config_path: Path, database_path: Path, connection_name: str, library_name: str, item: str, file_index: int) -> str:
+def run_metadata_report(config_path: Path, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int) -> str:
+    # Validate the separately authorized private store before credentials or
+    # network clients are constructed.  It must already be operator-created.
+    CoverArtifactStore(artifact_store_path, create=False)
     configuration = load_configuration_file(config_path)
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if library.media_kind != "ebook" or mount is None:

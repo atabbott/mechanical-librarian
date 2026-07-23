@@ -21,7 +21,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.metadata_report import MetadataReport, ReportValueError
 
 
-Runner = Callable[[Path, Path, str, str, str, int], str]
+Runner = Callable[[Path, Path, Path, str, str, str, int], str]
 ReopenRunner = Callable[[Path, str], str]
 CurrentReopenRunner = Callable[[Path, str, str, str, str], str]
 PreviewRunner = Callable[[Path, Path, str, str], bytes]
@@ -65,6 +65,7 @@ def _parser() -> _Parser:
     report = commands.add_parser("metadata-report", help="observe and persist one selected EPUB metadata report")
     report.add_argument("--config", required=True, metavar="PATH", type=Path)
     report.add_argument("--database", required=True, metavar="PATH", type=Path)
+    report.add_argument("--artifact-store", required=True, metavar="PATH", type=Path)
     report.add_argument("--connection", required=True, metavar="NAME", type=_name)
     report.add_argument("--library", required=True, metavar="NAME", type=_name)
     report.add_argument("--item", required=True, metavar="ITEM_ID", type=_item)
@@ -143,7 +144,7 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
         errors.write("Metadata report failed safely.\n")
         return 1
     try:
-        serialized = runner(arguments.config, arguments.database, arguments.connection, arguments.library, arguments.item, arguments.file_index)
+        serialized = runner(arguments.config, arguments.database, arguments.artifact_store, arguments.connection, arguments.library, arguments.item, arguments.file_index)
         report = MetadataReport.from_json(serialized)
         if report.to_json() != serialized:
             raise ReportValueError("report output is invalid")
