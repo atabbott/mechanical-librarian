@@ -9,8 +9,10 @@ import os
 import resource
 import socket
 import sys
+import warnings
+import ctypes
 
-from PIL import Image, UnidentifiedImageError, features
+from PIL import Image, ImageOps, UnidentifiedImageError, features
 
 
 _MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
@@ -39,25 +41,34 @@ def _no_network() -> None:
     socket.getaddrinfo = _deny_network  # type: ignore[assignment]
 
 
+def _isolate_network() -> None:
+    if not sys.platform.startswith("linux"):
+        return
+    if ctypes.CDLL(None, use_errno=True).unshare(0x40000000) != 0:
+        raise OSError(ctypes.get_errno(), "network namespace unavailable")
+
+
 def _decode(data: bytes) -> dict[str, object]:
     if not (features.check("jpg") and features.check("zlib") and features.check("webp")):
         return {"state": "decode_failed"}
-    try:
-        image = Image.open(io.BytesIO(data))
-    except UnidentifiedImageError:
-        return {"state": "unsupported_format"}
-    with image:
-        if getattr(image, "n_frames", 1) != 1:
-            return {"state": "animated_or_multiframe"}
-        if image.format not in {"JPEG", "PNG", "WEBP"}:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        try:
+            image = Image.open(io.BytesIO(data))
+        except UnidentifiedImageError:
             return {"state": "unsupported_format"}
-        image.load()
-        if image.width > 8192 or image.height > 8192 or image.width * image.height > _MAX_PIXELS:
-            return {"state": "oversized"}
-        preview = image.convert("RGBA")
-        preview.thumbnail((320, 480), Image.Resampling.LANCZOS)
-        output = io.BytesIO()
-        preview.save(output, "PNG", optimize=False, compress_level=9)
+        with image:
+            if getattr(image, "n_frames", 1) != 1:
+                return {"state": "animated_or_multiframe"}
+            if image.format not in {"JPEG", "PNG", "WEBP"}:
+                return {"state": "unsupported_format"}
+            if image.width > 8192 or image.height > 8192 or image.width * image.height > _MAX_PIXELS:
+                return {"state": "oversized"}
+            image.load()
+            preview = ImageOps.exif_transpose(image).convert("RGBA")
+            preview.thumbnail((320, 480), Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            preview.save(output, "PNG", optimize=False, compress_level=9)
     encoded = output.getvalue()
     if len(encoded) > _MAX_PREVIEW_BYTES:
         return {"state": "oversized"}
@@ -67,6 +78,7 @@ def _decode(data: bytes) -> dict[str, object]:
 def main() -> int:
     try:
         _limits()
+        _isolate_network()
         _no_network()
         data = sys.stdin.buffer.read(_MAX_ORIGINAL_BYTES + 1)
         if not data or len(data) > _MAX_ORIGINAL_BYTES:
@@ -75,7 +87,7 @@ def main() -> int:
         result = _decode(data)
         os.write(sys.stdout.fileno(), json.dumps(result, separators=(",", ":")).encode("ascii"))
         return 0
-    except (ValueError, OSError, UnidentifiedImageError, Image.DecompressionBombError):
+    except (ValueError, OSError, UnidentifiedImageError, Image.DecompressionBombError, Image.DecompressionBombWarning):
         return 1
 
 

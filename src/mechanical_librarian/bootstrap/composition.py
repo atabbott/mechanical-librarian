@@ -137,7 +137,7 @@ class _CoverEvidenceObserver:
             if original is None:
                 source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.ABSENT)
             else:
-                decoded = decode_cover(original, deadline=deadline.aggregate_deadline)
+                decoded = decode_cover(original)
                 self._artifacts.stage(decoded.artifact, original, decoded.preview)
                 source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.RETRIEVED, decoded.artifact)
         except CoverTimeoutError:
@@ -177,7 +177,7 @@ class _CoverEvidenceObserver:
         try:
             attempt = deadline.next_attempt()
             remote = fetch_remote_cover(url, deadline=attempt)
-            decoded = decode_cover(remote.content, deadline=min(attempt.attempt_deadline, attempt.aggregate_deadline))
+            decoded = decode_cover(remote.content)
             self._artifacts.stage(decoded.artifact, remote.content, decoded.preview)
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.RETRIEVED, decoded.artifact)
         except RemoteCoverTimeout:
