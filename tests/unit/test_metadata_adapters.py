@@ -230,52 +230,45 @@ class MetadataPersistenceTests(unittest.TestCase):
                 self.assertEqual(connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone(), expected_counts)
                 connection.close()
 
-    def test_existing_schema_validates_every_row_and_current_pointer_before_opening(self) -> None:
-        cases = ("malformed", "canonical_contradiction", "envelope", "digest", "private_canonical", "pointer")
-        for kind in cases:
-            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / "reports.sqlite"
-                repository = open_repository(path)
-                primary = _report()
-                other = MetadataReport.create(
-                    target=TargetFacts("secondary", "other", "item-2", "Other title"),
-                    file=FileFacts(0, "c" * 64, "d" * 64),
-                    local_claims=(), local_reasons=("no_opening_claims",), providers=(),
-                )
-                repository.publish(primary, lambda: True)
-                repository.publish(other, lambda: True)
-                repository.close()
-                connection = sqlite3.connect(path)
-                connection.execute("DROP TRIGGER metadata_reports_no_update")
-                if kind == "malformed":
-                    document = "{}"
-                    connection.execute("UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?", (document, hashlib.sha256(document.encode()).hexdigest(), primary.report_id))
-                elif kind == "canonical_contradiction":
-                    document = other.to_json()
-                    connection.execute("UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?", (document, hashlib.sha256(document.encode()).hexdigest(), primary.report_id))
-                elif kind == "envelope":
-                    connection.execute("UPDATE metadata_reports SET connection_name='other' WHERE report_id=?", (primary.report_id,))
-                elif kind == "digest":
-                    connection.execute("UPDATE metadata_reports SET document_digest=? WHERE report_id=?", ("0" * 64, primary.report_id))
-                elif kind == "private_canonical":
-                    payload = json.loads(primary.to_json())
-                    payload["local"]["claims"][0]["canonical"] = "/Users/private/title"
-                    document = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-                    connection.execute("UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?", (document, hashlib.sha256(document.encode()).hexdigest(), primary.report_id))
-                else:
-                    connection.execute("UPDATE current_metadata_reports SET connection_name='other'")
-                connection.commit()
-                expected_objects = connection.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall()
-                expected_counts = connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone()
-                connection.close()
-                before = path.read_bytes()
-                with self.assertRaises(MetadataReportError):
-                    open_repository(path)
-                self.assertEqual(path.read_bytes(), before)
-                connection = sqlite3.connect(path)
-                self.assertEqual(connection.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall(), expected_objects)
-                self.assertEqual(connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone(), expected_counts)
-                connection.close()
+    def test_exact_schema_isolates_unselected_history_and_validates_selected_rows_and_pointers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            primary = _report()
+            other = MetadataReport.create(target=TargetFacts("secondary", "ebooks", "item-2", "Other title"), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(primary, lambda: True)
+            repository.publish(other, lambda: True)
+            repository.close()
+            connection = sqlite3.connect(path)
+            connection.execute("DROP TRIGGER metadata_reports_no_update")
+            document = "{}"
+            connection.execute("UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?", (document, hashlib.sha256(document.encode()).hexdigest(), other.report_id))
+            connection.execute(metadata_persistence._NO_UPDATE_SQL)
+            connection.commit(); connection.close()
+            repository = open_repository(path)
+            self.assertEqual(repository.get(primary.report_id), primary.to_json())
+            with self.assertRaises(MetadataReportError):
+                repository.get(other.report_id)
+            repository.close()
+
+    def test_selected_corrupt_pointer_blocks_only_its_publication_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            primary = _report()
+            other = MetadataReport.create(target=TargetFacts("secondary", "ebooks", "item-2", "Other title"), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(primary, lambda: True); repository.publish(other, lambda: True); repository.close()
+            connection = sqlite3.connect(path)
+            connection.execute("UPDATE current_metadata_reports SET report_id=? WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (other.report_id, primary.target.connection, primary.target.library, primary.target.item, primary.file.identity))
+            connection.commit(); connection.close()
+            before = path.read_bytes()
+            repository = open_repository(path)
+            self.assertEqual(repository.current(other.target.connection, other.target.library, other.target.item, other.file.identity), other.to_json())
+            successor = _report("Successor")
+            with self.assertRaises(MetadataReportError):
+                repository.publish(successor, lambda: True)
+            repository.close()
+            self.assertEqual(path.read_bytes(), before)
 
     def test_pointer_failure_rolls_back_new_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
