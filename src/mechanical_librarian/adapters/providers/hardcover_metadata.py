@@ -27,7 +27,7 @@ _QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
     f"{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
     "{id book_id isbn_10 isbn_13 asin title subtitle release_date publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
-    "books:books_through_editions(where:{editions:{_or:[{isbn_13:{_in:$isbns}},{isbn_10:{_in:$isbns}}]}}},order_by:{id:asc},limit:6)"
+    "books:books(where:{editions:{_or:[{isbn_13:{_in:$isbns}},{isbn_10:{_in:$isbns}}]}},order_by:{id:asc},limit:6)"
     "{id title description contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag{id tag}}}}}"
 )
 
@@ -126,7 +126,7 @@ def _edition_claims(provider: str, identity: str, row: dict[str, Any], local: tu
     add(ClaimKind.PUBLISHER, None if publisher is None else publisher["name"])
     claims.append(_state_claim(provider, identity, ClaimKind.IMPRINT, FieldState.UNSUPPORTED, ClaimScope.EDITION, local, len(claims)))
     language = _closed_or_none(row["language"], {"id", "code2", "code3", "language"})
-    add(ClaimKind.LANGUAGE, None if language is None else language["code2"])
+    add(ClaimKind.LANGUAGE, None if language is None else (language["code2"] or language["code3"]))
     claims.extend(_contributions(provider, identity, row["contributions"], ClaimScope.EDITION, local, len(claims)))
     return claims
 
@@ -155,7 +155,12 @@ def _contributions(provider: str, identity: str, value: object, scope: ClaimScop
     claims: list[ProviderClaim] = []
     contributions, overflow = _bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"})
     if overflow:
-        return [_state_claim(provider, identity, ClaimKind.CREATOR, FieldState.OVERSIZED, scope, local, offset)]
+        # The seventeenth wire item is a bounded role probe; it preserves the
+        # affected field family without retaining unbounded evidence.
+        probe = value[MAX_CONTRIBUTIONS]
+        role = probe.get("contribution") if type(probe) is dict else None
+        kinds = {ClaimKind.CREATOR if type(role) is str and role.casefold() == "author" else ClaimKind.CONTRIBUTOR}
+        return [_state_claim(provider, identity, kind, FieldState.OVERSIZED, scope, local, offset + index) for index, kind in enumerate(sorted(kinds, key=lambda value: value.value))]
     for item in contributions:
         author = _closed_or_none(item["author"], {"id", "name"})
         try:
@@ -184,7 +189,7 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
         return FieldState.ABSENT, None
     maximum = MAX_DESCRIPTION_CHARACTERS if kind is ClaimKind.DESCRIPTION else MAX_SCALAR_CHARACTERS
     try:
-        if kind is ClaimKind.SERIES_SEQUENCE and type(value) is Decimal:
+        if kind is ClaimKind.SERIES_SEQUENCE and type(value) in {Decimal, int} and type(value) is not bool:
             return FieldState.VALID, _position(value)
         text = validate_projection_text(value, "provider claim value", maximum)
         if kind is ClaimKind.ISBN:
@@ -241,14 +246,19 @@ def _isbn(value: str, length: int) -> str:
     return text
 
 
-def _position(value: str | Decimal) -> str:
+def _position(value: int | str | Decimal) -> str:
     try:
         decimal = Decimal(value)
     except (InvalidOperation, ValueError) as error:
         raise ValueError("provider position invalid") from error
-    if not decimal.is_finite() or decimal.adjusted() > 12:
+    if not decimal.is_finite() or decimal.adjusted() > 12 or decimal.adjusted() < -MAX_SCALAR_CHARACTERS:
         raise ValueError("provider position invalid")
-    return format(decimal.normalize(), "f").rstrip("0").rstrip(".") or "0"
+    text = format(decimal.normalize(), "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    if len(text) > MAX_SCALAR_CHARACTERS:
+        raise ValueError("provider position invalid")
+    return text or "0"
 
 
 def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:

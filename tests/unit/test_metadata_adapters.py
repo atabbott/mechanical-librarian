@@ -100,7 +100,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 lambda connection: (
                     connection.execute(
                         metadata_persistence._REPORTS_SQL.replace(
-                            "BETWEEN 2 AND 1048576", "BETWEEN 2 AND 262144"
+                            "BETWEEN 2 AND 2097152", "BETWEEN 2 AND 262144"
                         )
                     ),
                     connection.execute(metadata_persistence._CURRENT_SQL),

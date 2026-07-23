@@ -22,7 +22,7 @@ COMPARISON_VERSION = "same-kind-v1"
 # F09j's report contract admits rich, source-attributed candidates.  The
 # physical SQLite schema separately fingerprints this exact shape, so an F09i
 # database cannot be opened as this schema despite the stable document label.
-MAX_REPORT_BYTES = 1_048_576
+MAX_REPORT_BYTES = 2_097_152
 MAX_CANDIDATES = 5
 MAX_CONTRIBUTIONS = 16
 MAX_SERIES = 16
@@ -714,6 +714,9 @@ def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> 
 def _comparison_value(kind: ClaimKind, value: str) -> str:
     if kind is ClaimKind.ISBN:
         return "".join(character for character in value if character.isdigit() or character in "Xx").upper()
+    if kind is ClaimKind.DESCRIPTION:
+        _projection_text(value, "comparison description", MAX_DESCRIPTION_CHARACTERS)
+        return " ".join(unicodedata.normalize("NFC", value).split()).casefold()
     return normalize_title(value).casefold()
 
 

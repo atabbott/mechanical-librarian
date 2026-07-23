@@ -139,8 +139,12 @@ class GenerateMetadataReport:
                 self._mount, selected.relative_path, self._limits.source_archive_bytes
             )
         except MetadataReportError:
+            if repository is not None:
+                repository.close()
             raise
         except Exception as error:
+            if repository is not None:
+                repository.close()
             raise MetadataReportError("EPUB inspection failed") from error
 
         target_title_claim = LocalClaim.create(
@@ -169,8 +173,10 @@ class GenerateMetadataReport:
             try:
                 provider = binding.factory()
             except CredentialError:
+                repository.close()
                 raise
             except Exception as error:
+                repository.close()
                 raise CredentialError("provider credential unavailable") from error
             try:
                 observation = provider.observe(combined_claims)
@@ -179,6 +185,7 @@ class GenerateMetadataReport:
                     binding.name, ProviderStatus.UNAVAILABLE
                 )
             if observation.provider != binding.name:
+                repository.close()
                 raise MetadataReportError("provider result is invalid")
             observations.append(observation)
 
@@ -188,18 +195,17 @@ class GenerateMetadataReport:
                 or {"no_opening_claims"}
             )
         )
-        report = MetadataReport.create(
-            target=TargetFacts(
-                self._connection.name, self._library.name, item, initial.title
-            ),
-            file=FileFacts(
-                file_index, selected.identity, local.content_digest
-            ),
-            local_claims=combined_claims,
-            local_reasons=reasons,
-            providers=tuple(sorted(observations, key=lambda value: value.provider)),
-            field_results=derive_field_results(combined_claims),
-        )
+        try:
+            report = MetadataReport.create(
+                target=TargetFacts(self._connection.name, self._library.name, item, initial.title),
+                file=FileFacts(file_index, selected.identity, local.content_digest),
+                local_claims=combined_claims, local_reasons=reasons,
+                providers=tuple(sorted(observations, key=lambda value: value.provider)),
+                field_results=derive_field_results(combined_claims),
+            )
+        except Exception:
+            repository.close()
+            raise
         try:
             persisted = repository.publish(
                 report,
