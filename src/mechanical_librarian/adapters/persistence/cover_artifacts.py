@@ -19,11 +19,10 @@ class CoverArtifactStore:
         if create:
             path.mkdir(mode=0o700, parents=True, exist_ok=True)
         try:
-            information = path.stat()
+            descriptor = self._directory()
+            os.close(descriptor)
         except OSError as error:
             raise MetadataReportError("artifact store is unavailable") from error
-        if not stat.S_ISDIR(information.st_mode) or information.st_uid != os.getuid() or information.st_mode & 0o077:
-            raise MetadataReportError("artifact store is unavailable")
 
     def stage(self, artifact: CoverArtifact, original: bytes, preview: bytes) -> None:
         """Create or verify both immutable blobs before database publication."""
@@ -111,9 +110,12 @@ class CoverArtifactStore:
             os.close(directory)
             raise MetadataReportError("artifact store is unavailable") from error
         try:
-            written = os.write(descriptor, content)
-            if written != len(content):
-                raise OSError("short artifact write")
+            written = 0
+            while written < len(content):
+                amount = os.write(descriptor, content[written:])
+                if amount <= 0:
+                    raise OSError("short artifact write")
+                written += amount
             os.fsync(descriptor)
             os.fsync(directory)
         except OSError as error:
@@ -136,7 +138,15 @@ class CoverArtifactStore:
                 information = os.fstat(descriptor)
                 if not stat.S_ISREG(information.st_mode) or information.st_size > maximum:
                     raise MetadataReportError("artifact is unavailable")
-                content = os.read(descriptor, maximum + 1)
+                chunks: list[bytes] = []
+                remaining = maximum + 1
+                while remaining:
+                    chunk = os.read(descriptor, min(65_536, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                content = b"".join(chunks)
             finally:
                 os.close(descriptor)
                 os.close(directory)
@@ -149,10 +159,31 @@ class CoverArtifactStore:
         return content
 
     def _directory(self) -> int:
+        descriptors: list[int] = []
         try:
-            return os.open(self._path, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0))
+            absolute = self._path.resolve(strict=True)
+            descriptor = os.open(
+                "/", os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+            )
+            descriptors.append(descriptor)
+            for name in absolute.parts[1:]:
+                descriptor = os.open(
+                    name,
+                    os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=descriptors[-1],
+                )
+                descriptors.append(descriptor)
+            result = os.dup(descriptors[-1])
+            information = os.fstat(result)
+            if information.st_uid != os.getuid() or information.st_mode & 0o077:
+                os.close(result)
+                raise MetadataReportError("artifact store is unavailable")
+            return result
         except OSError as error:
             raise MetadataReportError("artifact store is unavailable") from error
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
 
 
 __all__ = ["CoverArtifactStore"]
