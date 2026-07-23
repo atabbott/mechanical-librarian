@@ -43,6 +43,14 @@ Disabled providers cause no secret access, client construction, or egress.
 Unreferenced providers are never bound. A provider with no usable ISBN input
 returns `insufficient_input` without egress. There is no automatic retry.
 
+Cover acquisition remains report-only. The ABS raw-cover route is bracketed by
+the final item read and has no credentials, cookies, referrer, or user agent.
+Remote Hardcover cover requests are separately credential-free, require public
+HTTPS port 443 at every hop, use identity coding, and have bounded manual
+redirects, bytes, attempts, and aggregate deadline. Hostile JPEG, PNG, and
+static WebP bytes are decoded in a constrained child; reports retain only
+validated content digests, dimensions, media type, and preview references.
+
 ## Output and persistence
 
 Successful output and persisted documents contain only bounded target names,
@@ -57,6 +65,12 @@ report rows have update/delete triggers. The transaction runs the bounded
 target/media currentness precondition before inserting the report or advancing
 the pointer. The separate pointer may advance, but predecessor reports remain
 unchanged.
+
+Validated cover originals and previews stage before that transaction. Only
+report-bound preview digests can be reopened offline; raw originals and remote
+locations have no CLI or replay surface. A failed currentness check leaves no
+new report or pointer; any unreferenced staged bytes are recoverable cleanup,
+not a database repair protocol.
 
 Every 0.5 increment accepts only an absent database or its own exact current
 schema. `metadata-report-v1`, prior 0.5 increment schemas, extra objects,

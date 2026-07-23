@@ -6,6 +6,7 @@ The 0.4 runtime supports one synchronous report-only operation:
 mechanical-librarian metadata-report \
   --config /run/secrets/mechanical-librarian.json \
   --database /data/reports.sqlite \
+  --artifact-store /data/cover-artifacts \
   --connection primary \
   --library ebooks \
   --item ITEM_ID \
@@ -36,6 +37,20 @@ On success stdout is exactly the persisted canonical JSON report followed by
 one newline. On failure stdout is empty, stderr contains one fixed bounded
 diagnostic, and the exit status is nonzero. Diagnostics never include paths,
 credentials, target values, provider bodies, or EPUB text.
+
+Cover evidence is report-only. Where valid cover bytes are available, the report
+contains a source outcome and a private artifact reference. The only supported
+offline read is a report-bound preview:
+
+```text
+mechanical-librarian metadata-report-cover-preview \
+  --database /data/reports.sqlite --artifact-store /data/cover-artifacts \
+  --report-id report_<64-lowercase-hex-characters> \
+  --artifact-id cover_<64-lowercase-hex-characters>
+```
+
+It writes raw preview bytes only to non-interactive stdout. It never performs
+target, provider, or remote-cover transport and it cannot retrieve originals.
 
 ## Preconditions
 

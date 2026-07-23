@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add report-only, source-attributed ABS, declared EPUB, and bounded Hardcover
+  cover evidence. Valid JPEG, PNG, and static WebP inputs produce private
+  content-addressed originals and deterministic offline preview artifacts; no
+  cover selection or write capability is added.
+
 - Expand the bounded configured Hardcover observation to persist ordered rich
   edition/work field evidence, roles, source scope, and per-local comparisons.
 
