@@ -439,18 +439,29 @@ class SQLiteMetadataReportRepository:
                     "INSERT INTO metadata_reports(report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document) VALUES(?,?,?,?,?,?,?,?,?)",
                     values,
                 )
-            elif existing != values[1:]:
-                raise MetadataReportError("persisted report identity conflicts")
-            for source in report.cover_sources:
-                self._connection.execute(
-                    "INSERT INTO metadata_report_cover_references(report_id,source_id,artifact_id,preview_digest) VALUES(?,?,?,?)",
-                    (
-                        report.report_id,
-                        source.source_id,
-                        None if source.artifact is None else source.artifact.artifact_id,
-                        None if source.artifact is None else source.artifact.preview_digest,
-                    ),
+                for source in report.cover_sources:
+                    self._connection.execute(
+                        "INSERT INTO metadata_report_cover_references(report_id,source_id,artifact_id,preview_digest) VALUES(?,?,?,?)",
+                        (
+                            report.report_id,
+                            source.source_id,
+                            None if source.artifact is None else source.artifact.artifact_id,
+                            None if source.artifact is None else source.artifact.preview_digest,
+                        ),
+                    )
+            else:
+                if existing != values[1:]:
+                    raise MetadataReportError("persisted report identity conflicts")
+                expected_references = tuple(
+                    (source.source_id, None if source.artifact is None else source.artifact.artifact_id, None if source.artifact is None else source.artifact.preview_digest)
+                    for source in report.cover_sources
                 )
+                actual_references = tuple(self._connection.execute(
+                    "SELECT source_id,artifact_id,preview_digest FROM metadata_report_cover_references WHERE report_id=? ORDER BY source_id",
+                    (report.report_id,),
+                ))
+                if tuple(sorted(expected_references)) != actual_references:
+                    raise MetadataReportError("persisted report cover references conflict")
             self._connection.execute(
                 "INSERT INTO current_metadata_reports(connection_name,library_name,item_id,file_identity,report_id) VALUES(?,?,?,?,?) "
                 "ON CONFLICT(connection_name,library_name,item_id,file_identity) DO UPDATE SET report_id=excluded.report_id",

@@ -134,10 +134,13 @@ def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool 
 def _installed_cli(
     config: Path,
     database: Path,
+    artifact_store: Path | None = None,
     *,
     library: str = "books",
     file_index: int = 0,
 ) -> tuple[int, str, str]:
+    artifact_store = database.parent / "artifacts" if artifact_store is None else artifact_store
+    artifact_store.mkdir(mode=0o700, exist_ok=True)
     output = io.StringIO()
     errors = io.StringIO()
     with redirect_stdout(output), redirect_stderr(errors):
@@ -148,6 +151,8 @@ def _installed_cli(
                 str(config),
                 "--database",
                 str(database),
+                "--artifact-store",
+                str(artifact_store),
                 "--connection",
                 "primary",
                 "--library",
@@ -182,9 +187,11 @@ class MetadataReportCommandTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 database = root / "reports.sqlite"
+                artifact_store = root / "artifacts"
+                artifact_store.mkdir(mode=0o700)
                 with self.assertRaises(MetadataReportError) as raised:
                     run_metadata_report(
-                        config, database, "primary", "books", "item-1", 0
+                        config, database, artifact_store, "primary", "books", "item-1", 0
                     )
             self.assertFalse(database.exists())
             self.assertNotIn(hostile, str(raised.exception))
@@ -203,6 +210,8 @@ class MetadataReportCommandTests(unittest.TestCase):
             target_secret.write_text("target-token", encoding="ascii")
             target_secret.chmod(0o600)
             database = root / "reports.sqlite"
+            artifact_store = root / "artifacts"
+            artifact_store.mkdir(mode=0o700)
             exact_title = "Cafe\u0301  Story"
             payload = _item(source.stat().st_size)
             payload["media"]["metadata"]["title"] = exact_title
@@ -214,6 +223,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                     "metadata-report",
                     "--config", str(config),
                     "--database", str(database),
+                    "--artifact-store", str(artifact_store),
                     "--connection", "primary",
                     "--library", "books",
                     "--item", "item-1",
@@ -509,13 +519,15 @@ class MetadataReportCommandTests(unittest.TestCase):
             target_secret.write_text("target-token", encoding="ascii")
             target_secret.chmod(0o600)
             database = root / "reports.sqlite"
+            artifact_store = root / "artifacts"
+            artifact_store.mkdir(mode=0o700)
             with _Server(_item(source.stat().st_size)) as server:
                 config = root / "config.json"
                 config.write_text(json.dumps(_config(server.endpoint, media, target_secret)), encoding="utf-8")
-                first = run_metadata_report(config, database, "primary", "books", "item-1", 0)
-                replay = run_metadata_report(config, database, "primary", "books", "item-1", 0)
+                first = run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0)
+                replay = run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0)
                 server.payload["media"]["metadata"]["title"] = "Changed service title"
-                successor = run_metadata_report(config, database, "primary", "books", "item-1", 0)
+                successor = run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0)
 
             first_report = MetadataReport.from_json(first)
             successor_report = MetadataReport.from_json(successor)
@@ -575,11 +587,13 @@ class MetadataReportCommandTests(unittest.TestCase):
                 config = root / "config.json"
                 config.write_text(json.dumps(source_config), encoding="utf-8")
                 database = root / "reports.sqlite"
+                artifact_store = root / "artifacts"
+                artifact_store.mkdir(mode=0o700)
                 primary = MetadataReport.from_json(
-                    run_metadata_report(config, database, "primary", "books", "item-1", 0)
+                    run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0)
                 )
                 secondary = MetadataReport.from_json(
-                    run_metadata_report(config, database, "secondary", "other", "item-1", 0)
+                    run_metadata_report(config, database, artifact_store, "secondary", "other", "item-1", 0)
                 )
             self.assertEqual(primary.local_status, "no_candidate")
             self.assertEqual(
@@ -606,7 +620,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                 config.write_text(json.dumps(_config(server.endpoint, root, target_secret, audiobook=True, provider_secret="/definitely/absent/provider.secret")), encoding="utf-8")
                 database = root / "reports.sqlite"
                 with self.assertRaises(UnsupportedMediaError):
-                    run_metadata_report(config, database, "primary", "books", "item-1", 0)
+                    run_metadata_report(config, database, root / "artifacts", "primary", "books", "item-1", 0)
             self.assertFalse(database.exists())
             self.assertEqual(server.requests, 0)
 

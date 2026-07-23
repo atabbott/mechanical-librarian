@@ -98,6 +98,17 @@ class _IsolatedEpubInspector:
             if opened is not None:
                 os.close(opened.descriptor)
 
+    def unchanged(self, mount: MediaMountConfiguration, relative_path: str, expected_digest: str, maximum_bytes: int) -> bool:
+        opened = None
+        try:
+            opened = open_local_media(mount.container_path, relative_path)
+            return sha256_descriptor(opened.descriptor, opened.length, maximum=maximum_bytes) == expected_digest
+        except (LocalMediaError, OSError, ValueError):
+            return False
+        finally:
+            if opened is not None:
+                os.close(opened.descriptor)
+
 
 class _CoverEvidenceObserver:
     """Acquire the one declared ABS cover inside the slice's bounded envelope.
@@ -189,26 +200,14 @@ class _CoverEvidenceObserver:
         except MetadataReportError:
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.UNAVAILABLE)
 
-    def unchanged(self, mount: MediaMountConfiguration, relative_path: str, expected_digest: str, maximum_bytes: int) -> bool:
-        opened = None
-        try:
-            opened = open_local_media(mount.container_path, relative_path)
-            return sha256_descriptor(opened.descriptor, opened.length, maximum=maximum_bytes) == expected_digest
-        except (LocalMediaError, OSError, ValueError):
-            return False
-        finally:
-            if opened is not None:
-                os.close(opened.descriptor)
-
-
 def run_metadata_report(config_path: Path, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int) -> str:
     # Validate the separately authorized private store before credentials or
     # network clients are constructed.  It must already be operator-created.
-    CoverArtifactStore(artifact_store_path, create=False)
     configuration = load_configuration_file(config_path)
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if library.media_kind != "ebook" or mount is None:
         raise UnsupportedMediaError("unsupported media")
+    CoverArtifactStore(artifact_store_path, create=False)
     target = AudiobookshelfItemReader(
         client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds),
         endpoint=connection.endpoint,
