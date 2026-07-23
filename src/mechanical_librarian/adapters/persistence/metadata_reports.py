@@ -831,6 +831,25 @@ def _migrate_v1(connection: sqlite3.Connection) -> None:
         return
     connection.execute("BEGIN IMMEDIATE")
     try:
+        rows = connection.execute(
+            "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports"
+        ).fetchall()
+        for report_id, connection_name, library_name, item_id, file_identity, content_digest, schema, digest, document in rows:
+            if (
+                schema != "metadata-report-v1"
+                or type(document) is not str
+                or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest
+            ):
+                raise MetadataReportError("database migration failed")
+            _validate_v1_document(
+                document,
+                report_id,
+                connection_name,
+                library_name,
+                item_id,
+                file_identity,
+                content_digest,
+            )
         connection.execute("DROP TRIGGER metadata_reports_no_update")
         connection.execute("DROP TRIGGER metadata_reports_no_delete")
         connection.execute("ALTER TABLE current_metadata_reports RENAME TO current_metadata_reports_v1")

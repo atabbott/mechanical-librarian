@@ -10,6 +10,8 @@
   and non-canonical oversized or unsafe sentinel states through report replay.
 - Preserve duplicate EPUB occurrences with bounded v2 ordinals and admit only
   the narrow exact-v1 to exact-v2 pre-release persistence migration.
+- Add exact-ID and current-scope offline reopen proof for preserved v1 bytes,
+  followed by a v2 successor, without widening migration or retention scope.
 
 - Added `metadata-report-v2` local-field evidence: complete ordered field
   states, package/opening evidence, and bounded rear-spine copyright evidence.
@@ -17,8 +19,9 @@
   configuration, credentials, target access, or network access.
 
 - Activated the clean-state 0.4 neutral metadata-evidence runtime. The installed
-  package now exposes only `metadata-report` with required config, database,
-  connection, library, item, and file-index inputs.
+  package exposes `metadata-report` with required config, database, connection,
+  library, item, and file-index inputs, plus configuration-free exact-ID and
+  current-scope `metadata-report-get` replay.
 - Added explicit named target connections, libraries, read-only mounts, and
   provider connections with per-library provider references and explicit
   enablement.

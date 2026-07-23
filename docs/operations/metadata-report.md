@@ -128,6 +128,8 @@ current pointer. Earlier reports remain retrievable internally by stable ID.
 
 The command can read configured target metadata, read the selected mounted
 EPUB, contact explicitly enabled referenced providers, and append neutral
-reports. It cannot browse inventory, review or decide claims, apply changes,
-write a service or media file, run background work, retry, prune, migrate, or
-repair state.
+reports. Its repository may perform only the documented exact v1-to-v2
+atomic widening before normal use. It cannot browse inventory, review or decide
+claims, apply changes, write a service or media file, run background work,
+retry, prune, repair, import, downgrade, retain selectively, or migrate any
+other state.

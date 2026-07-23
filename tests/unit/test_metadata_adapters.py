@@ -50,6 +50,70 @@ def _report(title: str = "Current title") -> MetadataReport:
     )
 
 
+def _v1_document(title: str = "Legacy title") -> tuple[str, str]:
+    """Return the closed canonical v1 document and its content-derived ID."""
+    document = {
+        "file": {
+            "content_digest": "b" * 64,
+            "format": "epub",
+            "identity": "a" * 64,
+            "selected_index": 0,
+        },
+        "local": {"claims": [], "reasons": ["no_opening_claims"], "status": "no_candidate"},
+        "providers": [],
+        "schema_version": "metadata-report-v1",
+        "target": {
+            "connection": "primary",
+            "current_title": title,
+            "item": "item-1",
+            "library": "ebooks",
+        },
+    }
+    report_id = "report_" + hashlib.sha256(
+        json.dumps(document, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    document["report_id"] = report_id
+    return json.dumps(document, ensure_ascii=False, separators=(",", ":"), sort_keys=True), report_id
+
+
+def _create_exact_v1_database(path: Path, document: str, report_id: str) -> None:
+    """Create the one accepted pre-release schema without using product writes."""
+    legacy_reports = metadata_persistence._REPORTS_SQL.replace(
+        "IN ('metadata-report-v1','metadata-report-v2')", "= 'metadata-report-v1'"
+    )
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(legacy_reports)
+        connection.execute(metadata_persistence._CURRENT_SQL)
+        connection.execute(metadata_persistence._NO_UPDATE_SQL)
+        connection.execute(metadata_persistence._NO_DELETE_SQL)
+        connection.execute(
+            "INSERT INTO metadata_reports VALUES(?,?,?,?,?,?,?,?,?)",
+            (
+                report_id, "primary", "ebooks", "item-1", "a" * 64, "b" * 64,
+                "metadata-report-v1", hashlib.sha256(document.encode("utf-8")).hexdigest(), document,
+            ),
+        )
+        connection.execute(
+            "INSERT INTO current_metadata_reports VALUES(?,?,?,?,?)",
+            ("primary", "ebooks", "item-1", "a" * 64, report_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def _schema_objects(path: Path) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    connection = sqlite3.connect(path)
+    try:
+        return (
+            connection.execute("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall(),
+            connection.execute("SELECT name,sql FROM sqlite_master WHERE type='trigger' ORDER BY name").fetchall(),
+        )
+    finally:
+        connection.close()
+
+
 def _leave_hot_journal(path: Path) -> Path:
     child = (
         "import os,sqlite3,sys\n"
@@ -73,6 +137,84 @@ def _leave_hot_journal(path: Path) -> Path:
 
 
 class MetadataPersistenceTests(unittest.TestCase):
+    def test_exact_v1_migration_preserves_current_bytes_and_allows_v2_successor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            document, report_id = _v1_document()
+            _create_exact_v1_database(path, document, report_id)
+
+            repository = open_repository(path)
+            self.assertEqual(repository.get(report_id), document)
+            self.assertEqual(repository.current("primary", "ebooks", "item-1", "a" * 64), document)
+            successor = _report("Current title")
+            repository.publish(successor, lambda: True)
+            self.assertEqual(repository.get(report_id), document)
+            self.assertEqual(repository.current("primary", "ebooks", "item-1", "a" * 64), successor.to_json())
+            repository.close()
+
+            connection = sqlite3.connect(path)
+            self.assertEqual(
+                connection.execute("SELECT document FROM metadata_reports WHERE report_id=?", (report_id,)).fetchone(),
+                (document,),
+            )
+            self.assertEqual(
+                connection.execute("SELECT report_id FROM current_metadata_reports").fetchone(),
+                (successor.report_id,),
+            )
+            connection.close()
+
+    def test_malformed_nested_v1_document_is_rejected_without_schema_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            document, report_id = _v1_document()
+            malformed = json.loads(document)
+            malformed["local"]["claims"] = [{"reference": "forged"}]
+            malformed.pop("report_id")
+            malformed_report_id = "report_" + hashlib.sha256(
+                json.dumps(malformed, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            malformed["report_id"] = malformed_report_id
+            malformed_document = json.dumps(malformed, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            _create_exact_v1_database(path, malformed_document, malformed_report_id)
+            before = _schema_objects(path)
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
+            self.assertEqual(_schema_objects(path), before)
+
+    def test_only_exact_v1_schema_is_admitted_before_migration(self) -> None:
+        for kind, statement in (
+            ("extra table", "CREATE TABLE unexpected(value TEXT)"),
+            ("extra trigger", "CREATE TRIGGER unexpected AFTER INSERT ON metadata_reports BEGIN SELECT 1; END"),
+            ("schema mismatch", "DROP TRIGGER metadata_reports_no_delete"),
+        ):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "reports.sqlite"
+                document, report_id = _v1_document()
+                _create_exact_v1_database(path, document, report_id)
+                connection = sqlite3.connect(path)
+                connection.execute(statement)
+                connection.commit()
+                connection.close()
+                before = _schema_objects(path)
+                with self.assertRaises(MetadataReportError):
+                    open_repository(path)
+                self.assertEqual(_schema_objects(path), before)
+
+    def test_v1_migration_failure_rolls_back_without_partial_schema_or_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            document, report_id = _v1_document()
+            _create_exact_v1_database(path, document, report_id)
+            before = _schema_objects(path)
+            with patch.object(metadata_persistence, "_validate_schema", side_effect=MetadataReportError("synthetic failure")):
+                with self.assertRaises(MetadataReportError):
+                    open_repository(path)
+            self.assertEqual(_schema_objects(path), before)
+            connection = sqlite3.connect(path)
+            self.assertEqual(connection.execute("SELECT report_id,document FROM metadata_reports").fetchall(), [(report_id, document)])
+            self.assertEqual(connection.execute("SELECT report_id FROM current_metadata_reports").fetchall(), [(report_id,)])
+            connection.close()
+
     def test_clean_database_has_exactly_two_tables_and_replays(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "reports.sqlite"

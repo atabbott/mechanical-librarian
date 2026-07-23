@@ -14,11 +14,12 @@ and a multi-table migration history that the baseline explicitly rejected.
 
 ## Decision
 
-Activate one installed `metadata-report` command and remove every superseded
-runtime surface in the same change. The application directly composes one
-scoped current-item read, the isolated EPUB inspector, explicit per-library
-provider references, one fresh request per enabled supported provider, final
-target/media currentness, and whole-report publication.
+Activate one installed `metadata-report` observation command and its
+configuration-free `metadata-report-get` exact-ID/current-scope replay surface,
+then remove every superseded runtime surface in the same change. The application
+directly composes one scoped current-item read, the isolated EPUB inspector,
+explicit per-library provider references, one fresh request per enabled
+supported provider, final target/media currentness, and whole-report publication.
 
 Persist exactly two application tables: immutable canonical metadata reports
 and their separate current pointers. The sole supported compatibility action is
@@ -30,7 +31,11 @@ or general migration framework.
 The v2 report preserves local evidence occurrence order and records source
 capability state separately from aggregate field state. Target metadata is
 title-only; EPUB remains the complete local source. Oversized or unsafe source
-sentinels are retained only as typed non-canonical evidence.
+sentinels are retained only as typed non-canonical evidence. It retains the
+closed field vocabulary (title/subtitle, creator/contributor roles,
+series/sequence, ISBN, date, publisher/imprint, description, language, and
+contextual subject) plus bounded source/DOM occurrence and rear-spine
+provenance, rather than arbitrary source text or paths.
 
 Use SQLite rollback-journal `DELETE` mode for this sole baseline. WAL,
 migration-ledger, forward-migration, compatibility, recovery, and repair
@@ -69,4 +74,5 @@ The installed surface is small, neutral, synchronous, and report-only. Exact
 content replay supplies stable identity without retry/cache/work machinery.
 Operators who want to retain older development state must keep it offline;
 0.4 neither reads nor transforms it. Review, decisions, automation, AI, apply,
-production writes, and retention remain future work.
+production writes, retention, pruning, purge, repair, and broader migration
+remain future work.

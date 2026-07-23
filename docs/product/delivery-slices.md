@@ -92,7 +92,9 @@ human or AI decision, approval, production write, or destructive authority.
 
 F09i retains the exact pre-release metadata-report-v1 to v2 widening solely to
 preserve immutable report/current-pointer replay; it does not establish a
-general migration surface.
+general migration surface. The activation proof reopens both exact-ID and
+current-scope v1 bytes after widening, then publishes a v2 successor without
+rewriting the predecessor; it carries no repair, import, or retention work.
 | F09b Bounded Hardcover title evidence | #204 | Historical retired surface: `hardcover-title-proposal-report` formerly ran only the fixed generated `agree-empty` case. The installed CLI now rejects the command name; F09f owns current configured Hardcover identity operation. | #223 | `slice/f09b-hardcover-title` |
 | F10a Synthetic title review case | #146 | Historical retired surface: `synthetic-title-review-case-report` formerly admitted one deterministic synthetic case from a qualifying F09a lineage. The installed CLI now rejects the command name. | #224 | `slice/f10a-title-review-case` |
 
@@ -281,12 +283,15 @@ proposal gate with the neutral evidence-report contract.
 | Linked-work gate | #261 | Simplify the independent GitHub policy gate after #253. |
 | Activation | #197 | Sole runtime/schema reset after all four contributors. |
 
-The installed activation command is exactly
+The installed activation observation command is exactly
 `metadata-report --config PATH --database PATH --connection NAME --library NAME --item ITEM_ID --file-index INDEX`.
 Both path inputs are required; no defaults, CWD discovery, implicit filenames,
 or undocumented environment fallbacks exist. Success emits exactly the
 persisted canonical JSON report plus a newline; failure emits no stdout, one
 bounded redacted stderr diagnostic, and a nonzero exit.
+The separate configuration-free `metadata-report-get` surface reopens either an
+exact immutable ID or the current report for a full connection/library/item/file
+identity scope; neither lookup observes a target or advances a pointer.
 
 Each report has a small relational identity, lookup, digest, and schema-version
 envelope plus one immutable canonical JSON document. The envelope and document
@@ -294,7 +299,8 @@ identity agree, and the closed typed document is validated on write and read.
 Exact re-observation replays the same whole report identity and bytes; changed
 evidence creates a successor without changing the prior document.
 
-Only a new database is a supported 0.4 starting state. Pre-0.4 development
+Only a new database is a supported 0.4 starting state, apart from F09i's exact
+pre-release v1 report/current-pointer widening. Other pre-0.4 development
 databases have no recognition, migration, import, preservation, or tailored
 compatibility path. No partial 0.4 runtime is exposed before #197. The existing
 final-0.3 report stays report-only during the contributor work.
@@ -303,10 +309,10 @@ final-0.3 report stays report-only during the contributor work.
 
 - #253, #255, #257, and #261 are complete; #197 alone activates the complete
   outcome and reconciles historical #254, #256, #258, and #260;
-- an installed artifact demonstrates the exact one-command, clean-state
-  contract, agreeing relational envelope and canonical document, whole-report
-  replay, privacy/currentness/hostile-input safeguards, and report-only/no-write
-  boundary; and
+- an installed artifact demonstrates the exact observation-command, clean-state
+  contract, configuration-free exact-ID/current-scope replay, agreeing relational
+  envelope and canonical document, privacy/currentness/hostile-input safeguards,
+  and report-only/no-write boundary; and
 - no review, decision, approval, apply, target/media write, background worker,
   retry, provider cache, compatibility machinery, tag, release, or release
   artifact is introduced.

@@ -56,3 +56,10 @@ report rows have update/delete triggers. The transaction runs the bounded
 target/media currentness precondition before inserting the report or advancing
 the pointer. The separate pointer may advance, but predecessor reports remain
 unchanged.
+
+The v1 exception is admission-only: the repository accepts only the exact
+two-table, two-trigger predecessor after validating its canonical document and
+relational envelope, then widens it in one transaction. Extra objects, altered
+SQL, malformed nested v1 content, failed foreign-key/integrity checks, and any
+other schema fail closed without a partial migration. It grants no repair,
+import, retention, deletion, or broader compatibility authority.

@@ -38,6 +38,11 @@ insert and pointer advance share one transaction. The sole baseline uses
 rollback-journal `DELETE` mode. It recognizes neither WAL/recovery sidecars nor
 prior schemas except the exact metadata-report-v1 widening to v2, and has no migration ledger, workflow, audit, job, attempt,
 cache, normalized claim table, or deletion surface.
+The v2 document retains the closed ordered local-field states, source capability
+provenance, and bounded occurrence/rear-spine provenance needed to replay the
+observation; the relational envelope remains only its scope, identity, digest,
+and schema-version index. A current-scope lookup follows the separate pointer
+offline, while an exact-ID lookup never changes a predecessor.
 
 On supported Linux deployments, the repository retains a no-follow,
 identity-checked directory chain from the filesystem root, holds an exclusive
