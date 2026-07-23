@@ -870,6 +870,20 @@ class ProviderAdapterTests(unittest.TestCase):
                 self.assertEqual(len(relevant), count)
                 self.assertTrue(all(claim.state is FieldState.VALID for claim in relevant))
 
+    def test_contribution_probe_preserves_roles_and_overflow_validates_rows(self) -> None:
+        for roles, expected in (((["Author"] * 16) + ["Translator"], {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}), ((["Translator"] * 16) + ["Author"], {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR})):
+            contributions = [{"id": index, "contribution": role, "author": {"id": index, "name": f"A{index}"}} for index, role in enumerate(roles, 1)]
+            payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions}], [{"id": 1, "title": None}])
+            claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
+            overflow = {claim.kind for claim in claims if claim.state is FieldState.OVERSIZED and claim.scope is ClaimScope.EDITION}
+            self.assertEqual(overflow, expected)
+        for bad in (0, 16):
+            contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}} for index in range(17)]
+            contributions[bad] = {"id": bad, "contribution": "Author"}
+            payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions}], [{"id": 1, "title": None}])
+            with self.assertRaises(ValueError):
+                hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())
+
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
         client = httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(1) or httpx.Response(200)))

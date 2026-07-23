@@ -137,6 +137,7 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
     series, series_overflow = _bounded_list(book["book_series"], MAX_SERIES, {"id", "position", "series"})
     if series_overflow:
         claims.extend((_state_claim(provider, identity, ClaimKind.SERIES, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset), _state_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset + 1)))
+        series = []
     for item in series:
         series = _closed_or_none(item["series"], {"id", "name"})
         claims.append(_claim(provider, identity, ClaimKind.SERIES, None if series is None else series["name"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
@@ -144,6 +145,7 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
     taggings, taggings_overflow = _bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"})
     if taggings_overflow:
         claims.append(_state_claim(provider, identity, ClaimKind.TAG, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset))
+        taggings = []
     for item in taggings:
         tag = _closed_or_none(item["tag"], {"id", "tag"})
         claims.append(_claim(provider, identity, ClaimKind.TAG, None if tag is None else tag["tag"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
@@ -155,11 +157,16 @@ def _contributions(provider: str, identity: str, value: object, scope: ClaimScop
     claims: list[ProviderClaim] = []
     contributions, overflow = _bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"})
     if overflow:
-        # The seventeenth wire item is a bounded role probe; it preserves the
-        # affected field family without retaining unbounded evidence.
-        probe = value[MAX_CONTRIBUTIONS]
-        role = probe.get("contribution") if type(probe) is dict else None
-        kinds = {ClaimKind.CREATOR if type(role) is str and role.casefold() == "author" else ClaimKind.CONTRIBUTOR}
+        # The admitted max+1 probe preserves every role family present without
+        # retaining an unbounded contribution list.
+        kinds: set[ClaimKind] = set()
+        for probe in contributions:
+            role = probe["contribution"]
+            try:
+                role = validate_role_projection(role).casefold()
+            except EvidenceValueError:
+                raise ValueError("provider contribution role invalid") from None
+            kinds.add(ClaimKind.CREATOR if role == "author" else ClaimKind.CONTRIBUTOR)
         return [_state_claim(provider, identity, kind, FieldState.OVERSIZED, scope, local, offset + index) for index, kind in enumerate(sorted(kinds, key=lambda value: value.value))]
     for item in contributions:
         author = _closed_or_none(item["author"], {"id", "name"})
@@ -208,9 +215,8 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
 def _bounded_list(value: object, maximum: int, keys: set[str]) -> tuple[list[dict[str, Any]], bool]:
     if type(value) is not list:
         raise ValueError("provider list invalid")
-    if len(value) > maximum:
-        return [], True
-    return [_closed(item, keys) for item in value], False
+    values = [_closed(item, keys) for item in value]
+    return values, len(values) > maximum
 
 
 def _closed(value: object, keys: set[str]) -> dict[str, Any]:
