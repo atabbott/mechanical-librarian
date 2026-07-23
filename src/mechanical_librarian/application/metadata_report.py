@@ -13,6 +13,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimScope,
     ClaimKind,
     FileFacts,
     LocalClaim,
@@ -143,6 +144,7 @@ class GenerateMetadataReport:
             basis="target_metadata",
             checksum="not_applicable",
             applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
             occurrence=0,
         )
         # Claims are evidence, not a set: retain the target observation first and

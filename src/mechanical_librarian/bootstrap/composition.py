@@ -21,7 +21,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionOutcome
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
-from mechanical_librarian.domain.metadata_report import ClaimKind, FieldState, LocalClaim, RearClaimProvenance
+from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, FieldState, LocalClaim, RearClaimProvenance
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -59,6 +59,7 @@ class _IsolatedEpubInspector:
                     basis=fact.basis,
                     checksum=fact.checksum,
                     applicability_basis=fact.classification_basis,
+                    scope=ClaimScope.EDITION if fact.field.value == ClaimKind.ISBN.value else ClaimScope.WORK,
                     state=FieldState(fact.state),
                     role=fact.role,
                     rear_provenance=None if fact.rear_provenance is None else RearClaimProvenance(**fact.rear_provenance.to_data()),

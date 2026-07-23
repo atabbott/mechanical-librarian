@@ -20,6 +20,9 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import HARDCOVER
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
+    Comparison,
+    ComparisonLink,
     Comparison,
     FileFacts,
     LocalClaim,
@@ -40,6 +43,7 @@ def _report(title: str = "Current title") -> MetadataReport:
         basis="target_metadata",
         checksum="not_applicable",
         applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
     )
     return MetadataReport.create(
         target=TargetFacts("primary", "ebooks", "item-1", title),
@@ -662,6 +666,7 @@ class ProviderAdapterTests(unittest.TestCase):
             applicability="ebook",
             checksum="valid_isbn_13",
             applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
         )
 
     def _title_claim(self) -> LocalClaim:
@@ -674,6 +679,7 @@ class ProviderAdapterTests(unittest.TestCase):
             basis="target_metadata",
             checksum="not_applicable",
             applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
         )
 
     def test_one_request_retains_all_candidates_in_identity_order(self) -> None:
@@ -695,8 +701,8 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(observation.status, ProviderStatus.CANDIDATES)
         self.assertEqual([item.identity for item in observation.candidates], ["hardcover-edition-0000000001", "hardcover-edition-0000000002"])
         claims = {claim.kind: claim for claim in observation.candidates[1].claims}
-        self.assertEqual(claims[ClaimKind.ISBN].comparison, Comparison.AGREEMENT)
-        self.assertEqual(claims[ClaimKind.TITLE].comparison, Comparison.DISAGREEMENT)
+        self.assertEqual(claims[ClaimKind.ISBN].links[0].outcome, Comparison.AGREEMENT)
+        self.assertEqual(claims[ClaimKind.TITLE].links[0].outcome, Comparison.DISAGREEMENT)
         self.assertEqual(observation.input_references, (self._claim().reference,))
         self.assertEqual(len(requests), 1)
         self.assertEqual(str(requests[0].url), HARDCOVER_URL)
@@ -743,15 +749,19 @@ class ProviderAdapterTests(unittest.TestCase):
         claims = {
             claim.kind: claim for claim in observation.candidates[0].claims
         }
-        self.assertEqual(claims[ClaimKind.TITLE].comparison, Comparison.AGREEMENT)
         self.assertEqual(
-            claims[ClaimKind.TITLE].local_references,
-            (self._title_claim().reference,),
+            {link.local_reference: link.outcome for link in claims[ClaimKind.TITLE].links},
+            {
+                self._title_claim().reference: Comparison.AGREEMENT,
+                other_title.reference: Comparison.DISAGREEMENT,
+            },
         )
-        self.assertEqual(claims[ClaimKind.ISBN].comparison, Comparison.AGREEMENT)
         self.assertEqual(
-            claims[ClaimKind.ISBN].local_references,
-            (self._claim().reference,),
+            {link.local_reference: link.outcome for link in claims[ClaimKind.ISBN].links},
+            {
+                self._claim().reference: Comparison.AGREEMENT,
+                other_isbn.reference: Comparison.NOT_COMPARABLE,
+            },
         )
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:

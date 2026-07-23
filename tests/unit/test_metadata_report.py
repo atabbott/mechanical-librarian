@@ -21,7 +21,9 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
     Comparison,
+    ComparisonLink,
     FieldResult,
     FieldSource,
     FieldSourceResult,
@@ -44,6 +46,7 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
     TargetFacts,
     canonical_json,
+    comparison_links,
     derive_field_results,
     normalize_title,
     stable_reference,
@@ -98,9 +101,11 @@ class MetadataReportTests(unittest.TestCase):
     def test_f09j_exact_max_shape_fits_one_mebibyte(self) -> None:
         """The admitted provider envelope fits before its parser is widened."""
         def claim(candidate: str, kind: ClaimKind, value: str) -> ProviderClaim:
-            return ProviderClaim(
-                stable_reference("provider", {"candidate": candidate, "kind": kind.value, "provider": "catalogue", "value": value}),
-                kind, value, Comparison.NOT_COMPARABLE, (),
+            return ProviderClaim.create(
+                provider="catalogue", candidate=candidate, kind=kind, value=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION if kind is ClaimKind.ISBN else ClaimScope.WORK,
+                applicability="ebook" if kind is ClaimKind.ISBN else "not_applicable",
             )
         candidates = []
         for number in range(MAX_CANDIDATES):
@@ -306,13 +311,14 @@ class MetadataReportTests(unittest.TestCase):
             MetadataReport.from_json(canonical_json(replay_data))
 
     def test_provider_claim_and_local_role_rear_provenance_are_closed(self) -> None:
-        reference = "provider_" + "a" * 64
-        self.assertEqual(ProviderClaim(reference, ClaimKind.TITLE, "A title", Comparison.AGREEMENT, ()).kind, ClaimKind.TITLE)
-        self.assertEqual(ProviderClaim(reference, ClaimKind.ISBN, "9780306406157", Comparison.AGREEMENT, ()).kind, ClaimKind.ISBN)
-        self.assertEqual(ProviderClaim(reference, ClaimKind.PUBLISHER, "Example Press", Comparison.NOT_COMPARABLE, ()).kind, ClaimKind.PUBLISHER)
+        def provider(kind: ClaimKind, value: str) -> ProviderClaim:
+            return ProviderClaim.create(provider="catalogue", candidate="candidate", kind=kind, value=value, state=FieldState.VALID, scope=ClaimScope.EDITION if kind is ClaimKind.ISBN else ClaimScope.WORK, applicability="ebook" if kind is ClaimKind.ISBN else "not_applicable")
+        self.assertEqual(provider(ClaimKind.TITLE, "A title").kind, ClaimKind.TITLE)
+        self.assertEqual(provider(ClaimKind.ISBN, "9780306406157").kind, ClaimKind.ISBN)
+        self.assertEqual(provider(ClaimKind.PUBLISHER, "Example Press").kind, ClaimKind.PUBLISHER)
         for kind, value in ((ClaimKind.TITLE, "/Users/private/title"), (ClaimKind.TITLE, "Authorization: Bearer abcdefgh")):
             with self.subTest(provider_kind=kind, value=value), self.assertRaises(ReportValueError):
-                ProviderClaim(reference, kind, value, Comparison.AGREEMENT, ())
+                provider(kind, value)
         provenance = RearClaimProvenance("a" * 64, 1, 1, "copyright", "Copyright 2026")
         valid_rear = LocalClaim.create(
             kind=ClaimKind.CREATOR, observed="Ada Example", canonical="Ada Example", excerpt="Ada Example",
@@ -327,6 +333,34 @@ class MetadataReportTests(unittest.TestCase):
                     applicability="not_applicable", basis=basis, checksum="not_applicable",
                     applicability_basis="not_applicable", role=role, rear_provenance=rear,
                 )
+
+    def test_comparison_links_are_complete_per_local_claim_and_canonical(self) -> None:
+        agree = LocalClaim.create(kind=ClaimKind.TITLE, observed="Shared title", canonical="Shared title", excerpt="Shared title", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK)
+        disagree = LocalClaim.create(kind=ClaimKind.TITLE, observed="Other title", canonical="Other title", excerpt="Other title", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK)
+        invalid = LocalClaim.create(kind=ClaimKind.TITLE, observed="unsafe-source-text-sha256:" + "a" * 64, canonical=None, excerpt="unsafe-source-text-sha256:" + "a" * 64, applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK, state=FieldState.UNSUPPORTED)
+        edition = LocalClaim.create(kind=ClaimKind.TITLE, observed="Shared title", canonical="Shared title", excerpt="Shared title", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.EDITION)
+        author = LocalClaim.create(kind=ClaimKind.CREATOR, observed="Ada", canonical="Ada", excerpt="Ada", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK, role="author")
+        provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.TITLE, value="Shared title", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable")
+        links = tuple(sorted((ComparisonLink(agree.reference, Comparison.AGREEMENT), ComparisonLink(disagree.reference, Comparison.DISAGREEMENT), ComparisonLink(invalid.reference, Comparison.NOT_COMPARABLE), ComparisonLink(edition.reference, Comparison.NOT_COMPARABLE)), key=lambda link: link.local_reference))
+        linked = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.TITLE, value="Shared title", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable", links=links)
+        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", (linked,)),)),))
+        self.assertEqual(provider.links, ())
+        self.assertEqual({link.outcome for link in linked.links}, {Comparison.AGREEMENT, Comparison.DISAGREEMENT, Comparison.NOT_COMPARABLE})
+        self.assertNotIn(author.reference, {link.local_reference for link in linked.links})
+        contributor = LocalClaim.create(kind=ClaimKind.CREATOR, observed="Ada", canonical="Ada", excerpt="Ada", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK, role="translator")
+        creator = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.CREATOR, value="Ada", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable", role="author")
+        self.assertEqual(
+            {link.local_reference: link.outcome for link in comparison_links(creator, (author, contributor))},
+            {author.reference: Comparison.AGREEMENT, contributor.reference: Comparison.NOT_COMPARABLE},
+        )
+        data = report.to_data()
+        data["providers"][0]["candidates"][0]["claims"][0]["links"] = []
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(data))
+        data = report.to_data()
+        data["providers"][0]["candidates"][0]["claims"][0]["links"][0]["outcome"] = "disagreement"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(data))
 
     def test_non_valid_title_sentinel_cannot_become_canonical(self) -> None:
         sentinel = "unsafe-source-text-sha256:" + "a" * 64

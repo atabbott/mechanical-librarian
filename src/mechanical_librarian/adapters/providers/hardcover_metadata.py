@@ -10,6 +10,8 @@ import httpx
 
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
+    FieldState,
     LocalClaim,
     MAX_CANDIDATES,
     ProviderCandidate,
@@ -17,8 +19,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderStatus,
     canonical_json,
-    compare_claim,
-    stable_reference,
+    comparison_links,
 )
 
 
@@ -146,13 +147,12 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
         referenced_books.add(book_id)
         book = indexed_books[book_id]
         if book["title"] is not None:
-            claims.append(_claim(provider, identity, ClaimKind.TITLE, _text(book["title"], 512), local_claims))
+            claims.append(_claim(provider, identity, ClaimKind.TITLE, _text(book["title"], 512), local_claims, len(claims)))
         for key in ("isbn_10", "isbn_13"):
             value = row[key]
             if value is not None:
                 value = _isbn(value, 10 if key == "isbn_10" else 13)
-                claims.append(_claim(provider, identity, ClaimKind.ISBN, value, local_claims))
-        claims.sort(key=lambda value: (value.kind.value, value.value, value.reference))
+                claims.append(_claim(provider, identity, ClaimKind.ISBN, value, local_claims, len(claims)))
         candidates.append(ProviderCandidate(identity, tuple(claims)))
     candidates.sort(key=lambda value: value.identity)
     if referenced_books != set(indexed_books):
@@ -162,14 +162,19 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
     return tuple(candidates)
 
 
-def _claim(provider: str, identity: str, kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) -> ProviderClaim:
+def _claim(provider: str, identity: str, kind: ClaimKind, value: str, local: tuple[LocalClaim, ...], raw_order: int) -> ProviderClaim:
     applicability = "ebook" if kind is ClaimKind.ISBN else "not_applicable"
-    comparison, references = compare_claim(kind, value, tuple(item for item in local if item.applicability == applicability and item.role is None))
-    reference = stable_reference(
-        "provider",
-        {"candidate": identity, "kind": kind.value, "provider": provider, "value": value},
+    scope = ClaimScope.EDITION if kind is ClaimKind.ISBN else ClaimScope.WORK
+    claim = ProviderClaim.create(
+        provider=provider, candidate=identity, kind=kind, value=value,
+        state=FieldState.VALID, scope=scope, applicability=applicability,
+        raw_order=raw_order,
     )
-    return ProviderClaim(reference, kind, value, comparison, references, applicability)
+    return ProviderClaim.create(
+        provider=provider, candidate=identity, kind=kind, value=value,
+        state=FieldState.VALID, scope=scope, applicability=applicability,
+        raw_order=raw_order, links=comparison_links(claim, local),
+    )
 
 
 def _closed(value: object, keys: set[str]) -> dict[str, Any]:
