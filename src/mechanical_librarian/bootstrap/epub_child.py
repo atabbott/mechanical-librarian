@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import resource
 import signal
@@ -178,6 +179,25 @@ def _inspect_opening(
         return EpubOpeningReport(EpubInspectionOutcome.INTEGRITY_FAILURE, limits)
 
 
+def _snapshot_source(descriptor: int, maximum: int) -> bytes:
+    information = os.fstat(descriptor)
+    if (
+        type(maximum) is not int
+        or maximum < 0
+        or information.st_size < 0
+        or information.st_size > maximum
+    ):
+        raise ValueError("source snapshot exceeds its limit")
+    snapshot = bytearray()
+    while len(snapshot) < information.st_size:
+        amount = min(1_048_576, information.st_size - len(snapshot))
+        value = os.pread(descriptor, amount, len(snapshot))
+        if len(value) != amount:
+            raise ValueError("source changed while snapshotting")
+        snapshot.extend(value)
+    return bytes(snapshot)
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     if len(arguments) != 3:
@@ -209,11 +229,22 @@ def main(argv: list[str] | None = None) -> int:
             or any(character not in "0123456789abcdef" for character in logical_identity)
         ):
             raise ValueError("invalid child context")
-        length = os.fstat(source_descriptor).st_size
+        snapshot = _snapshot_source(
+            source_descriptor,
+            package_limits.source_archive_bytes,
+        )
+        if hashlib.sha256(snapshot).hexdigest() != expected.digest:
+            _write_report(
+                EpubOpeningReport(EpubInspectionOutcome.INTEGRITY_FAILURE, limits)
+            )
+            return 0
         request = EpubPackageRequest(
             TargetId(AdapterId("local-epub"), ConnectionId("local"), LibraryId("local"), ExternalItemId(logical_identity)),
             FileReference("local", f"{logical_identity}.epub"),
-            EpubPackageSource(length, lambda offset, size: os.pread(source_descriptor, size, offset)),
+            EpubPackageSource(
+                len(snapshot),
+                lambda offset, size: snapshot[offset : offset + size],
+            ),
             expected,
             EpubPackageCapability.OPENING_MATTER,
             package_limits,

@@ -26,6 +26,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
+    ReportValueError,
     TargetFacts,
 )
 from mechanical_librarian.interfaces.cli import main
@@ -62,7 +63,8 @@ class _Repository:
         self.values: dict[str, str] = {}
         self.closed = False
 
-    def publish(self, report: MetadataReport) -> str:
+    def publish(self, report: MetadataReport, currentness) -> str:
+        currentness()
         self.values.setdefault(report.report_id, report.to_json())
         return self.values[report.report_id]
 
@@ -94,6 +96,31 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(MetadataReport.from_json(report.to_json()), report)
         self.assertTrue(report.report_id.startswith("report_"))
         self.assertEqual(report.local_status, "candidate")
+
+    def test_title_claims_retain_exact_512_characters_but_isbn_evidence_stays_bounded(self) -> None:
+        title = "T" * 512
+        claim = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed=title,
+            canonical=title,
+            excerpt=title,
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+        )
+        self.assertEqual(claim.observed, title)
+        self.assertEqual(TargetFacts("primary", "ebooks", "item-1", title).current_title, title)
+        with self.assertRaises(ReportValueError):
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed="9" * 281,
+                canonical=None,
+                excerpt="9" * 281,
+                applicability="unknown",
+                checksum="invalid",
+                applicability_basis="unlabelled",
+            )
 
     def test_application_replays_after_file_reorder_and_constructs_provider_once(self) -> None:
         first_file = TargetFile("a" * 64, "one.epub", "epub")
@@ -142,10 +169,11 @@ class MetadataReportTests(unittest.TestCase):
         target = _Target([TargetSnapshot("audiobook", "Audio", ())])
         inspector = _Inspector(InspectionResult("c" * 64, ()))
         activity: list[str] = []
+        repository = _Repository()
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: activity.append("repository") or _Repository(),
+            repository_factory=lambda: activity.append("repository") or repository,
             providers=(ProviderBinding("catalogue", True, lambda: activity.append("provider")),),
             connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
             library=LibraryConfiguration("audio", "primary", "library-id", "audiobook", None, ("catalogue",)),
@@ -157,7 +185,7 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(activity, [])
         self.assertEqual(inspector.inspections, 0)
 
-    def test_currentness_drift_prevents_repository_construction(self) -> None:
+    def test_currentness_drift_inside_publication_precondition_publishes_nothing(self) -> None:
         selected = TargetFile("a" * 64, "book.epub", "epub")
         target = _Target(
             [
@@ -167,10 +195,11 @@ class MetadataReportTests(unittest.TestCase):
         )
         inspector = _Inspector(InspectionResult("c" * 64, ()))
         activity: list[str] = []
+        repository = _Repository()
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: activity.append("repository") or _Repository(),
+            repository_factory=lambda: activity.append("repository") or repository,
             providers=(ProviderBinding("catalogue", False, lambda: activity.append("provider")),),
             connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
             library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ("catalogue",)),
@@ -179,7 +208,9 @@ class MetadataReportTests(unittest.TestCase):
         )
         with self.assertRaises(CurrentnessError):
             service.run("item-1", 0)
-        self.assertEqual(activity, [])
+        self.assertEqual(activity, ["repository"])
+        self.assertEqual(repository.values, {})
+        self.assertTrue(repository.closed)
         self.assertEqual((inspector.inspections, inspector.verifications), (1, 0))
 
     def test_cli_has_only_required_contract_and_redacts_failure(self) -> None:

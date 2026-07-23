@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import threading
@@ -22,10 +23,66 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
-from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
+from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 
 
 class EpubChildCompositionTests(unittest.TestCase):
+    @staticmethod
+    def _opening_context(digest: str) -> dict[str, object]:
+        return {
+            "child_seconds": 4.5,
+            "expected_source": {
+                "algorithm": "sha256",
+                "digest": digest,
+                "schema": "local-file-v1",
+            },
+            "limits": EpubOpeningLimits().to_data(),
+            "logical_identity": digest,
+        }
+
+    def test_snapshot_digest_mismatch_rejects_before_any_parser_dispatch(self) -> None:
+        expected = hashlib.sha256(b"original").hexdigest()
+        written: list[EpubOpeningReport] = []
+        with (
+            patch.object(child, "_install_parent_guard"),
+            patch.object(child, "_apply_limits"),
+            patch.object(child, "_read_context", return_value=self._opening_context(expected)),
+            patch.object(child, "_snapshot_source", return_value=b"changed then restored"),
+            patch.object(child, "_write_report", side_effect=written.append),
+            patch.object(child, "_inspect_opening") as inspect,
+            patch.object(child.signal, "signal"),
+            patch.object(child.os, "close"),
+        ):
+            self.assertEqual(child.main(["10", "11", "123"]), 0)
+        inspect.assert_not_called()
+        self.assertEqual([value.outcome for value in written], [EpubInspectionOutcome.INTEGRITY_FAILURE])
+
+    def test_matching_snapshot_is_the_immutable_source_used_for_all_parser_reads(self) -> None:
+        snapshot = bytearray(b"one bounded immutable snapshot")
+        expected = hashlib.sha256(snapshot).hexdigest()
+        observed: list[bytes] = []
+
+        def inspect(request, package_request, limits):
+            snapshot[:] = b"x" * len(snapshot)
+            observed.append(request.source.read_at(0, request.source.length))
+            observed.append(package_request.source.read_at(0, package_request.source.length))
+            return EpubOpeningReport(EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE, limits)
+
+        written: list[EpubOpeningReport] = []
+        with (
+            patch.object(child, "_install_parent_guard"),
+            patch.object(child, "_apply_limits"),
+            patch.object(child, "_read_context", return_value=self._opening_context(expected)),
+            patch.object(child, "_snapshot_source", return_value=bytes(snapshot)),
+            patch.object(child, "_write_report", side_effect=written.append),
+            patch.object(child, "_inspect_opening", side_effect=inspect),
+            patch.object(child.signal, "signal"),
+            patch.object(child.os, "close"),
+        ):
+            self.assertEqual(child.main(["10", "11", "123"]), 0)
+        self.assertEqual(observed, [b"one bounded immutable snapshot"] * 2)
+        self.assertEqual([value.outcome for value in written], [EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE])
+
     def test_unknown_capability_is_rejected_without_package_dispatch(self) -> None:
         context = {
             "capability": "unknown",

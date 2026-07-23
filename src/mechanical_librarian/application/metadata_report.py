@@ -74,7 +74,7 @@ class MetadataProvider(Protocol):
 
 
 class ReportRepository(Protocol):
-    def publish(self, report: MetadataReport) -> str: ...
+    def publish(self, report: MetadataReport, currentness: Callable[[], bool]) -> str: ...
     def get(self, report_id: str) -> str: ...
     def close(self) -> None: ...
 
@@ -111,11 +111,11 @@ class GenerateMetadataReport:
         self._limits = limits
 
     def run(self, item: str, file_index: int) -> str:
+        if self._library.media_kind != "ebook" or self._mount is None:
+            raise UnsupportedMediaError("unsupported media")
         initial = self._safe_read(item)
         if (
-            self._library.media_kind != "ebook"
-            or initial.media_kind != "ebook"
-            or self._mount is None
+            initial.media_kind != "ebook"
             or type(file_index) is not int
             or not 0 <= file_index < len(initial.files)
         ):
@@ -169,23 +169,6 @@ class GenerateMetadataReport:
                 raise MetadataReportError("provider result is invalid")
             observations.append(observation)
 
-        final = self._safe_read(item)
-        matches = tuple(value for value in final.files if value.identity == selected.identity)
-        if (
-            final.media_kind != "ebook"
-            or final.title != initial.title
-            or len(matches) != 1
-            or matches[0].format != "epub"
-            or matches[0].relative_path != selected.relative_path
-            or not self._inspector.unchanged(
-                self._mount,
-                selected.relative_path,
-                local.content_digest,
-                self._limits.source_archive_bytes,
-            )
-        ):
-            raise CurrentnessError("target or media changed")
-
         reasons = tuple(
             sorted(
                 {f"opening_{claim.kind.value}" for claim in local.claims}
@@ -206,7 +189,15 @@ class GenerateMetadataReport:
         repository: ReportRepository | None = None
         try:
             repository = self._repository_factory()
-            persisted = repository.publish(report)
+            persisted = repository.publish(
+                report,
+                lambda: self._is_current(
+                    item,
+                    initial,
+                    selected,
+                    local.content_digest,
+                ),
+            )
             if persisted != report.to_json() or repository.get(report.report_id) != persisted:
                 raise MetadataReportError("persisted report readback failed")
             return persisted
@@ -217,6 +208,33 @@ class GenerateMetadataReport:
         finally:
             if repository is not None:
                 repository.close()
+
+    def _is_current(
+        self,
+        item: str,
+        initial: TargetSnapshot,
+        selected: TargetFile,
+        expected_digest: str,
+    ) -> bool:
+        final = self._safe_read(item)
+        matches = tuple(
+            value for value in final.files if value.identity == selected.identity
+        )
+        if (
+            final.media_kind != "ebook"
+            or final.title != initial.title
+            or len(matches) != 1
+            or matches[0].format != "epub"
+            or matches[0].relative_path != selected.relative_path
+            or not self._inspector.unchanged(
+                self._mount,
+                selected.relative_path,
+                expected_digest,
+                self._limits.source_archive_bytes,
+            )
+        ):
+            raise CurrentnessError("target or media changed")
+        return True
 
     def _safe_read(self, item: str) -> TargetSnapshot:
         try:

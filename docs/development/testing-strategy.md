@@ -6,16 +6,19 @@ entire `unittest` suite. The suite covers:
 - closed reports, canonical serialization, stable claim/report references,
   title normalization, and ISBN applicability;
 - strict configuration, duplicate/reference rejection, and no implicit inputs;
-- scoped Audiobookshelf item reading, response bounds, multiple files, and
-  opaque identity across reorder;
+- scoped Audiobookshelf item reading, response bounds, root mounts,
+  `relPath`/`path` agreement, multiple files, and opaque identity across reorder;
 - isolated EPUB traversal, expansion limits, malformed markup, external/entity
   exclusion, timeout, child failure, invalid IPC, and output bounds;
 - provider input selection, no-input zero egress, one-request cardinality,
-  sparse candidates, all-or-nothing malformed handling, and identity order;
-- exact two-table schema, append-only history, replay, successor pointers,
-  restart readback, corrupt-row rejection, and rollback;
+  observable cap overflow, cross-provider claim-reference uniqueness, sparse
+  candidates, all-or-nothing malformed handling, and identity order;
+- exact two-table schema, side-effect-free existing-file validation, no-follow
+  connection binding, append-only history, replay, scope-checked successor
+  pointers, restart readback, corrupt-row rejection, and rollback;
 - rejection before unauthorized parser/provider/publication activity,
-  currentness drift, redaction, and absence of product/media writes; and
+  transaction-bound currentness drift, exact-byte snapshot binding, title
+  privacy rejection, redaction, and absence of product/media writes; and
 - installed package shape, distribution exclusions, generated-schema drift,
   static dependency direction, and retired-surface absence.
 

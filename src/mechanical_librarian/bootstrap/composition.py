@@ -16,6 +16,7 @@ from mechanical_librarian.application.metadata_report import (
     InspectionResult,
     MetadataReportError,
     ProviderBinding,
+    UnsupportedMediaError,
 )
 from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionOutcome
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
@@ -83,11 +84,13 @@ class _IsolatedEpubInspector:
 def run_metadata_report(config_path: Path, database_path: Path, connection_name: str, library_name: str, item: str, file_index: int) -> str:
     configuration = load_configuration_file(config_path)
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
+    if library.media_kind != "ebook" or mount is None:
+        raise UnsupportedMediaError("unsupported media")
     target = AudiobookshelfItemReader(
         client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds),
         endpoint=connection.endpoint,
         library_id=library.library_id,
-        service_path="/" if mount is None else mount.service_path,
+        service_path=mount.service_path,
         maximum_bytes=configuration.limits.target_response_bytes,
     )
     bindings: list[ProviderBinding] = []

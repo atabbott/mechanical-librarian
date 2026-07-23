@@ -6,8 +6,11 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
+
+import mechanical_librarian.adapters.persistence.metadata_reports as metadata_persistence
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
@@ -51,10 +54,10 @@ class MetadataPersistenceTests(unittest.TestCase):
             path = Path(directory) / "reports.sqlite"
             repository = open_repository(path)
             first = _report()
-            self.assertEqual(repository.publish(first), first.to_json())
-            self.assertEqual(repository.publish(first), first.to_json())
+            self.assertEqual(repository.publish(first, lambda: True), first.to_json())
+            self.assertEqual(repository.publish(first, lambda: True), first.to_json())
             second = _report("Changed title")
-            repository.publish(second)
+            repository.publish(second, lambda: True)
             repository.close()
 
             connection = sqlite3.connect(path)
@@ -88,7 +91,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             path = Path(directory) / "reports.sqlite"
             repository = open_repository(path)
             report = _report()
-            repository.publish(report)
+            repository.publish(report, lambda: True)
             repository._connection.execute("DROP TRIGGER metadata_reports_no_update")
             repository._connection.execute("UPDATE metadata_reports SET document='{}'")
             with self.assertRaises(MetadataReportError):
@@ -110,8 +113,115 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "CREATE TRIGGER fail_pointer BEFORE INSERT ON current_metadata_reports BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END"
             )
             with self.assertRaises(MetadataReportError):
-                repository.publish(_report())
+                repository.publish(_report(), lambda: True)
             self.assertEqual(repository._connection.execute("SELECT COUNT(*) FROM metadata_reports").fetchone(), (0,))
+            repository.close()
+
+    def test_publication_precondition_failure_rolls_back_report_and_pointer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            calls: list[str] = []
+            with self.assertRaises(MetadataReportError):
+                repository.publish(
+                    _report(),
+                    lambda: calls.append("transactional-currentness") or False,
+                )
+            self.assertEqual(calls, ["transactional-currentness"])
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM metadata_reports"
+                ).fetchone(),
+                (0,),
+            )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM current_metadata_reports"
+                ).fetchone(),
+                (0,),
+            )
+            repository.close()
+
+    def test_wal_incompatible_database_is_rejected_byte_for_byte_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "other.sqlite"
+            connection = sqlite3.connect(path)
+            self.assertEqual(connection.execute("PRAGMA journal_mode=WAL").fetchone(), ("wal",))
+            connection.execute("CREATE TABLE legacy(value TEXT)")
+            connection.commit()
+            connection.close()
+            before = {value.name: value.read_bytes() for value in root.iterdir()}
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
+            after = {value.name: value.read_bytes() for value in root.iterdir()}
+            self.assertEqual(after, before)
+
+    def test_path_swap_to_symlink_cannot_bind_or_write_alternate_database(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "reports.sqlite"
+            repository = open_repository(path)
+            repository.close()
+            original = root / "original.sqlite"
+            alternate = root / "alternate.sqlite"
+            connection = sqlite3.connect(alternate)
+            connection.execute("CREATE TABLE alternate(value TEXT)")
+            connection.commit()
+            connection.close()
+            alternate_before = alternate.read_bytes()
+            real_connect = sqlite3.connect
+            calls = 0
+
+            def swapping_connect(*args, **kwargs):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    path.rename(original)
+                    path.symlink_to(alternate)
+                return real_connect(*args, **kwargs)
+
+            try:
+                with patch.object(
+                    metadata_persistence.sqlite3,
+                    "connect",
+                    side_effect=swapping_connect,
+                ), self.assertRaises(MetadataReportError):
+                    open_repository(path)
+            finally:
+                if path.is_symlink():
+                    path.unlink()
+                if original.exists():
+                    original.rename(path)
+            self.assertEqual(alternate.read_bytes(), alternate_before)
+
+    def test_current_pointer_scope_must_agree_with_decoded_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            primary = _report("Primary title")
+            other = MetadataReport.create(
+                target=TargetFacts("secondary", "other", "item-2", "Other title"),
+                file=FileFacts(0, "c" * 64, "d" * 64),
+                local_claims=(),
+                local_reasons=("no_opening_claims",),
+                providers=(),
+            )
+            repository.publish(primary, lambda: True)
+            repository.publish(other, lambda: True)
+            repository._connection.execute(
+                "UPDATE current_metadata_reports SET report_id=? "
+                "WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?",
+                (
+                    other.report_id,
+                    "primary",
+                    "ebooks",
+                    "item-1",
+                    "a" * 64,
+                ),
+            )
+            with self.assertRaises(MetadataReportError):
+                repository.current("primary", "ebooks", "item-1", "a" * 64)
             repository.close()
 
 
@@ -168,6 +278,7 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(observation.input_references, (self._claim().reference,))
         self.assertEqual(len(requests), 1)
         self.assertEqual(str(requests[0].url), HARDCOVER_URL)
+        self.assertIn("limit:5", json.loads(requests[0].content)["query"])
         self.assertEqual(provider.observe((self._claim(), self._title_claim())).status, ProviderStatus.UNAVAILABLE)
         self.assertEqual(len(requests), 1)
 
@@ -272,6 +383,89 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(observation.status, ProviderStatus.MALFORMED)
         self.assertEqual(observation.candidates, ())
 
+    def test_same_candidate_from_two_provider_connections_has_globally_unique_refs(self) -> None:
+        payload = {
+            "data": {
+                "editions": [
+                    {
+                        "id": 1,
+                        "isbn_10": None,
+                        "isbn_13": "9780306406157",
+                        "book": {"id": 1, "title": "Current title"},
+                    }
+                ]
+            }
+        }
+
+        def observation(name: str) -> ProviderObservation:
+            client = httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
+                )
+            )
+            return HardcoverMetadataProvider(name, client, 65_536).observe(
+                (self._claim(), self._title_claim())
+            )
+
+        first = observation("catalogue")
+        second = observation("secondary")
+        first_references = {
+            claim.reference
+            for candidate in first.candidates
+            for claim in candidate.claims
+        }
+        second_references = {
+            claim.reference
+            for candidate in second.candidates
+            for claim in candidate.claims
+        }
+        self.assertTrue(first_references)
+        self.assertTrue(first_references.isdisjoint(second_references))
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(self._claim(), self._title_claim()),
+            local_reasons=("opening_isbn",),
+            providers=(first, second),
+        )
+        self.assertEqual(MetadataReport.from_json(report.to_json()), report)
+
+    def test_credential_and_private_path_provider_titles_are_malformed_without_leakage(self) -> None:
+        for hostile in (
+            "api_key=supersecretvalue",
+            "/Users/private/library/book.epub",
+        ):
+            client = httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request, title=hostile: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={
+                            "data": {
+                                "editions": [
+                                    {
+                                        "id": 1,
+                                        "isbn_10": None,
+                                        "isbn_13": "9780306406157",
+                                        "book": {"id": 1, "title": title},
+                                    }
+                                ]
+                            }
+                        },
+                    )
+                )
+            )
+            with self.subTest(hostile=hostile):
+                observation = HardcoverMetadataProvider(
+                    "catalogue", client, 65_536
+                ).observe((self._claim(),))
+                self.assertEqual(observation.status, ProviderStatus.MALFORMED)
+                self.assertNotIn(hostile, repr(observation))
+
 
 class AudiobookshelfItemTests(unittest.TestCase):
     def test_scoped_reader_derives_stable_opaque_file_identity(self) -> None:
@@ -359,6 +553,92 @@ class AudiobookshelfItemTests(unittest.TestCase):
         )
         with self.assertRaises(MetadataReportError):
             reader.read("item-1")
+
+    def test_root_service_path_fallback_and_dual_path_agreement_are_closed(self) -> None:
+        base_file = {
+            "ebookFormat": "epub",
+            "ino": "inode-1",
+            "metadata": {"path": "/book.epub", "size": 1},
+        }
+        payload = {
+            "id": "item-1",
+            "libraryId": "library-id",
+            "isInvalid": False,
+            "isMissing": False,
+            "mediaType": "book",
+            "media": {
+                "metadata": {"title": "Current title"},
+                "ebookFile": base_file,
+            },
+        }
+
+        def reader() -> AudiobookshelfItemReader:
+            return AudiobookshelfItemReader(
+                client_factory=lambda: httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=payload,
+                        )
+                    )
+                ),
+                endpoint="https://example.invalid",
+                library_id="library-id",
+                service_path="/",
+                maximum_bytes=65_536,
+            )
+
+        self.assertEqual(reader().read("item-1").files[0].relative_path, "book.epub")
+        base_file["metadata"]["relPath"] = "book.epub"
+        self.assertEqual(reader().read("item-1").files[0].relative_path, "book.epub")
+        base_file["metadata"]["relPath"] = "other.epub"
+        with self.assertRaises(MetadataReportError):
+            reader().read("item-1")
+
+    def test_credential_and_private_path_target_titles_fail_without_raw_values(self) -> None:
+        for hostile in (
+            "Authorization: Bearer abcd1234",
+            "/Users/private/library/book.epub",
+        ):
+            payload = {
+                "id": "item-1",
+                "libraryId": "library-id",
+                "isInvalid": False,
+                "isMissing": False,
+                "mediaType": "book",
+                "media": {
+                    "metadata": {"title": hostile},
+                    "ebookFile": {
+                        "ebookFormat": "epub",
+                        "ino": "inode-1",
+                        "metadata": {
+                            "relPath": "book.epub",
+                            "path": "/library/book.epub",
+                            "size": 1,
+                        },
+                    },
+                },
+            }
+            reader = AudiobookshelfItemReader(
+                client_factory=lambda: httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=payload,
+                        )
+                    )
+                ),
+                endpoint="https://example.invalid",
+                library_id="library-id",
+                service_path="/library",
+                maximum_bytes=65_536,
+            )
+            with self.subTest(hostile=hostile):
+                with self.assertRaises(MetadataReportError) as raised:
+                    reader.read("item-1")
+                self.assertNotIn(hostile, str(raised.exception))
 
 
 if __name__ == "__main__":

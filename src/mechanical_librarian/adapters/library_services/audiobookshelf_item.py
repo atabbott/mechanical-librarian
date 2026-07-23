@@ -113,10 +113,20 @@ def _file(source: object, service_path: str) -> TargetFile:
         raise MetadataReportError("target file mapping is invalid")
     relative = metadata.get("relPath")
     path = metadata.get("path")
-    if type(relative) is not str or not relative:
-        if type(path) is not str or not path.startswith(service_path + "/"):
+    has_relative = type(relative) is str and bool(relative)
+    if relative is not None and not has_relative:
+        raise MetadataReportError("target file mapping is invalid")
+    from_path = None
+    if path is not None:
+        if type(path) is not str:
             raise MetadataReportError("target file mapping is invalid")
-        relative = path[len(service_path) + 1 :]
+        from_path = _relative_service_path(path, service_path)
+    if not has_relative:
+        if from_path is None:
+            raise MetadataReportError("target file mapping is invalid")
+        relative = from_path
+    elif from_path is not None and from_path != relative:
+        raise MetadataReportError("target file mapping is invalid")
     normalized = posixpath.normpath(relative)
     if not 1 <= len(relative) <= 1024 or normalized != relative or relative.startswith("/") or any(part in {"", ".", ".."} for part in relative.split("/")):
         raise MetadataReportError("target file mapping is invalid")
@@ -126,6 +136,17 @@ def _file(source: object, service_path: str) -> TargetFile:
         raise MetadataReportError("target file identity is invalid")
     identity = hashlib.sha256(canonical_json({"format": format_value, "inode": inode, "relative": relative, "size": size}).encode("utf-8")).hexdigest()
     return TargetFile(identity, relative, format_value)
+
+
+def _relative_service_path(path: str, service_path: str) -> str:
+    if service_path == "/":
+        if not path.startswith("/") or path == "/":
+            raise MetadataReportError("target file mapping is invalid")
+        return path[1:]
+    prefix = service_path + "/"
+    if not path.startswith(prefix):
+        raise MetadataReportError("target file mapping is invalid")
+    return path[len(prefix) :]
 
 
 def _bounded_body(response: httpx.Response, maximum: int) -> bytes:

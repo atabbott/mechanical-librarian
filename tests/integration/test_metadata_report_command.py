@@ -11,7 +11,10 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from mechanical_librarian.application.metadata_report import UnsupportedMediaError
+from mechanical_librarian.application.metadata_report import (
+    MetadataReportError,
+    UnsupportedMediaError,
+)
 from mechanical_librarian.bootstrap.composition import run_metadata_report
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.epub_packages import opening_no_applicable, opening_title_isbn_applicability
@@ -120,6 +123,33 @@ def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool 
 
 
 class MetadataReportCommandTests(unittest.TestCase):
+    def test_hostile_target_title_is_rejected_before_database_with_value_free_error(self) -> None:
+        hostile = "Authorization: Bearer abcd1234"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            source.write_bytes(opening_no_applicable())
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            payload = _item(source.stat().st_size)
+            payload["media"]["metadata"]["title"] = hostile
+            with _Server(payload) as server:
+                config = root / "config.json"
+                config.write_text(
+                    json.dumps(_config(server.endpoint, media, target_secret)),
+                    encoding="utf-8",
+                )
+                database = root / "reports.sqlite"
+                with self.assertRaises(MetadataReportError) as raised:
+                    run_metadata_report(
+                        config, database, "primary", "books", "item-1", 0
+                    )
+            self.assertFalse(database.exists())
+            self.assertNotIn(hostile, str(raised.exception))
+
     def test_installed_command_requires_explicit_locations_and_emits_persisted_bytes(self) -> None:
         executable = shutil.which("mechanical-librarian")
         self.assertIsNotNone(executable)
@@ -269,9 +299,7 @@ class MetadataReportCommandTests(unittest.TestCase):
     def test_audiobook_rejection_has_no_parser_provider_or_database_activity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            target_secret = root / "target.secret"
-            target_secret.write_text("target-token", encoding="ascii")
-            target_secret.chmod(0o600)
+            target_secret = root / "absent-target.secret"
             payload = _item(0)
             payload["media"].pop("ebookFile")
             payload["media"]["audioFiles"] = []
@@ -282,7 +310,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                 with self.assertRaises(UnsupportedMediaError):
                     run_metadata_report(config, database, "primary", "books", "item-1", 0)
             self.assertFalse(database.exists())
-            self.assertEqual(server.requests, 1)
+            self.assertEqual(server.requests, 0)
 
 
 if __name__ == "__main__":

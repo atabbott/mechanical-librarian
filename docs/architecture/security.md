@@ -16,12 +16,14 @@ deletion, migration, or repair authority.
   evidence.
 - A mounted-media owner may provide a hostile EPUB or replace it during an
   invocation. The descriptor-bound isolated child has no credentials, network,
-  persistence, matching, or decision authority. The parent validates file
-  content and target identity again immediately before publication.
+  persistence, matching, or decision authority. It hashes and parses one
+  bounded immutable byte snapshot, and the parent validates file content and
+  target identity again as the publication transaction's precondition.
 - A local actor may replace or corrupt configuration, secret, media, or SQLite
-  files. No-follow regular-file checks, owner-only secret permissions, exact
-  schema validation, canonical row decoding, envelope/document agreement, and
-  fail-closed diagnostics bound this risk. 0.4 does not repair tampered state.
+  files. No-follow descriptor binding, side-effect-free validation of existing
+  databases, owner-only secret permissions, exact schema validation, canonical
+  row decoding, envelope/document agreement, and fail-closed diagnostics bound
+  this risk. 0.4 does not repair tampered state.
 
 Ordinary typed in-process collaborators are trusted to honor their interfaces;
 arbitrary descriptor, subclass, traceback, or interpreter-control-flow
@@ -45,8 +47,11 @@ Successful output and persisted documents contain only bounded target names,
 item identity, opaque file identity/digest, current title, fact-local opening
 excerpts, typed claims, provider candidate fields, and comparison facts. They
 contain no credentials, private paths, raw provider bodies, or arbitrary EPUB
-text. Failure output is fixed and value-free.
+text. Target and provider titles pass the same closed public-safe projection
+before they can enter a report. Failure output is fixed and value-free.
 
 Report and current-pointer publication is one SQLite transaction. Immutable
-report rows have update/delete triggers. The separate pointer may advance, but
-predecessor reports remain unchanged.
+report rows have update/delete triggers. The transaction runs the bounded
+target/media currentness precondition before inserting the report or advancing
+the pointer. The separate pointer may advance, but predecessor reports remain
+unchanged.

@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Mapping, Self
 
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_projection_text,
+)
+
 
 REPORT_SCHEMA = "metadata-report-v1"
 MAX_REPORT_BYTES = 262_144
@@ -66,6 +71,10 @@ def normalize_title(value: str) -> str:
         raise ReportValueError("title is invalid")
     normalized = " ".join(unicodedata.normalize("NFC", value).split())
     _text(normalized, "title", 512)
+    try:
+        validate_projection_text(normalized, "title", 512)
+    except EvidenceValueError as error:
+        raise ReportValueError("title is not public-safe") from error
     return normalized
 
 
@@ -81,6 +90,8 @@ class TargetFacts:
         _name(self.library, "library")
         _text(self.item, "item", 512)
         _text(self.current_title, "current title", 512)
+        if normalize_title(self.current_title) != self.current_title:
+            raise ReportValueError("current title is invalid")
 
     def to_data(self) -> dict[str, str]:
         return {
@@ -132,10 +143,11 @@ class LocalClaim:
             raise ReportValueError("local claim reference is invalid")
         if type(self.kind) is not ClaimKind:
             raise ReportValueError("local claim kind is invalid")
-        _text(self.observed, "observed claim", 280)
+        maximum = 512 if self.kind is ClaimKind.TITLE else 280
+        _text(self.observed, "observed claim", maximum)
         if self.canonical is not None:
             _text(self.canonical, "canonical claim", 512)
-        _text(self.excerpt, "claim excerpt", 280)
+        _text(self.excerpt, "claim excerpt", maximum)
         if self.observed not in self.excerpt:
             raise ReportValueError("claim excerpt does not support its observation")
         if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"}:
@@ -221,6 +233,11 @@ class ProviderClaim:
         if type(self.kind) is not ClaimKind or type(self.comparison) is not Comparison:
             raise ReportValueError("provider claim is invalid")
         _text(self.value, "provider claim value", 512)
+        if self.kind is ClaimKind.TITLE:
+            try:
+                validate_projection_text(self.value, "provider title", 512)
+            except EvidenceValueError as error:
+                raise ReportValueError("provider title is not public-safe") from error
         if self.kind is ClaimKind.ISBN and not (
             _valid_isbn(self.value, "valid_isbn_10")
             or _valid_isbn(self.value, "valid_isbn_13")
@@ -254,14 +271,6 @@ class ProviderCandidate:
         references = tuple(value.reference for value in self.claims)
         if len(set(references)) != len(references):
             raise ReportValueError("provider candidate claim references are duplicated")
-        if any(
-            value.reference != stable_reference(
-                "provider",
-                {"candidate": self.identity, "kind": value.kind.value, "value": value.value},
-            )
-            for value in self.claims
-        ):
-            raise ReportValueError("provider candidate claim reference is inconsistent")
 
     def to_data(self) -> dict[str, object]:
         return {"claims": [value.to_data() for value in self.claims], "identity": self.identity}
@@ -292,6 +301,21 @@ class ProviderObservation:
             raise ReportValueError("provider status and candidates disagree")
         if self.status in {ProviderStatus.DISABLED, ProviderStatus.INSUFFICIENT_INPUT} and self.input_references:
             raise ReportValueError("inactive provider cannot claim inputs")
+        if any(
+            claim.reference
+            != stable_reference(
+                "provider",
+                {
+                    "candidate": candidate.identity,
+                    "kind": claim.kind.value,
+                    "provider": self.provider,
+                    "value": claim.value,
+                },
+            )
+            for candidate in self.candidates
+            for claim in candidate.claims
+        ):
+            raise ReportValueError("provider candidate claim reference is inconsistent")
 
     def to_data(self) -> dict[str, object]:
         return {

@@ -6,7 +6,10 @@ import hashlib
 import os
 import sqlite3
 import stat
+import sys
+from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import quote
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import MetadataReport, REPORT_SCHEMA, ReportValueError
@@ -43,8 +46,8 @@ class SQLiteMetadataReportRepository:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
 
-    def publish(self, report: MetadataReport) -> str:
-        if type(report) is not MetadataReport:
+    def publish(self, report: MetadataReport, currentness: Callable[[], bool]) -> str:
+        if type(report) is not MetadataReport or not callable(currentness):
             raise MetadataReportError("report publication failed")
         document = report.to_json()
         digest = hashlib.sha256(document.encode("utf-8")).hexdigest()
@@ -61,6 +64,8 @@ class SQLiteMetadataReportRepository:
         )
         try:
             self._connection.execute("BEGIN IMMEDIATE")
+            if currentness() is not True:
+                raise MetadataReportError("target or media changed")
             existing = self._connection.execute(
                 "SELECT connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
                 (report.report_id,),
@@ -85,6 +90,9 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             self._connection.rollback()
             raise MetadataReportError("report publication failed") from error
+        except Exception as error:
+            self._connection.rollback()
+            raise MetadataReportError("report publication precondition failed") from error
 
     def get(self, report_id: str) -> str:
         try:
@@ -123,7 +131,19 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("persisted current report is invalid") from error
         if row is None or type(row[0]) is not str:
             raise MetadataReportError("persisted current report is unavailable")
-        return self.get(row[0])
+        document = self.get(row[0])
+        try:
+            report = MetadataReport.from_json(document)
+        except ReportValueError as error:
+            raise MetadataReportError("persisted current report is invalid") from error
+        if (
+            report.target.connection != connection
+            or report.target.library != library
+            or report.target.item != item
+            or report.file.identity != file_identity
+        ):
+            raise MetadataReportError("persisted current report scope disagrees")
+        return document
 
     def close(self) -> None:
         self._connection.close()
@@ -131,17 +151,28 @@ class SQLiteMetadataReportRepository:
 
 def open_repository(path: Path) -> SQLiteMetadataReportRepository:
     created = False
+    descriptor = -1
+    created_identity: tuple[int, int] | None = None
     connection: sqlite3.Connection | None = None
     try:
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        if not nofollow:
+            raise MetadataReportError("database no-follow access is unavailable")
+        flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | nofollow
         if os.path.lexists(path):
-            information = path.lstat()
+            descriptor = os.open(path, flags)
+            information = os.fstat(descriptor)
             if not stat.S_ISREG(information.st_mode):
                 raise MetadataReportError("database path is invalid")
+            _validate_existing_read_only(path, descriptor)
         else:
-            descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0), 0o600)
-            os.close(descriptor)
+            descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+            information = os.fstat(descriptor)
+            if not stat.S_ISREG(information.st_mode):
+                raise MetadataReportError("database path is invalid")
             created = True
-        connection = sqlite3.connect(path, isolation_level=None)
+            created_identity = (information.st_dev, information.st_ino)
+        connection = _connect_bound(path, descriptor)
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA journal_mode=DELETE")
         connection.execute("PRAGMA synchronous=FULL")
@@ -154,25 +185,104 @@ def open_repository(path: Path) -> SQLiteMetadataReportRepository:
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
         _validate_schema(connection)
+        os.close(descriptor)
+        descriptor = -1
         return SQLiteMetadataReportRepository(connection)
     except MetadataReportError:
         if connection is not None:
             connection.close()
-        if created:
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        if created and created_identity is not None:
+            _unlink_created(path, created_identity)
         raise
     except (OSError, sqlite3.Error) as error:
         if connection is not None:
             connection.close()
-        if created:
-            try:
-                path.unlink()
-            except OSError:
-                pass
+        if created and created_identity is not None:
+            _unlink_created(path, created_identity)
         raise MetadataReportError("database is unavailable or incompatible") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _validate_existing_read_only(path: Path, descriptor: int) -> None:
+    absolute = str(path.absolute())
+    uri = f"file:{quote(absolute, safe='/')}?mode=ro&immutable=1"
+    connection: sqlite3.Connection | None = None
+    try:
+        before = _open_descriptors()
+        connection = sqlite3.connect(uri, uri=True, isolation_level=None)
+        connection.execute("PRAGMA schema_version").fetchone()
+        _validate_connection_binding(path, descriptor, before)
+        _validate_schema(connection)
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+def _connect_bound(path: Path, descriptor: int) -> sqlite3.Connection:
+    before = _open_descriptors()
+    absolute = str(path.absolute())
+    uri = f"file:{quote(absolute, safe='/')}?mode=rw"
+    connection = sqlite3.connect(uri, uri=True, isolation_level=None)
+    try:
+        _validate_connection_binding(path, descriptor, before)
+        return connection
+    except Exception:
+        connection.close()
+        raise
+
+
+def _open_descriptors() -> set[int]:
+    if not sys.platform.startswith("linux"):
+        return set()
+    try:
+        return {
+            int(value)
+            for value in os.listdir("/proc/self/fd")
+            if value.isascii() and value.isdigit()
+        }
+    except OSError as error:
+        raise MetadataReportError("database descriptor binding is unavailable") from error
+
+
+def _validate_connection_binding(path: Path, descriptor: int, before: set[int]) -> None:
+    expected = os.fstat(descriptor)
+    expected_identity = (expected.st_dev, expected.st_ino)
+    if sys.platform.startswith("linux"):
+        candidates = _open_descriptors() - before - {descriptor}
+        for candidate in candidates:
+            try:
+                information = os.fstat(candidate)
+            except OSError:
+                continue
+            if stat.S_ISREG(information.st_mode) and (
+                information.st_dev,
+                information.st_ino,
+            ) == expected_identity:
+                return
+        raise MetadataReportError("database pathname changed while opening")
+    try:
+        information = path.lstat()
+    except OSError as error:
+        raise MetadataReportError("database pathname changed while opening") from error
+    if not stat.S_ISREG(information.st_mode) or (
+        information.st_dev,
+        information.st_ino,
+    ) != expected_identity:
+        raise MetadataReportError("database pathname changed while opening")
+
+
+def _unlink_created(path: Path, expected: tuple[int, int]) -> None:
+    try:
+        information = path.lstat()
+        if stat.S_ISREG(information.st_mode) and (
+            information.st_dev,
+            information.st_ino,
+        ) == expected:
+            path.unlink()
+    except OSError:
+        pass
 
 
 def _validate_schema(connection: sqlite3.Connection) -> None:

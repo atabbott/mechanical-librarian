@@ -25,7 +25,7 @@ from mechanical_librarian.domain.metadata_report import (
 HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
 _QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
-    "{isbn_13:{_in:$isbns}},{isbn_10:{_in:$isbns}}]},order_by:{id:asc},limit:4)"
+    f"{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
     "{id isbn_10 isbn_13 book{id title}}}"
 )
 
@@ -82,7 +82,7 @@ class HardcoverMetadataProvider:
         except (httpx.HTTPError, OSError, ValueError):
             return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
         try:
-            candidates = _parse_candidates(payload, local_claims)
+            candidates = _parse_candidates(payload, self._name, local_claims)
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
             return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
         return ProviderObservation(
@@ -106,7 +106,7 @@ def _body(response: httpx.Response, maximum: int) -> bytes:
     return b"".join(chunks)
 
 
-def _parse_candidates(payload: bytes, local_claims: tuple[LocalClaim, ...]) -> tuple[ProviderCandidate, ...]:
+def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalClaim, ...]) -> tuple[ProviderCandidate, ...]:
     source = json.loads(
         payload.decode("utf-8", "strict"),
         object_pairs_hook=_unique_object,
@@ -132,12 +132,12 @@ def _parse_candidates(payload: bytes, local_claims: tuple[LocalClaim, ...]) -> t
             if type(book["id"]) is not int or type(book["id"]) is bool or not 1 <= book["id"] <= 2_147_483_647:
                 raise ValueError("provider book invalid")
             if book["title"] is not None:
-                claims.append(_claim(identity, ClaimKind.TITLE, _text(book["title"], 512), local_claims))
+                claims.append(_claim(provider, identity, ClaimKind.TITLE, _text(book["title"], 512), local_claims))
         for key in ("isbn_10", "isbn_13"):
             value = row[key]
             if value is not None:
                 value = _isbn(value, 10 if key == "isbn_10" else 13)
-                claims.append(_claim(identity, ClaimKind.ISBN, value, local_claims))
+                claims.append(_claim(provider, identity, ClaimKind.ISBN, value, local_claims))
         claims.sort(key=lambda value: (value.kind.value, value.value, value.reference))
         candidates.append(ProviderCandidate(identity, tuple(claims)))
     candidates.sort(key=lambda value: value.identity)
@@ -146,9 +146,12 @@ def _parse_candidates(payload: bytes, local_claims: tuple[LocalClaim, ...]) -> t
     return tuple(candidates)
 
 
-def _claim(identity: str, kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) -> ProviderClaim:
+def _claim(provider: str, identity: str, kind: ClaimKind, value: str, local: tuple[LocalClaim, ...]) -> ProviderClaim:
     comparison, references = compare_claim(kind, value, local)
-    reference = stable_reference("provider", {"candidate": identity, "kind": kind.value, "value": value})
+    reference = stable_reference(
+        "provider",
+        {"candidate": identity, "kind": kind.value, "provider": provider, "value": value},
+    )
     return ProviderClaim(reference, kind, value, comparison, references)
 
 

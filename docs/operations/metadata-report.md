@@ -43,7 +43,9 @@ by the Audiobookshelf adapter. Final currentness locates that identity again,
 so a harmless file-list reorder does not change the target.
 
 The isolated child receives only the already-open read-only EPUB descriptor,
-source fingerprint, and fixed limits. It returns bounded title and ISBN facts.
+source fingerprint, and fixed limits. It first captures one bounded immutable
+byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
+parsing. It returns bounded title and ISBN facts.
 Each ISBN fact keeps its exact observed substring, a directly supporting
 excerpt, checksum result, canonical value only when valid, and an explicit
 ebook, print, unknown, or ambiguous classification with its nonnumeric label
@@ -56,8 +58,10 @@ secret access or egress. Unreferenced providers are absent.
 
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order.
-One malformed candidate or a cap overflow makes the entire observation
-`malformed`. No winner, score, merge, fallback search, retry, or cache exists.
+The fixed request asks for one row beyond the retained cap so overflow remains
+observable. One malformed candidate or a cap overflow makes the entire
+observation `malformed`. No winner, score, merge, fallback search, retry, or
+cache exists.
 
 The report ID is derived from the complete canonical document. Exact fresh
 re-observation returns the same ID and bytes without accumulating another row.
