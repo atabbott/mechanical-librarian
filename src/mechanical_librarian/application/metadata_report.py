@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
+import time
 
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
@@ -107,6 +108,7 @@ class CoverObserver(Protocol):
         providers: tuple[ProviderObservation, ...],
         local_sources: tuple[CoverSource, ...],
         descriptors: tuple[tuple[str, str, str | None], ...] = (),
+        aggregate_deadline: float | None = None,
     ) -> tuple[CoverSource, ...]: ...
 
 
@@ -207,6 +209,7 @@ class GenerateMetadataReport:
         combined_claims = (target_title_claim, *local.claims)
         observations: list[ProviderObservation] = []
         descriptors: list[tuple[str, str, str | None]] = []
+        cover_aggregate_deadline = time.monotonic() + 60.0
         for binding in self._providers:
             if not binding.enabled:
                 observations.append(
@@ -222,7 +225,11 @@ class GenerateMetadataReport:
                 repository.close()
                 raise CredentialError("provider credential unavailable") from error
             try:
-                observation = provider.observe(combined_claims)
+                observation = (
+                    provider.observe(combined_claims, deadline=cover_aggregate_deadline)
+                    if hasattr(provider, "cover_descriptors")
+                    else provider.observe(combined_claims)
+                )
             except Exception:
                 observation = ProviderObservation(
                     binding.name, ProviderStatus.UNAVAILABLE
@@ -243,7 +250,7 @@ class GenerateMetadataReport:
         )
         try:
             cover_sources = local.cover_sources if self._cover_observer is None else self._cover_observer.observe(
-                initial, tuple(observations), local.cover_sources, tuple(descriptors)
+                initial, tuple(observations), local.cover_sources, tuple(descriptors), cover_aggregate_deadline
             )
             report = MetadataReport.create(
                 target=TargetFacts(self._connection.name, self._library.name, item, initial.title),

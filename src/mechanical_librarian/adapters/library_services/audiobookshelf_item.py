@@ -83,26 +83,30 @@ class AudiobookshelfItemReader:
         if before.cover != cover:
             raise CoverSourceChangedError("target cover changed")
         try:
-            with httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""}) as client:
-                host = httpx.URL(self._endpoint).host
-                with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=_phase_timeout(deadline)) as response:
-                    if response.status_code == 404:
-                        value = None
-                    elif response.status_code != 200:
-                        raise MetadataReportError("target cover is unavailable")
-                    else:
-                        content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
-                        if content_type not in {"image/jpeg", "image/png", "image/webp"}:
-                            raise MetadataReportError("target cover is invalid")
-                        value = _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
+            value = self._read_raw_cover(cover, deadline)
             after = self.read(cover.item, deadline=deadline)
             if after.cover != before.cover:
+                raise CoverSourceChangedError("target cover changed")
+            if self._read_raw_cover(cover, deadline) != value:
                 raise CoverSourceChangedError("target cover changed")
             return value
         except MetadataReportError:
             raise
         except (httpx.HTTPError, OSError, ValueError) as error:
             raise MetadataReportError("target cover is unavailable") from error
+
+    def _read_raw_cover(self, cover: TargetCover, deadline: float | None) -> bytes | None:
+        with httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""}) as client:
+            host = httpx.URL(self._endpoint).host
+            with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=_phase_timeout(deadline)) as response:
+                if response.status_code == 404:
+                    return None
+                if response.status_code != 200:
+                    raise MetadataReportError("target cover is unavailable")
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
+                if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+                    raise MetadataReportError("target cover is invalid")
+                return _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
 
 
 def _snapshot(source: object, item: str, library_id: str, service_path: str) -> TargetSnapshot:

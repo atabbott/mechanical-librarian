@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import sys
 from pathlib import Path
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -161,7 +162,11 @@ class CoverArtifactStore:
     def _directory(self) -> int:
         descriptors: list[int] = []
         try:
-            absolute = self._path.resolve(strict=True)
+            absolute = (
+                self._path.resolve(strict=True)
+                if sys.platform == "darwin"
+                else self._path.absolute()
+            )
             descriptor = os.open(
                 "/", os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
             )

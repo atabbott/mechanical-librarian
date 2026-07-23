@@ -126,12 +126,14 @@ class _CoverEvidenceObserver:
         self._artifacts = artifacts
         self._providers = {value.name: value for value in providers}
 
-    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...], descriptors: tuple[tuple[str, str, str | None], ...] = ()) -> tuple[CoverSource, ...]:
+    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...], descriptors: tuple[tuple[str, str, str | None], ...] = (), aggregate_deadline: float | None = None) -> tuple[CoverSource, ...]:
+        now = time.monotonic()
+        aggregate = now + 60.0 if aggregate_deadline is None else aggregate_deadline
+        deadline = CoverDeadline(aggregate, min(now + 20.0, aggregate))
         if target.cover is None:
             source = CoverSource(cover_source_id(CoverSourceKind.ABS, "absent"), CoverSourceKind.ABS, CoverSourceState.ABSENT)
-            return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=CoverDeadline.start()))
+            return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
         source_id = cover_source_id(CoverSourceKind.ABS, target.cover.identity)
-        deadline = CoverDeadline.start()
         try:
             original = self._target.read_cover(target.cover, deadline=deadline.aggregate_deadline)
             if original is None:

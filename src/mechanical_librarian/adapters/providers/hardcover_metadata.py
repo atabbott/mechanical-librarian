@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -42,7 +43,7 @@ class HardcoverMetadataProvider:
         self._called = False
         self.cover_descriptors: tuple[tuple[str, str | None], ...] = ()
 
-    def observe(self, local_claims: tuple[LocalClaim, ...]) -> ProviderObservation:
+    def observe(self, local_claims: tuple[LocalClaim, ...], *, deadline: float | None = None) -> ProviderObservation:
         if self._called:
             return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE)
         self._called = True
@@ -53,7 +54,10 @@ class HardcoverMetadataProvider:
         references = tuple(sorted(claim.reference for claim in usable))
         body = {"operationName": "MetadataEvidenceByIsbn", "query": _QUERY, "variables": {"isbns": sorted({claim.canonical for claim in usable if claim.canonical is not None})}}
         try:
-            with self._client, self._client.stream("POST", HARDCOVER_URL, content=canonical_json(body).encode(), headers={"Accept": "application/json", "Content-Type": "application/json", "Accept-Encoding": "identity"}) as response:
+            remaining = 5.0 if deadline is None else min(5.0, deadline - time.monotonic())
+            if remaining <= 0:
+                return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
+            with self._client, self._client.stream("POST", HARDCOVER_URL, content=canonical_json(body).encode(), headers={"Accept": "application/json", "Content-Type": "application/json", "Accept-Encoding": "identity"}, timeout=remaining) as response:
                 if response.status_code == 401:
                     return ProviderObservation(self._name, ProviderStatus.AUTHENTICATION, references)
                 if response.status_code == 403:
@@ -66,7 +70,7 @@ class HardcoverMetadataProvider:
                     return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
                 if response.headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}:
                     return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
-                payload = _body(response, self._maximum_bytes)
+                payload = _body(response, self._maximum_bytes, deadline=deadline)
         except _ResponseOversized:
             return ProviderObservation(self._name, ProviderStatus.OVERSIZED, references)
         except (httpx.HTTPError, OSError, ValueError):
@@ -81,10 +85,12 @@ class HardcoverMetadataProvider:
         return ProviderObservation(self._name, ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH, references, candidates)
 
 
-def _body(response: httpx.Response, maximum: int) -> bytes:
+def _body(response: httpx.Response, maximum: int, *, deadline: float | None = None) -> bytes:
     chunks: list[bytes] = []
     size = 0
     for chunk in response.iter_bytes():
+        if deadline is not None and time.monotonic() >= deadline:
+            raise httpx.ReadTimeout("provider deadline elapsed")
         size += len(chunk)
         if size > maximum:
             raise _ResponseOversized
