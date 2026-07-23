@@ -41,11 +41,11 @@ _CURRENT_SQL = (
 _COVER_REFERENCES_SQL = (
     "CREATE TABLE metadata_report_cover_references ("
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
-    "source_id TEXT NOT NULL, artifact_id TEXT, preview_digest TEXT, "
+    "source_id TEXT NOT NULL, artifact_id TEXT, preview_digest TEXT, preview_variant TEXT, "
     "PRIMARY KEY (report_id, source_id), "
-    "CHECK ((artifact_id IS NULL AND preview_digest IS NULL) OR "
+    "CHECK ((artifact_id IS NULL AND preview_digest IS NULL AND preview_variant IS NULL) OR "
     "(length(artifact_id) = 70 AND artifact_id GLOB 'cover_[0-9a-f]*' "
-    "AND length(preview_digest) = 64 AND preview_digest NOT GLOB '*[^0-9a-f]*')))"
+    "AND length(preview_digest) = 64 AND preview_digest NOT GLOB '*[^0-9a-f]*' AND preview_variant = 'preview-320x480-rgba-png-v1')))"
 )
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
@@ -441,23 +441,24 @@ class SQLiteMetadataReportRepository:
                 )
                 for source in report.cover_sources:
                     self._connection.execute(
-                        "INSERT INTO metadata_report_cover_references(report_id,source_id,artifact_id,preview_digest) VALUES(?,?,?,?)",
+                    "INSERT INTO metadata_report_cover_references(report_id,source_id,artifact_id,preview_digest,preview_variant) VALUES(?,?,?,?,?)",
                         (
                             report.report_id,
                             source.source_id,
                             None if source.artifact is None else source.artifact.artifact_id,
                             None if source.artifact is None else source.artifact.preview_digest,
+                            None if source.artifact is None else source.artifact.preview_variant,
                         ),
                     )
             else:
                 if existing != values[1:]:
                     raise MetadataReportError("persisted report identity conflicts")
                 expected_references = tuple(
-                    (source.source_id, None if source.artifact is None else source.artifact.artifact_id, None if source.artifact is None else source.artifact.preview_digest)
+                    (source.source_id, None if source.artifact is None else source.artifact.artifact_id, None if source.artifact is None else source.artifact.preview_digest, None if source.artifact is None else source.artifact.preview_variant)
                     for source in report.cover_sources
                 )
                 actual_references = tuple(self._connection.execute(
-                    "SELECT source_id,artifact_id,preview_digest FROM metadata_report_cover_references WHERE report_id=? ORDER BY source_id",
+                    "SELECT source_id,artifact_id,preview_digest,preview_variant FROM metadata_report_cover_references WHERE report_id=? ORDER BY source_id",
                     (report.report_id,),
                 ))
                 if tuple(sorted(expected_references)) != actual_references:

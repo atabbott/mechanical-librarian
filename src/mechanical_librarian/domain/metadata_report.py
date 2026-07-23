@@ -781,7 +781,7 @@ def _cover_source_from_data(value: object) -> CoverSource:
     item = _object(value, {"artifact", "kind", "source_id", "state", "timeout_scope"})
     artifact = None
     if item["artifact"] is not None:
-        artifact = CoverArtifact(**_object(item["artifact"], {"artifact_id", "height", "media_type", "original_digest", "preview_digest", "width"}))
+        artifact = CoverArtifact(**_object(item["artifact"], {"artifact_id", "height", "media_type", "original_digest", "preview_digest", "preview_variant", "width"}))
     return CoverSource(item["source_id"], CoverSourceKind(item["kind"]), CoverSourceState(item["state"]), artifact, item["timeout_scope"])
 
 

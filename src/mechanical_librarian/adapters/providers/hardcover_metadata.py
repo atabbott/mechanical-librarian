@@ -70,7 +70,8 @@ class HardcoverMetadataProvider:
         except (httpx.HTTPError, OSError, ValueError):
             return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
         try:
-            candidates, self.cover_descriptors = _parse_candidates(payload, self._name, local_claims)
+            candidates = _parse_candidates(payload, self._name, local_claims)
+            self.cover_descriptors = _parse_cover_descriptors(payload)
         except _CandidateLimit:
             return ProviderObservation(self._name, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, references)
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
@@ -91,7 +92,7 @@ def _body(response: httpx.Response, maximum: int) -> bytes:
     return b"".join(chunks)
 
 
-def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalClaim, ...]) -> tuple[tuple[ProviderCandidate, ...], tuple[tuple[str, str], ...]]:
+def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalClaim, ...]) -> tuple[ProviderCandidate, ...]:
     source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
     root = _closed(source, {"data"})
     data = _closed(root["data"], {"editions", "books"})
@@ -117,6 +118,14 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
         candidates.append(ProviderCandidate(identity, tuple(claims)))
     if used != set(indexed) or len({candidate.identity for candidate in candidates}) != len(candidates):
         raise ValueError("provider join invalid")
+    return tuple(sorted(candidates, key=lambda candidate: candidate.identity))
+
+
+def _parse_cover_descriptors(payload: bytes) -> tuple[tuple[str, str], ...]:
+    source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
+    rows = _closed(_closed(source, {"data"})["data"], {"editions", "books"})["editions"]
+    if type(rows) is not list or len(rows) > MAX_CANDIDATES:
+        raise ValueError("provider rows invalid")
     descriptors: list[tuple[str, str]] = []
     for row_value in rows:
         if type(row_value) is dict and "image" not in row_value:
@@ -128,7 +137,7 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
         if image is not None:
             source_identity = f"{row['id']}:{image['url']}"
             descriptors.append(("hardcover_" + hashlib.sha256(source_identity.encode()).hexdigest(), image["url"]))
-    return tuple(sorted(candidates, key=lambda candidate: candidate.identity)), tuple(descriptors)
+    return tuple(descriptors)
 
 
 def _edition_claims(provider: str, identity: str, row: dict[str, Any], local: tuple[LocalClaim, ...]) -> list[ProviderClaim]:

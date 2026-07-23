@@ -15,6 +15,7 @@ from enum import StrEnum
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_ID = re.compile(r"^cover_[0-9a-f]{64}$")
 _SOURCE_ID = re.compile(r"^(?:abs|epub|hardcover)_[0-9a-f]{64}$")
+PREVIEW_VARIANT = "preview-320x480-rgba-png-v1"
 
 
 class CoverEvidenceError(ValueError):
@@ -50,6 +51,7 @@ class CoverArtifact:
     artifact_id: str
     original_digest: str
     preview_digest: str
+    preview_variant: str
     media_type: str
     width: int
     height: int
@@ -59,6 +61,7 @@ class CoverArtifact:
             _ARTIFACT_ID.fullmatch(self.artifact_id) is None
             or _DIGEST.fullmatch(self.original_digest) is None
             or _DIGEST.fullmatch(self.preview_digest) is None
+            or self.preview_variant != PREVIEW_VARIANT
             or self.media_type not in {"image/jpeg", "image/png", "image/webp"}
             or type(self.width) is not int
             or type(self.height) is not int
@@ -67,9 +70,7 @@ class CoverArtifact:
             or self.width * self.height > 16_777_216
         ):
             raise CoverEvidenceError("cover artifact is invalid")
-        expected = "cover_" + hashlib.sha256(
-            f"{self.original_digest}:{self.preview_digest}".encode("ascii")
-        ).hexdigest()
+        expected = "cover_" + self.original_digest
         if self.artifact_id != expected:
             raise CoverEvidenceError("cover artifact identity is inconsistent")
 
@@ -82,11 +83,7 @@ class CoverArtifact:
         original_digest = hashlib.sha256(original).hexdigest()
         preview_digest = hashlib.sha256(preview).hexdigest()
         return cls(
-            "cover_" + hashlib.sha256(
-                f"{original_digest}:{preview_digest}".encode("ascii")
-            ).hexdigest(),
-            original_digest,
-            preview_digest,
+            "cover_" + original_digest, original_digest, preview_digest, PREVIEW_VARIANT,
             media_type,
             width,
             height,
@@ -98,6 +95,7 @@ class CoverArtifact:
             "media_type": self.media_type,
             "original_digest": self.original_digest,
             "preview_digest": self.preview_digest,
+            "preview_variant": self.preview_variant,
             "height": self.height,
             "width": self.width,
         }
@@ -152,5 +150,5 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
 
 __all__ = [
     "CoverArtifact", "CoverEvidenceError", "CoverSource", "CoverSourceKind",
-    "CoverSourceState", "cover_source_id", "publication_ready",
+    "CoverSourceState", "PREVIEW_VARIANT", "cover_source_id", "publication_ready",
 ]
