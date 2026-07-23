@@ -183,8 +183,8 @@ class EpubOpeningTests(unittest.TestCase):
             {claim.field for claim in report.claims},
             {
                 OpeningField.TITLE,
-                OpeningField.CONTRIBUTOR,
-                OpeningField.CONTRIBUTOR_ROLE,
+                OpeningField.CREATOR,
+                OpeningField.CREATOR_ROLE,
                 OpeningField.EDITION,
                 OpeningField.IMPRINT,
                 OpeningField.IDENTIFIER,
@@ -637,12 +637,15 @@ class EpubOpeningTests(unittest.TestCase):
 
     def test_every_controlled_claim_family_and_contributor_role_is_recognized(self) -> None:
         report = _extract(opening_claim_families())
-        self.assertEqual({claim.field for claim in report.claims}, set(OpeningField) - {OpeningField.CREATOR})
+        self.assertEqual(
+            {claim.field for claim in report.claims},
+            set(OpeningField),
+        )
         self.assertEqual(
             {
                 claim.normalized_value
                 for claim in report.claims
-                if claim.field is OpeningField.CONTRIBUTOR_ROLE
+                if claim.field in {OpeningField.CONTRIBUTOR_ROLE, OpeningField.CREATOR_ROLE}
             },
             {"author", "editor", "translator", "illustrator"},
         )
@@ -688,6 +691,22 @@ class EpubOpeningTests(unittest.TestCase):
             [claim.normalized_value for claim in roles.claims if claim.field is OpeningField.CREATOR],
             ["Chris Creator"],
         )
+
+    def test_byline_is_a_creator_with_author_role_and_source_values_are_redacted(self) -> None:
+        report = _extract(self._single(_xhtml('<p epub:type="creator">By Ada Example</p><p epub:type="contributor">Bea Editor</p>')))
+        creators = [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
+        contributors = [claim for claim in report.claims if claim.field is OpeningField.CONTRIBUTOR]
+        self.assertEqual([(claim.normalized_value, claim.raw_value) for claim in creators], [("Ada Example", "Ada Example")])
+        self.assertEqual([claim.normalized_value for claim in contributors], ["Bea Editor"])
+        self.assertEqual(
+            [claim.normalized_value for claim in report.claims if claim.field is OpeningField.CREATOR_ROLE],
+            ["author"],
+        )
+        oversized = _extract(self._single(_xhtml('<p epub:type="creator">' + "A" * 281 + "</p>")))
+        claim = next(claim for claim in oversized.claims if claim.field is OpeningField.CREATOR)
+        self.assertEqual(claim.state, "oversized")
+        self.assertRegex(claim.raw_value, r"^oversized-source-text-sha256:[0-9a-f]{64}$")
+        self.assertEqual(claim.raw_value, claim.citation.exact_excerpt)
 
     def test_strict_recovery_and_active_content_are_inert_and_visible(self) -> None:
         strict = _extract(opening_strict_xhtml())

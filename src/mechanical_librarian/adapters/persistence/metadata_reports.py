@@ -808,19 +808,6 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     expected_objects = sorted((("index", "sqlite_autoindex_current_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_1", None), ("index", "sqlite_autoindex_metadata_reports_2", None), ("table", "current_metadata_reports", _CURRENT_SQL), ("table", "metadata_reports", _REPORTS_SQL), ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL), ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL)))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
-    rows = connection.execute("SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports").fetchall()
-    reports: dict[str, str] = {}
-    for row in rows:
-        document = _validate_report_row(row)
-        reports[row[0]] = document
-    pointers = connection.execute("SELECT connection_name,library_name,item_id,file_identity,report_id FROM current_metadata_reports").fetchall()
-    for connection_name, library_name, item_id, file_identity, report_id in pointers:
-        document = reports.get(report_id)
-        if document is None:
-            raise MetadataReportError("persisted current report is invalid")
-        report = MetadataReport.from_json(document)
-        if (report.target.connection, report.target.library, report.target.item, report.file.identity) != (connection_name, library_name, item_id, file_identity):
-            raise MetadataReportError("persisted current report scope disagrees")
 
 
 def _validate_report_row(row: tuple[object, ...]) -> str:

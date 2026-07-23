@@ -289,14 +289,18 @@ class EpubInspection:
             OpeningField.IMPRINT: EpubInspectionField.PUBLISHER,
         }
         contributor_index: int | None = None
+        creator_index: int | None = None
         for claim in report.claims:
-            if claim.field is OpeningField.TITLE and claim.normalized_value is not None and claim.applicability not in {EpubObservationApplicability.INAPPLICABLE, EpubObservationApplicability.UNKNOWN}:
-                facts.append(EpubInspectionFact(EpubInspectionField.TITLE, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter"))
-            elif claim.field in fields and claim.normalized_value is not None:
-                facts.append(EpubInspectionFact(fields[claim.field], source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter"))
+            if claim.field is OpeningField.TITLE and (claim.normalized_value is not None or claim.state != "valid") and claim.applicability not in {EpubObservationApplicability.INAPPLICABLE, EpubObservationApplicability.UNKNOWN}:
+                facts.append(EpubInspectionFact(EpubInspectionField.TITLE, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter", state=claim.state))
+            elif claim.field in fields and (claim.normalized_value is not None or claim.state != "valid"):
+                facts.append(EpubInspectionFact(fields[claim.field], source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, "not_applicable", "not_applicable", "not_applicable", "opening_matter", state=claim.state))
                 contributor_index = len(facts) - 1 if claim.field is OpeningField.CONTRIBUTOR else contributor_index
+                creator_index = len(facts) - 1 if claim.field is OpeningField.CREATOR else creator_index
             elif claim.field is OpeningField.CONTRIBUTOR_ROLE and contributor_index is not None:
                 facts[contributor_index] = replace(facts[contributor_index], role=claim.normalized_value or claim.raw_value)
+            elif claim.field is OpeningField.CREATOR_ROLE and creator_index is not None:
+                facts[creator_index] = replace(facts[creator_index], role=claim.normalized_value or claim.raw_value)
             elif claim.field is OpeningField.IDENTIFIER and claim.identifier_type in {"isbn_10", "isbn_13"}:
                 checksum = claim.identifier_type if claim.identifier_type in {"isbn_10", "isbn_13"} and claim.normalized_value is not None else "invalid"
                 classification_basis = claim.applicability_label or "unlabelled"

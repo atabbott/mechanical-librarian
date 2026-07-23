@@ -27,7 +27,7 @@ from mechanical_librarian.domain.epub_opening import (
     OpeningResourceDisposition,
     OpeningResourceResult,
 )
-from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
+from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageDeclarationKind,
     EpubPackageCapability,
@@ -1775,11 +1775,19 @@ def _isbn_valid(value: str) -> bool:
 
 
 def _claim(field: OpeningField, value: str, applicability: EpubObservationApplicability, element: _Element, projection: _Projection, source, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int, *, normalized: str | None = None, identifier_type: str | None = None, applicability_label: str | None = None, citation_context: tuple[_Element, int, int] | None = None) -> OpeningClaim | None:
-    raw = _SPACE.sub(" ", value).strip()[:excerpt_characters]
+    original = _SPACE.sub(" ", value).strip()
+    if not original:
+        return None
+    try:
+        validate_projection_text(original, "opening source value", 280)
+        state = "valid"
+    except EvidenceValueError:
+        state = "oversized" if len(original) > excerpt_characters else "unsupported"
+    raw = original[:excerpt_characters] if state == "valid" else f"{state}-source-text-sha256:" + hashlib.sha256(original.encode("utf-8")).hexdigest()
     if not raw:
         return None
     start = element.start
-    if raw != element.exact_text:
+    if state == "valid" and raw != element.exact_text:
         relative = element.exact_text.find(raw)
         if relative >= 0:
             start += relative
@@ -1809,10 +1817,15 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
     citation_excerpt = citation_excerpt.strip()
     citation_start += leading
     citation_end = citation_start + len(citation_excerpt)
-    if not citation_excerpt or raw not in citation_excerpt:
+    if not citation_excerpt or (state == "valid" and raw not in citation_excerpt):
         return None
+    if state != "valid":
+        citation_excerpt = raw
+        citation_end = citation_start + len(citation_excerpt)
     normalized_value = (
         None
+        if state != "valid"
+        else None
         if field is OpeningField.IDENTIFIER
         and identifier_type in {"isbn_10", "isbn_13"}
         and normalized is None
@@ -1839,6 +1852,7 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
             citation,
             identifier_type,
             applicability_label,
+            state,
         )
     except EvidenceValueError:
         return None
@@ -2140,8 +2154,8 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             add(OpeningField.IMPRINT, text, EpubObservationApplicability.EDITION)
         if lowered.startswith(("by ", "author: ", "written by ")):
             value = re.sub(r"^(?:by|author:|written by)\s+", "", text, flags=re.I)
-            add(OpeningField.CONTRIBUTOR, value, EpubObservationApplicability.WORK)
-            add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "author")
+            add(OpeningField.CREATOR, value, EpubObservationApplicability.WORK)
+            add(OpeningField.CREATOR_ROLE, text, EpubObservationApplicability.WORK, "author")
         elif lowered.startswith("edited by "):
             add(OpeningField.CONTRIBUTOR, text[10:], EpubObservationApplicability.WORK)
             add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "editor")
@@ -2165,7 +2179,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             add(OpeningField.CONTRIBUTOR, value, EpubObservationApplicability.WORK)
             add(OpeningField.CONTRIBUTOR_ROLE, text, EpubObservationApplicability.WORK, "other")
         explicit_semantics = _tokens(element.attributes)
-        if "creator" in explicit_semantics:
+        if "creator" in explicit_semantics and not lowered.startswith(("by ", "author: ", "written by ")):
             add(OpeningField.CREATOR, text, EpubObservationApplicability.WORK)
         elif "contributor" in explicit_semantics:
             add(OpeningField.CONTRIBUTOR, text, EpubObservationApplicability.WORK)

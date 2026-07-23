@@ -139,8 +139,12 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             projection = opening._parse(data, declaration.media_type, limits, request)
             text += projection.work_text_characters; nodes += projection.work_nodes
             if text > limits.text_characters_per_selection or nodes > limits.nodes_per_selection: raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT)
-        except opening._AggregateRejected: raise
-        except (opening._ResourceRejected, opening._MalformedMarkup, opening._UnsafeConstruct, opening._UnsupportedEncoding, ValueError): continue
+        except opening._AggregateRejected:
+            raise
+        except opening._ResourceRejected:
+            raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT) from None
+        except (opening._MalformedMarkup, opening._UnsafeConstruct, opening._UnsupportedEncoding, ValueError):
+            raise opening._AggregateRejected(report.outcome.MALFORMED) from None
         marker = _MARKER.search(projection.text)
         if marker is None: continue
         provenance = EpubRearProvenance(identity, spine_item.spine_position or tail_slot, tail_slot, marker.group(0).lower(), marker.group(0))
@@ -159,8 +163,8 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             if is_ancestor and not admitted_cue: continue
             if element.semantics & {"title", "fulltitle"}: field, canonical = EpubInspectionField.TITLE, normalize_title(value)
             elif element.semantics & {"contributor"}: field, canonical = EpubInspectionField.CONTRIBUTOR, value
-            elif element.semantics & {"creator"}: field, canonical = EpubInspectionField.CREATOR, value
-            elif byline is not None and len(byline.group(1)) <= 280: field, canonical = EpubInspectionField.CREATOR, byline.group(1)
+            elif element.semantics & {"creator"}: field, canonical, role = EpubInspectionField.CREATOR, value, "author"
+            elif byline is not None and len(byline.group(1)) <= 280: field, canonical, role = EpubInspectionField.CREATOR, byline.group(1), "author"
             if field is not None: facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
             for match in () if is_ancestor else opening._ISBN.finditer(value):
                 if resource_isbns >= 4: break
