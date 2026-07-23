@@ -13,7 +13,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
 from mechanical_librarian.domain.epub_inspection import (
     EpubInspectionFact, EpubInspectionField, EpubPackageLimits, EpubRearProvenance,
 )
-from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text
+from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.identifiers import Fingerprint
 from mechanical_librarian.domain.metadata_report import normalize_title
@@ -40,6 +40,21 @@ def _bounded(value: str) -> tuple[str, str | None]:
     if len(value) <= 280:
         return value, None
     return "oversized-source-text-sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest(), "oversized"
+
+
+def _project_role(value: str | None) -> str | None:
+    """Project package role text without allowing arbitrary source text through."""
+
+    if value is None:
+        return None
+    if _SENTINEL.fullmatch(value):
+        return value
+    if len(value) > 64:
+        return "oversized-source-text-sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+    try:
+        return validate_role_projection(value)
+    except EvidenceValueError:
+        return "unsafe-source-text-sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubInspectionFact, ...]:
@@ -79,7 +94,7 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         if canonical is not None and field in {EpubInspectionField.TITLE, EpubInspectionField.SUBTITLE}:
             canonical = normalize_title(observed)
         state = forced_state or ("untyped" if field is EpubInspectionField.SUBJECT else "malformed" if canonical is None else "inapplicable" if observation.applicability.value == "inapplicable" else "valid")
-        facts.append(EpubInspectionFact(field, source, observed, canonical, observed, "not_applicable", "not_applicable", "not_applicable", "package_metadata", state=state, role=roles.get(observation.citation.source_ordinal)))
+        facts.append(EpubInspectionFact(field, source, observed, canonical, observed, "not_applicable", "not_applicable", "not_applicable", "package_metadata", state=state, role=_project_role(roles.get(observation.citation.source_ordinal))))
     return tuple(facts)
 
 
@@ -93,7 +108,7 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
     spine = [d for d in report.declarations if d.kind is EpubPackageDeclarationKind.SPINE_SLOT and d.linear]
     encrypted = {d.resource_identity for d in report.declarations if d.kind is EpubPackageDeclarationKind.ENCRYPTION and d.resource_identity}
     opened = {r.resource_identity for r in opening_report.resources if r.opened}
-    rear_capacity = min(4, max(0, 9 - len(opened)))
+    rear_capacity = min(4, max(0, 9 - opening_report.usage.opened_resources))
     seen: set[str] = set()
     limits = EpubOpeningLimits(package=request.limits, selected_documents=4, expanded_bytes_per_resource=1_048_576, expanded_bytes_per_selection=4_194_304, text_characters_per_selection=262_144, nodes_per_resource=50_000, nodes_per_selection=50_000, facts=16)
     names = {epub_resource_identity(info.filename): info.filename for info in archive.infolist() if not info.is_dir()}

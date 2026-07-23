@@ -242,6 +242,38 @@ class MetadataReportTests(unittest.TestCase):
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(data))
 
+        for role in (
+            "unsafe-source-text-sha256:" + "a" * 64,
+            "oversized-source-text-sha256:" + "a" * 64,
+        ):
+            claim = LocalClaim.create(
+                kind=ClaimKind.CREATOR, observed="Ada Example", canonical="Ada Example",
+                excerpt="Ada Example", applicability="not_applicable", basis="package_metadata",
+                checksum="not_applicable", applicability_basis="not_applicable", role=role,
+            )
+            self.assertEqual(claim.role, role)
+        for role in ("unsafe-source-text-sha256:" + "A" * 64, "oversized-source-text-sha256:short", "x" * 65):
+            with self.subTest(role=role), self.assertRaises(ReportValueError):
+                LocalClaim.create(
+                    kind=ClaimKind.CREATOR, observed="Ada Example", canonical="Ada Example",
+                    excerpt="Ada Example", applicability="not_applicable", basis="package_metadata",
+                    checksum="not_applicable", applicability_basis="not_applicable", role=role,
+                )
+        replay = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(
+                LocalClaim.create(
+                    kind=ClaimKind.CREATOR, observed="Ada Example", canonical="Ada Example",
+                    excerpt="Ada Example", applicability="not_applicable", basis="package_metadata",
+                    checksum="not_applicable", applicability_basis="not_applicable", role="author",
+                ),
+            ), local_reasons=("package_metadata_creator",), providers=(),
+        )
+        replay_data = replay.to_data()
+        replay_data["local"]["claims"][0]["role"] = "unsafe-source-text-sha256:" + "A" * 64
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(replay_data))
+
     def test_provider_claim_and_local_role_rear_provenance_are_closed(self) -> None:
         reference = "provider_" + "a" * 64
         self.assertEqual(ProviderClaim(reference, ClaimKind.TITLE, "A title", Comparison.AGREEMENT, ()).kind, ClaimKind.TITLE)

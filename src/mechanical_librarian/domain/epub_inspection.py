@@ -14,7 +14,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Callable, ClassVar, Mapping
 
-from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
+from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_role_projection
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 
 if TYPE_CHECKING:
@@ -222,7 +222,7 @@ class EpubInspectionFact:
             or self.basis not in _BASES
             or type(self.outcome) is not EpubInspectionOutcome
             or self.state not in _FIELD_STATES
-            or (self.role is not None and (type(self.role) is not str or not self.role or len(self.role) > 64))
+            or (self.role is not None and not _valid_role(self.role))
             or (self.rear_provenance is not None and type(self.rear_provenance) is not EpubRearProvenance)
         ):
             raise ValueError("EPUB inspection fact is malformed")
@@ -238,6 +238,14 @@ class EpubInspectionFact:
 
     def __repr__(self) -> str:
         return "EpubInspectionFact(<redacted>)"
+
+
+def _valid_role(value: object) -> bool:
+    try:
+        validate_role_projection(value)
+    except EvidenceValueError:
+        return False
+    return True
 
 
 @dataclass(frozen=True, repr=False)

@@ -13,6 +13,7 @@ from typing import Any, Mapping, Self
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
+    validate_role_projection,
 )
 
 
@@ -235,7 +236,10 @@ class LocalClaim:
         if self.role is not None:
             if self.kind not in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}:
                 raise ReportValueError("local claim role is invalid")
-            _projection_text(self.role, "contributor role", 64)
+            try:
+                validate_role_projection(self.role)
+            except EvidenceValueError as error:
+                raise ReportValueError("local claim role is invalid") from error
         if self.rear_provenance is not None and type(self.rear_provenance) is not RearClaimProvenance:
             raise ReportValueError("rear claim provenance is invalid")
         if self.rear_provenance is not None and (self.basis != "opening_matter" or self.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR, ClaimKind.ISBN}):
