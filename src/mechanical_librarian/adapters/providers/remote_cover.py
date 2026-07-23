@@ -52,7 +52,10 @@ def fetch_remote_cover(url: str, *, deadline: float | None = None, client: httpx
             if deadline is not None and time.monotonic() >= deadline:
                 raise RemoteCoverTimeout("aggregate deadline elapsed")
             host, _ = _public_https(current)
-            timeout = httpx.Timeout(5.0, connect=5.0, read=5.0, write=5.0, pool=5.0)
+            remaining = 5.0 if deadline is None else deadline - time.monotonic()
+            if remaining <= 0:
+                raise RemoteCoverTimeout("aggregate deadline elapsed")
+            timeout = httpx.Timeout(remaining, connect=remaining, read=remaining, write=remaining, pool=remaining)
             with active.stream("GET", current, headers={"Host": host, "Accept-Encoding": "identity"}, timeout=timeout) as response:
                 if response.status_code in {301, 302, 303, 307, 308}:
                     location = response.headers.get("location")

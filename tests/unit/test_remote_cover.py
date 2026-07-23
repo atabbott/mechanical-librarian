@@ -1,9 +1,11 @@
 import unittest
+import time
 from unittest.mock import patch
 
 import httpx
 
 from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverError, _public_https, fetch_remote_cover
+from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverTimeout
 
 
 class RemoteCoverTests(unittest.TestCase):
@@ -51,3 +53,9 @@ class RemoteCoverTests(unittest.TestCase):
                 fetch_remote_cover("https://example.com/cover.png", client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "image/png", "content-encoding": "gzip"}, content=b"x"))))
             with self.assertRaises(RemoteCoverError):
                 fetch_remote_cover("https://example.com/cover.png", client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(302, headers={"location": "/again"}))))
+
+    def test_elapsed_aggregate_deadline_permits_no_dns_or_request(self) -> None:
+        with patch("socket.getaddrinfo") as lookup:
+            with self.assertRaises(RemoteCoverTimeout):
+                fetch_remote_cover("https://example.com/cover.png", deadline=time.monotonic() - 1)
+        lookup.assert_not_called()
