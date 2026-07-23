@@ -39,8 +39,12 @@ rollback-journal `DELETE` mode. It recognizes neither WAL/recovery sidecars nor
 prior schemas, and has no migration ledger, workflow, audit, job, attempt,
 cache, normalized claim table, or deletion surface.
 
-On supported Linux deployments, the repository holds an exclusive lock on the
-owner-only database parent directory and opens SQLite through an unpredictable
-verified hard-link alias to the already-opened database inode. SQLite journal
-artifacts are therefore private-alias scoped. The configured path must continue
-to name that inode and remain free of recovery sidecars at publication.
+On supported Linux deployments, the repository retains a no-follow,
+identity-checked directory chain from the filesystem root, holds an exclusive
+lock on the owner-only database parent, and opens SQLite through an
+unpredictable verified hard-link alias to the already-opened database inode.
+SQLite journal artifacts are therefore private-alias scoped. Before writes and
+at the final pre-commit boundary, the runtime rewalks the current absolute
+chain and requires the configured path to name that inode without recovery
+sidecars. Protected ancestor permissions and a dedicated process identity make
+that check stable against other unprivileged identities.

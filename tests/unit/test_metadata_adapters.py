@@ -377,6 +377,73 @@ class MetadataPersistenceTests(unittest.TestCase):
             )
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_linux_parent_replacement_at_final_precommit_check_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            outer = Path(directory) / "outer"
+            outer.mkdir(mode=0o700)
+            live = outer / "live"
+            live.mkdir(mode=0o700)
+            path = live / "reports.sqlite"
+            repository = open_repository(path)
+            original_bytes = path.read_bytes()
+            displaced = outer / "displaced"
+            replacement_bytes = b"replacement-database"
+            binding = repository._binding
+            self.assertIsNotNone(binding)
+            require_current = binding.require_current
+            calls = 0
+
+            def replace_parent_at_final_check() -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    live.rename(displaced)
+                    live.mkdir(mode=0o700)
+                    path.write_bytes(replacement_bytes)
+                require_current()
+
+            with patch.object(
+                binding,
+                "require_current",
+                side_effect=replace_parent_at_final_check,
+            ), self.assertRaises(MetadataReportError):
+                repository.publish(_report(), lambda: True)
+            self.assertEqual(calls, 2)
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM metadata_reports"
+                ).fetchone(),
+                (0,),
+            )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM current_metadata_reports"
+                ).fetchone(),
+                (0,),
+            )
+            self.assertEqual(
+                (displaced / "reports.sqlite").read_bytes(),
+                original_bytes,
+            )
+            self.assertEqual(path.read_bytes(), replacement_bytes)
+            repository.close()
+            self.assertEqual(
+                tuple(value.name for value in displaced.iterdir()),
+                ("reports.sqlite",),
+            )
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
+            self.assertEqual(path.read_bytes(), replacement_bytes)
+
+            path.unlink()
+            live.rmdir()
+            displaced.rename(live)
+            reopened = open_repository(path)
+            with self.assertRaises(MetadataReportError):
+                reopened.get(_report().report_id)
+            reopened.close()
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
     def test_linux_database_parent_must_be_owner_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory) / "shared"
@@ -390,6 +457,26 @@ class MetadataPersistenceTests(unittest.TestCase):
             repository = open_repository(path)
             repository.close()
             self.assertEqual(tuple(value.name for value in parent.iterdir()), ("reports.sqlite",))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux descriptor proof")
+    def test_linux_database_ancestor_must_exclude_other_users(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            shared = Path(directory) / "shared"
+            shared.mkdir(mode=0o700)
+            parent = shared / "private"
+            parent.mkdir(mode=0o700)
+            shared.chmod(0o777)
+            path = parent / "reports.sqlite"
+            with self.assertRaises(MetadataReportError):
+                open_repository(path)
+            self.assertFalse(path.exists())
+            shared.chmod(0o700)
+            repository = open_repository(path)
+            repository.close()
+            self.assertEqual(
+                tuple(value.name for value in parent.iterdir()),
+                ("reports.sqlite",),
+            )
 
     def test_current_pointer_scope_must_agree_with_decoded_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -28,10 +28,25 @@ state.
 Use SQLite rollback-journal `DELETE` mode for this sole baseline. WAL,
 migration-ledger, forward-migration, compatibility, recovery, and repair
 machinery are outside the accepted contract. On supported Linux deployments,
-hold an exclusive owner-directory binding for the repository lifetime and open
-SQLite only through a verified private hard-link alias to the already-opened
-database inode. Configured-name recovery sidecars are rejected; the private
-alias confines SQLite-created journal artifacts to the owned binding.
+open and retain a no-follow directory chain from the filesystem root to the
+owner-only database parent. Every entry is protected by root/process ownership
+and non-writable permissions, or by sticky-directory ownership. Hold an
+exclusive owner-directory binding for the repository lifetime and open SQLite
+only through a verified private hard-link alias to the already-opened database
+inode. Before transaction writes and again at the final pre-commit boundary,
+rewalk the absolute chain from the current root and require every directory,
+the configured database name, and configured-name sidecar absence to match.
+The private alias confines SQLite-created journal artifacts to the owned
+binding.
+
+The directory lock coordinates supported repository instances; it is not a
+security boundary. Linux discretionary access control supplies the exclusion
+invariant against other unprivileged user identities. Production therefore
+runs under a dedicated identity with no untrusted same-identity processes.
+Linux has no unprivileged primitive that atomically couples an arbitrary
+absolute-path rename exclusion to SQLite commit. A detectable same-identity
+parent move at either publication boundary fails and rolls back, but hostile
+same-identity or privileged mutation is outside the supported guarantee.
 
 ## Replacement scope
 

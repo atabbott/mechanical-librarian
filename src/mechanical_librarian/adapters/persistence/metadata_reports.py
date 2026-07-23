@@ -48,22 +48,169 @@ _NO_DELETE_SQL = (
 )
 
 
+class _LinuxDirectoryChain:
+    def __init__(
+        self,
+        names: tuple[str, ...],
+        descriptors: tuple[int, ...],
+        identities: tuple[tuple[int, int], ...],
+    ) -> None:
+        self.names = names
+        self.descriptors = descriptors
+        self.identities = identities
+        self.closed = False
+
+    @classmethod
+    def open(cls, path: Path) -> "_LinuxDirectoryChain":
+        absolute = path.absolute()
+        if not absolute.is_absolute():
+            raise MetadataReportError("database parent path is invalid")
+        names = tuple(absolute.parts[1:])
+        if any(name in ("", ".", "..") for name in names):
+            raise MetadataReportError("database parent path is invalid")
+        descriptors: list[int] = []
+        identities: list[tuple[int, int]] = []
+        try:
+            descriptor = os.open(
+                "/",
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+            descriptors.append(descriptor)
+            information = os.fstat(descriptor)
+            identities.append((information.st_dev, information.st_ino))
+            for name in names:
+                descriptor = os.open(
+                    name,
+                    os.O_RDONLY
+                    | os.O_DIRECTORY
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    dir_fd=descriptors[-1],
+                )
+                descriptors.append(descriptor)
+                information = os.fstat(descriptor)
+                if not stat.S_ISDIR(information.st_mode):
+                    raise MetadataReportError(
+                        "database parent path is invalid"
+                    )
+                _require_protected_directory_entry(
+                    os.fstat(descriptors[-2]), information
+                )
+                identities.append((information.st_dev, information.st_ino))
+            return cls(names, tuple(descriptors), tuple(identities))
+        except MetadataReportError:
+            raise
+        except (OSError, ValueError) as error:
+            raise MetadataReportError(
+                "database parent path is unavailable"
+            ) from error
+        finally:
+            if len(identities) != len(descriptors):
+                for descriptor in reversed(descriptors):
+                    try:
+                        os.close(descriptor)
+                    except OSError:
+                        pass
+
+    @property
+    def parent_descriptor(self) -> int:
+        return self.descriptors[-1]
+
+    def open_current_parent(self) -> int:
+        if self.closed:
+            raise MetadataReportError(
+                "database parent path is unavailable"
+            )
+        current = -1
+        try:
+            current = os.open(
+                "/",
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+            root = os.fstat(current)
+            if (root.st_dev, root.st_ino) != self.identities[0]:
+                raise MetadataReportError("database parent path changed")
+            for index, name in enumerate(self.names):
+                descriptor = -1
+                try:
+                    descriptor = os.open(
+                        name,
+                        os.O_RDONLY
+                        | os.O_DIRECTORY
+                        | getattr(os, "O_CLOEXEC", 0)
+                        | getattr(os, "O_NOFOLLOW", 0),
+                        dir_fd=current,
+                    )
+                    information = os.fstat(descriptor)
+                    if (
+                        not stat.S_ISDIR(information.st_mode)
+                        or (information.st_dev, information.st_ino)
+                        != self.identities[index + 1]
+                    ):
+                        raise MetadataReportError(
+                            "database parent path changed"
+                        )
+                    _require_protected_directory_entry(
+                        os.fstat(current), information
+                    )
+                    os.close(current)
+                    current = descriptor
+                    descriptor = -1
+                finally:
+                    if descriptor >= 0:
+                        os.close(descriptor)
+            result = current
+            current = -1
+            return result
+        except MetadataReportError:
+            raise
+        except OSError as error:
+            raise MetadataReportError(
+                "database parent path changed"
+            ) from error
+        finally:
+            if current >= 0:
+                os.close(current)
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        failure: OSError | None = None
+        for descriptor in reversed(self.descriptors):
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                failure = failure or error
+        if failure is not None:
+            raise MetadataReportError(
+                "database parent binding cleanup failed"
+            ) from failure
+
+
 class _LinuxDatabaseBinding:
     def __init__(
         self,
         configured_name: str,
         descriptor: int,
-        parent_descriptor: int,
+        directory_chain: _LinuxDirectoryChain,
         alias_name: str,
         expected_identity: tuple[int, int],
     ) -> None:
         self.configured_name = configured_name
         self.descriptor = descriptor
-        self.parent_descriptor = parent_descriptor
+        self.directory_chain = directory_chain
+        self.parent_descriptor = directory_chain.parent_descriptor
         self.alias_name = alias_name
         self.expected_identity = expected_identity
         self.alias_path = Path(
-            f"/proc/self/fd/{parent_descriptor}/{alias_name}"
+            f"/proc/self/fd/{self.parent_descriptor}/{alias_name}"
         )
         self.closed = False
 
@@ -74,27 +221,16 @@ class _LinuxDatabaseBinding:
         absolute = path.absolute()
         if not absolute.name:
             raise MetadataReportError("database path is invalid")
-        parent_descriptor = -1
+        directory_chain: _LinuxDirectoryChain | None = None
         alias_name: str | None = None
         locked = False
         succeeded = False
         try:
-            parent_descriptor = os.open(
-                absolute.parent,
-                os.O_RDONLY
-                | os.O_DIRECTORY
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
+            directory_chain = _LinuxDirectoryChain.open(absolute.parent)
+            parent_descriptor = directory_chain.parent_descriptor
+            _require_owner_only_database_parent(
+                os.fstat(parent_descriptor)
             )
-            parent = os.fstat(parent_descriptor)
-            if (
-                not stat.S_ISDIR(parent.st_mode)
-                or parent.st_uid != os.geteuid()
-                or parent.st_mode & 0o077
-            ):
-                raise MetadataReportError(
-                    "database parent directory is not owner-only"
-                )
             fcntl.flock(parent_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             locked = True
             expected = os.fstat(descriptor)
@@ -131,7 +267,7 @@ class _LinuxDatabaseBinding:
             binding = cls(
                 absolute.name,
                 descriptor,
-                parent_descriptor,
+                directory_chain,
                 alias_name,
                 expected_identity,
             )
@@ -144,29 +280,46 @@ class _LinuxDatabaseBinding:
                 "database private binding is unavailable"
             ) from error
         finally:
-            if alias_name is not None and not succeeded:
+            if (
+                alias_name is not None
+                and directory_chain is not None
+                and not succeeded
+            ):
                 try:
-                    os.unlink(alias_name, dir_fd=parent_descriptor)
+                    os.unlink(
+                        alias_name,
+                        dir_fd=directory_chain.parent_descriptor,
+                    )
                 except OSError:
                     pass
             if not succeeded:
-                if locked:
+                if locked and directory_chain is not None:
                     try:
-                        fcntl.flock(parent_descriptor, fcntl.LOCK_UN)
+                        fcntl.flock(
+                            directory_chain.parent_descriptor,
+                            fcntl.LOCK_UN,
+                        )
                     except OSError:
                         pass
-                if parent_descriptor >= 0:
-                    os.close(parent_descriptor)
+                if directory_chain is not None:
+                    directory_chain.close()
 
     def require_current(self) -> None:
-        _require_named_identity(
-            self.parent_descriptor,
-            self.configured_name,
-            self.expected_identity,
-        )
-        _reject_database_sidecars_in_directory(
-            self.parent_descriptor, self.configured_name
-        )
+        current_parent = self.directory_chain.open_current_parent()
+        try:
+            _require_owner_only_database_parent(
+                os.fstat(current_parent)
+            )
+            _require_named_identity(
+                current_parent,
+                self.configured_name,
+                self.expected_identity,
+            )
+            _reject_database_sidecars_in_directory(
+                current_parent, self.configured_name
+            )
+        finally:
+            os.close(current_parent)
 
     def close(self) -> None:
         if self.closed:
@@ -214,9 +367,9 @@ class _LinuxDatabaseBinding:
         except OSError as error:
             failure = failure or error
         try:
-            os.close(self.parent_descriptor)
-        except OSError as error:
-            failure = failure or error
+            self.directory_chain.close()
+        except MetadataReportError as error:
+            failure = failure or OSError(str(error))
         if failure is not None:
             raise MetadataReportError(
                 "database private binding cleanup failed"
@@ -270,6 +423,8 @@ class SQLiteMetadataReportRepository:
                 "ON CONFLICT(connection_name,library_name,item_id,file_identity) DO UPDATE SET report_id=excluded.report_id",
                 (*values[1:5], report.report_id),
             )
+            if self._binding is not None:
+                self._binding.require_current()
             self._connection.commit()
             return self.get(report.report_id)
         except MetadataReportError:
@@ -524,6 +679,37 @@ def _require_named_identity(
         information.st_ino,
     ) != expected_identity:
         raise MetadataReportError("database pathname changed while opening")
+
+
+def _require_protected_directory_entry(
+    parent: os.stat_result, entry: os.stat_result
+) -> None:
+    effective_user = os.geteuid()
+    if parent.st_uid not in (0, effective_user):
+        raise MetadataReportError(
+            "database parent path is not protected"
+        )
+    writable_by_others = parent.st_mode & 0o022
+    sticky = parent.st_mode & stat.S_ISVTX
+    if writable_by_others and (
+        not sticky or entry.st_uid != effective_user
+    ):
+        raise MetadataReportError(
+            "database parent path is not protected"
+        )
+
+
+def _require_owner_only_database_parent(
+    information: os.stat_result,
+) -> None:
+    if (
+        not stat.S_ISDIR(information.st_mode)
+        or information.st_uid != os.geteuid()
+        or information.st_mode & 0o077
+    ):
+        raise MetadataReportError(
+            "database parent directory is not owner-only"
+        )
 
 
 def _validate_delete_mode_header(descriptor: int) -> None:

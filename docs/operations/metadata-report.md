@@ -28,6 +28,12 @@ credentials, target values, provider bodies, or EPUB text.
 - On supported Linux deployments, the database parent directory is owned by
   the process user and grants no group or other permissions. The configured
   database basename has no `-journal`, `-wal`, or `-shm` recovery sidecar.
+- Every absolute parent-path component is a real directory rather than a
+  symbolic link. Its directory entry is protected by root/process ownership
+  and non-writable permissions, or by sticky-directory ownership.
+- The container runs under a dedicated Unix identity with no untrusted
+  same-identity processes. Privileged and hostile same-identity filesystem
+  mutation is outside the supported unprivileged exclusion boundary.
 - The configuration uses `config-v2` and names the requested connection and
   library explicitly.
 - The target secret and each enabled referenced provider secret are owner-only
@@ -38,11 +44,15 @@ credentials, target values, provider bodies, or EPUB text.
 Audiobook and non-EPUB targets fail before EPUB inspection, provider
 construction, provider credential access, egress, or report publication.
 
-Linux production opens the database through a private verified hard-link alias
-while holding the parent-directory lock for the repository lifetime. The alias
-and its clean private journal artifacts are removed on close. Non-Linux runs
-retain the no-follow and inode checks for development qualification, but do not
-claim the Linux production exclusion guarantee.
+Linux production retains the no-follow root-to-parent chain and opens the
+database through a private verified hard-link alias while holding the
+parent-directory lock for the repository lifetime. It rewalks the current
+absolute chain before publication writes and immediately before commit. The
+alias and its clean private journal artifacts are removed on close. The lock
+coordinates repository instances; ancestor permissions and the dedicated Unix
+identity provide exclusion from other unprivileged actors. Non-Linux runs
+retain the database no-follow and inode checks for development qualification,
+but do not claim the Linux production exclusion guarantee.
 
 ## Evidence and replay
 
