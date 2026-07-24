@@ -77,7 +77,8 @@ validated content digests, dimensions, media type, and preview references.
 
 Successful output and persisted documents contain only bounded target names,
 item identity, opaque file identity/digest, current title, fact-local opening
-excerpts, typed claims, provider candidate fields, and comparison facts. They
+excerpts, typed claims, provider candidate edition and provider-local work
+identities, and comparison facts. They
 contain no credentials, private paths, raw provider bodies, or arbitrary EPUB
 text. Target and provider titles pass the same closed public-safe projection
 before they can enter a report. Failure output is fixed and value-free.

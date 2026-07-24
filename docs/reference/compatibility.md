@@ -4,7 +4,7 @@ The current installed contract is intentionally narrow:
 
 - Python 3.13 or 3.14;
 - `config-v3` only;
-- an absent database or the installed exact current report or `catalogue-v1`
+- an absent database or the installed exact current `metadata-report-v4` or `catalogue-v1`
   schema, using separate database files for their separate stores;
 - strict `batch-manifest-v1` for foreground evidence batches;
 - Audiobookshelf v2.35.1 library, library-items, and current-item responses for

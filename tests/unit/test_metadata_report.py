@@ -243,7 +243,7 @@ class MetadataReportTests(unittest.TestCase):
             claims += [claim(identity, ClaimKind.SERIES, f"s{number:03d}-{index:03d}" + "x" * (MAX_SCALAR_CHARACTERS - 8), offset + index) for index in range(MAX_SERIES)]
             offset = len(claims)
             claims += [claim(identity, ClaimKind.TAG, f"t{number:03d}-{index:03d}" + "x" * (MAX_SCALAR_CHARACTERS - 8), offset + index) for index in range(MAX_TAGS)]
-            candidates.append(ProviderCandidate(identity, tuple(claims)))
+            candidates.append(ProviderCandidate(identity, f"work-{identity}", tuple(claims)))
         report = MetadataReport.create(
             target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
             file=FileFacts(0, "a" * 64, "b" * 64), local_claims=local_claims,
@@ -473,10 +473,13 @@ class MetadataReportTests(unittest.TestCase):
         provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.TITLE, value="Shared title", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable")
         links = tuple(sorted((ComparisonLink(agree.reference, Comparison.AGREEMENT), ComparisonLink(disagree.reference, Comparison.DISAGREEMENT), ComparisonLink(invalid.reference, Comparison.NOT_COMPARABLE), ComparisonLink(edition.reference, Comparison.NOT_COMPARABLE)), key=lambda link: link.local_reference))
         linked = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.TITLE, value="Shared title", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable", links=links)
-        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", (linked,)),)),))
+        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", "work-candidate", (linked,)),)),))
+        changed_work = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", "different-work", (linked,)),)),))
         self.assertEqual(provider.links, ())
         self.assertEqual({link.outcome for link in linked.links}, {Comparison.AGREEMENT, Comparison.DISAGREEMENT, Comparison.NOT_COMPARABLE})
         self.assertNotIn(author.reference, {link.local_reference for link in linked.links})
+        self.assertNotEqual(report.report_id, changed_work.report_id)
+        self.assertEqual(MetadataReport.from_json(changed_work.to_json()), changed_work)
         contributor = LocalClaim.create(kind=ClaimKind.CREATOR, observed="Ada", canonical="Ada", excerpt="Ada", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK, role="translator")
         creator = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.CREATOR, value="Ada", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable", role="author")
         self.assertEqual(

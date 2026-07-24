@@ -5,7 +5,8 @@ observation. It retains the configured logical connection/library names,
 target item identifier, current title, opaque file identity and digest, bounded
 local field claims and results, fact-local opening excerpts of at most 280
 characters, bounded source/DOM occurrence and rear-spine provenance, and
-bounded provider candidate title/identifier fields.
+bounded provider candidate title/identifier fields and opaque provider-local
+work identities.
 
 It does not retain credentials, authorization headers, endpoint paths, private
 filesystem paths, raw target/provider responses, arbitrary EPUB fragments,
