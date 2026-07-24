@@ -426,14 +426,14 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
         repository.close()
     if snapshot.generation != value["catalogue_generation"] or snapshot.fingerprint != value["catalogue_fingerprint"]:
         raise BatchError("catalogue requires refresh")
-    selected_connections = {selection.connection for selection in selections}
-    selected_provider_names = set(value["providers"])
-    credentials = _load_batch_credentials(configuration, selected_connections, selected_provider_names)
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     artifact_identity = artifacts.identity
     repository = open_repository(database_path)
     try: repository_identity = repository.identity
     finally: repository.close()
+    selected_connections = {selection.connection for selection in selections}
+    selected_provider_names = set(value["providers"])
+    credentials = _load_batch_credentials(configuration, selected_connections, selected_provider_names)
     def current_entry(generation: int, fingerprint: str, key: tuple[str, str, str, str]):
         repository = open_catalogue(catalogue_path, create=False)
         try:

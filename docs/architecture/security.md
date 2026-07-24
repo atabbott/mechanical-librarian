@@ -22,9 +22,11 @@ Foreground batch manifests are private immutable operator artifacts. Preview and
 read bind bounded regular no-follow descriptors under a private parent, validate
 strict UTF-8 canonical JSON before authority, and bind execution to the
 content-addressed manifest ID. The frozen projection excludes credential values
-and paths while binding selected egress, providers, library, and limits. Each
-serial item rechecks catalogue/source authority; configuration, catalogue,
-credential, and service drift stops safely, while item-local evidence failures
+and paths while binding selected egress, providers, library, and limits. One
+loaded configuration and credential snapshot remains authoritative for the
+whole run, so later configuration or secret-file edits cannot rebind authority.
+Each serial item rechecks catalogue/source authority; catalogue, repository,
+provider, and service failures stop safely, while item-local evidence failures
 remain value-free deterministic stream records. Interrupts propagate without
 resume, retry, worker, or background state.
 

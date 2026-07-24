@@ -46,7 +46,7 @@ class ForegroundBatchRun:
                 self._emit({"item": selection.item, "outcome": "stopped"}); return self._finish(completed, skipped, failed, True)
             report_id, statuses = report
             completed += 1; self._emit({"item": selection.item, "outcome": "completed", "report": report_id})
-            if any(status in {ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION, ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE} for status in statuses):
+            if any(status in {ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION, ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE, ProviderStatus.MALFORMED, ProviderStatus.OVERSIZED} for status in statuses):
                 self._emit({"item": selection.item, "outcome": "stopped"}); return self._finish(completed, skipped, failed, True)
         return self._finish(completed, skipped, failed, False)
 
