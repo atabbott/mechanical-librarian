@@ -34,7 +34,7 @@ PROFILES = {
         },
     },
 }
-FLOORS = {"title": (47, 49), "creator": (47, 49), "language": (48, 49), "overall_matches": (257, 405), "precision": (801775, 1_000_000), "false_positive": (85366, 1_000_000)}
+FLOORS = {"title": (48, 49), "creator": (48, 49), "language": (49, 49), "matched_rows": (253, 489), "precision": (804734, 1_000_000), "false_positive": (7, 82)}
 MAX_BYTES = 1_000_000
 MAX_ROWS = 2_000
 MAX_DEPTH = 20
@@ -148,13 +148,13 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
         if relation != "associated" and observation["same_work"]: raise ValueError("same-work evidence requires associated relation")
         isbn[relation] += 1
     regression = document["regression"]
-    if not isinstance(regression, dict) or set(regression) != {"title_matches", "creator_matches", "language_matches", "overall_matches", "precision_matches", "precision_candidates", "false_positives", "negative_rows"} or any(type(value) is not int or value < 0 for value in regression.values()): raise ValueError("invalid regression controls")
+    if not isinstance(regression, dict) or set(regression) != {"title_matches", "creator_matches", "language_matches", "matched_rows", "precision_matches", "precision_candidates", "false_positives", "negative_rows"} or any(type(value) is not int or value < 0 for value in regression.values()): raise ValueError("invalid regression controls")
     gates = {
         "supported-denominator": views["supported"]["denominator"] == 405,
         "title": regression["title_matches"] >= FLOORS["title"][0],
         "creator": regression["creator_matches"] >= FLOORS["creator"][0],
         "language": regression["language_matches"] >= FLOORS["language"][0],
-        "overall-matches": regression["overall_matches"] >= FLOORS["overall_matches"][0],
+        "matched-rows": regression["matched_rows"] >= FLOORS["matched_rows"][0],
         "candidate-precision": regression["precision_matches"] * FLOORS["precision"][1] >= FLOORS["precision"][0] * regression["precision_candidates"],
         "explicit-negative-fp": regression["false_positives"] * FLOORS["false_positive"][1] <= FLOORS["false_positive"][0] * regression["negative_rows"],
     }
