@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import unittest
 
 from mechanical_librarian.domain.epub_inspection import (
+    EpubInspection,
     EpubInspectionFact,
     EpubInspectionField,
     EpubInspectionOutcome,
@@ -13,6 +15,22 @@ from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 
 
 class EpubInspectionFactTests(unittest.TestCase):
+    def test_rear_limit_disposition_is_boolean_success_only_and_canonical(self) -> None:
+        source = Fingerprint("sha256", SchemaVersion("source-v1"), "c" * 64)
+        inspection = EpubInspection(
+            EpubInspectionOutcome.SUCCESS,
+            source,
+            rear_resource_limit=True,
+        )
+        serialized = inspection.to_json()
+        self.assertEqual(EpubInspection.from_json(serialized), inspection)
+        malformed = json.loads(serialized)
+        malformed["rear_resource_limit"] = "rear_resource_limit"
+        with self.assertRaises(ValueError):
+            EpubInspection.from_json(json.dumps(malformed, separators=(",", ":"), sort_keys=True))
+        with self.assertRaises(ValueError):
+            EpubInspection(EpubInspectionOutcome.RESOURCE_LIMIT, None, rear_resource_limit=True)
+
     def test_isbn_support_is_distinct_from_observed_and_canonical_values(self) -> None:
         source = Fingerprint("sha256", SchemaVersion("source-v1"), "a" * 64)
 

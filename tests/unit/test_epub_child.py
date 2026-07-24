@@ -572,6 +572,7 @@ class EpubChildRearSpineTests(unittest.TestCase):
         self.assertIn("rear_resource_limit", opening_report.warnings)
         report = self._inspect_in_child(value)
         self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
+        self.assertTrue(report.rear_resource_limit)
         self.assertIn("Fixture Registry Title", {fact.canonical_value for fact in report.facts})
         self.assertIn("Synthetic Opening Title", {fact.canonical_value for fact in report.facts})
         self.assertFalse(any(fact.rear_provenance is not None for fact in report.facts))

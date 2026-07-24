@@ -101,6 +101,7 @@ class InspectionResult:
     content_digest: str
     claims: tuple[LocalClaim, ...]
     cover_sources: tuple[CoverSource, ...] = ()
+    rear_resource_limit: bool = False
 
 
 class TargetReader(Protocol):
@@ -275,6 +276,7 @@ class GenerateMetadataReport:
         reasons = tuple(
             sorted(
                 {f"{claim.basis}_{claim.kind.value}" for claim in local.claims}
+                | ({"rear_resource_limit"} if local.rear_resource_limit else set())
                 or {"no_opening_claims"}
             )
         )

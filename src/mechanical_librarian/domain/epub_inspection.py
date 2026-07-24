@@ -255,16 +255,19 @@ class EpubInspection:
     outcome: EpubInspectionOutcome
     source: Fingerprint | None
     facts: tuple[EpubInspectionFact, ...] = ()
+    rear_resource_limit: bool = False
 
     def __post_init__(self) -> None:
         if type(self.outcome) is not EpubInspectionOutcome or (
             self.source is not None and type(self.source) is not Fingerprint
-        ) or type(self.facts) is not tuple or any(type(value) is not EpubInspectionFact for value in self.facts):
+        ) or type(self.facts) is not tuple or any(type(value) is not EpubInspectionFact for value in self.facts) or type(self.rear_resource_limit) is not bool:
             raise ValueError("EPUB inspection is malformed")
         if self.outcome is EpubInspectionOutcome.SUCCESS and self.source is None:
             raise ValueError("successful EPUB inspection needs a source")
         if self.source is not None and any(value.source != self.source for value in self.facts):
             raise ValueError("EPUB inspection fact source is inconsistent")
+        if not self.outcome.succeeded and self.rear_resource_limit:
+            raise ValueError("failed EPUB inspection cannot retain a rear limit")
 
     @classmethod
     def from_opening_report(cls, report: EpubOpeningReport) -> "EpubInspection":
@@ -311,7 +314,12 @@ class EpubInspection:
                     else "unknown"
                 )
                 facts.append(EpubInspectionFact(EpubInspectionField.ISBN, source, claim.raw_value, claim.normalized_value, claim.citation.exact_excerpt, f"valid_{checksum}" if checksum != "invalid" else checksum, media, classification_basis, "opening_matter", state="valid" if claim.normalized_value is not None else "malformed"))
-        return cls(outcome, source, tuple(facts))
+        return cls(
+            outcome,
+            source,
+            tuple(facts),
+            "rear_resource_limit" in report.warnings,
+        )
 
     def to_json(self) -> str:
         """Canonical closed protocol payload for the isolated child boundary."""
@@ -335,7 +343,8 @@ class EpubInspection:
                     for fact in self.facts
                 ],
                 "outcome": self.outcome.value,
-                "schema": "epub-inspection-v1",
+                "rear_resource_limit": self.rear_resource_limit,
+                "schema": "epub-inspection-v2",
                 "source": None if self.source is None else {
                     "algorithm": self.source.algorithm,
                     "digest": self.source.digest,
@@ -353,7 +362,7 @@ class EpubInspection:
             raise ValueError("EPUB inspection protocol is invalid")
         try:
             value = json.loads(serialized)
-            if type(value) is not dict or set(value) != {"facts", "outcome", "schema", "source"} or value["schema"] != "epub-inspection-v1":
+            if type(value) is not dict or set(value) != {"facts", "outcome", "rear_resource_limit", "schema", "source"} or value["schema"] != "epub-inspection-v2":
                 raise ValueError
             source_data = value["source"]
             source = None if source_data is None else Fingerprint(source_data["algorithm"], SchemaVersion(source_data["schema"]), source_data["digest"])
@@ -363,7 +372,7 @@ class EpubInspection:
                 )
                 for item in value["facts"]
             )
-            result = cls(EpubInspectionOutcome(value["outcome"]), source, facts)
+            result = cls(EpubInspectionOutcome(value["outcome"]), source, facts, value["rear_resource_limit"])
         except (KeyError, TypeError, ValueError):
             raise ValueError("EPUB inspection protocol is invalid") from None
         if result.to_json() != serialized:

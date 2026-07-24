@@ -310,7 +310,12 @@ def _inspection(
         return EpubInspection(opening.outcome, source)
     facts = (*_package_facts(package_report, source), *opening.facts, *rear_facts)
     outcome = EpubInspectionOutcome.SUCCESS if facts else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
-    return EpubInspection(outcome, source, facts)
+    return EpubInspection(
+        outcome,
+        source,
+        facts,
+        opening.rear_resource_limit,
+    )
 
 
 def _rear_facts(

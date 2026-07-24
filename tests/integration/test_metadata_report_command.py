@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,14 +22,20 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     UnsupportedMediaError,
 )
-from mechanical_librarian.bootstrap.composition import run_metadata_report
+from mechanical_librarian.bootstrap.composition import reopen_metadata_report, run_metadata_report
 from mechanical_librarian.bootstrap.composition import reopen_cover_preview
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.cover_evidence import PREVIEW_VARIANT
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client as real_hardcover_client,
 )
-from tests.support.epub_packages import opening_no_applicable, opening_title_isbn_applicability
+from tests.support.epub_packages import (
+    _opening_epub,
+    _opening_package,
+    _xhtml,
+    opening_no_applicable,
+    opening_title_isbn_applicability,
+)
 
 
 class _Server:
@@ -599,6 +606,43 @@ class MetadataReportCommandTests(unittest.TestCase):
             connection.close()
             self.assertEqual(server.requests, 6)
             self.assertEqual(source.read_bytes(), original_media)
+
+    def test_rear_limit_warning_survives_real_child_report_reopen(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            package = _opening_package(
+                items=(
+                    ("opening", "opening.xhtml", "application/xhtml+xml", ""),
+                    ("rear", "rear.xhtml", "application/xhtml+xml", ""),
+                ),
+                spine=("opening", "rear"),
+            )
+            source.write_bytes(
+                _opening_epub(
+                    package=package,
+                    entries=(
+                        ("EPUB/opening.xhtml", _xhtml('<h1 epub:type="fulltitle">Synthetic Opening Title</h1><main epub:type="bodymatter">Synthetic body boundary</main>'), zipfile.ZIP_STORED),
+                        ("EPUB/rear.xhtml", _xhtml("<p>Copyright 2026</p><p>" + "x" * 262_145 + "</p>"), zipfile.ZIP_STORED),
+                    ),
+                )
+            )
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            database = root / "reports.sqlite"
+            artifact_store = root / "artifacts"
+            artifact_store.mkdir(mode=0o700)
+            with _Server(_item(source.stat().st_size)) as server:
+                config = root / "config.json"
+                config.write_text(json.dumps(_config(server.endpoint, media, target_secret)), encoding="utf-8")
+                report = MetadataReport.from_json(run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0))
+            reopened = MetadataReport.from_json(reopen_metadata_report(database, report.report_id))
+            self.assertIn("rear_resource_limit", report.local_reasons)
+            self.assertEqual(reopened, report)
+            self.assertFalse(any(claim.rear_provenance is not None for claim in report.local_claims))
 
     def test_six_metadata_only_providers_do_not_consume_cover_source_capacity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
