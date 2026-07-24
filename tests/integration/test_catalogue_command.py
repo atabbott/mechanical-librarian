@@ -10,14 +10,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
-def _detail(library: str, item: str, *, mounted: bool) -> dict[str, object]:
-    return {"id": item, "libraryId": library, "updatedAt": 1, "media": {"metadata": {"title": item, "authors": [{"name": "Ada"}]}, "ebookFile": {"ebookFormat": "epub", "ino": item, "metadata": {"relPath": f"{item}.epub", "size": 1}}}}
+def _detail(library: str, item: str, *, audio: bool) -> dict[str, object]:
+    media: dict[str, object] = {"metadata": {"title": item, "authors": [{"name": "Ada"}]}, "ebookFile": {"ebookFormat": "epub", "ino": item, "metadata": {"relPath": f"{item}.epub", "size": 1}}}
+    if audio:
+        media["audioFiles"] = [{"ino": "audio"}]
+    return {"id": item, "libraryId": library, "updatedAt": 1, "media": media}
 
 
 class CatalogueCommandTests(unittest.TestCase):
     def test_installed_cli_refreshes_separate_and_mixed_book_libraries_without_list_paths(self) -> None:
         self.assertIsNotNone(shutil.which("mechanical-librarian"))
-        details = {("one", "one-item"): _detail("one", "one-item", mounted=True), ("two", "two-item"): _detail("two", "two-item", mounted=False)}
+        details = {("one", "one-item"): _detail("one", "one-item", audio=True), ("two", "two-item"): _detail("two", "two-item", audio=False)}
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 if self.headers.get("Authorization") != "Bearer token": self.send_response(403); self.end_headers(); return
@@ -37,8 +40,9 @@ class CatalogueCommandTests(unittest.TestCase):
                 base = [shutil.which("mechanical-librarian"), "catalogue", "--config", str(config), "--database", str(database)]
                 refresh = subprocess.run([*base, "refresh"], capture_output=True, text=True, timeout=20)
                 listed = subprocess.run([*base, "list"], capture_output=True, text=True, timeout=20)
+                ebooks = subprocess.run([*base, "list", "--filter", "ebook"], capture_output=True, text=True, timeout=20)
+                audio = subprocess.run([*base, "list", "--filter", "audio"], capture_output=True, text=True, timeout=20)
                 exact = subprocess.run([*base, "get", "--connection", "primary", "--library", "first", "--library-id", "one", "--item", "one-item"], capture_output=True, text=True, timeout=20)
-                self.assertEqual(refresh.returncode, 0, refresh.stderr); rows = json.loads(listed.stdout); self.assertEqual(len(rows), 2); self.assertNotIn("service_path", listed.stdout); self.assertEqual({row["library_id"] for row in rows}, {"one", "two"}); self.assertFalse(rows[0]["eligible"]); self.assertIn("service_path", json.loads(exact.stdout)[0]); self.assertEqual(exact.returncode, 0, exact.stderr)
+                self.assertEqual(refresh.returncode, 0, refresh.stderr); rows = json.loads(listed.stdout); self.assertEqual(len(rows), 2); self.assertNotIn("service_path", listed.stdout); self.assertEqual({row["library_id"] for row in rows}, {"one", "two"}); self.assertEqual(next(row for row in rows if row["library_id"] == "one")["ebook"], True); self.assertEqual(next(row for row in rows if row["library_id"] == "one")["audio"], True); self.assertEqual(len(json.loads(ebooks.stdout)), 2); self.assertEqual([row["library_id"] for row in json.loads(audio.stdout)], ["one"]); self.assertFalse(rows[0]["eligible"]); self.assertIn("service_path", json.loads(exact.stdout)[0]); self.assertEqual(exact.returncode, 0, exact.stderr)
         finally:
             server.shutdown(); thread.join(); server.server_close()
-

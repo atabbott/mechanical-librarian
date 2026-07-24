@@ -50,6 +50,7 @@ class SQLiteCatalogueRepository:
             information = os.fstat(descriptor)
             if not stat.S_ISREG(information.st_mode) or information.st_uid != os.geteuid() or information.st_mode & 0o022:
                 raise CatalogueError("catalogue database is unsafe")
+            self._identity = information
             if exists:
                 self._validate_existing_readonly()
             self._require_bound_name(information)
@@ -120,12 +121,14 @@ class SQLiteCatalogueRepository:
 
     def acquire_refresh(self) -> None:
         try:
+            self._require_bound_name(self._identity)
             self._connection.execute("BEGIN IMMEDIATE")
         except sqlite3.OperationalError as error:
             raise CatalogueBusyError("catalogue refresh is busy") from error
 
     def publish(self, fingerprint: str, entries: tuple[CatalogueEntry, ...]) -> int:
         try:
+            self._require_bound_name(self._identity)
             generation = self._connection.execute("SELECT COALESCE(MAX(generation),0)+1 FROM catalogue_generations").fetchone()[0]
             self._connection.execute("UPDATE catalogue_generations SET current=0 WHERE current=1")
             self._connection.execute("INSERT INTO catalogue_generations(generation,fingerprint,current) VALUES(?,?,1)", (generation, fingerprint))
@@ -133,6 +136,7 @@ class SQLiteCatalogueRepository:
                 "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [(generation, item.connection, item.library, item.library_id, item.item_id, item.updated_at, item.title, json.dumps(item.authors, ensure_ascii=False, separators=(",", ":")), int(item.has_ebook), int(item.has_audio), item.classification, item.file_identity, item.service_path, item.format, item.mount) for item in entries],
             )
+            self._require_bound_name(self._identity)
             self._connection.execute("COMMIT")
             return generation
         except Exception:

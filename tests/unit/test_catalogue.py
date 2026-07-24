@@ -116,6 +116,19 @@ class CatalogueRepositoryTests(unittest.TestCase):
             self.assertTrue({"updated_at", "file_identity", "format", "service_path", "mount"}.isdisjoint(listed[0]))
             self.assertEqual(set(got[0]), public | {"updated_at", "file_identity", "format", "service_path", "mount"})
 
+    def test_replacement_during_refresh_fails_before_publication_and_keeps_prior_current(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalogue.sqlite"
+            repository = open_catalogue(path)
+            repository.acquire_refresh(); repository.publish("a" * 64, (_entry(),))
+            repository.acquire_refresh()
+            replacement = Path(directory) / "replacement.sqlite"; replacement.write_bytes(b"replacement")
+            os.replace(replacement, path)
+            with self.assertRaises(Exception):
+                repository.publish("a" * 64, (_entry("item-2"),))
+            self.assertEqual(repository.inspect("a" * 64), (_entry(),))
+            repository.close()
+
 
 if __name__ == "__main__":
     unittest.main()
