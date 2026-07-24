@@ -28,3 +28,6 @@ supported report regeneration.
 The retained local vocabulary includes bounded title/subtitle, creator/contributor
 roles, series/sequence, ISBN, dates, publisher/imprint, description, language,
 and contextual subject evidence; it retains no paths or source bodies.
+Edition and rights remain outside that public report vocabulary. Their private
+qualification labels and exploratory aggregates are not retained in reports or
+committed to the repository.

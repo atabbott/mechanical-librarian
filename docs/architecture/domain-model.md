@@ -17,6 +17,9 @@ EPUB. It contains:
 The local field vocabulary is title/subtitle, creator/contributor and role,
 series/sequence, ISBN, date, publisher/imprint, description, language, and
 contextual subject evidence; typed field states remain evidence, not decisions.
+Edition and rights are not local report-claim kinds: edition identity and
+applicability may contextualize supported evidence, while rights observations
+remain outside the report projection.
 
 Local claims represent the closed field vocabulary. ISBN claims retain the
 observed substring, canonical checksum-valid identifier when available, at
