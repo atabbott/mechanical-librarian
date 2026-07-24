@@ -114,9 +114,28 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
-    def test_closed_claim_vocabulary_excludes_edition_and_rights(self) -> None:
-        self.assertNotIn("edition", {kind.value for kind in ClaimKind})
-        self.assertNotIn("rights", {kind.value for kind in ClaimKind})
+    def test_closed_claim_vocabulary_is_exact(self) -> None:
+        self.assertEqual(
+            {kind.value for kind in ClaimKind},
+            {
+                "title",
+                "subtitle",
+                "creator",
+                "contributor",
+                "series",
+                "series_sequence",
+                "isbn",
+                "asin",
+                "publication_date",
+                "publisher",
+                "description",
+                "language",
+                "subject",
+                "imprint",
+                "genre",
+                "tag",
+            },
+        )
 
     def test_final_currentness_rejects_absent_abs_source_that_becomes_bytes(self) -> None:
         selected = TargetFile("a" * 64, "book.epub", "epub")
