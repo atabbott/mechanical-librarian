@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 from mechanical_librarian.application.batch import BatchError, BatchSelection, CatalogueSnapshot
 from mechanical_librarian.application.catalogue import CatalogueEntry, CatalogueStaleError
-from mechanical_librarian.application.metadata_report import CredentialError, CurrentnessError, MetadataReportError, UnsupportedMediaError
+from mechanical_librarian.application.metadata_report import CredentialError, CurrentnessError, ItemInspectionError, MetadataReportError, UnsupportedMediaError
 from mechanical_librarian.domain.metadata_report import ProviderStatus
 
 
@@ -38,7 +38,7 @@ class ForegroundBatchRun:
                 skipped += 1; self._emit({"item": selection.item, "outcome": "stale"}); continue
             except CredentialError:
                 self._emit({"item": selection.item, "outcome": "stopped"}); return self._finish(completed, skipped, failed, True)
-            except UnsupportedMediaError:
+            except (UnsupportedMediaError, ItemInspectionError):
                 failed += 1; self._emit({"item": selection.item, "outcome": "item_failed"}); continue
             except MetadataReportError:
                 self._emit({"item": selection.item, "outcome": "stopped"}); return self._finish(completed, skipped, failed, True)

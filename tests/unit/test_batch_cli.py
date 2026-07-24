@@ -9,8 +9,10 @@ from mechanical_librarian.interfaces.cli import main
 class BatchCliTests(unittest.TestCase):
     def test_preview_and_inspect_are_deterministic(self) -> None:
         output = io.StringIO()
-        code = main(["batch", "preview", "--config", "/private/config", "--catalogue", "/private/catalogue", "--manifest", "/private/manifest", "--select", "primary", "books", "library,one", "item,two"], batch_preview_runner=lambda *_: '{"id":"a"}', stdout=output, stderr=io.StringIO())
+        received = []
+        code = main(["batch", "preview", "--config", "/private/config", "--catalogue", "/private/catalogue", "--manifest", "/private/manifest", "--select", "primary", "books", "library,one", "item,two"], batch_preview_runner=lambda *_arguments: (received.append(_arguments[3]) or '{"id":"a"}'), stdout=output, stderr=io.StringIO())
         self.assertEqual((code, output.getvalue()), (0, '{"id":"a"}\n'))
+        self.assertEqual(received, [(('primary', 'books', 'library,one', 'item,two'),)])
         output = io.StringIO()
         code = main(["batch", "inspect", "--manifest", "/private/manifest"], batch_inspect_runner=lambda _: '{"entries":1}', stdout=output, stderr=io.StringIO())
         self.assertEqual((code, output.getvalue()), (0, '{"entries":1}\n'))

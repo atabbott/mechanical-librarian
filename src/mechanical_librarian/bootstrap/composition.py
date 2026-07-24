@@ -279,7 +279,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
         raise UnsupportedMediaError("unsupported media")
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     target = AudiobookshelfItemReader(
-        client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds) if credentials is None else target_client_token(connection.endpoint, credentials[connection.name], configuration.limits.timeout_seconds),
+        client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds) if credentials is None else target_client_token(connection.endpoint, credentials["target:" + connection.name], configuration.limits.timeout_seconds),
         endpoint=connection.endpoint,
         library_id=library.library_id,
         service_path=mount.service_path,
@@ -293,7 +293,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                 raise MetadataReportError("provider credential unavailable")
             return HardcoverMetadataProvider(
                 value.name,
-                hardcover_client(value.secret_file, configuration.limits.timeout_seconds) if credentials is None else hardcover_client_token(credentials[value.name], configuration.limits.timeout_seconds),
+                hardcover_client(value.secret_file, configuration.limits.timeout_seconds) if credentials is None else hardcover_client_token(credentials["provider:" + value.name], configuration.limits.timeout_seconds),
                 configuration.limits.provider_response_bytes,
                 configuration.limits.timeout_seconds,
             )
@@ -405,10 +405,13 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     selections = tuple(BatchSelection(raw["connection"], raw["library"], raw["library_id"], raw["item"], raw["file_identity"], raw["classification"], raw["eligible"]) for raw in value["entries"])
     if batch_fingerprint(configuration, selections) != value["batch_config_fingerprint"]:
         raise BatchError("batch configuration changed")
+    actual_providers = tuple(sorted({name for selection in selections for library in configuration.libraries if library.name == selection.library and library.connection == selection.connection for name in library.provider_connections if next(provider for provider in configuration.providers if provider.name == name).enabled}))
+    if actual_providers != tuple(value["providers"]):
+        raise BatchError("batch configuration changed")
     selected_connections = {selection.connection for selection in selections}
     selected_provider_names = set(value["providers"])
-    credentials = {item.name: read_secret(item.secret_file) for item in configuration.connections if item.name in selected_connections}
-    credentials.update({item.name: read_secret(item.secret_file) for item in configuration.providers if item.name in selected_provider_names and item.secret_file is not None})
+    credentials = {"target:" + item.name: read_secret(item.secret_file) for item in configuration.connections if item.name in selected_connections}
+    credentials.update({"provider:" + item.name: read_secret(item.secret_file) for item in configuration.providers if item.name in selected_provider_names and item.secret_file is not None})
     repository = open_catalogue(catalogue_path, create=False)
     try:
         snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))

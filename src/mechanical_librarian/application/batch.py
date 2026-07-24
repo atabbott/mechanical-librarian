@@ -87,7 +87,7 @@ def select(snapshot: CatalogueSnapshot, requested: tuple[tuple[str, str, str, st
 
 
 def manifest(snapshot: CatalogueSnapshot, config_fingerprint: str, selections: tuple[BatchSelection, ...], providers: tuple[str, ...]) -> bytes:
-    if type(snapshot.generation) is not int or snapshot.generation < 1 or not _digest(snapshot.fingerprint) or not _digest(config_fingerprint) or len(selections) > 10_000 or tuple(sorted(set(providers))) != providers:
+    if type(snapshot.generation) is not int or snapshot.generation < 1 or not _digest(snapshot.fingerprint) or not _digest(config_fingerprint) or len(selections) > 10_000 or tuple(sorted(set(providers))) != providers or any(not _entry_valid(asdict(value)) for value in selections):
         raise BatchError("batch manifest is invalid")
     body = {
         "schema": "batch-manifest-v1",
@@ -100,7 +100,9 @@ def manifest(snapshot: CatalogueSnapshot, config_fingerprint: str, selections: t
     }
     canonical = canonical_json(body).encode("utf-8") + b"\n"
     value = {**body, "id": hashlib.sha256(canonical).hexdigest()}
-    return canonical_json(value).encode("utf-8") + b"\n"
+    raw = canonical_json(value).encode("utf-8") + b"\n"
+    if len(raw) > MAX_MANIFEST_BYTES: raise BatchError("batch manifest is invalid")
+    return raw
 
 
 def parse_manifest(raw: bytes) -> dict[str, object]:
@@ -166,7 +168,7 @@ def _entry_valid(entry: dict[str, object]) -> bool:
     if type(entry["connection"]) is not str or not entry["connection"].isascii() or not 1 <= len(entry["connection"]) <= 64 or type(entry["library"]) is not str or not entry["library"].isascii() or not 1 <= len(entry["library"]) <= 64 or type(entry["library_id"]) is not str or not 1 <= len(entry["library_id"]) <= 128 or type(entry["item"]) is not str or not 1 <= len(entry["item"]) <= 512:
         return False
     identity = entry["file_identity"]; classification = entry["classification"]; eligible = entry["eligible"]
-    if classification == "singular-supported": return type(eligible) is bool and (identity is None or _digest(identity))
+    if classification == "singular-supported": return type(eligible) is bool and _digest(identity)
     return eligible is False and identity is None
 
 

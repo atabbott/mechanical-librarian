@@ -164,7 +164,7 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
             if arguments.batch_action == "preview":
                 if batch_preview_runner is None:
                     raise ValueError
-                serialized = batch_preview_runner(arguments.config, arguments.catalogue, arguments.manifest, tuple(arguments.select), arguments.all_eligible)
+                serialized = batch_preview_runner(arguments.config, arguments.catalogue, arguments.manifest, tuple(tuple(value) for value in arguments.select), arguments.all_eligible)
             elif arguments.batch_action == "inspect":
                 if batch_inspect_runner is None:
                     raise ValueError

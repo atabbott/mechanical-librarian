@@ -41,6 +41,10 @@ class UnsupportedMediaError(MetadataReportError):
     pass
 
 
+class ItemInspectionError(MetadataReportError):
+    pass
+
+
 class CurrentnessError(MetadataReportError):
     pass
 
@@ -370,7 +374,7 @@ class GenerateMetadataReport:
 
 __all__ = [
     "CoverObserver", "CoverReadError", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
-    "InspectionResult", "MetadataProvider", "MetadataReportError", "ProviderBinding",
+    "InspectionResult", "ItemInspectionError", "MetadataProvider", "MetadataReportError", "ProviderBinding",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
 ]
