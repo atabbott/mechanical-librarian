@@ -344,6 +344,7 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
     profile = PROFILES[document["profile"]]
     matrices = {"supported": _matrix(SUPPORTED), "exploratory": _matrix(EXPLORATORY)}
     excluded = Counter({state: 0 for state in EXCLUDED})
+    source_present = Counter({"supported": 0, "exploratory": 0})
     field_totals: Counter[str] = Counter()
     failure_subtypes = Counter({"whole_item": 0, "extraction_stage": 0})
     value_fields = SUPPORTED + EXPLORATORY
@@ -368,6 +369,8 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
                 or any(type(row[key]) is not str for key in expected_keys - {"readable"})):
             raise ValueError("invalid value row")
         target = "supported" if field in SUPPORTED else "exploratory"
+        if row["source"] == "present":
+            source_present[target] += 1
         category = _category(row)
         matrices[target][field][category] += 1
         if category == "inspection_failure":
@@ -415,15 +418,7 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
         "inspection_failure_subtypes": dict(failure_subtypes),
         "exploratory_recoverable_recall": _rate(
             recovered,
-            sum(
-                values[category]
-                for values in exploratory["by_field"].values()
-                for category in (
-                    "extracted_not_projected", "normalization_mismatch",
-                    "semantic_mismatch", "matched_partial", "matched_complete",
-                    "inspection_failure",
-                )
-            ),
+            source_present["exploratory"],
         ),
         "isbn": isbn,
         "regression": regression,

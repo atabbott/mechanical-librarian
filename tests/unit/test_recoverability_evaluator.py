@@ -41,6 +41,13 @@ class RecoverabilityEvaluatorTests(unittest.TestCase):
                         row["comparison"] = comparison
                 self.assertEqual(MODULE.evaluate(changed)["views"]["supported"], before)
 
+    def test_whole_item_failure_is_not_exploratory_recoverable_evidence(self):
+        document = self.load()
+        before = MODULE.evaluate(document)["exploratory_recoverable_recall"]["denominator"]
+        row = next(row for row in document["rows"] if row.get("field") == "edition" and row.get("state") == "value")
+        row.update({"inspection": "failure", "source": "unavailable", "extraction": "not_attempted", "projection": "not_projected", "comparison": "none"})
+        self.assertEqual(MODULE.evaluate(document)["exploratory_recoverable_recall"]["denominator"], before - 1)
+
     def test_stage_tuples_reject_every_cross_stage_contradiction(self):
         document = self.load()
         valid = document["rows"][0]
