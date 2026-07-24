@@ -4,7 +4,7 @@
 - Date: 2026-07-23
 - Owners: project maintainers
 - Supersedes: ADR-0003, ADR-0009, and the migration-specific provisions of ADR-0006;
-  pre-release schema policy superseded by ADR-0013
+- Superseded in part by: ADR-0013 (repository-wide pre-release schema policy)
 
 ## Context
 

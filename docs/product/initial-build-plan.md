@@ -108,7 +108,9 @@ Exit criteria:
 - worker, scheduler, or process restart cannot duplicate completed work, lose
   cancellation, or treat `waiting` as readiness or success;
 - every state transition is attributable; and
-- upgrade and rollback rehearsals pass against representative databases.
+- exact-current-schema restart, replay, and crash-safety evidence passes, while
+  older state fails clearly without rewrite and a clean rebuild remains
+  available.
 
 ## WP3: Audiobookshelf read adapter
 
