@@ -115,6 +115,7 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(rows, list) or not isinstance(observations, list) or len(rows) > MAX_ROWS or len(observations) > MAX_ROWS: raise ValueError("invalid row collection")
     matrices = {"supported": _matrix(SUPPORTED), "exploratory": _matrix(EXPLORATORY)}
     excluded = Counter({state: 0 for state in EXCLUDED})
+    failure_subtypes = Counter({"whole_item": 0, "extraction_stage": 0})
     for row in rows:
         if not isinstance(row, dict) or row.get("field") not in SUPPORTED + EXPLORATORY or row.get("state") not in ("value",) + EXCLUDED: raise ValueError("invalid row")
         if row["state"] != "value":
@@ -124,7 +125,10 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
         required = {"field", "state", "readable", "inspection", "source", "extraction", "projection", "comparison"}
         if set(row) != required or row["readable"] is not True or any(type(row[key]) is not str for key in required - {"readable"}): raise ValueError("invalid value row")
         target = "supported" if row["field"] in SUPPORTED else "exploratory"
-        matrices[target][row["field"]][_category(row)] += 1
+        classified = _category(row)
+        matrices[target][row["field"]][classified] += 1
+        if classified == "inspection_failure":
+            failure_subtypes["whole_item" if row["inspection"] == "failure" else "extraction_stage"] += 1
     views = {}
     for name, fields in (("supported", SUPPORTED), ("exploratory", EXPLORATORY)):
         denominator = sum(sum(matrices[name][field].values()) for field in fields)
@@ -154,7 +158,9 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
         "candidate-precision": regression["precision_matches"] * FLOORS["precision"][1] >= FLOORS["precision"][0] * regression["precision_candidates"],
         "explicit-negative-fp": regression["false_positives"] * FLOORS["false_positive"][1] <= FLOORS["false_positive"][0] * regression["negative_rows"],
     }
-    return {"schema": OUTPUT_SCHEMA, "profile": document["profile"], "views": views, "excluded": dict(excluded), "isbn": {"counts": dict(isbn), "denominator": sum(isbn.values()), "accepted_recall": _rate(isbn["accepted"], sum(isbn.values())), "associated_yield": _rate(isbn["associated"], sum(isbn.values())), "unrelated_rate": _rate(isbn["unrelated"], sum(isbn.values())), "invalid_rate": _rate(isbn["invalid"], sum(isbn.values())), "unresolved_rate": _rate(isbn["unresolved"], sum(isbn.values()))}, "regression": {"controls": regression, "gates": gates, "passed": all(gates.values()), "note": "overall matches are rows; precision matches are candidate atoms"}, "recommendations": [{"category": category, "count": views["supported"]["categories"][category]} for category in ("extracted_not_projected", "normalization_mismatch", "semantic_mismatch") if views["supported"]["categories"][category]]}
+    if sum(failure_subtypes.values()) != views["supported"]["categories"]["inspection_failure"] + views["exploratory"]["categories"]["inspection_failure"]:
+        raise ValueError("inspection failure arithmetic")
+    return {"schema": OUTPUT_SCHEMA, "profile": document["profile"], "views": views, "excluded": dict(excluded), "inspection_failure_subtypes": dict(failure_subtypes), "isbn": {"counts": dict(isbn), "denominator": sum(isbn.values()), "accepted_recall": _rate(isbn["accepted"], sum(isbn.values())), "associated_yield": _rate(isbn["associated"], sum(isbn.values())), "unrelated_rate": _rate(isbn["unrelated"], sum(isbn.values())), "invalid_rate": _rate(isbn["invalid"], sum(isbn.values())), "unresolved_rate": _rate(isbn["unresolved"], sum(isbn.values()))}, "regression": {"controls": regression, "gates": gates, "passed": all(gates.values()), "note": "overall matches are rows; precision matches are candidate atoms"}, "recommendations": [{"category": category, "count": views["supported"]["categories"][category]} for category in ("extracted_not_projected", "normalization_mismatch", "semantic_mismatch") if views["supported"]["categories"][category]]}
 
 
 def main() -> None:
