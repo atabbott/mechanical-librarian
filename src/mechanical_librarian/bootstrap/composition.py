@@ -222,6 +222,8 @@ class _CoverEvidenceObserver:
             source = CoverSource(source_id, CoverSourceKind.ABS, error.state)
         except CoverReadError as error:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState(error.state))
+        except ArtifactAuthorityError:
+            raise
         except MetadataReportError:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
         return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
@@ -417,6 +419,13 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     actual_providers = _batch_provider_names(configuration, selections)
     if actual_providers != tuple(value["providers"]):
         raise BatchError("batch configuration changed")
+    repository = open_catalogue(catalogue_path, create=False)
+    try:
+        snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))
+    finally:
+        repository.close()
+    if snapshot.generation != value["catalogue_generation"] or snapshot.fingerprint != value["catalogue_fingerprint"]:
+        raise BatchError("catalogue requires refresh")
     selected_connections = {selection.connection for selection in selections}
     selected_provider_names = set(value["providers"])
     credentials = _load_batch_credentials(configuration, selected_connections, selected_provider_names)
@@ -425,13 +434,6 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     repository = open_repository(database_path)
     try: repository_identity = repository.identity
     finally: repository.close()
-    repository = open_catalogue(catalogue_path, create=False)
-    try:
-        snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))
-    finally:
-        repository.close()
-    if snapshot.generation != value["catalogue_generation"] or snapshot.fingerprint != value["catalogue_fingerprint"]:
-        raise BatchError("catalogue requires refresh")
     def current_entry(generation: int, fingerprint: str, key: tuple[str, str, str, str]):
         repository = open_catalogue(catalogue_path, create=False)
         try:
