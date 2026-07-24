@@ -85,3 +85,6 @@ schemas are not migrated, imported, preserved, or passed through a compatibility
 parser. Recovery uses a clean database and supported report regeneration;
 same-schema exact-ID and current-scope replay retain their existing transaction
 and validation controls.
+This report-database boundary is the narrower runtime application of ADR-0013's
+repository-wide pre-release clean-schema rule; it does not limit that rule to
+database state.

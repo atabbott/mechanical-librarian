@@ -90,6 +90,8 @@ List the exact commands and outcomes:
 - [ ] The change is narrowly scoped and contains no unrelated refactoring.
 - [ ] No credentials, private URLs, personal paths, copyrighted media, or production data are included.
 - [ ] New failure states are explicit, observable, and recoverable.
-- [ ] Persisted or public contracts include migrations and compatibility notes.
+- [ ] Persisted or public contracts document ADR-0013 clean-schema handling
+  before release; migrations and compatibility notes require a named
+  compatibility decision and post-release obligation.
 - [ ] Durable architectural decisions add or supersede an ADR.
 - [ ] User-visible behavior updates the changelog and documentation.

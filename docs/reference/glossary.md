@@ -26,6 +26,10 @@ initialization. Prior and intermediate schemas are rejected before mutation;
 same-schema report replay remains supported, but no backward migration, import,
 preservation, or compatibility parser exists.
 
+This metadata-report database definition is a narrower current-runtime
+application of repository-wide ADR-0013, not the full limit of the pre-release
+clean-schema rule.
+
 **Neutral provider observation**
 One provider's independent status and complete bounded candidate set. It has no
 winner, score, merge, or decision meaning.
