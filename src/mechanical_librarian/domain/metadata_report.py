@@ -21,11 +21,10 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 
 
-REPORT_SCHEMA = "metadata-report-v4"
+REPORT_SCHEMA = "metadata-report-v5"
 COMPARISON_VERSION = "same-kind-v1"
-# F09j's report contract admits rich, source-attributed candidates.  The
-# physical SQLite schema separately fingerprints this exact shape, so an F09i
-# database cannot be opened as this schema despite the stable document label.
+# The physical SQLite schema separately fingerprints this exact report shape,
+# so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
 MAX_CANDIDATES = 5
 MAX_CONTRIBUTIONS = 16
@@ -147,6 +146,104 @@ class Comparison(StrEnum):
     DISAGREEMENT = "disagreement"
     INCOMPATIBLE = "incompatible"
     NOT_COMPARABLE = "not_comparable"
+
+
+class IdentifierRelation(StrEnum):
+    """Closed relationship between an ISBN claim and the selected ebook."""
+
+    ACCEPTED = "accepted"
+    ASSOCIATED = "associated"
+    UNRELATED = "unrelated"
+    INVALID = "invalid"
+    UNRESOLVED = "unresolved"
+
+
+class IdentifierEvidenceBasis(StrEnum):
+    """Closed, deterministic reason for an ISBN relationship."""
+
+    EXPLICIT_EBOOK = "explicit_ebook"
+    LOCAL_SOURCE_AGREEMENT = "local_source_agreement"
+    PROVIDER_IDENTIFIER_AGREEMENT = "provider_identifier_agreement"
+    PROVIDER_WORK_IDENTITY = "provider_work_identity"
+    PROVIDER_OTHER_WORK = "provider_other_work"
+    INVALID_IDENTIFIER = "invalid_identifier"
+    INSUFFICIENT_CONTEXT = "insufficient_context"
+
+
+@dataclass(frozen=True, slots=True)
+class IdentifierEvidence:
+    """Public-safe ISBN relationship derived from retained claim provenance."""
+
+    reference: str
+    relation: IdentifierRelation
+    basis: IdentifierEvidenceBasis
+    related_references: tuple[str, ...] = ()
+    provider: str | None = None
+    candidate_identity: str | None = None
+    work_identity: str | None = None
+
+    def __post_init__(self) -> None:
+        allowed_bases = {
+            IdentifierRelation.ACCEPTED: {
+                IdentifierEvidenceBasis.EXPLICIT_EBOOK,
+                IdentifierEvidenceBasis.LOCAL_SOURCE_AGREEMENT,
+                IdentifierEvidenceBasis.PROVIDER_IDENTIFIER_AGREEMENT,
+            },
+            IdentifierRelation.ASSOCIATED: {
+                IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY,
+            },
+            IdentifierRelation.UNRELATED: {
+                IdentifierEvidenceBasis.PROVIDER_OTHER_WORK,
+            },
+            IdentifierRelation.INVALID: {
+                IdentifierEvidenceBasis.INVALID_IDENTIFIER,
+            },
+            IdentifierRelation.UNRESOLVED: {
+                IdentifierEvidenceBasis.INSUFFICIENT_CONTEXT,
+            },
+        }
+        if (
+            _REFERENCE.fullmatch(self.reference) is None
+            or type(self.relation) is not IdentifierRelation
+            or type(self.basis) is not IdentifierEvidenceBasis
+            or self.basis not in allowed_bases.get(self.relation, set())
+            or type(self.related_references) is not tuple
+            or tuple(sorted(set(self.related_references))) != self.related_references
+            or self.reference in self.related_references
+            or any(_REFERENCE.fullmatch(value) is None for value in self.related_references)
+        ):
+            raise ReportValueError("identifier evidence is invalid")
+        provider_values = (
+            self.provider,
+            self.candidate_identity,
+            self.work_identity,
+        )
+        if self.reference.startswith("local_"):
+            if any(value is not None for value in provider_values):
+                raise ReportValueError("local identifier evidence has provider identity")
+        elif not self.reference.startswith("provider_") or any(
+            value is None for value in provider_values
+        ):
+            raise ReportValueError("provider identifier evidence lacks identity")
+        else:
+            _name(self.provider, "identifier evidence provider")
+            _text(
+                self.candidate_identity,
+                "identifier evidence candidate identity",
+                128,
+            )
+            _text(self.work_identity, "identifier evidence work identity", 128)
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "basis": self.basis.value,
+            "candidate_identity": self.candidate_identity,
+            "provider": self.provider,
+            "reference": self.reference,
+            "related_references": list(self.related_references),
+            "relation": self.relation.value,
+            "work_identity": self.work_identity,
+        }
 
 
 class ClaimScope(StrEnum):
@@ -531,6 +628,7 @@ class MetadataReport:
     local_reasons: tuple[str, ...]
     providers: tuple[ProviderObservation, ...]
     field_results: tuple[FieldResult, ...]
+    identifier_evidence: tuple[IdentifierEvidence, ...]
     cover_sources: tuple[CoverSource, ...] = ()
     schema_version: str = REPORT_SCHEMA
     comparison_version: str = COMPARISON_VERSION
@@ -566,6 +664,16 @@ class MetadataReport:
             or self.field_results != derive_field_results(self.local_claims)
         ):
             raise ReportValueError("field results are inconsistent")
+        if (
+            type(self.identifier_evidence) is not tuple
+            or any(
+                type(value) is not IdentifierEvidence
+                for value in self.identifier_evidence
+            )
+            or self.identifier_evidence
+            != derive_identifier_evidence(self.local_claims, self.providers)
+        ):
+            raise ReportValueError("identifier evidence is inconsistent")
         try:
             if not publication_ready(self.cover_sources):
                 raise ReportValueError("cover evidence is incomplete")
@@ -604,14 +712,16 @@ class MetadataReport:
         local_reasons: tuple[str, ...],
         providers: tuple[ProviderObservation, ...],
         field_results: tuple[FieldResult, ...] | None = None,
+        identifier_evidence: tuple[IdentifierEvidence, ...] | None = None,
         cover_sources: tuple[CoverSource, ...] = (),
     ) -> Self:
         local_status = "candidate" if any(value.basis == "opening_matter" for value in local_claims) else "no_candidate"
         results = field_results if field_results is not None else derive_field_results(local_claims)
-        data = _report_data("", target, file, local_claims, local_status, local_reasons, providers, results, cover_sources)
+        identifiers = identifier_evidence if identifier_evidence is not None else derive_identifier_evidence(local_claims, providers)
+        data = _report_data("", target, file, local_claims, local_status, local_reasons, providers, results, identifiers, cover_sources)
         data.pop("report_id")
         identity = f"report_{hashlib.sha256(canonical_json(data).encode('utf-8')).hexdigest()}"
-        return cls(identity, target, file, local_claims, local_status, local_reasons, providers, results, cover_sources)
+        return cls(identity, target, file, local_claims, local_status, local_reasons, providers, results, identifiers, cover_sources)
 
     def _identity_data(self) -> dict[str, object]:
         value = self.to_data()
@@ -619,7 +729,7 @@ class MetadataReport:
         return value
 
     def to_data(self) -> dict[str, object]:
-        return _report_data(self.report_id, self.target, self.file, self.local_claims, self.local_status, self.local_reasons, self.providers, self.field_results, self.cover_sources)
+        return _report_data(self.report_id, self.target, self.file, self.local_claims, self.local_status, self.local_reasons, self.providers, self.field_results, self.identifier_evidence, self.cover_sources)
 
     def to_json(self) -> str:
         return canonical_json(self.to_data())
@@ -678,6 +788,227 @@ def derive_field_results(local_claims: tuple[LocalClaim, ...]) -> tuple[FieldRes
     )
 
 
+def derive_identifier_evidence(
+    local_claims: tuple[LocalClaim, ...],
+    providers: tuple[ProviderObservation, ...],
+) -> tuple[IdentifierEvidence, ...]:
+    """Classify every ISBN claim without discarding its original evidence."""
+    local_isbns = tuple(
+        claim for claim in local_claims if claim.kind is ClaimKind.ISBN
+    )
+    provider_isbns = tuple(
+        (provider.provider, candidate, claim)
+        for provider in providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.ISBN
+    )
+    local_families = {
+        claim.reference: _isbn_family(claim.canonical)
+        for claim in local_isbns
+        if claim.state is FieldState.VALID and claim.canonical is not None
+    }
+    provider_families = {
+        claim.reference: _isbn_family(claim.value)
+        for _, _, claim in provider_isbns
+        if claim.state is FieldState.VALID and claim.value is not None
+    }
+
+    family_sources: dict[str, set[str]] = {}
+    family_local_references: dict[str, list[str]] = {}
+    for claim in local_isbns:
+        family = local_families.get(claim.reference)
+        if family is None:
+            continue
+        family_sources.setdefault(family, set()).add(claim.basis)
+        family_local_references.setdefault(family, []).append(claim.reference)
+    accepted_local_families = {
+        family
+        for family, references in family_local_references.items()
+        if family_sources[family] >= {"package_metadata", "opening_matter"}
+        or any(
+            claim.reference in references and claim.applicability == "ebook"
+            for claim in local_isbns
+        )
+    }
+
+    accepted_works: dict[str, set[str]] = {}
+    accepted_provider_references: dict[tuple[str, str], list[str]] = {}
+    for provider, candidate, claim in provider_isbns:
+        family = provider_families.get(claim.reference)
+        if family in accepted_local_families:
+            accepted_works.setdefault(provider, set()).add(candidate.work_identity)
+            accepted_provider_references.setdefault(
+                (provider, candidate.work_identity), []
+            ).append(claim.reference)
+
+    provider_by_family: dict[str, list[tuple[str, ProviderCandidate, ProviderClaim]]] = {}
+    for provider, candidate, claim in provider_isbns:
+        family = provider_families.get(claim.reference)
+        if family is not None:
+            provider_by_family.setdefault(family, []).append(
+                (provider, candidate, claim)
+            )
+
+    evidence: list[IdentifierEvidence] = []
+    for claim in local_isbns:
+        family = local_families.get(claim.reference)
+        if family is None:
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.INVALID,
+                    IdentifierEvidenceBasis.INVALID_IDENTIFIER,
+                )
+            )
+            continue
+        references = family_local_references[family]
+        if family_sources[family] >= {"package_metadata", "opening_matter"}:
+            related = tuple(
+                sorted(
+                    other.reference
+                    for other in local_isbns
+                    if other.reference in references
+                    and other.basis != claim.basis
+                )
+            )
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.ACCEPTED,
+                    IdentifierEvidenceBasis.LOCAL_SOURCE_AGREEMENT,
+                    related,
+                )
+            )
+            continue
+        if claim.applicability == "ebook":
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.ACCEPTED,
+                    IdentifierEvidenceBasis.EXPLICIT_EBOOK,
+                )
+            )
+            continue
+        matching = provider_by_family.get(family, [])
+        associated = [
+            provider_claim.reference
+            for provider, candidate, provider_claim in matching
+            if candidate.work_identity in accepted_works.get(provider, set())
+        ]
+        if associated:
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.ASSOCIATED,
+                    IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY,
+                    tuple(sorted(associated)),
+                )
+            )
+        elif any(accepted_works.get(provider) for provider, _, _ in matching):
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.UNRELATED,
+                    IdentifierEvidenceBasis.PROVIDER_OTHER_WORK,
+                    tuple(sorted(item.reference for _, _, item in matching)),
+                )
+            )
+        else:
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.UNRESOLVED,
+                    IdentifierEvidenceBasis.INSUFFICIENT_CONTEXT,
+                )
+            )
+
+    for provider, candidate, claim in provider_isbns:
+        family = provider_families.get(claim.reference)
+        identity = {
+            "provider": provider,
+            "candidate_identity": candidate.identity,
+            "work_identity": candidate.work_identity,
+        }
+        if family is None:
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.INVALID,
+                    IdentifierEvidenceBasis.INVALID_IDENTIFIER,
+                    **identity,
+                )
+            )
+        elif family in accepted_local_families:
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.ACCEPTED,
+                    IdentifierEvidenceBasis.PROVIDER_IDENTIFIER_AGREEMENT,
+                    tuple(sorted(family_local_references[family])),
+                    **identity,
+                )
+            )
+        elif candidate.work_identity in accepted_works.get(provider, set()):
+            related = accepted_provider_references.get(
+                (provider, candidate.work_identity), []
+            )
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.ASSOCIATED,
+                    IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY,
+                    tuple(sorted(related)),
+                    **identity,
+                )
+            )
+        elif accepted_works.get(provider):
+            related = [
+                reference
+                for work in accepted_works[provider]
+                for reference in accepted_provider_references[(provider, work)]
+            ]
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.UNRELATED,
+                    IdentifierEvidenceBasis.PROVIDER_OTHER_WORK,
+                    tuple(sorted(related)),
+                    **identity,
+                )
+            )
+        else:
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.UNRESOLVED,
+                    IdentifierEvidenceBasis.INSUFFICIENT_CONTEXT,
+                    **identity,
+                )
+            )
+    return tuple(evidence)
+
+
+def _isbn_family(value: str | None) -> str | None:
+    if value is None:
+        return None
+    compact = _comparison_value(ClaimKind.ISBN, value)
+    if _valid_isbn(compact, "valid_isbn_13"):
+        return compact
+    if not _valid_isbn(compact, "valid_isbn_10"):
+        return None
+    stem = "978" + compact[:9]
+    checksum = (
+        10
+        - sum(
+            (1 if index % 2 == 0 else 3) * int(character)
+            for index, character in enumerate(stem)
+        )
+        % 10
+    ) % 10
+    return stem + str(checksum)
+
+
 def _provider_reference_data(provider: str, candidate: str, kind: ClaimKind, value: str | None, state: FieldState, scope: ClaimScope, applicability: str, role: str | None, raw_order: int) -> dict[str, object]:
     return {
         "applicability": applicability,
@@ -733,10 +1064,11 @@ def _comparison_value(kind: ClaimKind, value: str) -> str:
     return normalize_title(value).casefold()
 
 
-def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...], field_results: tuple[FieldResult, ...], cover_sources: tuple[CoverSource, ...]) -> dict[str, object]:
+def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...], field_results: tuple[FieldResult, ...], identifier_evidence: tuple[IdentifierEvidence, ...], cover_sources: tuple[CoverSource, ...]) -> dict[str, object]:
     return {
         "file": file.to_data(),
         "field_results": [value.to_data() for value in field_results],
+        "identifier_evidence": [value.to_data() for value in identifier_evidence],
         "local": {
             "claims": [value.to_data() for value in local_claims],
             "reasons": list(local_reasons),
@@ -752,13 +1084,14 @@ def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_cla
 
 
 def _report_from_data(value: object) -> MetadataReport:
-    root = _object(value, {"comparison_version", "covers", "field_results", "file", "local", "providers", "report_id", "schema_version", "target"})
+    root = _object(value, {"comparison_version", "covers", "field_results", "file", "identifier_evidence", "local", "providers", "report_id", "schema_version", "target"})
     target = _object(root["target"], {"connection", "current_title", "item", "library"})
     file = _object(root["file"], {"content_digest", "format", "identity", "selected_index"})
     local = _object(root["local"], {"claims", "reasons", "status"})
     claims = tuple(_local_claim_from_data(item) for item in _list(local["claims"]))
     providers = tuple(_provider_from_data(item) for item in _list(root["providers"]))
     field_results = tuple(_field_result_from_data(item) for item in _list(root["field_results"]))
+    identifier_evidence = tuple(_identifier_evidence_from_data(item) for item in _list(root["identifier_evidence"]))
     reasons = tuple(_strings(local["reasons"]))
     covers = tuple(_cover_source_from_data(item) for item in _list(root["covers"]))
     return MetadataReport(
@@ -770,6 +1103,7 @@ def _report_from_data(value: object) -> MetadataReport:
         reasons,
         providers,
         field_results,
+        identifier_evidence,
         covers, root["schema_version"], root["comparison_version"],
     )
 
@@ -777,6 +1111,30 @@ def _report_from_data(value: object) -> MetadataReport:
 def _field_result_from_data(value: object) -> FieldResult:
     item = _object(value, {"kind", "state", "sources"})
     return FieldResult(ClaimKind(item["kind"]), FieldState(item["state"]), tuple(FieldSourceResult(FieldSource(source["source"]), FieldState(source["state"])) for source in _list(item["sources"])))
+
+
+def _identifier_evidence_from_data(value: object) -> IdentifierEvidence:
+    item = _object(
+        value,
+        {
+            "basis",
+            "candidate_identity",
+            "provider",
+            "reference",
+            "related_references",
+            "relation",
+            "work_identity",
+        },
+    )
+    return IdentifierEvidence(
+        item["reference"],
+        IdentifierRelation(item["relation"]),
+        IdentifierEvidenceBasis(item["basis"]),
+        tuple(_strings(item["related_references"])),
+        item["provider"],
+        item["candidate_identity"],
+        item["work_identity"],
+    )
 
 
 def _cover_source_from_data(value: object) -> CoverSource:
@@ -878,8 +1236,10 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 
 __all__ = [
     "ClaimKind", "ClaimScope", "COMPARISON_VERSION", "Comparison", "ComparisonLink", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
+    "IdentifierEvidence", "IdentifierEvidenceBasis", "IdentifierRelation",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
     "ProviderObservation", "ProviderStatus", "REPORT_SCHEMA", "ReportValueError",
-    "TargetFacts", "canonical_json", "claim_scope", "comparison_links", "normalize_title",
+    "TargetFacts", "canonical_json", "claim_scope", "comparison_links",
+    "derive_identifier_evidence", "normalize_title",
     "stable_reference", "validate_observed_title",
 ]

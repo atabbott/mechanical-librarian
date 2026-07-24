@@ -298,6 +298,36 @@ class EpubChildRearSpineTests(unittest.TestCase):
             [(fact.field.value, fact.canonical_value) for fact in facts if fact.field.value in {"title", "subtitle", "isbn"}],
             [("title", "Caf\u00e9 Registry"), ("subtitle", "The Sequel"), ("isbn", "9780306406157")],
         )
+        self.assertEqual(
+            [
+                (fact.media, fact.classification_basis)
+                for fact in facts
+                if fact.field.value == "isbn"
+            ],
+            [("unknown", "unlabelled")],
+        )
+
+    def test_package_primary_isbn_is_distinct_from_secondary_isbn(self) -> None:
+        package = EPUB3_PACKAGE.replace(
+            b"</metadata>",
+            b"<dc:identifier>9780140328721</dc:identifier></metadata>",
+        )
+        facts = self._package_facts(package)
+        self.assertEqual(
+            [
+                (
+                    fact.canonical_value,
+                    fact.media,
+                    fact.classification_basis,
+                )
+                for fact in facts
+                if fact.field.value == "isbn"
+            ],
+            [
+                ("9780306406157", "ebook", "ebook"),
+                ("9780140328721", "unknown", "unlabelled"),
+            ],
+        )
 
     def test_package_facts_mark_missing_invalid_date_and_language_canonicals_malformed(self) -> None:
         package = EPUB3_PACKAGE.replace(

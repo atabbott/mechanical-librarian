@@ -38,6 +38,8 @@ from mechanical_librarian.domain.metadata_report import (
     FieldSourceResult,
     FieldState,
     FileFacts,
+    IdentifierEvidenceBasis,
+    IdentifierRelation,
     LocalClaim,
     MetadataReport,
     MAX_CANDIDATES,
@@ -57,6 +59,7 @@ from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     comparison_links,
     claim_scope,
+    derive_identifier_evidence,
     derive_field_results,
     normalize_title,
     stable_reference,
@@ -515,6 +518,335 @@ class MetadataReportTests(unittest.TestCase):
             MetadataReport.from_json(canonical_json(data))
         data = report.to_data()
         data["providers"][0]["candidates"][0]["claims"][0]["links"][0]["outcome"] = "disagreement"
+        with self.assertRaises(ReportValueError):
+            MetadataReport.from_json(canonical_json(data))
+
+    def test_identifier_evidence_classifies_provider_local_work_relations(self) -> None:
+        def local(
+            value: str,
+            *,
+            basis: str,
+            applicability: str,
+            applicability_basis: str,
+            occurrence: int,
+        ) -> LocalClaim:
+            return LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed=value,
+                canonical=value,
+                excerpt=value,
+                applicability=applicability,
+                basis=basis,
+                checksum=f"valid_isbn_{len(value)}",
+                applicability_basis=applicability_basis,
+                scope=ClaimScope.EDITION,
+                occurrence=occurrence,
+            )
+
+        package = local(
+            "9780306406157",
+            basis="package_metadata",
+            applicability="unknown",
+            applicability_basis="unlabelled",
+            occurrence=1,
+        )
+        opening = local(
+            "0306406152",
+            basis="opening_matter",
+            applicability="ebook",
+            applicability_basis="ebook",
+            occurrence=2,
+        )
+        same_work_print = local(
+            "9780140328721",
+            basis="opening_matter",
+            applicability="print",
+            applicability_basis="paperback",
+            occurrence=3,
+        )
+        other_work = local(
+            "9783161484100",
+            basis="opening_matter",
+            applicability="unknown",
+            applicability_basis="unlabelled",
+            occurrence=4,
+        )
+        unresolved = local(
+            "9781861972712",
+            basis="opening_matter",
+            applicability="ambiguous",
+            applicability_basis="ambiguous",
+            occurrence=5,
+        )
+        malformed = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406158",
+            canonical=None,
+            excerpt="9780306406158",
+            applicability="ebook",
+            basis="opening_matter",
+            checksum="invalid",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+            state=FieldState.MALFORMED,
+            occurrence=6,
+        )
+        local_claims = (
+            package,
+            opening,
+            same_work_print,
+            other_work,
+            unresolved,
+            malformed,
+        )
+
+        def provider_claim(
+            candidate: str,
+            value: str,
+            raw_order: int,
+        ) -> ProviderClaim:
+            bare = ProviderClaim.create(
+                provider="catalogue",
+                candidate=candidate,
+                kind=ClaimKind.ISBN,
+                value=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+                raw_order=raw_order,
+            )
+            return ProviderClaim.create(
+                provider="catalogue",
+                candidate=candidate,
+                kind=ClaimKind.ISBN,
+                value=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+                raw_order=raw_order,
+                links=comparison_links(bare, local_claims),
+            )
+
+        seed = provider_claim("edition-seed", "9780306406157", 0)
+        alternate = provider_claim("edition-alternate", "9780140328721", 0)
+        unrelated = provider_claim("edition-unrelated", "9783161484100", 0)
+        providers = (
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                (),
+                (
+                    ProviderCandidate(
+                        "edition-alternate",
+                        "work-one",
+                        (alternate,),
+                    ),
+                    ProviderCandidate("edition-seed", "work-one", (seed,)),
+                    ProviderCandidate(
+                        "edition-unrelated",
+                        "work-two",
+                        (unrelated,),
+                    ),
+                ),
+            ),
+        )
+
+        evidence = derive_identifier_evidence(local_claims, providers)
+        by_reference = {item.reference: item for item in evidence}
+        self.assertEqual(
+            {item.reference for item in evidence},
+            {
+                *(claim.reference for claim in local_claims),
+                seed.reference,
+                alternate.reference,
+                unrelated.reference,
+            },
+        )
+        self.assertEqual(
+            by_reference[package.reference].relation,
+            IdentifierRelation.ACCEPTED,
+        )
+        self.assertEqual(
+            by_reference[opening.reference].relation,
+            IdentifierRelation.ACCEPTED,
+        )
+        self.assertEqual(
+            by_reference[package.reference].basis,
+            IdentifierEvidenceBasis.LOCAL_SOURCE_AGREEMENT,
+        )
+        self.assertEqual(
+            by_reference[same_work_print.reference].relation,
+            IdentifierRelation.ASSOCIATED,
+        )
+        self.assertEqual(
+            by_reference[same_work_print.reference].basis,
+            IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY,
+        )
+        self.assertEqual(
+            by_reference[other_work.reference].relation,
+            IdentifierRelation.UNRELATED,
+        )
+        self.assertEqual(
+            by_reference[unresolved.reference].relation,
+            IdentifierRelation.UNRESOLVED,
+        )
+        self.assertEqual(
+            by_reference[malformed.reference].relation,
+            IdentifierRelation.INVALID,
+        )
+        self.assertEqual(
+            by_reference[seed.reference].relation,
+            IdentifierRelation.ACCEPTED,
+        )
+        self.assertEqual(
+            by_reference[alternate.reference].relation,
+            IdentifierRelation.ASSOCIATED,
+        )
+        self.assertEqual(
+            by_reference[unrelated.reference].relation,
+            IdentifierRelation.UNRELATED,
+        )
+        self.assertEqual(by_reference[alternate.reference].provider, "catalogue")
+        self.assertEqual(
+            by_reference[alternate.reference].candidate_identity,
+            "edition-alternate",
+        )
+        self.assertEqual(
+            by_reference[alternate.reference].work_identity,
+            "work-one",
+        )
+        self.assertEqual(
+            set(by_reference[alternate.reference].to_data()),
+            {
+                "basis",
+                "candidate_identity",
+                "provider",
+                "reference",
+                "related_references",
+                "relation",
+                "work_identity",
+            },
+        )
+        self.assertTrue(
+            {
+                "observed",
+                "canonical",
+                "excerpt",
+                "resource_identity",
+            }.isdisjoint(by_reference[alternate.reference].to_data())
+        )
+
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=local_claims,
+            local_reasons=("opening_matter_isbn",),
+            providers=providers,
+        )
+        self.assertEqual(report.identifier_evidence, evidence)
+        self.assertEqual(MetadataReport.from_json(report.to_json()), report)
+        self.assertEqual(report.local_claims, local_claims)
+
+    def test_identifier_evidence_preserves_repeats_conflicts_and_rejects_tampering(self) -> None:
+        provenance = RearClaimProvenance(
+            "a" * 64,
+            12,
+            1,
+            "copyright",
+            "Copyright",
+        )
+        claims = (
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed="9780306406157",
+                canonical="9780306406157",
+                excerpt="9780306406157",
+                applicability="unknown",
+                basis="package_metadata",
+                checksum="valid_isbn_13",
+                applicability_basis="unlabelled",
+                occurrence=1,
+            ),
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed="0306406152",
+                canonical="0306406152",
+                excerpt="0306406152",
+                applicability="unknown",
+                basis="opening_matter",
+                checksum="valid_isbn_10",
+                applicability_basis="unlabelled",
+                rear_provenance=provenance,
+                occurrence=2,
+            ),
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed="0306406152",
+                canonical="0306406152",
+                excerpt="0306406152",
+                applicability="unknown",
+                basis="opening_matter",
+                checksum="valid_isbn_10",
+                applicability_basis="unlabelled",
+                rear_provenance=provenance,
+                occurrence=3,
+            ),
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed="9780140328721",
+                canonical="9780140328721",
+                excerpt="9780140328721",
+                applicability="ambiguous",
+                basis="opening_matter",
+                checksum="valid_isbn_13",
+                applicability_basis="ambiguous",
+                rear_provenance=provenance,
+                occurrence=4,
+            ),
+        )
+        evidence = derive_identifier_evidence(claims, ())
+        self.assertEqual(len(evidence), len(claims))
+        self.assertEqual(
+            [item.relation for item in evidence],
+            [
+                IdentifierRelation.ACCEPTED,
+                IdentifierRelation.ACCEPTED,
+                IdentifierRelation.ACCEPTED,
+                IdentifierRelation.UNRESOLVED,
+            ],
+        )
+        primary_package = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9783161484100",
+            canonical="9783161484100",
+            excerpt="9783161484100",
+            applicability="ebook",
+            basis="package_metadata",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+            occurrence=5,
+        )
+        primary_evidence = derive_identifier_evidence((primary_package,), ())[0]
+        self.assertEqual(
+            (primary_evidence.relation, primary_evidence.basis),
+            (
+                IdentifierRelation.ACCEPTED,
+                IdentifierEvidenceBasis.EXPLICIT_EBOOK,
+            ),
+        )
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=claims,
+            local_reasons=("opening_matter_isbn",),
+            providers=(),
+        )
+        self.assertEqual(
+            [claim.to_data() for claim in report.local_claims],
+            [claim.to_data() for claim in claims],
+        )
+        data = report.to_data()
+        data["identifier_evidence"][0]["relation"] = "associated"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(data))
 

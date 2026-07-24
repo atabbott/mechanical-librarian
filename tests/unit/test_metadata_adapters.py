@@ -63,7 +63,7 @@ def _report(title: str = "Current title") -> MetadataReport:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v4'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v5'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)

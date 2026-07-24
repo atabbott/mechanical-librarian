@@ -21,6 +21,11 @@
   edition/work field evidence, roles, source scope, and per-local comparisons.
 - Preserve each bounded Hardcover candidate's opaque provider-local work
   identity alongside its distinct edition identity.
+- Classify every retained ISBN claim as accepted, associated, unrelated,
+  invalid, or unresolved using primary-package, separately provenanced
+  package/opening, and provider-local work evidence. Secondary and conflicting
+  identifiers remain typed and report-only, and exact replay validates the
+  derived relationship projection.
 
 - Preserve source-spine slot positions for bounded local EPUB rear evidence and
   make exact-ID report reopening non-creating.

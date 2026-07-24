@@ -9,10 +9,11 @@ EPUB. It contains:
 - selected file index, opaque file identity, EPUB format, and content digest;
 - stable source-attributed local field claims with bounded occurrence and, where
   applicable, rear-spine provenance;
-- a local `candidate` or `no_candidate` status with bounded reasons; and
+- a local `candidate` or `no_candidate` status with bounded reasons;
 - independent provider observations with stable input references and zero or
   more provider-identity-ordered candidates, each with an opaque provider-local
-  work identity distinct from its edition identity.
+  work identity distinct from its edition identity; and
+- one derived ISBN relationship for every local and provider ISBN claim.
 
 The local field vocabulary is title/subtitle, creator/contributor and role,
 series/sequence, ISBN, date, publisher/imprint, description, language, and
@@ -29,12 +30,28 @@ basis. Invalid, unlabeled, and conflicting-label identifiers remain distinct
 facts; an ISBN-10 is not represented as an observed ISBN-13. Other bounded
 local fields remain source-attributed evidence, never decisions, and preserve
 their admitted source/DOM order and rear-spine provenance where present.
+The package primary-identifier designation is projected as ebook applicability
+only when its value is a valid ISBN; other package ISBNs remain independently
+provenanced and unlabelled.
+
+ISBN relationships use the closed vocabulary `accepted`, `associated`,
+`unrelated`, `invalid`, and `unresolved`. Their basis records explicit ebook
+applicability, same-family package/opening agreement, provider identifier
+agreement, provider-local work correlation, a different provider-local work,
+invalidity, or insufficient context. ISBN-10 and ISBN-13 claims may compare as
+one family without changing either retained observation. Repeated claims remain
+separate relationship entries. The derived projection contains claim
+references and bounded provider identities, not another copy of observations
+or excerpts, and exact replay rejects a relationship that does not recompute
+from the report's claims and candidates.
 
 Provider observations are `disabled`, `insufficient_input`, `candidates`,
 `no_match`, `authentication`, `authorization`, `rate_limited`, `unavailable`,
 or `malformed`. Candidate claims record agreement, disagreement, incompatible,
 or not-comparable facts against stable local claim references. No outcome is a
-decision or winner.
+decision or winner. Provider-local work identity may associate alternate ebook
+or print ISBNs with an accepted identifier, but it cannot corroborate another
+provider or make an unresolved claim accepted.
 
 Claim references and the report ID are derived from canonical content. Exact
 replay therefore preserves IDs and bytes without an idempotency subsystem.

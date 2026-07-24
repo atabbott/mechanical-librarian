@@ -74,6 +74,11 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         for observation in report.observations
         if observation.field is EpubPackageField.IDENTIFIER_SCHEME
     }
+    package_identifier_ordinals = {
+        observation.citation.source_ordinal
+        for observation in report.observations
+        if observation.field is EpubPackageField.PACKAGE_IDENTIFIER
+    }
     for observation in report.observations:
         field = _PACKAGE_FIELDS.get(observation.field)
         if field is None and observation.field is not EpubPackageField.IDENTIFIER:
@@ -89,7 +94,24 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
                 continue
             if not valid:
                 canonical = None
-            facts.append(EpubInspectionFact(field, source, observed, canonical, observed, f"valid_isbn_{len(canonical)}" if valid else "invalid", "unknown", "unlabelled", "package_metadata", state=forced_state or ("valid" if valid else "malformed")))
+            primary = (
+                observation.citation.source_ordinal
+                in package_identifier_ordinals
+            )
+            facts.append(
+                EpubInspectionFact(
+                    field,
+                    source,
+                    observed,
+                    canonical,
+                    observed,
+                    f"valid_isbn_{len(canonical)}" if valid else "invalid",
+                    "ebook" if primary else "unknown",
+                    "ebook" if primary else "unlabelled",
+                    "package_metadata",
+                    state=forced_state or ("valid" if valid else "malformed"),
+                )
+            )
             continue
         if canonical is not None and field in {EpubInspectionField.TITLE, EpubInspectionField.SUBTITLE}:
             canonical = normalize_title(observed)
