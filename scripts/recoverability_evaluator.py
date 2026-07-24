@@ -140,13 +140,18 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
                     raise ValueError("profile field denominator drift")
         views[name] = {"name": name, "evaluated_fields": list(fields), "denominator": denominator, "by_field": matrices[name], "categories": {category: sum(matrices[name][field][category] for field in fields) for category in CATEGORIES}}
     isbn = Counter({relation: 0 for relation in ISBN_RELATIONS})
+    seen_slots: set[int] = set()
     for observation in observations:
-        if not isinstance(observation, dict) or set(observation) != {"relation", "provider_scope", "same_work", "non_corroborating", "source_present"}: raise ValueError("invalid identifier observation")
+        if not isinstance(observation, dict) or set(observation) != {"slot", "relation", "provider_scope", "same_work", "non_corroborating", "source_present"}: raise ValueError("invalid identifier observation")
+        if type(observation["slot"]) is not int or observation["slot"] < 0 or observation["slot"] in seen_slots: raise ValueError("invalid identifier slot")
+        seen_slots.add(observation["slot"])
         relation = observation["relation"]
         if relation not in ISBN_RELATIONS or observation["provider_scope"] not in {"none", "hardcover"} or any(type(observation[key]) is not bool for key in ("same_work", "non_corroborating", "source_present")): raise ValueError("invalid identifier observation")
         if relation == "associated" and not (observation["provider_scope"] == "hardcover" and observation["same_work"] and observation["non_corroborating"] and observation["source_present"]): raise ValueError("invalid associated ISBN")
         if relation != "associated" and observation["same_work"]: raise ValueError("same-work evidence requires associated relation")
         isbn[relation] += 1
+    if document["profile"] == "gold-50-v1" and len(observations) > views["supported"]["by_field"]["identifier"]["matched_complete"] + views["supported"]["by_field"]["identifier"]["matched_partial"]:
+        raise ValueError("identifier observations exceed supported identifier matches")
     regression = document["regression"]
     if not isinstance(regression, dict) or set(regression) != {"title_matches", "creator_matches", "language_matches", "matched_rows", "precision_matches", "precision_candidates", "false_positives", "negative_rows"} or any(type(value) is not int or value < 0 for value in regression.values()): raise ValueError("invalid regression controls")
     gates = {
