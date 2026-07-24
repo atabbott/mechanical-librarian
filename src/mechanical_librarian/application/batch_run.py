@@ -13,7 +13,7 @@ from mechanical_librarian.domain.metadata_report import ProviderStatus
 class ForegroundBatchRun:
     """Own the closed serial loop; composition supplies the concrete authority."""
 
-    def __init__(self, *, snapshot: CatalogueSnapshot, selections: tuple[BatchSelection, ...], projection: Callable[[], str], expected_projection: str, current_entry: Callable[[int, str, tuple[str, str, str, str]], CatalogueEntry | None], report: Callable[[CatalogueEntry], str], emit: Callable[[dict[str, object]], None]) -> None:
+    def __init__(self, *, snapshot: CatalogueSnapshot, selections: tuple[BatchSelection, ...], projection: Callable[[], str], expected_projection: str, current_entry: Callable[[int, str, tuple[str, str, str, str]], CatalogueEntry | None], report: Callable[[CatalogueEntry], tuple[str, tuple[ProviderStatus, ...]]], emit: Callable[[dict[str, object]], None]) -> None:
         self._snapshot = snapshot; self._selections = selections; self._projection = projection; self._expected_projection = expected_projection; self._current_entry = current_entry; self._report = report; self._emit = emit
 
     def run(self) -> bool:

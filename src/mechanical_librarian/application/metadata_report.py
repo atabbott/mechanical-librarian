@@ -198,9 +198,14 @@ class GenerateMetadataReport:
                 else MetadataReport.from_json(current_document).report_id
             )
 
-            local = self._inspector.inspect(
-                self._mount, selected.relative_path, self._limits.source_archive_bytes
-            )
+            try:
+                local = self._inspector.inspect(
+                    self._mount, selected.relative_path, self._limits.source_archive_bytes
+                )
+            except MetadataReportError:
+                raise
+            except Exception as error:
+                raise ItemInspectionError("EPUB inspection failed") from error
         except MetadataReportError:
             if repository is not None:
                 repository.close()

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import unicodedata
 from dataclasses import asdict, dataclass
 from typing import Protocol
 
@@ -165,11 +167,19 @@ def _reject_constant(_: str) -> float:
 
 
 def _entry_valid(entry: dict[str, object]) -> bool:
-    if type(entry["connection"]) is not str or not entry["connection"].isascii() or not 1 <= len(entry["connection"]) <= 64 or type(entry["library"]) is not str or not entry["library"].isascii() or not 1 <= len(entry["library"]) <= 64 or type(entry["library_id"]) is not str or not 1 <= len(entry["library_id"]) <= 128 or type(entry["item"]) is not str or not 1 <= len(entry["item"]) <= 512:
+    if not _name(entry["connection"]) or not _name(entry["library"]) or not _opaque(entry["library_id"], 128) or not _opaque(entry["item"], 512):
         return False
     identity = entry["file_identity"]; classification = entry["classification"]; eligible = entry["eligible"]
     if classification == "singular-supported": return type(eligible) is bool and _digest(identity)
-    return eligible is False and identity is None
+    return classification in {"none", "needs-attention"} and eligible is False and identity is None
+
+
+def _name(value: object) -> bool:
+    return type(value) is str and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", value) is not None
+
+
+def _opaque(value: object, maximum: int) -> bool:
+    return type(value) is str and 1 <= len(value) <= maximum and value.strip() == value and not any(character in "\x00/\\" or unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value)
 
 
 __all__ = ["BatchError", "BatchSelection", "CatalogueSnapshot", "CatalogueSnapshotReader", "MAX_MANIFEST_BYTES", "batch_fingerprint", "catalogue_fingerprint", "manifest", "parse_manifest", "select"]

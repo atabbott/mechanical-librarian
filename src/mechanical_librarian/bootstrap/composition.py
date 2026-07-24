@@ -50,6 +50,7 @@ from mechanical_librarian.application.metadata_report import (
     CoverSourceChangedError,
     CoverTimeoutError,
     CurrentnessError,
+    ItemInspectionError,
     GenerateMetadataReport,
     InspectionResult,
     MetadataReportError,
@@ -111,7 +112,7 @@ class _IsolatedEpubInspector:
             )
             inspection = report
             if inspection.outcome not in {EpubInspectionOutcome.SUCCESS, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE}:
-                raise MetadataReportError("EPUB inspection failed")
+                raise ItemInspectionError("EPUB inspection failed")
             claims: list[LocalClaim] = []
             for occurrence, fact in enumerate(inspection.facts, 1):
                 claim = LocalClaim.create(
@@ -157,7 +158,7 @@ class _IsolatedEpubInspector:
         except MetadataReportError:
             raise
         except (LocalMediaError, OSError, ValueError) as error:
-            raise MetadataReportError("EPUB inspection failed") from error
+            raise ItemInspectionError("EPUB inspection failed") from error
         finally:
             if opened is not None:
                 os.close(opened.descriptor)
