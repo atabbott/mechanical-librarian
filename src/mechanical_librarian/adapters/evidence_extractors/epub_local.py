@@ -79,6 +79,11 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         for observation in report.observations
         if observation.field is EpubPackageField.PACKAGE_IDENTIFIER
     }
+    if any(
+        warning.code == "inferred_package_identifier"
+        for warning in report.warnings
+    ):
+        package_identifier_ordinals.clear()
     for observation in report.observations:
         field = _PACKAGE_FIELDS.get(observation.field)
         if field is None and observation.field is not EpubPackageField.IDENTIFIER:

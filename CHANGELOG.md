@@ -26,6 +26,10 @@
   package/opening, and provider-local work evidence. Secondary and conflicting
   identifiers remain typed and report-only, and exact replay validates the
   derived relationship projection.
+- Keep ISBN acceptance claim-local: only explicitly designated package
+  primaries are projected as ebook identifiers, while inferred primaries,
+  print labels, ambiguous labels, and conflicts remain unresolved unless
+  bounded provider-local evidence proves association.
 
 - Preserve source-spine slot positions for bounded local EPUB rear evidence and
   make exact-ID report reopening non-creating.

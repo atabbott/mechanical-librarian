@@ -815,30 +815,58 @@ def derive_identifier_evidence(
     }
 
     family_sources: dict[str, set[str]] = {}
-    family_local_references: dict[str, list[str]] = {}
+    family_local_claims: dict[str, list[LocalClaim]] = {}
     for claim in local_isbns:
         family = local_families.get(claim.reference)
         if family is None:
             continue
         family_sources.setdefault(family, set()).add(claim.basis)
-        family_local_references.setdefault(family, []).append(claim.reference)
+        family_local_claims.setdefault(family, []).append(claim)
+
+    local_acceptance: dict[str, IdentifierEvidenceBasis] = {}
+    for family, claims in family_local_claims.items():
+        for claim in claims:
+            if (
+                claim.applicability == "ebook"
+                and claim.applicability_basis == "ebook"
+            ):
+                local_acceptance[claim.reference] = (
+                    IdentifierEvidenceBasis.EXPLICIT_EBOOK
+                )
+        if (
+            family_sources[family] >= {"package_metadata", "opening_matter"}
+            and all(
+                claim.applicability == "unknown"
+                and claim.applicability_basis == "unlabelled"
+                for claim in claims
+            )
+        ):
+            for claim in claims:
+                local_acceptance[claim.reference] = (
+                    IdentifierEvidenceBasis.LOCAL_SOURCE_AGREEMENT
+                )
+
+    accepted_local_references = {
+        family: [
+            claim.reference
+            for claim in claims
+            if claim.reference in local_acceptance
+        ]
+        for family, claims in family_local_claims.items()
+    }
     accepted_local_families = {
         family
-        for family, references in family_local_references.items()
-        if family_sources[family] >= {"package_metadata", "opening_matter"}
-        or any(
-            claim.reference in references and claim.applicability == "ebook"
-            for claim in local_isbns
-        )
+        for family, references in accepted_local_references.items()
+        if references
     }
 
     accepted_works: dict[str, set[str]] = {}
-    accepted_provider_references: dict[tuple[str, str], list[str]] = {}
+    provider_work_anchor_references: dict[tuple[str, str], list[str]] = {}
     for provider, candidate, claim in provider_isbns:
         family = provider_families.get(claim.reference)
         if family in accepted_local_families:
             accepted_works.setdefault(provider, set()).add(candidate.work_identity)
-            accepted_provider_references.setdefault(
+            provider_work_anchor_references.setdefault(
                 (provider, candidate.work_identity), []
             ).append(claim.reference)
 
@@ -862,13 +890,14 @@ def derive_identifier_evidence(
                 )
             )
             continue
-        references = family_local_references[family]
-        if family_sources[family] >= {"package_metadata", "opening_matter"}:
+        acceptance_basis = local_acceptance.get(claim.reference)
+        if acceptance_basis is not None:
             related = tuple(
                 sorted(
                     other.reference
-                    for other in local_isbns
-                    if other.reference in references
+                    for other in family_local_claims[family]
+                    if other.reference in local_acceptance
+                    and other.reference != claim.reference
                     and other.basis != claim.basis
                 )
             )
@@ -876,17 +905,8 @@ def derive_identifier_evidence(
                 IdentifierEvidence(
                     claim.reference,
                     IdentifierRelation.ACCEPTED,
-                    IdentifierEvidenceBasis.LOCAL_SOURCE_AGREEMENT,
+                    acceptance_basis,
                     related,
-                )
-            )
-            continue
-        if claim.applicability == "ebook":
-            evidence.append(
-                IdentifierEvidence(
-                    claim.reference,
-                    IdentifierRelation.ACCEPTED,
-                    IdentifierEvidenceBasis.EXPLICIT_EBOOK,
                 )
             )
             continue
@@ -940,17 +960,28 @@ def derive_identifier_evidence(
                 )
             )
         elif family in accepted_local_families:
-            evidence.append(
-                IdentifierEvidence(
-                    claim.reference,
-                    IdentifierRelation.ACCEPTED,
-                    IdentifierEvidenceBasis.PROVIDER_IDENTIFIER_AGREEMENT,
-                    tuple(sorted(family_local_references[family])),
-                    **identity,
+            if claim.applicability == "ebook":
+                evidence.append(
+                    IdentifierEvidence(
+                        claim.reference,
+                        IdentifierRelation.ACCEPTED,
+                        IdentifierEvidenceBasis.PROVIDER_IDENTIFIER_AGREEMENT,
+                        tuple(sorted(accepted_local_references[family])),
+                        **identity,
+                    )
                 )
-            )
+            else:
+                evidence.append(
+                    IdentifierEvidence(
+                        claim.reference,
+                        IdentifierRelation.ASSOCIATED,
+                        IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY,
+                        tuple(sorted(accepted_local_references[family])),
+                        **identity,
+                    )
+                )
         elif candidate.work_identity in accepted_works.get(provider, set()):
-            related = accepted_provider_references.get(
+            related = provider_work_anchor_references.get(
                 (provider, candidate.work_identity), []
             )
             evidence.append(
@@ -966,7 +997,7 @@ def derive_identifier_evidence(
             related = [
                 reference
                 for work in accepted_works[provider]
-                for reference in accepted_provider_references[(provider, work)]
+                for reference in provider_work_anchor_references[(provider, work)]
             ]
             evidence.append(
                 IdentifierEvidence(

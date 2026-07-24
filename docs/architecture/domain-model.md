@@ -30,9 +30,9 @@ basis. Invalid, unlabeled, and conflicting-label identifiers remain distinct
 facts; an ISBN-10 is not represented as an observed ISBN-13. Other bounded
 local fields remain source-attributed evidence, never decisions, and preserve
 their admitted source/DOM order and rear-spine provenance where present.
-The package primary-identifier designation is projected as ebook applicability
-only when its value is a valid ISBN; other package ISBNs remain independently
-provenanced and unlabelled.
+An explicit package primary-identifier designation is projected as ebook
+applicability only when its value is a valid ISBN. A parser-inferred primary and
+other package ISBNs remain independently provenanced and unlabelled.
 
 ISBN relationships use the closed vocabulary `accepted`, `associated`,
 `unrelated`, `invalid`, and `unresolved`. Their basis records explicit ebook
@@ -40,7 +40,11 @@ applicability, same-family package/opening agreement, provider identifier
 agreement, provider-local work correlation, a different provider-local work,
 invalidity, or insufficient context. ISBN-10 and ISBN-13 claims may compare as
 one family without changing either retained observation. Repeated claims remain
-separate relationship entries. The derived projection contains claim
+separate relationship entries. Acceptance is claim-local: print, ambiguous,
+conflicting, and inferred-primary occurrences do not inherit another
+same-family occurrence's acceptance. Unlabelled package/opening agreement is
+accepted only when every same-family occurrence is unlabelled and
+non-conflicting. The derived projection contains claim
 references and bounded provider identities, not another copy of observations
 or excerpts, and exact replay rejects a relationship that does not recompute
 from the report's claims and candidates.

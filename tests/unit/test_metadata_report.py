@@ -664,7 +664,7 @@ class MetadataReportTests(unittest.TestCase):
         )
         self.assertEqual(
             by_reference[package.reference].relation,
-            IdentifierRelation.ACCEPTED,
+            IdentifierRelation.ASSOCIATED,
         )
         self.assertEqual(
             by_reference[opening.reference].relation,
@@ -672,7 +672,11 @@ class MetadataReportTests(unittest.TestCase):
         )
         self.assertEqual(
             by_reference[package.reference].basis,
-            IdentifierEvidenceBasis.LOCAL_SOURCE_AGREEMENT,
+            IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY,
+        )
+        self.assertEqual(
+            by_reference[opening.reference].basis,
+            IdentifierEvidenceBasis.EXPLICIT_EBOOK,
         )
         self.assertEqual(
             by_reference[same_work_print.reference].relation,
@@ -834,6 +838,25 @@ class MetadataReportTests(unittest.TestCase):
                 IdentifierEvidenceBasis.EXPLICIT_EBOOK,
             ),
         )
+        inferred_package = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9783161484100",
+            canonical="9783161484100",
+            excerpt="9783161484100",
+            applicability="unknown",
+            basis="package_metadata",
+            checksum="valid_isbn_13",
+            applicability_basis="unlabelled",
+            occurrence=6,
+        )
+        inferred_evidence = derive_identifier_evidence((inferred_package,), ())[0]
+        self.assertEqual(
+            (inferred_evidence.relation, inferred_evidence.basis),
+            (
+                IdentifierRelation.UNRESOLVED,
+                IdentifierEvidenceBasis.INSUFFICIENT_CONTEXT,
+            ),
+        )
         report = MetadataReport.create(
             target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
             file=FileFacts(0, "a" * 64, "b" * 64),
@@ -849,6 +872,133 @@ class MetadataReportTests(unittest.TestCase):
         data["identifier_evidence"][0]["relation"] = "associated"
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(data))
+
+    def test_identifier_evidence_is_claim_local_under_applicability_conflicts(self) -> None:
+        def claim(
+            value: str,
+            *,
+            basis: str,
+            applicability: str,
+            applicability_basis: str,
+            occurrence: int,
+        ) -> LocalClaim:
+            return LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed=value,
+                canonical=value,
+                excerpt=value,
+                applicability=applicability,
+                basis=basis,
+                checksum="valid_isbn_13",
+                applicability_basis=applicability_basis,
+                occurrence=occurrence,
+            )
+
+        secondary_package = claim(
+            "9780306406157",
+            basis="package_metadata",
+            applicability="unknown",
+            applicability_basis="unlabelled",
+            occurrence=1,
+        )
+        paperback = claim(
+            "9780306406157",
+            basis="opening_matter",
+            applicability="print",
+            applicability_basis="paperback",
+            occurrence=2,
+        )
+        primary_ebook = claim(
+            "9780140328721",
+            basis="package_metadata",
+            applicability="ebook",
+            applicability_basis="ebook",
+            occurrence=3,
+        )
+        primary_print = claim(
+            "9780140328721",
+            basis="opening_matter",
+            applicability="print",
+            applicability_basis="hardcover",
+            occurrence=4,
+        )
+        unknown = claim(
+            "9783161484100",
+            basis="package_metadata",
+            applicability="unknown",
+            applicability_basis="unlabelled",
+            occurrence=5,
+        )
+        explicit_ebook = claim(
+            "9783161484100",
+            basis="opening_matter",
+            applicability="ebook",
+            applicability_basis="ebook",
+            occurrence=6,
+        )
+        ambiguous = claim(
+            "9783161484100",
+            basis="opening_matter",
+            applicability="ambiguous",
+            applicability_basis="ambiguous",
+            occurrence=7,
+        )
+        explicit_print = claim(
+            "9783161484100",
+            basis="opening_matter",
+            applicability="print",
+            applicability_basis="print",
+            occurrence=8,
+        )
+        evidence = {
+            item.reference: item
+            for item in derive_identifier_evidence(
+                (
+                    secondary_package,
+                    paperback,
+                    primary_ebook,
+                    primary_print,
+                    unknown,
+                    explicit_ebook,
+                    ambiguous,
+                    explicit_print,
+                ),
+                (),
+            )
+        }
+        self.assertEqual(
+            {
+                claim.reference: evidence[claim.reference].relation
+                for claim in (
+                    secondary_package,
+                    paperback,
+                    primary_ebook,
+                    primary_print,
+                    unknown,
+                    explicit_ebook,
+                    ambiguous,
+                    explicit_print,
+                )
+            },
+            {
+                secondary_package.reference: IdentifierRelation.UNRESOLVED,
+                paperback.reference: IdentifierRelation.UNRESOLVED,
+                primary_ebook.reference: IdentifierRelation.ACCEPTED,
+                primary_print.reference: IdentifierRelation.UNRESOLVED,
+                unknown.reference: IdentifierRelation.UNRESOLVED,
+                explicit_ebook.reference: IdentifierRelation.ACCEPTED,
+                ambiguous.reference: IdentifierRelation.UNRESOLVED,
+                explicit_print.reference: IdentifierRelation.UNRESOLVED,
+            },
+        )
+        self.assertEqual(
+            evidence[primary_ebook.reference].basis,
+            IdentifierEvidenceBasis.EXPLICIT_EBOOK,
+        )
+        self.assertEqual(
+            evidence[explicit_ebook.reference].basis,
+            IdentifierEvidenceBasis.EXPLICIT_EBOOK,
+        )
 
     def test_maximum_description_comparison_is_field_appropriate(self) -> None:
         local_value = "d" * 512

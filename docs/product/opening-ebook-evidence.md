@@ -195,18 +195,22 @@ Identifiers are typed and validated independently.
 - Never convert a UUID, DOI, ASIN, proprietary ID, or package identifier into an
   ISBN-shaped field.
 
-The package document's designated primary identifier is distinct from other
-declared identifiers. When that primary identifier is itself a checksum-valid
-ISBN, it is applicable to the EPUB publication; a secondary package ISBN
-remains unlabelled unless opening evidence independently establishes its
-applicability. Package and opening observations retain their separate
-provenance even when their ISBN-10/ISBN-13 family agrees.
+The package document's explicitly designated primary identifier is distinct
+from other declared identifiers. When that explicit primary identifier is
+itself a checksum-valid ISBN, it is applicable to the EPUB publication. A
+parser-inferred package identifier and every secondary package ISBN remain
+unlabelled unless other evidence independently establishes applicability; the
+parser warning and source provenance remain available. Package and opening
+observations retain their separate provenance even when their ISBN-10/ISBN-13
+family agrees.
 
 The report derives one closed relationship for every ISBN claim without
 discarding or rewriting the claim:
 
-- `accepted` means an explicit ebook ISBN, a checksum-valid primary package
-  ISBN, or an ISBN family observed in both package and opening evidence;
+- `accepted` means an explicit ebook ISBN, a checksum-valid explicitly
+  designated primary package ISBN, or an unlabelled ISBN family observed in
+  both package and opening evidence when every occurrence in that family is
+  likewise unlabelled and non-conflicting;
 - `associated` means an alternate ISBN on the same provider-local work as an
   accepted identifier;
 - `unrelated` means an ISBN on a different work from an accepted identifier
@@ -219,6 +223,10 @@ Provider work identity is correlation within one provider only. It is never
 independent corroboration, a winning candidate, or proposal authority.
 Associated, unrelated, invalid, and unresolved claims remain available as
 typed evidence but are not promoted into accepted evidence.
+Relationships are claim-local: print, ambiguous, conflicting, and inferred
+package occurrences never inherit acceptance merely because another occurrence
+in the same ISBN family is accepted. Provider-local work identity may prove
+association for such an occurrence; without that proof it remains unresolved.
 
 Qualification keeps two denominators explicit. Accepted-evidence precision
 scores only distinct ISBN families whose relationship is `accepted`.
