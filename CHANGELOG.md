@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a synthetic, aggregate-only EPUB evidence recoverability audit contract.
+
 - Add the read-only current Audiobookshelf book catalogue with bounded refresh,
   deterministic inspection, and config-v3 schema.
 - Correct catalogue refresh retention, empty plural ebook classification,

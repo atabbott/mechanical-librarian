@@ -18,6 +18,7 @@
 ## Development
 
 - [Quality strategy](development/quality-strategy.md)
+- [Recoverability qualification](development/recoverability-qualification.md)
 - [Testing strategy](development/testing-strategy.md)
 - [Repository structure](development/repository-structure.md)
 - [Functional slice delivery](development/slice-delivery.md)
