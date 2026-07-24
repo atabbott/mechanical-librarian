@@ -37,12 +37,13 @@ class ForegroundBatchRunTests(unittest.TestCase):
 
     def test_provider_stops_after_durable_item(self) -> None:
         for status in (ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION, ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE):
-            lines, result = self.exercise(lambda _: ("report", (status,)))
-            self.assertEqual(([line.get("outcome") for line in lines[:-1]], result), (["completed", "stopped"], False))
+            first, second = entry(), entry("item-2"); selections=(BatchSelection("primary","books","library","item","a"*64,"singular-supported",True),BatchSelection("primary","books","library","item-2","a"*64,"singular-supported",True)); lines=[]; calls=[]
+            result=ForegroundBatchRun(snapshot=CatalogueSnapshot(1,"b"*64,(first,second)),selections=selections,projection=lambda:"p",expected_projection="p",current_entry=lambda *_: second if _[-1][-1]=="item-2" else first,report=lambda value:(calls.append(value.item_id) or ("report",(status,))),emit=lines.append).run()
+            self.assertEqual((calls,[line.get("outcome") for line in lines[:-1]],lines[-1]["summary"]["stopped"],result),(["item"],["completed","stopped"],True,False))
 
     def test_inspection_continues_and_generic_metadata_stops(self) -> None:
         selected = BatchSelection("primary", "books", "library", "item", "a" * 64, "singular-supported", True)
         second = BatchSelection("primary", "books", "library", "item-2", "a" * 64, "singular-supported", True)
         lines=[]; calls=[]
-        result=ForegroundBatchRun(snapshot=CatalogueSnapshot(1,"b"*64,(entry(),entry("item-2"))),selections=(selected,second),projection=lambda:"p",expected_projection="p",current_entry=lambda *_: entry("item-2") if _[-1][-1]=="item-2" else entry(),report=lambda value: ((_ for _ in ()).throw(ItemInspectionError("bad")) if value.item_id=="item" else ("report",())),emit=lines.append).run()
-        self.assertEqual((lines[0]["outcome"],lines[1]["outcome"],result),("item_failed","completed",True))
+        result=ForegroundBatchRun(snapshot=CatalogueSnapshot(1,"b"*64,(entry(),entry("item-2"))),selections=(selected,second),projection=lambda:"p",expected_projection="p",current_entry=lambda *_: entry("item-2") if _[-1][-1]=="item-2" else entry(),report=lambda value:(calls.append(value.item_id) or ((_ for _ in ()).throw(ItemInspectionError("bad")) if value.item_id=="item" else ("report",()))),emit=lines.append).run()
+        self.assertEqual((calls,lines[0]["outcome"],lines[1]["outcome"],result),(["item","item-2"],"item_failed","completed",True))

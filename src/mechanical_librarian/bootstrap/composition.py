@@ -385,7 +385,7 @@ def preview_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, 
     finally:
         repository.close()
     selections = select(snapshot, requested, all_eligible)
-    providers = tuple(sorted({name for selection in selections for library in configuration.libraries if library.name == selection.library and library.connection == selection.connection for name in library.provider_connections if next(provider for provider in configuration.providers if provider.name == name).enabled}))
+    providers = _batch_provider_names(configuration, selections)
     raw = batch_manifest(snapshot, batch_fingerprint(configuration, selections), selections, providers)
     create_batch_manifest(manifest_path, raw)
     value = parse_manifest(raw)
@@ -406,13 +406,12 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     selections = tuple(BatchSelection(raw["connection"], raw["library"], raw["library_id"], raw["item"], raw["file_identity"], raw["classification"], raw["eligible"]) for raw in value["entries"])
     if batch_fingerprint(configuration, selections) != value["batch_config_fingerprint"]:
         raise BatchError("batch configuration changed")
-    actual_providers = tuple(sorted({name for selection in selections for library in configuration.libraries if library.name == selection.library and library.connection == selection.connection for name in library.provider_connections if next(provider for provider in configuration.providers if provider.name == name).enabled}))
+    actual_providers = _batch_provider_names(configuration, selections)
     if actual_providers != tuple(value["providers"]):
         raise BatchError("batch configuration changed")
     selected_connections = {selection.connection for selection in selections}
     selected_provider_names = set(value["providers"])
-    credentials = {"target:" + item.name: read_secret(item.secret_file) for item in configuration.connections if item.name in selected_connections}
-    credentials.update({"provider:" + item.name: read_secret(item.secret_file) for item in configuration.providers if item.name in selected_provider_names and item.secret_file is not None})
+    credentials = _load_batch_credentials(configuration, selected_connections, selected_provider_names)
     repository = open_catalogue(catalogue_path, create=False)
     try:
         snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))
@@ -432,6 +431,16 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
         report = MetadataReport.from_json(serialized)
         return report.report_id, tuple(item.status for item in report.providers)
     return ForegroundBatchRun(snapshot=snapshot, selections=selections, projection=lambda: batch_fingerprint(configuration, selections), expected_projection=value["batch_config_fingerprint"], current_entry=current_entry, report=report, emit=emit).run()
+
+
+def _batch_provider_names(configuration, selections: tuple[BatchSelection, ...]) -> tuple[str, ...]:
+    return tuple(sorted({name for selection in selections for library in configuration.libraries if library.name == selection.library and library.connection == selection.connection for name in library.provider_connections if next(provider for provider in configuration.providers if provider.name == name).enabled}))
+
+
+def _load_batch_credentials(configuration, selected_connections: set[str], selected_provider_names: set[str]) -> dict[str, str]:
+    values = {"target:" + item.name: read_secret(item.secret_file) for item in configuration.connections if item.name in selected_connections}
+    values.update({"provider:" + item.name: read_secret(item.secret_file) for item in configuration.providers if item.name in selected_provider_names and item.secret_file is not None})
+    return values
 
 
 def main(argv: Sequence[str] | None = None) -> int:
