@@ -39,6 +39,7 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     fetch_remote_cover,
 )
 from mechanical_librarian.application.batch import BatchError, BatchSelection, batch_fingerprint, catalogue_fingerprint as batch_catalogue_fingerprint, manifest as batch_manifest, parse_manifest, select
+from mechanical_librarian.application.batch_run import ForegroundBatchRun
 from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue
 from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
@@ -48,6 +49,7 @@ from mechanical_librarian.application.metadata_report import (
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
+    CurrentnessError,
     GenerateMetadataReport,
     InspectionResult,
     MetadataReportError,
@@ -374,8 +376,8 @@ def preview_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, 
     finally:
         repository.close()
     selections = select(snapshot, requested, all_eligible)
-    providers = tuple(item.name for item in configuration.providers if item.enabled)
-    raw = batch_manifest(snapshot, batch_fingerprint(configuration), selections, providers)
+    providers = tuple(sorted({name for selection in selections for library in configuration.libraries if library.name == selection.library and library.connection == selection.connection for name in library.provider_connections if next(provider for provider in configuration.providers if provider.name == name).enabled}))
+    raw = batch_manifest(snapshot, batch_fingerprint(configuration, selections), selections, providers)
     create_batch_manifest(manifest_path, raw)
     value = parse_manifest(raw)
     return json.dumps({"id": value["id"], "entries": len(selections), "target_observations": len(selections), "provider_metadata": len(selections) * len(providers)}, separators=(",", ":"))
@@ -386,11 +388,14 @@ def inspect_batch(manifest_path: Path) -> str:
     return json.dumps({"id": value["id"], "entries": len(value["entries"]), "target_observations": value["call_maxima"]["target_observations"], "provider_metadata": value["call_maxima"]["provider_metadata"]}, separators=(",", ":"))
 
 
-def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, database_path: Path, artifact_store_path: Path) -> str:
+def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, manifest_id: str, database_path: Path, artifact_store_path: Path) -> str:
     """Run the immutable foreground list serially; no resume or hidden state."""
     value = parse_manifest(read_batch_manifest(manifest_path))
+    if value["id"] != manifest_id:
+        raise BatchError("batch manifest is unavailable")
     configuration = load_configuration_file(config_path)
-    if batch_fingerprint(configuration) != value["batch_config_fingerprint"]:
+    selections = tuple(BatchSelection(raw["connection"], raw["library"], raw["library_id"], raw["item"], raw["file_identity"], raw["classification"], raw["eligible"]) for raw in value["entries"])
+    if batch_fingerprint(configuration, selections) != value["batch_config_fingerprint"]:
         raise BatchError("batch configuration changed")
     repository = open_catalogue(catalogue_path, create=False)
     try:
@@ -399,34 +404,18 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, data
         repository.close()
     if snapshot.generation != value["catalogue_generation"] or snapshot.fingerprint != value["catalogue_fingerprint"]:
         raise BatchError("catalogue requires refresh")
-    entries = {(item.connection, item.library, item.library_id, item.item_id): item for item in snapshot.entries}
     output: list[str] = []
-    completed = skipped = 0
-    for raw in value["entries"]:
-        if type(raw) is not dict:
-            raise BatchError("batch manifest is invalid")
-        key = (raw.get("connection"), raw.get("library"), raw.get("library_id"), raw.get("item"))
-        entry = entries.get(key)
-        if entry is None or entry.file_identity != raw.get("file_identity") or entry.classification != raw.get("classification") or entry.eligible != raw.get("eligible"):
-            skipped += 1
-            output.append(json.dumps({"item": raw.get("item"), "outcome": "stale"}, separators=(",", ":")))
-            continue
-        if not entry.eligible or entry.file_identity is None:
-            skipped += 1
-            output.append(json.dumps({"item": entry.item_id, "outcome": "ineligible"}, separators=(",", ":")))
-            continue
+    def current_entry(generation: int, fingerprint: str, key: tuple[str, str, str, str]):
+        repository = open_catalogue(catalogue_path, create=False)
         try:
-            serialized = run_metadata_report(config_path, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity)
-        except CurrentnessError:
-            skipped += 1
-            output.append(json.dumps({"item": entry.item_id, "outcome": "stale"}, separators=(",", ":")))
-            continue
-        except (UnsupportedMediaError, MetadataReportError):
-            output.append(json.dumps({"item": entry.item_id, "outcome": "item_failed"}, separators=(",", ":")))
-            continue
-        completed += 1
-        output.append(json.dumps({"item": entry.item_id, "outcome": "completed", "report": json.loads(serialized)["report_id"]}, separators=(",", ":")))
-    output.append(json.dumps({"summary": {"completed": completed, "skipped": skipped, "entries": len(value["entries"])}}, separators=(",", ":")))
+            return repository.current_entry(generation, fingerprint, key)
+        finally:
+            repository.close()
+    def report(entry):
+        serialized = run_metadata_report(config_path, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity)
+        return json.loads(serialized)["report_id"]
+    summary = ForegroundBatchRun(snapshot=snapshot, selections=selections, projection=lambda: batch_fingerprint(configuration, selections), expected_projection=value["batch_config_fingerprint"], current_entry=current_entry, report=report, emit=lambda line: output.append(json.dumps(line, separators=(",", ":")))).run()
+    output.append(json.dumps({"summary": {**summary, "entries": len(selections)}}, separators=(",", ":")))
     return "\n".join(output)
 
 
