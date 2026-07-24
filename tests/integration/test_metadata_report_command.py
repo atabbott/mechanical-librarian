@@ -483,8 +483,15 @@ class MetadataReportCommandTests(unittest.TestCase):
                     headers={"content-type": "application/json"},
                     json={
                         "data": {
-                            "editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []}],
-                            "books": [{"id": 1, "title": "Current service title", "description": None, "contributions": [], "book_series": [], "taggings": []}],
+                            "editions": [
+                                {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
+                                {"id": 2, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
+                                {"id": 3, "book_id": 2, "isbn_10": None, "isbn_13": "9780306406157", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
+                            ],
+                            "books": [
+                                {"id": 1, "title": "Current service title", "description": None, "contributions": [], "book_series": [], "taggings": []},
+                                {"id": 2, "title": "Other work title", "description": None, "contributions": [], "book_series": [], "taggings": []},
+                            ],
                         }
                     },
                 )
@@ -523,26 +530,36 @@ class MetadataReportCommandTests(unittest.TestCase):
                 config.write_text(json.dumps(source_config), encoding="utf-8")
                 with patch.object(composition, "hardcover_client", side_effect=client):
                     first = _installed_cli(config, database, library="books")
+                    replay = _installed_cli(config, database, library="books")
                     second = _installed_cli(config, database, library="other")
 
-            self.assertEqual([first[0], second[0]], [0, 0])
-            self.assertEqual([first[2], second[2]], ["", ""])
+            self.assertEqual([first[0], replay[0], second[0]], [0, 0, 0])
+            self.assertEqual([first[2], replay[2], second[2]], ["", "", ""])
+            self.assertEqual(first[1], replay[1])
             reports = [
                 MetadataReport.from_json(value[1].removesuffix("\n"))
-                for value in (first, second)
+                for value in (first, replay, second)
             ]
             self.assertEqual(
-                [report.target.library for report in reports], ["books", "other"]
+                [report.target.library for report in reports], ["books", "books", "other"]
             )
             self.assertEqual(
                 [report.providers[0].status.value for report in reports],
-                ["candidates", "candidates"],
+                ["candidates", "candidates", "candidates"],
+            )
+            self.assertEqual(
+                [candidate.work_identity for candidate in reports[0].providers[0].candidates],
+                [
+                    "hardcover-work-0000000001",
+                    "hardcover-work-0000000001",
+                    "hardcover-work-0000000002",
+                ],
             )
             self.assertEqual(
                 provider_secret_uses,
-                [str(provider_secret), str(provider_secret)],
+                [str(provider_secret), str(provider_secret), str(provider_secret)],
             )
-            self.assertEqual(len(provider_requests), 2)
+            self.assertEqual(len(provider_requests), 3)
             self.assertTrue(
                 all(
                     request.headers.get("authorization")
@@ -550,8 +567,8 @@ class MetadataReportCommandTests(unittest.TestCase):
                     for request in provider_requests
                 )
             )
-            self.assertEqual(server.requests, 4)
-            public_output = "".join(value for result in (first, second) for value in result[1:])
+            self.assertEqual(server.requests, 6)
+            public_output = "".join(value for result in (first, replay, second) for value in result[1:])
             self.assertNotIn("provider-token", public_output)
             self.assertNotIn("target-token", public_output)
             self.assertNotIn(str(provider_secret), public_output)
