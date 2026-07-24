@@ -9,9 +9,10 @@ to reports stored in the exact current schema; restart, replay, and crash safety
 remain mandatory.
 
 To adopt an increment, retain an older development database and its matching
-artifact directory offline together as one historical state set. Supply both an
-absent path for the current report database and an absent or separate empty
-artifact-store path, then rerun the supported report command. Never point a
+artifact directory offline together as one historical state set. Supply an
+absent database file path and a separately created, empty artifact-store
+directory that is not the retained old directory, then rerun the supported
+report command. Never point a
 current database at an older or unrelated artifact directory: exact-current
 crash recovery removes unreferenced 64-hex artifact files, so that reuse is
 destructive and unsupported. Pointing a current binary at an older or
