@@ -47,3 +47,6 @@ class ForegroundBatchRunTests(unittest.TestCase):
         lines=[]; calls=[]
         result=ForegroundBatchRun(snapshot=CatalogueSnapshot(1,"b"*64,(entry(),entry("item-2"))),selections=(selected,second),projection=lambda:"p",expected_projection="p",current_entry=lambda *_: entry("item-2") if _[-1][-1]=="item-2" else entry(),report=lambda value:(calls.append(value.item_id) or ((_ for _ in ()).throw(ItemInspectionError("bad")) if value.item_id=="item" else ("report",()))),emit=lines.append).run()
         self.assertEqual((calls,lines[0]["outcome"],lines[1]["outcome"],result),(["item","item-2"],"item_failed","completed",True))
+        lines=[]; calls=[]
+        result=ForegroundBatchRun(snapshot=CatalogueSnapshot(1,"b"*64,(entry(),entry("item-2"))),selections=(selected,second),projection=lambda:"p",expected_projection="p",current_entry=lambda *_: entry("item-2") if _[-1][-1]=="item-2" else entry(),report=lambda value:(calls.append(value.item_id) or (_ for _ in ()).throw(MetadataReportError("publication"))),emit=lines.append).run()
+        self.assertEqual((calls,[line.get("outcome") for line in lines[:-1]],lines[-1]["summary"]["stopped"],result),(["item"],["stopped"],True,False))

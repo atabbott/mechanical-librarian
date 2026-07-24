@@ -2,7 +2,7 @@ from __future__ import annotations
 import unittest
 from mechanical_librarian.application.batch import BatchError, BatchSelection, CatalogueSnapshot, MAX_MANIFEST_BYTES, batch_fingerprint, manifest, parse_manifest, select
 from mechanical_librarian.application.catalogue import CatalogueEntry
-from mechanical_librarian.application.configuration import ApplicationConfiguration, LibraryConfiguration, ReportLimits, TargetConnectionConfiguration
+from mechanical_librarian.application.configuration import ApplicationConfiguration, LibraryConfiguration, ProviderConnectionConfiguration, ReportLimits, TargetConnectionConfiguration
 
 def entry(item="one", eligible=True):
     return CatalogueEntry("primary","books","library",item,1,"Title",(),True,False,"singular-supported" if eligible else "needs-attention","a"*64,"book.epub","epub","books" if eligible else None)
@@ -35,3 +35,9 @@ class BatchTests(unittest.TestCase):
   for value in (BatchSelection("Bad Name","books","library","item","a"*64,"singular-supported",True),BatchSelection("primary","books","bad/path","item","a"*64,"singular-supported",True),BatchSelection("primary","books","library","item",None,"singular-supported",True),BatchSelection("primary","books","library","item",None,"unknown",False)):
    with self.assertRaises(BatchError):manifest(base,"b"*64,(value,),())
   with self.assertRaises(BatchError):manifest(base,"b"*64,(valid,),("Bad Name",))
+ def test_fingerprint_binds_selected_provider_references(self):
+  selected=(BatchSelection("primary","books","library","item","a"*64,"singular-supported",True),)
+  no_provider=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/target"),),(LibraryConfiguration("books","primary","library","book",None,()),),(),())
+  provider=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/other-target"),),(LibraryConfiguration("books","primary","library","book",None,("catalogue",)),),(),(ProviderConnectionConfiguration("catalogue",True,False,"/provider"),))
+  cover=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/third-target"),),(LibraryConfiguration("books","primary","library","book",None,("catalogue",)),),(),(ProviderConnectionConfiguration("catalogue",True,True,"/provider-two"),))
+  self.assertNotEqual(batch_fingerprint(no_provider,selected),batch_fingerprint(provider,selected));self.assertNotEqual(batch_fingerprint(provider,selected),batch_fingerprint(cover,selected))
