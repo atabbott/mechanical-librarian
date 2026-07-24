@@ -63,6 +63,16 @@ class RecoverabilityEvaluatorTests(unittest.TestCase):
         document["rows"][1]["projection"] = "projected"
         with self.assertRaises(ValueError):
             MODULE.evaluate(document)
+
+    def test_loader_rejects_oversize_and_duplicate_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "input.json"
+            source.write_bytes(b"x" * (MODULE.MAX_BYTES + 1))
+            with self.assertRaises(ValueError):
+                MODULE.load(source)
+            source.write_text('{"schema":"a","schema":"b"}', encoding="utf-8")
+            with self.assertRaises(ValueError):
+                MODULE.load(source)
         document = self.load()
         document["rows"][0]["source"] = "present"
         with self.assertRaises(ValueError):

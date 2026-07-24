@@ -57,7 +57,8 @@ def _integer(value: str) -> int:
 
 
 def load(path: Path) -> dict[str, Any]:
-    data = path.read_bytes()
+    with path.open("rb") as source:
+        data = source.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
         raise ValueError("input too large")
     try:
