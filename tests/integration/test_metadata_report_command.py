@@ -466,7 +466,26 @@ class MetadataReportCommandTests(unittest.TestCase):
             media = root / "media"
             media.mkdir()
             source = media / "book.epub"
-            source.write_bytes(opening_title_isbn_applicability())
+            source.write_bytes(
+                _opening_epub(
+                    package=_opening_package(
+                        items=(("opening", "opening.xhtml", "application/xhtml+xml", ""),),
+                        spine=("opening",),
+                    ),
+                    entries=(
+                        (
+                            "EPUB/opening.xhtml",
+                            _xhtml(
+                                '<section epub:type="titlepage"><h1>Two ISBN Clock</h1></section>'
+                                '<section epub:type="copyright-page"><p>'
+                                'ISBN 9780306406157 (eBook), ISBN 9781861972712 (eBook)'
+                                '</p></section>'
+                            ),
+                            zipfile.ZIP_STORED,
+                        ),
+                    ),
+                )
+            )
             target_secret = root / "target.secret"
             target_secret.write_text("target-token", encoding="ascii")
             target_secret.chmod(0o600)
@@ -485,8 +504,8 @@ class MetadataReportCommandTests(unittest.TestCase):
                         "data": {
                             "editions": [
                                 {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
-                                {"id": 2, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
-                                {"id": 3, "book_id": 2, "isbn_10": None, "isbn_13": "9780306406157", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
+                                {"id": 2, "book_id": 1, "isbn_10": None, "isbn_13": "9781861972712", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
+                                {"id": 3, "book_id": 2, "isbn_10": None, "isbn_13": "9781861972712", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
                             ],
                             "books": [
                                 {"id": 1, "title": "Current service title", "description": None, "contributions": [], "book_series": [], "taggings": []},
@@ -560,6 +579,13 @@ class MetadataReportCommandTests(unittest.TestCase):
                 [str(provider_secret), str(provider_secret), str(provider_secret)],
             )
             self.assertEqual(len(provider_requests), 3)
+            self.assertTrue(
+                all(
+                    json.loads(request.content)["variables"]["isbns"]
+                    == ["9780306406157", "9781861972712"]
+                    for request in provider_requests
+                )
+            )
             self.assertTrue(
                 all(
                     request.headers.get("authorization")
