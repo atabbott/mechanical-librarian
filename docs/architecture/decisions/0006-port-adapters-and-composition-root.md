@@ -4,7 +4,7 @@
 - Date: 2026-07-10
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: none
+- Superseded by: migration provisions superseded by ADR-0012 and ADR-0013
 
 ## Context
 
@@ -40,9 +40,9 @@ to leak back into application code.
    No ordinary production layer may import `bootstrap`.
 7. Executable entry points delegate immediately to `bootstrap`; they do not
    assemble dependencies independently.
-8. Versioned migration files remain under the top-level `migrations/` directory.
-   Application-facing repository implementations live under
-   `adapters/persistence`; migration execution remains runtime infrastructure.
+8. If a post-release migration facility is introduced, its files and execution
+   remain runtime infrastructure; ADR-0013 forbids admitting that facility
+   before the first production release.
 
 The ownership test is therefore:
 
@@ -50,6 +50,11 @@ The ownership test is therefore:
 - if it starts, configures, observes, secures, migrates, or packages the process
   without implementing an application port, it is infrastructure;
 - if it selects concrete implementations and connects them, it is bootstrap.
+
+## Supersession
+
+ADR-0013 supersedes this record's pre-release migration-directory and execution
+provisions. The layer-boundary decision remains accepted.
 
 ## Consequences
 

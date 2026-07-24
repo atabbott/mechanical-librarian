@@ -129,7 +129,7 @@ Priority describes consequence and sequencing, not contributor importance.
 
 - `Low`: isolated documentation, presentation, or pure behavior;
 - `Medium`: bounded integration or persistence behavior with established gates;
-- `High`: credentials, parsers, AI inputs, public API, migrations, production
+- `High`: credentials, parsers, AI inputs, public API, post-release migrations, production
   writes, backups, authentication, or upgrades;
 - `Critical`: destructive behavior, recovery authority, update trust, or a
   change capable of broad silent corruption.
@@ -200,7 +200,7 @@ An issue reaching `Ready` must contain:
 - relevant success and failure behavior;
 - required test layers;
 - documentation and compatibility impact;
-- dependencies and migration or rollback needs; and
+- dependencies and clean-schema or, after release, migration/rollback needs; and
 - privacy and security considerations proportionate to risk.
 
 A Defect or Bug additionally requires:

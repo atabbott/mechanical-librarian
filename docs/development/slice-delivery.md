@@ -246,7 +246,7 @@ the following without reconstructing behavior from isolated commits:
   restart, stale state, and bounded resource failure?
 - What production authority exists, and what authority remains deliberately
   absent?
-- How are persisted data, migrations, compatibility, backup, and rollback
+- How are persisted data, clean-schema handling, compatibility, backup, and rollback
   handled?
 - Which automated and manual evidence proves the exit criteria?
 
@@ -311,7 +311,9 @@ A new-functionality slice is done only when:
   tested in proportion to risk;
 - architecture, security, privacy, compatibility, and resource bounds remain
   intact;
-- persisted changes include migrations and recovery evidence;
+- persisted changes before the first production release accept only absent or
+  exact-current state under ADR-0013; post-release changes include migration
+  and recovery evidence;
 - operator and contributor documentation describes the delivered behavior;
 - changelog and generated contracts are current;
 - the branch contains no unrelated or deferred work disguised as TODOs;

@@ -19,7 +19,7 @@ trains; release publication does not make that automatic.
 
 - Enforce the recorded `AGPL-3.0-or-later` licence and notice policy.
 - Publish architecture, security, quality, and contribution contracts.
-- Establish repository layout, CI, packaging, migrations, and release tooling.
+- Establish repository layout, CI, packaging, clean-schema safety, and release tooling.
 - Create synthetic service, media, metadata-chaos, and reliability fixtures.
 
 Exit: a contributor can build, test, and understand the empty product shell.

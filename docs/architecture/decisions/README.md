@@ -27,6 +27,7 @@ context and consequences rather than reproducing code.
 | [0010](0010-0-4-neutral-evidence-baseline.md) | accepted | Set the 0.4 clean-state neutral evidence baseline |
 | [0011](0011-isolated-epub-inspector.md) | accepted | Keep EPUB package inspection private to its isolated child |
 | [0012](0012-metadata-report-activation.md) | accepted | Activate one clean-state three-table DELETE-mode metadata-report runtime |
+| [0013](0013-pre-release-clean-schema.md) | accepted | Require clean schemas until the first production release |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

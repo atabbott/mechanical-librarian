@@ -57,7 +57,7 @@ Production metadata and cover writes remain disabled throughout these slices.
 
 | Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Increment branch stem/example |
 | --- | --- | --- | --- | --- |
-| F01 Durable state check | #136 | A CLI diagnostic creates or opens application state, applies migrations atomically, records and reads a safe audit event, and reports failure without exposing a database path. | #51-#53 | `slice/f01-durable-state-check` |
+| F01 Durable state check | #136 | A CLI diagnostic creates or opens exact-current application state, records and reads a safe audit event, and reports incompatible state without exposing a database path. | #51-#53 | `slice/f01-durable-state-check` |
 | F02 Recoverable job heartbeat | #137 | A bounded synthetic dependency graph pins an immutable workflow-definition version and graph digest, schedules the complete eligible set with stable deduplication, survives worker, scheduler, and process restart under leases and fencing, persists nonterminal `waiting` separately from `retry_wait`, and advances fan-in only after independently validating expected outcomes. An incompatible graph creates linked superseding or replanned work whose transitively affected downstream checkpoints are ineligible for reuse or current applicability without mutating or erasing original history. | #54-#58, #126 | `slice/f02-recoverable-job-heartbeat` |
 | F03 Synthetic inventory round trip | #139 | Validated configuration drives a vendor-neutral synthetic target-service read; one item whose uninterpreted external value exists only inside an opaque adapter/connection/library-scoped canonical identity and one immutable snapshot are persisted and inspected through the CLI without database access or vendor fields. | #49, #187 | `slice/f03-synthetic-inventory` |
 | F04 Audiobookshelf connection report | #140 | A configured isolated Audiobookshelf instance can be authenticated, versioned, capability-discovered, and diagnosed without reading or mutating library content. | #60, #61 | `slice/f04-audiobookshelf-connection` |
@@ -293,10 +293,12 @@ identity agree, and the closed typed document is validated on write and read.
 Exact re-observation replays the same whole report identity and bytes; changed
 evidence creates a successor without changing the prior document.
 
-Only a new database is a supported 0.4 starting state. Pre-0.4 development
-databases have no recognition, migration, import, preservation, or tailored
-compatibility path. No partial 0.4 runtime is exposed before #197. The existing
-final-0.3 report stays report-only during the contributor work.
+ADR-0013 generalizes this clean-schema policy: until the first production
+release, every database, report, artifact, configuration, and internal-document
+schema accepts only absent or exact-current state. Earlier state has no
+recognition, migration, import, preservation, or tailored compatibility path.
+No partial 0.4 runtime is exposed before #197. The existing final-0.3 report
+stays report-only during the contributor work.
 
 ### 0.4.0 checkpoint exit
 
@@ -316,13 +318,12 @@ version, tag, GitHub Release, or published artifact.
 ## Delivery checkpoint 0.5.0: complete ebook metadata and cover evidence
 
 F09i #293, F09j #294, and F09k #295 complete local, configured Hardcover, and
-validated cover evidence in order. Throughout this checkpoint, each increment
-recognizes only an absent database or its own exact current schema.
-`metadata-report-v1`, prior 0.5 increment schemas, and all earlier development
-schemas are rejected before mutation. There is no migration, import,
-preservation, or compatibility parser. Recovery is a clean database plus
-supported report regeneration; old databases may be retained offline.
-Exact-ID/current-scope replay is required only within the exact current schema.
+validated cover evidence in order. Throughout this checkpoint, ADR-0013 applies
+repository-wide: each schema recognizes only absent or exact-current state;
+earlier state is rejected before mutation without migration, import,
+preservation, or compatibility parsing. Recovery uses a clean current state and
+supported regeneration; old state may be retained offline. Exact-ID/current-scope
+replay is required only within the exact current schema.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
@@ -402,7 +403,8 @@ slice placement, or the 1.0.0 exit.
 - A deliberately narrow adapter or interface is acceptable when it completely
   demonstrates the slice and preserves compatibility for later extension.
 - No slice may defer its required safety, recovery, observability,
-  documentation, migration, or test obligations to a later slice.
+  documentation, clean-schema handling (or post-release migration), or test
+  obligations to a later slice.
 - A work-package parent closes only when all owned outcomes are complete. A
   merged slice proves its bounded outcome, not wholesale work-package
   completion.

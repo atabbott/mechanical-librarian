@@ -48,6 +48,13 @@ story-content and whole-book transcription remain outside this scope.
 
 ## Compatibility posture
 
+Until the first production release, ADR-0013 applies repository-wide: every
+database, report, artifact, configuration, and internal-document schema accepts
+only absent or exact-current state. Earlier state fails clearly and is never
+silently deleted; a clean rebuild may be required. Compatibility needs a named
+present user need, while current-schema restart, replay, and crash safety remain
+in scope.
+
 Service adapters must detect and publish their capabilities. Unsupported fields
 remain unsupported rather than falling back to undocumented database or UI
 automation. A service version change that invalidates a capability must block

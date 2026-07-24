@@ -65,7 +65,8 @@ Exit criteria:
 
 Deliverables:
 
-- introduce versioned SQLite migrations;
+- introduce an exact-current-schema SQLite foundation; before the first
+  production release it accepts only absent or exact-current state;
 - implement repositories behind application-owned interfaces;
 - implement leases, retries, backoff, cancellation, and dead-letter handling;
 - persist bounded acyclic run dependency graphs, expected typed outcomes, and a
@@ -93,7 +94,8 @@ Deliverables:
 - persist event and ingestion deduplication outcomes, including failed or
   intentionally suppressed work, across process restarts;
 - persist audit events and immutable evidence; and
-- add backup-aware migration tests.
+- add clean-schema, restart, replay, and crash-safety tests; defer migration and
+  restore qualification to post-release work under #57.
 
 Exit criteria:
 

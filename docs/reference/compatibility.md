@@ -1,4 +1,4 @@
-# Compatibility policy for the 0.4 and 0.5 checkpoints
+# Pre-release compatibility policy
 
 The current installed contract is intentionally narrow:
 
@@ -16,12 +16,14 @@ Pre-0.4 databases, `config-v1`, inventory selectors, proposal/review state,
 preview fixtures, retry/work state, and all retired CLI commands are
 unsupported. They are rejected rather than migrated, imported, or interpreted.
 
-At no point in 0.5 is schema backward compatibility supported.
-`metadata-report-v1`, prior 0.5 increment schemas, and all earlier development
-schemas are rejected fail-closed before mutation. There is no migration, import,
-preservation, or compatibility parser. Recovery is a clean database plus
-supported report regeneration; old databases may be retained offline.
-Exact-ID and current-scope replay apply only within the exact current schema.
+Until the first production release, every database, report, artifact,
+configuration, and internal-document schema accepts only absent state or its
+exact current state. Earlier schemas are rejected fail-closed and never silently
+deleted; there is no migration, import, conversion, preservation, or compatibility
+parser. A clean rebuild may be required and old state may be retained offline.
+Exact-ID and current-scope replay apply only within the exact current schema;
+current-schema restart, replay, and crash safety remain mandatory.
 
-This is a pre-release reset and not a deprecation cycle. A future public release
-must document its own compatibility promises before users depend on them.
+This is a pre-release reset and not a deprecation cycle. Compatibility requires
+a named present user need. A future public release must document its own
+compatibility, migration, and restore promises before users depend on them.

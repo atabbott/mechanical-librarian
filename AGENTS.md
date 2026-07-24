@@ -57,7 +57,9 @@ Every change must include the smallest appropriate combination of:
 
 - tests proving behavior and failure handling;
 - documentation updates;
-- a migration when persisted schemas change;
+- for persisted-schema changes before the first production release, enforce the
+  clean-schema policy in ADR-0013: accept only absent or exact-current state;
+  do not add migrations, imports, or conversions;
 - an ADR when a durable architectural decision changes;
 - changelog entry for user-visible behavior;
 - security review for credentials, network access, parsers, AI inputs, writes,
