@@ -114,6 +114,10 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_closed_claim_vocabulary_excludes_edition_and_rights(self) -> None:
+        self.assertNotIn("edition", {kind.value for kind in ClaimKind})
+        self.assertNotIn("rights", {kind.value for kind in ClaimKind})
+
     def test_final_currentness_rejects_absent_abs_source_that_becomes_bytes(self) -> None:
         selected = TargetFile("a" * 64, "book.epub", "epub")
         cover = TargetCover("descriptor", "/cover", "item-1")
