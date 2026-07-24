@@ -25,6 +25,13 @@ class BatchTests(unittest.TestCase):
   second=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/private/b"),),(LibraryConfiguration("books","primary","library","book",None,()),),(),(),ReportLimits())
   self.assertEqual(batch_fingerprint(first),batch_fingerprint(second))
  def test_maximum_selection_round_trips_inside_bound(self):
-  values=tuple(BatchSelection("primary","books","library",("🙂"*127)+str(index),"a"*64,"singular-supported",True) for index in range(10_000))
+  values=tuple(BatchSelection("primary","books","library",("🙂"*508)+f"{index:04d}","a"*64,"singular-supported",True) for index in range(10_000))
   raw=manifest(CatalogueSnapshot(1,"a"*64,()),"b"*64,values,())
   self.assertLessEqual(len(raw),MAX_MANIFEST_BYTES);self.assertEqual(len(parse_manifest(raw)["entries"]),10_000)
+ def test_closed_manifest_entry_and_provider_validation(self):
+  base=CatalogueSnapshot(1,"a"*64,())
+  valid=BatchSelection("primary","books","library","item","a"*64,"singular-supported",False)
+  self.assertEqual(len(parse_manifest(manifest(base,"b"*64,(valid,),("catalogue",)))["entries"]),1)
+  for value in (BatchSelection("Bad Name","books","library","item","a"*64,"singular-supported",True),BatchSelection("primary","books","bad/path","item","a"*64,"singular-supported",True),BatchSelection("primary","books","library","item",None,"singular-supported",True),BatchSelection("primary","books","library","item",None,"unknown",False)):
+   with self.assertRaises(BatchError):manifest(base,"b"*64,(value,),())
+  with self.assertRaises(BatchError):manifest(base,"b"*64,(valid,),("Bad Name",))

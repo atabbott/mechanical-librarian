@@ -89,7 +89,7 @@ def select(snapshot: CatalogueSnapshot, requested: tuple[tuple[str, str, str, st
 
 
 def manifest(snapshot: CatalogueSnapshot, config_fingerprint: str, selections: tuple[BatchSelection, ...], providers: tuple[str, ...]) -> bytes:
-    if type(snapshot.generation) is not int or snapshot.generation < 1 or not _digest(snapshot.fingerprint) or not _digest(config_fingerprint) or len(selections) > 10_000 or tuple(sorted(set(providers))) != providers or any(not _entry_valid(asdict(value)) for value in selections):
+    if type(snapshot.generation) is not int or snapshot.generation < 1 or not _digest(snapshot.fingerprint) or not _digest(config_fingerprint) or len(selections) > 10_000 or tuple(sorted(set(providers))) != providers or any(not _name(value) for value in providers) or any(not _entry_valid(asdict(value)) for value in selections):
         raise BatchError("batch manifest is invalid")
     body = {
         "schema": "batch-manifest-v1",
@@ -121,7 +121,7 @@ def parse_manifest(raw: bytes) -> dict[str, object]:
     body = {key: item for key, item in value.items() if key != "id"}
     if raw != canonical_json(value).encode("utf-8") + b"\n" or identity != hashlib.sha256(canonical_json(body).encode("utf-8") + b"\n").hexdigest():
         raise BatchError("batch manifest is invalid")
-    if type(body["catalogue_generation"]) is not int or body["catalogue_generation"] < 1 or not _digest(body["catalogue_fingerprint"]) or not _digest(body["batch_config_fingerprint"]) or type(body["entries"]) is not list or len(body["entries"]) > 10_000 or type(body["providers"]) is not list or any(type(item) is not str or not 1 <= len(item) <= 64 for item in body["providers"]) or tuple(body["providers"]) != tuple(sorted(set(body["providers"]))) or body["call_maxima"] != _maxima(len(body["entries"]), len(body["providers"])):
+    if type(body["catalogue_generation"]) is not int or body["catalogue_generation"] < 1 or not _digest(body["catalogue_fingerprint"]) or not _digest(body["batch_config_fingerprint"]) or type(body["entries"]) is not list or len(body["entries"]) > 10_000 or type(body["providers"]) is not list or any(not _name(item) for item in body["providers"]) or tuple(body["providers"]) != tuple(sorted(set(body["providers"]))) or body["call_maxima"] != _maxima(len(body["entries"]), len(body["providers"])):
         raise BatchError("batch manifest is invalid")
     for entry in body["entries"]:
         if type(entry) is not dict or set(entry) != {"connection", "library", "library_id", "item", "file_identity", "classification", "eligible"} or not _entry_valid(entry):
