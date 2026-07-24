@@ -336,7 +336,7 @@ def reopen_cover_preview(database_path: Path, artifact_store_path: Path, report_
         repository.close()
 
 
-def run_catalogue(config_path: Path, database_path: Path, action: str, connection: str | None, library: str | None, selector: str | None) -> str:
+def run_catalogue(config_path: Path, database_path: Path, action: str, connection: str | None, library: str | None, library_id: str | None, selector: str | None, limit: int = 100) -> str:
     """Refresh or inspect the one current catalogue through explicit composition."""
     configuration = load_configuration_file(config_path)
     mounts = {item.name: item for item in configuration.mounts}
@@ -352,11 +352,9 @@ def run_catalogue(config_path: Path, database_path: Path, action: str, connectio
         service = RefreshCurrentCatalogue(reader, repository)
         if action == "refresh":
             return json.dumps({"generation": service.refresh(configuration)}, separators=(",", ":"))
-        exact = None if action == "list" else (connection or "", library or "", selector or "")
-        entries = service.inspect(configuration, exact=exact, facet=selector if action == "list" else None)
-        values = [{"connection": item.connection, "library": item.library, "item": item.item_id, "title": item.title, "authors": list(item.authors), "ebook": item.has_ebook, "audio": item.has_audio, "classification": item.classification} for item in entries]
-        if action == "get" and values:
-            values[0].update({"updated_at": entries[0].updated_at, "file_identity": entries[0].file_identity, "format": entries[0].format, "service_path": entries[0].service_path, "mount": entries[0].mount})
+        exact = None if action == "list" else (connection or "", library or "", library_id or "", selector or "")
+        entries = service.inspect(configuration, exact=exact, facet=selector if action == "list" else None, limit=limit)
+        values = [{"connection": item.connection, "library": item.library, "library_id": item.library_id, "item": item.item_id, "title": item.title, "authors": list(item.authors), "ebook": item.has_ebook, "audio": item.has_audio, "classification": item.classification, "eligible": item.eligible, "updated_at": item.updated_at, "file_identity": item.file_identity, "format": item.format, "service_path": item.service_path, "mount": item.mount} for item in entries]
         return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
     finally:
         repository.close()

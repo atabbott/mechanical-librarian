@@ -43,28 +43,32 @@ class CatalogueEntry:
 
     @property
     def eligible(self) -> bool:
-        return self.classification == "singular-supported"
+        return self.classification == "singular-supported" and self.mount is not None
 
 
 class CatalogueReader(Protocol):
-    def read_library(self, connection: str, library: LibraryConfiguration) -> tuple[CatalogueEntry, ...]: ...
+    def read_library(self, connection: str, library: LibraryConfiguration, remaining: int) -> tuple[CatalogueEntry, ...]: ...
 
 
 class CatalogueRepository(Protocol):
+    def acquire_refresh(self) -> None: ...
     def publish(self, fingerprint: str, entries: tuple[CatalogueEntry, ...]) -> int: ...
+    def abort_refresh(self) -> None: ...
     def inspect(self, fingerprint: str) -> tuple[CatalogueEntry, ...]: ...
     def close(self) -> None: ...
 
 
 def catalogue_fingerprint(configuration: ApplicationConfiguration) -> Fingerprint:
     """Hash the deliberately small, secret-free catalogue configuration projection."""
+    referenced_connections = {item.connection for item in configuration.libraries}
+    referenced_mounts = {item.mount for item in configuration.libraries if item.mount is not None}
     connections = {
         value.name: {"name": value.name, "adapter": value.adapter, "endpoint": value.endpoint.rstrip("/")}
-        for value in configuration.connections
+        for value in configuration.connections if value.name in referenced_connections
     }
     mounts = {
         value.name: {"name": value.name, "service_path": value.service_path, "container_path": value.container_path, "read_only": value.read_only}
-        for value in configuration.mounts
+        for value in configuration.mounts if value.name in referenced_mounts
     }
     value = {
         "schema": "config-v3",
@@ -89,16 +93,21 @@ class RefreshCurrentCatalogue:
     def refresh(self, configuration: ApplicationConfiguration) -> int:
         fingerprint = catalogue_fingerprint(configuration).digest
         entries: list[CatalogueEntry] = []
-        for library in configuration.libraries:
-            entries.extend(self._reader.read_library(library.connection, library))
-            if len(entries) > 10_000:
-                raise CatalogueError("catalogue limit exceeded")
-        return self._repository.publish(fingerprint, tuple(entries))
+        self._repository.acquire_refresh()
+        try:
+            for library in configuration.libraries:
+                entries.extend(self._reader.read_library(library.connection, library, 10_000 - len(entries)))
+            return self._repository.publish(fingerprint, tuple(entries))
+        except Exception:
+            self._repository.abort_refresh()
+            raise
 
-    def inspect(self, configuration: ApplicationConfiguration, *, exact: tuple[str, str, str] | None = None, facet: str | None = None) -> tuple[CatalogueEntry, ...]:
+    def inspect(self, configuration: ApplicationConfiguration, *, exact: tuple[str, str, str, str] | None = None, facet: str | None = None, limit: int = 500) -> tuple[CatalogueEntry, ...]:
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise CatalogueError("catalogue limit exceeded")
         entries = self._repository.inspect(catalogue_fingerprint(configuration).digest)
         if exact is not None:
-            entries = tuple(item for item in entries if (item.connection, item.library, item.item_id) == exact)
+            entries = tuple(item for item in entries if (item.connection, item.library, item.library_id, item.item_id) == exact)
         if facet == "eligible":
             entries = tuple(item for item in entries if item.eligible)
         elif facet == "ineligible":
@@ -107,7 +116,7 @@ class RefreshCurrentCatalogue:
             entries = tuple(item for item in entries if item.has_ebook)
         elif facet == "audio":
             entries = tuple(item for item in entries if item.has_audio)
-        return tuple(sorted(entries, key=lambda item: (item.connection, item.library, item.item_id)))
+        return tuple(sorted(entries, key=lambda item: (item.connection, item.library, item.library_id, item.item_id)))[:limit]
 
 
 __all__ = ["CatalogueBusyError", "CatalogueEntry", "CatalogueError", "CatalogueReader", "CatalogueRepository", "CatalogueStaleError", "RefreshCurrentCatalogue", "catalogue_fingerprint"]

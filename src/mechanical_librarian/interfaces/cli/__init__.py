@@ -22,7 +22,7 @@ Runner = Callable[[Path, Path, Path, str, str, str, int], str]
 ReopenRunner = Callable[[Path, str], str]
 CurrentReopenRunner = Callable[[Path, str, str, str, str], str]
 PreviewRunner = Callable[[Path, Path, str, str, str], bytes]
-CatalogueRunner = Callable[[Path, Path, str, str | None, str | None, str | None], str]
+CatalogueRunner = Callable[[Path, Path, str, str | None, str | None, str | None, str | None, int], str]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -89,8 +89,10 @@ def _parser() -> _Parser:
     catalogue.add_argument("action", choices=("refresh", "list", "get"))
     catalogue.add_argument("--connection", type=_name)
     catalogue.add_argument("--library", type=_name)
+    catalogue.add_argument("--library-id", type=_item)
     catalogue.add_argument("--item", type=_item)
     catalogue.add_argument("--filter", choices=("eligible", "ineligible", "ebook", "audio"))
+    catalogue.add_argument("--limit", type=_catalogue_limit, default=100)
     return parser
 
 
@@ -112,6 +114,16 @@ def _preview_variant(value: str) -> str:
     return value
 
 
+def _catalogue_limit(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("invalid catalogue limit") from error
+    if not 1 <= result <= 500:
+        raise argparse.ArgumentTypeError("invalid catalogue limit")
+    return result
+
+
 def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
@@ -121,11 +133,11 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
         errors.write("Metadata report failed: invalid invocation.\n")
         return 2
     if arguments.command == "catalogue":
-        if catalogue_runner is None or (arguments.action == "get" and None in (arguments.connection, arguments.library, arguments.item)):
+        if catalogue_runner is None or (arguments.action == "get" and None in (arguments.connection, arguments.library, arguments.library_id, arguments.item)):
             errors.write("Catalogue failed safely.\n")
             return 1
         try:
-            serialized = catalogue_runner(arguments.config, arguments.database, arguments.action, arguments.connection, arguments.library, arguments.item if arguments.action == "get" else arguments.filter)
+            serialized = catalogue_runner(arguments.config, arguments.database, arguments.action, arguments.connection, arguments.library, arguments.library_id, arguments.item if arguments.action == "get" else arguments.filter, arguments.limit)
         except (ConfigurationError, CredentialError):
             errors.write("Catalogue failed: configuration or credential unavailable.\n")
             return 3
