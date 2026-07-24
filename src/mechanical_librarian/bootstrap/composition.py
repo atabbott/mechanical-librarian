@@ -157,7 +157,12 @@ class _IsolatedEpubInspector:
             else:
                 assert declared.state is not None
                 covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, declared.state),)
-            return InspectionResult(digest, tuple(claims), covers)
+            return InspectionResult(
+                digest,
+                tuple(claims),
+                covers,
+                inspection.rear_resource_limit,
+            )
         except ArtifactAuthorityError:
             raise
         except MetadataReportError:

@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import zipfile
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from mechanical_librarian.adapters.evidence_extractors.epub_package import (
@@ -236,7 +237,26 @@ def _inspect_bundle(
         with zipfile.ZipFile(_SourceIO(package_request), "r", allowZip64=True) as archive:
             package_report = EpubPackageExtractor().extract(package_request, archive)
             opening_report = EpubOpeningExtractor().extract(request, limits, package_report, archive)
-            return package_report, opening_report, _adapter_rear_facts(request, package_report, opening_report, archive)
+            try:
+                rear_facts = _adapter_rear_facts(request, package_report, opening_report, archive)
+            except opening_parser._AggregateRejected as rejected:
+                if (
+                    rejected.outcome is not EpubInspectionOutcome.RESOURCE_LIMIT
+                    or not opening_report.outcome.succeeded
+                ):
+                    raise
+                return (
+                    package_report,
+                    replace(
+                        opening_report,
+                        warnings=(
+                            *opening_report.warnings[: limits.warnings - 1],
+                            "rear_resource_limit",
+                        ),
+                    ),
+                    (),
+                )
+            return package_report, opening_report, rear_facts
     except _Rejected as rejected:
         return (
             None,
@@ -290,7 +310,12 @@ def _inspection(
         return EpubInspection(opening.outcome, source)
     facts = (*_package_facts(package_report, source), *opening.facts, *rear_facts)
     outcome = EpubInspectionOutcome.SUCCESS if facts else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
-    return EpubInspection(outcome, source, facts)
+    return EpubInspection(
+        outcome,
+        source,
+        facts,
+        opening.rear_resource_limit,
+    )
 
 
 def _rear_facts(

@@ -6,6 +6,7 @@ import io
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 import time
@@ -20,6 +21,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     EpubPackageExtractor,
     _Rejected,
 )
+from mechanical_librarian.adapters.evidence_extractors.process import run_epub_inspector_child
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageCapability,
     EpubPackageDeclarationKind,
@@ -43,7 +45,7 @@ from mechanical_librarian.domain.identifiers import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind, FieldState, FileFacts, LocalClaim, MetadataReport, TargetFacts,
 )
-from tests.support.epub_packages import EPUB2_PACKAGE, EPUB3_PACKAGE, _opening_epub, _opening_package, _xhtml, epub_bytes
+from tests.support.epub_packages import EPUB2_PACKAGE, EPUB3_PACKAGE, _opening_epub, _opening_package, _xhtml, epub_bytes, opening_resource_limit
 
 
 class EpubChildCompositionTests(unittest.TestCase):
@@ -255,6 +257,16 @@ class EpubChildRearSpineTests(unittest.TestCase):
         request = self._request(value)
         package_request = EpubPackageRequest(request.target, request.file, request.source, request.expected_source, EpubPackageCapability.PACKAGE, request.limits, request.deadline, request.monotonic_deadline, request.cancellation)
         return request, child._inspect_bundle(request, package_request, EpubOpeningLimits())
+
+    @staticmethod
+    def _inspect_in_child(value: bytes):
+        source = Fingerprint("sha256", SchemaVersion("local-file-v1"), hashlib.sha256(value).hexdigest())
+        with tempfile.TemporaryFile() as fixture:
+            fixture.write(value)
+            fixture.flush()
+            return run_epub_inspector_child(
+                fixture.fileno(), source, EpubOpeningLimits(), logical_identity=source.digest
+            )
 
     def _package_facts(self, package: bytes):
         value = epub_bytes(package=package)
@@ -534,6 +546,58 @@ class EpubChildRearSpineTests(unittest.TestCase):
             with zipfile.ZipFile(child._SourceIO(initial), "r") as archive:
                 child._rear_facts(request, package, opening, archive)
         self.assertEqual(raised.exception.outcome, EpubInspectionOutcome.CANCELLATION)
+
+    def test_rear_resource_limit_preserves_opening_evidence_in_the_isolated_child(self) -> None:
+        rear_text = "".join(f"{ordinal:06x}" for ordinal in range(43_691))[:262_145]
+        package = _opening_package(
+            items=(
+                ("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'),
+                ("opening", "opening.xhtml", "application/xhtml+xml", ""),
+                ("rear", "rear.xhtml", "application/xhtml+xml", ""),
+            ),
+            spine=("opening", "rear"),
+        )
+        value = _opening_epub(
+            package=package,
+            entries=(
+                ("EPUB/nav.xhtml", _xhtml('<nav epub:type="landmarks"><ol><li><a epub:type="titlepage" href="opening.xhtml">Opening</a></li></ol></nav>'), 8),
+                ("EPUB/opening.xhtml", _xhtml('<h1 epub:type="fulltitle">Synthetic Opening Title</h1><main epub:type="bodymatter">Synthetic body boundary</main>'), 8),
+                ("EPUB/rear.xhtml", _xhtml("<p>Copyright 2026</p><p>" + rear_text + "</p>"), 8),
+            ),
+        )
+        request = self._request(value)
+        package_request = EpubPackageRequest(request.target, request.file, request.source, request.expected_source, EpubPackageCapability.PACKAGE, request.limits, request.deadline, request.monotonic_deadline, request.cancellation)
+        package_report, opening_report, rear = child._inspect_bundle(request, package_request, EpubOpeningLimits())
+        self.assertEqual(rear, ())
+        self.assertIn("rear_resource_limit", opening_report.warnings)
+        report = self._inspect_in_child(value)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
+        self.assertTrue(report.rear_resource_limit)
+        self.assertIn("Fixture Registry Title", {fact.canonical_value for fact in report.facts})
+        self.assertIn("Synthetic Opening Title", {fact.canonical_value for fact in report.facts})
+        self.assertFalse(any(fact.rear_provenance is not None for fact in report.facts))
+
+    def test_whole_opening_resource_limit_remains_terminal_in_the_isolated_child(self) -> None:
+        report = self._inspect_in_child(opening_resource_limit())
+        self.assertEqual((report.outcome, report.facts), (EpubInspectionOutcome.RESOURCE_LIMIT, ()))
+
+    def test_double_opening_and_rear_resource_limits_remain_terminal_in_the_isolated_child(self) -> None:
+        package = _opening_package(
+            items=(("opening", "opening.xhtml", "application/xhtml+xml", ""),),
+            spine=("opening",),
+        )
+        value = _opening_epub(
+            package=package,
+            entries=(
+                (
+                    "EPUB/opening.xhtml",
+                    _xhtml("<p>" + "x" * 600_000 + "</p>"),
+                    zipfile.ZIP_STORED,
+                ),
+            ),
+        )
+        report = self._inspect_in_child(value)
+        self.assertEqual((report.outcome, report.facts), (EpubInspectionOutcome.RESOURCE_LIMIT, ()))
 
     def test_child_protocol_preserves_exact_opening_terminal_outcomes(self) -> None:
         malformed = epub_bytes(package=EPUB3_PACKAGE.replace(b"</metadata>", b"<"))
