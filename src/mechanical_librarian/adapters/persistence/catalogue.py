@@ -136,6 +136,8 @@ class SQLiteCatalogueRepository:
                 "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [(generation, item.connection, item.library, item.library_id, item.item_id, item.updated_at, item.title, json.dumps(item.authors, ensure_ascii=False, separators=(",", ":")), int(item.has_ebook), int(item.has_audio), item.classification, item.file_identity, item.service_path, item.format, item.mount) for item in entries],
             )
+            self._connection.execute("DELETE FROM catalogue_entries WHERE generation <> ?", (generation,))
+            self._connection.execute("DELETE FROM catalogue_generations WHERE generation <> ?", (generation,))
             self._require_bound_name(self._identity)
             self._connection.execute("COMMIT")
             return generation
