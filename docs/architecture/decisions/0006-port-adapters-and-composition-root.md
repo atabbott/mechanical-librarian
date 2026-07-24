@@ -4,7 +4,7 @@
 - Date: 2026-07-10
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: none
+- Superseded by: migration provisions superseded by ADR-0012 and ADR-0013
 
 ## Context
 
@@ -50,6 +50,11 @@ The ownership test is therefore:
 - if it starts, configures, observes, secures, migrates, or packages the process
   without implementing an application port, it is infrastructure;
 - if it selects concrete implementations and connects them, it is bootstrap.
+
+## Supersession
+
+ADR-0013 supersedes this record's pre-release migration-directory and execution
+provisions. The layer-boundary decision remains accepted.
 
 ## Consequences
 

@@ -42,6 +42,9 @@ database or its own exact current schema. Prior and intermediate schemas are
 rejected before mutation; there is no migration, import, preservation,
 compatibility parser, ledger, workflow, audit, job, attempt, cache, normalized
 claim table, or deletion surface.
+This metadata-report database rule is the narrower current-runtime application
+of repository-wide ADR-0013, which also governs pre-release report, artifact,
+configuration, and internal-document schemas.
 The v2 document retains the closed ordered local-field states, source capability
 provenance, and bounded occurrence/rear-spine provenance needed to replay the
 observation; the relational envelope remains only its scope, identity, digest,

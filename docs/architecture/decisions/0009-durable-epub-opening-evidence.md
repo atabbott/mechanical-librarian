@@ -57,6 +57,12 @@ history, or allowing a stale worker to publish.
    eligible request can resume without selector redelivery.
 7. Migration 8 is additive and forward-only. Downgrade is restore-only.
 
+## Supersession
+
+ADR-0013 supersedes this record's pre-release migration and downgrade
+provisions. Its durable evidence decision is otherwise historical under
+ADR-0012.
+
 ## Consequences
 
 The installed CLI can execute once and reuse the same evidence identity after

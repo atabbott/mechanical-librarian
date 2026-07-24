@@ -4,7 +4,7 @@
 - Date: 2026-07-10
 - Owners: project maintainers
 - Supersedes: none
-- Superseded by: ADR-0012
+- Superseded by: ADR-0012; pre-release schema provisions superseded by ADR-0013
 
 ## Context
 
@@ -52,5 +52,7 @@ application. Domain code does not import SQLite or ORM types.
 ## Supersession
 
 ADR-0012 retains SQLite for the activated 0.4 report store but replaces this
-ADR's WAL, durable-job, and forward-migration decisions. WAL and migrations in
-this record are historical context, not current runtime authority.
+ADR's WAL, durable-job, and forward-migration decisions. ADR-0013 supersedes
+the pre-release migration and compatibility provisions repository-wide. WAL
+and migrations in this record are historical context, not current runtime
+authority.

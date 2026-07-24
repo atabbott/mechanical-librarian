@@ -131,8 +131,13 @@ acceptable only when:
 ## Commit and release discipline
 
 Use focused commits with descriptive messages. Do not commit generated runtime
-state. Releases follow semantic versioning once the first public API is declared
-stable. Breaking changes require migration notes and a supported upgrade path.
+state. Before the first production release, breaking persisted-schema or public
+API changes follow ADR-0013: accept only absent or exact-current state, reject
+older state clearly, and require a clean rebuild where needed. Do not add
+migration notes or a supported upgrade path unless a named compatibility decision
+creates a post-release obligation. Releases follow semantic versioning once the
+first public API is declared stable; then breaking changes require migration
+notes and a supported upgrade path.
 
 ## Contribution licence
 

@@ -61,6 +61,8 @@ target, provider, or remote-cover transport and it cannot retrieve originals.
   schemas are rejected before mutation. There is no migration, import,
   preservation, or compatibility parser. Keep an old database offline if
   required, initialize a clean database, and rerun the supported report command.
+  This database procedure is the narrower current-runtime application of
+  ADR-0013's repository-wide pre-release clean-schema rule.
 - On supported Linux deployments, the database parent directory is owned by
   the process user and grants no group or other permissions. The configured
   database basename has no `-journal`, `-wal`, or `-shm` recovery sidecar.

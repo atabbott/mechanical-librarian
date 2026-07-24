@@ -1,20 +1,25 @@
 # Upgrades and compatibility
 
-0.4 is a deliberate pre-deployment clean-state reset. Every 0.5 increment keeps
-that boundary: it recognizes only an absent database or its own exact current
-schema. `metadata-report-v1`, prior 0.5 increment schemas, and all earlier
-development schemas are rejected fail-closed before mutation. No migration,
-import, preservation, compatibility parser, downgrade, or repair is supported.
-Exact-ID and current-scope replay apply only to reports stored in the exact
-current schema.
+Until the first production release, every database, report, artifact,
+configuration, and internal-document schema recognizes only absent state or its
+exact current state. Earlier state is rejected fail-closed and never silently
+deleted. No migration, import, conversion, preservation, compatibility parser,
+downgrade, or repair is supported. Exact-ID and current-scope replay apply only
+to reports stored in the exact current schema; restart, replay, and crash safety
+remain mandatory.
 
-To adopt an increment, retain any older development database only as an offline
-historical artifact, supply an absent path for the current report database, and
-rerun the supported report command. Pointing a current binary at an older or
+To adopt an increment, retain an older development database and its matching
+artifact directory offline together as one historical state set. Supply an
+absent database file path and a separately created, empty artifact-store
+directory that is not the retained old directory, then rerun the supported
+report command. Never point a
+current database at an older or unrelated artifact directory: exact-current
+crash recovery removes unreferenced 64-hex artifact files, so that reuse is
+destructive and unsupported. Pointing a current binary at an older or
 intermediate database fails closed and does not rewrite it.
 
-Any future schema change must publish its own source/target versions, backup
-requirements, validation steps, and rollback limits. That future obligation
-does not create a migration promise for the retired development schemas.
-It also grants no repair, import, downgrade, retention, pruning, purge, or
-general migration authority.
+Retain older development state only as an offline historical artifact, then use
+an absent path and rerun the supported current operation. Post-release migration
+and restore policy requires a named present user need and a separate decision;
+it grants no pre-release repair, import, downgrade, retention, pruning, purge,
+or general migration authority.

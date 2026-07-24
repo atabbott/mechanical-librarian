@@ -3,7 +3,8 @@
 - Status: accepted
 - Date: 2026-07-23
 - Owners: project maintainers
-- Supersedes: ADR-0003, ADR-0009, and the migration-specific provisions of ADR-0006
+- Supersedes: ADR-0003, ADR-0009, and the migration-specific provisions of ADR-0006;
+- Superseded in part by: ADR-0013 (repository-wide pre-release schema policy)
 
 ## Context
 
@@ -83,3 +84,8 @@ neither 0.4 nor any 0.5 increment reads or transforms it. A clean database plus
 supported report regeneration is the only recovery path. Review, decisions,
 automation, AI, apply, production writes, retention, pruning, purge, repair, and
 broader migration remain future work.
+
+## Supersession note
+
+ADR-0013 generalizes this checkpoint's clean-state rule to every pre-release
+schema and supersedes this ADR's increment-specific migration policy.

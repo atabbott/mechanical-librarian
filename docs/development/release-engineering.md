@@ -30,6 +30,12 @@ split are recorded in [ADR-0010](../architecture/decisions/0010-0-4-neutral-evid
 
 ## Release goals
 
+Until the first production release, ADR-0013 requires clean schemas: each
+database, report, artifact, configuration, and internal-document schema accepts
+only absent or exact-current state. Do not present a pre-release checkpoint as
+an upgrade migration. Migration notes and the migration procedure below apply
+only after an explicit post-release compatibility decision.
+
 Releases must be reproducible, attributable, upgradeable, recoverable, and
 verifiable by users.
 
@@ -63,7 +69,7 @@ changes.
 
 ## Upgrade contract
 
-Before changing persisted state:
+After an explicit post-release migration decision, before changing persisted state:
 
 1. Validate the current schema and available disk space.
 2. Create or verify a compatible backup.
