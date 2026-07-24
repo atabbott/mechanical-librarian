@@ -240,7 +240,10 @@ def _inspect_bundle(
             try:
                 rear_facts = _adapter_rear_facts(request, package_report, opening_report, archive)
             except opening_parser._AggregateRejected as rejected:
-                if rejected.outcome is not EpubInspectionOutcome.RESOURCE_LIMIT:
+                if (
+                    rejected.outcome is not EpubInspectionOutcome.RESOURCE_LIMIT
+                    or not opening_report.outcome.succeeded
+                ):
                     raise
                 return (
                     package_report,

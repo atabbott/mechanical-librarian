@@ -580,6 +580,24 @@ class EpubChildRearSpineTests(unittest.TestCase):
         report = self._inspect_in_child(opening_resource_limit())
         self.assertEqual((report.outcome, report.facts), (EpubInspectionOutcome.RESOURCE_LIMIT, ()))
 
+    def test_double_opening_and_rear_resource_limits_remain_terminal_in_the_isolated_child(self) -> None:
+        package = _opening_package(
+            items=(("opening", "opening.xhtml", "application/xhtml+xml", ""),),
+            spine=("opening",),
+        )
+        value = _opening_epub(
+            package=package,
+            entries=(
+                (
+                    "EPUB/opening.xhtml",
+                    _xhtml("<p>" + "x" * 600_000 + "</p>"),
+                    zipfile.ZIP_STORED,
+                ),
+            ),
+        )
+        report = self._inspect_in_child(value)
+        self.assertEqual((report.outcome, report.facts), (EpubInspectionOutcome.RESOURCE_LIMIT, ()))
+
     def test_child_protocol_preserves_exact_opening_terminal_outcomes(self) -> None:
         malformed = epub_bytes(package=EPUB3_PACKAGE.replace(b"</metadata>", b"<"))
         cancelled = epub_bytes()
