@@ -55,8 +55,7 @@ history, or allowing a stale worker to publish.
    actor, attempt, fence, and state transition. Claim admission enforces the
    configured parser capacity, final lease exhaustion terminalizes, and an
    eligible request can resume without selector redelivery.
-7. The historical migration-8 plan is superseded for pre-release work by
-   ADR-0013; clean current-schema state is required instead.
+7. Migration 8 is additive and forward-only. Downgrade is restore-only.
 
 ## Supersession
 

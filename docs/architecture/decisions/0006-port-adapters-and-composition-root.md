@@ -40,9 +40,9 @@ to leak back into application code.
    No ordinary production layer may import `bootstrap`.
 7. Executable entry points delegate immediately to `bootstrap`; they do not
    assemble dependencies independently.
-8. If a post-release migration facility is introduced, its files and execution
-   remain runtime infrastructure; ADR-0013 forbids admitting that facility
-   before the first production release.
+8. Versioned migration files remain under the top-level `migrations/` directory.
+   Application-facing repository implementations live under
+   `adapters/persistence`; migration execution remains runtime infrastructure.
 
 The ownership test is therefore:
 
