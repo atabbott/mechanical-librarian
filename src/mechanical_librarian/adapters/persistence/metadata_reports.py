@@ -650,6 +650,8 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
                 _reject_database_sidecars(path)
                 _validate_existing_read_only(path, descriptor)
                 _reject_database_sidecars(path)
+        elif expected_identity is not None:
+            raise MetadataReportError("database authority changed")
         elif create:
             descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
             information = os.fstat(descriptor)

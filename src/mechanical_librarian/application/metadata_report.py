@@ -45,6 +45,10 @@ class ItemInspectionError(MetadataReportError):
     pass
 
 
+class ArtifactAuthorityError(MetadataReportError):
+    pass
+
+
 class CurrentnessError(MetadataReportError):
     pass
 
@@ -159,6 +163,7 @@ class GenerateMetadataReport:
         mount: MediaMountConfiguration | None,
         limits: ReportLimits,
         cover_observer: CoverObserver | None = None,
+        publication_authority_guard: Callable[[], None] | None = None,
     ) -> None:
         self._target = target
         self._inspector = inspector
@@ -169,6 +174,7 @@ class GenerateMetadataReport:
         self._mount = mount
         self._limits = limits
         self._cover_observer = cover_observer
+        self._publication_authority_guard = publication_authority_guard
 
     def run(self, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
         if self._mount is None:
@@ -290,13 +296,7 @@ class GenerateMetadataReport:
         try:
             persisted = repository.publish(
                 report,
-                lambda: self._is_current(
-                    item,
-                    initial,
-                    selected,
-                    local.content_digest,
-                    cover_sources,
-                ),
+                lambda: (self._publication_authority_guard() if self._publication_authority_guard is not None else None) is None and self._is_current(item, initial, selected, local.content_digest, cover_sources),
                 expected_current,
             )
             if persisted != report.to_json() or repository.get(report.report_id) != persisted:
@@ -379,7 +379,7 @@ class GenerateMetadataReport:
 
 __all__ = [
     "CoverObserver", "CoverReadError", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
-    "InspectionResult", "ItemInspectionError", "MetadataProvider", "MetadataReportError", "ProviderBinding",
+    "ArtifactAuthorityError", "InspectionResult", "ItemInspectionError", "MetadataProvider", "MetadataReportError", "ProviderBinding",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
 ]

@@ -51,6 +51,7 @@ from mechanical_librarian.application.metadata_report import (
     CoverTimeoutError,
     CurrentnessError,
     ItemInspectionError,
+    ArtifactAuthorityError,
     GenerateMetadataReport,
     InspectionResult,
     MetadataReportError,
@@ -138,6 +139,8 @@ class _IsolatedEpubInspector:
                     try:
                         self._artifacts.stage(decoded.artifact, declared.data or b"", decoded.preview)
                         covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.RETRIEVED, decoded.artifact),)
+                    except ArtifactAuthorityError:
+                        raise
                     except MetadataReportError:
                         covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.UNAVAILABLE),)
                 except CoverDecodeRejected as error:
@@ -155,6 +158,8 @@ class _IsolatedEpubInspector:
                 assert declared.state is not None
                 covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, declared.state),)
             return InspectionResult(digest, tuple(claims), covers)
+        except ArtifactAuthorityError:
+            raise
         except MetadataReportError:
             raise
         except (LocalMediaError, OSError, ValueError) as error:
@@ -263,6 +268,8 @@ class _CoverEvidenceObserver:
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, state)
         except CoverDecodeRejected as error:
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, error.state)
+        except ArtifactAuthorityError:
+            raise
         except MetadataReportError:
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.UNAVAILABLE)
 
@@ -318,6 +325,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
         mount=mount,
         limits=configuration.limits,
         cover_observer=_CoverEvidenceObserver(target, artifacts, tuple(provider_configs)),
+        publication_authority_guard=artifacts.require_current,
     )
     return service.run(item, file_index, expected_file_identity)
 
