@@ -17,8 +17,14 @@ CATEGORIES = ("absent_in_source", "inspection_failure", "extracted_not_projected
 ISBN_RELATIONS = ("accepted", "associated", "unrelated", "invalid", "unresolved")
 EXCLUDED = ("unknown", "known_empty", "not_applicable", "accepted_unsupported", "unexplained_failure")
 PROFILES = {
-    "synthetic-v1": {"supported": 7, "exploratory": 1},
-    "gold-50-v1": {"supported": 405, "exploratory": 94},
+    "synthetic-v1": {
+        "population": {"supported": 7, "exploratory": 1},
+        "readable": {"supported": 7, "exploratory": 1},
+    },
+    "gold-50-v1": {
+        "population": {"supported": 405, "exploratory": 94},
+        "readable": {"supported": 397, "exploratory": 92},
+    },
 }
 FLOORS = {"title": (47, 49), "creator": (47, 49), "language": (48, 49), "overall_matches": (257, 405), "precision": (801775, 1_000_000), "false_positive": (85366, 1_000_000)}
 MAX_BYTES = 1_000_000
@@ -102,7 +108,7 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
     views = {}
     for name, fields in (("supported", SUPPORTED), ("exploratory", EXPLORATORY)):
         denominator = sum(sum(matrices[name][field].values()) for field in fields)
-        if denominator != PROFILES[document["profile"]][name]: raise ValueError("profile denominator drift")
+        if denominator != PROFILES[document["profile"]]["readable"][name]: raise ValueError("profile denominator drift")
         views[name] = {"name": name, "evaluated_fields": list(fields), "denominator": denominator, "by_field": matrices[name], "categories": {category: sum(matrices[name][field][category] for field in fields) for category in CATEGORIES}}
     isbn = Counter({relation: 0 for relation in ISBN_RELATIONS})
     for observation in observations:

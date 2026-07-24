@@ -11,8 +11,9 @@ each supported value-bearing row into exactly one of
 accuracy: accepted metadata may legitimately be absent from the EPUB.
 
 The `synthetic-v1` profile has fixed synthetic denominators. The `gold-50-v1`
-profile requires 405 supported and 94 exploratory rows; a matrix mismatch
-fails rather than silently changing a gate. Regression controls are sanitized
+profile requires 405 supported and 94 exploratory population rows, of which
+397 and 92 respectively were readable in the exact-current qualification. A
+matrix mismatch fails rather than silently changing a gate. Regression controls are sanitized
 integer counts: title, creator, language, and overall matched rows, plus
 candidate-atom precision and explicit-negative false-positive numerators and
 denominators. Floors permit improvement; 257 overall matched rows and
