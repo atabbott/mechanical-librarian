@@ -41,3 +41,6 @@ class BatchTests(unittest.TestCase):
   provider=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/other-target"),),(LibraryConfiguration("books","primary","library","book",None,("catalogue",)),),(),(ProviderConnectionConfiguration("catalogue",True,False,"/provider"),))
   cover=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/third-target"),),(LibraryConfiguration("books","primary","library","book",None,("catalogue",)),),(),(ProviderConnectionConfiguration("catalogue",True,True,"/provider-two"),))
   self.assertNotEqual(batch_fingerprint(no_provider,selected),batch_fingerprint(provider,selected));self.assertNotEqual(batch_fingerprint(provider,selected),batch_fingerprint(cover,selected))
+ def test_duplicate_manifest_identity_rejects_at_generation_and_parse(self):
+  base=CatalogueSnapshot(1,"a"*64,()); value=BatchSelection("primary","books","library","item","a"*64,"singular-supported",True)
+  with self.assertRaises(BatchError):manifest(base,"b"*64,(value,value),())

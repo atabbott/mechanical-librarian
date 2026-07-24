@@ -16,12 +16,16 @@ from mechanical_librarian.domain.cover_evidence import CoverArtifact
 class CoverArtifactStore:
     """Stores originals and previews by digest; it never resolves arbitrary paths."""
 
-    def __init__(self, path: Path, *, create: bool = True) -> None:
+    def __init__(self, path: Path, *, create: bool = True, expected_identity: tuple[int, int] | None = None) -> None:
         self._path = path
         if create:
             path.mkdir(mode=0o700, parents=True, exist_ok=True)
         try:
             descriptor = self._directory()
+            information = os.fstat(descriptor)
+            if expected_identity is not None and (information.st_dev, information.st_ino) != expected_identity:
+                raise MetadataReportError("artifact store authority changed")
+            self.identity = (information.st_dev, information.st_ino)
             os.close(descriptor)
         except OSError as error:
             raise MetadataReportError("artifact store is unavailable") from error
@@ -155,6 +159,9 @@ class CoverArtifactStore:
                 descriptors.append(descriptor)
             result = os.dup(descriptors[-1])
             information = os.fstat(result)
+            if hasattr(self, "identity") and (information.st_dev, information.st_ino) != self.identity:
+                os.close(result)
+                raise MetadataReportError("artifact store authority changed")
             if information.st_uid != os.getuid() or information.st_mode & 0o077:
                 os.close(result)
                 raise MetadataReportError("artifact store is unavailable")

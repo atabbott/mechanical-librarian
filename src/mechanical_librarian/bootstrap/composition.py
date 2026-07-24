@@ -273,12 +273,12 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
 
 
-def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None) -> str:
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
         raise UnsupportedMediaError("unsupported media")
-    artifacts = CoverArtifactStore(artifact_store_path, create=False)
+    artifacts = CoverArtifactStore(artifact_store_path, create=False, expected_identity=artifact_identity)
     target = AudiobookshelfItemReader(
         client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds) if credentials is None else target_client_token(connection.endpoint, credentials["target:" + connection.name], configuration.limits.timeout_seconds),
         endpoint=connection.endpoint,
@@ -300,7 +300,7 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
             )
         bindings.append(ProviderBinding(provider.name, provider.enabled, factory))
     def repository_factory():
-        repository = open_repository(database_path)
+        repository = open_repository(database_path, expected_identity=repository_identity)
         try:
             artifacts.recover_unreferenced(repository.artifact_is_referenced)
             return repository
@@ -412,6 +412,11 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     selected_connections = {selection.connection for selection in selections}
     selected_provider_names = set(value["providers"])
     credentials = _load_batch_credentials(configuration, selected_connections, selected_provider_names)
+    artifacts = CoverArtifactStore(artifact_store_path, create=False)
+    artifact_identity = artifacts.identity
+    repository = open_repository(database_path)
+    try: repository_identity = repository.identity
+    finally: repository.close()
     repository = open_catalogue(catalogue_path, create=False)
     try:
         snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))
@@ -426,7 +431,7 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
         finally:
             repository.close()
     def report(entry):
-        serialized = run_metadata_report_loaded(configuration, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity, credentials)
+        serialized = run_metadata_report_loaded(configuration, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity, credentials, repository_identity, artifact_identity)
         from mechanical_librarian.domain.metadata_report import MetadataReport
         report = MetadataReport.from_json(serialized)
         return report.report_id, tuple(item.status for item in report.providers)
