@@ -1,6 +1,6 @@
 from __future__ import annotations
 import unittest
-from mechanical_librarian.application.batch import BatchError, BatchSelection, CatalogueSnapshot, batch_fingerprint, manifest, parse_manifest, select
+from mechanical_librarian.application.batch import BatchError, BatchSelection, CatalogueSnapshot, MAX_MANIFEST_BYTES, batch_fingerprint, manifest, parse_manifest, select
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import ApplicationConfiguration, LibraryConfiguration, ReportLimits, TargetConnectionConfiguration
 
@@ -24,3 +24,7 @@ class BatchTests(unittest.TestCase):
   first=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/private/a"),),(LibraryConfiguration("books","primary","library","book",None,()),),(),(),ReportLimits())
   second=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/private/b"),),(LibraryConfiguration("books","primary","library","book",None,()),),(),(),ReportLimits())
   self.assertEqual(batch_fingerprint(first),batch_fingerprint(second))
+ def test_maximum_selection_round_trips_inside_bound(self):
+  values=tuple(BatchSelection("primary","books","library",("🙂"*127)+str(index),"a"*64,"singular-supported",True) for index in range(10_000))
+  raw=manifest(CatalogueSnapshot(1,"a"*64,()),"b"*64,values,())
+  self.assertLessEqual(len(raw),MAX_MANIFEST_BYTES);self.assertEqual(len(parse_manifest(raw)["entries"]),10_000)

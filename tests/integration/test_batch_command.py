@@ -40,6 +40,9 @@ class BatchCommandTests(unittest.TestCase):
                 self.assertEqual(subprocess.run([*base,"catalogue","--config",str(config),"--database",str(catalogue),"refresh"],capture_output=True,text=True,timeout=30).returncode,0)
                 preview=subprocess.run([*base,"batch","preview","--config",str(config),"--catalogue",str(catalogue),"--manifest",str(manifest),"--all-eligible"],capture_output=True,text=True,timeout=30); self.assertEqual(preview.returncode,0,preview.stderr); identity=json.loads(preview.stdout)["id"]
                 self.assertEqual(subprocess.run([*base,"batch","inspect","--manifest",str(manifest)],capture_output=True,text=True,timeout=30).returncode,0)
+                explicit=root/"explicit.json"
+                selected=subprocess.run([*base,"batch","preview","--config",str(config),"--catalogue",str(catalogue),"--manifest",str(explicit),"--select","primary","books","library-id","item-1","--select","primary","books","library-id","item-2"],capture_output=True,text=True,timeout=30)
+                self.assertEqual((selected.returncode,json.loads(selected.stdout)["entries"]),(0,2),selected.stderr)
                 run=subprocess.run([*base,"batch","run","--config",str(config),"--catalogue",str(catalogue),"--manifest",str(manifest),"--manifest-id",identity,"--database",str(reports),"--artifact-store",str(artifacts)],capture_output=True,text=True,timeout=60)
                 lines=[json.loads(line) for line in run.stdout.splitlines()]; self.assertEqual(run.returncode,0,run.stderr); self.assertEqual([line["item"] for line in lines[:-1]],["item-1","item-2"]); self.assertIn("summary",lines[-1]); self.assertTrue(reports.exists())
         finally:
