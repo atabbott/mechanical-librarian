@@ -348,10 +348,10 @@ recreated.
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Retained planned designation. |
 | F10b Production review admission | #240 | One qualifying current proposal becomes a durable undecided production review case with exact freshness, evidence, replay, and supersession proof. | Retained planned designation. |
 | F11 Isolated AI shadow recommendation | #147 | An isolated reviewer returns one bounded closed-schema recommendation per selected proposal without credentials, provider payloads, or apply authority. | Retained planned designation. |
-| F13 Guarded fake-service apply | #149 | A current human-approved field change is planned, backed up, idempotently applied to a fake service, read back, verified, audited, and safely failed or rolled back. | Retained planned designation. |
-| F14 Audiobookshelf canary apply | #150 | The same gates perform one bounded mutation against a disposable qualified Audiobookshelf instance and prove before/request/after evidence. | Retained planned designation. |
 | F15a Supported container operation | #151 | The supported single container starts safely, runs the report and review product, survives current-schema restart, and exposes bounded redacted health, diagnostics, support, backup, and recovery evidence. | Consolidated container plus diagnostics/recovery outcome with a retained planned designation. |
-| F16a Authenticated browser review and decision | #152 | An authenticated owner finds one current case, inspects bounded evidence, makes one individual field decision, and observes immutable server-authoritative history after refresh or restart. | Consolidated API, browser, and one-human-decision outcome with a retained planned designation. |
+| F16a Authenticated browser review and decision | #152 | An authenticated owner finds one current case, inspects bounded evidence, makes one individual field decision, and observes immutable server-authoritative history after refresh or restart. The individual round trip passes the first-release responsive, keyboard/focus, accessibility, private caching/storage, content-security, hostile-rendering, performance, synthetic-artifact, and primary-supported-browser baseline. | Consolidated API, browser, one-human-decision, and first-release browser-baseline outcome with a retained planned designation. |
+| F13 Guarded fake-service apply | #149 | A current human-approved field change from F16a is planned, backed up, idempotently applied to a fake service, read back, verified, audited, and safely failed or rolled back. | Retained planned designation; requires an applicable current human decision from F16a. |
+| F14 Audiobookshelf canary apply | #150 | After F13, the same gates perform one bounded mutation against a disposable qualified Audiobookshelf instance and prove before/request/after evidence. | Retained planned designation; depends on completed F13 qualification. |
 | F17 Continuous pre-release operation | #153 | The useful Audiobookshelf path runs repeatedly under persisted scheduling and reconciliation, survives representative failures and restarts, and remains observable and recoverable without widening authority. | Retained planned designation; excludes CWA, release production/publication, and older-schema migration. |
 
 The retained `F` IDs are planned designations on the assigned outcome issues,
@@ -366,10 +366,12 @@ promotion before it can enter this checkpoint.
 
 The outcomes are not one serial chain. Readiness records the real dependencies:
 #70 supplies explainable proposals; F10b admits eligible proposals; F16a records
-one human decision; F13 and F14 prove guarded apply; F11 remains independently
-shadowable; F15a supplies the supported operating surface; and F17 composes the
-useful path under repeated operation. F08 remains an independent evidence
-outcome.
+one applicable current human decision and qualifies the first-release browser
+baseline; F13 requires that human decision before it proves guarded fake-service
+apply; and F14 follows completed F13 qualification for its disposable
+Audiobookshelf canary. F11 remains independently shadowable; F15a supplies the
+supported operating surface; and F17 composes the useful path under repeated
+operation. F08 remains an independent evidence outcome.
 
 ### 1.0.0 checkpoint exit
 
@@ -384,7 +386,10 @@ outcome.
 - the normal deployment is one supported container with one persistent volume,
   read-only media mounts, and one HTTP port;
 - one authenticated owner can inspect a current case and make one persistent,
-  server-authoritative individual decision; and
+  server-authoritative individual decision through the F16a first-release
+  responsive, keyboard/focus, accessibility, private caching/storage,
+  content-security, hostile-rendering, performance, synthetic-artifact, and
+  primary-supported-browser baseline; and
 - the complete useful path passes bounded continuous-operation qualification
   against exact-current state without adding release or compatibility promises.
 

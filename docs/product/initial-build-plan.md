@@ -496,24 +496,30 @@ Exit criteria:
 ## WP9: review API and operator surface
 
 For the pre-public core, F16a #152 consolidates the authenticated API, browser
-case, and one individual human decision. Bulk decisions, reversal, extended
-summaries, and the broad browser qualification matrix remain one deferred
-post-first-release outcome under #195. The longer list below is capability
-context, not the current F16a acceptance set.
+case, one individual human decision, and the first-release responsive,
+keyboard/focus, accessibility, private caching/storage, content-security,
+hostile-rendering, performance, synthetic-artifact, and primary-supported-
+browser baseline. Cross-case summaries and history, bulk decisions, reversal,
+additional browser and viewport coverage, and extended qualification budgets
+remain one deferred post-first-release outcome under #195. The longer list
+below is capability context; deferred capabilities are not current F16a or
+first-release acceptance.
 
 Deliverables:
 
 - expose versioned, cursor-paginated endpoints for cases, confirmed sibling
-  groups, evidence, decisions, summaries, jobs, audit events, and rollback;
+  groups, evidence, and individual decisions; cross-case summaries, bulk
+  operations, and reversal remain #195 capability context;
 - implement target-level queue, decision-first detail, progressive evidence,
-  sibling navigation, and global review-summary surfaces;
-- expose server-authoritative target, ordinary-case, destructive-case,
+  sibling navigation, and current-case history; global review summaries remain
+  #195 capability context;
+- define server-authoritative target, ordinary-case, destructive-case,
   field-work-item, and planned-change counts with explicit partial and stale
-  semantics;
-- implement exact-version bulk preview and commit with stale rejection,
+  semantics for the deferred cross-case summary outcome;
+- define exact-version bulk preview and commit with stale rejection,
   idempotency, individual decision records, and compensating reversal;
-- satisfy the responsive, keyboard, accessibility, privacy, and performance
-  contracts in the [review experience](review-experience.md); and
+- satisfy the F16a first-release browser baseline in the
+  [review experience](review-experience.md); and
 - document all mutations and their concurrency guards.
 
 Exit criteria:
@@ -523,8 +529,9 @@ Exit criteria:
 - rejected and historical work remains auditable; and
 - acknowledged decisions survive refresh, restart, and device changes;
 - sibling decisions cannot leak across targets; and
-- real-browser accessibility, narrow-viewport, pagination, stale-decision, and
-  payload-budget gates pass.
+- real-browser first-release accessibility, responsive, pagination,
+  stale-decision, privacy, content-security, and payload-budget gates pass in
+  the primary supported browser.
 
 ## Post-foundation work
 

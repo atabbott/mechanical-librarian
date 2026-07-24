@@ -127,8 +127,8 @@ The historical sequence was completed F06 #142 to F07a #143/#30/#31/#188 to F07b
 F09g #238/#243. F09g is the 0.3.0 checkpoint exit. Completing this internal
 checkpoint does not publish a release.
 
-The current 1.0 outcome set is #70, F08 #144, F10b #240, F11 #147, F13
-#149, F14 #150, F15a #151, F16a #152, and F17 #153. The retained `F` IDs are
+The current 1.0 outcome set is #70, F08 #144, F10b #240, F11 #147, F15a
+#151, F16a #152, F13 #149, F14 #150, and F17 #153. The retained `F` IDs are
 planned designations rather than `Ready` status. Issue #70 remains unassigned
 as a planned but unpromoted outcome with target release and milestone `1.0.0`;
 it has no `F` designation and must be explicitly promoted before delivery.
@@ -175,6 +175,10 @@ Exit: no systematic unsafe decision pattern remains unexplained.
 
 ## M4: Production apply
 
+- Require an applicable current human decision from F16a #152 before F13 #149
+  proves guarded fake-service apply; F14 #150 follows completed F13
+  qualification. These delivery dependencies govern even though this capability
+  grouping appears before M6.
 - Enforce backup readiness.
 - Add optimistic concurrency and service locks.
 - Apply only validated field changes through supported APIs.
@@ -205,10 +209,17 @@ the guarded apply path.
 - Deliver the authenticated target-level queue, decision-first detail,
   progressive evidence, sibling navigation, and one guarded individual decision
   through F16a #152.
-- Keep bulk decisions, reversal, extended summaries, and the broader
-  browser/accessibility qualification matrix deferred together under #195.
+- Qualify that individual round trip through the F16a first-release responsive,
+  keyboard/focus, accessibility, private caching/storage, content-security,
+  hostile-rendering, performance, synthetic-artifact, and primary-supported-
+  browser baseline.
+- Keep cross-case summaries and history, bulk decisions, reversal, additional
+  browser and viewport coverage, and extended accessibility, responsive,
+  privacy, content-security, performance, and synthetic-artifact budgets
+  deferred together under #195.
 
-Exit: occasional review is efficient, persistent, and server-authoritative.
+Exit: occasional individual review is efficient, persistent, server-
+authoritative, and qualified against the first-release browser baseline.
 
 ## M7: Ecosystem
 
