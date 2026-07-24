@@ -113,6 +113,10 @@ byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
  substitutes an excluded, missing, encrypted, image, unsupported, or duplicate
  slot. It admits only explicit title, creator, contributor, or byline cues and checksum-valid ISBNs when
  the same resource has a copyright marker; it is not whole-book mining.
+ If that optional rear pass reaches its aggregate resource limit, it emits no
+ rear facts and records a bounded warning while retaining already validated
+ package and opening-matter evidence; package and opening resource limits
+ remain terminal.
  Across both pools there are at most nine content opens, 9 MiB of expanded
  content, 786432 projected characters, 150000 nodes, and 80 claims.
 Each ISBN fact keeps its exact observed substring, a directly supporting

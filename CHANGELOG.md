@@ -20,6 +20,8 @@
 
 - Preserve source-spine slot positions for bounded local EPUB rear evidence and
   make exact-ID report reopening non-creating.
+- Preserve validated package and opening evidence when the optional bounded
+  rear EPUB pass reaches its aggregate resource limit.
 - Preserve local EPUB source/DOM evidence order, explicit source capabilities,
   and non-canonical oversized or unsafe sentinel states through report replay.
 - Preserve duplicate EPUB occurrences with bounded v2 ordinals.
