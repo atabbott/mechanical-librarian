@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import subprocess
 
 
 ROOT = Path(__file__).parents[2]
@@ -38,6 +39,23 @@ class RecoverabilityEvaluatorTests(unittest.TestCase):
     def test_rejects_unclosed_or_unsupported_contract_rows(self):
         document = self.load()
         document["rows"][7]["field"] = "secret_field"
+        with self.assertRaises(ValueError): MODULE.evaluate(document)
+
+    def test_cli_rejects_private_path_and_malformed_json_without_echoing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "input.json"
+            target = Path(directory) / "output.json"
+            source.write_text('{"secret":"/private/library/Secret"}', encoding="utf-8")
+            result = subprocess.run(["python3", str(ROOT / "scripts/recoverability_evaluator.py"), "--input", str(source), "--output", str(target)], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stderr, "Recoverability evaluation failed safely.\n")
+            self.assertNotIn("Secret", result.stderr)
+            self.assertFalse(target.exists())
+
+    def test_replay_is_deterministic_and_profile_spoof_fails(self):
+        document = self.load()
+        self.assertEqual(MODULE.evaluate(document), MODULE.evaluate(document))
+        document["profile"] = "gold-50-v1"
         with self.assertRaises(ValueError): MODULE.evaluate(document)
         document = self.load()
         document["identifier_observations"][1]["provider_scope"] = "unknown"
