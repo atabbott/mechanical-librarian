@@ -1,7 +1,8 @@
 # Configuration reference
 
-`metadata-report` accepts one strict UTF-8 JSON document with schema version
-`config-v3`. Unknown and duplicate fields are rejected. The generated schema is
+The installed `metadata-report`, `catalogue`, and `batch` operations accept one
+strict UTF-8 JSON document with schema version `config-v3`. Unknown and
+duplicate fields are rejected. The generated schema is
 [`config-v3.schema.json`](config-v3.schema.json) and is regenerated with:
 
 ```text

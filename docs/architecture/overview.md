@@ -1,13 +1,22 @@
 # Architecture overview
 
-The 0.4 runtime is one synchronous vertical path:
+The 0.6 runtime has three synchronous CLI paths:
 
 ```text
-CLI -> application GenerateMetadataReport -> domain MetadataReport
+CLI catalogue -> application RefreshCurrentCatalogue
+              -> Audiobookshelf catalogue adapter
+              -> SQLite catalogue repository
+
+CLI metadata-report -> application GenerateMetadataReport
                     |-> Audiobookshelf current-item adapter
                     |-> isolated EPUB inspector child
-                    |-> concrete Hardcover provider adapter
-                    `-> SQLite report repository
+                    |-> Hardcover metadata and cover adapters
+                    |-> constrained cover-decoder child
+                    `-> SQLite report repository + cover artifact store
+
+CLI batch -> application manifest selection / ForegroundBatchRun
+          -> current catalogue snapshot
+          -> GenerateMetadataReport once per frozen eligible entry
 ```
 
 Dependency direction remains:
@@ -19,32 +28,47 @@ infrastructure -> application/domain contracts
 bootstrap composes all layers
 ```
 
-The application service owns four narrow contracts: scoped target reading,
-EPUB inspection/currentness, one-provider observation, and report
-publication/readback. There is no central speculative ports module or generic
-provider registry. Bootstrap explicitly composes Audiobookshelf, the isolated
-EPUB inspector, Hardcover, private-file credentials, and SQLite.
+The application layer owns narrow contracts for current catalogue observation,
+catalogue persistence, frozen manifest selection, serial foreground execution,
+scoped target reading, EPUB inspection/currentness, provider and cover
+observation, artifact publication, and report publication/readback. There is no
+central speculative ports module, generic provider registry, queue, worker, or
+scheduler. Bootstrap explicitly composes Audiobookshelf, the isolated EPUB and
+cover children, Hardcover, private-file credentials, SQLite, and the private
+artifact store.
 
-The target adapter reads only `/api/items/{id}?expanded=1`; it persists no
-inventory. The EPUB child owns its package, opening-matter, and bounded
-rear-spine evidence passes, opens one archive once, and returns only their
-bounded facts. The parent retains all credentials,
-network, matching, persistence, and currentness authority. The provider adapter
-selects only the ISBN inputs supported by its fixed one-request operation and
-retains every valid candidate without ranking.
+The catalogue adapter uses bounded Audiobookshelf library, library-items, and
+item-detail GET routes. It atomically publishes one current generation of at
+most 10,000 entries across configured book libraries. Catalogue state contains
+bounded identity, title/author display, ebook/audio facets, eligibility, and a
+singular supported EPUB projection; list output never exposes a path.
+
+The scoped report adapter reads one item detail and selected file. The EPUB
+child owns package, opening-matter, and bounded rear-spine evidence passes,
+opens one immutable archive snapshot once, and returns only bounded facts. The
+cover child validates bounded JPEG, PNG, or static WebP bytes without network
+authority. The parent retains all credentials, network, matching, persistence,
+artifact, and currentness authority. The provider adapter selects only the ISBN
+inputs supported by its fixed one-request operation and retains every valid
+candidate without ranking.
+
+`batch-manifest-v1` is an immutable secret-free operator artifact. It binds the
+current catalogue generation, exact entries, report-relevant configuration,
+enabled provider names, and conservative call maxima. `ForegroundBatchRun`
+serially revalidates each entry and invokes the existing report service. It
+stores no attempt, progress, history, resume, retry, or lock state.
 
 SQLite stores immutable canonical documents in `metadata_reports`, one separate
 pointer per target/file scope in `current_metadata_reports`, and immutable
 report-bound cover references in `metadata_report_cover_references`. Report
 insert and pointer advance share one transaction. The sole baseline uses
-rollback-journal `DELETE` mode. Each 0.5 increment recognizes only an absent
-database or its own exact current schema. Prior and intermediate schemas are
-rejected before mutation; there is no migration, import, preservation,
-compatibility parser, ledger, workflow, audit, job, attempt, cache, normalized
-claim table, or deletion surface.
-This metadata-report database rule is the narrower current-runtime application
-of repository-wide ADR-0013, which also governs pre-release report, artifact,
-configuration, and internal-document schemas.
+rollback-journal `DELETE` mode. The separate catalogue database stores one
+exact-current `catalogue-v1` schema. The final report database, catalogue
+database, configuration, artifacts, and manifest each recognize only absent or
+their exact current pre-release state. Prior and intermediate schemas are
+rejected before mutation; there is no migration, import, compatibility parser,
+workflow, job, attempt, cache, or deletion surface. These rules are the
+current-runtime application of repository-wide ADR-0013.
 The v2 document retains the closed ordered local-field states, source capability
 provenance, and bounded occurrence/rear-spine provenance needed to replay the
 observation; the relational envelope remains only its scope, identity, digest,
@@ -60,4 +84,6 @@ SQLite journal artifacts are therefore private-alias scoped. Before writes and
 at the final pre-commit boundary, the runtime rewalks the current absolute
 chain and requires the configured path to name that inode without recovery
 sidecars. Protected ancestor permissions and a dedicated process identity make
-that check stable against other unprivileged identities.
+that check stable against other unprivileged identities. Catalogue and batch
+manifest filesystem operations apply their own bounded no-follow,
+identity-checked publication and read contracts.

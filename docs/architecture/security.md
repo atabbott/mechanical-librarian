@@ -41,11 +41,12 @@ resume, retry, worker, or background state.
   persistence, matching, or decision authority. It hashes and parses one
   bounded immutable byte snapshot, and the parent validates file content and
   target identity again as the publication transaction's precondition.
-- A local actor may replace or corrupt configuration, secret, media, or SQLite
+- A local actor may replace or corrupt configuration, secret, media, manifest,
+  or SQLite
   files. No-follow descriptor binding, side-effect-free validation of existing
   databases, owner-only secret permissions, exact schema validation, canonical
   row decoding, envelope/document agreement, and fail-closed diagnostics bound
-  this risk. 0.4 does not repair tampered state.
+  this risk. The current runtime does not repair tampered state.
 
 Ordinary typed in-process collaborators are trusted to honor their interfaces;
 arbitrary descriptor, subclass, traceback, or interpreter-control-flow
@@ -54,10 +55,11 @@ sabotage is outside the supported threat model.
 ## Credentials and egress
 
 Secret material is read only in infrastructure and represented nowhere in the
-report. Target authorization is attached only to GET current-item requests at
-the configured origin. Provider authorization is attached only to the fixed
-HTTPS Hardcover GraphQL URL. HTTP clients ignore ambient proxy/environment
-configuration and redirects.
+report, catalogue, or manifest. Target authorization is attached only to the
+configured origin's exact library, library-items, and current-item GET route
+shapes used by the selected operation. Provider authorization is attached only
+to the fixed HTTPS Hardcover GraphQL URL. HTTP clients ignore ambient
+proxy/environment configuration and redirects.
 
 Disabled providers cause no secret access, client construction, or egress.
 Unreferenced providers are never bound. A provider with no usable ISBN input
@@ -92,15 +94,17 @@ locations have no CLI or replay surface. A failed currentness check leaves no
 new report or pointer; any unreferenced staged bytes are recoverable cleanup,
 not a database repair protocol.
 
-Every 0.5 increment accepts only an absent database or its own exact current
-schema. `metadata-report-v1`, prior 0.5 increment schemas, extra objects,
-altered SQL, failed foreign-key/integrity checks, and all other schemas fail
-closed before mutation. Persisted report content is validated when an exact-ID
-or current-scope read selects it and when a selected current report or exact-ID
-collision participates in publication. Malformed targeted content fails closed;
-unrelated historical rows are not a whole-database semantic preflight. Earlier
-schemas are not migrated, imported, preserved, or passed through a compatibility
-parser. Recovery uses a clean database and supported report regeneration;
+The final report database, `catalogue-v1` database, `config-v3`, artifact
+records, and `batch-manifest-v1` each accept only absent or their exact current
+schema. `metadata-report-v1`, prior development schemas, extra objects, altered
+SQL, failed foreign-key/integrity checks, and other schemas fail closed before
+mutation. Persisted report content is validated when an exact-ID or
+current-scope read selects it and when a selected current report or exact-ID
+collision participates in publication. Malformed targeted content fails
+closed; unrelated historical rows are not a whole-database semantic preflight.
+Earlier schemas are not migrated, imported, preserved, or passed through a
+compatibility parser. Recovery uses clean current state plus catalogue refresh,
+fresh manifest creation, or supported report regeneration as applicable;
 same-schema exact-ID and current-scope replay retain their existing transaction
 and validation controls.
 This report-database boundary is the narrower runtime application of ADR-0013's

@@ -1,7 +1,9 @@
 # Documentation
 
-## Current 0.4 runtime
+## Current 0.6 runtime
 
+- [Current book catalogue](operations/catalogue.md)
+- [Foreground ebook evidence batches](operations/ebook-evidence-batches.md)
 - [Metadata report operation](operations/metadata-report.md)
 - [Configuration](reference/configuration.md)
 - [Compatibility and clean-state boundary](reference/compatibility.md)
@@ -11,6 +13,7 @@
 - [ADR-0010: clean-state neutral evidence baseline](architecture/decisions/0010-0-4-neutral-evidence-baseline.md)
 - [ADR-0011: isolated EPUB inspector](architecture/decisions/0011-isolated-epub-inspector.md)
 - [ADR-0012: metadata-report activation](architecture/decisions/0012-metadata-report-activation.md)
+- [ADR-0013: pre-release clean schema](architecture/decisions/0013-pre-release-clean-schema.md)
 
 ## Development
 
@@ -28,11 +31,12 @@
 - [Scope](product/scope.md)
 - [Roadmap](product/roadmap.md)
 - [Delivery slices](product/delivery-slices.md)
+- [0.7.0 independent multi-provider evidence plan](product/0-7-working-plan.md)
 - [Architecture decisions](architecture/decisions/README.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Security reporting](../SECURITY.md)
 - [Support](../SUPPORT.md)
 
 Historical product and architecture documents describe future direction, not
-installed 0.4 authority. Current operations and compatibility are defined only
+installed 0.6 authority. Current operations and compatibility are defined only
 by the first section above.
