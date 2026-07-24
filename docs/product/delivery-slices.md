@@ -17,6 +17,13 @@ supported outcomes. Split a transaction into additional pull requests only for
 distinct vertical increments or a required security or privacy separation,
 never into horizontal layers or merely because review found more work.
 
+The tables preserve assigned and historical delivery records. A future outcome
+outside them remains a concise deferred issue with no `F` ID; a stable
+functional-slice designation is assigned only when that same issue is
+explicitly promoted for delivery. Deferred outcomes do not acquire trackers,
+constituents, milestones, or implementation design merely to reserve future
+sequence.
+
 Each table's increment-branch column gives the conventional branch stem for a
 one-increment slice. A multi-increment transaction appends a short increment
 slug to that stem; it does not reuse one branch for the whole transaction.
@@ -379,22 +386,29 @@ cohort, provenance, upgrade, restore, isolation, and end-to-end qualification
 requirements remain mandatory checkpoint evidence regardless of whether or
 when a maintainer separately selects a checkpoint for release publication.
 
-## Deferred slice series
+## Deferred outcomes
 
 Opening-audio transcription (#24 and #104-#110), additional adapters,
 embedded-file updates, plugin loading, and the
 [reviewer backends after the 1.0 checkpoint](future-reviewer-backends.md) remain unassigned
-backlog work until their prerequisite design and qualification decisions are
-accepted. When scheduled, they receive new functional slice IDs and executable
-outcomes; they are not appended opportunistically to an active branch. The
+backlog outcomes until their prerequisite design and qualification decisions
+are accepted. New deferred outcomes stay concise and have no functional-slice
+designation, milestone, or pre-created constituents. Existing speculative
+tracker and constituent-like issues are planning inputs to reconcile before
+promotion; they do not become constituents automatically. Consolidate or close
+them as superseded unless an issue describes an independently valuable outcome
+retained by the promotion plan. When scheduled, the same outcome issue is
+explicitly promoted and receives a new functional slice ID and executable
+outcome; it is not appended opportunistically to an active branch. The
 reviewer-backend plan does not alter the documented active chain, later 1.0
 slice placement, or the 1.0.0 exit.
 
 ## Planning rules
 
-- A named `Deliver slice <ID>` instruction selects that unblocked Ready tracker.
-  Without a named ID, the highest-priority unblocked slice determines execution
-  order across work packages.
+- A named `Deliver slice <ID>` instruction selects that assigned, unblocked
+  `Ready` tracker. Without a named ID, the highest-priority assigned, unblocked
+  `Ready` tracker determines execution order across work packages. Neither form
+  selects or promotes an `Unassigned backlog` outcome.
 - The Project `Delivery slice` field records each new-functionality ticket's
   primary slice. Focused work uses `Not applicable`.
 - Slice trackers carry the exact closure list; the issue ranges above are

@@ -74,6 +74,14 @@ decision with rationale and review.
 - During the initial application build, new product functionality is normally
   delivered as a functional slice rather than as horizontal layer or
   work-package PRs.
+- A concise future product outcome may remain deferred without becoming a
+  slice tracker. Deferred outcomes carry `Delivery slice: Unassigned backlog`;
+  they have no functional-slice designation or delivery milestone and are not
+  eligible for implementation.
+- Only explicit promotion of the same deferred issue creates an assigned slice
+  tracker. `Deliver the next slice` selects only an assigned, unblocked
+  `Ready` tracker and ignores `Unassigned backlog`; selection never implicitly
+  promotes deferred work.
 - Fixes, audit corrections, security work, dependency-only changes,
   documentation, tooling, maintenance, and genuinely standalone tickets are
   not slices. Use a focused purpose branch such as `fix/`, `docs/`, `chore/`,
@@ -104,8 +112,10 @@ decision with rationale and review.
   and qualified again.
 - Non-activation increments close only constituent tickets whose complete
   acceptance criteria they satisfy. The activation increment proves the whole
-  supported outcome and alone closes the slice tracker. Incomplete behavior
-  remains unreachable, disabled, or report-only until activation.
+  supported outcome and alone closes the slice tracker. A one-issue slice may
+  use that tracker as its only closing reference and needs no constituent
+  ticket. Incomplete behavior remains unreachable, disabled, or report-only
+  until activation.
 - Every ready increment pull request must fully satisfy and natively close at
   least one ticket: a non-activation increment closes at least one constituent,
   while the activation increment may satisfy this requirement by closing the
