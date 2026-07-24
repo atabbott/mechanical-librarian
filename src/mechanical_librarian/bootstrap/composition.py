@@ -26,6 +26,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     AudiobookshelfItemReader,
 )
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+from mechanical_librarian.adapters.persistence.batch_manifest import create as create_batch_manifest, read as read_batch_manifest
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
@@ -37,6 +38,8 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     RemoteCoverTimeout,
     fetch_remote_cover,
 )
+from mechanical_librarian.application.batch import BatchError, BatchSelection, batch_fingerprint, catalogue_fingerprint as batch_catalogue_fingerprint, manifest as batch_manifest, parse_manifest, select
+from mechanical_librarian.application.batch_run import ForegroundBatchRun
 from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue
 from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
@@ -46,6 +49,9 @@ from mechanical_librarian.application.metadata_report import (
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
+    CurrentnessError,
+    ItemInspectionError,
+    ArtifactAuthorityError,
     GenerateMetadataReport,
     InspectionResult,
     MetadataReportError,
@@ -81,7 +87,10 @@ from mechanical_librarian.infrastructure.local_media import (
 )
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client,
+    hardcover_client_token,
+    read_secret,
     target_client,
+    target_client_token,
 )
 from mechanical_librarian.interfaces.cli import main as cli_main
 
@@ -104,7 +113,7 @@ class _IsolatedEpubInspector:
             )
             inspection = report
             if inspection.outcome not in {EpubInspectionOutcome.SUCCESS, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE}:
-                raise MetadataReportError("EPUB inspection failed")
+                raise ItemInspectionError("EPUB inspection failed")
             claims: list[LocalClaim] = []
             for occurrence, fact in enumerate(inspection.facts, 1):
                 claim = LocalClaim.create(
@@ -130,6 +139,8 @@ class _IsolatedEpubInspector:
                     try:
                         self._artifacts.stage(decoded.artifact, declared.data or b"", decoded.preview)
                         covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.RETRIEVED, decoded.artifact),)
+                    except ArtifactAuthorityError:
+                        raise
                     except MetadataReportError:
                         covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.UNAVAILABLE),)
                 except CoverDecodeRejected as error:
@@ -147,10 +158,12 @@ class _IsolatedEpubInspector:
                 assert declared.state is not None
                 covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, declared.state),)
             return InspectionResult(digest, tuple(claims), covers)
+        except ArtifactAuthorityError:
+            raise
         except MetadataReportError:
             raise
         except (LocalMediaError, OSError, ValueError) as error:
-            raise MetadataReportError("EPUB inspection failed") from error
+            raise ItemInspectionError("EPUB inspection failed") from error
         finally:
             if opened is not None:
                 os.close(opened.descriptor)
@@ -209,6 +222,8 @@ class _CoverEvidenceObserver:
             source = CoverSource(source_id, CoverSourceKind.ABS, error.state)
         except CoverReadError as error:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState(error.state))
+        except ArtifactAuthorityError:
+            raise
         except MetadataReportError:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
         return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
@@ -255,19 +270,26 @@ class _CoverEvidenceObserver:
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, state)
         except CoverDecodeRejected as error:
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, error.state)
+        except ArtifactAuthorityError:
+            raise
         except MetadataReportError:
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.UNAVAILABLE)
 
-def run_metadata_report(config_path: Path, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int) -> str:
+def run_metadata_report(config_path: Path, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
     # Validate the separately authorized private store before credentials or
     # network clients are constructed.  It must already be operator-created.
     configuration = load_configuration_file(config_path)
+    return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
+
+
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None) -> str:
+    """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
         raise UnsupportedMediaError("unsupported media")
-    artifacts = CoverArtifactStore(artifact_store_path, create=False)
+    artifacts = CoverArtifactStore(artifact_store_path, create=False, expected_identity=artifact_identity)
     target = AudiobookshelfItemReader(
-        client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds),
+        client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds) if credentials is None else target_client_token(connection.endpoint, credentials["target:" + connection.name], configuration.limits.timeout_seconds),
         endpoint=connection.endpoint,
         library_id=library.library_id,
         service_path=mount.service_path,
@@ -281,13 +303,13 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
                 raise MetadataReportError("provider credential unavailable")
             return HardcoverMetadataProvider(
                 value.name,
-                hardcover_client(value.secret_file, configuration.limits.timeout_seconds),
+                hardcover_client(value.secret_file, configuration.limits.timeout_seconds) if credentials is None else hardcover_client_token(credentials["provider:" + value.name], configuration.limits.timeout_seconds),
                 configuration.limits.provider_response_bytes,
                 configuration.limits.timeout_seconds,
             )
         bindings.append(ProviderBinding(provider.name, provider.enabled, factory))
     def repository_factory():
-        repository = open_repository(database_path)
+        repository = open_repository(database_path, expected_identity=repository_identity)
         try:
             artifacts.recover_unreferenced(repository.artifact_is_referenced)
             return repository
@@ -305,8 +327,9 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
         mount=mount,
         limits=configuration.limits,
         cover_observer=_CoverEvidenceObserver(target, artifacts, tuple(provider_configs)),
+        publication_authority_guard=artifacts.require_current,
     )
-    return service.run(item, file_index)
+    return service.run(item, file_index, expected_file_identity)
 
 
 def reopen_metadata_report(database_path: Path, report_id: str) -> str:
@@ -362,6 +385,79 @@ def run_catalogue(config_path: Path, database_path: Path, action: str, connectio
         repository.close()
 
 
+def preview_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, requested: tuple[tuple[str, str, str, str], ...], all_eligible: bool) -> str:
+    """Freeze one selected current-catalogue view before any report authority."""
+    configuration = load_configuration_file(config_path)
+    fingerprint = batch_catalogue_fingerprint(configuration)
+    repository = open_catalogue(catalogue_path, create=False)
+    try:
+        snapshot = repository.snapshot(fingerprint)
+    finally:
+        repository.close()
+    selections = select(snapshot, requested, all_eligible)
+    providers = _batch_provider_names(configuration, selections)
+    raw = batch_manifest(snapshot, batch_fingerprint(configuration, selections), selections, providers)
+    create_batch_manifest(manifest_path, raw)
+    value = parse_manifest(raw)
+    return json.dumps({"id": value["id"], "entries": len(selections), **value["call_maxima"]}, separators=(",", ":"))
+
+
+def inspect_batch(manifest_path: Path) -> str:
+    value = parse_manifest(read_batch_manifest(manifest_path))
+    return json.dumps({"id": value["id"], "entries": len(value["entries"]), **value["call_maxima"]}, separators=(",", ":"))
+
+
+def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, manifest_id: str, database_path: Path, artifact_store_path: Path, emit) -> bool:
+    """Run the immutable foreground list serially; no resume or hidden state."""
+    value = parse_manifest(read_batch_manifest(manifest_path))
+    if value["id"] != manifest_id:
+        raise BatchError("batch manifest is unavailable")
+    configuration = load_configuration_file(config_path)
+    selections = tuple(BatchSelection(raw["connection"], raw["library"], raw["library_id"], raw["item"], raw["file_identity"], raw["classification"], raw["eligible"]) for raw in value["entries"])
+    if batch_fingerprint(configuration, selections) != value["batch_config_fingerprint"]:
+        raise BatchError("batch configuration changed")
+    actual_providers = _batch_provider_names(configuration, selections)
+    if actual_providers != tuple(value["providers"]):
+        raise BatchError("batch configuration changed")
+    repository = open_catalogue(catalogue_path, create=False)
+    try:
+        snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))
+    finally:
+        repository.close()
+    if snapshot.generation != value["catalogue_generation"] or snapshot.fingerprint != value["catalogue_fingerprint"]:
+        raise BatchError("catalogue requires refresh")
+    artifacts = CoverArtifactStore(artifact_store_path, create=False)
+    artifact_identity = artifacts.identity
+    repository = open_repository(database_path)
+    try: repository_identity = repository.identity
+    finally: repository.close()
+    selected_connections = {selection.connection for selection in selections}
+    selected_provider_names = set(value["providers"])
+    credentials = _load_batch_credentials(configuration, selected_connections, selected_provider_names)
+    def current_entry(generation: int, fingerprint: str, key: tuple[str, str, str, str]):
+        repository = open_catalogue(catalogue_path, create=False)
+        try:
+            return repository.current_entry(generation, fingerprint, key)
+        finally:
+            repository.close()
+    def report(entry):
+        serialized = run_metadata_report_loaded(configuration, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity, credentials, repository_identity, artifact_identity)
+        from mechanical_librarian.domain.metadata_report import MetadataReport
+        report = MetadataReport.from_json(serialized)
+        return report.report_id, tuple(item.status for item in report.providers)
+    return ForegroundBatchRun(snapshot=snapshot, selections=selections, projection=lambda: batch_fingerprint(configuration, selections), expected_projection=value["batch_config_fingerprint"], current_entry=current_entry, report=report, emit=emit).run()
+
+
+def _batch_provider_names(configuration, selections: tuple[BatchSelection, ...]) -> tuple[str, ...]:
+    return tuple(sorted({name for selection in selections for library in configuration.libraries if library.name == selection.library and library.connection == selection.connection for name in library.provider_connections if next(provider for provider in configuration.providers if provider.name == name).enabled}))
+
+
+def _load_batch_credentials(configuration, selected_connections: set[str], selected_provider_names: set[str]) -> dict[str, str]:
+    values = {"target:" + item.name: read_secret(item.secret_file) for item in configuration.connections if item.name in selected_connections}
+    values.update({"provider:" + item.name: read_secret(item.secret_file) for item in configuration.providers if item.name in selected_provider_names and item.secret_file is not None})
+    return values
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     return cli_main(
         argv,
@@ -370,7 +466,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         current_reopen_runner=reopen_current_metadata_report,
         preview_runner=reopen_cover_preview,
         catalogue_runner=run_catalogue,
+        batch_preview_runner=preview_batch,
+        batch_inspect_runner=inspect_batch,
+        batch_run_runner=run_batch,
     )
 
 
-__all__ = ["main", "reopen_cover_preview", "reopen_current_metadata_report", "reopen_metadata_report", "run_catalogue", "run_metadata_report"]
+__all__ = ["inspect_batch", "main", "preview_batch", "reopen_cover_preview", "reopen_current_metadata_report", "reopen_metadata_report", "run_batch", "run_catalogue", "run_metadata_report"]

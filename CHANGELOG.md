@@ -6,6 +6,9 @@
   deterministic inspection, and config-v3 schema.
 - Correct catalogue refresh retention, empty plural ebook classification,
   path-only EPUB mapping, and safe absent/exact inspection failures.
+- Add report-only foreground catalogue evidence-batch preview, immutable
+  manifest inspection, and serial execution for explicitly selected or eligible
+  EPUB entries.
 
 ## Unreleased
 

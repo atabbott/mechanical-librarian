@@ -408,9 +408,11 @@ class SQLiteMetadataReportRepository:
         self,
         connection: sqlite3.Connection,
         binding: _LinuxDatabaseBinding | None = None,
+        identity: tuple[int, int] | None = None,
     ) -> None:
         self._connection = connection
         self._binding = binding
+        self.identity = identity
 
     def publish(self, report: MetadataReport, currentness: Callable[[], bool], expected_current: str | None = None) -> str:
         if type(report) is not MetadataReport or not callable(currentness):
@@ -618,7 +620,7 @@ class SQLiteMetadataReportRepository:
                 self._binding.close()
 
 
-def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportRepository:
+def open_repository(path: Path, *, create: bool = True, expected_identity: tuple[int, int] | None = None) -> SQLiteMetadataReportRepository:
     created = False
     descriptor = -1
     created_identity: tuple[int, int] | None = None
@@ -632,6 +634,8 @@ def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportR
         if os.path.lexists(path):
             descriptor = os.open(path, flags)
             information = os.fstat(descriptor)
+            if expected_identity is not None and (information.st_dev, information.st_ino) != expected_identity:
+                raise MetadataReportError("database authority changed")
             if not stat.S_ISREG(information.st_mode):
                 raise MetadataReportError("database path is invalid")
             _validate_delete_mode_header(descriptor)
@@ -646,6 +650,8 @@ def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportR
                 _reject_database_sidecars(path)
                 _validate_existing_read_only(path, descriptor)
                 _reject_database_sidecars(path)
+        elif expected_identity is not None:
+            raise MetadataReportError("database authority changed")
         elif create:
             descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
             information = os.fstat(descriptor)
@@ -689,7 +695,7 @@ def open_repository(path: Path, *, create: bool = True) -> SQLiteMetadataReportR
         if binding is None:
             os.close(descriptor)
             descriptor = -1
-        repository = SQLiteMetadataReportRepository(connection, binding)
+        repository = SQLiteMetadataReportRepository(connection, binding, (information.st_dev, information.st_ino))
         connection = None
         binding = None
         return repository

@@ -17,6 +17,7 @@ from mechanical_librarian.application.catalogue import (
     CatalogueError,
     CatalogueStaleError,
 )
+from mechanical_librarian.application.batch import CatalogueSnapshot
 
 _SCHEMA = "catalogue-v1"
 _SQL = (
@@ -167,6 +168,34 @@ class SQLiteCatalogueRepository:
             return tuple(CatalogueEntry(value[0], value[1], value[2], value[3], value[4], value[5], tuple(json.loads(value[6])), bool(value[7]), bool(value[8]), value[9], value[10], value[11], value[12], value[13]) for value in values)
         except (TypeError, ValueError):
             raise CatalogueError("catalogue state is invalid") from None
+
+    def snapshot(self, fingerprint: str) -> CatalogueSnapshot:
+        self._connection.execute("BEGIN")
+        try:
+            row = self._connection.execute("SELECT generation, fingerprint FROM catalogue_generations WHERE current=1").fetchone()
+            if row is None or row[1] != fingerprint:
+                raise CatalogueStaleError("catalogue requires refresh")
+            entries = self.inspect(fingerprint)
+            self._connection.execute("COMMIT")
+            return CatalogueSnapshot(row[0], row[1], entries)
+        except Exception:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+
+    def current_entry(self, generation: int, fingerprint: str, key: tuple[str, str, str, str]) -> CatalogueEntry | None:
+        self._connection.execute("BEGIN")
+        try:
+            row = self._connection.execute("SELECT generation FROM catalogue_generations WHERE current=1 AND generation=? AND fingerprint=?", (generation, fingerprint)).fetchone()
+            if row is None: raise CatalogueStaleError("catalogue requires refresh")
+            entries = self._connection.execute("SELECT connection,library,library_id,item_id,updated_at,title,authors,has_ebook,has_audio,classification,file_identity,service_path,format,mount FROM catalogue_entries WHERE generation=? AND connection=? AND library=? AND library_id=? AND item_id=?", (generation, *key)).fetchall()
+            self._connection.execute("COMMIT")
+            if len(entries) != 1: return None
+            value = entries[0]
+            return CatalogueEntry(value[0], value[1], value[2], value[3], value[4], value[5], tuple(json.loads(value[6])), bool(value[7]), bool(value[8]), value[9], value[10], value[11], value[12], value[13])
+        except Exception:
+            if self._connection.in_transaction: self._connection.execute("ROLLBACK")
+            raise
 
     def close(self) -> None:
         try:
