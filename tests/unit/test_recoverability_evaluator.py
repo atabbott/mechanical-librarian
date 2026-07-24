@@ -80,8 +80,7 @@ class RecoverabilityEvaluatorTests(unittest.TestCase):
         result = MODULE.evaluate(document)
         self.assertEqual(result["regression"]["current"]["matched_rows"], 2)
         changed = copy.deepcopy(document)
-        changed["candidate_rows"][0]["outcome"] = "false_positive"
-        changed["candidate_rows"][0]["explicit_negative"] = False
+        changed["negative_rows"][0]["has_candidate"] = "private value"
         with self.assertRaises(ValueError):
             MODULE.evaluate(changed)
         changed = copy.deepcopy(document)

@@ -49,9 +49,11 @@ SYNTHETIC_FIELDS = {
 }
 PROFILES = {
     "synthetic-v1": {"fields": SYNTHETIC_FIELDS, "identifier_targets": 6,
-                     "identifier_observations": 5, "candidate_rows": 5},
+                     "identifier_observations": 5, "candidate_rows": 5,
+                     "negative_rows": 2},
     "gold-50-v1": {"fields": GOLD_FIELDS, "identifier_targets": 47,
-                    "identifier_observations": 47, "candidate_rows": 344},
+                    "identifier_observations": 47, "candidate_rows": 344,
+                    "negative_rows": 82},
 }
 # These are frozen lower/upper bounds, while current metrics are derived from
 # the matrices and candidate evidence supplied to this run.
@@ -263,25 +265,28 @@ def _identifier_metrics(
 
 
 def _regression(
-    supported: dict[str, Any], candidate_rows: Any, profile: dict[str, Any],
+    supported: dict[str, Any], candidate_rows: Any, negative_rows: Any,
+    profile: dict[str, Any],
 ) -> dict[str, Any]:
-    if not isinstance(candidate_rows, list) or len(candidate_rows) != profile["candidate_rows"]:
+    if (not isinstance(candidate_rows, list)
+            or len(candidate_rows) != profile["candidate_rows"]):
         raise ValueError("candidate evidence denominator drift")
+    if not isinstance(negative_rows, list) or len(negative_rows) != profile["negative_rows"]:
+        raise ValueError("negative evidence denominator drift")
     matched_candidates = 0
-    explicit_negatives = 0
     false_positives = 0
     for row in candidate_rows:
-        if not isinstance(row, dict) or set(row) != {"outcome", "explicit_negative"}:
+        if not isinstance(row, dict) or set(row) != {"outcome"}:
             raise ValueError("invalid candidate evidence")
-        if row["outcome"] not in {"matched", "false_positive", "nonmatching"}:
+        if row["outcome"] not in {"matched", "nonmatching"}:
             raise ValueError("invalid candidate outcome")
-        if type(row["explicit_negative"]) is not bool:
-            raise ValueError("invalid candidate evidence")
         matched_candidates += row["outcome"] == "matched"
-        explicit_negatives += row["explicit_negative"]
-        false_positives += row["outcome"] == "false_positive"
-        if row["outcome"] == "false_positive" and not row["explicit_negative"]:
-            raise ValueError("false positive lacks explicit-negative evidence")
+    for row in negative_rows:
+        if not isinstance(row, dict) or set(row) != {"has_candidate"}:
+            raise ValueError("invalid negative evidence")
+        if type(row["has_candidate"]) is not bool:
+            raise ValueError("invalid negative evidence")
+        false_positives += row["has_candidate"]
     by_field = supported["by_field"]
     controls = {
         "title_matches": by_field["title"]["matched_complete"] + by_field["title"]["matched_partial"],
@@ -291,7 +296,7 @@ def _regression(
         "candidate_matches": matched_candidates,
         "candidate_denominator": len(candidate_rows),
         "false_positives": false_positives,
-        "explicit_negative_denominator": explicit_negatives,
+        "explicit_negative_denominator": len(negative_rows),
     }
     gates = {
         "supported-denominator": supported["readable_denominator"] == 405,
@@ -320,7 +325,7 @@ def _regression(
 def evaluate(document: dict[str, Any]) -> dict[str, Any]:
     required = {
         "schema", "profile", "rows", "identifier_targets",
-        "identifier_observations", "candidate_rows",
+        "identifier_observations", "candidate_rows", "negative_rows",
     }
     if (not isinstance(document, dict) or set(document) != required
             or document.get("schema") != INPUT_SCHEMA
@@ -373,7 +378,12 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
     isbn = _identifier_metrics(
         document["identifier_targets"], document["identifier_observations"], profile
     )
-    regression = _regression(supported, document["candidate_rows"], profile)
+    regression = _regression(
+        supported,
+        document["candidate_rows"],
+        document["negative_rows"],
+        profile,
+    )
     recovered = (
         exploratory["categories"]["matched_complete"]
         + exploratory["categories"]["matched_partial"]

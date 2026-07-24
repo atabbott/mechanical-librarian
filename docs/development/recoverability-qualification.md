@@ -22,7 +22,8 @@ Regression controls are derived from the matrices and bounded, value-free
 candidate evidence; they are not caller-supplied totals. The frozen comparator
 is kept separately from the current derived counts. Title, creator, language,
 and overall matching are row units. Candidate precision is a candidate-atom
-unit, and the explicit-negative rate is a separate negative-evidence unit.
+unit, and the explicit-negative rate is a separately bounded negative-evidence
+unit; neither denominator is inferred from the other.
 
 The public input is synthetic. Private gold labels, adjudication, reports, and
 lab paths remain ignored. The output contains only counts by field/category,
