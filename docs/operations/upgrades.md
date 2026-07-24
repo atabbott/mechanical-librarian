@@ -8,9 +8,13 @@ downgrade, or repair is supported. Exact-ID and current-scope replay apply only
 to reports stored in the exact current schema; restart, replay, and crash safety
 remain mandatory.
 
-To adopt an increment, retain any older development database only as an offline
-historical artifact, supply an absent path for the current report database, and
-rerun the supported report command. Pointing a current binary at an older or
+To adopt an increment, retain an older development database and its matching
+artifact directory offline together as one historical state set. Supply both an
+absent path for the current report database and an absent or separate empty
+artifact-store path, then rerun the supported report command. Never point a
+current database at an older or unrelated artifact directory: exact-current
+crash recovery removes unreferenced 64-hex artifact files, so that reuse is
+destructive and unsupported. Pointing a current binary at an older or
 intermediate database fails closed and does not rewrite it.
 
 Retain older development state only as an offline historical artifact, then use
