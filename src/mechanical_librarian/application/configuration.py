@@ -95,7 +95,7 @@ class LibraryConfiguration:
     def __post_init__(self) -> None:
         _name(self.name, "library name")
         _name(self.connection, "library connection")
-        if type(self.library_id) is not str or not 1 <= len(self.library_id) <= 128 or self.media_kind not in {"ebook", "audiobook"}:
+        if type(self.library_id) is not str or not 1 <= len(self.library_id) <= 128 or self.media_kind not in {"book", "ebook", "audiobook"}:
             raise ConfigurationError("library is invalid")
         if self.mount is not None:
             _name(self.mount, "library mount")
@@ -129,10 +129,10 @@ class ApplicationConfiguration:
     mounts: tuple[MediaMountConfiguration, ...]
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
-    schema_version: str = "config-v2"
+    schema_version: str = "config-v3"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "config-v2":
+        if self.schema_version != "config-v3":
             raise ConfigurationError("configuration schema is unsupported")
         typed = (
             (self.connections, TargetConnectionConfiguration, "target connections"),
@@ -153,8 +153,6 @@ class ApplicationConfiguration:
         for library in self.libraries:
             if library.connection not in connection_names or (library.mount is not None and library.mount not in mount_names) or not set(library.provider_connections).issubset(provider_names):
                 raise ConfigurationError("library references are invalid")
-            if library.media_kind == "ebook" and library.mount is None:
-                raise ConfigurationError("ebook library requires a read-only media mount")
             if sum(
                 providers_by_name[name].cover_enabled
                 for name in library.provider_connections

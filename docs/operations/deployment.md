@@ -3,7 +3,7 @@
 0.4 is a pre-release installed package, not a published container release. Its
 supported runtime shape is one process invocation with:
 
-- an explicit `config-v2` JSON file;
+- an explicit `config-v3` JSON file;
 - an explicit SQLite database path on reliable local storage;
 - owner-only target/provider secret files;
 - an explicitly configured read-only EPUB mount; and

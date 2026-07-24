@@ -2,6 +2,12 @@
 
 ## Authority
 
+The `catalogue` command may make only bounded GET observations of configured ABS
+book libraries and publish a local current generation. Its bearer credential is
+attached only to the configured origin's library, library-items, and item-detail
+GET routes. It has no provider, metadata-write, media-write, report, apply,
+background, retry, or cleanup authority.
+
 `metadata-report` may read one configured target item, one selected read-only
 EPUB, owner-only credential files, one fixed credential-bearing metadata request
 per applicable provider, and separately credential-free bounded cover request

@@ -167,7 +167,7 @@ class GenerateMetadataReport:
         self._cover_observer = cover_observer
 
     def run(self, item: str, file_index: int) -> str:
-        if self._library.media_kind != "ebook" or self._mount is None:
+        if self._mount is None:
             raise UnsupportedMediaError("unsupported media")
         initial = self._safe_read(item)
         if (

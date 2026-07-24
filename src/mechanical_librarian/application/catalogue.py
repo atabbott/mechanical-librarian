@@ -1,0 +1,113 @@
+"""Purpose-specific current book catalogue refresh and inspection contracts."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Protocol
+
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    LibraryConfiguration,
+)
+from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
+
+
+class CatalogueError(RuntimeError):
+    """Value-free catalogue operation failure."""
+
+
+class CatalogueBusyError(CatalogueError):
+    pass
+
+
+class CatalogueStaleError(CatalogueError):
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogueEntry:
+    connection: str
+    library: str
+    library_id: str
+    item_id: str
+    updated_at: int
+    title: str
+    authors: tuple[str, ...]
+    has_ebook: bool
+    has_audio: bool
+    classification: str
+    file_identity: str | None = None
+    service_path: str | None = None
+    format: str | None = None
+    mount: str | None = None
+
+    @property
+    def eligible(self) -> bool:
+        return self.classification == "singular-supported"
+
+
+class CatalogueReader(Protocol):
+    def read_library(self, connection: str, library: LibraryConfiguration) -> tuple[CatalogueEntry, ...]: ...
+
+
+class CatalogueRepository(Protocol):
+    def publish(self, fingerprint: str, entries: tuple[CatalogueEntry, ...]) -> int: ...
+    def inspect(self, fingerprint: str) -> tuple[CatalogueEntry, ...]: ...
+    def close(self) -> None: ...
+
+
+def catalogue_fingerprint(configuration: ApplicationConfiguration) -> Fingerprint:
+    """Hash the deliberately small, secret-free catalogue configuration projection."""
+    connections = {
+        value.name: {"name": value.name, "adapter": value.adapter, "endpoint": value.endpoint.rstrip("/")}
+        for value in configuration.connections
+    }
+    mounts = {
+        value.name: {"name": value.name, "service_path": value.service_path, "container_path": value.container_path, "read_only": value.read_only}
+        for value in configuration.mounts
+    }
+    value = {
+        "schema": "config-v3",
+        "connections": [connections[name] for name in sorted(connections)],
+        "libraries": [
+            {"name": item.name, "connection": item.connection, "library_id": item.library_id, "mount": item.mount}
+            for item in configuration.libraries
+        ],
+        "mounts": [mounts[name] for name in sorted(mounts)],
+        "limits": {"target_response_bytes": configuration.limits.target_response_bytes, "timeout_seconds": configuration.limits.timeout_seconds},
+    }
+    return Fingerprint.from_canonical_value(value, schema=SchemaVersion("catalogue-config-v1"))
+
+
+class RefreshCurrentCatalogue:
+    """One deep refresh interface hiding bounded enumeration and publication."""
+
+    def __init__(self, reader: CatalogueReader, repository: CatalogueRepository) -> None:
+        self._reader = reader
+        self._repository = repository
+
+    def refresh(self, configuration: ApplicationConfiguration) -> int:
+        fingerprint = catalogue_fingerprint(configuration).digest
+        entries: list[CatalogueEntry] = []
+        for library in configuration.libraries:
+            entries.extend(self._reader.read_library(library.connection, library))
+            if len(entries) > 10_000:
+                raise CatalogueError("catalogue limit exceeded")
+        return self._repository.publish(fingerprint, tuple(entries))
+
+    def inspect(self, configuration: ApplicationConfiguration, *, exact: tuple[str, str, str] | None = None, facet: str | None = None) -> tuple[CatalogueEntry, ...]:
+        entries = self._repository.inspect(catalogue_fingerprint(configuration).digest)
+        if exact is not None:
+            entries = tuple(item for item in entries if (item.connection, item.library, item.item_id) == exact)
+        if facet == "eligible":
+            entries = tuple(item for item in entries if item.eligible)
+        elif facet == "ineligible":
+            entries = tuple(item for item in entries if not item.eligible)
+        elif facet == "ebook":
+            entries = tuple(item for item in entries if item.has_ebook)
+        elif facet == "audio":
+            entries = tuple(item for item in entries if item.has_audio)
+        return tuple(sorted(entries, key=lambda item: (item.connection, item.library, item.item_id)))
+
+
+__all__ = ["CatalogueBusyError", "CatalogueEntry", "CatalogueError", "CatalogueReader", "CatalogueRepository", "CatalogueStaleError", "RefreshCurrentCatalogue", "catalogue_fingerprint"]

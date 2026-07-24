@@ -103,7 +103,7 @@ def _item(size: int) -> dict[str, object]:
 
 def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool = False, provider_secret: str | None = None) -> dict[str, object]:
     return {
-        "schema_version": "config-v2",
+        "schema_version": "config-v3",
         "connections": [
             {
                 "name": "primary",
@@ -117,7 +117,6 @@ def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool 
                 "name": "books",
                 "connection": "primary",
                 "library_id": "library-id",
-                "media_kind": "audiobook" if audiobook else "ebook",
                 "mount": None if audiobook else "books",
                 "provider_connections": ["catalogue"],
             }
@@ -504,7 +503,6 @@ class MetadataReportCommandTests(unittest.TestCase):
                         "name": "other",
                         "connection": "primary",
                         "library_id": "library-id",
-                        "media_kind": "ebook",
                         "mount": "books",
                         "provider_connections": ["catalogue"],
                     }
@@ -680,7 +678,6 @@ class MetadataReportCommandTests(unittest.TestCase):
                         "name": "other",
                         "connection": "secondary",
                         "library_id": "library-id",
-                        "media_kind": "ebook",
                         "mount": "books",
                         "provider_connections": [],
                     }

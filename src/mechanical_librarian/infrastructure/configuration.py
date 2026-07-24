@@ -59,7 +59,6 @@ class LibraryInput(_Closed):
     name: Name
     connection: Name
     library_id: Annotated[StrictStr, Field(min_length=1, max_length=128)]
-    media_kind: Literal["ebook", "audiobook"]
     mount: Name | None
     provider_connections: Annotated[list[Name], Field(max_length=32)]
 
@@ -72,7 +71,7 @@ class LimitsInput(_Closed):
 
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v2"]
+    schema_version: Literal["config-v3"]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]
     mounts: Annotated[list[MountInput], Field(max_length=32)]
@@ -91,7 +90,7 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
         value = ConfigurationInput.model_validate(source)
         return ApplicationConfiguration(
             tuple(sorted((TargetConnectionConfiguration(**item.model_dump()) for item in value.connections), key=lambda item: item.name)),
-            tuple(sorted((LibraryConfiguration(**{**item.model_dump(), "provider_connections": tuple(item.provider_connections)}) for item in value.libraries), key=lambda item: item.name)),
+            tuple(sorted((LibraryConfiguration(**{**item.model_dump(), "media_kind": "book", "provider_connections": tuple(item.provider_connections)}) for item in value.libraries), key=lambda item: item.name)),
             tuple(sorted((MediaMountConfiguration(**item.model_dump()) for item in value.mounts), key=lambda item: item.name)),
             tuple(sorted((ProviderConnectionConfiguration(**item.model_dump()) for item in value.providers), key=lambda item: item.name)),
             ReportLimits(**value.limits.model_dump()),

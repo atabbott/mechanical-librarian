@@ -19,14 +19,14 @@ from mechanical_librarian.infrastructure.security.credentials import read_secret
 
 def _source(root: Path) -> dict[str, object]:
     return {
-        "schema_version": "config-v2",
+        "schema_version": "config-v3",
         "connections": [
             {"name": "secondary", "adapter": "audiobookshelf", "endpoint": "https://secondary.invalid", "secret_file": str(root / "secondary.secret")},
             {"name": "primary", "adapter": "audiobookshelf", "endpoint": "https://primary.invalid", "secret_file": str(root / "primary.secret")},
         ],
         "libraries": [
-            {"name": "books", "connection": "primary", "library_id": "library-a", "media_kind": "ebook", "mount": "books", "provider_connections": ["second", "first"]},
-            {"name": "other", "connection": "secondary", "library_id": "library-b", "media_kind": "ebook", "mount": "other", "provider_connections": ["first"]},
+            {"name": "books", "connection": "primary", "library_id": "library-a", "mount": "books", "provider_connections": ["second", "first"]},
+            {"name": "other", "connection": "secondary", "library_id": "library-b", "mount": "other", "provider_connections": ["first"]},
         ],
         "mounts": [
             {"name": "other", "container_path": "/media/other", "service_path": "/other", "read_only": True},
@@ -81,7 +81,7 @@ class MetadataConfigurationTests(unittest.TestCase):
                     load_configuration_file(path)
 
     def test_generated_schema_is_current(self) -> None:
-        expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v2.schema.json").read_text(encoding="utf-8")
+        expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v3.schema.json").read_text(encoding="utf-8")
         self.assertEqual(configuration_schema_json(), expected)
 
     def test_mount_paths_are_absolute_in_generated_schema_and_runtime(self) -> None:

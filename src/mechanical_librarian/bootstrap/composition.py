@@ -2,48 +2,87 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections.abc import Sequence
 from pathlib import Path
 
-from mechanical_librarian.adapters.evidence_extractors.process import run_epub_inspector_child
-from mechanical_librarian.adapters.evidence_extractors.epub_cover import read_declared_cover
 from mechanical_librarian.adapters.cover_artifacts import (
     CoverDecodeRejected,
     CoverDecodeTimeout,
     decode_cover,
 )
-from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.evidence_extractors.epub_cover import (
+    read_declared_cover,
+)
+from mechanical_librarian.adapters.evidence_extractors.process import (
+    run_epub_inspector_child,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    AudiobookshelfCatalogueReader,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+    AudiobookshelfItemReader,
+)
+from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
-from mechanical_librarian.adapters.providers.hardcover_metadata import HardcoverMetadataProvider
-from mechanical_librarian.adapters.providers.remote_cover import CoverDeadline, RemoteCoverError, RemoteCoverTimeout, fetch_remote_cover
-from mechanical_librarian.application.configuration import ConfigurationError, MediaMountConfiguration, ProviderConnectionConfiguration
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.providers.hardcover_metadata import (
+    HardcoverMetadataProvider,
+)
+from mechanical_librarian.adapters.providers.remote_cover import (
+    CoverDeadline,
+    RemoteCoverError,
+    RemoteCoverTimeout,
+    fetch_remote_cover,
+)
+from mechanical_librarian.application.catalogue import RefreshCurrentCatalogue
+from mechanical_librarian.application.configuration import (
+    MediaMountConfiguration,
+    ProviderConnectionConfiguration,
+)
 from mechanical_librarian.application.metadata_report import (
+    CoverReadError,
+    CoverSourceChangedError,
+    CoverTimeoutError,
     GenerateMetadataReport,
     InspectionResult,
     MetadataReportError,
-    CoverReadError,
     ProviderBinding,
-    CoverTimeoutError,
-    CoverSourceChangedError,
     TargetCoverReader,
     TargetSnapshot,
     UnsupportedMediaError,
 )
-from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionOutcome
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
+from mechanical_librarian.domain.epub_inspection import (
+    EpubInspectionOutcome,
+)
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
-from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, FieldState, LocalClaim, ProviderObservation, ProviderStatus, RearClaimProvenance, claim_scope
-from mechanical_librarian.domain.cover_evidence import CoverSource, CoverSourceKind, CoverSourceState, cover_source_id
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    FieldState,
+    LocalClaim,
+    ProviderObservation,
+    RearClaimProvenance,
+    claim_scope,
+)
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
     open_local_media,
     sha256_descriptor,
 )
-from mechanical_librarian.infrastructure.security.credentials import hardcover_client, target_client
+from mechanical_librarian.infrastructure.security.credentials import (
+    hardcover_client,
+    target_client,
+)
 from mechanical_librarian.interfaces.cli import main as cli_main
 
 
@@ -224,7 +263,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     # network clients are constructed.  It must already be operator-created.
     configuration = load_configuration_file(config_path)
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
-    if library.media_kind != "ebook" or mount is None:
+    if mount is None:
         raise UnsupportedMediaError("unsupported media")
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     target = AudiobookshelfItemReader(
@@ -297,6 +336,32 @@ def reopen_cover_preview(database_path: Path, artifact_store_path: Path, report_
         repository.close()
 
 
+def run_catalogue(config_path: Path, database_path: Path, action: str, connection: str | None, library: str | None, selector: str | None) -> str:
+    """Refresh or inspect the one current catalogue through explicit composition."""
+    configuration = load_configuration_file(config_path)
+    mounts = {item.name: item for item in configuration.mounts}
+    clients = {item.name: item for item in configuration.connections}
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda name: target_client(clients[name].endpoint, clients[name].secret_file, configuration.limits.timeout_seconds),
+        mounts=mounts,
+        maximum_bytes=configuration.limits.target_response_bytes,
+        timeout_seconds=configuration.limits.timeout_seconds,
+    )
+    repository = open_catalogue(database_path)
+    try:
+        service = RefreshCurrentCatalogue(reader, repository)
+        if action == "refresh":
+            return json.dumps({"generation": service.refresh(configuration)}, separators=(",", ":"))
+        exact = None if action == "list" else (connection or "", library or "", selector or "")
+        entries = service.inspect(configuration, exact=exact, facet=selector if action == "list" else None)
+        values = [{"connection": item.connection, "library": item.library, "item": item.item_id, "title": item.title, "authors": list(item.authors), "ebook": item.has_ebook, "audio": item.has_audio, "classification": item.classification} for item in entries]
+        if action == "get" and values:
+            values[0].update({"updated_at": entries[0].updated_at, "file_identity": entries[0].file_identity, "format": entries[0].format, "service_path": entries[0].service_path, "mount": entries[0].mount})
+        return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
+    finally:
+        repository.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     return cli_main(
         argv,
@@ -304,7 +369,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         reopen_runner=reopen_metadata_report,
         current_reopen_runner=reopen_current_metadata_report,
         preview_runner=reopen_cover_preview,
+        catalogue_runner=run_catalogue,
     )
 
 
-__all__ = ["main", "reopen_cover_preview", "reopen_current_metadata_report", "reopen_metadata_report", "run_metadata_report"]
+__all__ = ["main", "reopen_cover_preview", "reopen_current_metadata_report", "reopen_metadata_report", "run_catalogue", "run_metadata_report"]
