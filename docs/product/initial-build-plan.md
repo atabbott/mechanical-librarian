@@ -5,6 +5,11 @@ sequence. The completed DUX prototype now supplies the review behavior and test
 scenarios that must shape the domain and API from the start. Detailed interface
 implementation remains in WP9, after those contracts are production-ready.
 
+WP1–WP9 now describe capability ownership and architectural intent only. Their
+original parent issues and constituent forests are closed as superseded; use the
+current outcomes in the [delivery-slice plan](delivery-slices.md), not these
+sections, to select delivery work.
+
 Each work package must leave the repository releasable, documented, and testable. A later package may not compensate for missing safety or quality work in an earlier one.
 
 ## WP0: project foundation
@@ -203,8 +208,10 @@ corroboration, records exact typed no-proposal outcomes, and supports replay
 and supersession without introducing AI, human decisions, covers, rich fields,
 multiple providers, or writes. F07a #143 and F07b #228 begin the later 0.3
 checkpoint and do not block the 0.2 preview. F08 #144, the broader #16, #46,
-#50, #68-#73, and #209 program, and F11 #147/#74-#80 remain 1.0 scope. The WP5
-and WP6 contracts below describe that long-term architecture; they are not 0.2
+#50, #68-#73, and #209 program, and F11 #147/#74-#80 were the original 1.0
+planning inputs. F08 #144 and F11 #147 remain current outcomes; the closed
+program and constituent tickets are historical context. The WP5 and WP6
+contracts below describe long-term architecture, not current tickets or 0.2
 exit criteria.
 
 Every historical F09a set carried the closed `synthetic_preview` mode in its
@@ -217,7 +224,8 @@ are deliberately deferred to the explicit 0.3 work. The retired F09a, F09b, and
 F10a surfaces no longer continue that preview or grant its synthetic lineage
 production applicability.
 
-The next internal checkpoint is 0.3.0, the first trustworthy live title report.
+The following historical internal checkpoint was 0.3.0, the first trustworthy
+live title report.
 Completed F06 leads to F07a #143/#30/#31/#188 and then F07b #228/#32.
 Completed F09b leads separately to F09f #239/#242. F07b and F09f then converge
 at F09g #238/#243, the checkpoint exit. F09f is a target-independent configured
@@ -243,15 +251,15 @@ Hardcover book, edition, and title votes.
 
 This 0.3 checkpoint adds no review admission, human or AI decision, approval,
 apply, target or media write, destructive authority, tag, or release
-publication. F09c #205/#210/#211 remains a separate 1.0 fallback report/provider
-lane and does not block F09g; #69/#70 later consume compatible F09c identity,
-with qualification in #73 and F17 #153. F10b #240/#241 remains 1.0 work after
-completed F10a and #197 and owns production review-case admission from a
-qualifying current neutral persisted report claim. F09g #238 is historical
-characterization evidence for this boundary, not an active F10b dependency.
-F11 remains an independently deliverable synthetic shadow path; F17 is the
-convergence qualification gate. These planning relationships add no production
-behavior to F10a.
+publication. The former F09c tracker #205 and its constituent-like provider
+issues are no longer a planned 1.0 lane: #205 is closed superseded, while Open
+Library #210 and LibraryThing #211 remain separate deferred provider outcomes.
+Issue #70 now owns the required explainable proposal and policy outcome and
+requires explicit promotion. F10b #240 owns production review admission; F11
+#147 remains an independently deliverable shadow path; and F17 #153 qualifies
+continuous pre-release operation without CWA or release scope. F09g #238 remains
+historical characterization evidence for this boundary, not an active F10b
+dependency. These planning relationships add no production behavior to F10a.
 
 ## WP5: candidate and policy engine
 
@@ -472,18 +480,26 @@ Deliverables:
   plus bounded advisory ETA with calculation basis, timestamp, freshness, and
   an explicit unknown state;
 - publish TrueNAS-oriented and generic container deployment examples; and
-- produce multi-architecture images, SBOMs, signatures, and provenance.
+- keep supported artifact production, SBOM, signatures, and provenance in the
+  separate first-release gate #94.
 
 Exit criteria:
 
 - a new user can deploy with one container, one data volume, media mounts, and one web port;
-- restart, backup, restore, and upgrade drills pass;
+- exact-current restart, backup, recovery, and clean rebuild pass; older-schema
+  migration and restore remain post-release work under #57;
 - scheduler restart and supervised continuation resume from durable state, not
   process IDs, shell sessions, or detached watcher ownership;
 - no internal component requires an exposed port; and
 - the image passes vulnerability and secret scans.
 
 ## WP9: review API and operator surface
+
+For the pre-public core, F16a #152 consolidates the authenticated API, browser
+case, and one individual human decision. Bulk decisions, reversal, extended
+summaries, and the broad browser qualification matrix remain one deferred
+post-first-release outcome under #195. The longer list below is capability
+context, not the current F16a acceptance set.
 
 Deliverables:
 
@@ -535,10 +551,11 @@ After the first production-quality vertical slice:
 ## Planning rule
 
 Implementation tickets should reference the governing documents and state which
-invariant, ADR, threat, and test layer they affect. New functionality also names
-its functional delivery slice. Work packages remain ownership buckets; they do
-not define branch or pull-request boundaries. Initial product functionality
-follows the branch and review workflow in
+invariant, ADR, threat, and test layer they affect. Deferred outcomes have no
+functional-slice designation; promoted new functionality names its assigned
+slice. Work packages remain historical ownership buckets, not current parent
+tickets, and do not define branch or pull-request boundaries. Initial product
+functionality follows the branch and review workflow in
 [functional slice delivery](../development/slice-delivery.md) and the ordered
 [delivery-slice plan](delivery-slices.md). Fixes, corrections, documentation,
 tooling, maintenance, and standalone tickets retain focused ticket-level

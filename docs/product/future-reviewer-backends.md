@@ -11,7 +11,8 @@ The initial checkpoint plan remains unchanged:
 
 - Codex CLI is the first reviewer backend;
 - F11 delivers isolated AI shadow recommendations;
-- the F01-F17 sequence and the 1.0.0 exit criteria remain authoritative; and
+- the current 1.0 outcome set and exit criteria in the
+  [delivery-slice plan](delivery-slices.md) remain authoritative; and
 - the normal deployment remains one Mechanical Librarian container.
 
 After the 1.0.0 checkpoint is complete, two optional reviewer capabilities may
@@ -22,9 +23,10 @@ be scheduled as separate functional slices:
 2. a reviewer connected to a separately operated compatible model server.
 
 Neither capability depends on the other. Both depend on the completed F11
-reviewer contract and isolation boundary, the completed F17 release cohort,
-and structured reviewer configuration and secret references. They receive new
-slice IDs only when maintainers schedule them.
+reviewer contract and isolation boundary, stable continuous operation from F17,
+and structured reviewer configuration and secret references. F17 is not a
+release cohort. These outcomes receive slice IDs only when maintainers schedule
+and explicitly promote them.
 
 ## Shared contract
 
@@ -85,16 +87,13 @@ delivery dependency between the slices.
 
 ## Deliverable A: OpenRouter reviewer
 
-### Tracker draft
+### Deferred outcome draft
 
 **Title:** Deliver a qualified OpenRouter reviewer with owner-controlled
 credentials
 
-**Classification:** After-1.0-checkpoint functional slice; Feature; High risk
-
-**Exact constituent-ticket list:**
-
-- Implement and qualify the OpenRouter reviewer backend.
+**Classification:** Deferred after-1.0-checkpoint Feature; High risk;
+`Unassigned backlog`; no milestone or functional-slice designation
 
 **Outcome:** An owner opts into disclosed hosted processing, supplies an
 OpenRouter credential, selects one exact qualified free or paid reviewer
@@ -319,16 +318,13 @@ only in the activation increment that completes the tracker outcome.
 
 ## Deliverable B: Externally operated compatible reviewer
 
-### Tracker draft
+### Deferred outcome draft
 
 **Title:** Deliver a reviewer backed by an externally operated compatible model
 server
 
-**Classification:** After-1.0-checkpoint functional slice; Feature; High risk
-
-**Exact constituent-ticket list:**
-
-- Implement and qualify the external compatible reviewer endpoint.
+**Classification:** Deferred after-1.0-checkpoint Feature; High risk;
+`Unassigned backlog`; no milestone or functional-slice designation
 
 **Outcome:** An owner connects Mechanical Librarian to a separately installed
 and operated model server, qualifies its exact endpoint/profile/model, and
@@ -533,8 +529,9 @@ only in the activation increment that completes the tracker outcome.
 ## Planning disposition
 
 The planning document is approved scope deferred until after the 1.0
-checkpoint. The two
-implementation trackers remain unassigned backlog work and cannot become
-`Ready` until their named decisions are resolved, current external-service
-behavior is reverified, exact closure lists and slice IDs are approved, and
-dependencies are complete.
+checkpoint. The two outcome drafts are not implementation trackers. When one is
+selected, create or update one concise outcome issue and explicitly promote
+that same issue only after its named decisions are resolved, current
+external-service behavior is reverified, and dependencies are complete. Add
+constituents only for independently valuable increments justified by that
+promotion plan.
