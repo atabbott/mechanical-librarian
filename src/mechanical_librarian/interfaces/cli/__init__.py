@@ -25,7 +25,7 @@ PreviewRunner = Callable[[Path, Path, str, str, str], bytes]
 CatalogueRunner = Callable[[Path, Path, str, str | None, str | None, str | None, str | None, int], str]
 BatchPreviewRunner = Callable[[Path, Path, Path, tuple[tuple[str, str, str, str], ...], bool], str]
 BatchInspectRunner = Callable[[Path], str]
-BatchRunRunner = Callable[[Path, Path, Path, str, Path, Path], str]
+BatchRunRunner = Callable[[Path, Path, Path, str, Path, Path, Callable[[dict[str, object]], None]], bool]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -174,7 +174,12 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
                     raise ValueError
                 if re.fullmatch(r"[0-9a-f]{64}", arguments.manifest_id) is None:
                     raise ValueError
-                serialized = batch_run_runner(arguments.config, arguments.catalogue, arguments.manifest, arguments.manifest_id, arguments.database, arguments.artifact_store)
+                def emit(line: dict[str, object]) -> None:
+                    import json
+                    output.write(json.dumps(line, separators=(",", ":")) + "\n")
+                    output.flush()
+                ok = batch_run_runner(arguments.config, arguments.catalogue, arguments.manifest, arguments.manifest_id, arguments.database, arguments.artifact_store, emit)
+                return 0 if ok else 1
         except (ConfigurationError, CredentialError):
             errors.write("Batch failed: configuration or credential unavailable.\n")
             return 3

@@ -184,14 +184,18 @@ class SQLiteCatalogueRepository:
             raise
 
     def current_entry(self, generation: int, fingerprint: str, key: tuple[str, str, str, str]) -> CatalogueEntry | None:
-        row = self._connection.execute("SELECT generation FROM catalogue_generations WHERE current=1 AND generation=? AND fingerprint=?", (generation, fingerprint)).fetchone()
-        if row is None:
-            raise CatalogueStaleError("catalogue requires refresh")
-        entries = self._connection.execute("SELECT connection,library,library_id,item_id,updated_at,title,authors,has_ebook,has_audio,classification,file_identity,service_path,format,mount FROM catalogue_entries WHERE generation=? AND connection=? AND library=? AND library_id=? AND item_id=?", (generation, *key)).fetchall()
-        if len(entries) != 1:
-            return None
-        value = entries[0]
-        return CatalogueEntry(value[0], value[1], value[2], value[3], value[4], value[5], tuple(json.loads(value[6])), bool(value[7]), bool(value[8]), value[9], value[10], value[11], value[12], value[13])
+        self._connection.execute("BEGIN")
+        try:
+            row = self._connection.execute("SELECT generation FROM catalogue_generations WHERE current=1 AND generation=? AND fingerprint=?", (generation, fingerprint)).fetchone()
+            if row is None: raise CatalogueStaleError("catalogue requires refresh")
+            entries = self._connection.execute("SELECT connection,library,library_id,item_id,updated_at,title,authors,has_ebook,has_audio,classification,file_identity,service_path,format,mount FROM catalogue_entries WHERE generation=? AND connection=? AND library=? AND library_id=? AND item_id=?", (generation, *key)).fetchall()
+            self._connection.execute("COMMIT")
+            if len(entries) != 1: return None
+            value = entries[0]
+            return CatalogueEntry(value[0], value[1], value[2], value[3], value[4], value[5], tuple(json.loads(value[6])), bool(value[7]), bool(value[8]), value[9], value[10], value[11], value[12], value[13])
+        except Exception:
+            if self._connection.in_transaction: self._connection.execute("ROLLBACK")
+            raise
 
     def close(self) -> None:
         try:

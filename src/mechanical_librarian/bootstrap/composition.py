@@ -396,7 +396,7 @@ def inspect_batch(manifest_path: Path) -> str:
     return json.dumps({"id": value["id"], "entries": len(value["entries"]), **value["call_maxima"]}, separators=(",", ":"))
 
 
-def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, manifest_id: str, database_path: Path, artifact_store_path: Path) -> str:
+def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, manifest_id: str, database_path: Path, artifact_store_path: Path, emit) -> bool:
     """Run the immutable foreground list serially; no resume or hidden state."""
     value = parse_manifest(read_batch_manifest(manifest_path))
     if value["id"] != manifest_id:
@@ -416,7 +416,6 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
         repository.close()
     if snapshot.generation != value["catalogue_generation"] or snapshot.fingerprint != value["catalogue_fingerprint"]:
         raise BatchError("catalogue requires refresh")
-    output: list[str] = []
     def current_entry(generation: int, fingerprint: str, key: tuple[str, str, str, str]):
         repository = open_catalogue(catalogue_path, create=False)
         try:
@@ -425,10 +424,10 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
             repository.close()
     def report(entry):
         serialized = run_metadata_report_loaded(configuration, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity, credentials)
-        return json.loads(serialized)["report_id"]
-    summary = ForegroundBatchRun(snapshot=snapshot, selections=selections, projection=lambda: batch_fingerprint(configuration, selections), expected_projection=value["batch_config_fingerprint"], current_entry=current_entry, report=report, emit=lambda line: output.append(json.dumps(line, separators=(",", ":")))).run()
-    output.append(json.dumps({"summary": {**summary, "entries": len(selections)}}, separators=(",", ":")))
-    return "\n".join(output)
+        from mechanical_librarian.domain.metadata_report import MetadataReport
+        report = MetadataReport.from_json(serialized)
+        return report.report_id, tuple(item.status for item in report.providers)
+    return ForegroundBatchRun(snapshot=snapshot, selections=selections, projection=lambda: batch_fingerprint(configuration, selections), expected_projection=value["batch_config_fingerprint"], current_entry=current_entry, report=report, emit=emit).run()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

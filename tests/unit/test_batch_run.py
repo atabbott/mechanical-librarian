@@ -20,16 +20,16 @@ class ForegroundBatchRunTests(unittest.TestCase):
 
     def test_source_stale_continues(self) -> None:
         lines, result = self.exercise(lambda _: (_ for _ in ()).throw(CurrentnessError("changed")))
-        self.assertEqual((lines[0]["outcome"], result["skipped"], result["stopped"]), ("stale", 1, 0))
+        self.assertEqual((lines[0]["outcome"], lines[-1]["summary"]["skipped"], result), ("stale", 1, True))
 
     def test_credential_and_catalogue_drift_stop(self) -> None:
         lines, result = self.exercise(lambda _: (_ for _ in ()).throw(CredentialError("unavailable")))
-        self.assertEqual((lines[0]["outcome"], result["stopped"]), ("stopped", 1))
-        lines, result = self.exercise(lambda _: "report", current=lambda *_: (_ for _ in ()).throw(CatalogueStaleError("refresh")))
-        self.assertEqual((lines[0]["outcome"], result["stopped"]), ("stopped", 1))
+        self.assertEqual((lines[0]["outcome"], result), ("stopped", False))
+        lines, result = self.exercise(lambda _: ("report", ()), current=lambda *_: (_ for _ in ()).throw(CatalogueStaleError("refresh")))
+        self.assertEqual((lines[0]["outcome"], result), ("stopped", False))
 
     def test_item_local_failure_and_unclassified_stop(self) -> None:
         lines, result = self.exercise(lambda _: (_ for _ in ()).throw(UnsupportedMediaError("format")))
-        self.assertEqual((lines[0]["outcome"], result["failed"], result["stopped"]), ("item_failed", 1, 0))
+        self.assertEqual((lines[0]["outcome"], lines[-1]["summary"]["failed"], result), ("item_failed", 1, True))
         lines, result = self.exercise(lambda _: (_ for _ in ()).throw(RuntimeError("broken")))
-        self.assertEqual((lines[0]["outcome"], result["stopped"]), ("stopped", 1))
+        self.assertEqual((lines[0]["outcome"], result), ("stopped", False))
