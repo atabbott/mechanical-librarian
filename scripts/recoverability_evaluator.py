@@ -77,9 +77,21 @@ def load(path: Path) -> dict[str, Any]:
 
 
 def _category(row: dict[str, Any]) -> str:
-    if row["inspection"] == "failure" or row["extraction"] == "failure": return "inspection_failure"
+    if row["inspection"] == "failure":
+        if row["extraction"] != "not_found" or row["projection"] != "not_projected" or row["comparison"] != "none":
+            raise ValueError("invalid whole inspection failure")
+        return "inspection_failure"
+    if row["inspection"] != "success":
+        raise ValueError("invalid inspection stage")
+    if row["extraction"] == "failure":
+        if row["projection"] != "not_projected" or row["comparison"] != "none":
+            raise ValueError("invalid extraction failure")
+        return "inspection_failure"
+    if row["extraction"] not in {"found", "not_found"}:
+        raise ValueError("invalid extraction stage")
     if row["source"] == "absent": return "absent_in_source"
-    if row["source"] != "present" or row["extraction"] != "found": raise ValueError("invalid evidence stages")
+    if row["source"] != "present" or row["extraction"] != "found":
+        raise ValueError("invalid evidence stages")
     if row["projection"] == "not_projected": return "extracted_not_projected"
     if row["projection"] != "projected": raise ValueError("invalid projection")
     values = {"normalization": "normalization_mismatch", "semantic": "semantic_mismatch", "partial": "matched_partial", "complete": "matched_complete"}

@@ -57,6 +57,16 @@ class RecoverabilityEvaluatorTests(unittest.TestCase):
         self.assertEqual(MODULE.evaluate(document), MODULE.evaluate(document))
         document["profile"] = "gold-50-v1"
         with self.assertRaises(ValueError): MODULE.evaluate(document)
+
+    def test_rejects_contradictory_cross_stage_failure(self):
+        document = self.load()
+        document["rows"][1]["projection"] = "projected"
+        with self.assertRaises(ValueError):
+            MODULE.evaluate(document)
+        document = self.load()
+        document["rows"][0]["source"] = "present"
+        with self.assertRaises(ValueError):
+            MODULE.evaluate(document)
         document = self.load()
         document["identifier_observations"][1]["provider_scope"] = "unknown"
         with self.assertRaises(ValueError): MODULE.evaluate(document)
