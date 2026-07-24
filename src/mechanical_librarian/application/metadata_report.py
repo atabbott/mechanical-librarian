@@ -166,7 +166,7 @@ class GenerateMetadataReport:
         self._limits = limits
         self._cover_observer = cover_observer
 
-    def run(self, item: str, file_index: int) -> str:
+    def run(self, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
         if self._mount is None:
             raise UnsupportedMediaError("unsupported media")
         initial = self._safe_read(item)
@@ -177,6 +177,8 @@ class GenerateMetadataReport:
         ):
             raise UnsupportedMediaError("unsupported media")
         selected = initial.files[file_index]
+        if expected_file_identity is not None and selected.identity != expected_file_identity:
+            raise CurrentnessError("target file changed")
         if selected.format != "epub":
             raise UnsupportedMediaError("unsupported media")
 

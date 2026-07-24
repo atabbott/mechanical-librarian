@@ -23,6 +23,9 @@ ReopenRunner = Callable[[Path, str], str]
 CurrentReopenRunner = Callable[[Path, str, str, str, str], str]
 PreviewRunner = Callable[[Path, Path, str, str, str], bytes]
 CatalogueRunner = Callable[[Path, Path, str, str | None, str | None, str | None, str | None, int], str]
+BatchPreviewRunner = Callable[[Path, Path, Path, tuple[tuple[str, str, str, str], ...], bool], str]
+BatchInspectRunner = Callable[[Path], str]
+BatchRunRunner = Callable[[Path, Path, Path, Path, Path], str]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -93,6 +96,23 @@ def _parser() -> _Parser:
     catalogue.add_argument("--item", type=_item)
     catalogue.add_argument("--filter", choices=("eligible", "ineligible", "ebook", "audio"))
     catalogue.add_argument("--limit", type=_catalogue_limit, default=100)
+    batch = commands.add_parser("batch", help="preview, inspect, or run one immutable foreground evidence batch")
+    batch_commands = batch.add_subparsers(dest="batch_action", required=True)
+    preview_batch = batch_commands.add_parser("preview", help="create one immutable batch manifest")
+    preview_batch.add_argument("--config", required=True, metavar="PATH", type=Path)
+    preview_batch.add_argument("--catalogue", required=True, metavar="PATH", type=Path)
+    preview_batch.add_argument("--manifest", required=True, metavar="PATH", type=Path)
+    group = preview_batch.add_mutually_exclusive_group(required=True)
+    group.add_argument("--select", action="append", type=_selection, default=[])
+    group.add_argument("--all-eligible", action="store_true")
+    inspect_batch = batch_commands.add_parser("inspect", help="inspect one immutable batch manifest")
+    inspect_batch.add_argument("--manifest", required=True, metavar="PATH", type=Path)
+    run_batch = batch_commands.add_parser("run", help="run one immutable foreground batch")
+    run_batch.add_argument("--config", required=True, metavar="PATH", type=Path)
+    run_batch.add_argument("--catalogue", required=True, metavar="PATH", type=Path)
+    run_batch.add_argument("--manifest", required=True, metavar="PATH", type=Path)
+    run_batch.add_argument("--database", required=True, metavar="PATH", type=Path)
+    run_batch.add_argument("--artifact-store", required=True, metavar="PATH", type=Path)
     return parser
 
 
@@ -124,7 +144,14 @@ def _catalogue_limit(value: str) -> int:
     return result
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def _selection(value: str) -> tuple[str, str, str, str]:
+    parts = value.split(",")
+    if len(parts) != 4 or any(not part for part in parts) or any(_NAME.fullmatch(part) is None for part in parts[:2]) or any(not 1 <= len(part) <= 512 or part.strip() != part or any(character in part for character in "\x00/\\") for part in parts[2:]):
+        raise argparse.ArgumentTypeError("invalid selection")
+    return tuple(parts)  # type: ignore[return-value]
+
+
+def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     try:
@@ -132,6 +159,28 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
     except _ArgumentFailure:
         errors.write("Metadata report failed: invalid invocation.\n")
         return 2
+    if arguments.command == "batch":
+        try:
+            if arguments.batch_action == "preview":
+                if batch_preview_runner is None:
+                    raise ValueError
+                serialized = batch_preview_runner(arguments.config, arguments.catalogue, arguments.manifest, tuple(arguments.select), arguments.all_eligible)
+            elif arguments.batch_action == "inspect":
+                if batch_inspect_runner is None:
+                    raise ValueError
+                serialized = batch_inspect_runner(arguments.manifest)
+            else:
+                if batch_run_runner is None:
+                    raise ValueError
+                serialized = batch_run_runner(arguments.config, arguments.catalogue, arguments.manifest, arguments.database, arguments.artifact_store)
+        except (ConfigurationError, CredentialError):
+            errors.write("Batch failed: configuration or credential unavailable.\n")
+            return 3
+        except Exception:
+            errors.write("Batch failed safely.\n")
+            return 1
+        output.write(serialized + "\n")
+        return 0
     if arguments.command == "catalogue":
         if catalogue_runner is None or (arguments.action == "get" and None in (arguments.connection, arguments.library, arguments.library_id, arguments.item)):
             errors.write("Catalogue failed safely.\n")

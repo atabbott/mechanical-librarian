@@ -86,7 +86,8 @@ class ImportBoundaryTests(unittest.TestCase):
     def test_runtime_has_one_cli_command_and_no_write_authority(self) -> None:
         cli = (PACKAGE_ROOT / "interfaces" / "cli" / "__init__.py").read_text(encoding="utf-8")
         self.assertEqual(cli.count('add_parser("metadata-report"'), 1)
-        for retired in ("state-check", "inventory", "preview", "proposal", "review", "apply", "worker", "heartbeat"):
+        self.assertEqual(cli.count('add_parser("batch"'), 1)
+        for retired in ("state-check", "inventory", "proposal", "review", "apply", "worker", "heartbeat"):
             self.assertNotIn(f'add_parser("{retired}', cli)
         source = "\n".join(path.read_text(encoding="utf-8") for path in PACKAGE_ROOT.rglob("*.py"))
         self.assertNotIn("DELETE FROM metadata_reports", source)

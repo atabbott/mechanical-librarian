@@ -17,6 +17,7 @@ from mechanical_librarian.application.catalogue import (
     CatalogueError,
     CatalogueStaleError,
 )
+from mechanical_librarian.application.batch import CatalogueSnapshot
 
 _SCHEMA = "catalogue-v1"
 _SQL = (
@@ -167,6 +168,12 @@ class SQLiteCatalogueRepository:
             return tuple(CatalogueEntry(value[0], value[1], value[2], value[3], value[4], value[5], tuple(json.loads(value[6])), bool(value[7]), bool(value[8]), value[9], value[10], value[11], value[12], value[13]) for value in values)
         except (TypeError, ValueError):
             raise CatalogueError("catalogue state is invalid") from None
+
+    def snapshot(self, fingerprint: str) -> CatalogueSnapshot:
+        row = self._connection.execute("SELECT generation, fingerprint FROM catalogue_generations WHERE current=1").fetchone()
+        if row is None or row[1] != fingerprint:
+            raise CatalogueStaleError("catalogue requires refresh")
+        return CatalogueSnapshot(row[0], row[1], self.inspect(fingerprint))
 
     def close(self) -> None:
         try:

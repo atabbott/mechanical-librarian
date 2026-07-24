@@ -26,6 +26,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     AudiobookshelfItemReader,
 )
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+from mechanical_librarian.adapters.persistence.batch_manifest import create as create_batch_manifest, read as read_batch_manifest
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
@@ -37,6 +38,7 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     RemoteCoverTimeout,
     fetch_remote_cover,
 )
+from mechanical_librarian.application.batch import BatchError, BatchSelection, batch_fingerprint, catalogue_fingerprint as batch_catalogue_fingerprint, manifest as batch_manifest, parse_manifest, select
 from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue
 from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
@@ -258,7 +260,7 @@ class _CoverEvidenceObserver:
         except MetadataReportError:
             return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.UNAVAILABLE)
 
-def run_metadata_report(config_path: Path, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int) -> str:
+def run_metadata_report(config_path: Path, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
     # Validate the separately authorized private store before credentials or
     # network clients are constructed.  It must already be operator-created.
     configuration = load_configuration_file(config_path)
@@ -306,7 +308,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
         limits=configuration.limits,
         cover_observer=_CoverEvidenceObserver(target, artifacts, tuple(provider_configs)),
     )
-    return service.run(item, file_index)
+    return service.run(item, file_index, expected_file_identity)
 
 
 def reopen_metadata_report(database_path: Path, report_id: str) -> str:
@@ -362,6 +364,72 @@ def run_catalogue(config_path: Path, database_path: Path, action: str, connectio
         repository.close()
 
 
+def preview_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, requested: tuple[tuple[str, str, str, str], ...], all_eligible: bool) -> str:
+    """Freeze one selected current-catalogue view before any report authority."""
+    configuration = load_configuration_file(config_path)
+    fingerprint = batch_catalogue_fingerprint(configuration)
+    repository = open_catalogue(catalogue_path, create=False)
+    try:
+        snapshot = repository.snapshot(fingerprint)
+    finally:
+        repository.close()
+    selections = select(snapshot, requested, all_eligible)
+    providers = tuple(item.name for item in configuration.providers if item.enabled)
+    raw = batch_manifest(snapshot, batch_fingerprint(configuration), selections, providers)
+    create_batch_manifest(manifest_path, raw)
+    value = parse_manifest(raw)
+    return json.dumps({"id": value["id"], "entries": len(selections), "target_observations": len(selections), "provider_metadata": len(selections) * len(providers)}, separators=(",", ":"))
+
+
+def inspect_batch(manifest_path: Path) -> str:
+    value = parse_manifest(read_batch_manifest(manifest_path))
+    return json.dumps({"id": value["id"], "entries": len(value["entries"]), "target_observations": value["call_maxima"]["target_observations"], "provider_metadata": value["call_maxima"]["provider_metadata"]}, separators=(",", ":"))
+
+
+def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, database_path: Path, artifact_store_path: Path) -> str:
+    """Run the immutable foreground list serially; no resume or hidden state."""
+    value = parse_manifest(read_batch_manifest(manifest_path))
+    configuration = load_configuration_file(config_path)
+    if batch_fingerprint(configuration) != value["batch_config_fingerprint"]:
+        raise BatchError("batch configuration changed")
+    repository = open_catalogue(catalogue_path, create=False)
+    try:
+        snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))
+    finally:
+        repository.close()
+    if snapshot.generation != value["catalogue_generation"] or snapshot.fingerprint != value["catalogue_fingerprint"]:
+        raise BatchError("catalogue requires refresh")
+    entries = {(item.connection, item.library, item.library_id, item.item_id): item for item in snapshot.entries}
+    output: list[str] = []
+    completed = skipped = 0
+    for raw in value["entries"]:
+        if type(raw) is not dict:
+            raise BatchError("batch manifest is invalid")
+        key = (raw.get("connection"), raw.get("library"), raw.get("library_id"), raw.get("item"))
+        entry = entries.get(key)
+        if entry is None or entry.file_identity != raw.get("file_identity") or entry.classification != raw.get("classification") or entry.eligible != raw.get("eligible"):
+            skipped += 1
+            output.append(json.dumps({"item": raw.get("item"), "outcome": "stale"}, separators=(",", ":")))
+            continue
+        if not entry.eligible or entry.file_identity is None:
+            skipped += 1
+            output.append(json.dumps({"item": entry.item_id, "outcome": "ineligible"}, separators=(",", ":")))
+            continue
+        try:
+            serialized = run_metadata_report(config_path, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity)
+        except CurrentnessError:
+            skipped += 1
+            output.append(json.dumps({"item": entry.item_id, "outcome": "stale"}, separators=(",", ":")))
+            continue
+        except (UnsupportedMediaError, MetadataReportError):
+            output.append(json.dumps({"item": entry.item_id, "outcome": "item_failed"}, separators=(",", ":")))
+            continue
+        completed += 1
+        output.append(json.dumps({"item": entry.item_id, "outcome": "completed", "report": json.loads(serialized)["report_id"]}, separators=(",", ":")))
+    output.append(json.dumps({"summary": {"completed": completed, "skipped": skipped, "entries": len(value["entries"])}}, separators=(",", ":")))
+    return "\n".join(output)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     return cli_main(
         argv,
@@ -370,7 +438,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         current_reopen_runner=reopen_current_metadata_report,
         preview_runner=reopen_cover_preview,
         catalogue_runner=run_catalogue,
+        batch_preview_runner=preview_batch,
+        batch_inspect_runner=inspect_batch,
+        batch_run_runner=run_batch,
     )
 
 
-__all__ = ["main", "reopen_cover_preview", "reopen_current_metadata_report", "reopen_metadata_report", "run_catalogue", "run_metadata_report"]
+__all__ = ["inspect_batch", "main", "preview_batch", "reopen_cover_preview", "reopen_current_metadata_report", "reopen_metadata_report", "run_batch", "run_catalogue", "run_metadata_report"]
