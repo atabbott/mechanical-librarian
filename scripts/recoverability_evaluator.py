@@ -299,7 +299,7 @@ def _regression(
         "explicit_negative_denominator": len(negative_rows),
     }
     gates = {
-        "supported-denominator": supported["readable_denominator"] == 405,
+        "supported-population": supported["population"] == 405,
         "title": controls["title_matches"] >= FROZEN_BASELINE["title_matches"],
         "creator": controls["creator_matches"] >= FROZEN_BASELINE["creator_matches"],
         "language": controls["language_matches"] >= FROZEN_BASELINE["language_matches"],
