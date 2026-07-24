@@ -52,7 +52,7 @@ PROFILES = {
                      "identifier_observations": 5, "candidate_rows": 5,
                      "negative_rows": 2},
     "gold-50-v1": {"fields": GOLD_FIELDS, "identifier_targets": 47,
-                    "identifier_observations": 47, "candidate_rows": 344,
+                    "identifier_observations": 44, "candidate_rows": 344,
                     "negative_rows": 82},
 }
 # These are frozen lower/upper bounds, while current metrics are derived from
