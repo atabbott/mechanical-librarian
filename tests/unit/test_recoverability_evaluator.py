@@ -21,7 +21,7 @@ class RecoverabilityEvaluatorTests(unittest.TestCase):
         view = result["views"]["supported"]
         self.assertEqual(set(view["categories"]), set(MODULE.CATEGORIES))
         self.assertEqual(sum(view["categories"].values()), view["denominator"])
-        self.assertEqual(result["isbn"]["counts"], {item: 1 for item in MODULE.ISBN})
+        self.assertEqual(result["isbn"]["counts"], {item: 1 for item in MODULE.ISBN_RELATIONS})
         self.assertEqual(result["views"]["exploratory"]["evaluated_fields"], ["edition", "rights"])
 
     def test_precedence_and_private_values_never_enter_output(self):

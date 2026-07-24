@@ -1,73 +1,137 @@
 #!/usr/bin/env python3
-"""Bounded aggregate-only recoverability evaluator; never publishes rows."""
+"""Bounded, aggregate-only recoverability qualification evaluator."""
+
 from __future__ import annotations
-import argparse, json
+
+import argparse
 from collections import Counter
+import json
 from pathlib import Path
+from typing import Any
 
-INPUT_SCHEMA="recoverability-evaluator-v2"; OUTPUT_SCHEMA="recoverability-aggregate-v2"
-SUPPORTED=("title","subtitle","creator","contributor","publisher","language","publication_date","identifier","collection","collection_position")
-EXPLORATORY=("edition","rights")
-CATEGORIES=("absent_in_source","inspection_failure","extracted_not_projected","normalization_mismatch","semantic_mismatch","matched_partial","matched_complete")
-ISBN=("accepted","associated","unrelated","invalid","unresolved")
-STATES=("value","unknown","known_empty","not_applicable","accepted_unsupported","unexplained_failure")
-ROW_KEYS={"field","state","readable","inspection","source","extraction","projection","comparison"}
-IDENTITY_KEYS={"relation","provider_scope","same_work","non_corroborating","source_present"}
-MAX_BYTES=1_000_000; MAX_ROWS=2_000; MAX_DEPTH=20; MAX_INTEGER_DIGITS=12
+INPUT_SCHEMA = "recoverability-evaluator-v3"
+OUTPUT_SCHEMA = "recoverability-aggregate-v3"
+SUPPORTED = ("title", "subtitle", "creator", "contributor", "publisher", "language", "publication_date", "identifier", "collection", "collection_position")
+EXPLORATORY = ("edition", "rights")
+CATEGORIES = ("absent_in_source", "inspection_failure", "extracted_not_projected", "normalization_mismatch", "semantic_mismatch", "matched_partial", "matched_complete")
+ISBN_RELATIONS = ("accepted", "associated", "unrelated", "invalid", "unresolved")
+EXCLUDED = ("unknown", "known_empty", "not_applicable", "accepted_unsupported", "unexplained_failure")
+PROFILES = {
+    "synthetic-v1": {"supported": 7, "exploratory": 1},
+    "gold-50-v1": {"supported": 405, "exploratory": 94},
+}
+FLOORS = {"title": (47, 49), "creator": (47, 49), "language": (48, 49), "overall_matches": (257, 405), "precision": (801775, 1_000_000), "false_positive": (85366, 1_000_000)}
+MAX_BYTES = 1_000_000
+MAX_ROWS = 2_000
+MAX_DEPTH = 20
+MAX_INTEGER_DIGITS = 12
 
-def _pairs(pairs):
- d={}
- for k,v in pairs:
-  if k in d: raise ValueError("duplicate JSON key")
-  d[k]=v
- return d
-def _integer(v):
- if len(v.lstrip("-"))>MAX_INTEGER_DIGITS: raise ValueError("integer too large")
- return int(v)
-def load(path):
- b=path.read_bytes()
- if len(b)>MAX_BYTES: raise ValueError("input too large")
- try: x=json.loads(b.decode("utf-8"),object_pairs_hook=_pairs,parse_int=_integer,parse_constant=lambda _: (_ for _ in ()).throw(ValueError("invalid number")))
- except (UnicodeDecodeError,json.JSONDecodeError,ValueError) as e: raise ValueError("invalid input") from e
- def depth(v,n=0):
-  if n>MAX_DEPTH: raise ValueError("input too deep")
-  if isinstance(v,dict): [depth(a,n+1) for a in v.values()]
-  if isinstance(v,list): [depth(a,n+1) for a in v]
- depth(x); return x
-def _category(r):
- if r["inspection"]=="failure" or r["extraction"]=="failure": return "inspection_failure"
- if r["source"]=="absent": return "absent_in_source"
- if r["source"]!="present" or r["extraction"]!="found": raise ValueError("invalid evidence stages")
- if r["projection"]=="not_projected": return "extracted_not_projected"
- if r["projection"]!="projected": raise ValueError("invalid projection")
- m=r["comparison"]
- return {"normalization":"normalization_mismatch","semantic":"semantic_mismatch","partial":"matched_partial","complete":"matched_complete"}.get(m) or (_ for _ in ()).throw(ValueError("invalid comparison"))
-def _matrix(fields): return {f:{c:0 for c in CATEGORIES} for f in fields}
-def evaluate(d):
- if not isinstance(d,dict) or set(d)!={"schema","rows","identifier_observations","regression"} or d["schema"]!=INPUT_SCHEMA or not isinstance(d["rows"],list) or not isinstance(d["identifier_observations"],list): raise ValueError("invalid document")
- if len(d["rows"])>MAX_ROWS or len(d["identifier_observations"])>MAX_ROWS: raise ValueError("too many rows")
- matrices={"supported":_matrix(SUPPORTED),"exploratory":_matrix(EXPLORATORY)}; excluded=Counter()
- for r in d["rows"]:
-  if not isinstance(r,dict) or r.get("field") not in SUPPORTED+EXPLORATORY or r.get("state") not in STATES: raise ValueError("invalid row")
-  field,state=r["field"],r["state"]
-  if state!="value":
-   if set(r)!={"field","state"}: raise ValueError("excluded row carries evidence")
-   excluded[state]+=1; continue
-  if set(r)!=ROW_KEYS or type(r["readable"]) is not bool or not r["readable"]: raise ValueError("readable value required")
-  cat=_category(r); matrices["supported" if field in SUPPORTED else "exploratory"][field][cat]+=1
- isbn=Counter()
- for o in d["identifier_observations"]:
-  if not isinstance(o,dict) or set(o)!=IDENTITY_KEYS or o.get("relation") not in ISBN: raise ValueError("invalid identifier observation")
-  if o["relation"]=="associated" and not (o["provider_scope"] in {"hardcover"} and o["same_work"] is True and o["non_corroborating"] is True and o["source_present"] is True): raise ValueError("invalid associated ISBN")
-  if o["relation"]=="associated" and o["source_present"] is not True: raise ValueError("source-missing ISBN cannot associate")
-  isbn[o["relation"]]+=1
- reg=d["regression"]
- if not isinstance(reg,dict) or set(reg)!={"matches","denominator","candidate_precision","false_positive_rate"} or reg["matches"]!=257 or reg["denominator"]!=405 or reg["candidate_precision"]!=0.801775 or reg["false_positive_rate"]!=0.085366: raise ValueError("supported regression drift")
- def view(name):
-  m=matrices[name]; return {"name":name,"evaluated_fields":list(SUPPORTED if name=="supported" else EXPLORATORY),"denominator":sum(sum(v.values()) for v in m.values()),"by_field":m,"categories":{c:sum(m[f][c] for f in m) for c in CATEGORIES}}
- return {"schema":OUTPUT_SCHEMA,"views":{"supported":view("supported"),"exploratory":view("exploratory")},"excluded":{s:excluded[s] for s in STATES if s!="value"},"isbn":{"counts":{x:isbn[x] for x in ISBN},"denominator":sum(isbn.values())},"regression":{"matches":257,"denominator":405,"candidate_precision":0.801775,"false_positive_rate":0.085366},"recommendations":[]}
-def main():
- p=argparse.ArgumentParser();p.add_argument("--input",required=True,type=Path);p.add_argument("--output",required=True,type=Path);a=p.parse_args()
- try: result=evaluate(load(a.input)); a.output.write_text(json.dumps(result,sort_keys=True)+"\n",encoding="utf-8")
- except (OSError,ValueError): raise SystemExit("Recoverability evaluation failed safely.")
-if __name__=="__main__": main()
+
+def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON key")
+        value[key] = item
+    return value
+
+
+def _integer(value: str) -> int:
+    if len(value.lstrip("-")) > MAX_INTEGER_DIGITS:
+        raise ValueError("integer too large")
+    return int(value)
+
+
+def load(path: Path) -> dict[str, Any]:
+    data = path.read_bytes()
+    if len(data) > MAX_BYTES:
+        raise ValueError("input too large")
+    try:
+        parsed = json.loads(data.decode("utf-8"), object_pairs_hook=_pairs, parse_int=_integer, parse_float=lambda _: (_ for _ in ()).throw(ValueError("floats forbidden")), parse_constant=lambda _: (_ for _ in ()).throw(ValueError("invalid number")))
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
+        raise ValueError("invalid input") from error
+    def depth(value: Any, level: int = 0) -> None:
+        if level > MAX_DEPTH:
+            raise ValueError("input too deep")
+        if isinstance(value, dict):
+            for item in value.values(): depth(item, level + 1)
+        elif isinstance(value, list):
+            for item in value: depth(item, level + 1)
+    depth(parsed)
+    if not isinstance(parsed, dict): raise ValueError("invalid document")
+    return parsed
+
+
+def _category(row: dict[str, Any]) -> str:
+    if row["inspection"] == "failure" or row["extraction"] == "failure": return "inspection_failure"
+    if row["source"] == "absent": return "absent_in_source"
+    if row["source"] != "present" or row["extraction"] != "found": raise ValueError("invalid evidence stages")
+    if row["projection"] == "not_projected": return "extracted_not_projected"
+    if row["projection"] != "projected": raise ValueError("invalid projection")
+    values = {"normalization": "normalization_mismatch", "semantic": "semantic_mismatch", "partial": "matched_partial", "complete": "matched_complete"}
+    if row["comparison"] not in values: raise ValueError("invalid comparison")
+    return values[row["comparison"]]
+
+
+def _matrix(fields: tuple[str, ...]) -> dict[str, dict[str, int]]:
+    return {field: {category: 0 for category in CATEGORIES} for field in fields}
+
+
+def _rate(numerator: int, denominator: int) -> dict[str, int]:
+    return {"numerator": numerator, "denominator": denominator}
+
+
+def evaluate(document: dict[str, Any]) -> dict[str, Any]:
+    if set(document) != {"schema", "profile", "rows", "identifier_observations", "regression"} or document.get("schema") != INPUT_SCHEMA or document.get("profile") not in PROFILES:
+        raise ValueError("invalid document")
+    rows = document["rows"]
+    observations = document["identifier_observations"]
+    if not isinstance(rows, list) or not isinstance(observations, list) or len(rows) > MAX_ROWS or len(observations) > MAX_ROWS: raise ValueError("invalid row collection")
+    matrices = {"supported": _matrix(SUPPORTED), "exploratory": _matrix(EXPLORATORY)}
+    excluded = Counter({state: 0 for state in EXCLUDED})
+    for row in rows:
+        if not isinstance(row, dict) or row.get("field") not in SUPPORTED + EXPLORATORY or row.get("state") not in ("value",) + EXCLUDED: raise ValueError("invalid row")
+        if row["state"] != "value":
+            if set(row) != {"field", "state"}: raise ValueError("excluded row carries evidence")
+            if row["state"] == "accepted_unsupported" and row["field"] not in EXPLORATORY: raise ValueError("unsupported state applies only to exploratory fields")
+            excluded[row["state"]] += 1; continue
+        required = {"field", "state", "readable", "inspection", "source", "extraction", "projection", "comparison"}
+        if set(row) != required or row["readable"] is not True or any(type(row[key]) is not str for key in required - {"readable"}): raise ValueError("invalid value row")
+        target = "supported" if row["field"] in SUPPORTED else "exploratory"
+        matrices[target][row["field"]][_category(row)] += 1
+    views = {}
+    for name, fields in (("supported", SUPPORTED), ("exploratory", EXPLORATORY)):
+        denominator = sum(sum(matrices[name][field].values()) for field in fields)
+        if denominator != PROFILES[document["profile"]][name]: raise ValueError("profile denominator drift")
+        views[name] = {"name": name, "evaluated_fields": list(fields), "denominator": denominator, "by_field": matrices[name], "categories": {category: sum(matrices[name][field][category] for field in fields) for category in CATEGORIES}}
+    isbn = Counter({relation: 0 for relation in ISBN_RELATIONS})
+    for observation in observations:
+        if not isinstance(observation, dict) or set(observation) != {"relation", "provider_scope", "same_work", "non_corroborating", "source_present"}: raise ValueError("invalid identifier observation")
+        relation = observation["relation"]
+        if relation not in ISBN_RELATIONS or observation["provider_scope"] not in {"none", "hardcover"} or any(type(observation[key]) is not bool for key in ("same_work", "non_corroborating", "source_present")): raise ValueError("invalid identifier observation")
+        if relation == "associated" and not (observation["provider_scope"] == "hardcover" and observation["same_work"] and observation["non_corroborating"] and observation["source_present"]): raise ValueError("invalid associated ISBN")
+        if relation != "associated" and observation["same_work"]: raise ValueError("same-work evidence requires associated relation")
+        isbn[relation] += 1
+    regression = document["regression"]
+    if not isinstance(regression, dict) or set(regression) != {"title_matches", "creator_matches", "language_matches", "overall_matches", "precision_matches", "precision_candidates", "false_positives", "negative_rows"} or any(type(value) is not int or value < 0 for value in regression.values()): raise ValueError("invalid regression controls")
+    gates = {
+        "supported-denominator": views["supported"]["denominator"] == 405,
+        "title": regression["title_matches"] >= FLOORS["title"][0],
+        "creator": regression["creator_matches"] >= FLOORS["creator"][0],
+        "language": regression["language_matches"] >= FLOORS["language"][0],
+        "overall-matches": regression["overall_matches"] >= FLOORS["overall_matches"][0],
+        "candidate-precision": regression["precision_matches"] * FLOORS["precision"][1] >= FLOORS["precision"][0] * regression["precision_candidates"],
+        "explicit-negative-fp": regression["false_positives"] * FLOORS["false_positive"][1] <= FLOORS["false_positive"][0] * regression["negative_rows"],
+    }
+    return {"schema": OUTPUT_SCHEMA, "profile": document["profile"], "views": views, "excluded": dict(excluded), "isbn": {"counts": dict(isbn), "denominator": sum(isbn.values()), "accepted_recall": _rate(isbn["accepted"], sum(isbn.values())), "associated_yield": _rate(isbn["associated"], sum(isbn.values())), "unrelated_rate": _rate(isbn["unrelated"], sum(isbn.values())), "invalid_rate": _rate(isbn["invalid"], sum(isbn.values())), "unresolved_rate": _rate(isbn["unresolved"], sum(isbn.values()))}, "regression": {"controls": regression, "gates": gates, "passed": all(gates.values()), "note": "overall matches are rows; precision matches are candidate atoms"}, "recommendations": [{"category": category, "count": views["supported"]["categories"][category]} for category in ("extracted_not_projected", "normalization_mismatch", "semantic_mismatch") if views["supported"]["categories"][category]]}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", required=True, type=Path); parser.add_argument("--output", required=True, type=Path)
+    args = parser.parse_args()
+    try: args.output.write_text(json.dumps(evaluate(load(args.input)), sort_keys=True) + "\n", encoding="utf-8")
+    except (OSError, RecursionError, ValueError): raise SystemExit("Recoverability evaluation failed safely.")
+
+
+if __name__ == "__main__": main()
