@@ -392,10 +392,14 @@ Opening-audio transcription (#24 and #104-#110), additional adapters,
 embedded-file updates, plugin loading, and the
 [reviewer backends after the 1.0 checkpoint](future-reviewer-backends.md) remain unassigned
 backlog outcomes until their prerequisite design and qualification decisions
-are accepted. They stay concise and have no functional-slice designation,
-milestone, or constituents. When scheduled, the same issue is explicitly
-promoted and receives a new functional slice ID and executable outcome; it is
-not appended opportunistically to an active branch. The
+are accepted. New deferred outcomes stay concise and have no functional-slice
+designation, milestone, or pre-created constituents. Existing speculative
+tracker and constituent-like issues are planning inputs to reconcile before
+promotion; they do not become constituents automatically. Consolidate or close
+them as superseded unless an issue describes an independently valuable outcome
+retained by the promotion plan. When scheduled, the same outcome issue is
+explicitly promoted and receives a new functional slice ID and executable
+outcome; it is not appended opportunistically to an active branch. The
 reviewer-backend plan does not alter the documented active chain, later 1.0
 slice placement, or the 1.0.0 exit.
 
