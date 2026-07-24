@@ -165,7 +165,13 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
     }
     if sum(failure_subtypes.values()) != views["supported"]["categories"]["inspection_failure"] + views["exploratory"]["categories"]["inspection_failure"]:
         raise ValueError("inspection failure arithmetic")
-    return {"schema": OUTPUT_SCHEMA, "profile": document["profile"], "views": views, "excluded": dict(excluded), "inspection_failure_subtypes": dict(failure_subtypes), "isbn": {"counts": dict(isbn), "denominator": sum(isbn.values()), "accepted_recall": _rate(isbn["accepted"], sum(isbn.values())), "associated_yield": _rate(isbn["associated"], sum(isbn.values())), "unrelated_rate": _rate(isbn["unrelated"], sum(isbn.values())), "invalid_rate": _rate(isbn["invalid"], sum(isbn.values())), "unresolved_rate": _rate(isbn["unresolved"], sum(isbn.values()))}, "regression": {"controls": regression, "gates": gates, "passed": all(gates.values()), "note": "overall matches are rows; precision matches are candidate atoms"}, "recommendations": [{"category": category, "count": views["supported"]["categories"][category]} for category in ("extracted_not_projected", "normalization_mismatch", "semantic_mismatch") if views["supported"]["categories"][category]]}
+    exploratory_recovered = views["exploratory"]["categories"]["matched_complete"] + views["exploratory"]["categories"]["matched_partial"]
+    recommendations = []
+    for field, values in views["supported"]["by_field"].items():
+        for category in ("extracted_not_projected", "normalization_mismatch", "semantic_mismatch"):
+            if values[category]:
+                recommendations.append({"field": field, "category": category, "scope": "bounded-diagnosis", "count": values[category]})
+    return {"schema": OUTPUT_SCHEMA, "profile": document["profile"], "views": views, "excluded": dict(excluded), "inspection_failure_subtypes": dict(failure_subtypes), "exploratory_recoverable_recall": _rate(exploratory_recovered, views["exploratory"]["denominator"]), "isbn": {"counts": dict(isbn), "denominator": sum(isbn.values()), "accepted_recall": _rate(isbn["accepted"], sum(isbn.values())), "associated_yield": _rate(isbn["associated"], sum(isbn.values())), "unrelated_rate": _rate(isbn["unrelated"], sum(isbn.values())), "invalid_rate": _rate(isbn["invalid"], sum(isbn.values())), "unresolved_rate": _rate(isbn["unresolved"], sum(isbn.values()))}, "regression": {"controls": regression, "gates": gates, "passed": all(gates.values()), "note": "overall matches are rows; precision matches are candidate atoms"}, "recommendations": recommendations}
 
 
 def main() -> None:
