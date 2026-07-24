@@ -30,7 +30,10 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
     EpubPackageSourceError,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
-from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
+from mechanical_librarian.domain.epub_inspection import (
+    EpubInspectionField,
+    EpubInspectionOutcome,
+)
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
 from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
@@ -297,6 +300,72 @@ class EpubChildRearSpineTests(unittest.TestCase):
         self.assertEqual(
             [(fact.field.value, fact.canonical_value) for fact in facts if fact.field.value in {"title", "subtitle", "isbn"}],
             [("title", "Caf\u00e9 Registry"), ("subtitle", "The Sequel"), ("isbn", "9780306406157")],
+        )
+        self.assertEqual(
+            [
+                (fact.media, fact.classification_basis)
+                for fact in facts
+                if fact.field.value == "isbn"
+            ],
+            [("unknown", "unlabelled")],
+        )
+
+    def test_package_primary_isbn_is_distinct_from_secondary_isbn(self) -> None:
+        package = EPUB3_PACKAGE.replace(
+            b"</metadata>",
+            b"<dc:identifier>9780140328721</dc:identifier></metadata>",
+        )
+        facts = self._package_facts(package)
+        self.assertEqual(
+            [
+                (
+                    fact.canonical_value,
+                    fact.media,
+                    fact.classification_basis,
+                )
+                for fact in facts
+                if fact.field.value == "isbn"
+            ],
+            [
+                ("9780306406157", "ebook", "ebook"),
+                ("9780140328721", "unknown", "unlabelled"),
+            ],
+        )
+
+    def test_inferred_package_identifier_remains_unknown_in_isolated_child(self) -> None:
+        package = EPUB3_PACKAGE.replace(b' unique-identifier="pub-id"', b"")
+        value = epub_bytes(package=package)
+        request = self._request(value)
+        package_request = EpubPackageRequest(
+            request.target,
+            request.file,
+            request.source,
+            request.expected_source,
+            EpubPackageCapability.PACKAGE,
+            request.limits,
+            request.deadline,
+            request.monotonic_deadline,
+            request.cancellation,
+        )
+        package_report = EpubPackageExtractor().extract(package_request)
+        self.assertIn(
+            "inferred_package_identifier",
+            {warning.code for warning in package_report.warnings},
+        )
+
+        report = self._inspect_in_child(value)
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
+        self.assertEqual(
+            [
+                (
+                    fact.canonical_value,
+                    fact.media,
+                    fact.classification_basis,
+                )
+                for fact in report.facts
+                if fact.field is EpubInspectionField.ISBN
+            ],
+            [("9780306406157", "unknown", "unlabelled")],
         )
 
     def test_package_facts_mark_missing_invalid_date_and_language_canonicals_malformed(self) -> None:

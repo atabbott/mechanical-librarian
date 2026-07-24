@@ -78,7 +78,10 @@ validated content digests, dimensions, media type, and preview references.
 Successful output and persisted documents contain only bounded target names,
 item identity, opaque file identity/digest, current title, fact-local opening
 excerpts, typed claims, provider candidate edition and provider-local work
-identities, and comparison facts. They
+identities, comparison facts, and derived ISBN relationships containing only
+claim references and those already-admitted bounded identities. The
+relationship projection does not duplicate observations or excerpts. It
+performs no egress and grants no proposal, decision, or write authority. They
 contain no credentials, private paths, raw provider bodies, or arbitrary EPUB
 text. Target and provider titles pass the same closed public-safe projection
 before they can enter a report. Failure output is fixed and value-free.
