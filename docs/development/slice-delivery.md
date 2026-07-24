@@ -14,6 +14,10 @@ This document is the authoritative branch and pull-request workflow. The
 outcomes, and [work management](work-management.md) defines Project fields and
 issue state.
 
+This workflow begins only after a future outcome is explicitly promoted into
+an assigned slice tracker. A concise `Triaged` outcome in `Unassigned backlog`
+is not a slice tracker and cannot enter this workflow through selection.
+
 ## Delivery classification
 
 Use a functional slice when the primary purpose is to add a new user- or
@@ -52,9 +56,9 @@ tooling change remains focused work.
 
 ## Unit of delivery
 
-Every planned new-functionality slice has exactly one slice tracker issue. The
-tracker is the outcome and lifecycle unit; a pull request is a bounded merge
-unit. The tracker states:
+Every explicitly promoted new-functionality slice has exactly one slice tracker
+issue. The tracker is the outcome and lifecycle unit; a pull request is a
+bounded merge unit. The tracker states:
 
 - the observable operator or contributor outcome;
 - the executable demonstration path;
@@ -62,6 +66,10 @@ unit. The tracker states:
 - entry dependencies and governing contracts;
 - success, failure, restart, privacy, and recovery behavior; and
 - slice-level exit criteria and required test layers.
+
+A promoted tracker may be the slice's only issue. When one activation pull
+request delivers its complete outcome, no constituent ticket is required; that
+pull request closes the tracker directly.
 
 Implementation tickets contributing to new functionality retain their
 work-package parents. The slice tracker is a cross-cutting execution record, not
@@ -92,9 +100,9 @@ because it can merge alone.
 ## Autonomous delivery transaction
 
 The instruction `Deliver slice <ID>` authorizes one bounded autonomous delivery
-transaction for the selected Ready tracker. `Deliver and merge slice <ID>` is
-an explicit synonym. Within the frozen outcome and exclusions, the transaction
-may:
+transaction for the selected assigned `Ready` tracker. `Deliver and merge slice
+<ID>` is an explicit synonym. A selection instruction never promotes a deferred
+outcome. Within the frozen outcome and exclusions, the transaction may:
 
 - plan ordered vertical increments;
 - create purpose-based branches and draft or ready pull requests;
@@ -183,8 +191,10 @@ merged transaction is not a terminal result.
 ## Branch workflow
 
 1. When `Deliver slice <ID>` names a tracker, select that tracker and require it
-   to be unblocked and `Ready`. Only an instruction without an ID selects the
-   highest-priority unblocked slice tracker in `Ready`.
+   to have that assigned slice ID and be unblocked and `Ready`. Only an
+   instruction without an ID selects the highest-priority unblocked assigned
+   slice tracker in `Ready`. Never select or implicitly promote an
+   `Unassigned backlog` outcome.
 2. Confirm that every ticket the slice intends to close is sufficiently
    specified and mapped to that slice in the Project.
 3. Record a one-increment plan or ordered vertical increments and move the

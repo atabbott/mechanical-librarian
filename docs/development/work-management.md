@@ -73,13 +73,49 @@ maintainers may explicitly designate later milestones as release trains;
 neither that first published release nor checkpoint completion converts later
 milestones automatically.
 
+### Deferred outcomes and promotion
+
+A deferred outcome is a concise future product outcome retained without a
+delivery commitment. It has all of the following Project state:
+
+- `Work kind: Feature`;
+- `Status: Triaged`;
+- `Delivery slice: Unassigned backlog`; and
+- `Target release: Backlog`.
+
+It has no GitHub milestone and no functional-slice designation. It is neither a
+slice tracker nor a constituent ticket, and it cannot be selected or started.
+Its issue body needs only:
+
+- an observable user or operator outcome;
+- material included and excluded boundaries;
+- known dependencies or unresolved decisions; and
+- enough product context to distinguish it from duplicates.
+
+Do not pre-create implementation design, executable criteria, slice
+constituents, or delivery ceremony for speculative work. Record a material
+safety, privacy, or compatibility constraint when it already bounds the
+outcome, but defer implementation choices until scheduling.
+
+When an outcome is selected for delivery, explicitly promote the same issue
+into a slice tracker. Assign its stable functional-slice designation, matching
+`Delivery slice` value, target checkpoint and GitHub milestone; then add the
+executable demonstration, acceptance criteria, dependencies, governing
+contracts, proof obligations, and exact closure mapping required for `Ready`.
+Create constituents only for independently valuable supported increments that
+can satisfy and close their own complete criteria. If one activation pull
+request can deliver the outcome, the promoted tracker is the only issue and
+that pull request closes it directly. Promotion is complete only when the
+assigned tracker satisfies the normal `Ready` rules.
+
 ### Functional slice trackers
 
-A functional slice tracker is the cross-work-package outcome and lifecycle unit
-for new product functionality during the initial application build. It is an
-ordinary issue with a stable slice ID, an executable outcome, a demonstration
-path, the exact tickets it intends to close, and slice-level exit criteria. It
-does not replace the work-package parent of those tickets.
+After explicit promotion, a functional slice tracker is the cross-work-package
+outcome and lifecycle unit for new product functionality during the initial
+application build. It is an ordinary issue with a stable slice ID, an
+executable outcome, a demonstration path, any exact constituent tickets it
+intends to close, and slice-level exit criteria. It does not replace the
+work-package parent of those tickets.
 
 One slice tracker maps to one bounded delivery transaction containing one or
 more independently safe vertical increment pull requests. A new-functionality
@@ -145,7 +181,8 @@ During pre-release development, the existing `Target release` field groups work
 by its intended delivery checkpoint. Assigning that field does not commit the
 checkpoint to release publication. Work package maps work to WP0–WP9 for
 implementation reporting. Parent relationships remain the authoritative
-hierarchy.
+hierarchy. `Backlog` means that a deferred outcome has no selected delivery
+checkpoint.
 
 ### Work kind
 
@@ -172,9 +209,11 @@ delivery-slice plan plus:
 - `Not applicable` for fixes, corrections, security work, documentation,
   tooling, dependency-only changes, maintenance, and standalone tickets.
 
-A new-functionality ticket cannot move to `Ready` without a delivery-slice
-value. Non-slice work may move to `Ready` with `Not applicable`. Slice tracker
-issues use their own slice value.
+`Unassigned backlog` identifies a deferred outcome, not a branch, tracker, or
+delivery authorization. A new-functionality ticket cannot move to `Ready`
+without an assigned delivery-slice value. Non-slice work may move to `Ready`
+with `Not applicable`. Promoted slice tracker issues use their own assigned
+slice value.
 
 ## Labels
 
@@ -191,6 +230,9 @@ fields:
 Do not create status, priority, risk, size, milestone, or issue-type labels.
 
 ## Required issue content
+
+Deferred outcomes use only the lightweight content defined above. They do not
+meet, and must not be treated as meeting, the following `Ready` contract.
 
 An issue reaching `Ready` must contain:
 
@@ -221,11 +263,13 @@ Maintain these Project views:
 
 - **Triage**: `Inbox` and `Triaged`, filterable by work package and ownership
   area;
+- **Deferred outcomes**: `Feature`, `Triaged`, `Delivery slice: Unassigned
+  backlog`, and `Target release: Backlog`, with no milestone;
 - **Ready**: unblocked `Ready` work, sorted by priority and risk;
 - **Current**: `In progress`, `In review`, and `Blocked` as a board;
 - **Delivery slices**: new-functionality trackers and mapped tickets grouped by
-  `Delivery slice`, excluding `Not applicable`, and ordered by target release
-  and slice ID;
+  `Delivery slice`, excluding `Not applicable` and `Unassigned backlog`, and
+  ordered by target release and slice ID;
 - **Roadmap**: Epics and Features by work package and target release;
 - **Quality and security**: High or Critical risk plus security-labelled work;
 - **Defects and bugs**: `Defect` and `Bug`, grouped by status and sorted by
@@ -256,6 +300,10 @@ accepted `CLIENT_ENFORCED_FREE_PLAN` mode and records
 `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED` on every success. Server settings are
 observational; exact PR/head/check/review/connector, conditional merge, and
 post-merge verification remain mandatory.
+
+The instruction `Deliver the next slice` selects only the highest-priority
+unblocked `Ready` tracker with an assigned `Delivery slice` value. It ignores
+`Unassigned backlog` outcomes and does not authorize their promotion.
 
 ## Pull requests
 
