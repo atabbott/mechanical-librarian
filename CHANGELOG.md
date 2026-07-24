@@ -4,6 +4,8 @@
 
 - Add the read-only current Audiobookshelf book catalogue with bounded refresh,
   deterministic inspection, and config-v3 schema.
+- Correct catalogue refresh retention, empty plural ebook classification,
+  path-only EPUB mapping, and safe absent/exact inspection failures.
 
 ## Unreleased
 

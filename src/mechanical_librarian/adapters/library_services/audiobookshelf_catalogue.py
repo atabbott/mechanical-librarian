@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
@@ -112,7 +113,7 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
     ebook = media.get("ebookFile")
     plural = media.get("ebookFiles")
     has_audio = type(media.get("audioFiles")) is list
-    if ebook is None and plural is None:
+    if ebook is None and (plural is None or plural == []):
         classification = "none"; file_identity = service_path = format_value = mount_name = None; has_ebook = False
     elif type(ebook) is dict and plural is None:
         has_ebook = True
@@ -120,10 +121,15 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
         fmt = ebook.get("ebookFormat")
         ino = ebook.get("ino", metadata_file.get("ino") if type(metadata_file) is dict else None)
         relative = metadata_file.get("relPath") if type(metadata_file) is dict else None
+        if relative is None and mount is not None and type(metadata_file) is dict and type(metadata_file.get("path")) is str:
+            path = metadata_file["path"]
+            prefix = mount.service_path.rstrip("/") + "/"
+            if path.startswith(prefix):
+                relative = path[len(prefix):]
         if type(fmt) is not str:
             extension = metadata_file.get("ext") if type(metadata_file) is dict else None
             fmt = extension[1:] if type(extension) is str and extension.startswith(".") else None
-        if type(fmt) is not str or fmt.lower() != "epub" or type(ino) is not str or not 1 <= len(ino) <= 256 or type(relative) is not str or not relative or relative.startswith("/") or "" in relative.split("/") or "." in relative.split("/") or ".." in relative.split("/"):
+        if type(fmt) is not str or fmt.lower() != "epub" or type(ino) is not str or not 1 <= len(ino) <= 256 or type(relative) is not str or not 1 <= len(relative) <= 1024 or posixpath.normpath(relative) != relative or relative.startswith("/") or "" in relative.split("/") or "." in relative.split("/") or ".." in relative.split("/"):
             classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None
         else:
             size = metadata_file.get("size")

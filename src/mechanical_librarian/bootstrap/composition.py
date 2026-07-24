@@ -37,7 +37,7 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     RemoteCoverTimeout,
     fetch_remote_cover,
 )
-from mechanical_librarian.application.catalogue import RefreshCurrentCatalogue
+from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue
 from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
@@ -347,7 +347,7 @@ def run_catalogue(config_path: Path, database_path: Path, action: str, connectio
         maximum_bytes=configuration.limits.target_response_bytes,
         timeout_seconds=configuration.limits.timeout_seconds,
     )
-    repository = open_catalogue(database_path)
+    repository = open_catalogue(database_path, create=action == "refresh")
     try:
         service = RefreshCurrentCatalogue(reader, repository)
         if action == "refresh":

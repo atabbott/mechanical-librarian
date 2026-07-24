@@ -28,7 +28,7 @@ _SQL = (
 
 
 class SQLiteCatalogueRepository:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, create: bool = False) -> None:
         self._path = path.absolute()
         if not self._path.is_absolute() or not self._path.name:
             raise CatalogueError("catalogue database is unavailable")
@@ -45,6 +45,8 @@ class SQLiteCatalogueRepository:
                 descriptor = os.open(self._path if self._chain is None else self._path.name, flags, **({} if self._chain is None else {"dir_fd": self._chain.parent_descriptor}))
                 exists = True
             except FileNotFoundError:
+                if not create:
+                    raise CatalogueStaleError("catalogue requires refresh") from None
                 descriptor = os.open(self._path if self._chain is None else self._path.name, flags | os.O_CREAT | os.O_EXCL, 0o600, **({} if self._chain is None else {"dir_fd": self._chain.parent_descriptor}))
                 exists = False
             information = os.fstat(descriptor)
@@ -54,7 +56,12 @@ class SQLiteCatalogueRepository:
             if exists:
                 self._validate_existing_readonly()
             self._require_bound_name(information)
-            self._connection = sqlite3.connect(self._path, timeout=0, isolation_level=None)
+            try:
+                self._connection = sqlite3.connect(f"file:{quote(str(self._path))}?mode=rw", uri=True, timeout=0, isolation_level=None)
+            except sqlite3.OperationalError as error:
+                if not create:
+                    raise CatalogueStaleError("catalogue requires refresh") from error
+                raise CatalogueError("catalogue database is unavailable") from error
             self._require_bound_name(information)
             self._connection.execute("PRAGMA foreign_keys = ON")
             self._verify_or_create()
@@ -136,6 +143,8 @@ class SQLiteCatalogueRepository:
                 "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [(generation, item.connection, item.library, item.library_id, item.item_id, item.updated_at, item.title, json.dumps(item.authors, ensure_ascii=False, separators=(",", ":")), int(item.has_ebook), int(item.has_audio), item.classification, item.file_identity, item.service_path, item.format, item.mount) for item in entries],
             )
+            self._connection.execute("DELETE FROM catalogue_entries WHERE generation <> ?", (generation,))
+            self._connection.execute("DELETE FROM catalogue_generations WHERE generation <> ?", (generation,))
             self._require_bound_name(self._identity)
             self._connection.execute("COMMIT")
             return generation
@@ -167,8 +176,8 @@ class SQLiteCatalogueRepository:
                 self._chain.close()
 
 
-def open_catalogue(path: Path) -> SQLiteCatalogueRepository:
-    return SQLiteCatalogueRepository(path)
+def open_catalogue(path: Path, *, create: bool = False) -> SQLiteCatalogueRepository:
+    return SQLiteCatalogueRepository(path, create=create)
 
 
 __all__ = ["SQLiteCatalogueRepository", "open_catalogue"]

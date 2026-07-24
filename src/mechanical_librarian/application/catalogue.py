@@ -108,6 +108,8 @@ class RefreshCurrentCatalogue:
         entries = self._repository.inspect(catalogue_fingerprint(configuration).digest)
         if exact is not None:
             entries = tuple(item for item in entries if (item.connection, item.library, item.library_id, item.item_id) == exact)
+            if len(entries) != 1:
+                raise CatalogueError("catalogue item is unavailable")
         if facet == "eligible":
             entries = tuple(item for item in entries if item.eligible)
         elif facet == "ineligible":
