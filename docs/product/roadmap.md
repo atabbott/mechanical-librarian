@@ -27,9 +27,8 @@ Exit: a contributor can build, test, and understand the empty product shell.
 ## M1: Read-only Audiobookshelf inventory
 
 - Connect through the supported API.
-- Consume target notifications when supported and detect changes through
-  bounded polling otherwise.
-- Reconcile with scheduled polling.
+- Reconcile through bounded scheduled polling. Optional notification-assisted
+  reconciliation remains deferred under #65.
 - Persist canonical items, snapshots, fingerprints, and jobs.
 - Provide health and inventory CLI/API surfaces.
 - Prove persistent deduplication and bounded retry behavior under repeated
@@ -73,7 +72,7 @@ Exit: restarts and duplicate events cannot lose or duplicate inventory work.
 - Keep AI, human decisions, approval, covers, rich fields, multi-provider
   fusion, and production writes outside the preview.
 
-The active sequence is completed F06 #142 plus #221, then F09a #145/#222,
+The historical sequence was completed F06 #142 plus #221, then F09a #145/#222,
 F09b #204/#223, and F10a #146/#224.
 
 Binding production local evidence to a current Audiobookshelf snapshot,
@@ -86,12 +85,11 @@ restart through one undecided case without gaining decision or write authority.
 
 ### Planned 1.0 evidence and review breadth
 
-F07a #143 (#30, #31, and #188) and F07b #228 (#32) retain their planned scope
-but are not 0.2 prerequisites; they begin the 0.3 checkpoint. F08 #144 (#33 and
-#34), the broader candidate and provider program in #16, #46, #50, #68-#73,
-and #209, and F11 #147/#74-#80 AI shadow review remain 1.0 work. They extend the
-provider-neutral seams and immutable history proven by the preview rather than
-being partially implemented inside it.
+F07a #143 and F07b #228 were not 0.2 prerequisites; they began the 0.3
+checkpoint. Their former constituents, F08's #33/#34 inputs, the broader #16,
+#46, #50, #68–#73 and #209 program, and F11's #74–#80 inputs are historical
+planning detail rather than current 1.0 tickets. The current 1.0 outcome set is
+defined below and in the [delivery-slice plan](delivery-slices.md).
 
 ## M2a: First trustworthy live title report (0.3.0)
 
@@ -124,20 +122,27 @@ being partially implemented inside it.
   media writes, destructive authority, tagging, and release publication out of
   the checkpoint.
 
-The active sequence is completed F06 #142 to F07a #143/#30/#31/#188 to F07b
+The historical sequence was completed F06 #142 to F07a #143/#30/#31/#188 to F07b
 #228/#32; completed F09b #204/#223 to F09f #239/#242; then F07b plus F09f to
 F09g #238/#243. F09g is the 0.3.0 checkpoint exit. Completing this internal
 checkpoint does not publish a release.
 
-F09c #205/#210/#211 remains separately planned for 1.0 as a fallback
-report/provider lane and is not an F09g blocker. Later provider-neutral work
-#69/#70 consumes compatible F09c identity, with qualification in #73 and F17
-#153. F10b #240/#241 remains 1.0 work after completed F10a and #197; it admits
-a qualifying current neutral persisted report claim into production review. F09g
-#238 remains historical characterization evidence for that report boundary, not
-an active F10b input. F11 remains an independently deliverable synthetic shadow
-path, and the production title/case and reviewer paths converge only at F17
-qualification.
+The current 1.0 outcome set is #70, F08 #144, F10b #240, F11 #147, F15a
+#151, F16a #152, F13 #149, F14 #150, and F17 #153. The retained `F` IDs are
+planned designations rather than `Ready` status. Issue #70 remains unassigned
+as a planned but unpromoted outcome with target release and milestone `1.0.0`;
+it has no `F` designation and must be explicitly promoted before delivery.
+Google Books #315 is the likely second pre-public-release metadata proof but
+remains deferred with target release `Backlog`, no milestone, and the same
+explicit-promotion requirement. Closed WP parents, provider trackers, and
+constituent forests are historical planning inputs, not current delivery work.
+The authoritative outcome definitions and deferred-provider list are in the
+[delivery-slice plan](delivery-slices.md).
+
+F09g #238 remains historical characterization evidence for the current report
+boundary, not an active F10b input. Release artifact production #94 and
+publication-readiness #43 remain separate `first-release` gates rather than F17
+work.
 
 Exit: one current Audiobookshelf ebook produces a restartable, evidence-backed
 live title proposal or exact zero-proposal report without gaining review,
@@ -170,6 +175,10 @@ Exit: no systematic unsafe decision pattern remains unexplained.
 
 ## M4: Production apply
 
+- Require an applicable current human decision from F16a #152 before F13 #149
+  proves guarded fake-service apply; F14 #150 follows completed F13
+  qualification. These delivery dependencies govern even though this capability
+  grouping appears before M6.
 - Enforce backup readiness.
 - Add optimistic concurrency and service locks.
 - Apply only validated field changes through supported APIs.
@@ -180,27 +189,37 @@ Exit: production writes are recoverable, idempotent, and fully audited.
 
 ## M5: Continuous operation
 
-- Enable event-driven unattended processing.
-- Add daily reconciliation and weekly summaries.
+- Enable persisted scheduled unattended processing with polling as the
+  authoritative reconciliation path.
+- Keep notification-assisted reconciliation and summary enhancements deferred
+  under #65 until separately promoted.
 - Add circuit breakers, authentication recovery, and support diagnostics.
 - Expose typed active stage, adapter, retry, and suspension state for unattended
   operation.
-- Document upgrade and disaster-recovery drills.
+- Qualify exact-current restart and recovery. Older-schema migration and restore
+  remain post-release work under #57.
 
-Exit: new items are normally corrected without human involvement.
+Exit: new items progress continuously into bounded evidence, proposals, and
+review; any mutation still requires a qualified policy or human decision and
+the guarded apply path.
 
 ## M6: Review experience
 
 - Implement the DUX-derived, snapshot-aware review-case and decision contract.
-- Expose current unresolved work and historical automatic decisions.
-- Provide target-level queue, decision-first detail, progressive evidence,
-  confirmed sibling navigation, and review summaries.
-- Support guarded individual and bulk decisions without coupling authoritative
-  state to browser storage or run files.
-- Pass real-browser mobile, keyboard, accessibility, stale-state, and
-  performance gates.
+- Deliver the authenticated target-level queue, decision-first detail,
+  progressive evidence, sibling navigation, and one guarded individual decision
+  through F16a #152.
+- Qualify that individual round trip through the F16a first-release responsive,
+  keyboard/focus, accessibility, private caching/storage, content-security,
+  hostile-rendering, performance, synthetic-artifact, and primary-supported-
+  browser baseline.
+- Keep cross-case summaries and history, bulk decisions, reversal, additional
+  browser and viewport coverage, and extended accessibility, responsive,
+  privacy, content-security, performance, and synthetic-artifact budgets
+  deferred together under #195.
 
-Exit: occasional review is efficient, persistent, and server-authoritative.
+Exit: occasional individual review is efficient, persistent, server-
+authoritative, and qualified against the first-release browser baseline.
 
 ## M7: Ecosystem
 

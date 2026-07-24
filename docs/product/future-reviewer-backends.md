@@ -11,7 +11,8 @@ The initial checkpoint plan remains unchanged:
 
 - Codex CLI is the first reviewer backend;
 - F11 delivers isolated AI shadow recommendations;
-- the F01-F17 sequence and the 1.0.0 exit criteria remain authoritative; and
+- the current 1.0 outcome set and exit criteria in the
+  [delivery-slice plan](delivery-slices.md) remain authoritative; and
 - the normal deployment remains one Mechanical Librarian container.
 
 After the 1.0.0 checkpoint is complete, two optional reviewer capabilities may
@@ -22,9 +23,10 @@ be scheduled as separate functional slices:
 2. a reviewer connected to a separately operated compatible model server.
 
 Neither capability depends on the other. Both depend on the completed F11
-reviewer contract and isolation boundary, the completed F17 release cohort,
-and structured reviewer configuration and secret references. They receive new
-slice IDs only when maintainers schedule them.
+reviewer contract and isolation boundary, stable continuous operation from F17,
+and structured reviewer configuration and secret references. F17 is not a
+release cohort. These outcomes receive slice IDs only when maintainers schedule
+and explicitly promote them.
 
 ## Shared contract
 
@@ -85,16 +87,13 @@ delivery dependency between the slices.
 
 ## Deliverable A: OpenRouter reviewer
 
-### Tracker draft
+### Deferred outcome draft
 
 **Title:** Deliver a qualified OpenRouter reviewer with owner-controlled
 credentials
 
-**Classification:** After-1.0-checkpoint functional slice; Feature; High risk
-
-**Exact constituent-ticket list:**
-
-- Implement and qualify the OpenRouter reviewer backend.
+**Classification:** Deferred after-1.0-checkpoint Feature; High risk;
+`Unassigned backlog`; no milestone or functional-slice designation
 
 **Outcome:** An owner opts into disclosed hosted processing, supplies an
 OpenRouter credential, selects one exact qualified free or paid reviewer
@@ -241,7 +240,7 @@ synthetic cohort replay, and a disposable end-to-end hosted shadow run.
 
 ### Delivery boundary
 
-One future slice transaction delivers configuration,
+If promoted, one outcome should deliver configuration,
 credential handling, the adapter, owner setup and status, immutable provenance,
 failure handling, qualification fixtures, documentation, generated contracts,
 changelog, and the risk-proportionate security review. It excludes generic
@@ -249,7 +248,7 @@ provider aggregation, anonymous project-funded service, automatic model
 selection, silent fallback, production-write qualification, and unrelated
 local-model support.
 
-### Decisions required before Ready
+### Promotion considerations
 
 1. Decide whether a qualified route pins one provider or permits an allowlist
    of separately qualified providers for the same model. Actual provider
@@ -260,25 +259,16 @@ local-model support.
 3. Decide whether the first setup surface accepts only a write-only key or also
    implements OAuth PKCE. Both must produce an owner-controlled reviewer secret.
 4. Select the exact free and paid model/provider configurations only when the
-   slice begins because catalogue, capabilities, policies, and availability
+   outcome is promoted because catalogue, capabilities, policies, and availability
    are time-sensitive.
 
-### Intended closure mapping
+### Qualification constraints retained for promotion
 
-The slice tracker closes with the constituent feature ticket only when every
-criterion above and that ticket's complete criteria pass. It closes no F-series
-tracker and changes no 1.0.0 checkpoint criterion.
-
-## Constituent ticket A1
-
-**Title:** Implement and qualify the OpenRouter reviewer backend
-
-**Primary slice:** The future OpenRouter reviewer slice
-
-**Outcome:** The configured owner can execute and diagnose one exact qualified
-OpenRouter reviewer configuration through the established reviewer workflow.
-
-**Acceptance criteria:**
+If this outcome is promoted, its single concise outcome issue should incorporate
+the material constraints below unless an independently valuable increment
+justifies a split. They are promotion and qualification considerations, not a
+pre-created constituent ticket or a Ready checklist while the outcome remains
+deferred.
 
 - Accept only an owner-controlled, reviewer-scoped credential and expose only
   its redacted status.
@@ -307,28 +297,22 @@ OpenRouter reviewer configuration through the established reviewer workflow.
 - Convert authentication, credit, quota, retirement, rate, timeout, provider,
   cancellation, and validation failures into bounded typed states without
   switching routes.
-- Pass the tracker demonstration and prove deterministic and human workflows
+- Demonstrate that deterministic and human workflows
   remain available when OpenRouter is disabled or unavailable.
 
-**Required evidence:** The supported demonstration, adapter contract suite,
-privacy and credential checks, hostile-output suite, replayable cohort report,
-and end-to-end shadow run named by the tracker.
-
-**Dependencies and closure:** Depends on the tracker dependencies and closes
-only in the activation increment that completes the tracker outcome.
+A future promotion plan should define proportionate evidence including the
+supported demonstration, adapter contract suite, privacy and credential checks,
+hostile-output suite, replayable cohort report, and end-to-end shadow run.
 
 ## Deliverable B: Externally operated compatible reviewer
 
-### Tracker draft
+### Deferred outcome draft
 
 **Title:** Deliver a reviewer backed by an externally operated compatible model
 server
 
-**Classification:** After-1.0-checkpoint functional slice; Feature; High risk
-
-**Exact constituent-ticket list:**
-
-- Implement and qualify the external compatible reviewer endpoint.
+**Classification:** Deferred after-1.0-checkpoint Feature; High risk;
+`Unassigned backlog`; no milestone or functional-slice designation
 
 **Outcome:** An owner connects Mechanical Librarian to a separately installed
 and operated model server, qualifies its exact endpoint/profile/model, and
@@ -459,7 +443,7 @@ disposable end-to-end external-server shadow run.
 
 ### Delivery boundary
 
-One future slice transaction delivers configuration, the
+If promoted, one outcome should deliver configuration, the
 compatibility profile, the bounded network client, capability and identity
 preflight, adapter and diagnostics, immutable provenance, qualification
 fixtures, documentation, generated contracts, changelog, threat-model updates,
@@ -468,7 +452,7 @@ server supervision, GPU/device support, network discovery, arbitrary API
 compatibility, global private-network access, production-write qualification,
 and OpenRouter support.
 
-### Decisions required before Ready
+### Promotion considerations
 
 1. Select the initial compatibility profile: a narrow Mechanical Librarian
    profile over OpenAI-style chat completions is recommended, with named
@@ -481,22 +465,13 @@ and OpenRouter support.
 4. Decide how exact origins remain stable across DHCP or local DNS changes
    without weakening destination validation.
 
-### Intended closure mapping
+### Qualification constraints retained for promotion
 
-The slice tracker closes with the constituent feature ticket only when every
-criterion above and that ticket's complete criteria pass. It closes no F-series
-tracker and changes no 1.0.0 checkpoint criterion.
-
-## Constituent ticket B1
-
-**Title:** Implement and qualify the external compatible reviewer endpoint
-
-**Primary slice:** The future external compatible reviewer slice
-
-**Outcome:** The configured owner can execute and diagnose one exact external
-endpoint/profile/model through the established reviewer workflow.
-
-**Acceptance criteria:**
+If this outcome is promoted, its single concise outcome issue should incorporate
+the material constraints below unless an independently valuable increment
+justifies a split. They are promotion and qualification considerations, not a
+pre-created constituent ticket or a Ready checklist while the outcome remains
+deferred.
 
 - Keep inference runtime, weights, model lifecycle, device support, and service
   discovery outside the Mechanical Librarian image and process lifecycle.
@@ -523,18 +498,17 @@ endpoint/profile/model through the established reviewer workflow.
 - Convert endpoint failures into bounded typed reviewer states and prove
   container liveness and deterministic and human workflows remain available.
 
-**Required evidence:** The supported demonstration, adapter contract suite,
-network-boundary and credential checks, hostile-output suite, replayable cohort
-report, and disposable external-server shadow run named by the tracker.
-
-**Dependencies and closure:** Depends on the tracker dependencies and closes
-only in the activation increment that completes the tracker outcome.
+A future promotion plan should define proportionate evidence including the
+supported demonstration, adapter contract suite, network-boundary and
+credential checks, hostile-output suite, replayable cohort report, and
+disposable external-server shadow run.
 
 ## Planning disposition
 
 The planning document is approved scope deferred until after the 1.0
-checkpoint. The two
-implementation trackers remain unassigned backlog work and cannot become
-`Ready` until their named decisions are resolved, current external-service
-behavior is reverified, exact closure lists and slice IDs are approved, and
-dependencies are complete.
+checkpoint. The two outcome drafts are not implementation trackers. When one is
+selected, create or update one concise outcome issue and explicitly promote
+that same issue only after its named decisions are resolved, current
+external-service behavior is reverified, and dependencies are complete. Add
+constituents only for independently valuable increments justified by that
+promotion plan.

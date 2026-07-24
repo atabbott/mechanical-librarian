@@ -72,12 +72,14 @@ request delivers its complete outcome, no constituent ticket is required; that
 pull request closes the tracker directly.
 
 Implementation tickets contributing to new functionality retain their
-work-package parents. The slice tracker is a cross-cutting execution record, not
-a replacement parent. A contributing ticket belongs to one primary delivery
-slice. If its acceptance criteria span more than one slice, split the ticket
-before it reaches `Ready`; do not close part of a ticket in one slice and carry
-hidden remainder into another. Non-slice tickets use `Not applicable` in the
-Project `Delivery slice` field.
+capability and work-package classification without requiring a current WP
+parent issue. The slice tracker is a cross-cutting execution record and never
+reopens a closed historical parent. A genuine current parent, when one exists,
+retains its own lifecycle. A contributing ticket belongs to one primary
+delivery slice. If its acceptance criteria span more than one slice, split the
+ticket before it reaches `Ready`; do not close part of a ticket in one slice and
+carry hidden remainder into another. Non-slice tickets use `Not applicable` in
+the Project `Delivery slice` field.
 
 A small slice may still use one branch and pull request. A larger slice uses
 sequential increments. Each increment is a complete, independently safe

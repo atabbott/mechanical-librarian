@@ -49,10 +49,12 @@ reviewed migration while preserving the Defect/Bug distinction where it remains
 useful.
 
 The WP0–WP9 packages in the
-[initial build plan](../product/initial-build-plan.md) are parent work-package
-issues. Deliverables become sub-issues. Use native issue dependencies for
-blocking relationships; do not encode dependency order only in prose or
-checklists.
+[initial build plan](../product/initial-build-plan.md) remain capability
+ownership and historical architecture references. Their original issue parents
+and constituent forests are closed as superseded and are not current delivery
+tickets. Track current outcomes directly and use native issue dependencies for
+real blocking relationships; do not recreate the old decomposition or encode
+dependency order only in prose or checklists.
 
 The M0–M7 outcome milestones in the [roadmap](../product/roadmap.md) are a
 separate product progression. `WP` always means implementation work package;
@@ -73,7 +75,7 @@ maintainers may explicitly designate later milestones as release trains;
 neither that first published release nor checkpoint completion converts later
 milestones automatically.
 
-### Deferred outcomes and promotion
+### Unpromoted outcomes and promotion
 
 A deferred outcome is a concise future product outcome retained without a
 delivery commitment. It has all of the following Project state:
@@ -97,6 +99,22 @@ constituents, or delivery ceremony for speculative work. Record a material
 safety, privacy, or compatibility constraint when it already bounds the
 outcome, but defer implementation choices until scheduling.
 
+A planned but unpromoted outcome reserves a named delivery checkpoint without
+yet becoming a slice. It has:
+
+- `Work kind: Feature`;
+- `Status: Triaged` or `Blocked`, matching its real dependency state;
+- `Delivery slice: Unassigned backlog`;
+- a named `Target release` other than `Backlog`;
+- the matching GitHub milestone; and
+- no functional-slice designation.
+
+It uses the same lightweight issue content as a deferred outcome and is neither
+a slice tracker nor a constituent ticket. Its checkpoint and milestone express
+planning intent only; it cannot be selected or started until explicit
+promotion assigns a slice designation and it satisfies the normal `Ready`
+contract.
+
 When an outcome is selected for delivery, explicitly promote the same issue
 into a slice tracker. Assign its stable functional-slice designation, matching
 `Delivery slice` value, target checkpoint and GitHub milestone; then add the
@@ -114,8 +132,10 @@ After explicit promotion, a functional slice tracker is the cross-work-package
 outcome and lifecycle unit for new product functionality during the initial
 application build. It is an ordinary issue with a stable slice ID, an
 executable outcome, a demonstration path, any exact constituent tickets it
-intends to close, and slice-level exit criteria. It does not replace the
-work-package parent of those tickets.
+intends to close, and slice-level exit criteria. Capability and work-package
+classification remain useful architecture vocabulary, but promotion does not
+require or reopen a historical WP parent issue. A genuine current parent issue,
+when one exists, retains its own lifecycle.
 
 One slice tracker maps to one bounded delivery transaction containing one or
 more independently safe vertical increment pull requests. A new-functionality
@@ -180,9 +200,11 @@ must normally be decomposed before it becomes `Ready`.
 During pre-release development, the existing `Target release` field groups work
 by its intended delivery checkpoint. Assigning that field does not commit the
 checkpoint to release publication. Work package maps work to WP0–WP9 for
-implementation reporting. Parent relationships remain the authoritative
-hierarchy. `Backlog` means that a deferred outcome has no selected delivery
-checkpoint.
+implementation reporting. A genuine current parent relationship, when present,
+remains authoritative; closed legacy WP parents do not. `Backlog` means that a
+deferred outcome has no selected delivery checkpoint. A planned but unpromoted
+outcome uses a named target release and the matching GitHub milestone while it
+awaits explicit slice promotion.
 
 ### Work kind
 
@@ -204,16 +226,19 @@ does not erase history, reproduction evidence, or linked review findings.
 and branch that will complete it. Values use the stable IDs in the
 delivery-slice plan plus:
 
-- `Cross-slice parent` for work-package and other genuine parent issues;
-- `Unassigned backlog` for future functionality not yet scheduled; and
+- `Cross-slice parent` for a genuine current parent issue; legacy WP parents
+  remain historical;
+- `Unassigned backlog` for deferred or planned functionality not yet assigned a
+  functional-slice designation; and
 - `Not applicable` for fixes, corrections, security work, documentation,
   tooling, dependency-only changes, maintenance, and standalone tickets.
 
-`Unassigned backlog` identifies a deferred outcome, not a branch, tracker, or
-delivery authorization. A new-functionality ticket cannot move to `Ready`
-without an assigned delivery-slice value. Non-slice work may move to `Ready`
-with `Not applicable`. Promoted slice tracker issues use their own assigned
-slice value.
+`Unassigned backlog` identifies an unpromoted outcome, not a branch, tracker, or
+delivery authorization. `Target release` and milestone distinguish a deferred
+outcome from a planned but unpromoted checkpoint outcome. A new-functionality
+ticket cannot move to `Ready` without an assigned delivery-slice value.
+Non-slice work may move to `Ready` with `Not applicable`. Promoted slice tracker
+issues use their own assigned slice value.
 
 ## Labels
 
@@ -231,7 +256,7 @@ Do not create status, priority, risk, size, milestone, or issue-type labels.
 
 ## Required issue content
 
-Deferred outcomes use only the lightweight content defined above. They do not
+Unpromoted outcomes use only the lightweight content defined above. They do not
 meet, and must not be treated as meeting, the following `Ready` contract.
 
 An issue reaching `Ready` must contain:
@@ -265,6 +290,9 @@ Maintain these Project views:
   area;
 - **Deferred outcomes**: `Feature`, `Triaged`, `Delivery slice: Unassigned
   backlog`, and `Target release: Backlog`, with no milestone;
+- **Planned unpromoted outcomes**: `Feature`, `Triaged` or `Blocked`, `Delivery
+  slice: Unassigned backlog`, a named non-Backlog target release, and its
+  matching milestone;
 - **Ready**: unblocked `Ready` work, sorted by priority and risk;
 - **Current**: `In progress`, `In review`, and `Blocked` as a board;
 - **Delivery slices**: new-functionality trackers and mapped tickets grouped by

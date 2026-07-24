@@ -17,8 +17,9 @@ prototype's static-file delivery and browser-local workflow authority.
 - The active queue contains only work that can benefit from an owner decision.
 - One ordinary review case represents one adapter-scoped target snapshot.
 - Decisions stay independent per target and per field.
-- Automatic approvals and rejections remain searchable without crowding the
-  active queue.
+- Automatic approvals and rejections remain visible in current-case history
+  without crowding the active queue. Cross-case history search belongs to
+  post-first-release outcome #195.
 - Destructive work remains separate and always requires explicit authority.
 - A browser refresh, device change, restart, or upgrade cannot lose an
   acknowledged decision.
@@ -176,10 +177,12 @@ The detail view presents identity and current-versus-proposed choices before
 supporting evidence. Irrelevant panels are absent. Evidence explanations,
 source rows, policy versions, and diagnostics are progressively disclosed.
 
-A global review summary presents remaining work, conflicts, stale cases,
-readiness, and planned changes by adapter. Automatic history is available
-through separate filters and sampling views rather than mixed into the active
-queue.
+The post-first-release #195 outcome may add a global review summary presenting
+remaining work, conflicts, stale cases, readiness, and planned changes by
+adapter. It may also expose automatic cross-case history through separate
+filters and sampling views rather than mixing it into the active queue. These
+cross-case summary and history surfaces are not F16a or first-release
+acceptance.
 
 Summary counts are server-authoritative and name their unit:
 
@@ -208,6 +211,10 @@ remain in bounded evidence detail and reviewer-packet schemas.
 
 ## Bulk decisions
 
+Bulk decisions and their reversal flow belong to post-first-release outcome
+#195. They are retained here as a future contract and are not F16a or
+first-release acceptance.
+
 Bulk review is an optimization for a bounded unresolved queue, not an
 alternative automatic policy engine.
 
@@ -229,8 +236,15 @@ interface undo action.
 
 ## Responsive and accessible behavior
 
-- Narrow screens use separate queue, case, and summary surfaces rather than
-  stacking the entire queue before the selected detail.
+F16a qualifies the individual queue, case-detail, evidence, and decision round
+trip against the first-release responsive and accessibility baseline below in
+the primary supported browser. Outcome #195 owns additional browser and
+viewport coverage and extended accessibility and responsive qualification; it
+does not defer or replace this baseline.
+
+- Narrow screens use separate queue and case surfaces rather than stacking the
+  entire queue before the selected detail. When #195 adds a cross-case summary,
+  it receives its own narrow-screen surface.
 - The interface has no document-level horizontal overflow at a 390-pixel
   viewport.
 - Primary touch targets are at least 44 pixels.
@@ -250,7 +264,8 @@ The production interface does not embed a full-library dataset into one static
 document. Collection endpoints are paginated, case detail and evidence are
 loaded on demand, and covers outside the active context are lazy-loaded.
 
-Release gates define measurable budgets for:
+F16a defines measurable first-release budgets for its individual queue,
+case-detail, evidence, and decision round trip:
 
 - JavaScript and stylesheet assets;
 - initial API response bytes;
@@ -261,6 +276,18 @@ Release gates define measurable budgets for:
 
 Performance optimization cannot omit decision provenance, evidence references,
 validation, or stale-state guards.
+
+For the same F16a baseline, authenticated review responses are private and
+cannot be stored in shared caches; browser storage holds only non-authoritative
+display preferences. A restrictive content-security policy and text-safe
+rendering prevent hostile metadata, provider content, URLs, or evidence from
+becoming executable markup. Synthetic browser artifacts must be bounded,
+sanitized, and free of credentials or private library data. Real-browser
+qualification runs these privacy, storage, content-security, hostile-rendering,
+performance, and artifact checks in the primary supported browser.
+
+Outcome #195 extends those budgets and checks across its cross-case summaries,
+history, bulk and reversal flows, and additional browser and viewport matrix.
 
 ## Explicitly unsupported prototype behavior
 
@@ -291,13 +318,21 @@ The review experience is ready when:
   provenance;
 - unsupported, rejected, stale, conflicting, and destructive work cannot enter
   an ordinary apply plan;
-- queue, decision, bulk, accessibility, responsive, and performance contracts
-  pass in real browser tests that derive categories from the versioned product
-  and category-capability contract, exercise at least one representative fixture
-  for each applicable category, record explicit reasons for not-applicable
-  categories, and fail on unexpected page or console errors;
+- the F16a individual queue, detail, evidence, and decision round trip passes
+  the first-release responsive, keyboard/focus, accessibility, private caching
+  and storage, content-security, hostile-rendering, performance, synthetic-
+  artifact, and primary-supported-browser baseline in real browser tests that
+  derive categories from the versioned product and category-capability
+  contract, exercise at least one representative fixture for each applicable
+  category, record explicit reasons for not-applicable categories, and fail on
+  unexpected page or console errors;
 - untouched presentation defaults remain bound to the current proposal version
   and may refresh only when that version changes, while an acknowledged user
   decision is never silently rewritten by a new default; and
 - restart and cross-device tests prove that acknowledged state is server-
   authoritative.
+
+Cross-case summaries and history, bulk decisions and reversal, additional
+browser and viewport coverage, and extended qualification budgets remain
+post-first-release work under #195. They are not prerequisites for this
+first-release acceptance.

@@ -3,19 +3,22 @@
 ## Purpose
 
 Mechanical Librarian is delivered through small end-to-end outcomes rather than
-through completed horizontal work packages. WP0-WP9 remain capability ownership
-buckets and issue parents. A functional slice crosses whichever packages are
-needed to produce one executable, reviewable result.
+through completed horizontal work packages. WP0-WP9 remain historical
+capability-ownership buckets, not current issue parents. A functional slice
+crosses whichever capabilities are needed to produce one executable, reviewable
+result.
 
-The sequence below is the default implementation order. Each row becomes one
-slice tracker and one bounded delivery transaction. The transaction may use one
-`slice/...` branch and pull request or sequential independently safe vertical
-increment branches and pull requests. The tracker contains the final ticket
-list and may narrow the outcome before work starts. Divide the outcome into
-suffixed slices such as `F05a` and `F05b` only when they are genuinely distinct
-supported outcomes. Split a transaction into additional pull requests only for
-distinct vertical increments or a required security or privacy separation,
-never into horizontal layers or merely because review found more work.
+The sequence below is the default implementation order. Each assigned row has
+one slice tracker and one bounded delivery transaction; a row explicitly marked
+as requiring promotion remains an outcome only until that promotion completes.
+The transaction may use one `slice/...` branch and pull request or sequential
+independently safe vertical increment branches and pull requests. The tracker
+contains the final ticket list and may narrow the outcome before work starts.
+Divide the outcome into suffixed slices such as `F05a` and `F05b` only when they
+are genuinely distinct supported outcomes. Split a transaction into additional
+pull requests only for distinct vertical increments or a required security or
+privacy separation, never into horizontal layers or merely because review found
+more work.
 
 The tables preserve assigned and historical delivery records. A future outcome
 outside them remains a concise deferred issue with no `F` ID; a stable
@@ -24,9 +27,10 @@ explicitly promoted for delivery. Deferred outcomes do not acquire trackers,
 constituents, milestones, or implementation design merely to reserve future
 sequence.
 
-Each table's increment-branch column gives the conventional branch stem for a
-one-increment slice. A multi-increment transaction appends a short increment
-slug to that stem; it does not reuse one branch for the whole transaction.
+Where a table includes an increment-branch column, it gives the conventional
+branch stem for a one-increment slice. A multi-increment transaction appends a
+short increment slug to that stem; it does not reuse one branch for the whole
+transaction.
 
 The authoritative branch, issue, and review mechanics are defined in
 [functional slice delivery](../development/slice-delivery.md).
@@ -48,15 +52,10 @@ new-functionality slice, but they are never absorbed into that slice merely to
 satisfy its checks. A slice may still introduce a dependency needed for its
 observable outcome under the repository dependency policy.
 
-Current focused work includes:
-
-- contributor, CI, licence, publication, and governance work under #36-#43,
-  #135, and #154;
-- durability and architecture corrections #127, #130, and #131 before F01;
-- port, scope, and configuration corrections #129, #132, and #134 before F03;
-- evidence-bound correction #133 before F06;
-- lifecycle and authorization correction #128 before F10a;
-- frontend architecture decision #192 before F16a.
+Publication-readiness #43 remains a separate first-release gate. Any frontend
+architecture decision needed for F16a is owned by #152 during promotion rather
+than by the closed #192 ticket. The previously listed correction, governance,
+and prerequisite tickets are completed or superseded history, not current work.
 
 ## Delivery checkpoint 0.1.0: trustworthy report-only product spine
 
@@ -99,7 +98,7 @@ human or AI decision, approval, production write, or destructive authority.
 | F09b Bounded Hardcover title evidence | #204 | Historical retired surface: `hardcover-title-proposal-report` formerly ran only the fixed generated `agree-empty` case. The installed CLI now rejects the command name; F09f owns current configured Hardcover identity operation. | #223 | `slice/f09b-hardcover-title` |
 | F10a Synthetic title review case | #146 | Historical retired surface: `synthetic-title-review-case-report` formerly admitted one deterministic synthetic case from a qualifying F09a lineage. The installed CLI now rejects the command name. | #224 | `slice/f10a-title-review-case` |
 
-The only active delivery chain is:
+The historical delivery chain was:
 
 ```text
 completed F06 #142 + planning #221 -> F09a #145/#222
@@ -180,9 +179,10 @@ proposal-applicability decision.
   multi-provider-fusion, production-write, or destructive behavior.
 
 F07a #143 (#30, #31, and #188) and F07b #228 (#32) are not prerequisites for
-this 0.2.0 chain; they begin the later 0.3.0 checkpoint. F08 #144 (#33 and
-#34), F11 #147 and #74-#80, the broader #16, #46, #50, and #68-#73 program,
-and rich Hardcover work #209 remain 1.0.0 scope.
+this 0.2.0 chain; they begin the later 0.3.0 checkpoint. F08 #144 and F11 #147
+remain later 1.0.0 outcomes. Their former constituent tickets and the broader
+closed program are historical planning inputs, not current delivery work; the
+current outcome set is defined below.
 
 ## Delivery checkpoint 0.3.0: first trustworthy live title report
 
@@ -337,31 +337,41 @@ replay is required only within the exact current schema.
 Write-capable slices use fake or disposable services until their explicit
 canary slice. Destructive operations remain outside ordinary review and apply.
 
-| Slice | Tracker | Demonstrable outcome | Primary backlog inputs | Increment branch stem/example |
-| --- | --- | --- | --- | --- |
-| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | #33, #34 | `slice/f08-audiobook-health` |
-| F09c Work identity fallback | #205 | Bounded Open Library work/edition discovery and optional LibraryThing ISBN-family clustering preserve ambiguity, lineage, independent-provider limits, and disabled/failure behavior. | #210, #211; unresolved prerequisite #68 | `slice/f09c-work-identity-fallback` |
-| F10b Production title review case | #240 | Exactly one current qualifying neutral persisted report claim becomes one durable undecided production review case while preserving exact freshness, evidence, version, replay, and supersession proof. | #241; F10a #146 and #197 | `slice/f10b-production-title-case` |
-| F11 AI shadow recommendation | #147 | An isolated reviewer receives a complete bounded vendor-neutral packet carrying the exact normalized current snapshot and explicit field-load state only after required authoritative inputs join successfully, without target-service or provider credentials or vendor payloads, then returns one direct closed-schema `AIDecision` for every proposal; its required `problems` list contains adverse or unresolved problem codes, with `problems: []` for a clean approval. Malformed output, unknown fields, missing required fields, duplicate or partial decisions, trailing content, or semantic repair becomes a typed failure without authorizing apply. A zero-proposal selection terminates without invocation, and optional provider failure remains operational. | #74-#80 | `slice/f11-ai-shadow-review` |
-| F12a Authenticated API foundation | #189 | The supported HTTP service exposes deterministic versioned OpenAPI, minimal anonymous liveness, and one bounded authenticated owner diagnostic; invalid sessions, origins, CSRF, proxy and rate-limit contexts fail closed. | #96, #97 | `slice/f12a-authenticated-api` |
-| F12b Human decision round trip | #148 | An authenticated owner accepts, keeps, or rejects one field, restarts and retrieves the immutable decision/history, then observes a safe stale-version conflict. | #19 | `slice/f12b-human-decision` |
-| F13 Guarded fake-service apply | #149 | A current human-approved field change is planned, backed up, idempotently applied to a fake service through the guarded application/API surfaces, read back, verified, audited, and safely rolled back on injected failure. | #17, #81-#83, #86, #190 | `slice/f13-guarded-fake-apply` |
-| F14 Audiobookshelf canary apply | #150 | The same gates perform one bounded field or cover mutation against a disposable qualified Audiobookshelf instance and prove before/request/after evidence. | #84, #85, #87 | `slice/f14-audiobookshelf-canary` |
-| F15a Report-only container runtime | #151 | The supported single container proves its reproducible image, explicit principals, filesystem/mount isolation, supervised lifecycle, first-run health and durable report-only restart with writes disabled. | #88-#91 | `slice/f15a-container-runtime` |
-| F15b Diagnostics and recovery | #191 | The F15a container exposes authenticated report-only operational status, bounded correlated diagnostics, a previewable redacted support bundle, and documented backup/restore support without write authority. | #92, #93, #98 | `slice/f15b-diagnostics-recovery` |
-| F16a Browser review case round trip | #152 | In a real browser, an authenticated owner finds one target, inspects decision-first detail and progressive evidence, navigates siblings, makes one individual decision, refreshes/restarts, and observes server-authoritative persistence. | #18, #99, #100; focused prerequisite #192 | `slice/f16a-review-case-browser` |
-| F16b Browser summaries, bulk, and qualification | #195 | The browser presents server-authoritative summaries/history, commits one exact-version bulk decision, reverses one unapplied decision, and qualifies every applicable category across the supported browser matrix. | #20, #101-#103, #193, #194 | `slice/f16b-review-bulk-qualification` |
-| F17 Continuous-operation qualification | #153 | The same canonical target/evidence/candidate scenario passes Audiobookshelf and CWA-shaped target fakes, each with provider-disabled and configured-provider variants, without schema changes; provider-disabled runs construct no provider adapter/client, resolve no provider secret, and make no provider network call, while the CWA-shaped fake traps database, UI, maintenance-container, media-write, unsupported-API, and production-mutation fallbacks. Events, reconciliation, review, guarded apply, circuit breakers, immutable workflow upgrades, dependency fan-out and fan-in, duplicate-safe resume, cancellation, worker and scheduler death, candidate-lane reuse and retry, physical JSONL framing, report-only authority isolation, browser-category coverage, advisory progress, restart, upgrade, backup, restore, release provenance, and support diagnostics pass the release cohort. | #94, #95 and a slice-specific release cohort | `slice/f17-release-qualification` |
+The original WP1–WP9 parents and their constituent forests are closed,
+superseded planning history. They remain useful context in completed checkpoint
+records but are not current delivery tickets and must not be reopened or
+recreated.
 
-The remaining productionisation dependencies are deliberately not one serial
-chain. F09c remains separately blocked on its declared prerequisite #68 and is
-not a prerequisite for the 0.3 F09g report. Its fallback identity remains a
-separate report/provider lane; later provider-neutral candidate work #69/#70
-consumes compatible F09c identity, with qualification in #73 and F17 #153.
-F10b starts after completed F10a and #197 and is the first production review-case
-admission from the current neutral persisted report/claim boundary. F11 remains
-independently deliverable against its synthetic shadow input. The production
-title and synthetic reviewer paths converge only in F17 qualification.
+| Outcome | Issue | Demonstrable result | Planning state |
+| --- | --- | --- | --- |
+| Explainable field proposals and policy | #70 | Current provenance-bearing evidence produces deterministic field-level proposals and closed explainable policy dispositions without review or write authority. | Planned but unpromoted 1.0 outcome: `Unassigned backlog`, target and milestone `1.0.0`, no `F` designation, and not selectable until explicit promotion. |
+| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Retained planned designation. |
+| F10b Production review admission | #240 | One qualifying current proposal becomes a durable undecided production review case with exact freshness, evidence, replay, and supersession proof. | Retained planned designation. |
+| F11 Isolated AI shadow recommendation | #147 | An isolated reviewer returns one bounded closed-schema recommendation per selected proposal without credentials, provider payloads, or apply authority. | Retained planned designation. |
+| F15a Supported container operation | #151 | The supported single container starts safely, runs the report and review product, survives current-schema restart, and exposes bounded redacted health, diagnostics, support, backup, and recovery evidence. | Consolidated container plus diagnostics/recovery outcome with a retained planned designation. |
+| F16a Authenticated browser review and decision | #152 | An authenticated owner finds one current case, inspects bounded evidence, makes one individual field decision, and observes immutable server-authoritative history after refresh or restart. The individual round trip passes the first-release responsive, keyboard/focus, accessibility, private caching/storage, content-security, hostile-rendering, performance, synthetic-artifact, and primary-supported-browser baseline. | Consolidated API, browser, one-human-decision, and first-release browser-baseline outcome with a retained planned designation. |
+| F13 Guarded fake-service apply | #149 | A current human-approved field change from F16a is planned, backed up, idempotently applied to a fake service, read back, verified, audited, and safely failed or rolled back. | Retained planned designation; requires an applicable current human decision from F16a. |
+| F14 Audiobookshelf canary apply | #150 | After F13, the same gates perform one bounded mutation against a disposable qualified Audiobookshelf instance and prove before/request/after evidence. | Retained planned designation; depends on completed F13 qualification. |
+| F17 Continuous pre-release operation | #153 | The useful Audiobookshelf path runs repeatedly under persisted scheduling and reconciliation, survives representative failures and restarts, and remains observable and recoverable without widening authority. | Retained planned designation; excludes CWA, release production/publication, and older-schema migration. |
+
+The retained `F` IDs are planned designations on the assigned outcome issues,
+not proof of `Ready` status or authority to begin. Each tracker still must meet
+the normal readiness and selection rules. Issue #70 is planned but unpromoted:
+it retains target release and milestone `1.0.0` while remaining
+`Unassigned backlog`, without an `F` designation, until its same issue is
+explicitly promoted. Google Books #315 is instead deferred with target release
+`Backlog` and no milestone; it is the likely second pre-public-release
+metadata-provider proof, but remains unscheduled and requires explicit
+promotion before it can enter this checkpoint.
+
+The outcomes are not one serial chain. Readiness records the real dependencies:
+#70 supplies explainable proposals; F10b admits eligible proposals; F16a records
+one applicable current human decision and qualifies the first-release browser
+baseline; F13 requires that human decision before it proves guarded fake-service
+apply; and F14 follows completed F13 qualification for its disposable
+Audiobookshelf canary. F11 remains independently shadowable; F15a supplies the
+supported operating surface; and F17 composes the useful path under repeated
+operation. F08 remains an independent evidence outcome.
 
 ### 1.0.0 checkpoint exit
 
@@ -375,33 +385,45 @@ title and synthetic reviewer paths converge only in F17 qualification.
   diagnostics only;
 - the normal deployment is one supported container with one persistent volume,
   read-only media mounts, and one HTTP port;
-- the review experience is persistent, accessible, responsive, and
-  server-authoritative, including typed count units and stale or partial
-  summary semantics; and
-- release, upgrade, restore, isolation, and end-to-end qualification evidence is
-  complete.
+- one authenticated owner can inspect a current case and make one persistent,
+  server-authoritative individual decision through the F16a first-release
+  responsive, keyboard/focus, accessibility, private caching/storage,
+  content-security, hostile-rendering, performance, synthetic-artifact, and
+  primary-supported-browser baseline; and
+- the complete useful path passes bounded continuous-operation qualification
+  against exact-current state without adding release or compatibility promises.
 
-Satisfying this checkpoint exit does not itself publish a release. Its release
-cohort, provenance, upgrade, restore, isolation, and end-to-end qualification
-requirements remain mandatory checkpoint evidence regardless of whether or
-when a maintainer separately selects a checkpoint for release publication.
+Satisfying this checkpoint exit does not itself publish a release. First-release
+artifact production #94 and publication-readiness audit #43 are separate gates
+in the `first-release` milestone and require an explicit maintainer publication
+decision. Post-release migration and older-schema restore recovery remain #57;
+neither is F17 acceptance.
 
 ## Deferred outcomes
 
-Opening-audio transcription (#24 and #104-#110), additional adapters,
-embedded-file updates, plugin loading, and the
-[reviewer backends after the 1.0 checkpoint](future-reviewer-backends.md) remain unassigned
-backlog outcomes until their prerequisite design and qualification decisions
-are accepted. New deferred outcomes stay concise and have no functional-slice
-designation, milestone, or pre-created constituents. Existing speculative
-tracker and constituent-like issues are planning inputs to reconcile before
-promotion; they do not become constituents automatically. Consolidate or close
-them as superseded unless an issue describes an independently valuable outcome
-retained by the promotion plan. When scheduled, the same outcome issue is
-explicitly promoted and receives a new functional slice ID and executable
-outcome; it is not appended opportunistically to an active branch. The
-reviewer-backend plan does not alter the documented active chain, later 1.0
-slice placement, or the 1.0.0 exit.
+The current deferred product outcomes are:
+
+- opening-audio evidence #24; its former #104–#110 decomposition is closed
+  superseded history;
+- one outcome per metadata provider: Open Library #210, LibraryThing #211,
+  Project Gutenberg #212, LibriVox #213, Audible #214, and Google Books #315;
+  the old F09c/F09d/F09e trackers #205, #206, and #208 are closed superseded;
+- bulk browser review and extended qualification #195 after the first public
+  release;
+- Calibre-Web Automated library-provider support #316 after the first public
+  release;
+- optional Audiobookshelf notifications and polling enhancement #65;
+- post-release migration and restore recovery #57; and
+- the [additional reviewer backends](future-reviewer-backends.md), embedded-file
+  updates, plugin loading, and other optional extensions.
+
+These outcomes stay concise and have no functional-slice designation, milestone,
+or pre-created constituents. Google Books may be promoted before publication,
+but that intent is not a schedule or designation. When an outcome is selected,
+explicitly promote that same issue and create constituents only for retained
+independently valuable increments. Closed speculative trackers, WP parents, and
+constituent forests remain historical inputs and never become current work
+automatically.
 
 ## Planning rules
 
@@ -411,14 +433,13 @@ slice placement, or the 1.0.0 exit.
   selects or promotes an `Unassigned backlog` outcome.
 - The Project `Delivery slice` field records each new-functionality ticket's
   primary slice. Focused work uses `Not applicable`.
-- Slice trackers carry the exact closure list; the issue ranges above are
-  planning inputs, not permission to close a parent whose full criteria are not
-  satisfied.
+- Slice trackers carry their exact closure mapping. Historical issue ranges in
+  completed checkpoint records are context, not permission to reopen or close a
+  legacy parent or constituent.
 - A deliberately narrow adapter or interface is acceptable when it completely
   demonstrates the slice and preserves compatibility for later extension.
 - No slice may defer its required safety, recovery, observability,
   documentation, clean-schema handling (or post-release migration), or test
   obligations to a later slice.
-- A work-package parent closes only when all owned outcomes are complete. A
-  merged slice proves its bounded outcome, not wholesale work-package
-  completion.
+- Historical work-package parents remain closed; a current slice neither
+  reopens them nor inherits their superseded constituent forest.
