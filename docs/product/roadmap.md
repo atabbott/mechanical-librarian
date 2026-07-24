@@ -132,11 +132,10 @@ The current 1.0 outcome set is #70, F08 #144, F10b #240, F11 #147, F15a
 planned designations rather than `Ready` status. Issue #70 remains unassigned
 as a planned but unpromoted outcome with target release and milestone `1.0.0`;
 it has no `F` designation and must be explicitly promoted before delivery.
-Google Books #315 is the likely second pre-public-release metadata proof but
-remains deferred with target release `Backlog`, no milestone, and the same
-explicit-promotion requirement. Closed WP parents, provider trackers, and
-constituent forests are historical planning inputs, not current delivery work.
-The authoritative outcome definitions and deferred-provider list are in the
+Open Library #210 is the selected 0.7.0 Ready slice tracker, while the other
+deferred provider outcomes remain outside this checkpoint. Closed WP parents,
+provider trackers, and constituent forests are historical planning inputs, not
+current delivery work. The authoritative outcome definitions are in the
 [delivery-slice plan](delivery-slices.md).
 
 F09g #238 remains historical characterization evidence for the current report
@@ -163,6 +162,81 @@ work to reconcile, not active contributors.
 The checkpoint excludes review, decisions, apply, writes, background execution,
 retry, caching, compatibility paths, tags, releases, and publication. It is an
 internal pre-deployment checkpoint, not a supported version or release train.
+
+### Completed 0.5.0 ebook metadata-and-cover evidence checkpoint
+
+- F09i #293 completes the bounded Audiobookshelf and structured EPUB field
+  graph, including deterministic opening and rear evidence.
+- F09j #294 adds the configured ISBN-backed Hardcover work/edition observation
+  with rich field-local comparisons and explicit disabled/failure outcomes.
+- F09k #295 adds validated Audiobookshelf, EPUB-declared, and Hardcover cover
+  source evidence with private content-addressed originals and deterministic
+  offline previews.
+- Exact replay remains within the exact current schema; changed evidence creates
+  immutable successors.
+- Keep proposal selection, review, decisions, apply, target/media writes,
+  background work, retries, compatibility paths, tags, releases, and
+  publication out of the checkpoint.
+
+Exit: one selected current Audiobookshelf EPUB produces and reopens one complete
+source-attributed metadata-and-cover evidence report without gaining proposal,
+review, decision, or write authority.
+
+### Completed 0.6.0 catalogue and library-scale evidence checkpoint
+
+- F05c #300/#301 atomically refreshes a current catalogue of at most 10,000
+  scoped entries across configured Audiobookshelf book libraries, preserving
+  independent ebook/audio facets and exact eligibility classifications.
+- F18 #302/#303 freezes explicit selections or all eligible EPUBs into one
+  immutable secret-free manifest and serially runs the complete final-0.5
+  report operation in the foreground.
+- Batch execution revalidates the current generation and item before each
+  report, streams deterministic outcomes, and preserves completed reports on a
+  later stop.
+- Recovery is a fresh operator-created manifest and run. #304's durable
+  attempt, resume, retry, lock, and runner-state design was explicitly removed;
+  scheduling, queues, workers, concurrency, and continuous intake remain later
+  work.
+
+Exit: an operator can discover a current configured book catalogue and run the
+complete evidence operation for selected or all eligible EPUBs without gaining
+proposal, review, decision, write, or background authority.
+
+### Planned 0.7.0 independent multi-provider ebook evidence checkpoint
+
+The [0.7.0 working plan](0-7-working-plan.md) records the selected next step
+after 0.6: add Open Library as a second real metadata adapter and prove
+that one immutable report preserves independent local, Hardcover, and Open
+Library evidence. Provider order, failure, absence, malformed or incomplete
+data, and contradiction remain separate canonical observations rather than
+votes or a fused result. Open Library reaches behavioral parity with every
+existing Hardcover evidence capability for which it exposes semantically
+equivalent data; unsupported parity fields remain explicit rather than
+guessed. Beyond
+parity, the report preserves a bounded allowlist of typed provider identities
+and revision provenance, selected identifiers present on the required edition
+or work records, subjects and classifications, edition characteristics,
+contributor identities, the exact edition-to-work relationship, and cover
+identities. It does not traverse author records, enumerate editions, or issue
+fallback searches solely for enrichment.
+
+The proposal keeps fuzzy fallback, provider ranking, proposals, review,
+decisions, UI, apply, writes, background execution, unbounded provider-backed
+batches, raw provider payloads, arbitrary upstream properties and link
+collections, community signals, lending or full-text features, a third
+provider, and release publication out. Rich evidence remains source-scoped and
+cannot rank candidates, map subjects into tags or genres, or create proposals.
+Open Library participation is limited to a documented low-volume operating
+envelope; larger batches remain usable with that provider disabled and fail
+closed before egress when it is enabled outside the envelope. The checkpoint
+uses the existing foreground batch lifecycle with a fixed ceiling and
+single-attempt posture; it adds no cache, retry, scheduling, rate-policy, or
+provider-cost framework.
+
+Live tracking assigns Open Library #210 to milestone 0.7.0 as Ready F09l.
+It remains a one-issue vertical slice with no pre-created constituents; this
+documentation change does not implement it. Issue #70 remains a separate
+planned but unpromoted 1.0.0 outcome.
 
 ## M3: AI review in shadow mode
 

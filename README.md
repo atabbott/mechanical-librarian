@@ -6,27 +6,30 @@ production image, supported release, or write-capable runtime yet.
 
 ## Current checkpoint
 
-The 0.4 development checkpoint installs one synchronous, report-only command:
+The completed 0.6 development checkpoint installs a bounded, report-only ebook
+evidence workflow. An operator can:
 
-```text
-mechanical-librarian metadata-report \
-  --config /run/secrets/mechanical-librarian.json \
-  --database /var/lib/mechanical-librarian/reports.sqlite \
-  --connection primary --library ebooks --item ITEM_ID --file-index 0
-```
+- refresh and inspect a current catalogue across configured Audiobookshelf book
+  libraries;
+- create and inspect an immutable manifest for explicit selections or all
+  eligible EPUBs;
+- run that frozen batch serially in the foreground; and
+- generate or reopen one complete source-attributed EPUB metadata-and-cover
+  evidence report.
 
-It reads one explicitly selected Audiobookshelf EPUB, extracts bounded title
-and ISBN facts in an isolated child, independently observes each explicitly
-referenced provider, and stores one neutral canonical JSON report. Success
-writes exactly that persisted document and a newline to stdout. The command
-has no inventory, review, decision, apply, target-write, or media-write
-authority.
+The report combines current Audiobookshelf state, bounded structured EPUB
+evidence, configured Hardcover observations, and validated cover artifacts.
+Catalogue and batch operations retain the same read-only boundary. There is no
+review, decision, apply, target write, media write, background execution,
+automatic retry, or supported release.
 
-Only a clean 0.4 database is supported. Earlier development databases and
-retired commands are intentionally not migrated or recognized.
+Only absent or exact-current pre-release state is supported. Earlier
+development databases, manifests, configuration schemas, and retired commands
+are intentionally rejected rather than migrated or interpreted.
 
-See the [metadata report operations guide](docs/operations/metadata-report.md),
-[configuration reference](docs/reference/configuration.md), and
+See the [catalogue guide](docs/operations/catalogue.md),
+[foreground batch guide](docs/operations/ebook-evidence-batches.md),
+[metadata report guide](docs/operations/metadata-report.md), and
 [documentation index](docs/README.md).
 
 ## Product direction

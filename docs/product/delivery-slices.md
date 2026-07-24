@@ -324,13 +324,107 @@ version, tag, GitHub Release, or published artifact.
 
 ## Delivery checkpoint 0.5.0: complete ebook metadata and cover evidence
 
-F09i #293, F09j #294, and F09k #295 complete local, configured Hardcover, and
-validated cover evidence in order. Throughout this checkpoint, ADR-0013 applies
-repository-wide: each schema recognizes only absent or exact-current state;
-earlier state is rejected before mutation without migration, import,
-preservation, or compatibility parsing. Recovery uses a clean current state and
-supported regeneration; old state may be retained offline. Exact-ID/current-scope
-replay is required only within the exact current schema.
+This completed checkpoint expands the neutral report into one complete current
+ebook metadata-and-cover evidence document.
+
+| Slice | Tracker | Demonstrable outcome |
+| --- | --- | --- |
+| F09i Complete local ebook metadata evidence | #293 | Audiobookshelf and bounded structured EPUB evidence form one closed v2 field graph with deterministic source order, comparison links, exact replay, and complete opening/rear limits. |
+| F09j Complete Hardcover ebook metadata evidence | #294 | One configured ISBN-filtered Hardcover observation contributes bounded source-attributed work and edition evidence while disabled, failed, empty, and malformed outcomes remain independent facts. |
+| F09k Complete ebook cover evidence | #295 | Audiobookshelf, declared EPUB, and enabled Hardcover cover sources produce validated original and offline-preview artifact facts without selecting or writing a cover. |
+
+The slices completed in that order. F09k is the checkpoint activation and
+retains metadata output when cover acquisition is absent or degraded.
+Throughout the checkpoint, ADR-0013 applies repository-wide: each schema
+recognizes only absent or exact-current state; earlier state is rejected before
+mutation without migration, import, preservation, or compatibility parsing.
+Recovery uses a clean current state and supported regeneration; old state may
+be retained offline. Exact-ID/current-scope replay is required only within the
+exact current schema.
+
+### 0.5.0 checkpoint exit
+
+- one selected current Audiobookshelf EPUB produces a complete immutable report
+  containing current target state, bounded local field evidence, configured
+  Hardcover candidates, field-local comparisons, and validated cover source
+  outcomes;
+- valid JPEG, PNG, and static WebP cover inputs can produce private
+  content-addressed originals and deterministic report-bound offline previews;
+- exact re-observation replays the same report and artifact identities, while
+  changed evidence creates an immutable successor; and
+- the runtime gains no proposal selection, review, decision, apply,
+  target/media write, background execution, retry, tag, or release authority.
+
+## Delivery checkpoint 0.6.0: catalogue and library-scale ebook evidence
+
+This completed checkpoint composes the final 0.5 operation with a bounded
+current Audiobookshelf book catalogue and operator-controlled foreground
+batches.
+
+| Slice | Tracker | Activation | Demonstrable outcome |
+| --- | --- | --- | --- |
+| F05c Current Audiobookshelf book catalogue | #300 | #301 | One refresh atomically publishes at most 10,000 current scoped entries across configured book libraries, preserving independent ebook/audio facets and exact eligible, ineligible, and needs-attention classifications. |
+| F18 Library-scale ebook evidence batch | #302 | #303 | An operator freezes explicit selections or all eligible EPUBs into one immutable secret-free manifest, inspects it, and serially runs the final 0.5 report operation in the foreground. |
+
+#299 records the repository-wide pre-release clean-schema policy applied by
+both slices. #309 corrected reachable catalogue edge cases before the milestone
+closed. The proposed durable attempt/resume design #304 was explicitly closed
+as not planned: recovery remains a fresh operator-created manifest and
+foreground run.
+
+### 0.6.0 checkpoint exit
+
+- catalogue refresh covers every configured Audiobookshelf book library and
+  publishes only a complete generation after bounded summary/detail
+  validation;
+- deterministic list and exact-get inspection expose the current stored
+  projection without provider access or target/media writes;
+- a content-addressed `batch-manifest-v1` binds catalogue generation, exact
+  scoped entries, report-relevant configuration, enabled providers, and
+  conservative call maxima without storing private values or execution state;
+- batch run revalidates the generation and exact entry before each serial
+  final-0.5 report, streams deterministic item outcomes and one summary, and
+  preserves completed reports on a later stop or interruption; and
+- no proposal, review, decision, apply, API/browser control plane, scheduler,
+  queue, worker, resume, automatic retry, parallelism, write, tag, or release
+  authority is introduced.
+
+## Proposed delivery checkpoint 0.7.0: independent multi-provider ebook evidence
+
+The [0.7.0 working plan](0-7-working-plan.md) recommends adding Open Library as
+a second real metadata adapter and proving that the completed 0.6 report and
+foreground-batch boundaries preserve independent Hardcover and Open Library
+observations. Exact ISBN evidence, candidate identity, lineage, failure,
+absence, malformed or incomplete data, and contradiction remain
+provider-specific and canonical; Open Library reaches behavioral parity with
+each existing Hardcover evidence capability for which it has semantically
+equivalent data and records explicit absent or unsupported outcomes otherwise.
+Beyond parity, it preserves a bounded allowlist of typed provider identities
+and revision provenance, selected
+identifiers present on required edition or work records, subjects and
+classifications, edition characteristics, contributor identities, the exact
+edition-to-work relationship, and cover identities. It does not traverse
+author records, enumerate editions, or issue fallback searches solely for
+enrichment.
+
+The checkpoint persists no raw provider payload, generic property map,
+arbitrary upstream link collection, community signals, lending or full-text
+state, or unbounded edition graph. Rich evidence remains source-scoped and
+performs no provider voting, fusion, subject-to-tag mapping, proposal selection,
+review, or write.
+
+Open Library participation is restricted to a documented low-volume envelope.
+A larger or all-eligible batch with Open Library enabled fails closed before
+provider construction or egress; the existing batch remains usable with that
+provider disabled. A permitted explicit selection reuses the existing
+foreground lifecycle with a fixed ceiling and single-attempt posture rather
+than adding a cache, retry, scheduler, rate-policy language, or provider-cost
+framework.
+
+Open Library #210 is the assigned Ready F09l tracker in milestone 0.7.0. It is
+a one-issue vertical slice: configuration, schema, adapter, covers, batch
+participation, proof, and documentation do not become separate constituents.
+This documentation change does not implement that future checkpoint.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
@@ -344,7 +438,7 @@ recreated.
 
 | Outcome | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
-| Explainable field proposals and policy | #70 | Current provenance-bearing evidence produces deterministic field-level proposals and closed explainable policy dispositions without review or write authority. | Planned but unpromoted 1.0 outcome: `Unassigned backlog`, target and milestone `1.0.0`, no `F` designation, and not selectable until explicit promotion. |
+| Explainable field proposals and policy | #70 | Current provenance-bearing evidence produces deterministic field-level proposals and closed explainable policy dispositions without review or write authority. | Live tracking remains a planned but unpromoted 1.0 outcome. The proposed 0.7 working plan leaves this issue unchanged while the second-provider seam is proved first. |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Retained planned designation. |
 | F10b Production review admission | #240 | One qualifying current proposal becomes a durable undecided production review case with exact freshness, evidence, replay, and supersession proof. | Retained planned designation. |
 | F11 Isolated AI shadow recommendation | #147 | An isolated reviewer returns one bounded closed-schema recommendation per selected proposal without credentials, provider payloads, or apply authority. | Retained planned designation. |
@@ -356,13 +450,11 @@ recreated.
 
 The retained `F` IDs are planned designations on the assigned outcome issues,
 not proof of `Ready` status or authority to begin. Each tracker still must meet
-the normal readiness and selection rules. Issue #70 is planned but unpromoted:
-it retains target release and milestone `1.0.0` while remaining
-`Unassigned backlog`, without an `F` designation, until its same issue is
-explicitly promoted. Google Books #315 is instead deferred with target release
-`Backlog` and no milestone; it is the likely second pre-public-release
-metadata-provider proof, but remains unscheduled and requires explicit
-promotion before it can enter this checkpoint.
+the normal readiness and selection rules. Issue #70 remains planned but
+unpromoted in live 1.0.0 tracking, with `Unassigned backlog` and no `F`
+designation. The selected 0.7 plan leaves #70 unchanged. Open Library #210 is
+now the Ready F09l tracker in milestone 0.7.0; this document does not
+implement it.
 
 The outcomes are not one serial chain. Readiness records the real dependencies:
 #70 supplies explainable proposals; F10b admits eligible proposals; F16a records
@@ -406,7 +498,7 @@ The current deferred product outcomes are:
 - opening-audio evidence #24; its former #104–#110 decomposition is closed
   superseded history;
 - one outcome per metadata provider: Open Library #210, LibraryThing #211,
-  Project Gutenberg #212, LibriVox #213, Audible #214, and Google Books #315;
+  Project Gutenberg #212, LibriVox #213, and Audible #214;
   the old F09c/F09d/F09e trackers #205, #206, and #208 are closed superseded;
 - bulk browser review and extended qualification #195 after the first public
   release;
@@ -418,12 +510,11 @@ The current deferred product outcomes are:
   updates, plugin loading, and other optional extensions.
 
 These outcomes stay concise and have no functional-slice designation, milestone,
-or pre-created constituents. Google Books may be promoted before publication,
-but that intent is not a schedule or designation. When an outcome is selected,
-explicitly promote that same issue and create constituents only for retained
-independently valuable increments. Closed speculative trackers, WP parents, and
-constituent forests remain historical inputs and never become current work
-automatically.
+or pre-created constituents unless explicitly selected. Open Library #210 is
+the selected exception: it is Ready F09l in milestone 0.7.0 with no
+constituents, and remains unimplemented. Closed speculative trackers, WP
+parents, and constituent forests remain historical inputs and never become
+current work automatically.
 
 ## Planning rules
 

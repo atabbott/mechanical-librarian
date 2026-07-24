@@ -1,4 +1,6 @@
-# 0.4 domain model
+# Current pre-release domain model
+
+## Metadata evidence report
 
 `MetadataReport` is one closed typed observation of one explicitly selected
 EPUB. It contains:
@@ -36,3 +38,41 @@ Every admitted EPUB occurrence, including identical values, retains source/DOM
 order through a bounded v2 occurrence ordinal in its claim identity.
 The replay guarantee applies within the exact current schema; the domain model
 does not interpret reports from prior or intermediate development schemas.
+
+## Current book catalogue
+
+One `CatalogueGeneration` is a bounded current observation across every
+configured Audiobookshelf book library. It is identified by a monotonically
+increasing generation and a deterministic configuration fingerprint and
+contains at most 10,000 `CatalogueEntry` values.
+
+Each entry has the complete connection/library/library-ID/item identity,
+bounded title and author display values, independent ebook and audio facets,
+and one ebook classification: none, singular supported EPUB, or
+needs-attention. Only a singular supported EPUB may carry the opaque file
+identity and mapped read-only path projection required by metadata reporting.
+Catalogue eligibility is an observation, not authority to inspect media or
+contact a provider.
+
+Only a completely refreshed generation becomes current. The preceding current
+generation remains readable until the atomic local pointer switch. A generation
+is a bounded observation window rather than a perpetual Audiobookshelf
+snapshot.
+
+## Foreground evidence batch
+
+One `batch-manifest-v1` document freezes an ordered set of exact catalogue
+entries. It binds the current catalogue generation and fingerprint, selected
+file identities, a secret-free report-configuration fingerprint, enabled
+provider names, and bounded call maxima. Its content digest is its identity.
+
+The manifest contains no user-facing metadata values, paths, credentials,
+report bodies, progress, attempt, or retry state. `ForegroundBatchRun`
+revalidates the current generation and exact entry before invoking the existing
+metadata report operation serially. Item outcomes plus one final summary are
+streamed to the operator; only the ordinary reports and cover artifacts are
+durable.
+
+The batch model has no queue, job, worker, scheduler, lease, resume, automatic
+retry, parallelism, proposal, review, decision, or write concept. Manual
+recovery is a fresh manifest and foreground run.

@@ -22,3 +22,7 @@ The database retains only the installed `catalogue-v1` schema. A different or
 tampered schema fails closed and requires an operator-created clean database.
 Configuration changes produce `catalogue requires refresh`; they never silently
 adapt a current generation.
+
+The current generation can be frozen into an explicit or all-eligible
+foreground evidence batch. See
+[Foreground ebook evidence batches](ebook-evidence-batches.md).

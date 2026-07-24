@@ -1,6 +1,7 @@
 # Metadata report
 
-The 0.4 runtime supports one synchronous report-only operation:
+The current runtime retains one synchronous single-item report operation
+alongside the 0.6 catalogue and foreground batch surfaces:
 
 ```text
 mechanical-librarian metadata-report \
