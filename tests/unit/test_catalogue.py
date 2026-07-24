@@ -6,10 +6,13 @@ from multiprocessing import Event, Process
 from pathlib import Path
 import os
 import sqlite3
+import json
+from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
-from mechanical_librarian.application.catalogue import CatalogueBusyError, CatalogueEntry, CatalogueStaleError, RefreshCurrentCatalogue
+from mechanical_librarian.application.catalogue import CatalogueBusyError, CatalogueEntry, CatalogueStaleError, RefreshCurrentCatalogue, catalogue_fingerprint
 from mechanical_librarian.application.configuration import ApplicationConfiguration, LibraryConfiguration, TargetConnectionConfiguration
+from mechanical_librarian.bootstrap.composition import run_catalogue
 
 
 def _entry(item: str = "item-1") -> CatalogueEntry:
@@ -86,6 +89,32 @@ class CatalogueRepositoryTests(unittest.TestCase):
             with self.assertRaises(Exception):
                 open_catalogue(link)
             self.assertNotEqual(before, altered)
+
+    def test_existing_extra_trigger_and_view_are_rejected_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalogue.sqlite"
+            repository = open_catalogue(path); repository.close()
+            connection = sqlite3.connect(path)
+            connection.execute("CREATE VIEW unexpected_view AS SELECT 1")
+            connection.execute("CREATE TRIGGER unexpected_trigger AFTER INSERT ON catalogue_schema BEGIN SELECT 1; END")
+            connection.commit(); connection.close()
+            before = path.read_bytes()
+            with self.assertRaises(Exception):
+                open_catalogue(path)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_list_projection_suppresses_paths_and_get_is_exactly_extended(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalogue.sqlite"
+            repository = open_catalogue(path)
+            repository.acquire_refresh(); repository.publish(catalogue_fingerprint(_configuration()).digest, (_entry(),)); repository.close()
+            with patch("mechanical_librarian.bootstrap.composition.load_configuration_file", return_value=_configuration()):
+                listed = json.loads(run_catalogue(Path("ignored"), path, "list", None, None, None, None))
+                got = json.loads(run_catalogue(Path("ignored"), path, "get", "primary", "books", "library-id", "item-1"))
+            public = {"connection", "library", "library_id", "item", "title", "authors", "ebook", "audio", "classification", "eligible"}
+            self.assertEqual(set(listed[0]), public)
+            self.assertTrue({"updated_at", "file_identity", "format", "service_path", "mount"}.isdisjoint(listed[0]))
+            self.assertEqual(set(got[0]), public | {"updated_at", "file_identity", "format", "service_path", "mount"})
 
 
 if __name__ == "__main__":

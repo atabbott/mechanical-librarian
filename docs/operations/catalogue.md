@@ -13,7 +13,7 @@ Later service drift is outside the generation's bounded observation window.
 
 `catalogue list` emits deterministic JSON rows and accepts `--filter` with
 `eligible`, `ineligible`, `ebook`, or `audio`. `catalogue get --connection NAME
---library NAME --item ID` emits one exact stored entry. List output never
+--library NAME --library-id LIBRARY_ID --item ID` emits one exact stored entry. List output never
 contains a path. Exact lookup can include the service-relative EPUB path; command
 errors remain value-free and logs must redact titles, authors, identities, paths,
 and credentials.

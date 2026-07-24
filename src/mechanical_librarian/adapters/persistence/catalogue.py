@@ -6,9 +6,11 @@ import json
 import os
 import sqlite3
 import stat
+import sys
 from pathlib import Path
 from urllib.parse import quote
 
+from mechanical_librarian.adapters.persistence.metadata_reports import _LinuxDirectoryChain
 from mechanical_librarian.application.catalogue import (
     CatalogueBusyError,
     CatalogueEntry,
@@ -27,26 +29,58 @@ _SQL = (
 
 class SQLiteCatalogueRepository:
     def __init__(self, path: Path) -> None:
-        self._path = path
-        if path.is_symlink() or path.parent.is_symlink() or not path.parent.is_dir():
+        self._path = path.absolute()
+        if not self._path.is_absolute() or not self._path.name:
             raise CatalogueError("catalogue database is unavailable")
-        parent = path.parent.stat()
+        self._chain = _LinuxDirectoryChain.open(self._path.parent) if sys.platform.startswith("linux") else None
+        parent = os.fstat(self._chain.parent_descriptor) if self._chain is not None else self._path.parent.stat()
         if parent.st_uid != os.geteuid() or parent.st_mode & 0o077:
+            if self._chain is not None:
+                self._chain.close()
             raise CatalogueError("catalogue database parent is unsafe")
-        exists = path.exists()
-        if exists:
-            information = path.stat()
+        descriptor = -1
+        try:
+            flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                descriptor = os.open(self._path if self._chain is None else self._path.name, flags, **({} if self._chain is None else {"dir_fd": self._chain.parent_descriptor}))
+                exists = True
+            except FileNotFoundError:
+                descriptor = os.open(self._path if self._chain is None else self._path.name, flags | os.O_CREAT | os.O_EXCL, 0o600, **({} if self._chain is None else {"dir_fd": self._chain.parent_descriptor}))
+                exists = False
+            information = os.fstat(descriptor)
             if not stat.S_ISREG(information.st_mode) or information.st_uid != os.geteuid() or information.st_mode & 0o022:
                 raise CatalogueError("catalogue database is unsafe")
-            self._validate_existing_readonly()
-        self._connection = sqlite3.connect(path, timeout=0, isolation_level=None)
-        try:
+            if exists:
+                self._validate_existing_readonly()
+            self._require_bound_name(information)
+            self._connection = sqlite3.connect(self._path, timeout=0, isolation_level=None)
+            self._require_bound_name(information)
             self._connection.execute("PRAGMA foreign_keys = ON")
             self._verify_or_create()
             self._connection.execute("PRAGMA journal_mode = WAL")
         except Exception:
-            self._connection.close()
+            if hasattr(self, "_connection"):
+                self._connection.close()
+            if self._chain is not None:
+                self._chain.close()
             raise
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+
+    def _require_bound_name(self, expected: os.stat_result) -> None:
+        if self._chain is None:
+            actual = self._path.lstat()
+            if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+                raise CatalogueError("catalogue database pathname changed while opening")
+            return
+        current = self._chain.open_current_parent()
+        try:
+            actual = os.stat(self._path.name, dir_fd=current, follow_symlinks=False)
+        finally:
+            os.close(current)
+        if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+            raise CatalogueError("catalogue database pathname changed while opening")
 
     def _validate_existing_readonly(self) -> None:
         connection = sqlite3.connect(f"file:{quote(str(self._path))}?mode=ro", uri=True, timeout=0, isolation_level=None)
@@ -56,7 +90,7 @@ class SQLiteCatalogueRepository:
             connection.close()
 
     def _verify_or_create(self) -> None:
-        rows = self._connection.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('table','index') AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
+        rows = self._connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
         if not rows:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -70,15 +104,18 @@ class SQLiteCatalogueRepository:
             return
         self._validate_schema(self._connection, rows)
 
-    def _validate_schema(self, connection: sqlite3.Connection, rows: list[tuple[str, str]] | None = None) -> None:
-        rows = rows if rows is not None else connection.execute("SELECT name, sql FROM sqlite_master WHERE type IN ('table','index') AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
-        expected = {
-            "catalogue_schema": _SQL[0], "catalogue_generations": _SQL[1],
-            "catalogue_one_current": _SQL[2], "catalogue_entries": _SQL[3],
-        }
-        actual = {name: sql for name, sql in rows}
+    def _validate_schema(self, connection: sqlite3.Connection, rows: list[tuple[str, str, str | None]] | None = None) -> None:
+        rows = rows if rows is not None else connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
+        expected = sorted((
+            ("index", "catalogue_one_current", _SQL[2]),
+            ("index", "sqlite_autoindex_catalogue_entries_1", None),
+            ("index", "sqlite_autoindex_catalogue_schema_1", None),
+            ("table", "catalogue_entries", _SQL[3]),
+            ("table", "catalogue_generations", _SQL[1]),
+            ("table", "catalogue_schema", _SQL[0]),
+        ))
         canonical = lambda value: " ".join(value.replace(";", "").split()).lower()
-        if actual.keys() != expected.keys() or any(type(actual[name]) is not str or canonical(actual[name]) != canonical(expected[name]) for name in expected) or connection.execute("SELECT version FROM catalogue_schema").fetchall() != [(_SCHEMA,)] or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)] or connection.execute("PRAGMA foreign_key_check").fetchall():
+        if len(rows) != len(expected) or any(actual[:2] != expected_item[:2] or (actual[2] is None) != (expected_item[2] is None) or actual[2] is not None and canonical(actual[2]) != canonical(expected_item[2]) for actual, expected_item in zip(rows, expected, strict=True)) or connection.execute("SELECT version FROM catalogue_schema").fetchall() != [(_SCHEMA,)] or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)] or connection.execute("PRAGMA foreign_key_check").fetchall():
             raise CatalogueError("catalogue schema is unsupported")
 
     def acquire_refresh(self) -> None:
@@ -119,7 +156,11 @@ class SQLiteCatalogueRepository:
             raise CatalogueError("catalogue state is invalid") from None
 
     def close(self) -> None:
-        self._connection.close()
+        try:
+            self._connection.close()
+        finally:
+            if self._chain is not None:
+                self._chain.close()
 
 
 def open_catalogue(path: Path) -> SQLiteCatalogueRepository:
