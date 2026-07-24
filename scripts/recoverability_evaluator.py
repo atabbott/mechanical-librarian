@@ -24,6 +24,14 @@ PROFILES = {
     "gold-50-v1": {
         "population": {"supported": 405, "exploratory": 94},
         "readable": {"supported": 397, "exploratory": 92},
+        "fields": {
+            "title": (50, 49), "subtitle": (10, 10), "creator": (50, 49),
+            "contributor": (36, 36), "publisher": (47, 46),
+            "language": (50, 49), "publication_date": (50, 49),
+            "identifier": (47, 46), "collection": (36, 35),
+            "collection_position": (29, 28), "edition": (47, 46),
+            "rights": (47, 46),
+        },
     },
 }
 FLOORS = {"title": (47, 49), "creator": (47, 49), "language": (48, 49), "overall_matches": (257, 405), "precision": (801775, 1_000_000), "false_positive": (85366, 1_000_000)}
@@ -109,6 +117,11 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
     for name, fields in (("supported", SUPPORTED), ("exploratory", EXPLORATORY)):
         denominator = sum(sum(matrices[name][field].values()) for field in fields)
         if denominator != PROFILES[document["profile"]]["readable"][name]: raise ValueError("profile denominator drift")
+        expected_fields = PROFILES[document["profile"]].get("fields")
+        if expected_fields is not None:
+            for field in fields:
+                if sum(matrices[name][field].values()) != expected_fields[field][1]:
+                    raise ValueError("profile field denominator drift")
         views[name] = {"name": name, "evaluated_fields": list(fields), "denominator": denominator, "by_field": matrices[name], "categories": {category: sum(matrices[name][field][category] for field in fields) for category in CATEGORIES}}
     isbn = Counter({relation: 0 for relation in ISBN_RELATIONS})
     for observation in observations:
