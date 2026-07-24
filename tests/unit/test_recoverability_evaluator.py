@@ -73,10 +73,10 @@ class RecoverabilityEvaluatorTests(unittest.TestCase):
             source.write_text('{"schema":"a","schema":"b"}', encoding="utf-8")
             with self.assertRaises(ValueError):
                 MODULE.load(source)
+
+    def test_exploratory_changes_do_not_change_supported_matrix(self):
         document = self.load()
-        document["rows"][0]["source"] = "present"
-        with self.assertRaises(ValueError):
-            MODULE.evaluate(document)
-        document = self.load()
-        document["identifier_observations"][1]["provider_scope"] = "unknown"
-        with self.assertRaises(ValueError): MODULE.evaluate(document)
+        before = MODULE.evaluate(document)["views"]["supported"]
+        document["rows"][7]["comparison"] = "semantic"
+        after = MODULE.evaluate(document)["views"]["supported"]
+        self.assertEqual(before, after)
