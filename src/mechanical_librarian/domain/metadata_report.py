@@ -21,7 +21,7 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 
 
-REPORT_SCHEMA = "metadata-report-v3"
+REPORT_SCHEMA = "metadata-report-v4"
 COMPARISON_VERSION = "same-kind-v1"
 # F09j's report contract admits rich, source-attributed candidates.  The
 # physical SQLite schema separately fingerprints this exact shape, so an F09i
@@ -458,10 +458,12 @@ class ProviderClaim:
 @dataclass(frozen=True, slots=True)
 class ProviderCandidate:
     identity: str
+    work_identity: str
     claims: tuple[ProviderClaim, ...]
 
     def __post_init__(self) -> None:
         _text(self.identity, "provider candidate identity", 128)
+        _text(self.work_identity, "provider candidate work identity", 128)
         if type(self.claims) is not tuple or any(type(value) is not ProviderClaim for value in self.claims):
             raise ReportValueError("provider candidate claims are invalid")
         references = tuple(value.reference for value in self.claims)
@@ -471,7 +473,7 @@ class ProviderCandidate:
             raise ReportValueError("provider candidate claims are not in raw source order")
 
     def to_data(self) -> dict[str, object]:
-        return {"claims": [value.to_data() for value in self.claims], "identity": self.identity}
+        return {"claims": [value.to_data() for value in self.claims], "identity": self.identity, "work_identity": self.work_identity}
 
 
 @dataclass(frozen=True, slots=True)
@@ -798,8 +800,8 @@ def _provider_from_data(value: object) -> ProviderObservation:
 
 
 def _candidate_from_data(value: object) -> ProviderCandidate:
-    item = _object(value, {"claims", "identity"})
-    return ProviderCandidate(item["identity"], tuple(_provider_claim_from_data(claim) for claim in _list(item["claims"])))
+    item = _object(value, {"claims", "identity", "work_identity"})
+    return ProviderCandidate(item["identity"], item["work_identity"], tuple(_provider_claim_from_data(claim) for claim in _list(item["claims"])))
 
 
 def _provider_claim_from_data(value: object) -> ProviderClaim:

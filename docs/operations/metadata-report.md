@@ -142,7 +142,8 @@ cover request chains. Disabled references produce one `disabled` observation
 without secret access or egress. Unreferenced providers are absent.
 
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
-bounded set is `candidates`; all candidates survive in provider-identity order.
+bounded set is `candidates`; all candidates survive in provider-identity order
+with their distinct edition identity and opaque provider-local work identity.
 The fixed request asks for one row beyond the retained cap so overflow remains
 observable. Malformed or oversized provider fields remain explicit field-local
 claims; structural or join failures make the observation `malformed`. No

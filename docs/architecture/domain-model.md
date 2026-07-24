@@ -11,7 +11,8 @@ EPUB. It contains:
   applicable, rear-spine provenance;
 - a local `candidate` or `no_candidate` status with bounded reasons; and
 - independent provider observations with stable input references and zero or
-  more provider-identity-ordered candidates.
+  more provider-identity-ordered candidates, each with an opaque provider-local
+  work identity distinct from its edition identity.
 
 The local field vocabulary is title/subtitle, creator/contributor and role,
 series/sequence, ISBN, date, publisher/imprint, description, language, and

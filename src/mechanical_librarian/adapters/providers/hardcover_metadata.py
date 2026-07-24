@@ -127,9 +127,10 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
             raise ValueError("provider unreferenced work")
         used.add(book_id)
         identity = f"hardcover-edition-{edition_id:010d}"
+        work_identity = f"hardcover-work-{book_id:010d}"
         claims = _edition_claims(provider, identity, row, local_claims)
         claims.extend(_work_claims(provider, identity, indexed[book_id], local_claims, len(claims)))
-        candidates.append(ProviderCandidate(identity, tuple(claims)))
+        candidates.append(ProviderCandidate(identity, work_identity, tuple(claims)))
     if used != set(indexed) or len({candidate.identity for candidate in candidates}) != len(candidates):
         raise ValueError("provider join invalid")
     return tuple(sorted(candidates, key=lambda candidate: candidate.identity))

@@ -63,7 +63,7 @@ def _report(title: str = "Current title") -> MetadataReport:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v3'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v4'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -1119,6 +1119,50 @@ class ProviderAdapterTests(unittest.TestCase):
                     [candidate.identity for candidate in observation.candidates],
                     sorted(candidate.identity for candidate in observation.candidates),
                 )
+
+    def test_candidate_work_identity_is_joined_bounded_and_provider_local(self) -> None:
+        same_work = hardcover_metadata._parse_candidates(
+            json.dumps(self._envelope(
+                [
+                    {"id": 2, "book_id": 10, "isbn_10": None, "isbn_13": None},
+                    {"id": 1, "book_id": 10, "isbn_10": None, "isbn_13": None},
+                ],
+                [{"id": 10, "title": None}],
+            )).encode(),
+            "catalogue",
+            (),
+        )
+        self.assertEqual(
+            [candidate.identity for candidate in same_work],
+            ["hardcover-edition-0000000001", "hardcover-edition-0000000002"],
+        )
+        self.assertEqual(
+            {candidate.work_identity for candidate in same_work},
+            {"hardcover-work-0000000010"},
+        )
+        different_works = hardcover_metadata._parse_candidates(
+            json.dumps(self._envelope(
+                [
+                    {"id": 1, "book_id": 10, "isbn_10": None, "isbn_13": None},
+                    {"id": 2, "book_id": 20, "isbn_10": None, "isbn_13": None},
+                ],
+                [{"id": 10, "title": None}, {"id": 20, "title": None}],
+            )).encode(),
+            "catalogue",
+            (),
+        )
+        self.assertEqual(
+            {candidate.work_identity for candidate in different_works},
+            {"hardcover-work-0000000010", "hardcover-work-0000000020"},
+        )
+        for malformed in (0, True, 2_147_483_648, "10"):
+            with self.subTest(malformed=malformed):
+                payload = self._envelope(
+                    [{"id": 1, "book_id": malformed, "isbn_10": None, "isbn_13": None}],
+                    [{"id": 1, "title": None}],
+                )
+                with self.assertRaises(ValueError):
+                    hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())
 
     def test_sparse_candidate_is_valid_but_result_cap_overflow_is_malformed(self) -> None:
         sparse = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None}]))))
