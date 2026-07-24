@@ -26,7 +26,7 @@ class RecoverabilityEvaluatorTests(unittest.TestCase):
         self.assertEqual(set(supported["categories"]), set(MODULE.CATEGORIES))
         self.assertEqual(sum(supported["categories"].values()), supported["readable_denominator"])
         self.assertEqual(result["excluded"], {state: 1 for state in MODULE.EXCLUDED})
-        self.assertEqual(result["isbn"]["counts"], {relation: 1 for relation in MODULE.ISBN_RELATIONS})
+        self.assertEqual(result["isbn"]["counts"], {"accepted": 1, "associated": 2, "unrelated": 1, "invalid": 1, "unresolved": 1})
         self.assertEqual(result["isbn"]["accepted_recall"], {"numerator": 1, "denominator": 6})
         self.assertEqual(result["inspection_failure_subtypes"], {"whole_item": 1, "extraction_stage": 0})
 
@@ -71,7 +71,7 @@ class RecoverabilityEvaluatorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE.evaluate(changed)
         changed = copy.deepcopy(document)
-        changed["identifier_observations"].append(copy.deepcopy(changed["identifier_observations"][0]))
+        changed["identifier_observations"][5]["slot"] = 0
         with self.assertRaises(ValueError):
             MODULE.evaluate(changed)
 

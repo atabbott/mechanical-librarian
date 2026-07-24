@@ -49,17 +49,18 @@ SYNTHETIC_FIELDS = {
 }
 PROFILES = {
     "synthetic-v1": {"fields": SYNTHETIC_FIELDS, "identifier_targets": 6,
-                     "identifier_observations": 5, "candidate_rows": 5,
+                     "identifier_observations": 6, "candidate_rows": 5,
                      "negative_rows": 2},
     "gold-50-v1": {"fields": GOLD_FIELDS, "identifier_targets": 47,
-                    "identifier_observations": 44, "candidate_rows": 344,
+                    "identifier_observations": 68, "observed_identifier_targets": 44, "candidate_rows": 344,
                     "negative_rows": 82},
 }
 # These are frozen lower/upper bounds, while current metrics are derived from
 # the matrices and candidate evidence supplied to this run.
 FROZEN_BASELINE = {
     "title_matches": 47, "creator_matches": 47, "language_matches": 48,
-    "matched_rows": 253, "precision": (277, 344), "false_positive": (7, 82),
+    "identifier_matches": 41, "matched_rows": 257,
+    "precision": (801775, 1_000_000), "false_positive": (85366, 1_000_000),
 }
 MAX_BYTES = 1_000_000
 MAX_ROWS = 2_000
@@ -230,8 +231,7 @@ def _identifier_metrics(
         slot = observation["slot"]
         target_slot = observation["target_slot"]
         if (type(slot) is not int or type(target_slot) is not int or slot < 0
-                or target_slot not in observed_targets or slot in observation_slots
-                or target_slot in observed_by_evidence):
+                or target_slot not in observed_targets or slot in observation_slots):
             raise ValueError("detached identifier observation")
         relation = observation["relation"]
         evidence = (
@@ -248,7 +248,9 @@ def _identifier_metrics(
         observation_slots.add(slot)
         observed_by_evidence.add(target_slot)
         counts[relation] += 1
-    if observation_slots != set(range(len(observations))) or observed_by_evidence != observed_targets:
+    if (observation_slots != set(range(len(observations)))
+            or observed_by_evidence != observed_targets
+            or len(observed_targets) != profile.get("observed_identifier_targets", len(observed_targets))):
         raise ValueError("identifier observations are detached")
     observation_denominator = len(observations)
     target_denominator = len(targets)
@@ -256,7 +258,10 @@ def _identifier_metrics(
         "counts": dict(counts),
         "observation_denominator": observation_denominator,
         "target_denominator": target_denominator,
-        "accepted_recall": _rate(counts["accepted"], target_denominator),
+        "accepted_recall": _rate(
+            len({item["target_slot"] for item in observations if item["relation"] == "accepted"}),
+            target_denominator,
+        ),
         "associated_yield": _rate(counts["associated"], observation_denominator),
         "unrelated_rate": _rate(counts["unrelated"], observation_denominator),
         "invalid_rate": _rate(counts["invalid"], observation_denominator),
@@ -292,6 +297,7 @@ def _regression(
         "title_matches": by_field["title"]["matched_complete"] + by_field["title"]["matched_partial"],
         "creator_matches": by_field["creator"]["matched_complete"] + by_field["creator"]["matched_partial"],
         "language_matches": by_field["language"]["matched_complete"] + by_field["language"]["matched_partial"],
+        "identifier_matches": by_field["identifier"]["matched_complete"] + by_field["identifier"]["matched_partial"],
         "matched_rows": supported["categories"]["matched_complete"] + supported["categories"]["matched_partial"],
         "candidate_matches": matched_candidates,
         "candidate_denominator": len(candidate_rows),
@@ -303,6 +309,7 @@ def _regression(
         "title": controls["title_matches"] >= FROZEN_BASELINE["title_matches"],
         "creator": controls["creator_matches"] >= FROZEN_BASELINE["creator_matches"],
         "language": controls["language_matches"] >= FROZEN_BASELINE["language_matches"],
+        "identifier": controls["identifier_matches"] >= FROZEN_BASELINE["identifier_matches"],
         "matched-rows": controls["matched_rows"] >= FROZEN_BASELINE["matched_rows"],
         "candidate-precision": (
             controls["candidate_matches"] * FROZEN_BASELINE["precision"][1]
@@ -407,7 +414,16 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
         "excluded": dict(excluded),
         "inspection_failure_subtypes": dict(failure_subtypes),
         "exploratory_recoverable_recall": _rate(
-            recovered, exploratory["readable_denominator"]
+            recovered,
+            sum(
+                values[category]
+                for values in exploratory["by_field"].values()
+                for category in (
+                    "extracted_not_projected", "normalization_mismatch",
+                    "semantic_mismatch", "matched_partial", "matched_complete",
+                    "inspection_failure",
+                )
+            ),
         ),
         "isbn": isbn,
         "regression": regression,

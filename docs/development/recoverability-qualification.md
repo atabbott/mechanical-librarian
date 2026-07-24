@@ -42,7 +42,8 @@ not independent corroboration and does not turn a different identifier into a
 metadata match. Missing provider work identity remains unresolved.
 
 Exploratory recoverable-evidence recall is the matched-complete plus
-matched-partial exploratory rows over that view's readable denominator.
+matched-partial exploratory rows over rows with source evidence present; source
+absence and whole-item unavailability do not dilute this recall denominator.
 Recommendations are deterministic, count-only entries with a field, category,
 and bounded scope for nonzero projection, normalization, or semantic gaps.
 
