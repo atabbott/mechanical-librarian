@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add the read-only current Audiobookshelf book catalogue with bounded refresh,
+  deterministic inspection, and config-v3 schema.
+
+## Unreleased
+
 - Add report-only, source-attributed ABS, EPUB-declared, and bounded Hardcover
   cover evidence. Valid JPEG, PNG, and static WebP inputs produce private
   content-addressed originals and deterministic offline preview artifacts; no

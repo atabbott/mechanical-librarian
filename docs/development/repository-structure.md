@@ -17,7 +17,7 @@ src/mechanical_librarian/
 Tests are grouped into unit, integration, and static architecture suites.
 Synthetic EPUBs are generated in memory; no media files or production payloads
 are committed. `scripts/generate_configuration_schema.py` is the sole product
-generator and must reproduce `docs/reference/config-v2.schema.json`.
+generator and must reproduce `docs/reference/config-v3.schema.json`.
 
 The dependency direction and responsibilities are defined by the
 [architecture overview](../architecture/overview.md). Empty packages for

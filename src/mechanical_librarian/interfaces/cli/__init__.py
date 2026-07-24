@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 import unicodedata
@@ -15,16 +14,15 @@ from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
     CurrentnessError,
-    MetadataReportError,
     UnsupportedMediaError,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport, ReportValueError
-
 
 Runner = Callable[[Path, Path, Path, str, str, str, int], str]
 ReopenRunner = Callable[[Path, str], str]
 CurrentReopenRunner = Callable[[Path, str, str, str, str], str]
 PreviewRunner = Callable[[Path, Path, str, str, str], bytes]
+CatalogueRunner = Callable[[Path, Path, str, str | None, str | None, str | None, str | None, int], str]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -85,6 +83,16 @@ def _parser() -> _Parser:
     preview.add_argument("--report-id", required=True, metavar="REPORT_ID", type=_report_id)
     preview.add_argument("--artifact-id", required=True, metavar="ARTIFACT_ID", type=_artifact_id)
     preview.add_argument("--preview-variant", required=True, metavar="VARIANT", type=_preview_variant)
+    catalogue = commands.add_parser("catalogue", help="refresh or inspect the current book catalogue")
+    catalogue.add_argument("--config", required=True, metavar="PATH", type=Path)
+    catalogue.add_argument("--database", required=True, metavar="PATH", type=Path)
+    catalogue.add_argument("action", choices=("refresh", "list", "get"))
+    catalogue.add_argument("--connection", type=_name)
+    catalogue.add_argument("--library", type=_name)
+    catalogue.add_argument("--library-id", type=_item)
+    catalogue.add_argument("--item", type=_item)
+    catalogue.add_argument("--filter", choices=("eligible", "ineligible", "ebook", "audio"))
+    catalogue.add_argument("--limit", type=_catalogue_limit, default=100)
     return parser
 
 
@@ -106,7 +114,17 @@ def _preview_variant(value: str) -> str:
     return value
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def _catalogue_limit(value: str) -> int:
+    try:
+        result = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("invalid catalogue limit") from error
+    if not 1 <= result <= 500:
+        raise argparse.ArgumentTypeError("invalid catalogue limit")
+    return result
+
+
+def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     try:
@@ -114,6 +132,20 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
     except _ArgumentFailure:
         errors.write("Metadata report failed: invalid invocation.\n")
         return 2
+    if arguments.command == "catalogue":
+        if catalogue_runner is None or (arguments.action == "get" and None in (arguments.connection, arguments.library, arguments.library_id, arguments.item)):
+            errors.write("Catalogue failed safely.\n")
+            return 1
+        try:
+            serialized = catalogue_runner(arguments.config, arguments.database, arguments.action, arguments.connection, arguments.library, arguments.library_id, arguments.item if arguments.action == "get" else arguments.filter, arguments.limit)
+        except (ConfigurationError, CredentialError):
+            errors.write("Catalogue failed: configuration or credential unavailable.\n")
+            return 3
+        except Exception:
+            errors.write("Catalogue failed safely.\n")
+            return 1
+        output.write(serialized + "\n")
+        return 0
     if arguments.command == "metadata-report-cover-preview":
         if preview_runner is None or getattr(output, "isatty", lambda: False)():
             errors.write("Metadata report failed safely.\n")

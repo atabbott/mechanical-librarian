@@ -50,14 +50,6 @@
           "title": "Library Id",
           "type": "string"
         },
-        "media_kind": {
-          "enum": [
-            "ebook",
-            "audiobook"
-          ],
-          "title": "Media Kind",
-          "type": "string"
-        },
         "mount": {
           "anyOf": [
             {
@@ -89,7 +81,6 @@
         "name",
         "connection",
         "library_id",
-        "media_kind",
         "mount",
         "provider_connections"
       ],
@@ -261,7 +252,7 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "config-v2",
+      "const": "config-v3",
       "title": "Schema Version",
       "type": "string"
     }

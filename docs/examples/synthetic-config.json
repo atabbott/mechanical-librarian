@@ -1,5 +1,5 @@
 {
-  "schema_version": "config-v2",
+  "schema_version": "config-v3",
   "connections": [
     {
       "name": "primary",
@@ -13,7 +13,6 @@
       "name": "ebooks",
       "connection": "primary",
       "library_id": "01234567-89ab-4def-8123-456789abcdef",
-      "media_kind": "ebook",
       "mount": "books",
       "provider_connections": ["hardcover-main"]
     }

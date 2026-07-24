@@ -49,6 +49,7 @@ def target_client(endpoint: str, secret_file: str, timeout_seconds: int) -> http
     if not _target_origin_allowed(endpoint):
         raise CredentialError("target endpoint is invalid")
     return httpx.Client(
+        base_url=endpoint.rstrip("/"),
         auth=_TargetAuth(endpoint.rstrip("/"), read_secret(secret_file)),
         follow_redirects=False,
         trust_env=False,
@@ -76,7 +77,11 @@ class _TargetAuth(httpx.Auth):
         self._token = token
 
     def auth_flow(self, request):
-        if request.method == "GET" and request.url.scheme == self._origin.scheme and request.url.host == self._origin.host and request.url.port == self._origin.port and re.fullmatch(r"/api/items/[^/]+", request.url.path):
+        if request.method == "GET" and request.url.scheme == self._origin.scheme and request.url.host == self._origin.host and request.url.port == self._origin.port and (
+            request.url.path == "/api/libraries"
+            or re.fullmatch(r"/api/libraries/[^/]+/items", request.url.path)
+            or re.fullmatch(r"/api/items/[^/]+", request.url.path)
+        ):
             request.headers["Authorization"] = f"Bearer {self._token}"
         yield request
 

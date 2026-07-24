@@ -3,7 +3,7 @@
 The current installed contract is intentionally narrow:
 
 - Python 3.13 or 3.14;
-- `config-v2` only;
+- `config-v3` only;
 - an absent database or the installed increment's exact current report schema;
 - Audiobookshelf current-item responses for explicitly configured book
   libraries;

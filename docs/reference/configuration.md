@@ -1,8 +1,8 @@
 # Configuration reference
 
 `metadata-report` accepts one strict UTF-8 JSON document with schema version
-`config-v2`. Unknown and duplicate fields are rejected. The generated schema is
-[`config-v2.schema.json`](config-v2.schema.json) and is regenerated with:
+`config-v3`. Unknown and duplicate fields are rejected. The generated schema is
+[`config-v3.schema.json`](config-v3.schema.json) and is regenerated with:
 
 ```text
 uv run --frozen python scripts/generate_configuration_schema.py
@@ -12,7 +12,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
 
 ```json
 {
-  "schema_version": "config-v2",
+  "schema_version": "config-v3",
   "connections": [
     {
       "name": "primary",
@@ -26,7 +26,6 @@ uv run --frozen python scripts/generate_configuration_schema.py
       "name": "ebooks",
       "connection": "primary",
       "library_id": "01234567-89ab-4def-8123-456789abcdef",
-      "media_kind": "ebook",
       "mount": "books",
       "provider_connections": ["hardcover-main"]
     }
