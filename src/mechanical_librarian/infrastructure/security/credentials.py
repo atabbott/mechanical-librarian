@@ -46,11 +46,15 @@ def read_secret(path_value: str) -> str:
 
 
 def target_client(endpoint: str, secret_file: str, timeout_seconds: int) -> httpx.Client:
+    return target_client_token(endpoint, read_secret(secret_file), timeout_seconds)
+
+
+def target_client_token(endpoint: str, token: str, timeout_seconds: int) -> httpx.Client:
     if not _target_origin_allowed(endpoint):
         raise CredentialError("target endpoint is invalid")
     return httpx.Client(
         base_url=endpoint.rstrip("/"),
-        auth=_TargetAuth(endpoint.rstrip("/"), read_secret(secret_file)),
+        auth=_TargetAuth(endpoint.rstrip("/"), token),
         follow_redirects=False,
         trust_env=False,
         verify=True,
@@ -60,8 +64,12 @@ def target_client(endpoint: str, secret_file: str, timeout_seconds: int) -> http
 
 
 def hardcover_client(secret_file: str, timeout_seconds: int, *, transport: httpx.BaseTransport | None = None) -> httpx.Client:
+    return hardcover_client_token(read_secret(secret_file), timeout_seconds, transport=transport)
+
+
+def hardcover_client_token(token: str, timeout_seconds: int, *, transport: httpx.BaseTransport | None = None) -> httpx.Client:
     return httpx.Client(
-        auth=_HardcoverAuth(read_secret(secret_file)),
+        auth=_HardcoverAuth(token),
         follow_redirects=False,
         trust_env=False,
         verify=True,
@@ -108,4 +116,4 @@ def _target_origin_allowed(value: str) -> bool:
         return False
 
 
-__all__ = ["hardcover_client", "read_secret", "target_client"]
+__all__ = ["hardcover_client", "hardcover_client_token", "read_secret", "target_client", "target_client_token"]

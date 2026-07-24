@@ -85,7 +85,10 @@ from mechanical_librarian.infrastructure.local_media import (
 )
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client,
+    hardcover_client_token,
+    read_secret,
     target_client,
+    target_client_token,
 )
 from mechanical_librarian.interfaces.cli import main as cli_main
 
@@ -266,12 +269,17 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     # Validate the separately authorized private store before credentials or
     # network clients are constructed.  It must already be operator-created.
     configuration = load_configuration_file(config_path)
+    return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
+
+
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None) -> str:
+    """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
         raise UnsupportedMediaError("unsupported media")
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     target = AudiobookshelfItemReader(
-        client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds),
+        client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds) if credentials is None else target_client_token(connection.endpoint, credentials[connection.name], configuration.limits.timeout_seconds),
         endpoint=connection.endpoint,
         library_id=library.library_id,
         service_path=mount.service_path,
@@ -285,7 +293,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
                 raise MetadataReportError("provider credential unavailable")
             return HardcoverMetadataProvider(
                 value.name,
-                hardcover_client(value.secret_file, configuration.limits.timeout_seconds),
+                hardcover_client(value.secret_file, configuration.limits.timeout_seconds) if credentials is None else hardcover_client_token(credentials[value.name], configuration.limits.timeout_seconds),
                 configuration.limits.provider_response_bytes,
                 configuration.limits.timeout_seconds,
             )
@@ -380,12 +388,12 @@ def preview_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, 
     raw = batch_manifest(snapshot, batch_fingerprint(configuration, selections), selections, providers)
     create_batch_manifest(manifest_path, raw)
     value = parse_manifest(raw)
-    return json.dumps({"id": value["id"], "entries": len(selections), "target_observations": len(selections), "provider_metadata": len(selections) * len(providers)}, separators=(",", ":"))
+    return json.dumps({"id": value["id"], "entries": len(selections), **value["call_maxima"]}, separators=(",", ":"))
 
 
 def inspect_batch(manifest_path: Path) -> str:
     value = parse_manifest(read_batch_manifest(manifest_path))
-    return json.dumps({"id": value["id"], "entries": len(value["entries"]), "target_observations": value["call_maxima"]["target_observations"], "provider_metadata": value["call_maxima"]["provider_metadata"]}, separators=(",", ":"))
+    return json.dumps({"id": value["id"], "entries": len(value["entries"]), **value["call_maxima"]}, separators=(",", ":"))
 
 
 def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, manifest_id: str, database_path: Path, artifact_store_path: Path) -> str:
@@ -397,6 +405,10 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     selections = tuple(BatchSelection(raw["connection"], raw["library"], raw["library_id"], raw["item"], raw["file_identity"], raw["classification"], raw["eligible"]) for raw in value["entries"])
     if batch_fingerprint(configuration, selections) != value["batch_config_fingerprint"]:
         raise BatchError("batch configuration changed")
+    selected_connections = {selection.connection for selection in selections}
+    selected_provider_names = set(value["providers"])
+    credentials = {item.name: read_secret(item.secret_file) for item in configuration.connections if item.name in selected_connections}
+    credentials.update({item.name: read_secret(item.secret_file) for item in configuration.providers if item.name in selected_provider_names and item.secret_file is not None})
     repository = open_catalogue(catalogue_path, create=False)
     try:
         snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))
@@ -412,7 +424,7 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
         finally:
             repository.close()
     def report(entry):
-        serialized = run_metadata_report(config_path, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity)
+        serialized = run_metadata_report_loaded(configuration, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity, credentials)
         return json.loads(serialized)["report_id"]
     summary = ForegroundBatchRun(snapshot=snapshot, selections=selections, projection=lambda: batch_fingerprint(configuration, selections), expected_projection=value["batch_config_fingerprint"], current_entry=current_entry, report=report, emit=lambda line: output.append(json.dumps(line, separators=(",", ":")))).run()
     output.append(json.dumps({"summary": {**summary, "entries": len(selections)}}, separators=(",", ":")))

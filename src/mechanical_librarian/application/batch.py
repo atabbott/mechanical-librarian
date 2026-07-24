@@ -16,7 +16,7 @@ class BatchError(RuntimeError):
     """Value-free batch preparation or execution failure."""
 
 
-MAX_MANIFEST_BYTES = 4_194_304
+MAX_MANIFEST_BYTES = 64 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +76,7 @@ def select(snapshot: CatalogueSnapshot, requested: tuple[tuple[str, str, str, st
     if all_eligible == bool(requested) or len(requested) > 10_000:
         raise BatchError("batch selection is invalid")
     values = {(entry.connection, entry.library, entry.library_id, entry.item_id): entry for entry in snapshot.entries}
-    keys = tuple(key for key, entry in values.items() if entry.eligible) if all_eligible else requested
+    keys = tuple(sorted(key for key, entry in values.items() if entry.eligible)) if all_eligible else requested
     if len(keys) > 10_000 or len(set(keys)) != len(keys):
         raise BatchError("batch selection is invalid")
     try:
@@ -108,7 +108,7 @@ def parse_manifest(raw: bytes) -> dict[str, object]:
         raise BatchError("batch manifest is invalid")
     try:
         _depth(raw)
-        value = json.loads(raw.decode("utf-8", "strict"))
+        value = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=_unique, parse_constant=_reject_constant)
     except (UnicodeError, ValueError, RecursionError):
         raise BatchError("batch manifest is invalid") from None
     if type(value) is not dict or set(value) != {"schema", "id", "catalogue_generation", "catalogue_fingerprint", "batch_config_fingerprint", "entries", "providers", "call_maxima"} or value.get("schema") != "batch-manifest-v1" or not _digest(value.get("id")):
@@ -120,7 +120,7 @@ def parse_manifest(raw: bytes) -> dict[str, object]:
     if type(body["catalogue_generation"]) is not int or body["catalogue_generation"] < 1 or not _digest(body["catalogue_fingerprint"]) or not _digest(body["batch_config_fingerprint"]) or type(body["entries"]) is not list or len(body["entries"]) > 10_000 or type(body["providers"]) is not list or any(type(item) is not str or not 1 <= len(item) <= 64 for item in body["providers"]) or tuple(body["providers"]) != tuple(sorted(set(body["providers"]))) or body["call_maxima"] != _maxima(len(body["entries"]), len(body["providers"])):
         raise BatchError("batch manifest is invalid")
     for entry in body["entries"]:
-        if type(entry) is not dict or set(entry) != {"connection", "library", "library_id", "item", "file_identity", "classification", "eligible"} or any(type(entry[key]) is not str or not 1 <= len(entry[key]) <= 512 for key in ("connection", "library", "library_id", "item")) or entry["file_identity"] is not None and not _digest(entry["file_identity"]) or entry["classification"] not in {"none", "singular-supported", "needs-attention"} or type(entry["eligible"]) is not bool or entry["eligible"] != (entry["classification"] == "singular-supported"):
+        if type(entry) is not dict or set(entry) != {"connection", "library", "library_id", "item", "file_identity", "classification", "eligible"} or not _entry_valid(entry):
             raise BatchError("batch manifest is invalid")
     return value
 
@@ -130,7 +130,7 @@ def _digest(value: object) -> bool:
 
 
 def _maxima(entries: int, providers: int) -> dict[str, int]:
-    return {"target_item_observations": entries * 2, "target_cover_observations": entries, "provider_metadata": entries * providers, "remote_cover_requests": entries * providers * 4}
+    return {"target_item_observations": entries * 6, "target_raw_cover_requests": entries * 4, "provider_metadata": entries * providers, "remote_cover_requests": entries * providers * 5 * 4}
 
 
 def _depth(raw: bytes) -> None:
@@ -144,8 +144,30 @@ def _depth(raw: bytes) -> None:
         elif byte in (91, 123):
             level += 1
             if level > 100: raise ValueError
-        elif byte in (93, 125): level -= 1
+        elif byte in (93, 125):
+            level -= 1
+            if level < 0: raise ValueError
     if quoted or level != 0: raise ValueError
+
+
+def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value: raise ValueError
+        value[key] = item
+    return value
+
+
+def _reject_constant(_: str) -> float:
+    raise ValueError
+
+
+def _entry_valid(entry: dict[str, object]) -> bool:
+    if type(entry["connection"]) is not str or not entry["connection"].isascii() or not 1 <= len(entry["connection"]) <= 64 or type(entry["library"]) is not str or not entry["library"].isascii() or not 1 <= len(entry["library"]) <= 64 or type(entry["library_id"]) is not str or not 1 <= len(entry["library_id"]) <= 128 or type(entry["item"]) is not str or not 1 <= len(entry["item"]) <= 512:
+        return False
+    identity = entry["file_identity"]; classification = entry["classification"]; eligible = entry["eligible"]
+    if classification == "singular-supported": return type(eligible) is bool and (identity is None or _digest(identity))
+    return eligible is False and identity is None
 
 
 __all__ = ["BatchError", "BatchSelection", "CatalogueSnapshot", "CatalogueSnapshotReader", "MAX_MANIFEST_BYTES", "batch_fingerprint", "catalogue_fingerprint", "manifest", "parse_manifest", "select"]

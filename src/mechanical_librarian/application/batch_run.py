@@ -20,13 +20,13 @@ class ForegroundBatchRun:
         for selection in self._selections:
             if self._projection() != self._expected_projection:
                 self._emit({"item": selection.item, "outcome": "stopped"})
-                return {"completed": completed, "skipped": skipped, "failed": failed}
+                return {"completed": completed, "skipped": skipped, "failed": failed, "stopped": 1}
             key = (selection.connection, selection.library, selection.library_id, selection.item)
             try:
                 entry = self._current_entry(self._snapshot.generation, self._snapshot.fingerprint, key)
             except CatalogueStaleError:
                 self._emit({"item": selection.item, "outcome": "stopped"})
-                return {"completed": completed, "skipped": skipped, "failed": failed}
+                return {"completed": completed, "skipped": skipped, "failed": failed, "stopped": 1}
             if entry is None or entry.file_identity != selection.file_identity or entry.classification != selection.classification or entry.eligible != selection.eligible:
                 skipped += 1; self._emit({"item": selection.item, "outcome": "stale"}); continue
             if not entry.eligible or entry.file_identity is None:
@@ -36,13 +36,15 @@ class ForegroundBatchRun:
             except CurrentnessError:
                 skipped += 1; self._emit({"item": selection.item, "outcome": "stale"}); continue
             except CredentialError:
-                self._emit({"item": selection.item, "outcome": "stopped"}); return {"completed": completed, "skipped": skipped, "failed": failed}
-            except (UnsupportedMediaError, MetadataReportError):
+                self._emit({"item": selection.item, "outcome": "stopped"}); return {"completed": completed, "skipped": skipped, "failed": failed, "stopped": 1}
+            except UnsupportedMediaError:
                 failed += 1; self._emit({"item": selection.item, "outcome": "item_failed"}); continue
+            except MetadataReportError:
+                self._emit({"item": selection.item, "outcome": "stopped"}); return {"completed": completed, "skipped": skipped, "failed": failed, "stopped": 1}
             except Exception:
-                self._emit({"item": selection.item, "outcome": "stopped"}); return {"completed": completed, "skipped": skipped, "failed": failed}
+                self._emit({"item": selection.item, "outcome": "stopped"}); return {"completed": completed, "skipped": skipped, "failed": failed, "stopped": 1}
             completed += 1; self._emit({"item": selection.item, "outcome": "completed", "report": report})
-        return {"completed": completed, "skipped": skipped, "failed": failed}
+        return {"completed": completed, "skipped": skipped, "failed": failed, "stopped": 0}
 
 
 __all__ = ["ForegroundBatchRun"]
