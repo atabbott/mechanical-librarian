@@ -129,7 +129,7 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
         if type(fmt) is not str:
             extension = metadata_file.get("ext") if type(metadata_file) is dict else None
             fmt = extension[1:] if type(extension) is str and extension.startswith(".") else None
-        if type(fmt) is not str or fmt.lower() != "epub" or type(ino) is not str or not 1 <= len(ino) <= 256 or type(relative) is not str or not relative or posixpath.normpath(relative) != relative or relative.startswith("/") or "" in relative.split("/") or "." in relative.split("/") or ".." in relative.split("/"):
+        if type(fmt) is not str or fmt.lower() != "epub" or type(ino) is not str or not 1 <= len(ino) <= 256 or type(relative) is not str or not 1 <= len(relative) <= 1024 or posixpath.normpath(relative) != relative or relative.startswith("/") or "" in relative.split("/") or "." in relative.split("/") or ".." in relative.split("/"):
             classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None
         else:
             size = metadata_file.get("size")

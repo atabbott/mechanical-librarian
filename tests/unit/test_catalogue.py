@@ -9,14 +9,14 @@ import sqlite3
 import json
 from unittest.mock import patch
 
-from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
-from mechanical_librarian.application.catalogue import CatalogueBusyError, CatalogueEntry, CatalogueStaleError, RefreshCurrentCatalogue, catalogue_fingerprint
+from mechanical_librarian.adapters.persistence.catalogue import SQLiteCatalogueRepository, open_catalogue
+from mechanical_librarian.application.catalogue import CatalogueBusyError, CatalogueEntry, CatalogueError, CatalogueStaleError, RefreshCurrentCatalogue, catalogue_fingerprint
 from mechanical_librarian.application.configuration import ApplicationConfiguration, LibraryConfiguration, TargetConnectionConfiguration
 from mechanical_librarian.bootstrap.composition import run_catalogue
 
 
-def _entry(item: str = "item-1") -> CatalogueEntry:
-    return CatalogueEntry("primary", "books", "library-id", item, 1, "Title", ("Author",), True, False, "singular-supported", "a" * 64, "book.epub", "epub", "books")
+def _entry(item: str = "item-1", *, title: str = "Title", author: str = "Author", path: str = "book.epub") -> CatalogueEntry:
+    return CatalogueEntry("primary", "books", "library-id", item, 1, title, (author,), True, False, "singular-supported", "a" * 64, path, "epub", "books")
 
 
 class _BlockingReader:
@@ -35,7 +35,7 @@ def _configuration() -> ApplicationConfiguration:
 
 
 def _hold_refresh_lock(path: str, ready: Event, release: Event) -> None:
-    repository = open_catalogue(Path(path))
+    repository = open_catalogue(Path(path), create=True)
     try:
         RefreshCurrentCatalogue(_BlockingReader(ready, release), repository).refresh(_configuration())
     finally:
@@ -46,7 +46,7 @@ class CatalogueRepositoryTests(unittest.TestCase):
     def test_atomic_current_switch_and_stale_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"
-            repository = open_catalogue(path)
+            repository = open_catalogue(path, create=True)
             repository.acquire_refresh()
             self.assertEqual(repository.publish("a" * 64, (_entry(),)), 1)
             self.assertEqual(repository.inspect("a" * 64), (_entry(),))
@@ -57,7 +57,7 @@ class CatalogueRepositoryTests(unittest.TestCase):
     def test_cross_process_second_refresh_is_nonblocking_busy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"
-            first = open_catalogue(path)
+            first = open_catalogue(path, create=True)
             first.close()
             ready = Event(); release = Event()
             holder = Process(target=_hold_refresh_lock, args=(str(path), ready, release))
@@ -75,7 +75,7 @@ class CatalogueRepositoryTests(unittest.TestCase):
     def test_existing_altered_schema_and_symlink_are_rejected_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"
-            repository = open_catalogue(path); repository.close()
+            repository = open_catalogue(path, create=True); repository.close()
             before = path.read_bytes()
             connection = sqlite3.connect(path)
             connection.execute("DROP INDEX catalogue_one_current")
@@ -93,7 +93,7 @@ class CatalogueRepositoryTests(unittest.TestCase):
     def test_existing_extra_trigger_and_view_are_rejected_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"
-            repository = open_catalogue(path); repository.close()
+            repository = open_catalogue(path, create=True); repository.close()
             connection = sqlite3.connect(path)
             connection.execute("CREATE VIEW unexpected_view AS SELECT 1")
             connection.execute("CREATE TRIGGER unexpected_trigger AFTER INSERT ON catalogue_schema BEGIN SELECT 1; END")
@@ -106,7 +106,7 @@ class CatalogueRepositoryTests(unittest.TestCase):
     def test_list_projection_suppresses_paths_and_get_is_exactly_extended(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"
-            repository = open_catalogue(path)
+            repository = open_catalogue(path, create=True)
             repository.acquire_refresh(); repository.publish(catalogue_fingerprint(_configuration()).digest, (_entry(),)); repository.close()
             with patch("mechanical_librarian.bootstrap.composition.load_configuration_file", return_value=_configuration()):
                 listed = json.loads(run_catalogue(Path("ignored"), path, "list", None, None, None, None))
@@ -119,7 +119,7 @@ class CatalogueRepositoryTests(unittest.TestCase):
     def test_replacement_during_refresh_fails_before_publication_and_keeps_prior_current(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"
-            repository = open_catalogue(path)
+            repository = open_catalogue(path, create=True)
             repository.acquire_refresh(); repository.publish("a" * 64, (_entry(),))
             repository.acquire_refresh()
             replacement = Path(directory) / "replacement.sqlite"; replacement.write_bytes(b"replacement")
@@ -128,6 +128,52 @@ class CatalogueRepositoryTests(unittest.TestCase):
                 repository.publish("a" * 64, (_entry("item-2"),))
             self.assertEqual(repository.inspect("a" * 64), (_entry(),))
             repository.close()
+
+    def test_refresh_retains_one_generation_and_publication_failure_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalogue.sqlite"
+            repository = open_catalogue(path, create=True)
+            original = _entry(title="Prior title", author="Prior author", path="prior.epub")
+            current = _entry("item-2", title="Current title", author="Current author", path="current.epub")
+            repository.acquire_refresh(); repository.publish("a" * 64, (original,))
+            repository.acquire_refresh(); repository.publish("a" * 64, (current,))
+            self.assertEqual(repository._connection.execute("SELECT generation,current FROM catalogue_generations").fetchall(), [(2, 1)])
+            self.assertEqual(repository._connection.execute("SELECT title,authors,service_path FROM catalogue_entries").fetchall(), [("Current title", '["Current author"]', "current.epub")])
+            repository.acquire_refresh()
+            with patch.object(repository, "_require_bound_name", side_effect=[None, CatalogueError("catalogue publication failed")]):
+                with self.assertRaises(CatalogueError):
+                    repository.publish("a" * 64, (_entry("item-3"),))
+            self.assertEqual(repository.inspect("a" * 64), (current,))
+            repository.close()
+
+    def test_inspection_never_creates_an_absent_or_deleted_catalogue(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "catalogue.sqlite"
+            with patch("mechanical_librarian.bootstrap.composition.load_configuration_file", return_value=_configuration()):
+                for action, values in (("list", (None, None, None, None)), ("get", ("primary", "books", "library-id", "item-1"))):
+                    with self.assertRaises(CatalogueStaleError):
+                        run_catalogue(Path("ignored"), path, action, *values)
+                    self.assertFalse(path.exists())
+            open_catalogue(path, create=True).close()
+            original = SQLiteCatalogueRepository._require_bound_name
+            def remove_after_binding(repository: SQLiteCatalogueRepository, identity: os.stat_result) -> None:
+                original(repository, identity)
+                path.unlink()
+            with patch.object(SQLiteCatalogueRepository, "_require_bound_name", new=remove_after_binding):
+                with self.assertRaises(CatalogueStaleError):
+                    open_catalogue(path)
+            self.assertFalse(path.exists())
+
+    def test_exact_get_rejects_zero_and_multiple_matches(self) -> None:
+        class Repository:
+            def __init__(self, entries: tuple[CatalogueEntry, ...]) -> None:
+                self.entries = entries
+            def inspect(self, _: str) -> tuple[CatalogueEntry, ...]:
+                return self.entries
+        exact = ("primary", "books", "library-id", "item-1")
+        for entries in ((), (_entry(), _entry())):
+            with self.assertRaises(CatalogueError):
+                RefreshCurrentCatalogue(None, Repository(entries)).inspect(_configuration(), exact=exact)
 
 
 if __name__ == "__main__":

@@ -6,9 +6,9 @@ import unittest
 
 import httpx
 
-from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import AudiobookshelfCatalogueReader, _get
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import AudiobookshelfCatalogueReader, _entry as catalogue_entry, _get
 from mechanical_librarian.application.catalogue import CatalogueError
-from mechanical_librarian.application.configuration import LibraryConfiguration
+from mechanical_librarian.application.configuration import LibraryConfiguration, MediaMountConfiguration
 from mechanical_librarian.domain.metadata_report import canonical_json
 
 
@@ -66,6 +66,26 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
         reader = AudiobookshelfCatalogueReader(client_factory=lambda _: httpx.Client(transport=httpx.MockTransport(handler), base_url="https://abs.invalid"), mounts={}, maximum_bytes=65_536, timeout_seconds=1)
         with self.assertRaises(CatalogueError):
             reader.read_library("primary", _library(), 10)
+
+    def test_path_only_mapping_matches_item_identity_and_enforces_relative_bounds(self) -> None:
+        mount = MediaMountConfiguration("books", "/library", "/media", True)
+        summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        def detail(path: str) -> dict[str, object]:
+            return {**_item(), "media": {"metadata": {"title": "Title", "authors": [{"name": "Ada"}]}, "ebookFile": {"ebookFormat": "epub", "ino": "inode", "metadata": {"path": path, "size": 7}}}}
+        entry = catalogue_entry("primary", _library(), mount, summary, detail("/media/books/title.epub"))
+        expected = hashlib.sha256(canonical_json({"format": "epub", "inode": "inode", "relative": "books/title.epub", "size": 7}).encode("utf-8")).hexdigest()
+        self.assertEqual((entry.eligible, entry.file_identity, entry.service_path), (True, expected, "books/title.epub"))
+        for relative, classification in (("a" * 1024, "singular-supported"), ("a" * 1025, "needs-attention")):
+            value = catalogue_entry("primary", _library(), mount, summary, detail("/media/" + relative))
+            self.assertEqual((value.classification, value.eligible), (classification, classification == "singular-supported"))
+        self.assertFalse(catalogue_entry("primary", _library(), mount, summary, detail("/outside/book.epub")).eligible)
+
+    def test_empty_plural_is_none_and_plural_values_need_attention(self) -> None:
+        summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        for plural, expected in (([], (False, "none")), ([{}], (True, "needs-attention")), ([{}, {}], (True, "needs-attention"))):
+            detail = {**_item(), "media": {"metadata": {"title": "Title", "authors": []}, "ebookFiles": plural}}
+            entry = catalogue_entry("primary", _library(), None, summary, detail)
+            self.assertEqual((entry.has_ebook, entry.classification), expected)
 
 
 if __name__ == "__main__":
