@@ -1,5 +1,32 @@
 # 0.7.0 metadata qualification scope
 
+## Status
+
+The 0.7.0 checkpoint is the completed qualified ebook metadata-matching
+programme. It did not add a provider or widen the report-only product boundary.
+The resulting delivery units are:
+
+| Unit | Resulting state | Delivered outcome |
+| --- | --- | --- |
+| #319 | Done | Fixed the supported qualification vocabulary and excluded edition and rights from the supported regression view. |
+| #320 | Done | Classified remaining aggregate evidence gaps by recoverability without creating implementation tickets from every mismatch. |
+| #321 | Done | Preserved validated package and opening evidence when the optional rear pass exhausts its resource budget. |
+| #324 | Done | Preserved bounded provider-local work identity independently from edition identity. |
+| F09n #328 | Done | Classified retained ISBN evidence as accepted, associated, unrelated, invalid, or unresolved without discarding claims. |
+| F07c #322 | Done | Excluded package `bkp` production credits from bibliographic contributors and admitted one strictly bounded paragraph series-position cue. |
+| F06a #323 | Done | Admitted standards-valid signed-offset publication date-times with event-specific applicability. |
+| F09m #327 | Done | Preserved explicit publisher and imprint roles separately without inferring a hierarchy. |
+| #325 | Done at reconciliation merge | Reconciled the completed 0.7.0 checkpoint and independent 0.8.0 provider plan. |
+
+The final installed-wheel aggregate retained 49 reports from the 50-case
+qualification cohort, with the known malformed EPUB remaining an expected item
+failure. Relative to the accepted F09n baseline, matched rows increased from
+258 to 266, complete rows from 230 to 238, candidate-atom precision from
+0.805233 to 0.819484, and explicit-negative false positives fell from 7 to 0.
+Title, creator, language, identifier, supported population, and the report-only
+safety boundary did not regress. These figures are aggregate qualification
+results, not release promises or private corpus artifacts.
+
 ## Decision
 
 For the 0.7.0 qualified ebook metadata-matching checkpoint, **edition** and
@@ -45,17 +72,17 @@ recomputed supported-only aggregate is 64.7355% readable any-match,
 figures: no row, title, identifier, path, excerpt, digest, credential, or
 private report belongs in this repository.
 
-The next private evaluator run must:
+The delivered private evaluator now:
 
-1. replace its hard-coded all-fields evaluation set with the closed supported
+1. replaces its hard-coded all-fields evaluation set with the closed supported
    vocabulary for the regression view;
-2. exclude both fields consistently from every supported numerator,
+2. excludes both fields consistently from every supported numerator,
    denominator, candidate-precision calculation, per-field result, and gate;
-3. retain a separately labelled exploratory aggregate with no supported gate;
-4. record fresh supported-only thresholds from the recomputed baseline,
+3. retains a separately labelled exploratory aggregate with no supported gate;
+4. records fresh supported-only thresholds from the recomputed baseline,
    including the existing title, creator, language, identifier, precision, and
    explicit-negative controls; and
-5. fail if a purported supported result includes either field or if the
+5. fails if a purported supported result includes either field or if the
    reported field set and denominators disagree.
 
 Synthetic fixtures must prove both exclusions with positive, negative, and

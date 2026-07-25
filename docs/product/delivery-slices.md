@@ -389,9 +389,41 @@ foreground run.
   queue, worker, resume, automatic retry, parallelism, write, tag, or release
   authority is introduced.
 
-## Proposed delivery checkpoint 0.7.0: independent multi-provider ebook evidence
+## Delivery checkpoint 0.7.0: qualified ebook metadata matching
 
-The [0.7.0 working plan](0-7-working-plan.md) recommends adding Open Library as
+This completed report-only checkpoint restored and qualified trustworthy ebook
+metadata matching against the aggregate 50-case cohort. Its bounded sequence
+was #319, #320, #321, #324, F09n #328, F07c #322, F06a #323, F09m #327, then
+the focused planning reconciliation #325.
+
+The programme fixed the supported scoring vocabulary, classified remaining
+gaps by recoverability, preserved evidence across the optional rear-pass limit,
+retained provider work identity, classified ISBN relationships, improved
+contributor and series evidence precision, admitted signed-offset publication
+dates, and kept explicit publisher and imprint roles distinct. It added no
+provider, proposal, review, apply, write, hierarchy inference, generic scoring
+engine, cache, retry, scheduler, or plugin framework.
+
+### 0.7.0 checkpoint exit
+
+- the installed-wheel aggregate improves matched rows from 258 to 266 and
+  complete rows from 230 to 238 relative to the accepted F09n baseline;
+- candidate-atom precision improves from 0.805233 to 0.819484 and
+  explicit-negative false positives fall from 7 to 0;
+- title, creator, language, identifier, and supported-population controls do
+  not regress;
+- every delivery unit #319, #320, #321, #322, #323, #324, #327, #328, and
+  #325 is complete; and
+- the runtime remains report-only and the checkpoint creates no tag, release,
+  publication artifact, or production-write authority.
+
+Numeric figures are qualification results rather than promises for unrelated
+future work. Each promoted unit carried its own minimum measurable gate and
+published its actual aggregate result.
+
+## Proposed delivery checkpoint 0.8.0: independent multi-provider ebook evidence
+
+The [0.8.0 working plan](0-8-working-plan.md) recommends adding Open Library as
 a second real metadata adapter and proving that the completed 0.6 report and
 foreground-batch boundaries preserve independent Hardcover and Open Library
 observations. Exact ISBN evidence, candidate identity, lineage, failure,
@@ -421,7 +453,7 @@ foreground lifecycle with a fixed ceiling and single-attempt posture rather
 than adding a cache, retry, scheduler, rate-policy language, or provider-cost
 framework.
 
-Open Library #210 is the assigned Ready F09l tracker in milestone 0.7.0. It is
+Open Library #210 is the assigned Ready F09l tracker in milestone 0.8.0. It is
 a one-issue vertical slice: configuration, schema, adapter, covers, batch
 participation, proof, and documentation do not become separate constituents.
 This documentation change does not implement that future checkpoint.
@@ -438,7 +470,7 @@ recreated.
 
 | Outcome | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
-| Explainable field proposals and policy | #70 | Current provenance-bearing evidence produces deterministic field-level proposals and closed explainable policy dispositions without review or write authority. | Live tracking remains a planned but unpromoted 1.0 outcome. The proposed 0.7 working plan leaves this issue unchanged while the second-provider seam is proved first. |
+| Explainable field proposals and policy | #70 | Current provenance-bearing evidence produces deterministic field-level proposals and closed explainable policy dispositions without review or write authority. | Live tracking remains a planned but unpromoted 1.0 outcome. The proposed 0.8 working plan leaves this issue unchanged while the second-provider seam is proved first. |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Retained planned designation. |
 | F10b Production review admission | #240 | One qualifying current proposal becomes a durable undecided production review case with exact freshness, evidence, replay, and supersession proof. | Retained planned designation. |
 | F11 Isolated AI shadow recommendation | #147 | An isolated reviewer returns one bounded closed-schema recommendation per selected proposal without credentials, provider payloads, or apply authority. | Retained planned designation. |
@@ -452,8 +484,8 @@ The retained `F` IDs are planned designations on the assigned outcome issues,
 not proof of `Ready` status or authority to begin. Each tracker still must meet
 the normal readiness and selection rules. Issue #70 remains planned but
 unpromoted in live 1.0.0 tracking, with `Unassigned backlog` and no `F`
-designation. The selected 0.7 plan leaves #70 unchanged. Open Library #210 is
-now the Ready F09l tracker in milestone 0.7.0; this document does not
+designation. The selected 0.8 plan leaves #70 unchanged. Open Library #210 is
+now the Ready F09l tracker in milestone 0.8.0; this document does not
 implement it.
 
 The outcomes are not one serial chain. Readiness records the real dependencies:
@@ -511,7 +543,7 @@ The current deferred product outcomes are:
 
 These outcomes stay concise and have no functional-slice designation, milestone,
 or pre-created constituents unless explicitly selected. Open Library #210 is
-the selected exception: it is Ready F09l in milestone 0.7.0 with no
+the selected exception: it is Ready F09l in milestone 0.8.0 with no
 constituents, and remains unimplemented. Closed speculative trackers, WP
 parents, and constituent forests remain historical inputs and never become
 current work automatically.

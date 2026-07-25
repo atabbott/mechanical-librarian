@@ -132,7 +132,7 @@ The current 1.0 outcome set is #70, F08 #144, F10b #240, F11 #147, F15a
 planned designations rather than `Ready` status. Issue #70 remains unassigned
 as a planned but unpromoted outcome with target release and milestone `1.0.0`;
 it has no `F` designation and must be explicitly promoted before delivery.
-Open Library #210 is the selected 0.7.0 Ready slice tracker, while the other
+Open Library #210 is the selected 0.8.0 Ready slice tracker, while the other
 deferred provider outcomes remain outside this checkpoint. Closed WP parents,
 provider trackers, and constituent forests are historical planning inputs, not
 current delivery work. The authoritative outcome definitions are in the
@@ -202,10 +202,29 @@ Exit: an operator can discover a current configured book catalogue and run the
 complete evidence operation for selected or all eligible EPUBs without gaining
 proposal, review, decision, write, or background authority.
 
-### Planned 0.7.0 independent multi-provider ebook evidence checkpoint
+### Completed 0.7.0 qualified ebook metadata-matching checkpoint
 
-The [0.7.0 working plan](0-7-working-plan.md) records the selected next step
-after 0.6: add Open Library as a second real metadata adapter and prove
+- #319 fixed the supported qualification vocabulary; #320 classified remaining
+  evidence gaps by recoverability.
+- #321 preserved validated evidence across optional rear-pass exhaustion; #324
+  retained provider-local work identity independently from edition identity.
+- F09n #328 classified ISBN evidence relationships without discarding claims.
+- F07c #322 improved contributor precision and one bounded series-position cue;
+  F06a #323 admitted standards-valid signed-offset publication dates.
+- F09m #327 preserved explicit publisher and imprint roles without hierarchy
+  inference; focused #325 reconciled the resulting plans.
+- Relative to the accepted F09n aggregate baseline, matched rows finish at 266
+  from 258, complete rows at 238 from 230, candidate-atom precision at
+  0.819484 from 0.805233, and explicit-negative false positives at 0 from 7.
+
+Exit: the qualified report-only matching programme is complete without adding a
+provider, proposal, review, decision, mutation, generic scoring framework,
+background operation, tag, or release.
+
+### Planned 0.8.0 independent multi-provider ebook evidence checkpoint
+
+The [0.8.0 working plan](0-8-working-plan.md) records the independent next
+provider outcome: add Open Library as a second real metadata adapter and prove
 that one immutable report preserves independent local, Hardcover, and Open
 Library evidence. Provider order, failure, absence, malformed or incomplete
 data, and contradiction remain separate canonical observations rather than
@@ -233,7 +252,7 @@ uses the existing foreground batch lifecycle with a fixed ceiling and
 single-attempt posture; it adds no cache, retry, scheduling, rate-policy, or
 provider-cost framework.
 
-Live tracking assigns Open Library #210 to milestone 0.7.0 as Ready F09l.
+Live tracking assigns Open Library #210 to milestone 0.8.0 as Ready F09l.
 It remains a one-issue vertical slice with no pre-created constituents; this
 documentation change does not implement it. Issue #70 remains a separate
 planned but unpromoted 1.0.0 outcome.
