@@ -133,8 +133,7 @@ The extractor admits only an explicit `Book|Volume N[.N] of|in Series`
 statement as a local series-and-position cue. An unqualified trailing
 `Series Name Book|Volume N[.N]` form is not admitted because it cannot be
 distinguished proportionately from directives, promotions, and story prose.
-Word or Roman-numeral positions and trailing text are likewise not admitted by
-this cue.
+Word or Roman-numeral positions are likewise not admitted by this cue.
 
 ### Navigation and structure
 
