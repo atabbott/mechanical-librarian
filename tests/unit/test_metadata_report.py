@@ -1011,8 +1011,11 @@ class MetadataReportTests(unittest.TestCase):
         for kind in (ClaimKind.PUBLICATION_DATE, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE):
             self.assertEqual(claim_scope(kind), ClaimScope.EDITION)
         local = LocalClaim.create(kind=ClaimKind.PUBLISHER, observed="Press", canonical="Press", excerpt="Press", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=claim_scope(ClaimKind.PUBLISHER))
+        imprint = LocalClaim.create(kind=ClaimKind.IMPRINT, observed="Press", canonical="Press", excerpt="Press", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=claim_scope(ClaimKind.IMPRINT))
         provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.PUBLISHER, value="Press", state=FieldState.VALID, scope=ClaimScope.EDITION, applicability="not_applicable")
-        self.assertEqual(comparison_links(provider, (local,)), (ComparisonLink(local.reference, Comparison.AGREEMENT),))
+        provider_imprint = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.IMPRINT, value="Press", state=FieldState.VALID, scope=ClaimScope.EDITION, applicability="not_applicable")
+        self.assertEqual(comparison_links(provider, (local, imprint)), (ComparisonLink(local.reference, Comparison.AGREEMENT),))
+        self.assertEqual(comparison_links(provider_imprint, (local, imprint)), (ComparisonLink(imprint.reference, Comparison.AGREEMENT),))
 
     def test_non_valid_title_sentinel_cannot_become_canonical(self) -> None:
         sentinel = "unsafe-source-text-sha256:" + "a" * 64

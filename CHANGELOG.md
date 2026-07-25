@@ -44,6 +44,8 @@
   paragraph-only `Series Name Book|Volume N[.N]` opening-matter cue.
 - Admit standards-valid signed-offset publication date-times from structured
   EPUB package metadata while preserving lexical values and event typing.
+- Preserve explicit opening-matter publisher and imprint evidence as distinct
+  edition roles through inspection, immutable reports, replay, and comparison.
 - Require every 0.5 increment to accept only an absent database or its exact
   current schema. Prior and intermediate schemas are rejected without mutation;
   same-schema exact-ID/current-scope replay remains available, and recovery is a

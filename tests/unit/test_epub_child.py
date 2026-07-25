@@ -48,6 +48,7 @@ from mechanical_librarian.domain.identifiers import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind, FieldState, FileFacts, LocalClaim, MetadataReport, TargetFacts,
+    claim_scope,
 )
 from tests.support.epub_packages import EPUB2_PACKAGE, EPUB3_PACKAGE, _opening_epub, _opening_package, _xhtml, epub_bytes, opening_resource_limit
 
@@ -761,6 +762,88 @@ class EpubChildRearSpineTests(unittest.TestCase):
         claims = tuple(LocalClaim.create(kind=ClaimKind(fact.field.value), observed=fact.observed_value, canonical=fact.canonical_value, excerpt=fact.supporting_context, applicability=fact.media, checksum=fact.checksum, applicability_basis=fact.classification_basis, basis=fact.basis, state=FieldState(fact.state), role=fact.role) for fact in inspection.facts if fact.field.value in {"creator", "contributor"})
         report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=claims, local_reasons=("opening_matter",), providers=())
         self.assertEqual({field.kind: field.state for field in report.field_results if field.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}}, {ClaimKind.CREATOR: FieldState.VALID, ClaimKind.CONTRIBUTOR: FieldState.VALID})
+
+    def test_child_preserves_explicit_publisher_and_imprint_as_distinct_report_fields(self) -> None:
+        package = _opening_package(
+            items=(("opening", "opening.xhtml", "application/xhtml+xml", ""),),
+            spine=("opening",),
+        )
+        value = _opening_epub(
+            package=package,
+            entries=(
+                (
+                    "EPUB/opening.xhtml",
+                    _xhtml(
+                        '<section epub:type="copyright-page">'
+                        '<p epub:type="publisher">Example House</p>'
+                        '<p epub:type="imprint">Example Imprint</p>'
+                        "</section>"
+                    ),
+                    8,
+                ),
+            ),
+        )
+        inspection = self._inspect_in_child(value)
+        edition_facts = tuple(
+            fact
+            for fact in inspection.facts
+            if fact.basis == "opening_matter"
+            and fact.field in {
+                EpubInspectionField.PUBLISHER,
+                EpubInspectionField.IMPRINT,
+            }
+        )
+        self.assertEqual(
+            [(fact.field, fact.canonical_value) for fact in edition_facts],
+            [
+                (EpubInspectionField.PUBLISHER, "Example House"),
+                (EpubInspectionField.IMPRINT, "Example Imprint"),
+            ],
+        )
+        self.assertEqual(EpubInspection.from_json(inspection.to_json()), inspection)
+
+        claims = tuple(
+            LocalClaim.create(
+                kind=ClaimKind(fact.field.value),
+                observed=fact.observed_value,
+                canonical=fact.canonical_value,
+                excerpt=fact.supporting_context,
+                applicability=fact.media,
+                checksum=fact.checksum,
+                applicability_basis=fact.classification_basis,
+                basis=fact.basis,
+                scope=claim_scope(ClaimKind(fact.field.value)),
+                state=FieldState(fact.state),
+                occurrence=occurrence,
+            )
+            for occurrence, fact in enumerate(edition_facts, 1)
+        )
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=claims,
+            local_reasons=("opening_matter",),
+            providers=(),
+        )
+        replayed = MetadataReport.from_json(report.to_json())
+        self.assertEqual(
+            [(claim.kind, claim.canonical) for claim in replayed.local_claims],
+            [
+                (ClaimKind.PUBLISHER, "Example House"),
+                (ClaimKind.IMPRINT, "Example Imprint"),
+            ],
+        )
+        self.assertEqual(
+            {
+                field.kind: field.state
+                for field in replayed.field_results
+                if field.kind in {ClaimKind.PUBLISHER, ClaimKind.IMPRINT}
+            },
+            {
+                ClaimKind.PUBLISHER: FieldState.VALID,
+                ClaimKind.IMPRINT: FieldState.VALID,
+            },
+        )
 
 
 if __name__ == "__main__":

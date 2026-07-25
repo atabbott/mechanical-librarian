@@ -126,6 +126,9 @@ F07a opening matter supports:
 
 Only the minimum supporting text is retained. Story prose adjacent to front
 matter is not automatically evidence of title, author, edition, or series.
+When both publisher and imprint are explicit, the local projection preserves
+their source order and separate edition roles. It does not infer a hierarchy,
+promote one role into the other, or compare unlike roles.
 Alongside an explicit `Book N of/in Series` statement, the extractor admits the
 complete text of a short paragraph in the form
 `Series Name Book|Volume N[.N]`. The series name is limited to six
