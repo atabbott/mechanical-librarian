@@ -12,10 +12,11 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 from dataclasses import asdict, dataclass
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import BinaryIO, Protocol
 from zipfile import BadZipFile, ZipFile, ZipInfo
 
 
@@ -23,7 +24,10 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_SHA = re.compile(r"^[0-9a-f]{40}$")
 _MAX_WHEEL_BYTES = 67_108_864
 _MAX_WHEEL_MEMBERS = 4_096
+_MAX_WHEEL_MEMBER_BYTES = 16_777_216
 _MAX_INSTALLED_BYTES = 134_217_728
+_MAX_METADATA_BYTES = 1_048_576
+_MAX_COMMAND_STREAM_BYTES = 1_048_576
 _COMMAND_TIMEOUT_SECONDS = 180
 
 
@@ -82,30 +86,17 @@ def qualify_exact_artifact(
     if not source_root.is_dir() or not (source_root / "pyproject.toml").is_file():
         raise QualificationFailure("source_repository_invalid")
 
-    actual_root = _run(
-        ("git", "-C", str(source_root), "rev-parse", "--show-toplevel"),
+    actual_root = _decode_stdout(
+        _run(
+            ("git", "-C", str(source_root), "rev-parse", "--show-toplevel"),
+            reason="source_repository_invalid",
+        ),
+        encoding="utf-8",
         reason="source_repository_invalid",
-    ).stdout.decode("utf-8", "strict").strip()
+    ).strip()
     if Path(actual_root).resolve() != source_root:
         raise QualificationFailure("source_repository_invalid")
-    actual_sha = _run(
-        ("git", "-C", str(source_root), "rev-parse", "HEAD"),
-        reason="source_identity_unavailable",
-    ).stdout.decode("ascii", "strict").strip()
-    if actual_sha != expected_source_sha:
-        raise QualificationFailure("source_identity_mismatch")
-    if _run(
-        (
-            "git",
-            "-C",
-            str(source_root),
-            "status",
-            "--porcelain=v1",
-            "--untracked-files=all",
-        ),
-        reason="source_cleanliness_unavailable",
-    ).stdout:
-        raise QualificationFailure("source_not_clean")
+    actual_sha = _verify_source_checkout(source_root, expected_source_sha)
 
     environment = {
         key: value
@@ -121,6 +112,33 @@ def qualify_exact_artifact(
         prefix="mechanical-librarian-exact-artifact-"
     ) as temporary:
         root = Path(temporary)
+        build_source = root / "source"
+        _run(
+            (
+                "git",
+                "clone",
+                "--no-local",
+                "--no-checkout",
+                "--quiet",
+                str(source_root),
+                str(build_source),
+            ),
+            reason="source_snapshot_failed",
+        )
+        _run(
+            (
+                "git",
+                "-C",
+                str(build_source),
+                "checkout",
+                "--detach",
+                "--quiet",
+                expected_source_sha,
+            ),
+            reason="source_snapshot_failed",
+        )
+        _verify_source_checkout(build_source, expected_source_sha)
+
         run_directory = root / "run"
         run_directory.mkdir()
         retained = wheel_output is not None
@@ -142,10 +160,11 @@ def qualify_exact_artifact(
                 "--out-dir",
                 str(output),
             ),
-            cwd=source_root,
+            cwd=build_source,
             env=environment,
             reason="wheel_build_failed",
         )
+        _verify_source_checkout(build_source, expected_source_sha)
         wheels = tuple(output.glob("*.whl"))
         if len(wheels) != 1:
             raise QualificationFailure("wheel_selection_invalid")
@@ -182,17 +201,21 @@ def qualify_exact_artifact(
             reason="wheel_install_failed",
         )
 
-        purelib_text = _run(
-            (
-                str(environment_python),
-                "-I",
-                "-c",
-                "import sysconfig; print(sysconfig.get_paths()['purelib'])",
+        purelib_text = _decode_stdout(
+            _run(
+                (
+                    str(environment_python),
+                    "-I",
+                    "-c",
+                    "import sysconfig; print(sysconfig.get_paths()['purelib'])",
+                ),
+                cwd=run_directory,
+                env=environment,
+                reason="installed_environment_invalid",
             ),
-            cwd=run_directory,
-            env=environment,
+            encoding="utf-8",
             reason="installed_environment_invalid",
-        ).stdout.decode("utf-8", "strict").strip()
+        ).strip()
         purelib = Path(purelib_text).resolve()
         (
             wheel_payload_sha256,
@@ -216,7 +239,9 @@ def qualify_exact_artifact(
             or not os.access(console, os.X_OK)
         ):
             raise QualificationFailure("installed_console_invalid")
-        if run_directory.resolve().is_relative_to(source_root):
+        if run_directory.resolve().is_relative_to(
+            source_root
+        ) or run_directory.resolve().is_relative_to(build_source):
             raise QualificationFailure("outside_checkout_invalid")
         completed = _run(
             (str(console), *console_args),
@@ -225,6 +250,7 @@ def qualify_exact_artifact(
             reason="installed_console_failed",
         )
         console_stdout_sha256 = hashlib.sha256(completed.stdout).hexdigest()
+        _verify_source_checkout(source_root, expected_source_sha)
 
     return ExactArtifactEvidence(
         schema="exact-artifact-evidence-v1",
@@ -246,6 +272,33 @@ def qualify_exact_artifact(
     )
 
 
+def _verify_source_checkout(source_root: Path, expected_source_sha: str) -> str:
+    actual_sha = _decode_stdout(
+        _run(
+            ("git", "-C", str(source_root), "rev-parse", "HEAD"),
+            reason="source_identity_unavailable",
+        ),
+        encoding="ascii",
+        reason="source_identity_unavailable",
+    ).strip()
+    if actual_sha != expected_source_sha:
+        raise QualificationFailure("source_identity_mismatch")
+    status = _run(
+        (
+            "git",
+            "-C",
+            str(source_root),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        ),
+        reason="source_cleanliness_unavailable",
+    ).stdout
+    if status:
+        raise QualificationFailure("source_not_clean")
+    return actual_sha
+
+
 def _run(
     command: tuple[str, ...],
     *,
@@ -254,21 +307,94 @@ def _run(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=cwd,
             env=env,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            check=False,
-            timeout=_COMMAND_TIMEOUT_SECONDS,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError:
         raise QualificationFailure(reason) from None
-    if completed.returncode != 0:
+
+    stdout = bytearray()
+    stderr = bytearray()
+    overflow = threading.Event()
+    if process.stdout is None or process.stderr is None:
+        process.kill()
+        process.wait()
         raise QualificationFailure(reason)
-    return completed
+    readers = (
+        threading.Thread(
+            target=_read_process_stream,
+            args=(process, process.stdout, stdout, overflow),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=_read_process_stream,
+            args=(process, process.stderr, stderr, overflow),
+            daemon=True,
+        ),
+    )
+    for reader in readers:
+        reader.start()
+    timed_out = False
+    try:
+        returncode = process.wait(timeout=_COMMAND_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        process.kill()
+        returncode = process.wait()
+    for reader in readers:
+        reader.join()
+    process.stdout.close()
+    process.stderr.close()
+
+    if timed_out or overflow.is_set() or returncode != 0:
+        raise QualificationFailure(reason)
+    return subprocess.CompletedProcess(
+        args=command,
+        returncode=returncode,
+        stdout=bytes(stdout),
+        stderr=bytes(stderr),
+    )
+
+
+def _read_process_stream(
+    process: subprocess.Popen[bytes],
+    stream: BinaryIO,
+    output: bytearray,
+    overflow: threading.Event,
+) -> None:
+    try:
+        while chunk := stream.read(65_536):
+            if len(output) + len(chunk) > _MAX_COMMAND_STREAM_BYTES:
+                overflow.set()
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+                return
+            output.extend(chunk)
+    except OSError:
+        overflow.set()
+        try:
+            process.kill()
+        except OSError:
+            pass
+
+
+def _decode_stdout(
+    completed: subprocess.CompletedProcess[bytes],
+    *,
+    encoding: str,
+    reason: str,
+) -> str:
+    try:
+        return completed.stdout.decode(encoding, "strict")
+    except UnicodeError:
+        raise QualificationFailure(reason) from None
 
 
 def _file_sha256(path: Path) -> str:
@@ -295,7 +421,6 @@ def _verify_installed_payload(
 ) -> tuple[str, str, str, str]:
     wheel_digest = hashlib.sha256()
     installed_digest = hashlib.sha256()
-    total = 0
     try:
         with ZipFile(wheel) as archive:
             members = tuple(
@@ -305,6 +430,16 @@ def _verify_installed_payload(
             )
             if not 1 <= len(members) <= _MAX_WHEEL_MEMBERS:
                 raise QualificationFailure("wheel_invalid")
+            total = sum(member.file_size for member in members)
+            if (
+                total > _MAX_INSTALLED_BYTES
+                or any(
+                    member.file_size < 0
+                    or member.file_size > _MAX_WHEEL_MEMBER_BYTES
+                    for member in members
+                )
+            ):
+                raise QualificationFailure("wheel_invalid")
             metadata_members = tuple(
                 member
                 for member in members
@@ -312,7 +447,11 @@ def _verify_installed_payload(
             )
             if len(metadata_members) != 1:
                 raise QualificationFailure("distribution_identity_mismatch")
-            metadata = BytesParser().parsebytes(archive.read(metadata_members[0]))
+            if metadata_members[0].file_size > _MAX_METADATA_BYTES:
+                raise QualificationFailure("distribution_identity_mismatch")
+            metadata = BytesParser().parsebytes(
+                _read_archive_member(archive, metadata_members[0])
+            )
             if _canonical_distribution(metadata.get("Name", "")) != _canonical_distribution(
                 distribution
             ):
@@ -324,25 +463,47 @@ def _verify_installed_payload(
 
             for member in sorted(members, key=lambda value: value.filename):
                 relative = _wheel_member_path(member)
-                wheel_bytes = archive.read(member)
-                total += len(wheel_bytes)
-                if total > _MAX_INSTALLED_BYTES:
-                    raise QualificationFailure("wheel_invalid")
                 installed = purelib.joinpath(*relative.parts)
                 if (
                     not installed.is_file()
                     or installed.is_symlink()
                     or not installed.resolve().is_relative_to(purelib)
+                    or installed.stat().st_size != member.file_size
                 ):
                     raise QualificationFailure("installed_payload_mismatch")
-                installed_bytes = installed.read_bytes()
-                if installed_bytes != wheel_bytes:
-                    raise QualificationFailure("installed_payload_mismatch")
-                _digest_member(wheel_digest, member.filename, wheel_bytes)
-                _digest_member(installed_digest, member.filename, installed_bytes)
+                _digest_member_header(
+                    wheel_digest,
+                    member.filename,
+                    member.file_size,
+                )
+                _digest_member_header(
+                    installed_digest,
+                    member.filename,
+                    member.file_size,
+                )
+                with archive.open(member) as wheel_stream, installed.open(
+                    "rb"
+                ) as installed_stream:
+                    while True:
+                        wheel_chunk = wheel_stream.read(65_536)
+                        installed_chunk = installed_stream.read(65_536)
+                        if wheel_chunk != installed_chunk:
+                            raise QualificationFailure("installed_payload_mismatch")
+                        if not wheel_chunk:
+                            break
+                        wheel_digest.update(wheel_chunk)
+                        installed_digest.update(installed_chunk)
     except QualificationFailure:
         raise
-    except (BadZipFile, KeyError, OSError, ValueError):
+    except (
+        BadZipFile,
+        EOFError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        UnicodeError,
+        ValueError,
+    ):
         raise QualificationFailure("wheel_invalid") from None
     return (
         wheel_digest.hexdigest(),
@@ -365,12 +526,23 @@ def _wheel_member_path(member: ZipInfo) -> PurePosixPath:
     return path
 
 
-def _digest_member(digest: _Digest, name: str, content: bytes) -> None:
+def _read_archive_member(archive: ZipFile, member: ZipInfo) -> bytes:
+    content = bytearray()
+    with archive.open(member) as stream:
+        while chunk := stream.read(65_536):
+            if len(content) + len(chunk) > member.file_size:
+                raise QualificationFailure("wheel_invalid")
+            content.extend(chunk)
+    if len(content) != member.file_size:
+        raise QualificationFailure("wheel_invalid")
+    return bytes(content)
+
+
+def _digest_member_header(digest: _Digest, name: str, size: int) -> None:
     encoded = name.encode("utf-8", "strict")
     digest.update(len(encoded).to_bytes(4, "big"))
     digest.update(encoded)
-    digest.update(len(content).to_bytes(8, "big"))
-    digest.update(content)
+    digest.update(size.to_bytes(8, "big"))
 
 
 def _verify_installed_origin(path: Path, wheel: Path) -> None:
@@ -399,12 +571,16 @@ def _verify_import_origin(
         f"spec=importlib.util.find_spec({import_name!r}); "
         "print('' if spec is None or spec.origin is None else spec.origin)"
     )
-    origin = _run(
-        (str(python), "-I", "-c", statement),
-        cwd=cwd,
-        env=environment,
+    origin = _decode_stdout(
+        _run(
+            (str(python), "-I", "-c", statement),
+            cwd=cwd,
+            env=environment,
+            reason="installed_import_invalid",
+        ),
+        encoding="utf-8",
         reason="installed_import_invalid",
-    ).stdout.decode("utf-8", "strict").strip()
+    ).strip()
     if not origin:
         raise QualificationFailure("installed_import_invalid")
     try:

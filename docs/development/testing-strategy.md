@@ -4,7 +4,8 @@ The public gate installs the package non-editably from the lockfile and runs the
 entire `unittest` suite. It then runs the canonical exact-artifact qualifier:
 
 ```bash
-python scripts/qualify_exact_artifact.py --source-sha "$(git rev-parse HEAD)"
+uv run --frozen --no-editable python scripts/qualify_exact_artifact.py \
+  --source-sha "$(git rev-parse HEAD)"
 ```
 
 That procedure requires a clean checkout at the supplied source SHA, disables

@@ -3,14 +3,18 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 from zipfile import ZipFile
 
+import scripts.qualify_exact_artifact as qualifier_module
 from scripts.qualify_exact_artifact import (
     QualificationFailure,
+    _decode_stdout,
+    _run,
     _verify_installed_payload,
     qualify_exact_artifact,
 )
@@ -28,6 +32,8 @@ class ExactArtifactQualificationTests(unittest.TestCase):
             first_sha = _commit(source, "source a")
 
             with patch.dict(os.environ, {"UV_CACHE_DIR": str(cache)}):
+                first_wheel_output = root / "source-a-wheel"
+                first_environment_path = root / "source-a-environment"
                 first = qualify_exact_artifact(
                     source,
                     first_sha,
@@ -35,7 +41,26 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                     import_name="cache_probe",
                     console_script="cache-probe",
                     console_args=(),
+                    wheel_output=first_wheel_output,
+                    environment_path=first_environment_path,
                 )
+                stale_environment = root / "stale-cache-environment"
+                _command("uv", "venv", "--python", sys.executable, str(stale_environment))
+                first_wheel = next(first_wheel_output.glob("*.whl"))
+                _command(
+                    "uv",
+                    "pip",
+                    "install",
+                    "--reinstall",
+                    "--python",
+                    str(_environment_bin(stale_environment) / "python"),
+                    str(first_wheel),
+                )
+                stale_output = _command(
+                    str(_environment_bin(stale_environment) / "cache-probe")
+                )
+                self.assertEqual("source-a\n", stale_output)
+                self.assertTrue(any(cache.iterdir()))
 
                 _write_probe(source, "source-b")
                 second_sha = _commit(source, "source b")
@@ -74,6 +99,41 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         self.assertTrue(second.retained_environment)
         self.assertTrue(retained_console_exists)
         self.assertEqual(1, retained_wheel_count)
+
+    def test_source_change_during_qualification_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            _write_probe(source, "source-a")
+            source_sha = _commit(source, "source")
+            real_run = qualifier_module._run
+            changed = False
+
+            def mutate_after_snapshot(
+                command: tuple[str, ...],
+                **kwargs: object,
+            ) -> subprocess.CompletedProcess[bytes]:
+                nonlocal changed
+                completed = real_run(command, **kwargs)
+                if not changed and command[:2] == ("git", "clone"):
+                    _write_probe(source, "source-b")
+                    changed = True
+                return completed
+
+            with patch.object(
+                qualifier_module,
+                "_run",
+                side_effect=mutate_after_snapshot,
+            ):
+                with self.assertRaises(QualificationFailure) as raised:
+                    qualify_exact_artifact(
+                        source,
+                        source_sha,
+                        distribution="cache-probe",
+                        import_name="cache_probe",
+                        console_script="cache-probe",
+                        console_args=(),
+                    )
+        self.assertEqual("source_not_clean", raised.exception.reason)
 
     def test_dirty_or_wrong_source_identity_fails_before_build(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -138,6 +198,32 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                 _verify_installed_payload(wheel, purelib, "cache-probe")
         self.assertEqual("installed_payload_mismatch", raised.exception.reason)
 
+    def test_subprocess_output_and_decoding_fail_closed(self) -> None:
+        with self.assertRaises(QualificationFailure) as output:
+            _run(
+                (
+                    sys.executable,
+                    "-c",
+                    "import sys; sys.stdout.buffer.write(b'x' * 1_048_577)",
+                ),
+                reason="command_output_invalid",
+            )
+        self.assertEqual("command_output_invalid", output.exception.reason)
+
+        completed = subprocess.CompletedProcess(
+            args=("probe",),
+            returncode=0,
+            stdout=b"\xff",
+            stderr=b"",
+        )
+        with self.assertRaises(QualificationFailure) as decoding:
+            _decode_stdout(
+                completed,
+                encoding="utf-8",
+                reason="command_encoding_invalid",
+            )
+        self.assertEqual("command_encoding_invalid", decoding.exception.reason)
+
 
 def _write_probe(source: Path, marker: str) -> None:
     (source / ".gitignore").write_text(
@@ -190,6 +276,24 @@ def _git(source: Path, *arguments: str) -> str:
         text=True,
         check=False,
         timeout=10,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(completed.stderr)
+    return completed.stdout
+
+
+def _environment_bin(environment: Path) -> Path:
+    return environment / ("Scripts" if os.name == "nt" else "bin")
+
+
+def _command(*arguments: str) -> str:
+    completed = subprocess.run(
+        arguments,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
     )
     if completed.returncode != 0:
         raise AssertionError(completed.stderr)
