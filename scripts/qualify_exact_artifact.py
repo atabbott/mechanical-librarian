@@ -447,9 +447,17 @@ def _run(
             returncode = process.wait(timeout=1)
         except subprocess.TimeoutExpired:
             returncode = -1
-    descendants_terminated = _terminate_process_tree(process)
+
     for reader in readers:
-        reader.join(timeout=max(0.0, deadline - time.monotonic()))
+        reader.join(timeout=min(0.25, max(0.0, deadline - time.monotonic())))
+    descendants_terminated = False
+    if any(reader.is_alive() for reader in readers):
+        descendants_terminated = _terminate_process_tree(process)
+        cleanup_deadline = time.monotonic() + 1
+        for reader in readers:
+            reader.join(
+                timeout=max(0.0, cleanup_deadline - time.monotonic())
+            )
     readers_stuck = any(reader.is_alive() for reader in readers)
     if not readers_stuck:
         process.stdout.close()
