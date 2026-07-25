@@ -751,6 +751,135 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(MetadataReport.from_json(report.to_json()), report)
         self.assertEqual(report.local_claims, local_claims)
 
+    def test_identifier_evidence_keeps_provider_work_collisions_unresolved(
+        self,
+    ) -> None:
+        accepted = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="9780306406157",
+            applicability="ebook",
+            basis="opening_matter",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+            occurrence=1,
+        )
+        alternate = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780140328721",
+            canonical="9780140328721",
+            excerpt="9780140328721",
+            applicability="print",
+            basis="opening_matter",
+            checksum="valid_isbn_13",
+            applicability_basis="paperback",
+            scope=ClaimScope.EDITION,
+            occurrence=2,
+        )
+
+        def provider_claim(
+            provider: str,
+            candidate: str,
+            value: str,
+            raw_order: int,
+        ) -> ProviderClaim:
+            return ProviderClaim.create(
+                provider=provider,
+                candidate=candidate,
+                kind=ClaimKind.ISBN,
+                value=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+                raw_order=raw_order,
+            )
+
+        collision_seed_a = provider_claim(
+            "collision", "edition-a", "9780306406157", 0
+        )
+        collision_alternate_a = provider_claim(
+            "collision", "edition-a", "9780140328721", 1
+        )
+        collision_seed_b = provider_claim(
+            "collision", "edition-b", "9780306406157", 0
+        )
+        collision_alternate_b = provider_claim(
+            "collision", "edition-b", "9783161484100", 1
+        )
+        collision = ProviderObservation(
+            "collision",
+            ProviderStatus.CANDIDATES,
+            (),
+            (
+                ProviderCandidate(
+                    "edition-a",
+                    "work-a",
+                    (collision_seed_a, collision_alternate_a),
+                ),
+                ProviderCandidate(
+                    "edition-b",
+                    "work-b",
+                    (collision_seed_b, collision_alternate_b),
+                ),
+            ),
+        )
+
+        collision_evidence = {
+            item.reference: item
+            for item in derive_identifier_evidence(
+                (accepted, alternate),
+                (collision,),
+            )
+        }
+        self.assertEqual(
+            collision_evidence[alternate.reference].relation,
+            IdentifierRelation.UNRESOLVED,
+        )
+        self.assertEqual(
+            collision_evidence[collision_alternate_a.reference].relation,
+            IdentifierRelation.UNRESOLVED,
+        )
+        self.assertEqual(
+            collision_evidence[collision_alternate_b.reference].relation,
+            IdentifierRelation.UNRESOLVED,
+        )
+
+        independent_seed = provider_claim(
+            "independent", "edition-c", "9780306406157", 0
+        )
+        independent_alternate = provider_claim(
+            "independent", "edition-c", "9780140328721", 1
+        )
+        independent = ProviderObservation(
+            "independent",
+            ProviderStatus.CANDIDATES,
+            (),
+            (
+                ProviderCandidate(
+                    "edition-c",
+                    "work-c",
+                    (independent_seed, independent_alternate),
+                ),
+            ),
+        )
+        combined_evidence = {
+            item.reference: item
+            for item in derive_identifier_evidence(
+                (accepted, alternate),
+                (collision, independent),
+            )
+        }
+        self.assertEqual(
+            combined_evidence[independent_alternate.reference].relation,
+            IdentifierRelation.ASSOCIATED,
+        )
+        self.assertEqual(
+            combined_evidence[alternate.reference].relation,
+            IdentifierRelation.ASSOCIATED,
+        )
+
     def test_identifier_evidence_preserves_repeats_conflicts_and_rejects_tampering(self) -> None:
         provenance = RearClaimProvenance(
             "a" * 64,

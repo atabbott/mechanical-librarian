@@ -941,15 +941,26 @@ def derive_identifier_evidence(
         if references
     }
 
-    accepted_works: dict[str, set[str]] = {}
-    provider_work_anchor_references: dict[tuple[str, str], list[str]] = {}
+    accepted_family_works: dict[
+        tuple[str, str], dict[str, list[str]]
+    ] = {}
     for provider, candidate, claim in provider_isbns:
         family = provider_families.get(claim.reference)
         if family in accepted_local_families:
-            accepted_works.setdefault(provider, set()).add(candidate.work_identity)
-            provider_work_anchor_references.setdefault(
-                (provider, candidate.work_identity), []
-            ).append(claim.reference)
+            accepted_family_works.setdefault(
+                (provider, family), {}
+            ).setdefault(candidate.work_identity, []).append(claim.reference)
+
+    accepted_works: dict[str, set[str]] = {}
+    provider_work_anchor_references: dict[tuple[str, str], list[str]] = {}
+    for (provider, _), work_references in accepted_family_works.items():
+        if len(work_references) != 1:
+            continue
+        work_identity, references = next(iter(work_references.items()))
+        accepted_works.setdefault(provider, set()).add(work_identity)
+        provider_work_anchor_references.setdefault(
+            (provider, work_identity), []
+        ).extend(references)
 
     provider_by_family: dict[str, list[tuple[str, ProviderCandidate, ProviderClaim]]] = {}
     for provider, candidate, claim in provider_isbns:
