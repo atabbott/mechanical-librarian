@@ -44,19 +44,19 @@ committed lockfile:
 ```text
 uv sync --frozen --no-editable --all-groups --reinstall-package mechanical-librarian
 uv run --frozen --no-editable python -m unittest discover -s tests -p 'test_*.py'
-uv build
-uv run --frozen --no-editable mechanical-librarian metadata-report --help
+python scripts/qualify_exact_artifact.py --source-sha "$(git rev-parse HEAD)"
 ```
 
-The final command verifies that the installed artifact exposes the sole current
-operator command without creating local state. The integration suite exercises
-that command end to end against disposable synthetic target, media, credential,
-and database fixtures.
+The final command requires a clean checkout and verifies that a newly built
+explicit wheel is installed without cache reuse, byte-identical to its installed
+distribution payload, and exposes the current operator command outside the
+checkout without creating local state. Its path-free evidence binds the source
+and artifact digests. The integration suite exercises that command end to end
+against disposable synthetic target, media, credential, and database fixtures.
 Issue #36 owns the future platform-neutral bootstrap and one-command
-verification wrapper. Re-run the cache-safe non-editable sync after changing
-package source. The explicit project-package reinstall prevents the stable
-pre-release version from reusing a wheel built from an earlier checkout, so
-tests exercise the same installed shape as the current built wheel.
+verification wrapper. Re-run the non-editable sync after changing package
+source so the tests use the current installed shape; only the exact-artifact
+qualifier supplies source-bound installed-artifact evidence.
 
 Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph
