@@ -132,7 +132,7 @@ The current 1.0 outcome set is #70, F08 #144, F10b #240, F11 #147, F15a
 planned designations rather than `Ready` status. Issue #70 remains unassigned
 as a planned but unpromoted outcome with target release and milestone `1.0.0`;
 it has no `F` designation and must be explicitly promoted before delivery.
-Open Library #210 is the selected 0.8.0 Ready slice tracker, while the other
+Open Library #210 is the completed 0.8.0 F09l slice tracker, while the other
 deferred provider outcomes remain outside this checkpoint. Closed WP parents,
 provider trackers, and constituent forests are historical planning inputs, not
 current delivery work. The authoritative outcome definitions are in the
@@ -221,10 +221,11 @@ Exit: the qualified report-only matching programme is complete without adding a
 provider, proposal, review, decision, mutation, generic scoring framework,
 background operation, tag, or release.
 
-### Planned 0.8.0 independent multi-provider ebook evidence checkpoint
+### Completed 0.8.0 independent multi-provider ebook evidence checkpoint
 
-The [0.8.0 working plan](0-8-working-plan.md) records the independent next
-provider outcome: add Open Library as a second real metadata adapter and prove
+The [0.8.0 working plan](0-8-working-plan.md) records the delivered independent
+provider outcome: Open Library is the second real metadata adapter, and
+qualification proves
 that one immutable report preserves independent local, Hardcover, and Open
 Library evidence. Provider order, failure, absence, malformed or incomplete
 data, and contradiction remain separate canonical observations rather than
@@ -239,7 +240,7 @@ contributor identities, the exact edition-to-work relationship, and cover
 identities. It does not traverse author records, enumerate editions, or issue
 fallback searches solely for enrichment.
 
-The proposal keeps fuzzy fallback, provider ranking, proposals, review,
+The implementation keeps fuzzy fallback, provider ranking, proposals, review,
 decisions, UI, apply, writes, background execution, unbounded provider-backed
 batches, raw provider payloads, arbitrary upstream properties and link
 collections, community signals, lending or full-text features, a third
@@ -252,10 +253,9 @@ uses the existing foreground batch lifecycle with a fixed ceiling and
 single-attempt posture; it adds no cache, retry, scheduling, rate-policy, or
 provider-cost framework.
 
-Live tracking assigns Open Library #210 to milestone 0.8.0 as Ready F09l.
-It remains a one-issue vertical slice with no pre-created constituents; this
-documentation change does not implement it. Issue #70 remains a separate
-planned but unpromoted 1.0.0 outcome.
+Open Library #210 completes milestone 0.8.0 as the one-issue F09l vertical
+slice with no constituents. Issue #70 remains a separate planned but
+unpromoted 1.0.0 outcome.
 
 ## M3: AI review in shadow mode
 

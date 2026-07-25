@@ -13,6 +13,10 @@ entire `unittest` suite. The suite covers:
 - provider input selection, no-input zero egress, one-request cardinality,
   observable cap overflow, cross-provider claim-reference uniqueness, sparse
   candidates, all-or-nothing malformed handling, and identity order;
+- Open Library exact ISBN-family Search admission, canonical edition/work
+  request order, shared one-second pacing, finite rich evidence, terminal
+  failure mapping, identified metadata/cover requests, cover-failure isolation,
+  provider-order/contact privacy, and the explicit five-item batch envelope;
 - exact three-table DELETE-mode schema, side-effect-free existing-file
   validation, no-follow connection binding, Linux owner-directory lock and
   root-to-parent chain validation, verified private-alias binding, raced

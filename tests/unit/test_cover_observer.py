@@ -10,7 +10,14 @@ from PIL import Image
 from mechanical_librarian.adapters.cover_artifacts import CoverDecodeTimeout
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.providers.remote_cover import CoverDeadline, RemoteCover
-from mechanical_librarian.application.metadata_report import CoverReadError, CoverSourceChangedError, CoverTimeoutError, TargetCover, TargetSnapshot
+from mechanical_librarian.application.metadata_report import (
+    CoverReadError,
+    CoverSourceChangedError,
+    CoverTimeoutError,
+    ProviderCoverDescriptor,
+    TargetCover,
+    TargetSnapshot,
+)
 from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
 from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
@@ -142,8 +149,12 @@ class CoverObserverTests(unittest.TestCase):
                 _Target(None),
                 CoverArtifactStore(Path(directory)),
             )._remote(
-                source_id,
-                "https://example.com/cover.jpg",
+                ProviderCoverDescriptor(
+                    "hardcover",
+                    CoverSourceKind.HARDCOVER,
+                    source_id,
+                    "https://example.com/cover.jpg",
+                ),
                 CoverDeadline(aggregate, aggregate),
             )
         decode.assert_called_once_with(_jpeg(), deadline=aggregate)

@@ -1,6 +1,6 @@
 # Documentation
 
-## Current 0.6 runtime
+## Current 0.8 runtime
 
 - [Current book catalogue](operations/catalogue.md)
 - [Foreground ebook evidence batches](operations/ebook-evidence-batches.md)
@@ -33,12 +33,12 @@
 - [Roadmap](product/roadmap.md)
 - [Delivery slices](product/delivery-slices.md)
 - [0.7.0 metadata qualification scope](product/0-7-metadata-qualification.md)
-- [0.8.0 independent multi-provider evidence plan](product/0-8-working-plan.md)
+- [0.8.0 independent multi-provider evidence contract](product/0-8-working-plan.md)
 - [Architecture decisions](architecture/decisions/README.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Security reporting](../SECURITY.md)
 - [Support](../SUPPORT.md)
 
 Historical product and architecture documents describe future direction, not
-installed 0.6 authority. Current operations and compatibility are defined only
+installed 0.8 authority. Current operations and compatibility are defined only
 by the first section above.

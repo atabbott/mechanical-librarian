@@ -18,6 +18,7 @@ from unittest.mock import patch
 import httpx
 
 import mechanical_librarian.bootstrap.composition as composition
+import mechanical_librarian.adapters.providers.open_library_metadata as open_library_metadata
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     UnsupportedMediaError,
@@ -110,7 +111,7 @@ def _item(size: int) -> dict[str, object]:
 
 def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool = False, provider_secret: str | None = None) -> dict[str, object]:
     return {
-        "schema_version": "config-v3",
+        "schema_version": "config-v4",
         "connections": [
             {
                 "name": "primary",
@@ -610,6 +611,280 @@ class MetadataReportCommandTests(unittest.TestCase):
                 (2,),
             )
             connection.close()
+
+    def test_two_provider_order_contact_privacy_and_failure_isolation(self) -> None:
+        class NoWaitPacer:
+            def wait(self, deadline: float | None = None) -> bool:
+                return True
+
+        hardcover_payload = {
+            "data": {
+                "editions": [
+                    {
+                        "id": 1,
+                        "book_id": 1,
+                        "isbn_10": "0306406152",
+                        "isbn_13": "9780306406157",
+                        "asin": None,
+                        "title": "Edition title",
+                        "subtitle": None,
+                        "release_date": None,
+                        "publisher": None,
+                        "language": None,
+                        "contributions": [],
+                    }
+                ],
+                "books": [
+                    {
+                        "id": 1,
+                        "title": "Current service title",
+                        "description": None,
+                        "contributions": [],
+                        "book_series": [],
+                        "taggings": [],
+                    }
+                ],
+            }
+        }
+        open_payloads = {
+            "/search.json": {
+                "docs": [
+                    {
+                        "key": "/works/OL5W",
+                        "editions": {
+                            "docs": [
+                                {
+                                    "key": "/books/OL1M",
+                                    "isbn": ["9780306406157"],
+                                }
+                            ]
+                        },
+                    }
+                ]
+            },
+            "/books/OL1M.json": {
+                "key": "/books/OL1M",
+                "works": [{"key": "/works/OL5W"}],
+                "isbn_13": ["9780306406157"],
+                "title": "Edition title",
+                "covers": [100],
+            },
+            "/works/OL5W.json": {
+                "key": "/works/OL5W",
+                "title": "Current service title",
+                "covers": [200],
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            source.write_bytes(opening_title_isbn_applicability())
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            provider_secret = root / "provider.secret"
+            provider_secret.write_text("provider-token", encoding="ascii")
+            provider_secret.chmod(0o600)
+
+            with _Server(_item(source.stat().st_size)) as server:
+                base = _config(
+                    server.endpoint,
+                    media,
+                    target_secret,
+                    provider_secret=str(provider_secret),
+                )
+                base["providers"][0]["cover_enabled"] = False  # type: ignore[index]
+                base["libraries"][0]["provider_connections"] = [  # type: ignore[index]
+                    "catalogue",
+                    "open",
+                ]
+                base["providers"].append(  # type: ignore[union-attr]
+                    {
+                        "name": "open",
+                        "adapter": "open_library",
+                        "enabled": True,
+                        "cover_enabled": True,
+                        "secret_file": None,
+                        "contact_email": "first@example.invalid",
+                    }
+                )
+                reverse = json.loads(json.dumps(base))
+                reverse["libraries"][0]["provider_connections"].reverse()
+                reverse["providers"].reverse()
+                reverse["providers"][0][
+                    "contact_email"
+                ] = "second@example.invalid"
+                configs = []
+                for name, value in (("first", base), ("second", reverse)):
+                    path = root / f"{name}.json"
+                    path.write_text(json.dumps(value), encoding="utf-8")
+                    configs.append(path)
+
+                def hardcover_client(
+                    secret_file: str,
+                    timeout_seconds: int,
+                ) -> httpx.Client:
+                    return real_hardcover_client(
+                        secret_file,
+                        timeout_seconds,
+                        transport=httpx.MockTransport(
+                            lambda request: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=hardcover_payload,
+                            )
+                        ),
+                    )
+
+                def open_client(
+                    contact_email: str,
+                    timeout_seconds: int,
+                ) -> httpx.Client:
+                    return httpx.Client(
+                        headers={
+                            "User-Agent": (
+                                f"Mechanical-Librarian ({contact_email})"
+                            )
+                        },
+                        transport=httpx.MockTransport(
+                            lambda request: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=open_payloads[request.url.path],
+                            )
+                        ),
+                    )
+
+                cover_user_agents: list[str | None] = []
+
+                def cover_failure(
+                    url: str,
+                    **kwargs: object,
+                ) -> object:
+                    cover_user_agents.append(
+                        kwargs.get("user_agent")  # type: ignore[arg-type]
+                    )
+                    raise composition.RemoteCoverError(
+                        "remote cover unavailable"
+                    )
+
+                with (
+                    patch.object(
+                        composition,
+                        "hardcover_client",
+                        side_effect=hardcover_client,
+                    ),
+                    patch.object(
+                        composition,
+                        "open_library_client",
+                        side_effect=open_client,
+                    ),
+                    patch.object(
+                        open_library_metadata,
+                        "OpenLibraryPacer",
+                        return_value=NoWaitPacer(),
+                    ),
+                    patch.object(
+                        composition,
+                        "fetch_remote_cover",
+                        side_effect=cover_failure,
+                    ),
+                ):
+                    first = _installed_cli(
+                        configs[0],
+                        root / "first.sqlite",
+                        root / "first-artifacts",
+                    )
+                    second = _installed_cli(
+                        configs[1],
+                        root / "second.sqlite",
+                        root / "second-artifacts",
+                    )
+
+                self.assertEqual((0, "", 0, ""), (first[0], first[2], second[0], second[2]))
+                self.assertEqual(first[1], second[1])
+                self.assertNotIn("first@example.invalid", first[1])
+                self.assertNotIn("second@example.invalid", second[1])
+                report = MetadataReport.from_json(first[1].removesuffix("\n"))
+                self.assertEqual(
+                    [("catalogue", "candidates"), ("open", "candidates")],
+                    [
+                        (provider.provider, provider.status.value)
+                        for provider in report.providers
+                    ],
+                )
+                self.assertEqual(
+                    [
+                        ("open_library", "unavailable"),
+                        ("open_library", "unavailable"),
+                    ],
+                    [
+                        (source.kind.value, source.state.value)
+                        for source in report.cover_sources
+                        if source.kind.value == "open_library"
+                    ],
+                )
+                self.assertEqual(
+                    [
+                        "Mechanical-Librarian (first@example.invalid)",
+                        "Mechanical-Librarian (first@example.invalid)",
+                        "Mechanical-Librarian (second@example.invalid)",
+                        "Mechanical-Librarian (second@example.invalid)",
+                    ],
+                    cover_user_agents,
+                )
+
+                def failed_open_client(
+                    contact_email: str,
+                    timeout_seconds: int,
+                ) -> httpx.Client:
+                    return httpx.Client(
+                        headers={
+                            "User-Agent": (
+                                f"Mechanical-Librarian ({contact_email})"
+                            )
+                        },
+                        transport=httpx.MockTransport(
+                            lambda request: httpx.Response(503)
+                        ),
+                    )
+
+                with (
+                    patch.object(
+                        composition,
+                        "hardcover_client",
+                        side_effect=hardcover_client,
+                    ),
+                    patch.object(
+                        composition,
+                        "open_library_client",
+                        side_effect=failed_open_client,
+                    ),
+                    patch.object(
+                        open_library_metadata,
+                        "OpenLibraryPacer",
+                        return_value=NoWaitPacer(),
+                    ),
+                ):
+                    failed = _installed_cli(
+                        configs[0],
+                        root / "failed.sqlite",
+                        root / "failed-artifacts",
+                    )
+                self.assertEqual((0, ""), (failed[0], failed[2]))
+                failed_report = MetadataReport.from_json(
+                    failed[1].removesuffix("\n")
+                )
+                self.assertEqual(
+                    [("catalogue", "candidates"), ("open", "unavailable")],
+                    [
+                        (provider.provider, provider.status.value)
+                        for provider in failed_report.providers
+                    ],
+                )
 
     def test_real_child_clean_database_exact_replay_and_successor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -8,7 +8,18 @@ import stat
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    WithJsonSchema,
+)
 
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -27,6 +38,37 @@ BoundedAbsolutePath = Annotated[
     StrictStr,
     Field(min_length=1, max_length=1024, pattern=r"^/"),
 ]
+_CONTACT_EMAIL_PATTERN = (
+    r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+    r"(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9]"
+    r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+"
+)
+
+
+def _contact_email(value: str) -> str:
+    if len(value.partition("@")[0]) > 64:
+        raise ValueError("contact email is invalid")
+    return value
+
+
+ContactEmail = Annotated[
+    StrictStr,
+    Field(
+        min_length=3,
+        max_length=254,
+        pattern="^" + _CONTACT_EMAIL_PATTERN + "$",
+    ),
+    AfterValidator(_contact_email),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 254,
+            "pattern": r"^(?=.{1,64}@)" + _CONTACT_EMAIL_PATTERN + "$",
+        }
+    ),
+]
 
 
 class _Closed(BaseModel):
@@ -40,12 +82,50 @@ class ConnectionInput(_Closed):
     secret_file: BoundedAbsolutePath
 
 
-class ProviderInput(_Closed):
+class _ProviderInput(_Closed):
     name: Name
-    adapter: Literal["hardcover"]
-    enabled: StrictBool
     cover_enabled: StrictBool
-    secret_file: BoundedAbsolutePath | None
+
+
+class EnabledHardcoverProviderInput(_ProviderInput):
+    adapter: Literal["hardcover"]
+    enabled: Literal[True]
+    secret_file: BoundedAbsolutePath
+    contact_email: Literal[None] = None
+
+
+class DisabledHardcoverProviderInput(_ProviderInput):
+    adapter: Literal["hardcover"]
+    enabled: Literal[False]
+    cover_enabled: Literal[False]
+    secret_file: Literal[None]
+    contact_email: Literal[None] = None
+
+
+class EnabledOpenLibraryProviderInput(_ProviderInput):
+    adapter: Literal["open_library"]
+    enabled: Literal[True]
+    secret_file: Literal[None]
+    contact_email: ContactEmail
+
+
+class DisabledOpenLibraryProviderInput(_ProviderInput):
+    adapter: Literal["open_library"]
+    enabled: Literal[False]
+    cover_enabled: Literal[False]
+    secret_file: Literal[None]
+    contact_email: Literal[None] = None
+
+
+class ProviderInput(
+    RootModel[
+        EnabledHardcoverProviderInput
+        | DisabledHardcoverProviderInput
+        | EnabledOpenLibraryProviderInput
+        | DisabledOpenLibraryProviderInput
+    ]
+):
+    pass
 
 
 class MountInput(_Closed):
@@ -71,7 +151,7 @@ class LimitsInput(_Closed):
 
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v3"]
+    schema_version: Literal["config-v4"]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]
     mounts: Annotated[list[MountInput], Field(max_length=32)]
@@ -90,7 +170,7 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
         value = ConfigurationInput.model_validate(source)
         return ApplicationConfiguration(
             tuple(sorted((TargetConnectionConfiguration(**item.model_dump()) for item in value.connections), key=lambda item: item.name)),
-            tuple(sorted((LibraryConfiguration(**{**item.model_dump(), "media_kind": "book", "provider_connections": tuple(item.provider_connections)}) for item in value.libraries), key=lambda item: item.name)),
+            tuple(sorted((LibraryConfiguration(**{**item.model_dump(), "media_kind": "book", "provider_connections": tuple(sorted(item.provider_connections))}) for item in value.libraries), key=lambda item: item.name)),
             tuple(sorted((MediaMountConfiguration(**item.model_dump()) for item in value.mounts), key=lambda item: item.name)),
             tuple(sorted((ProviderConnectionConfiguration(**item.model_dump()) for item in value.providers), key=lambda item: item.name)),
             ReportLimits(**value.limits.model_dump()),

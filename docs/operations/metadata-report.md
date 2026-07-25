@@ -1,7 +1,7 @@
 # Metadata report
 
 The current runtime retains one synchronous single-item report operation
-alongside the 0.6 catalogue and foreground batch surfaces:
+alongside the 0.8 catalogue and foreground batch surfaces:
 
 ```text
 mechanical-librarian metadata-report \
@@ -58,7 +58,7 @@ target, provider, or remote-cover transport and it cannot retrieve originals.
 
 - The database path is absent for the first invocation or already contains the
   exact current schema required by the installed increment.
-- `metadata-report-v1`, prior 0.5 increment schemas, and all earlier development
+- `metadata-report-v1`, `metadata-report-v5`, and all earlier development
   schemas are rejected before mutation. There is no migration, import,
   preservation, or compatibility parser. Keep an old database offline if
   required, initialize a clean database, and rerun the supported report command.
@@ -76,7 +76,7 @@ target, provider, or remote-cover transport and it cannot retrieve originals.
 - The container runs under a dedicated Unix identity with no untrusted
   same-identity processes. Privileged and hostile same-identity filesystem
   mutation is outside the supported unprivileged exclusion boundary.
-- The configuration uses `config-v3` and names the requested connection and
+- The configuration uses `config-v4` and names the requested connection and
   library explicitly.
 - The target secret and each enabled referenced provider secret are owner-only
   regular files.
@@ -142,12 +142,27 @@ The credential-bearing parent combines those facts with the exact current
 target title. Every referenced, enabled Hardcover connection makes at most one
 fresh credential-bearing GraphQL metadata request. For admitted candidate cover
 descriptors, it may then make up to five separately credential-free bounded
-cover request chains. Disabled references produce one `disabled` observation
-without secret access or egress. Unreferenced providers are absent.
+cover request chains. Every referenced, enabled Open Library connection
+requires exactly one usable edition-applicable ISBN family and may make one
+exact ISBN Search request, at most two exact edition requests, and at most two
+distinct exact work requests. Search admission is exact, deduplicated, and
+canonical by edition key; a third exact candidate is terminal before detail
+requests. Open Library request starts, including its at-most-one edition and
+one distinct-work cover, are spaced by the same fixed one-second pacer and are
+single-attempt. Disabled references produce one `disabled` observation without
+client construction, credential access, or egress. Unreferenced providers are
+absent.
 
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order
 with their distinct edition identity and opaque provider-local work identity.
+Open Library additionally preserves a closed, bounded rich-evidence allowlist
+from only those required edition and work records: provider identities and
+revision provenance, selected identifiers and classifications, subjects,
+edition characteristics, contributor identity/role, edition-work relation,
+first-publication date, and cover IDs. It retains no raw payloads, arbitrary
+links or unknown identifiers and performs no author traversal, edition
+enumeration, fuzzy fallback, ranking, voting, or provider fusion.
 The fixed request asks for one row beyond the retained cap so overflow remains
 observable. Malformed or oversized provider fields remain explicit field-local
 claims; structural or join failures make the observation `malformed`. No

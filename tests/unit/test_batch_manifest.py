@@ -6,7 +6,7 @@ from mechanical_librarian.application.batch import BatchError
 from mechanical_librarian.application.batch import manifest,CatalogueSnapshot,BatchSelection
 class Tests(unittest.TestCase):
  def test_create_read_and_refuse_overwrite(self):
-  raw=manifest(CatalogueSnapshot(1,"a"*64,()),"b"*64,(),())
+  raw=manifest(CatalogueSnapshot(1,"a"*64,()),"b"*64,(),(),())
   with tempfile.TemporaryDirectory() as d:
    p=Path(d)/"manifest.json";create(p,raw);self.assertEqual(read(p),raw)
    with self.assertRaises(BatchError):create(p,raw)

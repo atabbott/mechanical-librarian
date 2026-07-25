@@ -73,7 +73,7 @@ def catalogue_fingerprint(configuration: ApplicationConfiguration) -> Fingerprin
         for value in configuration.mounts if value.name in referenced_mounts
     }
     value = {
-        "schema": "config-v3",
+        "schema": "config-v4",
         "connections": [connections[name] for name in sorted(connections)],
         "libraries": [
             {"name": item.name, "connection": item.connection, "library_id": item.library_id, "mount": item.mount}

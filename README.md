@@ -6,7 +6,7 @@ production image, supported release, or write-capable runtime yet.
 
 ## Current checkpoint
 
-The completed 0.6 development checkpoint installs a bounded, report-only ebook
+The completed 0.8 development checkpoint installs a bounded, report-only ebook
 evidence workflow. An operator can:
 
 - refresh and inspect a current catalogue across configured Audiobookshelf book
@@ -18,7 +18,9 @@ evidence workflow. An operator can:
   evidence report.
 
 The report combines current Audiobookshelf state, bounded structured EPUB
-evidence, configured Hardcover observations, and validated cover artifacts.
+evidence, independent configured Hardcover and Open Library observations, and
+validated cover artifacts. Open Library uses exact ISBN-family admission and a
+strict low-volume request envelope; it does not fuse or rank provider evidence.
 Catalogue and batch operations retain the same read-only boundary. There is no
 review, decision, apply, target write, media write, background execution,
 automatic retry, or supported release.

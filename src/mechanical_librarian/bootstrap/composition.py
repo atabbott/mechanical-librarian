@@ -32,6 +32,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
+from mechanical_librarian.adapters.providers.open_library_metadata import (
+    OpenLibraryMetadataProvider,
+    OpenLibraryPacer,
+)
 from mechanical_librarian.adapters.providers.remote_cover import (
     CoverDeadline,
     RemoteCoverError,
@@ -56,6 +60,7 @@ from mechanical_librarian.application.metadata_report import (
     InspectionResult,
     MetadataReportError,
     ProviderBinding,
+    ProviderCoverDescriptor,
     TargetCoverReader,
     TargetSnapshot,
     UnsupportedMediaError,
@@ -88,6 +93,7 @@ from mechanical_librarian.infrastructure.local_media import (
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client,
     hardcover_client_token,
+    open_library_client,
     read_secret,
     target_client,
     target_client_token,
@@ -198,13 +204,13 @@ class _CoverEvidenceObserver:
         self._artifacts = artifacts
         self._providers = {value.name: value for value in providers}
 
-    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...], descriptors: tuple[tuple[str, str, str | None], ...] = (), aggregate_deadline: float | None = None) -> tuple[CoverSource, ...]:
+    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...], descriptors: tuple[ProviderCoverDescriptor, ...] = (), aggregate_deadline: float | None = None) -> tuple[CoverSource, ...]:
         now = time.monotonic()
         aggregate = now + 60.0 if aggregate_deadline is None else aggregate_deadline
         deadline = CoverDeadline(aggregate, min(now + 20.0, aggregate))
         if target.cover is None:
             source = CoverSource(cover_source_id(CoverSourceKind.ABS, "absent"), CoverSourceKind.ABS, CoverSourceState.ABSENT)
-            return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
+            return (source, *local_sources, *self._provider_covers(providers, descriptors, deadline=deadline))
         source_id = cover_source_id(CoverSourceKind.ABS, target.cover.identity)
         try:
             original = self._target.read_cover(target.cover, deadline=deadline.aggregate_deadline)
@@ -231,9 +237,9 @@ class _CoverEvidenceObserver:
             raise
         except MetadataReportError:
             source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
-        return (source, *local_sources, *self._hardcover(providers, descriptors, deadline=deadline))
+        return (source, *local_sources, *self._provider_covers(providers, descriptors, deadline=deadline))
 
-    def _hardcover(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[tuple[str, str, str | None], ...], *, deadline: CoverDeadline) -> tuple[CoverSource, ...]:
+    def _provider_covers(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[ProviderCoverDescriptor, ...], *, deadline: CoverDeadline) -> tuple[CoverSource, ...]:
         results: list[CoverSource] = []
         for observation in observations:
             configuration = self._providers.get(observation.provider)
@@ -241,44 +247,57 @@ class _CoverEvidenceObserver:
                 continue
             if not configuration.cover_enabled:
                 continue
-            values = tuple((source_id, url) for provider, source_id, url in descriptors if provider == observation.provider)
+            values = tuple(
+                descriptor
+                for descriptor in descriptors
+                if descriptor.provider == observation.provider
+            )
             if not values:
                 continue
             if time.monotonic() >= deadline.aggregate_deadline:
-                results.extend(CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.TIMEOUT, timeout_scope="not_started_due_to_aggregate_deadline") for source_id, _ in values)
+                results.extend(CoverSource(value.source_id, value.kind, CoverSourceState.TIMEOUT, timeout_scope="not_started_due_to_aggregate_deadline") for value in values)
                 continue
-            for source_id, url in values:
+            for value in values:
                 results.append(
-                    CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.ABSENT)
-                    if url is None
-                    else self._remote(source_id, url, deadline)
+                    self._remote(value, deadline)
                 )
         return tuple(results)
 
-    def _remote(self, source_id: str, url: str, deadline: CoverDeadline) -> CoverSource:
+    def _remote(self, descriptor: ProviderCoverDescriptor, deadline: CoverDeadline) -> CoverSource:
+        source_id = descriptor.source_id
+        kind = descriptor.kind
+        if descriptor.url is None:
+            return CoverSource(source_id, kind, CoverSourceState.ABSENT)
         try:
+            if descriptor.wait is not None and not descriptor.wait(deadline.aggregate_deadline):
+                return CoverSource(source_id, kind, CoverSourceState.TIMEOUT, timeout_scope="not_started_due_to_aggregate_deadline")
             attempt = deadline.next_attempt()
-            remote = fetch_remote_cover(url, deadline=attempt)
+            remote = fetch_remote_cover(
+                descriptor.url,
+                deadline=attempt,
+                allow_redirects=descriptor.allow_redirects,
+                user_agent=descriptor.user_agent,
+            )
             decoded = decode_cover(
                 remote.content,
                 deadline=deadline.aggregate_deadline,
             )
             self._artifacts.stage(decoded.artifact, remote.content, decoded.preview)
-            return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.RETRIEVED, decoded.artifact)
+            return CoverSource(source_id, kind, CoverSourceState.RETRIEVED, decoded.artifact)
         except RemoteCoverTimeout:
-            return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.TIMEOUT, timeout_scope="attempted")
+            return CoverSource(source_id, kind, CoverSourceState.TIMEOUT, timeout_scope="attempted")
         except CoverDecodeTimeout:
-            return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.TIMEOUT, timeout_scope="attempted")
+            return CoverSource(source_id, kind, CoverSourceState.TIMEOUT, timeout_scope="attempted")
         except RemoteCoverError as error:
             message = str(error)
             state = CoverSourceState.UNSAFE_REMOTE if "unsafe" in message else CoverSourceState.UNSUPPORTED_FORMAT if "format" in message else CoverSourceState.OVERSIZED if "oversized" in message else CoverSourceState.UNAVAILABLE
-            return CoverSource(source_id, CoverSourceKind.HARDCOVER, state)
+            return CoverSource(source_id, kind, state)
         except CoverDecodeRejected as error:
-            return CoverSource(source_id, CoverSourceKind.HARDCOVER, error.state)
+            return CoverSource(source_id, kind, error.state)
         except ArtifactAuthorityError:
             raise
         except MetadataReportError:
-            return CoverSource(source_id, CoverSourceKind.HARDCOVER, CoverSourceState.UNAVAILABLE)
+            return CoverSource(source_id, kind, CoverSourceState.UNAVAILABLE)
 
 def run_metadata_report(config_path: Path, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
     # Validate the separately authorized private store before credentials or
@@ -287,7 +306,7 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
 
 
-def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None) -> str:
+def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
@@ -301,17 +320,32 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
         maximum_bytes=configuration.limits.target_response_bytes,
         timeout_seconds=configuration.limits.timeout_seconds,
     )
+    if open_library_pacer is None and any(
+        provider.enabled and provider.adapter == "open_library"
+        for provider in provider_configs
+    ):
+        open_library_pacer = OpenLibraryPacer()
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
         def factory(value=provider):
-            if value.secret_file is None:
-                raise MetadataReportError("provider credential unavailable")
-            return HardcoverMetadataProvider(
-                value.name,
-                hardcover_client(value.secret_file, configuration.limits.timeout_seconds) if credentials is None else hardcover_client_token(credentials["provider:" + value.name], configuration.limits.timeout_seconds),
-                configuration.limits.provider_response_bytes,
-                configuration.limits.timeout_seconds,
-            )
+            if value.adapter == "hardcover":
+                if value.secret_file is None:
+                    raise MetadataReportError("provider credential unavailable")
+                return HardcoverMetadataProvider(
+                    value.name,
+                    hardcover_client(value.secret_file, configuration.limits.timeout_seconds) if credentials is None else hardcover_client_token(credentials["provider:" + value.name], configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                )
+            if value.adapter == "open_library" and value.contact_email is not None:
+                return OpenLibraryMetadataProvider(
+                    value.name,
+                    open_library_client(value.contact_email, configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=open_library_pacer,
+                )
+            raise MetadataReportError("provider configuration is invalid")
         bindings.append(ProviderBinding(provider.name, provider.enabled, factory))
     def repository_factory():
         repository = open_repository(database_path, expected_identity=repository_identity)
@@ -400,8 +434,20 @@ def preview_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, 
     finally:
         repository.close()
     selections = select(snapshot, requested, all_eligible)
+    _require_open_library_batch_envelope(
+        configuration, selections, all_eligible=all_eligible
+    )
     providers = _batch_provider_names(configuration, selections)
-    raw = batch_manifest(snapshot, batch_fingerprint(configuration, selections), selections, providers)
+    provider_adapters = _batch_provider_adapters(
+        configuration, selections, providers
+    )
+    raw = batch_manifest(
+        snapshot,
+        batch_fingerprint(configuration, selections),
+        selections,
+        providers,
+        provider_adapters,
+    )
     create_batch_manifest(manifest_path, raw)
     value = parse_manifest(raw)
     return json.dumps({"id": value["id"], "entries": len(selections), **value["call_maxima"]}, separators=(",", ":"))
@@ -424,6 +470,12 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     actual_providers = _batch_provider_names(configuration, selections)
     if actual_providers != tuple(value["providers"]):
         raise BatchError("batch configuration changed")
+    actual_adapters = _batch_provider_adapters(
+        configuration, selections, actual_providers
+    )
+    if actual_adapters != tuple(value["provider_adapters"]):
+        raise BatchError("batch configuration changed")
+    _require_open_library_batch_envelope(configuration, selections)
     repository = open_catalogue(catalogue_path, create=False)
     try:
         snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))
@@ -439,6 +491,9 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     selected_connections = {selection.connection for selection in selections}
     selected_provider_names = set(value["providers"])
     credentials = _load_batch_credentials(configuration, selected_connections, selected_provider_names)
+    open_library_pacer = (
+        OpenLibraryPacer() if "open_library" in actual_adapters else None
+    )
     def current_entry(generation: int, fingerprint: str, key: tuple[str, str, str, str]):
         repository = open_catalogue(catalogue_path, create=False)
         try:
@@ -446,7 +501,7 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
         finally:
             repository.close()
     def report(entry):
-        serialized = run_metadata_report_loaded(configuration, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity, credentials, repository_identity, artifact_identity)
+        serialized = run_metadata_report_loaded(configuration, database_path, artifact_store_path, entry.connection, entry.library, entry.item_id, 0, entry.file_identity, credentials, repository_identity, artifact_identity, open_library_pacer)
         from mechanical_librarian.domain.metadata_report import MetadataReport
         report = MetadataReport.from_json(serialized)
         return report.report_id, tuple(item.status for item in report.providers)
@@ -455,6 +510,41 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
 
 def _batch_provider_names(configuration, selections: tuple[BatchSelection, ...]) -> tuple[str, ...]:
     return tuple(sorted({name for selection in selections for library in configuration.libraries if library.name == selection.library and library.connection == selection.connection for name in library.provider_connections if next(provider for provider in configuration.providers if provider.name == name).enabled}))
+
+
+def _batch_provider_adapters(
+    configuration,
+    selections: tuple[BatchSelection, ...],
+    providers: tuple[str, ...] | None = None,
+) -> tuple[str, ...]:
+    names = (
+        _batch_provider_names(configuration, selections)
+        if providers is None
+        else providers
+    )
+    values = {provider.name: provider.adapter for provider in configuration.providers}
+    return tuple(values[name] for name in names)
+
+
+def _require_open_library_batch_envelope(
+    configuration,
+    selections: tuple[BatchSelection, ...],
+    *,
+    all_eligible: bool = False,
+) -> None:
+    providers = {provider.name: provider for provider in configuration.providers}
+    if all_eligible:
+        enabled = any(
+            providers[name].enabled and providers[name].adapter == "open_library"
+            for library in configuration.libraries
+            for name in library.provider_connections
+        )
+    else:
+        enabled = "open_library" in _batch_provider_adapters(
+            configuration, selections
+        )
+    if enabled and (all_eligible or len(selections) > 5):
+        raise BatchError("Open Library batch selection is invalid")
 
 
 def _load_batch_credentials(configuration, selected_connections: set[str], selected_provider_names: set[str]) -> dict[str, str]:

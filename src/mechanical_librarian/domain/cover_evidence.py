@@ -14,7 +14,7 @@ from enum import StrEnum
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_ID = re.compile(r"^cover_[0-9a-f]{64}$")
-_SOURCE_ID = re.compile(r"^(?:abs|epub|hardcover)_[0-9a-f]{64}$")
+_SOURCE_ID = re.compile(r"^(?:abs|epub|hardcover|open_library)_[0-9a-f]{64}$")
 PREVIEW_VARIANT = "preview-320x480-rgba-png-v1"
 
 
@@ -26,6 +26,7 @@ class CoverSourceKind(StrEnum):
     ABS = "abs"
     EPUB = "epub"
     HARDCOVER = "hardcover"
+    OPEN_LIBRARY = "open_library"
 
 
 class CoverSourceState(StrEnum):

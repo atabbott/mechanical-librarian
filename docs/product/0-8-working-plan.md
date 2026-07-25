@@ -2,11 +2,11 @@
 
 ## Status
 
-Milestone [0.8.0 — Independent multi-provider ebook evidence](https://github.com/atabbott/mechanical-librarian/milestone/9) is an open, planned report-only checkpoint. Its single Ready slice tracker is [#210](https://github.com/atabbott/mechanical-librarian/issues/210), `F09l: independent Open Library ebook evidence`. This document records that accepted delivery contract; it does not claim that Open Library support is implemented or authorize operation beyond the current report-only runtime.
+Milestone [0.8.0 — Independent multi-provider ebook evidence](https://github.com/atabbott/mechanical-librarian/milestone/9) is implemented by its single F09l slice tracker, [#210](https://github.com/atabbott/mechanical-librarian/issues/210), `independent Open Library ebook evidence`. This document records the delivered report-only contract; it does not authorize operation beyond that runtime.
 
 ## Outcome
 
-One current Audiobookshelf EPUB with exactly one usable edition-applicable ISBN family will produce or reopen one immutable report containing independent Hardcover and Open Library observations. Semantically equivalent Open Library claims match the existing Hardcover evidence surface, while an allowlisted finite rich-evidence set remains source-scoped. The checkpoint remains report-only: it adds no provider fusion, ranking, voting, proposal, review, apply, write, UI/API, third provider, generic cache/retry/scheduler/rate/cost/plugin framework, tag, or release.
+One current Audiobookshelf EPUB with exactly one usable edition-applicable ISBN family produces or reopens one immutable report containing independent Hardcover and Open Library observations. Semantically equivalent Open Library claims match the existing Hardcover evidence surface, while an allowlisted finite rich-evidence set remains source-scoped. The checkpoint remains report-only: it adds no provider fusion, ranking, voting, proposal, review, apply, write, UI/API, third provider, generic cache/retry/scheduler/rate/cost/plugin framework, tag, or release.
 
 ## Open Library operating envelope
 
@@ -18,14 +18,31 @@ One current Audiobookshelf EPUB with exactly one usable edition-applicable ISBN 
 - Cover acquisition starts only after successful candidates and stays independently best-effort: cover failure never erases metadata.
 - With Open Library enabled, only an explicit foreground selection of at most five items is accepted. `all_eligible` and larger selections fail before manifest creation, client construction, credential access, or egress. Larger existing batches remain available with Open Library disabled.
 
+The fixed request shapes follow Open Library's official
+[Search API](https://openlibrary.org/dev/docs/api/search),
+[REST record API](https://openlibrary.org/dev/docs/restful_api),
+[API usage guidelines](https://openlibrary.org/developers/api), and
+[Covers API](https://openlibrary.org/dev/docs/api/covers). The installed
+contract deliberately stays at the conservative one-request-per-second
+guideline even when an identified client might be permitted a higher rate.
+
 ## Finite evidence and boundaries
 
 Only the required exact Search, edition, and work payloads may supply rich evidence: exact work, edition, and author identities; revision and last-modified provenance; OCLC, LCCN, and Wikidata; subjects, people, places, and times; Dewey and LC classifications; physical format, pages, pagination, publication place, copyright date; contributor identity and role; edition-work relation and first-publication date; and bounded work and edition cover IDs.
 
 The checkpoint does not traverse author records, enumerate editions, use fuzzy fallback or extra discovery, retain arbitrary links, raw payloads, unbounded text, or unknown identifiers. It does not map subjects into tags or genres, select a value, or change another provider observation.
 
-## Required proof
+## Delivered proof
 
-The future implementation must prove closed adapter-specific configuration and no-egress invalid/disabled paths; ISBN-family input gating before egress; deterministic bounded parsing and claim parity; byte-identical report output independent of provider configuration order; provider failure isolation; exact replay and supersession; cover safety and failure isolation; truthful pre-egress batch maxima; and, if persistence changes, ADR-0013 absent-or-exact-current schema behavior without migration, import, or conversion. Qualification includes installed-artifact, configuration, documentation, security, architecture, and full required tests using synthetic fixtures and mocked transport.
+Qualification proves closed adapter-specific configuration and no-egress
+invalid/disabled paths; ISBN-family input gating before egress; deterministic
+bounded parsing and claim parity; canonical provider ordering and failure
+isolation; exact replay and supersession; cover safety and failure isolation;
+truthful pre-egress batch maxima; and ADR-0013 absent-or-exact-current
+`metadata-report-v6` behavior without migration, import, or conversion.
+Installed-artifact, configuration, documentation, security, architecture, and
+full required tests use only synthetic fixtures and mocked provider transport.
 
-The single future implementation pull request closes #210. Completing the milestone does not create a tag, release, publication artifact, or production write authority.
+The single implementation pull request closes #210. Completing the milestone
+does not create a tag, release, publication artifact, or production write
+authority.

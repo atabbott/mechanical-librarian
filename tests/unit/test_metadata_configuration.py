@@ -7,19 +7,20 @@ import unittest
 from pathlib import Path
 
 import httpx
+from pydantic import ValidationError
 
 from mechanical_librarian.application.configuration import (
     ConfigurationError,
     ProviderConnectionConfiguration,
     TargetConnectionConfiguration,
 )
-from mechanical_librarian.infrastructure.configuration import configuration_schema_json, load_configuration_file
+from mechanical_librarian.infrastructure.configuration import ConfigurationInput, configuration_schema_json, load_configuration_file
 from mechanical_librarian.infrastructure.security.credentials import read_secret, target_client
 
 
 def _source(root: Path) -> dict[str, object]:
     return {
-        "schema_version": "config-v3",
+        "schema_version": "config-v4",
         "connections": [
             {"name": "secondary", "adapter": "audiobookshelf", "endpoint": "https://secondary.invalid", "secret_file": str(root / "secondary.secret")},
             {"name": "primary", "adapter": "audiobookshelf", "endpoint": "https://primary.invalid", "secret_file": str(root / "primary.secret")},
@@ -49,6 +50,7 @@ class MetadataConfigurationTests(unittest.TestCase):
         connection, library, mount, providers = configuration.select("primary", "books")
         self.assertEqual(connection.name, "primary")
         self.assertEqual(library.library_id, "library-a")
+        self.assertEqual(library.provider_connections, ("first", "second"))
         self.assertEqual(mount.name, "books")
         self.assertEqual([value.name for value in providers], ["first", "second"])
 
@@ -65,6 +67,9 @@ class MetadataConfigurationTests(unittest.TestCase):
             old = _source(root)
             old["schema_version"] = "config-v1"
             cases.append(old)
+            previous = _source(root)
+            previous["schema_version"] = "config-v3"
+            cases.append(previous)
             missing_provider_secret = _source(root)
             missing_provider_secret["providers"][0]["enabled"] = True
             cases.append(missing_provider_secret)
@@ -81,8 +86,149 @@ class MetadataConfigurationTests(unittest.TestCase):
                     load_configuration_file(path)
 
     def test_generated_schema_is_current(self) -> None:
-        expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v3.schema.json").read_text(encoding="utf-8")
+        expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v4.schema.json").read_text(encoding="utf-8")
         self.assertEqual(configuration_schema_json(), expected)
+
+    def test_generated_schema_enforces_provider_variants(self) -> None:
+        schema = json.loads(configuration_schema_json())["$defs"]
+        self.assertEqual(
+            {
+                "DisabledHardcoverProviderInput",
+                "DisabledOpenLibraryProviderInput",
+                "EnabledHardcoverProviderInput",
+                "EnabledOpenLibraryProviderInput",
+            },
+            {
+                value["$ref"].rsplit("/", 1)[-1]
+                for value in schema["ProviderInput"]["anyOf"]
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            valid = (
+                {
+                    "name": "provider",
+                    "adapter": "hardcover",
+                    "enabled": True,
+                    "cover_enabled": True,
+                    "secret_file": str(root / "provider.secret"),
+                },
+                {
+                    "name": "provider",
+                    "adapter": "hardcover",
+                    "enabled": False,
+                    "cover_enabled": False,
+                    "secret_file": None,
+                },
+                {
+                    "name": "provider",
+                    "adapter": "open_library",
+                    "enabled": True,
+                    "cover_enabled": True,
+                    "secret_file": None,
+                    "contact_email": "operator@example.org",
+                },
+                {
+                    "name": "provider",
+                    "adapter": "open_library",
+                    "enabled": False,
+                    "cover_enabled": False,
+                    "secret_file": None,
+                },
+            )
+            for provider in valid:
+                source = _source(root)
+                source["providers"] = [provider]
+                ConfigurationInput.model_validate(source)
+
+            invalid = (
+                {
+                    "adapter": "open_library",
+                    "enabled": True,
+                    "secret_file": None,
+                },
+                {
+                    "adapter": "open_library",
+                    "enabled": True,
+                    "secret_file": str(root / "provider.secret"),
+                    "contact_email": "operator@example.org",
+                },
+                {
+                    "adapter": "hardcover",
+                    "enabled": True,
+                    "secret_file": None,
+                },
+                {
+                    "adapter": "hardcover",
+                    "enabled": False,
+                    "cover_enabled": True,
+                    "secret_file": None,
+                },
+            )
+            for changes in invalid:
+                source = _source(root)
+                source["providers"][0].update(changes)
+                with self.subTest(changes=changes), self.assertRaises(ValidationError):
+                    ConfigurationInput.model_validate(source)
+
+    def test_provider_adapters_have_closed_adapter_specific_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            valid = _source(root)
+            valid["providers"] = [
+                {
+                    "name": "first",
+                    "adapter": "hardcover",
+                    "enabled": True,
+                    "cover_enabled": False,
+                    "secret_file": str(root / "hardcover.secret"),
+                },
+                {
+                    "name": "second",
+                    "adapter": "open_library",
+                    "enabled": True,
+                    "cover_enabled": True,
+                    "secret_file": None,
+                    "contact_email": "operator@example.org",
+                },
+            ]
+            path = root / "valid.json"
+            path.write_text(json.dumps(valid), encoding="utf-8")
+            configuration = load_configuration_file(path)
+            self.assertEqual(
+                tuple((value.name, value.adapter) for value in configuration.providers),
+                (("first", "hardcover"), ("second", "open_library")),
+            )
+            self.assertNotIn("operator@example.org", repr(configuration))
+
+            invalid = []
+            for adapter, secret, contact in (
+                ("open_library", str(root / "secret"), "operator@example.org"),
+                ("open_library", None, None),
+                ("open_library", None, "not-an-email"),
+                ("open_library", None, ".operator@example.org"),
+                ("open_library", None, "operator.@example.org"),
+                ("open_library", None, "op..erator@example.org"),
+                ("open_library", None, "a" * 65 + "@example.org"),
+                ("hardcover", str(root / "secret"), "operator@example.org"),
+                ("unknown", None, "operator@example.org"),
+            ):
+                source = _source(root)
+                source["providers"][0].update(
+                    {
+                        "adapter": adapter,
+                        "enabled": True,
+                        "secret_file": secret,
+                        "contact_email": contact,
+                    }
+                )
+                invalid.append(source)
+            for index, source in enumerate(invalid):
+                candidate = root / f"invalid-provider-{index}.json"
+                candidate.write_text(json.dumps(source), encoding="utf-8")
+                with self.subTest(index=index), self.assertRaises(ConfigurationError):
+                    load_configuration_file(candidate)
 
     def test_mount_paths_are_absolute_in_generated_schema_and_runtime(self) -> None:
         mount_properties = json.loads(configuration_schema_json())["$defs"]["MountInput"][
@@ -107,11 +253,10 @@ class MetadataConfigurationTests(unittest.TestCase):
             schema["ConnectionInput"]["properties"]["secret_file"]["pattern"],
             "^/",
         )
-        provider_secret = schema["ProviderInput"]["properties"]["secret_file"]
-        absolute_variant = next(
-            value for value in provider_secret["anyOf"] if value.get("type") == "string"
-        )
-        self.assertEqual(absolute_variant["pattern"], "^/")
+        provider_secret = schema["EnabledHardcoverProviderInput"]["properties"][
+            "secret_file"
+        ]
+        self.assertEqual(provider_secret["pattern"], "^/")
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
