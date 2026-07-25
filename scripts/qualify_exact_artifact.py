@@ -931,6 +931,7 @@ def _installed_runtime_environment(
     launcher_python: str,
 ) -> dict[str, str]:
     value = dict(environment)
+    value.pop("UV_NO_CACHE", None)
     qualified_bin = _environment_bin(qualified_environment).resolve()
     launcher_bin = Path(launcher_python).parent.resolve()
     path_entries = []
