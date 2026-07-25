@@ -15,7 +15,7 @@ class CoverArtifactStoreTests(unittest.TestCase):
             artifact = CoverArtifact.create(b"source", b"preview", "image/png", 1, 1)
             store.stage(artifact, b"source", b"preview")
             store.stage(artifact, b"source", b"preview")
-            store.require_artifact(artifact, 1024)
+            store.require_artifact(artifact)
             self.assertEqual(b"preview", store.preview(artifact))
 
     def test_require_artifact_needs_the_original_and_preview(self) -> None:
@@ -28,7 +28,17 @@ class CoverArtifactStoreTests(unittest.TestCase):
             store.stage(artifact, b"source", b"preview")
             (root / artifact.original_digest).unlink()
             with self.assertRaises(MetadataReportError):
-                store.require_artifact(artifact, 1024)
+                store.require_artifact(artifact)
+
+    def test_require_artifact_uses_the_cover_pipeline_bound(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            original = b"x" * (1_048_576 + 1)
+            store = CoverArtifactStore(Path(directory))
+            artifact = CoverArtifact.create(
+                original, b"preview", "image/png", 1, 1
+            )
+            store.stage(artifact, original, b"preview")
+            store.require_artifact(artifact)
 
     def test_digest_mismatch_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

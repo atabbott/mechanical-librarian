@@ -588,10 +588,7 @@ def create_proposal_set(
         )
         for source in report.cover_sources:
             if source.artifact is not None:
-                artifacts.require_artifact(
-                    source.artifact,
-                    configuration.limits.target_response_bytes,
-                )
+                artifacts.require_artifact(source.artifact)
         artifacts.require_current()
         return valid
 
