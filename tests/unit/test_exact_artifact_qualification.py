@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import subprocess
@@ -16,6 +17,7 @@ from scripts.qualify_exact_artifact import (
     QualificationFailure,
     _decode_stdout,
     _run,
+    _validate_wheel,
     _verify_installed_payload,
     qualify_exact_artifact,
 )
@@ -42,6 +44,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                     import_name="cache_probe",
                     console_script="cache-probe",
                     console_args=(),
+                    test_args=None,
                     wheel_output=first_wheel_output,
                     environment_path=first_environment_path,
                 )
@@ -63,7 +66,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                 self.assertEqual("source-a\n", stale_output)
                 self.assertTrue(any(cache.iterdir()))
 
-                _write_probe(source, "source-b")
+                _write_probe(source, "source-b", with_test=True)
                 second_sha = _commit(source, "source b")
                 wheel_output = root / "retained-wheel"
                 environment_path = root / "retained-environment"
@@ -98,6 +101,9 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         )
         self.assertTrue(second.retained_wheel)
         self.assertTrue(second.retained_environment)
+        self.assertTrue(second.locked_dependencies)
+        self.assertTrue(second.full_suite_executed)
+        self.assertTrue(second.wheel_record_validated)
         self.assertTrue(retained_console_exists)
         self.assertEqual(1, retained_wheel_count)
 
@@ -133,6 +139,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                         import_name="cache_probe",
                         console_script="cache-probe",
                         console_args=(),
+                        test_args=None,
                     )
         self.assertEqual("source_not_clean", raised.exception.reason)
 
@@ -150,6 +157,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                     import_name="cache_probe",
                     console_script="cache-probe",
                     console_args=(),
+                    test_args=None,
                 )
             self.assertEqual("source_identity_mismatch", wrong.exception.reason)
 
@@ -162,6 +170,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                     import_name="cache_probe",
                     console_script="cache-probe",
                     console_args=(),
+                    test_args=None,
                 )
             self.assertEqual("source_not_clean", dirty.exception.reason)
 
@@ -183,6 +192,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                     b"Tag: py3-none-any\n"
                 ),
             }
+            members = _with_record(members)
             with ZipFile(wheel, "w") as archive:
                 for name, content in members.items():
                     archive.writestr(name, content)
@@ -198,6 +208,38 @@ class ExactArtifactQualificationTests(unittest.TestCase):
             with self.assertRaises(QualificationFailure) as raised:
                 _verify_installed_payload(wheel, purelib, "cache-probe")
         self.assertEqual("installed_payload_mismatch", raised.exception.reason)
+
+    def test_invalid_wheel_record_fails_before_install(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = Path(directory) / "cache_probe-0.0.0-py3-none-any.whl"
+            members = _with_record(
+                {
+                    "cache_probe.py": b"print('wheel')\n",
+                    "cache_probe-0.0.0.dist-info/METADATA": (
+                        b"Metadata-Version: 2.4\n"
+                        b"Name: cache-probe\n"
+                        b"Version: 0.0.0\n\n"
+                    ),
+                    "cache_probe-0.0.0.dist-info/WHEEL": (
+                        b"Wheel-Version: 1.0\n"
+                        b"Root-Is-Purelib: true\n"
+                        b"Tag: py3-none-any\n"
+                    ),
+                }
+            )
+            record_name = "cache_probe-0.0.0.dist-info/RECORD"
+            members[record_name] = members[record_name].replace(
+                b"sha256=",
+                b"sha256=invalid",
+                1,
+            )
+            with ZipFile(wheel, "w") as archive:
+                for name, content in members.items():
+                    archive.writestr(name, content)
+
+            with self.assertRaises(QualificationFailure) as raised:
+                _validate_wheel(wheel, "cache-probe")
+        self.assertEqual("wheel_record_invalid", raised.exception.reason)
 
     def test_subprocess_output_and_decoding_fail_closed(self) -> None:
         with self.assertRaises(QualificationFailure) as output:
@@ -248,9 +290,9 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         self.assertEqual("command_descendant_invalid", raised.exception.reason)
 
 
-def _write_probe(source: Path, marker: str) -> None:
+def _write_probe(source: Path, marker: str, *, with_test: bool = False) -> None:
     (source / ".gitignore").write_text(
-        "/build/\n/*.egg-info/\n",
+        "/build/\n*.egg-info/\n",
         encoding="utf-8",
     )
     (source / "pyproject.toml").write_text(
@@ -267,17 +309,58 @@ version = "0.0.0"
 cache-probe = "cache_probe:main"
 
 [tool.setuptools]
+package-dir = {"" = "src"}
 py-modules = ["cache_probe"]
 """,
         encoding="utf-8",
     )
-    (source / "cache_probe.py").write_text(
+    module = source / "src" / "cache_probe.py"
+    module.parent.mkdir(exist_ok=True)
+    module.write_text(
         f"""\
 def main():
     print({marker!r})
 """,
         encoding="utf-8",
     )
+    if with_test:
+        module.write_text(
+            f"""\
+MARKER = {marker!r}
+
+
+def main():
+    print(MARKER)
+""",
+            encoding="utf-8",
+        )
+        tests = source / "tests"
+        tests.mkdir(exist_ok=True)
+        (tests / "__init__.py").write_text("", encoding="utf-8")
+        (tests / "test_probe.py").write_text(
+            f"""\
+import shutil
+import subprocess
+import unittest
+
+import cache_probe
+
+
+class InstalledProbeTests(unittest.TestCase):
+    def test_exact_installed_source(self):
+        self.assertEqual({marker!r}, cache_probe.MARKER)
+        console = shutil.which("cache-probe")
+        self.assertIsNotNone(console)
+        completed = subprocess.run(
+            (console,),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual({marker!r} + "\\n", completed.stdout)
+""",
+            encoding="utf-8",
+        )
 
 
 def _commit(source: Path, message: str) -> str:
@@ -285,7 +368,8 @@ def _commit(source: Path, message: str) -> str:
         _git(source, "init", "--quiet")
         _git(source, "config", "user.name", "Qualification Test")
         _git(source, "config", "user.email", "qualification@example.invalid")
-    _git(source, "add", ".gitignore", "pyproject.toml", "cache_probe.py")
+    _command("uv", "lock", "--quiet", cwd=source)
+    _git(source, "add", ".")
     _git(source, "commit", "--quiet", "-m", message)
     return _git(source, "rev-parse", "HEAD").strip()
 
@@ -309,9 +393,31 @@ def _environment_bin(environment: Path) -> Path:
     return environment / ("Scripts" if os.name == "nt" else "bin")
 
 
-def _command(*arguments: str) -> str:
+def _with_record(members: dict[str, bytes]) -> dict[str, bytes]:
+    values = dict(members)
+    record_name = "cache_probe-0.0.0.dist-info/RECORD"
+    rows = []
+    for name, content in sorted(values.items()):
+        digest = base64.urlsafe_b64encode(
+            hashlib.sha256(content).digest()
+        ).rstrip(b"=")
+        rows.append(
+            name.encode("utf-8")
+            + b",sha256="
+            + digest
+            + b","
+            + str(len(content)).encode("ascii")
+            + b"\n"
+        )
+    rows.append(record_name.encode("utf-8") + b",,\n")
+    values[record_name] = b"".join(rows)
+    return values
+
+
+def _command(*arguments: str, cwd: Path | None = None) -> str:
     completed = subprocess.run(
         arguments,
+        cwd=cwd,
         stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,

@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import csv
 import hashlib
+import io
 import json
 import os
 import re
@@ -46,6 +49,22 @@ class _Digest(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class _WheelMember:
+    name: str
+    size: int
+    record_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class _WheelManifest:
+    distribution_version: str
+    dist_info: str
+    record_name: str
+    members: tuple[_WheelMember, ...]
+    payload_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class ExactArtifactEvidence:
     schema: str
     status: str
@@ -61,6 +80,9 @@ class ExactArtifactEvidence:
     isolated_environment: bool
     explicit_wheel_install: bool
     outside_checkout: bool
+    locked_dependencies: bool
+    full_suite_executed: bool
+    wheel_record_validated: bool
     retained_wheel: bool
     retained_environment: bool
 
@@ -76,6 +98,17 @@ def qualify_exact_artifact(
     import_name: str = "mechanical_librarian",
     console_script: str = "mechanical-librarian",
     console_args: tuple[str, ...] = ("metadata-report", "--help"),
+    test_args: tuple[str, ...] | None = (
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-t",
+        ".",
+        "-p",
+        "test_*.py",
+    ),
     python_executable: str = sys.executable,
     wheel_output: Path | None = None,
     environment_path: Path | None = None,
@@ -172,6 +205,7 @@ def qualify_exact_artifact(
             raise QualificationFailure("wheel_selection_invalid")
         wheel = wheels[0].resolve()
         wheel_sha256 = _file_sha256(wheel)
+        wheel_manifest = _validate_wheel(wheel, distribution)
 
         _run(
             (
@@ -187,12 +221,45 @@ def qualify_exact_artifact(
             reason="environment_creation_failed",
         )
         environment_python = _environment_python(qualified_environment)
+        locked_requirements = root / "locked-requirements.txt"
+        _run(
+            (
+                "uv",
+                "export",
+                "--frozen",
+                "--all-groups",
+                "--no-emit-project",
+                "--format",
+                "requirements.txt",
+                "--output-file",
+                str(locked_requirements),
+            ),
+            cwd=build_source,
+            env=environment,
+            reason="locked_dependencies_failed",
+        )
         _run(
             (
                 "uv",
                 "pip",
                 "install",
                 "--no-cache",
+                "--python",
+                str(environment_python),
+                "--requirements",
+                str(locked_requirements),
+            ),
+            cwd=run_directory,
+            env=environment,
+            reason="locked_dependencies_failed",
+        )
+        _run(
+            (
+                "uv",
+                "pip",
+                "install",
+                "--no-cache",
+                "--no-deps",
                 "--reinstall",
                 "--python",
                 str(environment_python),
@@ -202,6 +269,8 @@ def qualify_exact_artifact(
             env=environment,
             reason="wheel_install_failed",
         )
+        if _file_sha256(wheel) != wheel_sha256:
+            raise QualificationFailure("wheel_identity_mismatch")
 
         purelib_text = _decode_stdout(
             _run(
@@ -219,22 +288,44 @@ def qualify_exact_artifact(
             reason="installed_environment_invalid",
         ).strip()
         purelib = Path(purelib_text).resolve()
+        console = (
+            _environment_bin(qualified_environment) / console_script
+        ).resolve()
+        runtime_environment = _installed_runtime_environment(
+            environment,
+            qualified_environment,
+            python_executable,
+        )
         (
             wheel_payload_sha256,
             installed_payload_sha256,
             distribution_version,
             dist_info,
-        ) = _verify_installed_payload(wheel, purelib, distribution)
+        ) = _verify_installed_payload(
+            wheel,
+            purelib,
+            distribution,
+            manifest=wheel_manifest,
+            console=console,
+        )
+        if _file_sha256(wheel) != wheel_sha256:
+            raise QualificationFailure("wheel_identity_mismatch")
         _verify_installed_origin(purelib / dist_info / "direct_url.json", wheel)
         _verify_import_origin(
             environment_python,
             import_name,
             purelib,
             run_directory,
-            environment,
+            runtime_environment,
         )
 
-        console = _environment_bin(qualified_environment) / console_script
+        if test_args is not None:
+            _run(
+                (str(environment_python), "-I", *test_args),
+                cwd=build_source,
+                env=runtime_environment,
+                reason="installed_test_suite_failed",
+            )
         if (
             not console.is_file()
             or console.is_symlink()
@@ -248,7 +339,7 @@ def qualify_exact_artifact(
         completed = _run(
             (str(console), *console_args),
             cwd=run_directory,
-            env=environment,
+            env=runtime_environment,
             reason="installed_console_failed",
         )
         console_stdout_sha256 = hashlib.sha256(completed.stdout).hexdigest()
@@ -269,6 +360,9 @@ def qualify_exact_artifact(
         isolated_environment=True,
         explicit_wheel_install=True,
         outside_checkout=True,
+        locked_dependencies=True,
+        full_suite_executed=test_args is not None,
+        wheel_record_validated=True,
         retained_wheel=retained,
         retained_environment=retained,
     )
@@ -437,54 +531,147 @@ def _file_sha256(path: Path) -> str:
     return value
 
 
-def _verify_installed_payload(
-    wheel: Path,
-    purelib: Path,
-    distribution: str,
-) -> tuple[str, str, str, str]:
-    wheel_digest = hashlib.sha256()
-    installed_digest = hashlib.sha256()
+def _validate_wheel(wheel: Path, distribution: str) -> _WheelManifest:
+    payload_digest = hashlib.sha256()
     try:
         with ZipFile(wheel) as archive:
-            members = tuple(
-                member
-                for member in archive.infolist()
-                if not member.is_dir() and not member.filename.endswith("/RECORD")
-            )
-            if not 1 <= len(members) <= _MAX_WHEEL_MEMBERS:
+            entries = tuple(archive.infolist())
+            if not 1 <= len(entries) <= _MAX_WHEEL_MEMBERS:
                 raise QualificationFailure("wheel_invalid")
-            total = sum(member.file_size for member in members)
+            if len({entry.filename for entry in entries}) != len(entries):
+                raise QualificationFailure("wheel_invalid")
+            for entry in entries:
+                _wheel_member_path(entry)
+                if entry.flag_bits & 0x1 or (entry.is_dir() and entry.file_size != 0):
+                    raise QualificationFailure("wheel_invalid")
+
+            files = tuple(entry for entry in entries if not entry.is_dir())
             if (
-                total > _MAX_INSTALLED_BYTES
+                sum(entry.file_size for entry in files) > _MAX_INSTALLED_BYTES
                 or any(
-                    member.file_size < 0
-                    or member.file_size > _MAX_WHEEL_MEMBER_BYTES
-                    for member in members
+                    entry.file_size < 0
+                    or entry.file_size > _MAX_WHEEL_MEMBER_BYTES
+                    for entry in files
                 )
             ):
                 raise QualificationFailure("wheel_invalid")
             metadata_members = tuple(
-                member
-                for member in members
-                if member.filename.endswith(".dist-info/METADATA")
+                entry
+                for entry in files
+                if entry.filename.endswith(".dist-info/METADATA")
             )
             if len(metadata_members) != 1:
                 raise QualificationFailure("distribution_identity_mismatch")
-            if metadata_members[0].file_size > _MAX_METADATA_BYTES:
+            metadata_member = metadata_members[0]
+            if metadata_member.file_size > _MAX_METADATA_BYTES:
                 raise QualificationFailure("distribution_identity_mismatch")
             metadata = BytesParser().parsebytes(
-                _read_archive_member(archive, metadata_members[0])
+                _read_archive_member(archive, metadata_member)
             )
-            if _canonical_distribution(metadata.get("Name", "")) != _canonical_distribution(
-                distribution
-            ):
+            if _canonical_distribution(
+                metadata.get("Name", "")
+            ) != _canonical_distribution(distribution):
                 raise QualificationFailure("distribution_identity_mismatch")
             distribution_version = metadata.get("Version", "")
             if not distribution_version or len(distribution_version) > 128:
                 raise QualificationFailure("distribution_identity_mismatch")
-            dist_info = metadata_members[0].filename.split("/", 1)[0]
+            dist_info = metadata_member.filename.split("/", 1)[0]
+            record_name = f"{dist_info}/RECORD"
+            record_members = tuple(
+                entry for entry in files if entry.filename == record_name
+            )
+            if (
+                len(record_members) != 1
+                or record_members[0].file_size > _MAX_METADATA_BYTES
+            ):
+                raise QualificationFailure("wheel_record_invalid")
+            record_rows = _parse_record(
+                _read_archive_member(archive, record_members[0]),
+                reason="wheel_record_invalid",
+            )
+            if set(record_rows) != {entry.filename for entry in files}:
+                raise QualificationFailure("wheel_record_invalid")
 
-            for member in sorted(members, key=lambda value: value.filename):
+            manifest_members: list[_WheelMember] = []
+            for member in sorted(files, key=lambda value: value.filename):
+                record_hash, record_size = record_rows[member.filename]
+                if member.filename == record_name:
+                    if record_hash or record_size:
+                        raise QualificationFailure("wheel_record_invalid")
+                    continue
+                digest = hashlib.sha256()
+                _digest_member_header(
+                    payload_digest,
+                    member.filename,
+                    member.file_size,
+                )
+                with archive.open(member) as stream:
+                    observed_size = 0
+                    while chunk := stream.read(65_536):
+                        observed_size += len(chunk)
+                        if observed_size > member.file_size:
+                            raise QualificationFailure("wheel_invalid")
+                        digest.update(chunk)
+                        payload_digest.update(chunk)
+                if observed_size != member.file_size:
+                    raise QualificationFailure("wheel_invalid")
+                expected_hash = _record_hash(digest.digest())
+                if (
+                    record_hash != expected_hash
+                    or record_size != str(member.file_size)
+                ):
+                    raise QualificationFailure("wheel_record_invalid")
+                manifest_members.append(
+                    _WheelMember(
+                        name=member.filename,
+                        size=member.file_size,
+                        record_hash=expected_hash,
+                    )
+                )
+    except QualificationFailure:
+        raise
+    except (
+        BadZipFile,
+        csv.Error,
+        EOFError,
+        KeyError,
+        OSError,
+        RuntimeError,
+        UnicodeError,
+        ValueError,
+    ):
+        raise QualificationFailure("wheel_invalid") from None
+    return _WheelManifest(
+        distribution_version=distribution_version,
+        dist_info=dist_info,
+        record_name=record_name,
+        members=tuple(manifest_members),
+        payload_sha256=payload_digest.hexdigest(),
+    )
+
+
+def _verify_installed_payload(
+    wheel: Path,
+    purelib: Path,
+    distribution: str,
+    *,
+    manifest: _WheelManifest | None = None,
+    console: Path | None = None,
+) -> tuple[str, str, str, str]:
+    if manifest is None:
+        manifest = _validate_wheel(wheel, distribution)
+    installed_digest = hashlib.sha256()
+    try:
+        with ZipFile(wheel) as archive:
+            archive_members = {
+                member.filename: member
+                for member in archive.infolist()
+                if not member.is_dir()
+            }
+            for expected in manifest.members:
+                member = archive_members.get(expected.name)
+                if member is None or member.file_size != expected.size:
+                    raise QualificationFailure("wheel_identity_mismatch")
                 relative = _wheel_member_path(member)
                 installed = purelib.joinpath(*relative.parts)
                 if (
@@ -494,11 +681,6 @@ def _verify_installed_payload(
                     or installed.stat().st_size != member.file_size
                 ):
                     raise QualificationFailure("installed_payload_mismatch")
-                _digest_member_header(
-                    wheel_digest,
-                    member.filename,
-                    member.file_size,
-                )
                 _digest_member_header(
                     installed_digest,
                     member.filename,
@@ -514,8 +696,10 @@ def _verify_installed_payload(
                             raise QualificationFailure("installed_payload_mismatch")
                         if not wheel_chunk:
                             break
-                        wheel_digest.update(wheel_chunk)
                         installed_digest.update(installed_chunk)
+        if installed_digest.hexdigest() != manifest.payload_sha256:
+            raise QualificationFailure("installed_payload_mismatch")
+        _verify_installed_record(purelib, manifest, console)
     except QualificationFailure:
         raise
     except (
@@ -529,11 +713,105 @@ def _verify_installed_payload(
     ):
         raise QualificationFailure("wheel_invalid") from None
     return (
-        wheel_digest.hexdigest(),
+        manifest.payload_sha256,
         installed_digest.hexdigest(),
-        distribution_version,
-        dist_info,
+        manifest.distribution_version,
+        manifest.dist_info,
     )
+
+
+def _verify_installed_record(
+    purelib: Path,
+    manifest: _WheelManifest,
+    console: Path | None,
+) -> None:
+    record_path = purelib / manifest.record_name
+    rows = _parse_record(
+        _read_bounded_file(record_path, _MAX_METADATA_BYTES),
+        reason="installed_record_invalid",
+    )
+    expected = {
+        member.name: (member.record_hash, str(member.size))
+        for member in manifest.members
+    }
+    expected[manifest.record_name] = ("", "")
+    if any(rows.get(name) != value for name, value in expected.items()):
+        raise QualificationFailure("installed_record_payload_invalid")
+
+    generated = set(rows) - set(expected)
+    allowed = {
+        f"{manifest.dist_info}/INSTALLER",
+        f"{manifest.dist_info}/REQUESTED",
+        f"{manifest.dist_info}/direct_url.json",
+        f"{manifest.dist_info}/uv_cache.json",
+    }
+    installer_record = f"{manifest.dist_info}/INSTALLER"
+    origin_record = f"{manifest.dist_info}/direct_url.json"
+    console_record = None
+    if console is not None:
+        console_record = os.path.relpath(console, purelib).replace(os.sep, "/")
+        allowed.add(console_record)
+    if installer_record not in generated:
+        raise QualificationFailure("installed_record_installer_missing")
+    if origin_record not in generated:
+        raise QualificationFailure("installed_record_origin_missing")
+    if console_record is not None and console_record not in generated:
+        raise QualificationFailure("installed_record_console_missing")
+    if not generated.issubset(allowed):
+        raise QualificationFailure("installed_record_generated_unexpected")
+
+    for name in generated:
+        target = (
+            console
+            if name == console_record
+            else purelib.joinpath(*PurePosixPath(name).parts)
+        )
+        if target is None or not target.is_file() or target.is_symlink():
+            raise QualificationFailure("installed_record_generated_invalid")
+        if name != console_record and not target.resolve().is_relative_to(purelib):
+            raise QualificationFailure("installed_record_generated_invalid")
+        digest, size = _file_record_identity(target)
+        if rows[name] != (digest, str(size)):
+            raise QualificationFailure("installed_record_generated_invalid")
+
+
+def _parse_record(
+    content: bytes,
+    *,
+    reason: str,
+) -> dict[str, tuple[str, str]]:
+    try:
+        text = content.decode("utf-8", "strict")
+        parsed = tuple(csv.reader(io.StringIO(text, newline=""), strict=True))
+    except (csv.Error, UnicodeError):
+        raise QualificationFailure(reason) from None
+    rows: dict[str, tuple[str, str]] = {}
+    for row in parsed:
+        if len(row) != 3 or not row[0] or row[0] in rows:
+            raise QualificationFailure(reason)
+        rows[row[0]] = (row[1], row[2])
+    if not rows:
+        raise QualificationFailure(reason)
+    return rows
+
+
+def _record_hash(digest: bytes) -> str:
+    encoded = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return f"sha256={encoded}"
+
+
+def _file_record_identity(path: Path) -> tuple[str, int]:
+    try:
+        size = path.stat().st_size
+        if size < 0 or size > _MAX_WHEEL_MEMBER_BYTES:
+            raise QualificationFailure("installed_record_invalid")
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            while chunk := stream.read(65_536):
+                digest.update(chunk)
+    except OSError:
+        raise QualificationFailure("installed_record_invalid") from None
+    return _record_hash(digest.digest()), size
 
 
 def _wheel_member_path(member: ZipInfo) -> PurePosixPath:
@@ -543,6 +821,8 @@ def _wheel_member_path(member: ZipInfo) -> PurePosixPath:
         path.is_absolute()
         or not path.parts
         or any(part in {"", ".", ".."} for part in path.parts)
+        or "\\" in member.filename
+        or any(ord(character) < 32 or ord(character) == 127 for character in member.filename)
         or mode == stat.S_IFLNK
     ):
         raise QualificationFailure("wheel_invalid")
@@ -558,6 +838,21 @@ def _read_archive_member(archive: ZipFile, member: ZipInfo) -> bytes:
             content.extend(chunk)
     if len(content) != member.file_size:
         raise QualificationFailure("wheel_invalid")
+    return bytes(content)
+
+
+def _read_bounded_file(path: Path, limit: int) -> bytes:
+    try:
+        if path.is_symlink() or not path.is_file():
+            raise QualificationFailure("installed_record_invalid")
+        content = bytearray()
+        with path.open("rb") as stream:
+            while chunk := stream.read(65_536):
+                if len(content) + len(chunk) > limit:
+                    raise QualificationFailure("installed_record_invalid")
+                content.extend(chunk)
+    except OSError:
+        raise QualificationFailure("installed_record_invalid") from None
     return bytes(content)
 
 
@@ -620,6 +915,28 @@ def _environment_bin(environment: Path) -> Path:
 
 def _environment_python(environment: Path) -> Path:
     return _environment_bin(environment) / ("python.exe" if os.name == "nt" else "python")
+
+
+def _installed_runtime_environment(
+    environment: dict[str, str],
+    qualified_environment: Path,
+    launcher_python: str,
+) -> dict[str, str]:
+    value = dict(environment)
+    qualified_bin = _environment_bin(qualified_environment).resolve()
+    launcher_bin = Path(launcher_python).parent.resolve()
+    path_entries = []
+    for entry in environment.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        try:
+            resolved = Path(entry).resolve()
+        except OSError:
+            continue
+        if resolved not in {qualified_bin, launcher_bin}:
+            path_entries.append(entry)
+    value["PATH"] = os.pathsep.join((str(qualified_bin), *path_entries))
+    return value
 
 
 def _new_directory(path: Path | None, reason: str) -> Path:
