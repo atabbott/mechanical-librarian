@@ -1,6 +1,6 @@
 # Foreground ebook evidence batches
 
-The 0.6 runtime can preview and explicitly run one immutable foreground batch
+The 0.8 runtime can preview and explicitly run one immutable foreground batch
 over the current Audiobookshelf book catalogue. It serially reuses the complete
 metadata-and-cover report operation and remains report-only.
 
@@ -42,11 +42,22 @@ Alternatively, repeat `--select CONNECTION LIBRARY LIBRARY_ID ITEM_ID` for an
 explicit ordered set. A preview accepts at most 10,000 entries. Explicit
 selection and `--all-eligible` are mutually exclusive.
 
+When any selected library references an enabled `open_library` provider,
+preview accepts only an explicit selection of at most five entries.
+`--all-eligible` and larger explicit selections fail before manifest creation,
+provider-client construction, credential access, or egress. Existing larger and
+all-eligible batches remain available when Open Library is disabled.
+
 The manifest path must be absent. Preview atomically creates one immutable
-canonical `batch-manifest-v1` document. It records scoped identities, the
+canonical `batch-manifest-v2` document. It records scoped identities, the
 catalogue generation and fingerprint, a secret-free configuration fingerprint,
-enabled provider names, and conservative call-count maxima. It contains no
-title, author, path, credential, report body, execution state, or history.
+enabled provider names and adapter discriminators, and conservative call-count
+maxima. Open Library allows at most five metadata requests and two one-hop cover
+requests per entry; Hardcover retains one metadata request and at most five
+four-hop cover chains per entry. The maxima add the enabled adapters without a
+generic cost or scheduling framework. The manifest contains no title, author,
+path, credential, operational contact email, report body, execution state, or
+history.
 
 Inspect the exact document before granting run authority:
 
@@ -82,6 +93,10 @@ outcome and continue. Configuration, credential, catalogue-generation,
 provider, target-service, or report-publication failures stop the remainder
 while preserving already published reports. Interruption propagates to the
 operator.
+
+One Open Library pacer is shared by the whole serial foreground run. It keeps
+all Open Library metadata and cover request starts at least one second apart;
+requests remain single-attempt and no retry or backoff state is created.
 
 There is no attempt record, resume, automatic retry, backoff, queue, worker,
 lease, scheduler, parallel execution, or report adoption. Recovery is an

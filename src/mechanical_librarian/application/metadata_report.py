@@ -104,6 +104,17 @@ class InspectionResult:
     rear_resource_limit: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderCoverDescriptor:
+    provider: str
+    kind: CoverSourceKind
+    source_id: str
+    url: str | None
+    wait: Callable[[float | None], bool] | None = None
+    allow_redirects: bool = True
+    user_agent: str | None = None
+
+
 class TargetReader(Protocol):
     def read(self, item: str) -> TargetSnapshot: ...
 
@@ -129,7 +140,7 @@ class CoverObserver(Protocol):
         target: TargetSnapshot,
         providers: tuple[ProviderObservation, ...],
         local_sources: tuple[CoverSource, ...],
-        descriptors: tuple[tuple[str, str, str | None], ...] = (),
+        descriptors: tuple[ProviderCoverDescriptor, ...] = (),
         aggregate_deadline: float | None = None,
     ) -> tuple[CoverSource, ...]: ...
 
@@ -239,7 +250,7 @@ class GenerateMetadataReport:
         # references are deliberately not an ordering key.
         combined_claims = (target_title_claim, *local.claims)
         observations: list[ProviderObservation] = []
-        descriptors: list[tuple[str, str, str | None]] = []
+        descriptors: list[ProviderCoverDescriptor] = []
         cover_aggregate_deadline = time.monotonic() + 60.0
         for binding in self._providers:
             if not binding.enabled:
@@ -271,7 +282,32 @@ class GenerateMetadataReport:
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())
             if type(candidate_descriptors) is tuple:
-                descriptors.extend((binding.name, source_id, url) for source_id, url in candidate_descriptors)
+                cover_kind = getattr(
+                    provider, "cover_kind", CoverSourceKind.HARDCOVER
+                )
+                cover_pacer = getattr(provider, "cover_pacer", None)
+                allow_redirects = getattr(provider, "cover_allow_redirects", True)
+                user_agent = getattr(provider, "cover_user_agent", None)
+                if (
+                    type(cover_kind) is not CoverSourceKind
+                    or type(allow_redirects) is not bool
+                    or (cover_pacer is not None and not callable(getattr(cover_pacer, "wait", None)))
+                    or (user_agent is not None and type(user_agent) is not str)
+                ):
+                    repository.close()
+                    raise MetadataReportError("provider cover result is invalid")
+                descriptors.extend(
+                    ProviderCoverDescriptor(
+                        binding.name,
+                        cover_kind,
+                        source_id,
+                        url,
+                        None if cover_pacer is None else cover_pacer.wait,
+                        allow_redirects,
+                        user_agent,
+                    )
+                    for source_id, url in candidate_descriptors
+                )
 
         reasons = tuple(
             sorted(
@@ -381,7 +417,7 @@ class GenerateMetadataReport:
 
 __all__ = [
     "CoverObserver", "CoverReadError", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
-    "ArtifactAuthorityError", "InspectionResult", "ItemInspectionError", "MetadataProvider", "MetadataReportError", "ProviderBinding",
+    "ArtifactAuthorityError", "InspectionResult", "ItemInspectionError", "MetadataProvider", "MetadataReportError", "ProviderBinding", "ProviderCoverDescriptor",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
 ]

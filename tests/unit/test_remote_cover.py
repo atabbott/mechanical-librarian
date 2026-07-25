@@ -139,6 +139,31 @@ class RemoteCoverTests(unittest.TestCase):
         self.assertNotIn("Referer:", request)
         self.assertNotIn("User-Agent:", request)
 
+    def test_fetch_can_use_one_validated_identified_user_agent(self) -> None:
+        secured = _FakeSocket(
+            b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 5\r\n\r\n",
+            b"cover",
+        )
+        with (
+            patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]),
+            patch("socket.create_connection", return_value=secured),
+            patch("ssl.create_default_context", return_value=_FakeContext()),
+        ):
+            fetch_remote_cover(
+                "https://example.com/cover.png",
+                user_agent="Mechanical-Librarian (operator@example.invalid)",
+            )
+        self.assertIn(
+            "User-Agent: Mechanical-Librarian (operator@example.invalid)\r\n",
+            bytes(secured.sent).decode("ascii"),
+        )
+        for value in ("", "unsafe\r\nAuthorization: value", "é"):
+            with self.subTest(value=value), self.assertRaises(RemoteCoverError):
+                fetch_remote_cover(
+                    "https://example.com/cover.png",
+                    user_agent=value,
+                )
+
     def test_rejects_content_encoding_and_redirect_limit(self) -> None:
         encoded = _FakeSocket(b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Encoding: gzip\r\nContent-Length: 1\r\n\r\n", b"x")
         redirects = [
@@ -150,6 +175,23 @@ class RemoteCoverTests(unittest.TestCase):
                 fetch_remote_cover("https://example.com/cover.png")
             with patch("socket.create_connection", side_effect=redirects), self.assertRaises(RemoteCoverError):
                 fetch_remote_cover("https://example.com/cover.png")
+
+    def test_redirects_can_be_rejected_after_one_pinned_request(self) -> None:
+        redirect = _FakeSocket(
+            b"HTTP/1.1 302 Found\r\nLocation: /again\r\n"
+            b"Content-Length: 0\r\n\r\n"
+        )
+        with (
+            patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]),
+            patch("socket.create_connection", return_value=redirect) as connect,
+            patch("ssl.create_default_context", return_value=_FakeContext()),
+            self.assertRaises(RemoteCoverError),
+        ):
+            fetch_remote_cover(
+                "https://example.com/cover.png",
+                allow_redirects=False,
+            )
+        connect.assert_called_once()
 
     def test_elapsed_aggregate_deadline_permits_no_dns_or_request(self) -> None:
         with patch("socket.getaddrinfo") as lookup:

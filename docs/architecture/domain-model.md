@@ -12,7 +12,8 @@ EPUB. It contains:
 - a local `candidate` or `no_candidate` status with bounded reasons;
 - independent provider observations with stable input references and zero or
   more provider-identity-ordered candidates, each with an opaque provider-local
-  work identity distinct from its edition identity; and
+  work identity distinct from its edition identity and an optional closed,
+  canonical, bounded tuple of provider-specific rich evidence; and
 - one derived ISBN relationship for every local and provider ISBN claim.
 
 The local field vocabulary is title/subtitle, creator/contributor and role,
@@ -58,11 +59,14 @@ from the report's claims and candidates.
 
 Provider observations are `disabled`, `insufficient_input`, `candidates`,
 `no_match`, `authentication`, `authorization`, `rate_limited`, `unavailable`,
-or `malformed`. Candidate claims record agreement, disagreement, incompatible,
-or not-comparable facts against stable local claim references. No outcome is a
-decision or winner. Provider-local work identity may associate alternate ebook
-or print ISBNs with an accepted identifier, but it cannot corroborate another
-provider or make an unresolved claim accepted.
+`malformed`, `oversized`, or `candidate_limit_exceeded`. Candidate claims record
+agreement, disagreement, incompatible, or not-comparable facts against stable
+local claim references. Open Library candidates may also retain only the closed
+finite evidence kinds declared by `ProviderEvidenceKind`, never arbitrary
+upstream properties or raw payloads. No outcome is a decision or winner.
+Provider-local work identity may associate alternate ebook or print ISBNs with
+an accepted identifier, but it cannot corroborate another provider or make an
+unresolved claim accepted.
 
 Claim references and the report ID are derived from canonical content. Exact
 replay therefore preserves IDs and bytes without an idempotency subsystem.
@@ -93,10 +97,11 @@ snapshot.
 
 ## Foreground evidence batch
 
-One `batch-manifest-v1` document freezes an ordered set of exact catalogue
+One `batch-manifest-v2` document freezes an ordered set of exact catalogue
 entries. It binds the current catalogue generation and fingerprint, selected
 file identities, a secret-free report-configuration fingerprint, enabled
-provider names, and bounded call maxima. Its content digest is its identity.
+provider names and adapter discriminators, and bounded call maxima. Its content
+digest is its identity.
 
 The manifest contains no user-facing metadata values, paths, credentials,
 report bodies, progress, attempt, or retry state. `ForegroundBatchRun`
@@ -104,6 +109,11 @@ revalidates the current generation and exact entry before invoking the existing
 metadata report operation serially. Item outcomes plus one final summary are
 streamed to the operator; only the ordinary reports and cover artifacts are
 durable.
+
+If an enabled Open Library provider participates, the manifest may contain only
+an explicit selection of at most five entries. The shared runtime pacer spans
+the whole foreground run and provides request-start spacing without becoming
+durable batch state.
 
 The batch model has no queue, job, worker, scheduler, lease, resume, automatic
 retry, parallelism, proposal, review, decision, or write concept. Manual

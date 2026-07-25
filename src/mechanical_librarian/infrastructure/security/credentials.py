@@ -79,6 +79,29 @@ def hardcover_client_token(token: str, timeout_seconds: int, *, transport: httpx
     )
 
 
+def open_library_client(
+    contact_email: str,
+    timeout_seconds: int,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> httpx.Client:
+    if (
+        type(contact_email) is not str
+        or not 1 <= len(contact_email) <= 254
+        or any(not 0x21 <= ord(value) <= 0x7E for value in contact_email)
+    ):
+        raise CredentialError("provider contact is invalid")
+    return httpx.Client(
+        headers={"User-Agent": f"Mechanical-Librarian ({contact_email})"},
+        follow_redirects=False,
+        trust_env=False,
+        verify=True,
+        timeout=httpx.Timeout(float(timeout_seconds)),
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        transport=transport,
+    )
+
+
 class _TargetAuth(httpx.Auth):
     def __init__(self, origin: str, token: str) -> None:
         self._origin = httpx.URL(origin)
@@ -116,4 +139,11 @@ def _target_origin_allowed(value: str) -> bool:
         return False
 
 
-__all__ = ["hardcover_client", "hardcover_client_token", "read_secret", "target_client", "target_client_token"]
+__all__ = [
+    "hardcover_client",
+    "hardcover_client_token",
+    "open_library_client",
+    "read_secret",
+    "target_client",
+    "target_client_token",
+]

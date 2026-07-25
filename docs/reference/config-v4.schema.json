@@ -163,9 +163,27 @@
       "additionalProperties": false,
       "properties": {
         "adapter": {
-          "const": "hardcover",
+          "enum": [
+            "hardcover",
+            "open_library"
+          ],
           "title": "Adapter",
           "type": "string"
+        },
+        "contact_email": {
+          "anyOf": [
+            {
+              "maxLength": 254,
+              "minLength": 3,
+              "pattern": "^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contact Email"
         },
         "cover_enabled": {
           "title": "Cover Enabled",
@@ -252,7 +270,7 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "config-v3",
+      "const": "config-v4",
       "title": "Schema Version",
       "type": "string"
     }

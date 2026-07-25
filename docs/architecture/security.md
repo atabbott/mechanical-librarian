@@ -58,8 +58,10 @@ Secret material is read only in infrastructure and represented nowhere in the
 report, catalogue, or manifest. Target authorization is attached only to the
 configured origin's exact library, library-items, and current-item GET route
 shapes used by the selected operation. Provider authorization is attached only
-to the fixed HTTPS Hardcover GraphQL URL. HTTP clients ignore ambient
-proxy/environment configuration and redirects.
+to the fixed HTTPS Hardcover GraphQL URL. Open Library has no secret; its
+operational contact appears only in the User-Agent of requests to the fixed
+metadata and Covers origins. HTTP clients ignore ambient proxy/environment
+configuration and redirects.
 
 Disabled providers cause no secret access, client construction, or egress.
 Unreferenced providers are never bound. A provider with no usable ISBN input
@@ -72,6 +74,9 @@ HTTPS port 443 at every hop, use identity coding, and have bounded manual
 redirects, bytes, attempts, and aggregate deadline. Hostile JPEG, PNG, and
 static WebP bytes are decoded in a constrained child; reports retain only
 validated content digests, dimensions, media type, and preview references.
+Open Library cover requests use the same transport and decoder boundary, but
+allow no redirect, use constructed fixed-origin numeric-ID URLs, and share the
+adapter's one-second request-start pacer.
 
 ## Output and persistence
 
@@ -98,8 +103,8 @@ locations have no CLI or replay surface. A failed currentness check leaves no
 new report or pointer; any unreferenced staged bytes are recoverable cleanup,
 not a database repair protocol.
 
-The final report database, `catalogue-v1` database, `config-v3`, artifact
-records, and `batch-manifest-v1` each accept only absent or their exact current
+The final report database, `catalogue-v1` database, `config-v4`, artifact
+records, and `batch-manifest-v2` each accept only absent or their exact current
 schema. `metadata-report-v1`, prior development schemas, extra objects, altered
 SQL, failed foreign-key/integrity checks, and other schemas fail closed before
 mutation. Persisted report content is validated when an exact-ID or
@@ -114,3 +119,15 @@ and validation controls.
 This report-database boundary is the narrower runtime application of ADR-0013's
 repository-wide pre-release clean-schema rule; it does not limit that rule to
 database state.
+
+Open Library adds no credential or production-write authority. Its enabled
+configuration requires a non-secret contact email, which is held only long
+enough to identify fixed-origin metadata and cover requests. It is not included
+in application fingerprints, reports, IDs, manifests, persisted artifacts,
+logs, or diagnostics. Search and detail responses use existing strict byte,
+content-type, encoding, JSON, projection, and aggregate-deadline bounds.
+Candidate admission accepts only exact normalized ISBN-family rows with
+canonical Open Library edition/work keys. Cover URLs are constructed from
+bounded numeric IDs at the fixed Covers origin, are paced with metadata, reject
+redirects, and still pass through the existing public-address pinning, bounded
+decoder, and private artifact path.

@@ -63,7 +63,7 @@ def _report(title: str = "Current title") -> MetadataReport:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v5'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v6'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -99,6 +99,20 @@ class MetadataPersistenceTests(unittest.TestCase):
             (
                 "legacy v1",
                 _create_legacy_schema,
+            ),
+            (
+                "F09k report schema",
+                lambda connection: (
+                    connection.execute(
+                        metadata_persistence._REPORTS_SQL.replace(
+                            "= 'metadata-report-v6'",
+                            "= 'metadata-report-v5'",
+                        )
+                    ),
+                    connection.execute(metadata_persistence._CURRENT_SQL),
+                    connection.execute(metadata_persistence._NO_UPDATE_SQL),
+                    connection.execute(metadata_persistence._NO_DELETE_SQL),
+                ),
             ),
             (
                 "F09i document bound",

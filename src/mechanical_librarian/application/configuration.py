@@ -7,6 +7,11 @@ from dataclasses import dataclass
 
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
+_CONTACT_EMAIL = re.compile(
+    r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9]"
+    r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+)
 
 
 class ConfigurationError(ValueError):
@@ -51,16 +56,30 @@ class ProviderConnectionConfiguration:
     cover_enabled: bool
     secret_file: str | None
     adapter: str = "hardcover"
+    contact_email: str | None = None
 
     def __post_init__(self) -> None:
         _name(self.name, "provider connection name")
-        if self.adapter != "hardcover" or type(self.enabled) is not bool or type(self.cover_enabled) is not bool:
+        if self.adapter not in {"hardcover", "open_library"} or type(self.enabled) is not bool or type(self.cover_enabled) is not bool:
             raise ConfigurationError("provider connection is invalid")
-        if self.enabled != (self.secret_file is not None):
-            raise ConfigurationError("provider enablement and secret configuration disagree")
         if self.cover_enabled and not self.enabled:
             raise ConfigurationError("cover enablement requires provider enablement")
-        if self.secret_file is not None:
+        if self.adapter == "hardcover":
+            if self.contact_email is not None or self.enabled != (self.secret_file is not None):
+                raise ConfigurationError("provider connection is invalid")
+        elif (
+            self.secret_file is not None
+            or self.enabled != (self.contact_email is not None)
+            or (
+                self.contact_email is not None
+                and (
+                    len(self.contact_email) > 254
+                    or _CONTACT_EMAIL.fullmatch(self.contact_email) is None
+                )
+            )
+        ):
+            raise ConfigurationError("provider connection is invalid")
+        if self.adapter == "hardcover" and self.secret_file is not None:
             _absolute_path(self.secret_file, "provider secret file")
 
     def __repr__(self) -> str:
@@ -99,7 +118,12 @@ class LibraryConfiguration:
             raise ConfigurationError("library is invalid")
         if self.mount is not None:
             _name(self.mount, "library mount")
-        if type(self.provider_connections) is not tuple or any(type(value) is not str for value in self.provider_connections) or len(set(self.provider_connections)) != len(self.provider_connections):
+        if (
+            type(self.provider_connections) is not tuple
+            or any(type(value) is not str for value in self.provider_connections)
+            or self.provider_connections
+            != tuple(sorted(set(self.provider_connections)))
+        ):
             raise ConfigurationError("library provider references are duplicated or invalid")
         for value in self.provider_connections:
             _name(value, "library provider reference")
@@ -129,10 +153,10 @@ class ApplicationConfiguration:
     mounts: tuple[MediaMountConfiguration, ...]
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
-    schema_version: str = "config-v3"
+    schema_version: str = "config-v4"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "config-v3":
+        if self.schema_version != "config-v4":
             raise ConfigurationError("configuration schema is unsupported")
         typed = (
             (self.connections, TargetConnectionConfiguration, "target connections"),

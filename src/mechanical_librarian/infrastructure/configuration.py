@@ -27,6 +27,18 @@ BoundedAbsolutePath = Annotated[
     StrictStr,
     Field(min_length=1, max_length=1024, pattern=r"^/"),
 ]
+ContactEmail = Annotated[
+    StrictStr,
+    Field(
+        min_length=3,
+        max_length=254,
+        pattern=(
+            r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9]"
+            r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+            r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
+        ),
+    ),
+]
 
 
 class _Closed(BaseModel):
@@ -42,10 +54,11 @@ class ConnectionInput(_Closed):
 
 class ProviderInput(_Closed):
     name: Name
-    adapter: Literal["hardcover"]
+    adapter: Literal["hardcover", "open_library"]
     enabled: StrictBool
     cover_enabled: StrictBool
     secret_file: BoundedAbsolutePath | None
+    contact_email: ContactEmail | None = None
 
 
 class MountInput(_Closed):
@@ -71,7 +84,7 @@ class LimitsInput(_Closed):
 
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v3"]
+    schema_version: Literal["config-v4"]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]
     mounts: Annotated[list[MountInput], Field(max_length=32)]
@@ -90,7 +103,7 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
         value = ConfigurationInput.model_validate(source)
         return ApplicationConfiguration(
             tuple(sorted((TargetConnectionConfiguration(**item.model_dump()) for item in value.connections), key=lambda item: item.name)),
-            tuple(sorted((LibraryConfiguration(**{**item.model_dump(), "media_kind": "book", "provider_connections": tuple(item.provider_connections)}) for item in value.libraries), key=lambda item: item.name)),
+            tuple(sorted((LibraryConfiguration(**{**item.model_dump(), "media_kind": "book", "provider_connections": tuple(sorted(item.provider_connections))}) for item in value.libraries), key=lambda item: item.name)),
             tuple(sorted((MediaMountConfiguration(**item.model_dump()) for item in value.mounts), key=lambda item: item.name)),
             tuple(sorted((ProviderConnectionConfiguration(**item.model_dump()) for item in value.providers), key=lambda item: item.name)),
             ReportLimits(**value.limits.model_dump()),

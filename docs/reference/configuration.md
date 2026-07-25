@@ -1,9 +1,9 @@
 # Configuration reference
 
 The installed `metadata-report`, `catalogue`, and `batch` operations accept one
-strict UTF-8 JSON document with schema version `config-v3`. Unknown and
+strict UTF-8 JSON document with schema version `config-v4`. Unknown and
 duplicate fields are rejected. The generated schema is
-[`config-v3.schema.json`](config-v3.schema.json) and is regenerated with:
+[`config-v4.schema.json`](config-v4.schema.json) and is regenerated with:
 
 ```text
 uv run --frozen python scripts/generate_configuration_schema.py
@@ -13,7 +13,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
 
 ```json
 {
-  "schema_version": "config-v3",
+  "schema_version": "config-v4",
   "connections": [
     {
       "name": "primary",
@@ -28,7 +28,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
       "connection": "primary",
       "library_id": "01234567-89ab-4def-8123-456789abcdef",
       "mount": "books",
-      "provider_connections": ["hardcover-main"]
+      "provider_connections": ["hardcover-main", "open-library-main"]
     }
   ],
   "mounts": [
@@ -46,6 +46,14 @@ uv run --frozen python scripts/generate_configuration_schema.py
       "enabled": false,
       "cover_enabled": false,
       "secret_file": null
+    },
+    {
+      "name": "open-library-main",
+      "adapter": "open_library",
+      "enabled": true,
+      "cover_enabled": true,
+      "secret_file": null,
+      "contact_email": "operator@example.invalid"
     }
   ]
 }
@@ -60,13 +68,28 @@ An ebook library requires a named read-only mount. Audiobook libraries may
 coexist and use `mount: null`, but `metadata-report` rejects their items before
 parser/provider/publication activity.
 
-Every provider has explicit enablement. A disabled provider must use
-`secret_file: null`. An enabled provider requires an absolute private secret
-file. Adding or enabling a provider does nothing until a library explicitly
-references it. The same named provider connection and credential may be
-referenced by several libraries.
+Every provider has explicit enablement and one of exactly two built-in adapter
+values:
 
-Target and enabled-provider `secret_file` values are bounded absolute paths.
+- `hardcover` forbids `contact_email`; when enabled it requires an absolute
+  private `secret_file`.
+- `open_library` always forbids a secret; when enabled it requires a bounded
+  operational `contact_email`.
+
+A disabled provider must set both adapter-specific authority fields to `null`.
+Adding or enabling a provider does nothing until a library explicitly
+references it. The same named provider connection may be referenced by several
+libraries. `contact_email` is used only to identify Open Library HTTP requests;
+it is excluded from reports, report IDs, manifests, fingerprints, logs, errors,
+and persisted application artifacts. Changing it does not supersede reports or
+invalidate an already frozen batch.
+
+Each library may reference several enabled metadata providers, but at most one
+of them may set `cover_enabled: true`. This preserves the existing closed cover
+source bound while allowing independent Hardcover and Open Library metadata
+observations in the same report.
+
+Target and enabled-Hardcover `secret_file` values are bounded absolute paths.
 Relative secret paths are rejected by both the generated schema and runtime
 configuration loader.
 

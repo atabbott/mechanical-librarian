@@ -253,7 +253,11 @@ def _admitted_media_type(headers: object) -> str:
     return media_type.lower()
 
 
-def _pinned_fetch(url: str, deadline: float | CoverDeadline | None) -> tuple[int, dict[str, str], bytes]:
+def _pinned_fetch(
+    url: str,
+    deadline: float | CoverDeadline | None,
+    user_agent: str | None = None,
+) -> tuple[int, dict[str, str], bytes]:
     host, address, path = _pinned_address(url, deadline)
     query = _parts(url).query
     if query:
@@ -265,7 +269,8 @@ def _pinned_fetch(url: str, deadline: float | CoverDeadline | None) -> tuple[int
         context = ssl.create_default_context()
         with context.wrap_socket(raw, server_hostname=host) as secured:
             secured.settimeout(_remaining(deadline))
-            request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n".encode("ascii")
+            agent = "" if user_agent is None else f"User-Agent: {user_agent}\r\n"
+            request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\n{agent}Accept-Encoding: identity\r\nConnection: close\r\n\r\n".encode("ascii")
             secured.sendall(request)
             status, headers = _response_headers(secured, deadline)
             if status in _REDIRECT_STATUSES:
@@ -282,8 +287,30 @@ def _pinned_fetch(url: str, deadline: float | CoverDeadline | None) -> tuple[int
             pass
 
 
-def fetch_remote_cover(url: str, *, deadline: float | CoverDeadline | None = None) -> RemoteCover:
+def fetch_remote_cover(
+    url: str,
+    *,
+    deadline: float | CoverDeadline | None = None,
+    allow_redirects: bool = True,
+    user_agent: str | None = None,
+) -> RemoteCover:
     """One no-retry request chain; every redirect is revalidated before use."""
+    if (
+        type(allow_redirects) is not bool
+        or (
+            user_agent is not None
+            and (
+                type(user_agent) is not str
+                or not 1 <= len(user_agent) <= 512
+                or user_agent.strip() != user_agent
+                or any(
+                    ord(character) < 0x20 or ord(character) > 0x7E
+                    for character in user_agent
+                )
+            )
+        )
+    ):
+        raise RemoteCoverError("remote cover request is invalid")
     current = url
     try:
         for _ in range(4):
@@ -291,8 +318,14 @@ def fetch_remote_cover(url: str, *, deadline: float | CoverDeadline | None = Non
                 raise RemoteCoverTimeout("aggregate deadline elapsed")
             if type(deadline) is float and time.monotonic() >= deadline:
                 raise RemoteCoverTimeout("aggregate deadline elapsed")
-            status, headers, content = _pinned_fetch(current, deadline)
+            status, headers, content = _pinned_fetch(
+                current,
+                deadline,
+                user_agent,
+            )
             if status in _REDIRECT_STATUSES:
+                if not allow_redirects:
+                    raise RemoteCoverError("remote cover unavailable")
                 current = _redirect_target(current, headers.get("location"))
                 continue
             if status != 200:

@@ -1,6 +1,6 @@
 # Architecture overview
 
-The 0.6 runtime has three synchronous CLI paths:
+The 0.8 runtime has three synchronous CLI paths:
 
 ```text
 CLI catalogue -> application RefreshCurrentCatalogue
@@ -10,7 +10,7 @@ CLI catalogue -> application RefreshCurrentCatalogue
 CLI metadata-report -> application GenerateMetadataReport
                     |-> Audiobookshelf current-item adapter
                     |-> isolated EPUB inspector child
-                    |-> Hardcover metadata and cover adapters
+                    |-> Hardcover and Open Library metadata/cover adapters
                     |-> constrained cover-decoder child
                     `-> SQLite report repository + cover artifact store
 
@@ -34,8 +34,8 @@ scoped target reading, EPUB inspection/currentness, provider and cover
 observation, artifact publication, and report publication/readback. There is no
 central speculative ports module, generic provider registry, queue, worker, or
 scheduler. Bootstrap explicitly composes Audiobookshelf, the isolated EPUB and
-cover children, Hardcover, private-file credentials, SQLite, and the private
-artifact store.
+cover children, the closed Hardcover/Open Library adapter choice, private-file
+credentials, SQLite, and the private artifact store.
 
 The catalogue adapter uses bounded Audiobookshelf library, library-items, and
 item-detail GET routes. It atomically publishes one current generation of at
@@ -48,13 +48,16 @@ child owns package, opening-matter, and bounded rear-spine evidence passes,
 opens one immutable archive snapshot once, and returns only bounded facts. The
 cover child validates bounded JPEG, PNG, or static WebP bytes without network
 authority. The parent retains all credentials, network, matching, persistence,
-artifact, and currentness authority. The provider adapter selects only the ISBN
-inputs supported by its fixed one-request operation and retains every valid
-candidate without ranking.
+artifact, and currentness authority. Each provider adapter selects only the ISBN
+inputs supported by its fixed operation and retains every valid candidate
+without ranking. Open Library uses exact Search-to-edition-to-work admission,
+one adapter-local request-start pacer, and no author traversal, fallback
+discovery, retry, or generic provider registry.
 
-`batch-manifest-v1` is an immutable secret-free operator artifact. It binds the
+`batch-manifest-v2` is an immutable secret-free operator artifact. It binds the
 current catalogue generation, exact entries, report-relevant configuration,
-enabled provider names, and conservative call maxima. `ForegroundBatchRun`
+enabled provider names and adapter discriminators, and conservative call
+maxima. `ForegroundBatchRun`
 serially revalidates each entry and invokes the existing report service. It
 stores no attempt, progress, history, resume, retry, or lock state.
 
@@ -69,10 +72,12 @@ their exact current pre-release state. Prior and intermediate schemas are
 rejected before mutation; there is no migration, import, compatibility parser,
 workflow, job, attempt, cache, or deletion surface. These rules are the
 current-runtime application of repository-wide ADR-0013.
-The v2 document retains the closed ordered local-field states, source capability
+The `metadata-report-v6` document retains the closed ordered local-field states,
+source capability
 provenance, and bounded occurrence/rear-spine provenance needed to replay the
-observation; the relational envelope remains only its scope, identity, digest,
-and schema-version index. Within the exact current schema, a current-scope
+observation, plus source-scoped finite provider evidence; the relational
+envelope remains only its scope, identity, digest, and schema-version index.
+Within the exact current schema, a current-scope
 lookup follows the separate pointer offline, while an exact-ID lookup never
 changes a predecessor.
 

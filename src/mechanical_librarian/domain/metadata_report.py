@@ -21,12 +21,13 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 
 
-REPORT_SCHEMA = "metadata-report-v5"
+REPORT_SCHEMA = "metadata-report-v6"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
 MAX_CANDIDATES = 5
+MAX_PROVIDER_EVIDENCE = 128
 MAX_CONTRIBUTIONS = 16
 MAX_SERIES = 16
 MAX_TAGS = 32
@@ -59,6 +60,31 @@ class ClaimKind(StrEnum):
     IMPRINT = "imprint"
     GENRE = "genre"
     TAG = "tag"
+
+
+class ProviderEvidenceKind(StrEnum):
+    AUTHOR_IDENTITY = "author_identity"
+    CONTRIBUTOR_IDENTITY = "contributor_identity"
+    REVISION = "revision"
+    LAST_MODIFIED = "last_modified"
+    OCLC = "oclc"
+    LCCN = "lccn"
+    WIKIDATA = "wikidata"
+    SUBJECT = "subject"
+    PERSON = "person"
+    PLACE = "place"
+    TIME = "time"
+    DEWEY_CLASSIFICATION = "dewey_classification"
+    LC_CLASSIFICATION = "lc_classification"
+    PHYSICAL_FORMAT = "physical_format"
+    PAGE_COUNT = "page_count"
+    PAGINATION = "pagination"
+    PUBLICATION_PLACE = "publication_place"
+    COPYRIGHT_DATE = "copyright_date"
+    EDITION_WORK_RELATION = "edition_work_relation"
+    FIRST_PUBLICATION_DATE = "first_publication_date"
+    EDITION_COVER_ID = "edition_cover_id"
+    WORK_COVER_ID = "work_cover_id"
 
 
 class FieldState(StrEnum):
@@ -553,10 +579,41 @@ class ProviderClaim:
 
 
 @dataclass(frozen=True, slots=True)
+class ProviderEvidence:
+    kind: ProviderEvidenceKind
+    value: str
+    scope: ClaimScope
+    role: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.kind) is not ProviderEvidenceKind or type(self.scope) is not ClaimScope:
+            raise ReportValueError("provider rich evidence is invalid")
+        _projection_text(self.value, "provider rich evidence value", MAX_SCALAR_CHARACTERS)
+        if self.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY:
+            if self.role is None:
+                raise ReportValueError("provider rich evidence role is invalid")
+            try:
+                validate_role_projection(self.role)
+            except EvidenceValueError as error:
+                raise ReportValueError("provider rich evidence role is invalid") from error
+        elif self.role is not None:
+            raise ReportValueError("provider rich evidence role is invalid")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "kind": self.kind.value,
+            "role": self.role,
+            "scope": self.scope.value,
+            "value": self.value,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderCandidate:
     identity: str
     work_identity: str
     claims: tuple[ProviderClaim, ...]
+    evidence: tuple[ProviderEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         _text(self.identity, "provider candidate identity", 128)
@@ -568,9 +625,33 @@ class ProviderCandidate:
             raise ReportValueError("provider candidate claim references are duplicated")
         if tuple(value.raw_order for value in self.claims) != tuple(sorted(value.raw_order for value in self.claims)):
             raise ReportValueError("provider candidate claims are not in raw source order")
+        if (
+            type(self.evidence) is not tuple
+            or len(self.evidence) > MAX_PROVIDER_EVIDENCE
+            or any(type(value) is not ProviderEvidence for value in self.evidence)
+            or len(set(self.evidence)) != len(self.evidence)
+            or self.evidence
+            != tuple(
+                sorted(
+                    self.evidence,
+                    key=lambda value: (
+                        value.scope.value,
+                        value.kind.value,
+                        value.value,
+                        value.role or "",
+                    ),
+                )
+            )
+        ):
+            raise ReportValueError("provider rich evidence is invalid")
 
     def to_data(self) -> dict[str, object]:
-        return {"claims": [value.to_data() for value in self.claims], "identity": self.identity, "work_identity": self.work_identity}
+        return {
+            "claims": [value.to_data() for value in self.claims],
+            "evidence": [value.to_data() for value in self.evidence],
+            "identity": self.identity,
+            "work_identity": self.work_identity,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -804,12 +885,12 @@ def derive_identifier_evidence(
         if claim.kind is ClaimKind.ISBN
     )
     local_families = {
-        claim.reference: _isbn_family(claim.canonical)
+        claim.reference: isbn_family(claim.canonical)
         for claim in local_isbns
         if claim.state is FieldState.VALID and claim.canonical is not None
     }
     provider_families = {
-        claim.reference: _isbn_family(claim.value)
+        claim.reference: isbn_family(claim.value)
         for _, _, claim in provider_isbns
         if claim.state is FieldState.VALID and claim.value is not None
     }
@@ -1020,7 +1101,7 @@ def derive_identifier_evidence(
     return tuple(evidence)
 
 
-def _isbn_family(value: str | None) -> str | None:
+def isbn_family(value: str | None) -> str | None:
     if value is None:
         return None
     compact = _comparison_value(ClaimKind.ISBN, value)
@@ -1189,14 +1270,29 @@ def _provider_from_data(value: object) -> ProviderObservation:
 
 
 def _candidate_from_data(value: object) -> ProviderCandidate:
-    item = _object(value, {"claims", "identity", "work_identity"})
-    return ProviderCandidate(item["identity"], item["work_identity"], tuple(_provider_claim_from_data(claim) for claim in _list(item["claims"])))
+    item = _object(value, {"claims", "evidence", "identity", "work_identity"})
+    return ProviderCandidate(
+        item["identity"],
+        item["work_identity"],
+        tuple(_provider_claim_from_data(claim) for claim in _list(item["claims"])),
+        tuple(_provider_evidence_from_data(evidence) for evidence in _list(item["evidence"])),
+    )
 
 
 def _provider_claim_from_data(value: object) -> ProviderClaim:
     item = _object(value, {"applicability", "kind", "links", "raw_order", "reference", "role", "scope", "state", "value"})
     links = tuple(ComparisonLink(_object(link, {"local_reference", "outcome"})["local_reference"], Comparison(_object(link, {"local_reference", "outcome"})["outcome"])) for link in _list(item["links"]))
     return ProviderClaim(item["reference"], ClaimKind(item["kind"]), item["value"], FieldState(item["state"]), ClaimScope(item["scope"]), item["applicability"], item["role"], item["raw_order"], links)
+
+
+def _provider_evidence_from_data(value: object) -> ProviderEvidence:
+    item = _object(value, {"kind", "role", "scope", "value"})
+    return ProviderEvidence(
+        ProviderEvidenceKind(item["kind"]),
+        item["value"],
+        ClaimScope(item["scope"]),
+        item["role"],
+    )
 
 
 def _object(value: object, keys: set[str]) -> dict[str, Any]:
@@ -1269,8 +1365,9 @@ __all__ = [
     "ClaimKind", "ClaimScope", "COMPARISON_VERSION", "Comparison", "ComparisonLink", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
     "IdentifierEvidence", "IdentifierEvidenceBasis", "IdentifierRelation",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
+    "ProviderEvidence", "ProviderEvidenceKind",
     "ProviderObservation", "ProviderStatus", "REPORT_SCHEMA", "ReportValueError",
     "TargetFacts", "canonical_json", "claim_scope", "comparison_links",
-    "derive_identifier_evidence", "normalize_title",
+    "derive_identifier_evidence", "isbn_family", "normalize_title",
     "stable_reference", "validate_observed_title",
 ]

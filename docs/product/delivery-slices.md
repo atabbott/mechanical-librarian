@@ -421,10 +421,10 @@ Numeric figures are qualification results rather than promises for unrelated
 future work. Each promoted unit carried its own minimum measurable gate and
 published its actual aggregate result.
 
-## Proposed delivery checkpoint 0.8.0: independent multi-provider ebook evidence
+## Delivery checkpoint 0.8.0: independent multi-provider ebook evidence
 
-The [0.8.0 working plan](0-8-working-plan.md) recommends adding Open Library as
-a second real metadata adapter and proving that the completed 0.6 report and
+The completed [0.8.0 working plan](0-8-working-plan.md) adds Open Library as
+a second real metadata adapter and proves that the report and
 foreground-batch boundaries preserve independent Hardcover and Open Library
 observations. Exact ISBN evidence, candidate identity, lineage, failure,
 absence, malformed or incomplete data, and contradiction remain
@@ -453,10 +453,22 @@ foreground lifecycle with a fixed ceiling and single-attempt posture rather
 than adding a cache, retry, scheduler, rate-policy language, or provider-cost
 framework.
 
-Open Library #210 is the assigned Ready F09l tracker in milestone 0.8.0. It is
-a one-issue vertical slice: configuration, schema, adapter, covers, batch
-participation, proof, and documentation do not become separate constituents.
-This documentation change does not implement that future checkpoint.
+Open Library #210 is the completed F09l tracker in milestone 0.8.0. It is a
+one-issue vertical slice: configuration, schema, adapter, covers, batch
+participation, proof, and documentation have no separate constituents.
+
+### 0.8.0 checkpoint exit
+
+- one exact usable ISBN family can yield independent canonical Hardcover and
+  Open Library observations in one immutable `metadata-report-v6`;
+- Open Library retains only the closed finite rich-evidence allowlist from exact
+  admitted edition/work records and at most two cover sources;
+- adapter-specific `config-v4` excludes the Open Library operational contact
+  from report identity, persistence, manifests, fingerprints, and diagnostics;
+- `batch-manifest-v2` binds provider adapters and truthful maxima, while enabled
+  Open Library accepts only explicit batches of at most five items; and
+- the runtime remains report-only and creates no provider fusion, proposal,
+  review, decision, mutation, generic provider framework, tag, or release.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
@@ -485,8 +497,7 @@ not proof of `Ready` status or authority to begin. Each tracker still must meet
 the normal readiness and selection rules. Issue #70 remains planned but
 unpromoted in live 1.0.0 tracking, with `Unassigned backlog` and no `F`
 designation. The selected 0.8 plan leaves #70 unchanged. Open Library #210 is
-now the Ready F09l tracker in milestone 0.8.0; this document does not
-implement it.
+the completed F09l tracker in milestone 0.8.0.
 
 The outcomes are not one serial chain. Readiness records the real dependencies:
 #70 supplies explainable proposals; F10b admits eligible proposals; F16a records
@@ -529,8 +540,8 @@ The current deferred product outcomes are:
 
 - opening-audio evidence #24; its former #104–#110 decomposition is closed
   superseded history;
-- one outcome per metadata provider: Open Library #210, LibraryThing #211,
-  Project Gutenberg #212, LibriVox #213, and Audible #214;
+- one outcome per further metadata provider: LibraryThing #211, Project
+  Gutenberg #212, LibriVox #213, and Audible #214;
   the old F09c/F09d/F09e trackers #205, #206, and #208 are closed superseded;
 - bulk browser review and extended qualification #195 after the first public
   release;
@@ -543,10 +554,9 @@ The current deferred product outcomes are:
 
 These outcomes stay concise and have no functional-slice designation, milestone,
 or pre-created constituents unless explicitly selected. Open Library #210 is
-the selected exception: it is Ready F09l in milestone 0.8.0 with no
-constituents, and remains unimplemented. Closed speculative trackers, WP
-parents, and constituent forests remain historical inputs and never become
-current work automatically.
+no longer deferred: it is the completed F09l slice in milestone 0.8.0 with no
+constituents. Closed speculative trackers, WP parents, and constituent forests
+remain historical inputs and never become current work automatically.
 
 ## Planning rules
 
