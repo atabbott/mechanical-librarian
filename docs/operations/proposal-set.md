@@ -49,6 +49,8 @@ The policy is deliberately conservative:
   least two materially independent correlation groups;
 - ordered author lists, series name/sequence, and date/year remain complete
   and linked rather than being edited piecemeal;
+- refining a populated year into a full date requires two materially
+  independent correlation groups;
 - work first-publication evidence can fill an empty date/year consistently but
   cannot replace a valid populated edition value;
 - populated description, genres, and tags are never merged, replaced, or

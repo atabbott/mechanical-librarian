@@ -769,6 +769,20 @@ def _publication_results(
         )
         if str(selected.value.value) != date_target.value[:4]:
             year_result = _deferred(year_result, "date_year_conflict")
+    if (
+        date_result.selected_alternative_id is not None
+        and year_target.state is TargetFieldState.VALUE
+    ):
+        selected = next(
+            value
+            for value in date_result.alternatives
+            if value.alternative_id == date_result.selected_alternative_id
+        )
+        if len(selected.correlations) < 2:
+            date_result = _deferred(
+                date_result,
+                "date_refinement_requires_corroboration",
+            )
     return {
         TargetDestination.PUBLISHED_DATE: date_result,
         TargetDestination.PUBLISHED_YEAR: year_result,

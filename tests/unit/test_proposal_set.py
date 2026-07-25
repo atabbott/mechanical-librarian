@@ -395,6 +395,54 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(ProposalOutcome.DEFER, date_result.outcome)
         self.assertIn("date_year_conflict", date_result.reasons)
 
+    def test_full_date_refining_a_populated_year_needs_independent_sources(
+        self,
+    ) -> None:
+        year = TargetField(
+            TargetDestination.PUBLISHED_YEAR,
+            TargetFieldState.VALUE,
+            "2001",
+        )
+        claims = tuple(
+            _claim(
+                provider,
+                f"{provider}-edition",
+                ClaimKind.PUBLICATION_DATE,
+                "2001-02-03",
+                scope=ClaimScope.EDITION,
+            )
+            for provider in ("alpha", "beta")
+        )
+        one_source = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(published_year=year),
+                    providers=(
+                        _provider("alpha", "alpha-edition", (claims[0],)),
+                    ),
+                )
+            ),
+            TargetDestination.PUBLISHED_DATE,
+        )
+        self.assertEqual(ProposalOutcome.DEFER, one_source.outcome)
+        self.assertIn(
+            "date_refinement_requires_corroboration",
+            one_source.reasons,
+        )
+        two_sources = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(published_year=year),
+                    providers=(
+                        _provider("alpha", "alpha-edition", (claims[0],)),
+                        _provider("beta", "beta-edition", (claims[1],)),
+                    ),
+                )
+            ),
+            TargetDestination.PUBLISHED_DATE,
+        )
+        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, two_sources.outcome)
+
     def test_cover_requires_one_complete_safe_artifact(self) -> None:
         artifact = CoverArtifact.create(
             b"cover", b"preview", "image/png", 10, 20

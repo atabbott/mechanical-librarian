@@ -114,11 +114,13 @@ or bytes.
 The pure evaluator has no configuration, provider, network, persistence, or
 write authority. Its fixed rules preserve ordered complete people lists,
 atomic series name/sequence, linked publication date/year, edition identifier
-applicability, and cover-gallery completeness. Populated subjective fields are
-not merged or replaced. Multiple values, weak correlation, malformed/unloaded
-target state, role ambiguity, or incomplete cover evidence defer or become
-ineligible rather than being silently resolved. There is no score, provider
-priority, ranking, configurable policy, review, or decision concept.
+applicability, and cover-gallery completeness. A full date that refines a
+populated target year needs two independent correlation groups. Populated
+subjective fields are not merged or replaced. Multiple values, weak
+correlation, malformed/unloaded target state, role ambiguity, or incomplete
+cover evidence defer or become ineligible rather than being silently resolved.
+There is no score, provider priority, ranking, configurable policy, review, or
+decision concept.
 
 ## Current book catalogue
 
