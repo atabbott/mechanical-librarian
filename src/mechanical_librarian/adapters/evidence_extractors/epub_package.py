@@ -71,6 +71,11 @@ _DATE = re.compile(
     r"^\d{4}(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?)?"
     r"(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?$"
 )
+_SIGNED_OFFSET_DATE = re.compile(
+    r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
+    r"T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?"
+    r"[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00)$"
+)
 _MODIFIED_DATE = re.compile(
     r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])"
     r"T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?Z$"
@@ -797,6 +802,18 @@ def _valid_date(value: str) -> bool:
         return False
 
 
+def _valid_publication_date(value: str) -> bool:
+    if _valid_date(value):
+        return True
+    if _SIGNED_OFFSET_DATE.fullmatch(value) is None:
+        return False
+    try:
+        datetime.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
 def _valid_modified_date(value: str) -> bool:
     return _MODIFIED_DATE.fullmatch(value) is not None and _valid_date(value)
 
@@ -1243,13 +1260,23 @@ def _package_report(
                     )
             if local == "date":
                 event = _attribute(node, "event", _OPF_NS)
-                target_field = {
+                date_fields = {
                     "creation": EpubPackageField.CREATION_DATE,
                     "publication": EpubPackageField.PUBLICATION_DATE,
                     "modification": EpubPackageField.MODIFICATION_DATE,
                     "copyright": EpubPackageField.COPYRIGHT_DATE,
-                }.get(event or "", EpubPackageField.PUBLICATION_DATE)
-                if not _valid_date(normalized):
+                }
+                target_field = date_fields.get(
+                    event or "", EpubPackageField.PUBLICATION_DATE
+                )
+                supported_event = event is None or event in date_fields
+                valid_date = (
+                    _valid_publication_date(normalized)
+                    if target_field is EpubPackageField.PUBLICATION_DATE
+                    and event in {None, "publication"}
+                    else _valid_date(normalized)
+                )
+                if not supported_event or not valid_date:
                     warnings.append(
                         EpubPackageWarning(
                             "invalid_date",

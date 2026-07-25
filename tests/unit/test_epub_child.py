@@ -31,6 +31,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.epub_inspection import (
+    EpubInspection,
     EpubInspectionField,
     EpubInspectionOutcome,
 )
@@ -378,6 +379,34 @@ class EpubChildRearSpineTests(unittest.TestCase):
         states = {fact.field.value: fact.state for fact in facts}
         self.assertEqual(states["publication_date"], "malformed")
         self.assertEqual(states["language"], "malformed")
+
+    def test_signed_offset_publication_date_replays_with_lexical_value(self) -> None:
+        value = epub_bytes(
+            package=EPUB3_PACKAGE.replace(
+                b"</metadata>",
+                b"""<dc:date>2026-01-13T12:34:56.789+05:30</dc:date>
+  </metadata>""",
+            )
+        )
+        inspection = self._inspect_in_child(value)
+        publication = next(
+            fact
+            for fact in inspection.facts
+            if fact.field is EpubInspectionField.PUBLICATION_DATE
+        )
+
+        self.assertEqual(
+            (publication.observed_value, publication.canonical_value, publication.state),
+            (
+                "2026-01-13T12:34:56.789+05:30",
+                "2026-01-13T12:34:56.789+05:30",
+                "valid",
+            ),
+        )
+        self.assertEqual(
+            EpubInspection.from_json(inspection.to_json()),
+            inspection,
+        )
 
     def test_package_oversized_sentinel_reaches_report_as_noncanonical_oversized_evidence(self) -> None:
         package = EPUB3_PACKAGE.replace(b"A Synthetic Book", b"x" * 4_097)
