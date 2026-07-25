@@ -46,8 +46,7 @@ jobs:
       - name: Run the public test suite
         run: uv run --frozen --no-editable python -m unittest discover -s tests -p 'test_*.py'
 
-      - name: Build the distribution
-        run: uv build
-
-      - name: Exercise the installed operator command
-        run: uv run --frozen --no-editable mechanical-librarian metadata-report --help
+      - name: Qualify the exact installed artifact
+        run: >-
+          python scripts/qualify_exact_artifact.py
+          --source-sha "${{ github.sha }}"

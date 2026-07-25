@@ -6,7 +6,7 @@ production image, supported release, or write-capable runtime yet.
 
 ## Current checkpoint
 
-The completed 0.8 development checkpoint installs a bounded, report-only ebook
+The current 0.8 development checkpoint installs a bounded, report-only ebook
 evidence workflow. An operator can:
 
 - refresh and inspect a current catalogue across configured Audiobookshelf book

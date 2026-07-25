@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Make public installed-artifact qualification exact-source: build with caches
+  disabled from a clean bound revision, install the explicit wheel into a new
+  environment, prove wheel-to-install payload identity and origin, and run the
+  installed command outside the checkout.
 - Add independent, report-only Open Library evidence for an exact usable ISBN
   family alongside Hardcover. The built-in adapter uses canonical exact
   Search/edition/work requests, a fixed one-request-per-second pace, at most two

@@ -22,11 +22,16 @@ to `main`. It has read-only repository contents permission and:
 1. checks out the exact event revision without persisting credentials;
 2. uses commit-pinned GitHub Actions and a version-pinned `uv` installation;
 3. rejects a stale lockfile with `uv lock --check`;
-4. synchronizes all locked groups in frozen, non-editable mode;
+4. synchronizes all locked groups in frozen, non-editable mode for the tests;
 5. runs the complete public test suite;
-6. builds the distribution; and
-7. verifies the installed `metadata-report` command surface without implicit
-   inputs or editable source.
+6. disables the build and install caches, builds exactly one wheel from that
+   clean event revision, and installs its explicit pathname into a new isolated
+   environment; and
+7. proves the wheel and installed distribution payloads are byte-identical,
+   verifies the recorded install origin and import origin, and exercises the
+   installed `metadata-report` command from outside the checkout. The emitted
+   path-free evidence binds the event source SHA and wheel, payload, and command
+   output SHA-256 values.
 
 The concurrency key distinguishes pull-request work from `main` push events. A
 new head may cancel obsolete work for the same pull request. Each push event
