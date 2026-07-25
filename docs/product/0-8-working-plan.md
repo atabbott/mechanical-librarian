@@ -1,8 +1,8 @@
-# 0.7.0 working plan
+# 0.8.0 working plan
 
 ## Status
 
-Milestone [0.7.0 — Independent multi-provider ebook evidence](https://github.com/atabbott/mechanical-librarian/milestone/9) is an open, planned report-only checkpoint. Its single Ready slice tracker is [#210](https://github.com/atabbott/mechanical-librarian/issues/210), `F09l: independent Open Library ebook evidence`. This document records that accepted delivery contract; it does not claim that Open Library support is implemented or authorize operation beyond the current 0.6 runtime.
+Milestone [0.8.0 — Independent multi-provider ebook evidence](https://github.com/atabbott/mechanical-librarian/milestone/9) is an open, planned report-only checkpoint. Its single Ready slice tracker is [#210](https://github.com/atabbott/mechanical-librarian/issues/210), `F09l: independent Open Library ebook evidence`. This document records that accepted delivery contract; it does not claim that Open Library support is implemented or authorize operation beyond the current report-only runtime.
 
 ## Outcome
 

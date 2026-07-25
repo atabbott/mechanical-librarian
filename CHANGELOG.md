@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reconcile the completed 0.7.0 metadata-qualification programme and retain
+  Open Library #210 as the independent planned 0.8.0 provider outcome.
+
 - Add a synthetic, aggregate-only EPUB evidence recoverability audit contract.
 
 - Add the read-only current Audiobookshelf book catalogue with bounded refresh,

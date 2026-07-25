@@ -252,8 +252,9 @@ Hardcover book, edition, and title votes.
 This 0.3 checkpoint adds no review admission, human or AI decision, approval,
 apply, target or media write, destructive authority, tag, or release
 publication. The former F09c tracker #205 and its constituent-like provider
-issues are no longer a planned 1.0 lane: #205 is closed superseded, while Open
-Library #210 and LibraryThing #211 remain separate deferred provider outcomes.
+issues are no longer a planned 1.0 lane: #205 is closed superseded. Open
+Library #210 is the assigned Ready F09l outcome in the 0.8.0 checkpoint;
+LibraryThing #211 remains a separate deferred provider outcome.
 Issue #70 now owns the required explainable proposal and policy outcome and
 requires explicit promotion. F10b #240 owns production review admission; F11
 #147 remains an independently deliverable shadow path; and F17 #153 qualifies
