@@ -60,8 +60,9 @@
   and non-canonical oversized or unsafe sentinel states through report replay.
 - Preserve duplicate EPUB occurrences with bounded v2 ordinals.
 - Exclude package `bkp` book-producer credits from bibliographic contributors
-  while preserving raw package evidence, and recognize a strictly bounded
-  paragraph-only `Series Name Book|Volume N[.N]` opening-matter cue.
+  while preserving raw package evidence. Retain only the explicit
+  `Book|Volume N[.N] of|in Series Name` opening-matter cue; an unqualified
+  trailing series/order form remains absent.
 - Admit standards-valid signed-offset publication date-times from structured
   EPUB package metadata while preserving lexical values and event typing.
 - Preserve explicit opening-matter publisher and imprint evidence as distinct

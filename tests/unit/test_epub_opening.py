@@ -692,9 +692,11 @@ class EpubOpeningTests(unittest.TestCase):
             ["Chris Creator"],
         )
 
-    def test_short_paragraph_trailing_series_cue_is_strictly_bounded(self) -> None:
+    def test_trailing_series_cue_without_positive_structure_is_rejected(
+        self,
+    ) -> None:
         report = _extract(
-            self._single(_xhtml("<p>Clockwork Archive Book 2.5</p>"))
+            self._single(_xhtml("<p>Book 2.5 of the Clockwork Archive</p>"))
         )
         self.assertEqual(
             [
@@ -709,6 +711,9 @@ class EpubOpeningTests(unittest.TestCase):
         )
 
         rejected = (
+            "<p>Clockwork Archive Book 2.5</p>",
+            "<p>Read Clockwork Archive Book 2.5</p>",
+            "<p>Discover Clockwork Archive Volume 2.5</p>",
             "<p>Clockwork Archive Book II</p>",
             "<p>Clockwork Archive Book Two</p>",
             "<p>Clockwork Archive Book 2.5 revised</p>",
