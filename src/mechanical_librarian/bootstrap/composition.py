@@ -365,6 +365,13 @@ class _CoverEvidenceObserver:
     def _remote(self, descriptor: ProviderCoverDescriptor, deadline: CoverDeadline) -> CoverSource:
         source_id = descriptor.source_id
         kind = descriptor.kind
+        if descriptor.terminal_state is not None:
+            return CoverSource(
+                source_id,
+                kind,
+                descriptor.terminal_state,
+                provenance=descriptor.provenance,
+            )
         if descriptor.url is None:
             return CoverSource(
                 source_id,

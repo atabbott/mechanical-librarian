@@ -896,7 +896,15 @@ class ProviderAdapterTests(unittest.TestCase):
         )
         observation = provider.observe(_isbn_lookup((self._claim(), self._title_claim())))
         self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
-        self.assertEqual((), provider.cover_descriptors)
+        self.assertEqual(2, len(provider.cover_descriptors))
+        edition = next(
+            value
+            for value in provider.cover_descriptors
+            if value.provenance is not None
+            and value.provenance.designation.value == "exact_edition"
+        )
+        self.assertEqual(CoverSourceState.OVERSIZED, edition.terminal_state)
+        self.assertIsNone(edition.url)
 
     def test_agreement_references_only_matching_title_and_isbn_claims(self) -> None:
         other_title = LocalClaim.create(
@@ -1036,11 +1044,12 @@ class ProviderAdapterTests(unittest.TestCase):
                 json=payload,
             )
 
-        observation = HardcoverMetadataProvider(
+        provider = HardcoverMetadataProvider(
             "catalogue",
             httpx.Client(transport=httpx.MockTransport(handler)),
             65_536,
-        ).observe(_work_lookup())
+        )
+        observation = provider.observe(_work_lookup())
         self.assertEqual(ProviderQueryKind.WORK, observation.query_kind)
         self.assertEqual("MetadataEvidenceByWork", captured[0]["operationName"])
         self.assertEqual(
@@ -1073,6 +1082,19 @@ class ProviderAdapterTests(unittest.TestCase):
             if value.kind is ProviderEvidenceKind.FIRST_PUBLICATION_DATE
         )
         self.assertEqual((ClaimScope.WORK, "2001-02-03"), (publication.scope, publication.value))
+        default_cover = next(
+            value
+            for value in provider.cover_descriptors
+            if value.provenance is not None
+            and value.provenance.designation.value == "default"
+        )
+        self.assertEqual(
+            [("publication_date", "2001-02-03")],
+            [
+                (value.field.value, value.value)
+                for value in default_cover.provenance.context
+            ],
+        )
 
     def test_hardcover_taxonomy_and_work_publication_fail_closed(self) -> None:
         def observe(book: dict[str, object]) -> ProviderObservation:
@@ -1442,7 +1464,9 @@ class ProviderAdapterTests(unittest.TestCase):
     def test_same_candidate_from_two_provider_connections_has_globally_unique_refs(self) -> None:
         payload = self._envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}], [{"id": 1, "title": "Current title"}])
 
-        def observation(name: str) -> ProviderObservation:
+        def observation(
+            name: str,
+        ) -> tuple[HardcoverMetadataProvider, ProviderObservation]:
             client = httpx.Client(
                 transport=httpx.MockTransport(
                     lambda request: httpx.Response(
@@ -1452,12 +1476,14 @@ class ProviderAdapterTests(unittest.TestCase):
                     )
                 )
             )
-            return HardcoverMetadataProvider(name, client, 65_536).observe(
+            provider = HardcoverMetadataProvider(name, client, 65_536)
+            result = provider.observe(
                 _isbn_lookup((self._claim(), self._title_claim()))
             )
+            return provider, result
 
-        first = observation("catalogue")
-        second = observation("secondary")
+        first_provider, first = observation("catalogue")
+        second_provider, second = observation("secondary")
         first_references = {
             claim.reference
             for candidate in first.candidates
@@ -1470,6 +1496,11 @@ class ProviderAdapterTests(unittest.TestCase):
         }
         self.assertTrue(first_references)
         self.assertTrue(first_references.isdisjoint(second_references))
+        self.assertTrue(
+            {value.source_id for value in first_provider.cover_descriptors}.isdisjoint(
+                {value.source_id for value in second_provider.cover_descriptors}
+            )
+        )
         report = MetadataReport.create(
             target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
             file=FileFacts(0, "a" * 64, "b" * 64),

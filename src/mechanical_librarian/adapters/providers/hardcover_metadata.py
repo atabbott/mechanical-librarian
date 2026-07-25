@@ -21,6 +21,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
     CoverSourceKind,
+    CoverSourceState,
     cover_source_id,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -255,10 +256,7 @@ def _parse_cover_descriptors(
         if type(row_value) is dict and "image" not in row_value:
             row_value = {**row_value, "image": None}
         row = _closed(row_value, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
-        image = _closed_or_none(row["image"], {"url"})
-        if image is not None and (type(image["url"]) is not str or not image["url"] or len(image["url"]) > 2048):
-            raise ValueError("provider image invalid")
-        url = None if image is None else image["url"]
+        url, terminal_state = _cover_url(row["image"])
         edition_id = _identifier(row["id"])
         book_id = _identifier(row["book_id"])
         work_identity = f"hardcover-work-{book_id:010d}"
@@ -269,7 +267,7 @@ def _parse_cover_descriptors(
                 CoverSourceKind.HARDCOVER,
                 cover_source_id(
                     CoverSourceKind.HARDCOVER,
-                    f"edition:{edition_id}",
+                    f"{provider}:edition:{edition_id}",
                 ),
                 url,
                 CoverProvenance(
@@ -283,6 +281,7 @@ def _parse_cover_descriptors(
                     edition_identity,
                     _edition_cover_context(row),
                 ),
+                terminal_state=terminal_state,
             )
         )
     work_keys = {
@@ -298,30 +297,49 @@ def _parse_cover_descriptors(
     for raw_book in books:
         book = _closed(raw_book, work_keys)
         book_id = _identifier(book["id"])
-        image = _closed_or_none(book["image"], {"url"})
-        if image is not None and (
-            type(image["url"]) is not str
-            or not image["url"]
-            or len(image["url"]) > 2048
-        ):
-            raise ValueError("provider image invalid")
+        url, terminal_state = _cover_url(book["image"])
         descriptors.append(
             ProviderCoverDescriptor(
                 provider,
                 CoverSourceKind.HARDCOVER,
                 cover_source_id(
                     CoverSourceKind.HARDCOVER,
-                    f"work:{book_id}:default",
+                    f"{provider}:work:{book_id}:default",
                 ),
-                None if image is None else image["url"],
+                url,
                 CoverProvenance(
                     provider,
                     CoverDesignation.DEFAULT,
                     f"hardcover-work-{book_id:010d}",
+                    context=_work_cover_context(book),
                 ),
+                terminal_state=terminal_state,
             )
         )
     return tuple(descriptors)
+
+
+def _cover_url(value: object) -> tuple[str | None, CoverSourceState | None]:
+    try:
+        image = _closed_or_none(value, {"url"})
+    except (TypeError, ValueError):
+        return None, CoverSourceState.UNSAFE_REMOTE
+    if image is None:
+        return None, None
+    url = image["url"]
+    if type(url) is not str or not url:
+        return None, CoverSourceState.UNSAFE_REMOTE
+    if len(url) > 2048:
+        return None, CoverSourceState.OVERSIZED
+    return url, None
+
+
+def _work_cover_context(book: dict[str, Any]) -> tuple[CoverContext, ...]:
+    if book["release_date"] is None:
+        return ()
+    value = _text(book["release_date"], MAX_SCALAR_CHARACTERS)
+    date.fromisoformat(value)
+    return (CoverContext(CoverContextField.PUBLICATION_DATE, value),)
 
 
 def _edition_cover_context(row: dict[str, Any]) -> tuple[CoverContext, ...]:

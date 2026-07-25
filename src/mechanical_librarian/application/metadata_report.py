@@ -166,6 +166,7 @@ class ProviderCoverDescriptor:
     wait: Callable[[float | None], bool] | None = None
     allow_redirects: bool = True
     user_agent: str | None = None
+    terminal_state: CoverSourceState | None = None
 
 
 class TargetReader(Protocol):
@@ -319,7 +320,8 @@ def qualify_provider_observation(
             blocked_work_identities.add(candidate.work_identity)
         if (
             titles == (expected_title,)
-            and authors == expected_authors
+            and len(authors) == len(expected_authors)
+            and set(authors) == set(expected_authors)
             and not disqualifying_roles
             and not variant_marker
         ):

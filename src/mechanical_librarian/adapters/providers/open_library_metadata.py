@@ -847,7 +847,7 @@ def _cover_descriptors(
                 CoverSourceKind.OPEN_LIBRARY,
                 cover_source_id(
                     CoverSourceKind.OPEN_LIBRARY,
-                    f"edition:{edition_key}",
+                    f"{provider}:edition:{edition_key}",
                 ),
                 (
                     None
@@ -882,7 +882,7 @@ def _cover_descriptors(
                 CoverSourceKind.OPEN_LIBRARY,
                 cover_source_id(
                     CoverSourceKind.OPEN_LIBRARY,
-                    f"work:{work_key}",
+                    f"{provider}:work:{work_key}",
                 ),
                 (
                     None

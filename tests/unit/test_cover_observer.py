@@ -227,6 +227,56 @@ class CoverObserverTests(unittest.TestCase):
             },
         )
 
+    def test_terminal_descriptor_state_is_published_without_remote_fetch(self) -> None:
+        configuration = ProviderConnectionConfiguration(
+            "catalogue",
+            True,
+            True,
+            "/secrets/catalogue",
+        )
+        observation = ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (ProviderCandidate("edition-1", "work-1", ()),),
+        )
+        descriptor = ProviderCoverDescriptor(
+            "catalogue",
+            CoverSourceKind.HARDCOVER,
+            cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:edition-1"),
+            None,
+            CoverProvenance(
+                "catalogue",
+                CoverDesignation.RELATED_EDITION,
+                "work-1",
+                "edition-1",
+            ),
+            terminal_state=CoverSourceState.OVERSIZED,
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
+            ) as fetch,
+        ):
+            values = _CoverEvidenceObserver(
+                _Target(None),
+                CoverArtifactStore(Path(directory)),
+                (configuration,),
+            ).observe(
+                TargetSnapshot("ebook", "Title", (), None),
+                (observation,),
+                (),
+                (descriptor,),
+            )
+        provider_value = next(
+            value
+            for value in values
+            if value.kind is CoverSourceKind.HARDCOVER
+        )
+        self.assertEqual(CoverSourceState.OVERSIZED, provider_value.state)
+        fetch.assert_not_called()
+
     def test_abs_result_is_recorded_without_a_request(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = _Target(b"unexpected")

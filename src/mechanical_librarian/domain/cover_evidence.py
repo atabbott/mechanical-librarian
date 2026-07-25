@@ -274,9 +274,15 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
         for source in sources
         if source.kind in {CoverSourceKind.HARDCOVER, CoverSourceKind.OPEN_LIBRARY}
     ]
+    admitted_provider = [
+        source
+        for source in provider
+        if source.state is not CoverSourceState.TRUNCATED
+    ]
     if (
         len(local) > 2
         or any(source.provenance is None for source in provider)
+        or len(admitted_provider) > 8
         or len(
             {
                 source.artifact.original_digest

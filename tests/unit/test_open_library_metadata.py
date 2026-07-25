@@ -339,15 +339,15 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             {
                 cover_source_id(
                     CoverSourceKind.OPEN_LIBRARY,
-                    "edition:/books/OL10M",
+                    "open_library:edition:/books/OL10M",
                 ),
                 cover_source_id(
                     CoverSourceKind.OPEN_LIBRARY,
-                    "edition:/books/OL20M",
+                    "open_library:edition:/books/OL20M",
                 ),
                 cover_source_id(
                     CoverSourceKind.OPEN_LIBRARY,
-                    "work:/works/OL5W",
+                    "open_library:work:/works/OL5W",
                 ),
             },
             {value.source_id for value in provider.cover_descriptors},

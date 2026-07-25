@@ -377,6 +377,45 @@ class MetadataReportTests(unittest.TestCase):
                 self.assertEqual(ProviderStatus.NO_MATCH, result.status)
                 self.assertEqual((), result.candidates)
 
+    def test_work_lookup_accepts_the_complete_author_set_in_provider_order(self) -> None:
+        lookup = MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "The Example",
+            ("Ada Author", "Bea Author"),
+        )
+        claims = tuple(
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=kind,
+                value=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                role=role,
+                raw_order=index,
+            )
+            for index, (kind, value, role) in enumerate(
+                (
+                    (ClaimKind.TITLE, "The Example", None),
+                    (ClaimKind.CREATOR, "Bea Author", "author"),
+                    (ClaimKind.CREATOR, "Ada Author", "author"),
+                )
+            )
+        )
+        result = qualify_provider_observation(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                (),
+                (ProviderCandidate("edition-1", "work-1", claims),),
+                ProviderQueryKind.WORK,
+            ),
+            lookup,
+        )
+        self.assertEqual(ProviderStatus.CANDIDATES, result.status)
+
     def test_closed_claim_vocabulary_is_exact(self) -> None:
         self.assertEqual(
             {kind.value for kind in ClaimKind},

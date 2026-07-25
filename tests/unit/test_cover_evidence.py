@@ -68,3 +68,23 @@ class CoverEvidenceTests(unittest.TestCase):
         self.assertTrue(publication_ready((source,)))
         with self.assertRaises(CoverEvidenceError):
             CoverSource(source.source_id, source.kind, CoverSourceState.TIMEOUT)
+
+    def test_publication_rejects_more_than_eight_provider_outcomes(self) -> None:
+        sources = tuple(
+            CoverSource(
+                cover_source_id(
+                    CoverSourceKind.HARDCOVER,
+                    f"catalogue-{index // 4}:candidate-{index}",
+                ),
+                CoverSourceKind.HARDCOVER,
+                CoverSourceState.ABSENT,
+                provenance=CoverProvenance(
+                    f"catalogue-{index // 4}",
+                    CoverDesignation.WORK,
+                    f"work-{index}",
+                ),
+            )
+            for index in range(9)
+        )
+        with self.assertRaises(CoverEvidenceError):
+            publication_ready(sources)

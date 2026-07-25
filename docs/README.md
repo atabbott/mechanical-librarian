@@ -1,6 +1,6 @@
 # Documentation
 
-## Current 0.8 runtime
+## Current 0.9 runtime
 
 - [Current book catalogue](operations/catalogue.md)
 - [Foreground ebook evidence batches](operations/ebook-evidence-batches.md)
@@ -41,5 +41,5 @@
 - [Support](../SUPPORT.md)
 
 Historical product and architecture documents describe future direction, not
-installed 0.8 authority. Current operations and compatibility are defined only
+installed 0.9 authority. Current operations and compatibility are defined only
 by the first section above.
