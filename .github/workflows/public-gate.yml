@@ -40,6 +40,6 @@ jobs:
 
       - name: Qualify the exact installed artifact and run its tests
         run: >-
-          uv run --frozen --no-editable python
+          python3
           scripts/qualify_exact_artifact.py
           --source-sha "${{ github.sha }}"

@@ -11,6 +11,7 @@ import io
 import json
 import os
 import re
+import shutil
 import signal
 import stat
 import subprocess
@@ -34,6 +35,17 @@ _MAX_INSTALLED_BYTES = 134_217_728
 _MAX_METADATA_BYTES = 1_048_576
 _MAX_COMMAND_STREAM_BYTES = 1_048_576
 _COMMAND_TIMEOUT_SECONDS = 180
+_CANONICAL_TEST_ARGS = (
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-t",
+    ".",
+    "-p",
+    "test_*.py",
+)
 
 
 class QualificationFailure(RuntimeError):
@@ -98,17 +110,7 @@ def qualify_exact_artifact(
     import_name: str = "mechanical_librarian",
     console_script: str = "mechanical-librarian",
     console_args: tuple[str, ...] = ("metadata-report", "--help"),
-    test_args: tuple[str, ...] | None = (
-        "-m",
-        "unittest",
-        "discover",
-        "-s",
-        "tests",
-        "-t",
-        ".",
-        "-p",
-        "test_*.py",
-    ),
+    test_args: tuple[str, ...] | None = _CANONICAL_TEST_ARGS,
     python_executable: str = sys.executable,
     wheel_output: Path | None = None,
     environment_path: Path | None = None,
@@ -133,13 +135,8 @@ def qualify_exact_artifact(
         raise QualificationFailure("source_repository_invalid")
     actual_sha = _verify_source_checkout(source_root, expected_source_sha)
 
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in {"PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"}
-    }
-    environment["PYTHONNOUSERSITE"] = "1"
-    environment["UV_NO_CACHE"] = "1"
+    environment = _qualification_environment()
+    uv_executable = _required_executable("uv", environment)
     if (wheel_output is None) != (environment_path is None):
         raise QualificationFailure("retained_workspace_invalid")
 
@@ -187,10 +184,32 @@ def qualify_exact_artifact(
             qualified_environment = root / "environment"
             output.mkdir()
 
+        locked_requirements = root / "locked-requirements.txt"
         _run(
             (
-                "uv",
+                uv_executable,
+                "export",
+                "--no-config",
+                "--frozen",
+                "--all-groups",
+                "--no-emit-project",
+                "--format",
+                "requirements.txt",
+                "--output-file",
+                str(locked_requirements),
+            ),
+            cwd=build_source,
+            env=environment,
+            reason="locked_dependencies_failed",
+        )
+        _run(
+            (
+                uv_executable,
                 "build",
+                "--no-config",
+                "--build-constraints",
+                str(locked_requirements),
+                "--require-hashes",
                 "--wheel",
                 "--out-dir",
                 str(output),
@@ -209,8 +228,9 @@ def qualify_exact_artifact(
 
         _run(
             (
-                "uv",
+                uv_executable,
                 "venv",
+                "--no-config",
                 "--no-cache",
                 "--python",
                 python_executable,
@@ -221,29 +241,14 @@ def qualify_exact_artifact(
             reason="environment_creation_failed",
         )
         environment_python = _environment_python(qualified_environment)
-        locked_requirements = root / "locked-requirements.txt"
         _run(
             (
-                "uv",
-                "export",
-                "--frozen",
-                "--all-groups",
-                "--no-emit-project",
-                "--format",
-                "requirements.txt",
-                "--output-file",
-                str(locked_requirements),
-            ),
-            cwd=build_source,
-            env=environment,
-            reason="locked_dependencies_failed",
-        )
-        _run(
-            (
-                "uv",
+                uv_executable,
                 "pip",
                 "install",
+                "--no-config",
                 "--no-cache",
+                "--require-hashes",
                 "--python",
                 str(environment_python),
                 "--requirements",
@@ -255,9 +260,10 @@ def qualify_exact_artifact(
         )
         _run(
             (
-                "uv",
+                uv_executable,
                 "pip",
                 "install",
+                "--no-config",
                 "--no-cache",
                 "--no-deps",
                 "--reinstall",
@@ -361,11 +367,39 @@ def qualify_exact_artifact(
         explicit_wheel_install=True,
         outside_checkout=True,
         locked_dependencies=True,
-        full_suite_executed=test_args is not None,
+        full_suite_executed=test_args == _CANONICAL_TEST_ARGS,
         wheel_record_validated=True,
         retained_wheel=retained,
         retained_environment=retained,
     )
+
+
+def _qualification_environment() -> dict[str, str]:
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"}
+        and not key.startswith("UV_")
+    }
+    launcher_bin = Path(sys.executable).parent.resolve()
+    environment["PATH"] = os.pathsep.join(
+        entry
+        for entry in environment.get("PATH", "").split(os.pathsep)
+        if entry and Path(entry).resolve() != launcher_bin
+    )
+    environment["PYTHONNOUSERSITE"] = "1"
+    environment["UV_NO_CACHE"] = "1"
+    return environment
+
+
+def _required_executable(name: str, environment: dict[str, str]) -> str:
+    resolved = shutil.which(name, path=environment.get("PATH"))
+    if resolved is None:
+        raise QualificationFailure("qualification_tool_unavailable")
+    executable = Path(resolved).resolve()
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise QualificationFailure("qualification_tool_unavailable")
+    return str(executable)
 
 
 def _verify_source_checkout(source_root: Path, expected_source_sha: str) -> str:

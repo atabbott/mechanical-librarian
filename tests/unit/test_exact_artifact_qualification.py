@@ -16,6 +16,7 @@ import scripts.qualify_exact_artifact as qualifier_module
 from scripts.qualify_exact_artifact import (
     QualificationFailure,
     _decode_stdout,
+    _qualification_environment,
     _run,
     _validate_wheel,
     _verify_installed_payload,
@@ -80,6 +81,15 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                     wheel_output=wheel_output,
                     environment_path=environment_path,
                 )
+                partial = qualify_exact_artifact(
+                    source,
+                    second_sha,
+                    distribution="cache-probe",
+                    import_name="cache_probe",
+                    console_script="cache-probe",
+                    console_args=(),
+                    test_args=(),
+                )
                 retained_console_exists = (
                     environment_path
                     / ("Scripts" if os.name == "nt" else "bin")
@@ -89,6 +99,8 @@ class ExactArtifactQualificationTests(unittest.TestCase):
 
         self.assertEqual(first.distribution_version, "0.0.0")
         self.assertEqual(second.distribution_version, "0.0.0")
+        self.assertFalse(first.full_suite_executed)
+        self.assertFalse(partial.full_suite_executed)
         self.assertNotEqual(first.source_sha, second.source_sha)
         self.assertNotEqual(first.wheel_sha256, second.wheel_sha256)
         self.assertEqual(
@@ -106,6 +118,31 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         self.assertTrue(second.wheel_record_validated)
         self.assertTrue(retained_console_exists)
         self.assertEqual(1, retained_wheel_count)
+
+    def test_qualification_environment_discards_inherited_uv_controls(self) -> None:
+        inherited = {
+            "UV_CONFIG_FILE": "/tmp/untrusted-uv.toml",
+            "UV_NO_BUILD_ISOLATION": "1",
+            "UV_NO_VERIFY_HASHES": "1",
+            "UV_PROJECT": "/tmp/untrusted-project",
+        }
+        with patch.dict(os.environ, inherited):
+            environment = _qualification_environment()
+
+        self.assertEqual("1", environment["UV_NO_CACHE"])
+        self.assertEqual("1", environment["PYTHONNOUSERSITE"])
+        self.assertNotIn(
+            Path(sys.executable).parent.resolve(),
+            {
+                Path(entry).resolve()
+                for entry in environment["PATH"].split(os.pathsep)
+                if entry
+            },
+        )
+        self.assertFalse(
+            set(inherited).intersection(environment),
+            environment,
+        )
 
     def test_source_change_during_qualification_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -307,6 +344,9 @@ version = "0.0.0"
 
 [project.scripts]
 cache-probe = "cache_probe:main"
+
+[dependency-groups]
+dev = ["setuptools==83.0.0"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

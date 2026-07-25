@@ -43,7 +43,7 @@ committed lockfile:
 
 ```text
 uv lock --check
-uv run --frozen --no-editable python scripts/qualify_exact_artifact.py --source-sha "$(git rev-parse HEAD)"
+python3 scripts/qualify_exact_artifact.py --source-sha "$(git rev-parse HEAD)"
 ```
 
 The final command runs the

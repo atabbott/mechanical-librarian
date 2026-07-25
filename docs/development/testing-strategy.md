@@ -4,7 +4,7 @@ The public gate checks the lockfile and runs the canonical exact-artifact
 qualifier:
 
 ```bash
-uv run --frozen --no-editable python scripts/qualify_exact_artifact.py \
+python3 scripts/qualify_exact_artifact.py \
   --source-sha "$(git rev-parse HEAD)"
 ```
 
