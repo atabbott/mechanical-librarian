@@ -491,14 +491,14 @@ The [0.9 working plan](0-9-working-plan.md) promotes F09o #70 with #344 as its
 sole pre-activation sub-issue. #344 completes `metadata-report-v7`: all 16 ABS
 destinations, exact ISBN versus complete-author work lookup, fail-closed work
 qualification, typed taxonomy/first-publication evidence, and the bounded
-provenance-bearing provider cover gallery. #70 then consumes that exact report
-to activate one deterministic immutable ProposalSet covering all 16
-destinations.
+provenance-bearing provider cover gallery. Delivered #70 consumes that exact
+current report to activate one deterministic immutable ProposalSet covering
+all 16 destinations.
 
 | Outcome | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
-| F09o evidence input | #344 | One selected ABS EPUB produces or reopens the complete immutable evidence report required by explainable proposals, without proposal or write authority. | Pre-activation increment delivered before #70. |
-| F09o explainable proposals | #70 | One exact completed evidence report deterministically produces one immutable result for every destination, without review or write authority. | Activation increment follows #344. |
+| F09o evidence input | #344 | One selected ABS EPUB produces or reopens the complete immutable evidence report required by explainable proposals, without proposal or write authority. | Delivered pre-activation increment. |
+| F09o explainable proposals | #70 | One exact completed evidence report deterministically produces one immutable result for every destination, without review or write authority. | Delivered activation increment. |
 
 The checkpoint excludes new providers or discovery, fuzzy search, configurable
 policy, AI, review/admission/decision/apply/write, batch/background/retry/cache,
@@ -527,10 +527,9 @@ recreated.
 
 The retained `F` IDs are planned designations on the assigned outcome issues,
 not proof of `Ready` status or authority to begin. Each tracker still must meet
-the normal readiness and selection rules. F09o #70 moved into the 0.9.0
-checkpoint and supplies the proposal prerequisite used by later review
-outcomes. Open Library #210 remains the completed F09l tracker in milestone
-0.8.0.
+the normal readiness and selection rules. Completed F09o #70 supplies the
+proposal prerequisite used by later review outcomes. Open Library #210 remains
+the completed F09l tracker in milestone 0.8.0.
 
 The outcomes are not one serial chain. Readiness records the real dependencies:
 #70 supplies explainable proposals; F10b admits eligible proposals; F16a records

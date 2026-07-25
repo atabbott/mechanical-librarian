@@ -1,8 +1,8 @@
 # Configuration reference
 
-The installed `metadata-report`, `catalogue`, and `batch` operations accept one
-strict UTF-8 JSON document with schema version `config-v4`. Unknown and
-duplicate fields are rejected. The generated schema is
+The installed `metadata-report`, `proposal-set-create`, `catalogue`, and `batch`
+operations accept one strict UTF-8 JSON document with schema version
+`config-v4`. Unknown and duplicate fields are rejected. The generated schema is
 [`config-v4.schema.json`](config-v4.schema.json) and is regenerated with:
 
 ```text
@@ -104,4 +104,6 @@ ranking policy:
 There are no provider defaults, inheritance, overrides, weights, priorities,
 configurable fallback rules, environment substitutions, or undocumented
 configuration sources. The fixed no-ISBN title-plus-complete-author fallback is
-part of the report contract rather than operator policy.
+part of the report contract rather than operator policy. Proposal creation uses
+only the selected target connection/library/mount and never reads provider
+authority; its fixed evaluation policy is not configurable.

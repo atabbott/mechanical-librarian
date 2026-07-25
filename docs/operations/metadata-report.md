@@ -1,7 +1,7 @@
 # Metadata report
 
 The current runtime retains one synchronous single-item report operation
-alongside the 0.8 catalogue and foreground batch surfaces:
+alongside the 0.9 catalogue, foreground batch, and ProposalSet surfaces:
 
 ```text
 mechanical-librarian metadata-report \
@@ -53,6 +53,11 @@ mechanical-librarian metadata-report-cover-preview \
 
 It writes raw preview bytes only to non-interactive stdout. It never performs
 target, provider, or remote-cover transport and it cannot retrieve originals.
+
+An exact current report can be evaluated by the separate fixed-policy
+[`proposal-set-create`](proposal-set.md) operation. That operation references
+this evidence without changing or duplicating the report and performs no
+provider call.
 
 ## Preconditions
 

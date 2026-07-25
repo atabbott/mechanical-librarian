@@ -13,9 +13,11 @@ evidence workflow. An operator can:
   libraries;
 - create and inspect an immutable manifest for explicit selections or all
   eligible EPUBs;
-- run that frozen batch serially in the foreground; and
+- run that frozen batch serially in the foreground;
 - generate or reopen one complete source-attributed EPUB metadata-and-cover
-  evidence report.
+  evidence report; and
+- create or reopen one immutable fixed-policy ProposalSet from an exact current
+  report.
 
 The report combines all 16 current Audiobookshelf metadata destinations,
 bounded structured EPUB evidence, independent configured Hardcover and Open
@@ -24,10 +26,12 @@ keeps the exact ISBN path. Only when no usable ISBN exists may a configured
 provider receive one exact title-plus-complete-author work lookup; qualified
 work evidence never becomes edition evidence. The provider gallery retains at
 most eight sources and four per provider with safe provenance and explicit
-truncation. It does not fuse, rank, or propose from provider evidence.
-Catalogue and batch operations retain the same read-only boundary. There is no
-review, decision, apply, target write, media write, background execution,
-automatic retry, or supported release.
+truncation. The report remains neutral. A separate deterministic evaluator
+produces exactly one explainable result for each destination without contacting
+providers, configurable ranking, or write authority. Catalogue and batch
+operations retain the same read-only boundary. There is no review admission,
+decision, apply, target write, media write, background execution, automatic
+retry, or supported release.
 
 Only absent or exact-current pre-release state is supported. Earlier
 development databases, manifests, configuration schemas, and retired commands
@@ -35,7 +39,8 @@ are intentionally rejected rather than migrated or interpreted.
 
 See the [catalogue guide](docs/operations/catalogue.md),
 [foreground batch guide](docs/operations/ebook-evidence-batches.md),
-[metadata report guide](docs/operations/metadata-report.md), and
+[metadata report guide](docs/operations/metadata-report.md),
+[ProposalSet guide](docs/operations/proposal-set.md), and
 [documentation index](docs/README.md).
 
 ## Product direction

@@ -561,7 +561,19 @@ class GenerateMetadataReport:
         try:
             persisted = repository.publish(
                 report,
-                lambda: (self._publication_authority_guard() if self._publication_authority_guard is not None else None) is None and self._is_current(item, initial, selected, local.content_digest, cover_sources),
+                lambda: (
+                    self._publication_authority_guard()
+                    if self._publication_authority_guard is not None
+                    else None
+                )
+                is None
+                and require_report_current(
+                    self._target,
+                    self._inspector,
+                    self._mount,
+                    self._limits,
+                    report,
+                ),
                 expected_current,
             )
             if persisted != report.to_json() or repository.get(report.report_id) != persisted:
@@ -575,62 +587,6 @@ class GenerateMetadataReport:
             if repository is not None:
                 repository.close()
 
-    def _is_current(
-        self,
-        item: str,
-        initial: TargetSnapshot,
-        selected: TargetFile,
-        expected_digest: str,
-        cover_sources: tuple[CoverSource, ...],
-    ) -> bool:
-        final = self._safe_read(item)
-        matches = tuple(
-            value for value in final.files if value.identity == selected.identity
-        )
-        if (
-            final.media_kind != "ebook"
-            or final.title != initial.title
-            or final.fields != initial.fields
-            or final.cover != initial.cover
-            or len(matches) != 1
-            or matches[0].format != "epub"
-            or matches[0].relative_path != selected.relative_path
-            or not self._inspector.unchanged(
-                self._mount,
-                selected.relative_path,
-                expected_digest,
-                self._limits.source_archive_bytes,
-            )
-        ):
-            raise CurrentnessError("target or media changed")
-        expected_cover = next(
-            (
-                source.artifact.original_digest
-                for source in cover_sources
-                if source.kind is CoverSourceKind.ABS and source.artifact is not None
-            ),
-            None,
-        )
-        expected_absent = any(
-            source.kind is CoverSourceKind.ABS
-            and source.state is CoverSourceState.ABSENT
-            for source in cover_sources
-        )
-        if expected_cover is not None or expected_absent:
-            reader = getattr(self._target, "read_cover", None)
-            try:
-                current_cover = reader(final.cover) if callable(reader) and final.cover is not None else None
-            except (MetadataReportError, OSError, ValueError):
-                raise CurrentnessError("target or media changed") from None
-            if expected_absent and current_cover is not None:
-                raise CurrentnessError("target or media changed")
-            if expected_cover is not None and (
-                type(current_cover) is not bytes
-                or hashlib.sha256(current_cover).hexdigest() != expected_cover
-            ):
-                raise CurrentnessError("target or media changed")
-        return True
-
     def _safe_read(self, item: str) -> TargetSnapshot:
         try:
             value = self._target.read(item)
@@ -643,6 +599,78 @@ class GenerateMetadataReport:
         return value
 
 
+def require_report_current(
+    target: TargetReader,
+    inspector: EpubInspector,
+    mount: MediaMountConfiguration | None,
+    limits: ReportLimits,
+    report: MetadataReport,
+) -> bool:
+    """Revalidate the exact target, media, and ABS cover bound to a report."""
+    if (
+        mount is None
+        or type(report) is not MetadataReport
+        or type(limits) is not ReportLimits
+    ):
+        raise CurrentnessError("target or media changed")
+    try:
+        final = target.read(report.target.item)
+    except MetadataReportError:
+        raise
+    except Exception as error:
+        raise MetadataReportError("target read failed") from error
+    if type(final) is not TargetSnapshot:
+        raise MetadataReportError("target response is invalid")
+    matches = tuple(
+        value for value in final.files if value.identity == report.file.identity
+    )
+    if (
+        final.media_kind != "ebook"
+        or final.title != report.target.current_title
+        or final.fields != report.target.fields
+        or len(matches) != 1
+        or matches[0].format != "epub"
+        or not inspector.unchanged(
+            mount,
+            matches[0].relative_path,
+            report.file.content_digest,
+            limits.source_archive_bytes,
+        )
+    ):
+        raise CurrentnessError("target or media changed")
+    expected_cover = next(
+        (
+            source.artifact.original_digest
+            for source in report.cover_sources
+            if source.kind is CoverSourceKind.ABS and source.artifact is not None
+        ),
+        None,
+    )
+    expected_absent = any(
+        source.kind is CoverSourceKind.ABS
+        and source.state is CoverSourceState.ABSENT
+        for source in report.cover_sources
+    )
+    if expected_cover is not None or expected_absent:
+        reader = getattr(target, "read_cover", None)
+        try:
+            current_cover = (
+                reader(final.cover)
+                if callable(reader) and final.cover is not None
+                else None
+            )
+        except (MetadataReportError, OSError, ValueError):
+            raise CurrentnessError("target or media changed") from None
+        if expected_absent and current_cover is not None:
+            raise CurrentnessError("target or media changed")
+        if expected_cover is not None and (
+            type(current_cover) is not bytes
+            or hashlib.sha256(current_cover).hexdigest() != expected_cover
+        ):
+            raise CurrentnessError("target or media changed")
+    return True
+
+
 __all__ = [
     "CoverObserver", "CoverReadError", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
     "ArtifactAuthorityError", "InspectionResult", "ItemInspectionError",
@@ -650,5 +678,5 @@ __all__ = [
     "ProviderBinding", "ProviderCoverDescriptor",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
-    "metadata_lookup", "qualify_provider_observation",
+    "metadata_lookup", "qualify_provider_observation", "require_report_current",
 ]

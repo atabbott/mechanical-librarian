@@ -44,12 +44,17 @@ The suite covers:
   provider-order/contact privacy, and the explicit five-item batch envelope;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
-- exact three-table DELETE-mode schema, side-effect-free existing-file
+- exact four-table DELETE-mode report/ProposalSet schema, side-effect-free existing-file
   validation, no-follow connection binding, Linux owner-directory lock and
   root-to-parent chain validation, verified private-alias binding, raced
   configured-sidecar isolation, final-precommit parent replacement rollback,
   alias cleanup, append-only history, replay, scope-checked successor
   pointers, restart readback, corrupt-row rejection, and rollback;
+- fixed-policy exact 16-result enumeration, complete authors and atomic series,
+  independent corroboration, date/year consistency, populated subjective-field
+  closure, complete cover-gallery selection, deterministic ProposalSet replay,
+  stale-report no-insert, transaction-local report/current-pointer recheck, and
+  zero provider calls during proposal creation;
 - rejection before unauthorized parser/provider/publication activity,
   transaction-bound currentness drift, exact-byte snapshot binding, title
   privacy rejection, redaction, and absence of product/media writes; and

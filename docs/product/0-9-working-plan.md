@@ -29,13 +29,15 @@ observations with synthetic fixtures. `metadata-report-get --report-id`
 reopens the exact persisted bytes without configuration, credentials, target
 access, or network access.
 
-## Activation boundary
+## Activated ProposalSet boundary
 
-#70 may consume only the exact completed report contract. Its ProposalSet is a
-separate immutable artifact and must produce one closed result for every target
-destination without changing the evidence report, contacting providers again,
-or introducing review/apply authority. Until #70 closes, the 0.9.0 outcome is
-not activated.
+#70 consumes only the exact completed report contract. Its
+`proposal-set-v1` document is a separate content-addressed immutable artifact
+with one closed result for every target destination. Creation revalidates the
+external target/media/cover/artifact state, performs no provider call, and
+transactionally rechecks the report digest plus current pointer before insert.
+The fixed conservative policy is versioned in the artifact and introduces no
+review, decision, or apply authority.
 
 ## Exclusions
 

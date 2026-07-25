@@ -1,0 +1,82 @@
+# ProposalSet operation
+
+The 0.9 runtime can create one immutable ProposalSet from an exact current
+metadata report:
+
+```text
+mechanical-librarian proposal-set-create \
+  --config /run/secrets/mechanical-librarian.json \
+  --database /data/reports.sqlite \
+  --artifact-store /data/cover-artifacts \
+  --report-id report_<64-lowercase-hex-characters>
+```
+
+Every option is required. The command reopens the exact report, revalidates its
+current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
+both blobs of every referenced private cover artifact, then evaluates the built-in
+`fixed-conservative-v1` policy. It does not construct or contact a metadata or
+cover provider.
+
+An exact ProposalSet can be reopened offline:
+
+```text
+mechanical-librarian proposal-set-get \
+  --database /data/reports.sqlite \
+  --proposal-set-id proposal_set_<64-lowercase-hex-characters>
+```
+
+Success is exactly one canonical `proposal-set-v1` JSON document plus a
+newline. Failure emits no document and one value-free diagnostic.
+
+## Fixed policy
+
+Every ProposalSet is bound to the exact report ID and document digest, target
+fingerprint, policy version, contract version, and result-template version. It
+contains exactly one ordered result for title, subtitle, authors, narrators,
+series, genres, publishedYear, publishedDate, publisher, description, isbn,
+asin, language, explicit, tags, and cover. Each result is one of
+`needs_review`, `keep`, `reject`, `defer`, or `ineligible`.
+
+Alternatives retain only their bounded candidate value, work/edition/cover
+scope, assessment, stable evidence references, and hashed correlation groups.
+They do not copy report excerpts, raw provider evidence, responses, URLs,
+paths, or image bytes.
+
+The policy is deliberately conservative:
+
+- populated values need positive preservation evidence for `keep`;
+- populated replacement candidates normally need one unique value from at
+  least two materially independent correlation groups;
+- ordered author lists, series name/sequence, and date/year remain complete
+  and linked rather than being edited piecemeal;
+- work first-publication evidence can fill an empty date/year consistently but
+  cannot replace a valid populated edition value;
+- populated description, genres, and tags are never merged, replaced, or
+  cleaned; exact evidence may preserve them and candidates may fill only an
+  empty field;
+- ISBNs remain validated, edition-applicable observations; ISBN-13 and ASIN are
+  never manufactured;
+- explicit changes require direct evidence, so absence supports neither
+  `false` nor `keep`; and
+- an existing verified ABS cover is kept. An absent target gets a selected
+  cover only when the complete bounded gallery contains exactly one distinct
+  safe artifact; incomplete or competing galleries defer.
+
+There are no scores, provider priority, configured policy, fuzzy matching, AI,
+review admission, decision, or apply behavior.
+
+## Currentness and persistence
+
+External target, media, cover, and artifact validation finishes before the
+ProposalSet insertion transaction. The transaction then immediately rechecks
+that the immutable report document has the expected digest and that
+`current_metadata_reports` still points to that exact report for its complete
+scope. Drift inserts nothing. Audiobookshelf or media may change after the last
+external read; perpetual cross-system atomicity is not claimed, and the future
+review-admission stage must validate freshness again.
+
+`proposal_sets` is append-only and has no current pointer, lifecycle, retry,
+job, or normalized evidence tables. Identical exact inputs converge on the
+same ID and bytes. The report database accepts only an absent database or its
+exact current report-plus-ProposalSet schema; earlier development schemas are
+rejected without migration, import, or conversion.

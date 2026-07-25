@@ -94,6 +94,32 @@ order through a bounded v2 occurrence ordinal in its claim identity.
 The replay guarantee applies within the exact current schema; the domain model
 does not interpret reports from prior or intermediate development schemas.
 
+## Explainable ProposalSet
+
+`ProposalSet` is the deterministic, content-addressed evaluation of one exact
+`MetadataReport` under `fixed-conservative-v1`. It binds the report ID and
+document digest, target fingerprint, policy, contract, and result-template
+versions. Its ordered result tuple contains exactly one result for every
+`TargetDestination`.
+
+Results use the closed outcome vocabulary `needs_review`, `keep`, `reject`,
+`defer`, or `ineligible`. An alternative contains one bounded typed value, its
+work/edition/cover scope, target assessment, stable evidence references, and
+hashed correlation identities. Only `needs_review` identifies a selected
+alternative. `keep` requires positive preservation evidence and never encodes a
+replacement. The ProposalSet references observations owned by the report
+rather than copying excerpts, provider payloads, cover provenance, URLs, paths,
+or bytes.
+
+The pure evaluator has no configuration, provider, network, persistence, or
+write authority. Its fixed rules preserve ordered complete people lists,
+atomic series name/sequence, linked publication date/year, edition identifier
+applicability, and cover-gallery completeness. Populated subjective fields are
+not merged or replaced. Multiple values, weak correlation, malformed/unloaded
+target state, role ambiguity, or incomplete cover evidence defer or become
+ineligible rather than being silently resolved. There is no score, provider
+priority, ranking, configurable policy, review, or decision concept.
+
 ## Current book catalogue
 
 One `CatalogueGeneration` is a bounded current observation across every

@@ -1,4 +1,4 @@
-"""Clean-state, exact three-table SQLite metadata report repository."""
+"""Clean-state SQLite repository for immutable reports and ProposalSets."""
 
 from __future__ import annotations
 
@@ -17,6 +17,14 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     REPORT_SCHEMA,
     ReportValueError,
+)
+from mechanical_librarian.domain.proposal_set import (
+    CONTRACT_VERSION,
+    POLICY_VERSION,
+    PROPOSAL_SCHEMA,
+    TEMPLATE_VERSION,
+    ProposalSet,
+    ProposalValueError,
 )
 
 if sys.platform.startswith("linux"):
@@ -59,6 +67,19 @@ _COVER_PREVIEW_INDEX_SQL = (
     "CREATE INDEX metadata_report_cover_references_preview_digest "
     "ON metadata_report_cover_references(preview_digest) WHERE preview_digest IS NOT NULL"
 )
+_PROPOSAL_SETS_SQL = (
+    "CREATE TABLE proposal_sets ("
+    "proposal_set_id TEXT PRIMARY KEY NOT NULL CHECK (proposal_set_id GLOB 'proposal_set_[0-9a-f]*' AND length(proposal_set_id) = 77), "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "report_digest TEXT NOT NULL CHECK (length(report_digest) = 64 AND report_digest NOT GLOB '*[^0-9a-f]*'), "
+    "target_fingerprint TEXT NOT NULL CHECK (length(target_fingerprint) = 64 AND target_fingerprint NOT GLOB '*[^0-9a-f]*'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'proposal-set-v1'), "
+    "policy_version TEXT NOT NULL CHECK (policy_version = 'fixed-conservative-v1'), "
+    "contract_version TEXT NOT NULL CHECK (contract_version = 'explainable-ebook-proposal-v1'), "
+    "template_version TEXT NOT NULL CHECK (template_version = 'proposal-result-v1'), "
+    "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
+    "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
+)
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
     "BEGIN SELECT RAISE(ABORT, 'metadata reports are append-only'); END"
@@ -75,6 +96,16 @@ _COVER_NO_DELETE_SQL = (
     "CREATE TRIGGER metadata_report_cover_references_no_delete BEFORE DELETE ON metadata_report_cover_references "
     "BEGIN SELECT RAISE(ABORT, 'metadata report cover references are append-only'); END"
 )
+_PROPOSAL_NO_UPDATE_SQL = (
+    "CREATE TRIGGER proposal_sets_no_update BEFORE UPDATE ON proposal_sets "
+    "BEGIN SELECT RAISE(ABORT, 'proposal sets are append-only'); END"
+)
+_PROPOSAL_NO_DELETE_SQL = (
+    "CREATE TRIGGER proposal_sets_no_delete BEFORE DELETE ON proposal_sets "
+    "BEGIN SELECT RAISE(ABORT, 'proposal sets are append-only'); END"
+)
+
+
 class _LinuxDirectoryChain:
     def __init__(
         self,
@@ -519,6 +550,99 @@ class SQLiteMetadataReportRepository:
                 raise
             raise MetadataReportError("persisted report is invalid") from error
 
+    def publish_proposal(self, proposal_set: ProposalSet) -> str:
+        """Insert one exact ProposalSet after transaction-local report recheck."""
+        if type(proposal_set) is not ProposalSet:
+            raise MetadataReportError("proposal publication failed")
+        document = proposal_set.to_json()
+        document_digest = hashlib.sha256(document.encode("utf-8")).hexdigest()
+        values = (
+            proposal_set.proposal_set_id,
+            proposal_set.report_id,
+            proposal_set.report_digest,
+            proposal_set.target_fingerprint,
+            proposal_set.schema_version,
+            proposal_set.policy_version,
+            proposal_set.contract_version,
+            proposal_set.template_version,
+            document_digest,
+            document,
+        )
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            if self._binding is not None:
+                self._binding.require_current()
+            existing = self._connection.execute(
+                "SELECT report_id,report_digest,target_fingerprint,schema_version,policy_version,contract_version,template_version,document_digest,document "
+                "FROM proposal_sets WHERE proposal_set_id=?",
+                (proposal_set.proposal_set_id,),
+            ).fetchone()
+            expected = values[1:]
+            if existing is not None and existing != expected:
+                raise MetadataReportError("persisted proposal identity conflicts")
+            row = self._connection.execute(
+                "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document "
+                "FROM metadata_reports WHERE report_id=?",
+                (proposal_set.report_id,),
+            ).fetchone()
+            if row is None:
+                raise MetadataReportError("proposal report is unavailable")
+            report_document = _validate_report_row(row)
+            report = MetadataReport.from_json(report_document)
+            current = self._connection.execute(
+                "SELECT report_id FROM current_metadata_reports "
+                "WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?",
+                (
+                    report.target.connection,
+                    report.target.library,
+                    report.target.item,
+                    report.file.identity,
+                ),
+            ).fetchone()
+            if (
+                hashlib.sha256(report_document.encode("utf-8")).hexdigest()
+                != proposal_set.report_digest
+                or report.target.fingerprint != proposal_set.target_fingerprint
+                or current != (proposal_set.report_id,)
+            ):
+                raise MetadataReportError("proposal report changed")
+            if existing is None:
+                self._connection.execute(
+                    "INSERT INTO proposal_sets(proposal_set_id,report_id,report_digest,target_fingerprint,schema_version,policy_version,contract_version,template_version,document_digest,document) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    values,
+                )
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.commit()
+            return self.get_proposal(proposal_set.proposal_set_id)
+        except MetadataReportError:
+            self._connection.rollback()
+            raise
+        except (sqlite3.Error, ProposalValueError, ReportValueError) as error:
+            self._connection.rollback()
+            raise MetadataReportError("proposal publication failed") from error
+        except Exception as error:
+            self._connection.rollback()
+            raise MetadataReportError(
+                "proposal publication precondition failed"
+            ) from error
+
+    def get_proposal(self, proposal_set_id: str) -> str:
+        try:
+            row = self._connection.execute(
+                "SELECT proposal_set_id,report_id,report_digest,target_fingerprint,schema_version,policy_version,contract_version,template_version,document_digest,document "
+                "FROM proposal_sets WHERE proposal_set_id=?",
+                (proposal_set_id,),
+            ).fetchone()
+            if row is None:
+                raise MetadataReportError("persisted proposal is unavailable")
+            return _validate_proposal_row(row)
+        except MetadataReportError:
+            raise
+        except (sqlite3.Error, ProposalValueError, UnicodeError) as error:
+            raise MetadataReportError("persisted proposal is invalid") from error
+
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
         document = self.current_optional(connection, library, item, file_identity)
         if document is None:
@@ -686,9 +810,12 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_COVER_REFERENCES_SQL)
             connection.execute(_COVER_ARTIFACT_INDEX_SQL)
             connection.execute(_COVER_PREVIEW_INDEX_SQL)
+            connection.execute(_PROPOSAL_SETS_SQL)
             connection.execute(_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_DELETE_SQL)
+            connection.execute(_PROPOSAL_NO_UPDATE_SQL)
+            connection.execute(_PROPOSAL_NO_DELETE_SQL)
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
         _validate_schema(connection)
@@ -958,13 +1085,17 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
         ("index", "sqlite_autoindex_metadata_reports_1", None),
         ("index", "sqlite_autoindex_metadata_reports_2", None),
+        ("index", "sqlite_autoindex_proposal_sets_1", None),
         ("table", "current_metadata_reports", _CURRENT_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
         ("table", "metadata_reports", _REPORTS_SQL),
+        ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
         ("trigger", "metadata_report_cover_references_no_delete", _COVER_NO_DELETE_SQL),
         ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL),
         ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
         ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
+        ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
+        ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
     ))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
@@ -982,6 +1113,51 @@ def _validate_report_row(row: tuple[object, ...]) -> str:
         raise MetadataReportError("persisted report is invalid") from error
     if (report.report_id, report.target.connection, report.target.library, report.target.item, report.file.identity, report.file.content_digest) != (report_id, connection, library, item, file_identity, content_digest):
         raise MetadataReportError("persisted report envelope disagrees")
+    return document
+
+
+def _validate_proposal_row(row: tuple[object, ...]) -> str:
+    if len(row) != 10:
+        raise MetadataReportError("persisted proposal is invalid")
+    (
+        proposal_set_id,
+        report_id,
+        report_digest,
+        target_fingerprint,
+        schema,
+        policy,
+        contract,
+        template,
+        digest,
+        document,
+    ) = row
+    if (
+        type(proposal_set_id) is not str
+        or type(document) is not str
+        or schema != PROPOSAL_SCHEMA
+        or policy != POLICY_VERSION
+        or contract != CONTRACT_VERSION
+        or template != TEMPLATE_VERSION
+        or type(digest) is not str
+        or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest
+    ):
+        raise MetadataReportError("persisted proposal is invalid")
+    try:
+        proposal_set = ProposalSet.from_json(document)
+    except ProposalValueError as error:
+        raise MetadataReportError("persisted proposal is invalid") from error
+    if (
+        proposal_set.proposal_set_id,
+        proposal_set.report_id,
+        proposal_set.report_digest,
+        proposal_set.target_fingerprint,
+    ) != (
+        proposal_set_id,
+        report_id,
+        report_digest,
+        target_fingerprint,
+    ):
+        raise MetadataReportError("persisted proposal envelope disagrees")
     return document
 
 __all__ = ["SQLiteMetadataReportRepository", "open_repository"]

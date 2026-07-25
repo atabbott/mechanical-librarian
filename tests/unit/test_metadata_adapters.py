@@ -200,6 +200,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("current_metadata_reports",),
                     ("metadata_report_cover_references",),
                     ("metadata_reports",),
+                    ("proposal_sets",),
                 ],
             )
             self.assertEqual(len(rows), 2)

@@ -64,6 +64,11 @@ from mechanical_librarian.application.metadata_report import (
     TargetCoverReader,
     TargetSnapshot,
     UnsupportedMediaError,
+    require_report_current,
+)
+from mechanical_librarian.application.proposal_sets import (
+    CreateProposalSet,
+    GetProposalSet,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -545,6 +550,67 @@ def reopen_cover_preview(database_path: Path, artifact_store_path: Path, report_
         repository.close()
 
 
+def create_proposal_set(
+    config_path: Path,
+    database_path: Path,
+    artifact_store_path: Path,
+    report_id: str,
+) -> str:
+    """Create one ProposalSet without provider calls or write authority."""
+    configuration = load_configuration_file(config_path)
+    artifacts = CoverArtifactStore(artifact_store_path, create=False)
+    repository = open_repository(database_path, create=False)
+
+    def current(report) -> bool:
+        connection, library, mount, _ = configuration.select(
+            report.target.connection, report.target.library
+        )
+        if mount is None:
+            raise CurrentnessError("target or media changed")
+        target = AudiobookshelfItemReader(
+            client_factory=lambda: target_client(
+                connection.endpoint,
+                connection.secret_file,
+                configuration.limits.timeout_seconds,
+            ),
+            endpoint=connection.endpoint,
+            library_id=library.library_id,
+            service_path=mount.service_path,
+            maximum_bytes=configuration.limits.target_response_bytes,
+            timeout_seconds=configuration.limits.timeout_seconds,
+        )
+        valid = require_report_current(
+            target,
+            _IsolatedEpubInspector(artifacts),
+            mount,
+            configuration.limits,
+            report,
+        )
+        for source in report.cover_sources:
+            if source.artifact is not None:
+                artifacts.require_artifact(
+                    source.artifact,
+                    configuration.limits.target_response_bytes,
+                )
+        artifacts.require_current()
+        return valid
+
+    try:
+        return CreateProposalSet(repository, current).run(report_id)
+    finally:
+        repository.close()
+
+
+def reopen_proposal_set(
+    database_path: Path, proposal_set_id: str
+) -> str:
+    repository = open_repository(database_path, create=False)
+    try:
+        return GetProposalSet(repository).run(proposal_set_id)
+    finally:
+        repository.close()
+
+
 def run_catalogue(config_path: Path, database_path: Path, action: str, connection: str | None, library: str | None, library_id: str | None, selector: str | None, limit: int = 100) -> str:
     """Refresh or inspect the one current catalogue through explicit composition."""
     configuration = load_configuration_file(config_path)
@@ -711,7 +777,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         batch_preview_runner=preview_batch,
         batch_inspect_runner=inspect_batch,
         batch_run_runner=run_batch,
+        proposal_create_runner=create_proposal_set,
+        proposal_get_runner=reopen_proposal_set,
     )
 
 
-__all__ = ["inspect_batch", "main", "preview_batch", "reopen_cover_preview", "reopen_current_metadata_report", "reopen_metadata_report", "run_batch", "run_catalogue", "run_metadata_report"]
+__all__ = [
+    "create_proposal_set", "inspect_batch", "main", "preview_batch",
+    "reopen_cover_preview", "reopen_current_metadata_report",
+    "reopen_metadata_report", "reopen_proposal_set", "run_batch",
+    "run_catalogue", "run_metadata_report",
+]

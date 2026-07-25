@@ -46,6 +46,20 @@ class CoverArtifactStore:
             raise MetadataReportError("artifact is invalid")
         return self._read(artifact.preview_digest, 1_048_576)
 
+    def require_artifact(
+        self, artifact: CoverArtifact, maximum_original_bytes: int
+    ) -> None:
+        """Verify both immutable blobs without exposing the original."""
+        if (
+            type(artifact) is not CoverArtifact
+            or type(maximum_original_bytes) is not int
+            or isinstance(maximum_original_bytes, bool)
+            or maximum_original_bytes < 1
+        ):
+            raise MetadataReportError("artifact is invalid")
+        self._read(artifact.original_digest, maximum_original_bytes)
+        self._read(artifact.preview_digest, 1_048_576)
+
     def read_preview_digest(self, digest: str) -> bytes:
         """Read a preview only after a repository has authorized its digest."""
         return self._read(digest, 1_048_576)

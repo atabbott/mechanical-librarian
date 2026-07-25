@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Activate immutable explainable ebook proposals. `proposal-set-create`
+  revalidates one exact current `metadata-report-v7` target, media snapshot,
+  ABS cover, and private artifact authority, then evaluates a fixed
+  conservative policy into exactly one closed result for each of the 16
+  Audiobookshelf destinations without provider calls. `proposal-set-get`
+  reopens the exact canonical `proposal-set-v1` bytes. Proposal publication
+  rechecks the report digest and current pointer inside the insertion
+  transaction, remains append-only, and adds no review, decision, or write
+  authority.
 - Expand the immutable ebook evidence report to `metadata-report-v7`: preserve
   all 16 Audiobookshelf metadata destinations and their exact loading/value
   states in target currentness, use one exact title-plus-complete-author work
