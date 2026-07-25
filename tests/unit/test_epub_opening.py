@@ -692,6 +692,41 @@ class EpubOpeningTests(unittest.TestCase):
             ["Chris Creator"],
         )
 
+    def test_short_paragraph_trailing_series_cue_is_strictly_bounded(self) -> None:
+        report = _extract(
+            self._single(_xhtml("<p>Clockwork Archive Book 2.5</p>"))
+        )
+        self.assertEqual(
+            [
+                (claim.field, claim.normalized_value)
+                for claim in report.claims
+                if claim.field in {OpeningField.SERIES, OpeningField.SERIES_ORDER}
+            ],
+            [
+                (OpeningField.SERIES_ORDER, "2.5"),
+                (OpeningField.SERIES, "Clockwork Archive"),
+            ],
+        )
+
+        rejected = (
+            "<p>Clockwork Archive Book II</p>",
+            "<p>Clockwork Archive Book Two</p>",
+            "<p>Clockwork Archive Book 2.5 revised</p>",
+            "<p>Read Clockwork Archive Book 2.5 today</p>",
+            "<h2>Clockwork Archive Book 2.5</h2>",
+            "<p>One Two Three Four Five Six Seven Book 2.5</p>",
+        )
+        for markup in rejected:
+            with self.subTest(markup=markup):
+                claims = _extract(self._single(_xhtml(markup))).claims
+                self.assertFalse(
+                    {
+                        claim.field
+                        for claim in claims
+                    }
+                    & {OpeningField.SERIES, OpeningField.SERIES_ORDER}
+                )
+
     def test_byline_is_a_creator_with_author_role_and_source_values_are_redacted(self) -> None:
         report = _extract(self._single(_xhtml('<p epub:type="creator">By Ada Example</p><p epub:type="contributor">Bea Editor</p>')))
         creators = [claim for claim in report.claims if claim.field is OpeningField.CREATOR]

@@ -88,6 +88,12 @@ The package modification timestamp is not a publication date. A package unique
 identifier is not assumed to be an ISBN. Legacy or vendor-specific fields are
 normalized only through a versioned source adapter.
 
+Declared contributor roles remain present in the raw package report. The local
+bibliographic projection excludes a contributor whose normalized MARC relator
+code is exactly `bkp` (book producer), because that production credit is not an
+authorship or editorial contribution. Other creator and contributor roles are
+projected unchanged.
+
 ### Opening matter
 
 Prefer resources explicitly identified as title page, half-title page,
@@ -112,6 +118,12 @@ F07a opening matter supports:
 
 Only the minimum supporting text is retained. Story prose adjacent to front
 matter is not automatically evidence of title, author, edition, or series.
+Alongside an explicit `Book N of/in Series` statement, the extractor admits the
+complete text of a short paragraph in the form
+`Series Name Book|Volume N[.N]`. The series name is limited to six
+whitespace-separated tokens, the position must use Arabic digits, and headings,
+embedded prose, word or Roman-numeral positions, and trailing text are not
+admitted by this cue.
 
 ### Navigation and structure
 
@@ -330,8 +342,10 @@ Cover at minimum:
 - ebook and print ISBN lists with clear and ambiguous labels;
 - translations, illustrated editions, revised editions, regional editions,
   omnibuses, anthologies, and collected works;
-- multiple contributors and role vocabularies;
-- series names and integer, decimal, labelled, and missing sequence values;
+- multiple contributors and role vocabularies, including production-role
+  exclusion from the bibliographic projection;
+- series names and integer, decimal, labelled, missing, and strictly bounded
+  trailing sequence values;
 - image-only title or copyright pages without OCR fallback;
 - misleading early chapter headings and unrelated previews;
 - malformed XML/XHTML, invalid encodings, duplicate IDs, and broken links;

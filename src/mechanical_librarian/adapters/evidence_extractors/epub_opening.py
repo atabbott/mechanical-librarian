@@ -93,6 +93,11 @@ _SPACE = re.compile(r"\s+")
 _ISBN = re.compile(r"(?<![0-9Xx])(?:97[89][\s-]*)?[0-9][0-9Xx\s-]{8,20}[0-9Xx](?![0-9Xx])")
 _DATE = re.compile(r"\b(?:18|19|20|21)\d{2}(?:-[01]\d(?:-[0-3]\d)?)?\b")
 _SERIES = re.compile(r"\b(?:book|volume)\s+([0-9]+(?:\.[0-9]+)?)\s+(?:of|in)\s+(?:the\s+)?(.+)", re.I)
+_TRAILING_SERIES = re.compile(
+    r"^(?P<series>\S+(?:\s+\S+){0,5})\s+(?:book|volume)\s+"
+    r"(?P<order>[0-9]+(?:\.[0-9]+)?)$",
+    re.I,
+)
 _EBOOK_LABEL = re.compile(
     r"(?<![\w])(?:e[\s-]?book|epub|electronic|digital)(?![\w])",
     re.I,
@@ -2202,6 +2207,19 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
         if series:
             add(OpeningField.SERIES_ORDER, series.group(1), EpubObservationApplicability.WORK)
             add(OpeningField.SERIES, series.group(2), EpubObservationApplicability.WORK)
+        elif element.name == "p":
+            trailing_series = _TRAILING_SERIES.fullmatch(text)
+            if trailing_series:
+                add(
+                    OpeningField.SERIES_ORDER,
+                    trailing_series.group("order"),
+                    EpubObservationApplicability.WORK,
+                )
+                add(
+                    OpeningField.SERIES,
+                    trailing_series.group("series"),
+                    EpubObservationApplicability.WORK,
+                )
         if "omnibus" in lowered:
             add(OpeningField.OMNIBUS_MEMBERSHIP, text, EpubObservationApplicability.WORK)
         if "anthology" in lowered:
