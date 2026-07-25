@@ -36,6 +36,188 @@
       "title": "ConnectionInput",
       "type": "object"
     },
+    "DisabledHardcoverProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "hardcover",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "adapter",
+        "enabled",
+        "secret_file"
+      ],
+      "title": "DisabledHardcoverProviderInput",
+      "type": "object"
+    },
+    "DisabledOpenLibraryProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "open_library",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "adapter",
+        "enabled",
+        "secret_file"
+      ],
+      "title": "DisabledOpenLibraryProviderInput",
+      "type": "object"
+    },
+    "EnabledHardcoverProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "hardcover",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "pattern": "^/",
+          "title": "Secret File",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "adapter",
+        "enabled",
+        "secret_file"
+      ],
+      "title": "EnabledHardcoverProviderInput",
+      "type": "object"
+    },
+    "EnabledOpenLibraryProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "open_library",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "maxLength": 254,
+          "minLength": 3,
+          "pattern": "^(?=.{1,64}@)[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$",
+          "title": "Contact Email",
+          "type": "string"
+        },
+        "cover_enabled": {
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "adapter",
+        "enabled",
+        "secret_file",
+        "contact_email"
+      ],
+      "title": "EnabledOpenLibraryProviderInput",
+      "type": "object"
+    },
     "LibraryInput": {
       "additionalProperties": false,
       "properties": {
@@ -160,68 +342,21 @@
       "type": "object"
     },
     "ProviderInput": {
-      "additionalProperties": false,
-      "properties": {
-        "adapter": {
-          "enum": [
-            "hardcover",
-            "open_library"
-          ],
-          "title": "Adapter",
-          "type": "string"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EnabledHardcoverProviderInput"
         },
-        "contact_email": {
-          "anyOf": [
-            {
-              "maxLength": 254,
-              "minLength": 3,
-              "pattern": "^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Contact Email"
+        {
+          "$ref": "#/$defs/DisabledHardcoverProviderInput"
         },
-        "cover_enabled": {
-          "title": "Cover Enabled",
-          "type": "boolean"
+        {
+          "$ref": "#/$defs/EnabledOpenLibraryProviderInput"
         },
-        "enabled": {
-          "title": "Enabled",
-          "type": "boolean"
-        },
-        "name": {
-          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
-          "title": "Name",
-          "type": "string"
-        },
-        "secret_file": {
-          "anyOf": [
-            {
-              "maxLength": 1024,
-              "minLength": 1,
-              "pattern": "^/",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Secret File"
+        {
+          "$ref": "#/$defs/DisabledOpenLibraryProviderInput"
         }
-      },
-      "required": [
-        "name",
-        "adapter",
-        "enabled",
-        "cover_enabled",
-        "secret_file"
       ],
-      "title": "ProviderInput",
-      "type": "object"
+      "title": "ProviderInput"
     }
   },
   "additionalProperties": false,

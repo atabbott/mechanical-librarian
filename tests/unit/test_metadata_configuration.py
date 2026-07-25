@@ -7,13 +7,14 @@ import unittest
 from pathlib import Path
 
 import httpx
+from pydantic import ValidationError
 
 from mechanical_librarian.application.configuration import (
     ConfigurationError,
     ProviderConnectionConfiguration,
     TargetConnectionConfiguration,
 )
-from mechanical_librarian.infrastructure.configuration import configuration_schema_json, load_configuration_file
+from mechanical_librarian.infrastructure.configuration import ConfigurationInput, configuration_schema_json, load_configuration_file
 from mechanical_librarian.infrastructure.security.credentials import read_secret, target_client
 
 
@@ -88,6 +89,89 @@ class MetadataConfigurationTests(unittest.TestCase):
         expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v4.schema.json").read_text(encoding="utf-8")
         self.assertEqual(configuration_schema_json(), expected)
 
+    def test_generated_schema_enforces_provider_variants(self) -> None:
+        schema = json.loads(configuration_schema_json())["$defs"]
+        self.assertEqual(
+            {
+                "DisabledHardcoverProviderInput",
+                "DisabledOpenLibraryProviderInput",
+                "EnabledHardcoverProviderInput",
+                "EnabledOpenLibraryProviderInput",
+            },
+            {
+                value["$ref"].rsplit("/", 1)[-1]
+                for value in schema["ProviderInput"]["anyOf"]
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            valid = (
+                {
+                    "name": "provider",
+                    "adapter": "hardcover",
+                    "enabled": True,
+                    "cover_enabled": True,
+                    "secret_file": str(root / "provider.secret"),
+                },
+                {
+                    "name": "provider",
+                    "adapter": "hardcover",
+                    "enabled": False,
+                    "cover_enabled": False,
+                    "secret_file": None,
+                },
+                {
+                    "name": "provider",
+                    "adapter": "open_library",
+                    "enabled": True,
+                    "cover_enabled": True,
+                    "secret_file": None,
+                    "contact_email": "operator@example.org",
+                },
+                {
+                    "name": "provider",
+                    "adapter": "open_library",
+                    "enabled": False,
+                    "cover_enabled": False,
+                    "secret_file": None,
+                },
+            )
+            for provider in valid:
+                source = _source(root)
+                source["providers"] = [provider]
+                ConfigurationInput.model_validate(source)
+
+            invalid = (
+                {
+                    "adapter": "open_library",
+                    "enabled": True,
+                    "secret_file": None,
+                },
+                {
+                    "adapter": "open_library",
+                    "enabled": True,
+                    "secret_file": str(root / "provider.secret"),
+                    "contact_email": "operator@example.org",
+                },
+                {
+                    "adapter": "hardcover",
+                    "enabled": True,
+                    "secret_file": None,
+                },
+                {
+                    "adapter": "hardcover",
+                    "enabled": False,
+                    "cover_enabled": True,
+                    "secret_file": None,
+                },
+            )
+            for changes in invalid:
+                source = _source(root)
+                source["providers"][0].update(changes)
+                with self.subTest(changes=changes), self.assertRaises(ValidationError):
+                    ConfigurationInput.model_validate(source)
+
     def test_provider_adapters_have_closed_adapter_specific_fields(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -126,6 +210,7 @@ class MetadataConfigurationTests(unittest.TestCase):
                 ("open_library", None, ".operator@example.org"),
                 ("open_library", None, "operator.@example.org"),
                 ("open_library", None, "op..erator@example.org"),
+                ("open_library", None, "a" * 65 + "@example.org"),
                 ("hardcover", str(root / "secret"), "operator@example.org"),
                 ("unknown", None, "operator@example.org"),
             ):
@@ -168,11 +253,10 @@ class MetadataConfigurationTests(unittest.TestCase):
             schema["ConnectionInput"]["properties"]["secret_file"]["pattern"],
             "^/",
         )
-        provider_secret = schema["ProviderInput"]["properties"]["secret_file"]
-        absolute_variant = next(
-            value for value in provider_secret["anyOf"] if value.get("type") == "string"
-        )
-        self.assertEqual(absolute_variant["pattern"], "^/")
+        provider_secret = schema["EnabledHardcoverProviderInput"]["properties"][
+            "secret_file"
+        ]
+        self.assertEqual(provider_secret["pattern"], "^/")
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

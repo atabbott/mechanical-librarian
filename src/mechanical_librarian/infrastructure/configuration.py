@@ -8,7 +8,18 @@ import stat
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    WithJsonSchema,
+)
 
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -27,16 +38,35 @@ BoundedAbsolutePath = Annotated[
     StrictStr,
     Field(min_length=1, max_length=1024, pattern=r"^/"),
 ]
+_CONTACT_EMAIL_PATTERN = (
+    r"[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+"
+    r"(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*@[A-Za-z0-9]"
+    r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+    r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+"
+)
+
+
+def _contact_email(value: str) -> str:
+    if len(value.partition("@")[0]) > 64:
+        raise ValueError("contact email is invalid")
+    return value
+
+
 ContactEmail = Annotated[
     StrictStr,
     Field(
         min_length=3,
         max_length=254,
-        pattern=(
-            r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9]"
-            r"(?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-            r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
-        ),
+        pattern="^" + _CONTACT_EMAIL_PATTERN + "$",
+    ),
+    AfterValidator(_contact_email),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 254,
+            "pattern": r"^(?=.{1,64}@)" + _CONTACT_EMAIL_PATTERN + "$",
+        }
     ),
 ]
 
@@ -52,13 +82,50 @@ class ConnectionInput(_Closed):
     secret_file: BoundedAbsolutePath
 
 
-class ProviderInput(_Closed):
+class _ProviderInput(_Closed):
     name: Name
-    adapter: Literal["hardcover", "open_library"]
-    enabled: StrictBool
     cover_enabled: StrictBool
-    secret_file: BoundedAbsolutePath | None
-    contact_email: ContactEmail | None = None
+
+
+class EnabledHardcoverProviderInput(_ProviderInput):
+    adapter: Literal["hardcover"]
+    enabled: Literal[True]
+    secret_file: BoundedAbsolutePath
+    contact_email: Literal[None] = None
+
+
+class DisabledHardcoverProviderInput(_ProviderInput):
+    adapter: Literal["hardcover"]
+    enabled: Literal[False]
+    cover_enabled: Literal[False]
+    secret_file: Literal[None]
+    contact_email: Literal[None] = None
+
+
+class EnabledOpenLibraryProviderInput(_ProviderInput):
+    adapter: Literal["open_library"]
+    enabled: Literal[True]
+    secret_file: Literal[None]
+    contact_email: ContactEmail
+
+
+class DisabledOpenLibraryProviderInput(_ProviderInput):
+    adapter: Literal["open_library"]
+    enabled: Literal[False]
+    cover_enabled: Literal[False]
+    secret_file: Literal[None]
+    contact_email: Literal[None] = None
+
+
+class ProviderInput(
+    RootModel[
+        EnabledHardcoverProviderInput
+        | DisabledHardcoverProviderInput
+        | EnabledOpenLibraryProviderInput
+        | DisabledOpenLibraryProviderInput
+    ]
+):
+    pass
 
 
 class MountInput(_Closed):
