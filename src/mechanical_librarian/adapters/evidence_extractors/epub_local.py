@@ -26,6 +26,7 @@ _PACKAGE_FIELDS = {
     EpubPackageField.DESCRIPTION: EpubInspectionField.DESCRIPTION, EpubPackageField.LANGUAGE: EpubInspectionField.LANGUAGE,
     EpubPackageField.SUBJECT: EpubInspectionField.SUBJECT,
 }
+_NON_BIBLIOGRAPHIC_CONTRIBUTOR_ROLES = {"bkp"}
 _MARKER = re.compile(r"(?:copyright|©|all rights reserved)", re.I)
 _BYLINE = re.compile(r"^(?:by|author\s*[:\-]?|written by)\s+(.+)$", re.I)
 _SENTINEL = re.compile(r"(?:unsafe|oversized)-source-text-sha256:[0-9a-f]{64}")
@@ -121,7 +122,13 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         if canonical is not None and field in {EpubInspectionField.TITLE, EpubInspectionField.SUBTITLE}:
             canonical = normalize_title(observed)
         state = forced_state or ("untyped" if field is EpubInspectionField.SUBJECT else "malformed" if canonical is None else "inapplicable" if observation.applicability.value == "inapplicable" else "valid")
-        facts.append(EpubInspectionFact(field, source, observed, canonical, observed, "not_applicable", "not_applicable", "not_applicable", "package_metadata", state=state, role=_project_role(roles.get(observation.citation.source_ordinal))))
+        role = _project_role(roles.get(observation.citation.source_ordinal))
+        if (
+            field is EpubInspectionField.CONTRIBUTOR
+            and role in _NON_BIBLIOGRAPHIC_CONTRIBUTOR_ROLES
+        ):
+            continue
+        facts.append(EpubInspectionFact(field, source, observed, canonical, observed, "not_applicable", "not_applicable", "not_applicable", "package_metadata", state=state, role=role))
     return tuple(facts)
 
 

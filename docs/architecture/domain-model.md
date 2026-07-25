@@ -30,6 +30,9 @@ basis. Invalid, unlabeled, and conflicting-label identifiers remain distinct
 facts; an ISBN-10 is not represented as an observed ISBN-13. Other bounded
 local fields remain source-attributed evidence, never decisions, and preserve
 their admitted source/DOM order and rear-spine provenance where present.
+Package contributor observations retain their raw declared roles, while an
+exact normalized `bkp` book-producer role is omitted from the bibliographic
+contributor projection. Other declared roles are preserved unchanged.
 An explicit package primary-identifier designation is projected as ebook
 applicability only when its value is a valid ISBN. A parser-inferred primary and
 other package ISBNs remain independently provenanced and unlabelled.

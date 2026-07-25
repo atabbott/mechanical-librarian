@@ -442,6 +442,44 @@ class EpubChildRearSpineTests(unittest.TestCase):
                 )
                 self.assertEqual(MetadataReport.from_json(report.to_json()).local_claims[0].role, creator.role)
 
+    def test_package_projection_excludes_book_producer_contributors_only(self) -> None:
+        package = EPUB2_PACKAGE.replace(
+            b"</metadata>",
+            b"""<dc:contributor opf:role="bkp">Synthetic Production Credit</dc:contributor>
+    <dc:contributor opf:role="edt">Synthetic Editor</dc:contributor>
+  </metadata>""",
+        )
+        value = epub_bytes(package=package)
+        request = self._request(value)
+        package_request = EpubPackageRequest(
+            request.target,
+            request.file,
+            request.source,
+            request.expected_source,
+            EpubPackageCapability.PACKAGE,
+            request.limits,
+            request.deadline,
+            request.monotonic_deadline,
+            request.cancellation,
+        )
+        report = EpubPackageExtractor().extract(package_request)
+
+        self.assertIn(
+            ("contributor_role", "bkp"),
+            [
+                (observation.field.value, observation.normalized_value)
+                for observation in report.observations
+            ],
+        )
+
+        contributors = [
+            (fact.canonical_value, fact.role)
+            for fact in child._package_facts(report, report.source_fingerprint)
+            if fact.field is EpubInspectionField.CONTRIBUTOR
+        ]
+
+        self.assertEqual(contributors, [("Synthetic Editor", "edt")])
+
     def test_rear_pool_reads_only_tail_evidence_with_marker_and_explicit_cues(self) -> None:
         request, (package, opening, _) = self._bundle(_xhtml('<p>Copyright 2026</p><h1 epub:type="fulltitle">Rear Clock</h1><p>by Ada Example</p><p>ISBN 9780306406157</p>'))
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:

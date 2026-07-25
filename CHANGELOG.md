@@ -39,6 +39,9 @@
 - Preserve local EPUB source/DOM evidence order, explicit source capabilities,
   and non-canonical oversized or unsafe sentinel states through report replay.
 - Preserve duplicate EPUB occurrences with bounded v2 ordinals.
+- Exclude package `bkp` book-producer credits from bibliographic contributors
+  while preserving raw package evidence, and recognize a strictly bounded
+  paragraph-only `Series Name Book|Volume N[.N]` opening-matter cue.
 - Require every 0.5 increment to accept only an absent database or its exact
   current schema. Prior and intermediate schemas are rejected without mutation;
   same-schema exact-ID/current-scope replay remains available, and recovery is a
