@@ -320,6 +320,11 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
         maximum_bytes=configuration.limits.target_response_bytes,
         timeout_seconds=configuration.limits.timeout_seconds,
     )
+    if open_library_pacer is None and any(
+        provider.enabled and provider.adapter == "open_library"
+        for provider in provider_configs
+    ):
+        open_library_pacer = OpenLibraryPacer()
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
         def factory(value=provider):

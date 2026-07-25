@@ -590,6 +590,35 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             [request.url.path for request in requests],
         )
 
+    def test_edition_with_multiple_work_relations_is_malformed(self) -> None:
+        values = {
+            "/search.json": _search("/books/OL1M"),
+            "/books/OL1M.json": {
+                **_edition("/books/OL1M"),
+                "works": [
+                    {"key": "/works/OL5W"},
+                    {"key": "/works/OL9W"},
+                ],
+            },
+            "/works/OL5W.json": _work(),
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=values[request.url.path],
+            )
+
+        observation = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        ).observe((_isbn(),))
+        self.assertEqual(ProviderStatus.MALFORMED, observation.status)
+        self.assertEqual((), observation.candidates)
+
 
 if __name__ == "__main__":
     unittest.main()

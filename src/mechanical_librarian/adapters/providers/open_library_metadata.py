@@ -340,7 +340,7 @@ def _candidate(
         _key(_mapping(value).get("key"), _WORK_KEY)
         for value in _object_list(edition.get("works"), 8)
     )
-    if work_key not in relations:
+    if relations != (work_key,):
         raise ValueError("edition work relation is malformed")
     identity = "open-library-edition-" + edition_key.removeprefix("/books/")
     work_identity = "open-library-work-" + work_key.removeprefix("/works/")

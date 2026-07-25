@@ -123,6 +123,9 @@ class MetadataConfigurationTests(unittest.TestCase):
                 ("open_library", str(root / "secret"), "operator@example.org"),
                 ("open_library", None, None),
                 ("open_library", None, "not-an-email"),
+                ("open_library", None, ".operator@example.org"),
+                ("open_library", None, "operator.@example.org"),
+                ("open_library", None, "op..erator@example.org"),
                 ("hardcover", str(root / "secret"), "operator@example.org"),
                 ("unknown", None, "operator@example.org"),
             ):
