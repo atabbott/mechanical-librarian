@@ -8,11 +8,13 @@ import hashlib
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from dataclasses import asdict, dataclass
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
@@ -306,6 +308,7 @@ def _run(
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
+    deadline = time.monotonic() + _COMMAND_TIMEOUT_SECONDS
     try:
         process = subprocess.Popen(
             command,
@@ -314,6 +317,7 @@ def _run(
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            start_new_session=os.name == "posix",
         )
     except OSError:
         raise QualificationFailure(reason) from None
@@ -341,17 +345,29 @@ def _run(
         reader.start()
     timed_out = False
     try:
-        returncode = process.wait(timeout=_COMMAND_TIMEOUT_SECONDS)
+        returncode = process.wait(timeout=max(0.0, deadline - time.monotonic()))
     except subprocess.TimeoutExpired:
         timed_out = True
-        process.kill()
-        returncode = process.wait()
+        _terminate_process_tree(process)
+        try:
+            returncode = process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            returncode = -1
+    descendants_terminated = _terminate_process_tree(process)
     for reader in readers:
-        reader.join()
-    process.stdout.close()
-    process.stderr.close()
+        reader.join(timeout=max(0.0, deadline - time.monotonic()))
+    readers_stuck = any(reader.is_alive() for reader in readers)
+    if not readers_stuck:
+        process.stdout.close()
+        process.stderr.close()
 
-    if timed_out or overflow.is_set() or returncode != 0:
+    if (
+        timed_out
+        or overflow.is_set()
+        or descendants_terminated
+        or readers_stuck
+        or returncode != 0
+    ):
         raise QualificationFailure(reason)
     return subprocess.CompletedProcess(
         args=command,
@@ -371,18 +387,25 @@ def _read_process_stream(
         while chunk := stream.read(65_536):
             if len(output) + len(chunk) > _MAX_COMMAND_STREAM_BYTES:
                 overflow.set()
-                try:
-                    process.kill()
-                except OSError:
-                    pass
+                _terminate_process_tree(process)
                 return
             output.extend(chunk)
     except OSError:
         overflow.set()
-        try:
+        _terminate_process_tree(process)
+
+
+def _terminate_process_tree(process: subprocess.Popen[bytes]) -> bool:
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL)
+        elif process.poll() is None:
             process.kill()
-        except OSError:
-            pass
+        else:
+            return False
+    except OSError:
+        return False
+    return True
 
 
 def _decode_stdout(

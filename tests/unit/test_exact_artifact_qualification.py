@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -223,6 +224,28 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                 reason="command_encoding_invalid",
             )
         self.assertEqual("command_encoding_invalid", decoding.exception.reason)
+
+    @unittest.skipUnless(os.name == "posix", "process-group contract is POSIX")
+    def test_subprocess_descendant_cannot_extend_deadline(self) -> None:
+        statement = (
+            "import subprocess, sys; "
+            "subprocess.Popen("
+            "[sys.executable, '-c', 'import time; time.sleep(5)']"
+            ")"
+        )
+        started = time.monotonic()
+        with patch.object(
+            qualifier_module,
+            "_COMMAND_TIMEOUT_SECONDS",
+            0.5,
+        ):
+            with self.assertRaises(QualificationFailure) as raised:
+                _run(
+                    (sys.executable, "-c", statement),
+                    reason="command_descendant_invalid",
+                )
+        self.assertLess(time.monotonic() - started, 1.5)
+        self.assertEqual("command_descendant_invalid", raised.exception.reason)
 
 
 def _write_probe(source: Path, marker: str) -> None:
