@@ -479,7 +479,7 @@ class MetadataReportCommandTests(unittest.TestCase):
                             _xhtml(
                                 '<section epub:type="titlepage"><h1>Two ISBN Clock</h1></section>'
                                 '<section epub:type="copyright-page"><p>'
-                                'ISBN 9780306406157 (eBook), ISBN 9781861972712 (eBook)'
+                                'ISBN 9780306406157 (eBook)'
                                 '</p></section>'
                             ),
                             zipfile.ZIP_STORED,
@@ -505,12 +505,9 @@ class MetadataReportCommandTests(unittest.TestCase):
                         "data": {
                             "editions": [
                                 {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
-                                {"id": 2, "book_id": 1, "isbn_10": None, "isbn_13": "9781861972712", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
-                                {"id": 3, "book_id": 2, "isbn_10": None, "isbn_13": "9781861972712", "asin": None, "title": None, "subtitle": None, "release_date": None, "publisher": None, "language": None, "contributions": []},
                             ],
                             "books": [
-                                {"id": 1, "title": "Current service title", "description": None, "contributions": [], "book_series": [], "taggings": []},
-                                {"id": 2, "title": "Other work title", "description": None, "contributions": [], "book_series": [], "taggings": []},
+                                {"id": 1, "title": "Current service title", "description": None, "release_date": None, "image": None, "contributions": [], "book_series": [], "taggings": []},
                             ],
                         }
                     },
@@ -571,8 +568,6 @@ class MetadataReportCommandTests(unittest.TestCase):
                 [candidate.work_identity for candidate in reports[0].providers[0].candidates],
                 [
                     "hardcover-work-0000000001",
-                    "hardcover-work-0000000001",
-                    "hardcover-work-0000000002",
                 ],
             )
             self.assertEqual(
@@ -583,7 +578,7 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertTrue(
                 all(
                     json.loads(request.content)["variables"]["isbns"]
-                    == ["9780306406157", "9781861972712"]
+                    == ["9780306406157"]
                     for request in provider_requests
                 )
             )
@@ -595,13 +590,19 @@ class MetadataReportCommandTests(unittest.TestCase):
                 )
             )
             self.assertEqual(server.requests, 6)
-            public_output = "".join(value for result in (first, replay, second) for value in result[1:])
+            public_output = "".join(
+                value
+                for result in (first, replay, second)
+                for value in result[1:]
+            )
             self.assertNotIn("provider-token", public_output)
             self.assertNotIn("target-token", public_output)
             self.assertNotIn(str(provider_secret), public_output)
             connection = sqlite3.connect(database)
             self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM metadata_reports").fetchone(),
+                connection.execute(
+                    "SELECT COUNT(*) FROM metadata_reports"
+                ).fetchone(),
                 (2,),
             )
             self.assertEqual(
@@ -611,6 +612,140 @@ class MetadataReportCommandTests(unittest.TestCase):
                 (2,),
             )
             connection.close()
+
+    def test_installed_cli_uses_no_isbn_work_fallback_and_exact_id_reopen(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            media = root / "media"
+            media.mkdir()
+            source = media / "book.epub"
+            source.write_bytes(opening_no_applicable())
+            target_secret = root / "target.secret"
+            target_secret.write_text("target-token", encoding="ascii")
+            target_secret.chmod(0o600)
+            provider_secret = root / "provider.secret"
+            provider_secret.write_text("provider-token", encoding="ascii")
+            provider_secret.chmod(0o600)
+            target = _item(source.stat().st_size)
+            target["media"]["metadata"]["authors"] = [  # type: ignore[index]
+                {"name": "Ada Example"}
+            ]
+            provider_requests: list[httpx.Request] = []
+            provider_payload = {
+                "data": {
+                    "editions": [
+                        {
+                            "id": 1,
+                            "book_id": 1,
+                            "isbn_10": None,
+                            "isbn_13": None,
+                            "asin": None,
+                            "title": None,
+                            "subtitle": None,
+                            "release_date": None,
+                            "publisher": None,
+                            "language": None,
+                            "contributions": [],
+                        }
+                    ],
+                    "books": [
+                        {
+                            "id": 1,
+                            "title": "Current service title",
+                            "description": "Work description",
+                            "release_date": "2001-02-03",
+                            "image": None,
+                            "contributions": [
+                                {
+                                    "id": 1,
+                                    "contribution": "Author",
+                                    "author": {
+                                        "id": 7,
+                                        "name": "Ada Example",
+                                    },
+                                }
+                            ],
+                            "book_series": [],
+                            "taggings": [],
+                        }
+                    ],
+                }
+            }
+
+            def hardcover_client(
+                secret_file: str,
+                timeout_seconds: int,
+            ) -> httpx.Client:
+                return real_hardcover_client(
+                    secret_file,
+                    timeout_seconds,
+                    transport=httpx.MockTransport(
+                        lambda request: provider_requests.append(request)
+                        or httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=provider_payload,
+                        )
+                    ),
+                )
+
+            database = root / "reports.sqlite"
+            with _Server(target) as server:
+                config = root / "config.json"
+                config.write_text(
+                    json.dumps(
+                        _config(
+                            server.endpoint,
+                            media,
+                            target_secret,
+                            provider_secret=str(provider_secret),
+                        )
+                    ),
+                    encoding="utf-8",
+                )
+                with patch.object(
+                    composition,
+                    "hardcover_client",
+                    side_effect=hardcover_client,
+                ):
+                    result, output, errors = _installed_cli(config, database)
+            self.assertEqual((0, ""), (result, errors))
+            report = MetadataReport.from_json(output.removesuffix("\n"))
+            self.assertEqual(16, len(report.target.fields))
+            self.assertEqual("work", report.providers[0].query_kind.value)
+            self.assertEqual("candidates", report.providers[0].status.value)
+            self.assertEqual(
+                {"title", "creator", "description"},
+                {
+                    claim.kind.value
+                    for claim in report.providers[0].candidates[0].claims
+                    if claim.state.value == "valid"
+                },
+            )
+            request = json.loads(provider_requests[0].content)
+            self.assertEqual("MetadataEvidenceByWork", request["operationName"])
+            self.assertEqual(
+                {
+                    "authors": ["Ada Example"],
+                    "title": "Current service title",
+                },
+                request["variables"],
+            )
+
+            reopened_output = io.StringIO()
+            reopened_errors = io.StringIO()
+            with redirect_stdout(reopened_output), redirect_stderr(reopened_errors):
+                reopened_result = composition.main(
+                    [
+                        "metadata-report-get",
+                        "--database",
+                        str(database),
+                        "--report-id",
+                        report.report_id,
+                    ]
+                )
+            self.assertEqual((0, ""), (reopened_result, reopened_errors.getvalue()))
+            self.assertEqual(output, reopened_output.getvalue())
 
     def test_two_provider_order_contact_privacy_and_failure_isolation(self) -> None:
         class NoWaitPacer:
@@ -639,6 +774,8 @@ class MetadataReportCommandTests(unittest.TestCase):
                         "id": 1,
                         "title": "Current service title",
                         "description": None,
+                        "release_date": None,
+                        "image": None,
                         "contributions": [],
                         "book_series": [],
                         "taggings": [],

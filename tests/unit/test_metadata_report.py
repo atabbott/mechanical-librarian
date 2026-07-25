@@ -14,12 +14,15 @@ from mechanical_librarian.application.metadata_report import (
     CurrentnessError,
     GenerateMetadataReport,
     InspectionResult,
+    MetadataLookup,
     ProviderBinding,
     TargetFile,
     TargetCover,
     TargetSnapshot,
     UnsupportedMediaError,
     MetadataReportError,
+    metadata_lookup,
+    qualify_provider_observation,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -52,13 +55,20 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderCandidate,
     ProviderClaim,
+    ProviderEvidence,
+    ProviderEvidenceKind,
+    ProviderQueryKind,
     ProviderStatus,
     RearClaimProvenance,
     ReportValueError,
+    TargetDestination,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
     canonical_json,
     comparison_links,
     claim_scope,
+    default_target_fields,
     derive_identifier_evidence,
     derive_field_results,
     normalize_title,
@@ -117,6 +127,295 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_authors(self) -> None:
+        def target(
+            title: str | None,
+            authors: TargetField,
+        ) -> TargetSnapshot:
+            fields = tuple(
+                authors if field.destination is TargetDestination.AUTHORS else field
+                for field in default_target_fields(title)
+            )
+            return TargetSnapshot("ebook", title, (), fields=fields)
+
+        complete = target(
+            "The Example",
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Author", "Ben Writer"),
+            ),
+        )
+        self.assertEqual(
+            MetadataLookup(
+                ProviderQueryKind.WORK,
+                (),
+                "The Example",
+                ("Ada Author", "Ben Writer"),
+            ),
+            metadata_lookup(complete, ()),
+        )
+        for state in (
+            TargetFieldState.MISSING,
+            TargetFieldState.NULL,
+            TargetFieldState.EMPTY,
+            TargetFieldState.UNLOADED,
+            TargetFieldState.MALFORMED,
+            TargetFieldState.OVERSIZED,
+        ):
+            with self.subTest(state=state):
+                incomplete = target(
+                    "The Example",
+                    TargetField(TargetDestination.AUTHORS, state),
+                )
+                self.assertEqual(
+                    ProviderQueryKind.NONE,
+                    metadata_lookup(incomplete, ()).kind,
+                )
+        ambiguous = target(
+            "The Example",
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Author", "ADA AUTHOR"),
+            ),
+        )
+        self.assertEqual(
+            ProviderQueryKind.NONE,
+            metadata_lookup(ambiguous, ()).kind,
+        )
+
+        isbn = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="9780306406157",
+            applicability="ebook",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+        )
+        self.assertEqual(
+            ProviderQueryKind.ISBN,
+            metadata_lookup(complete, (isbn,)).kind,
+        )
+        competing = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780140328721",
+            canonical="9780140328721",
+            excerpt="9780140328721",
+            applicability="ebook",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+        )
+        self.assertEqual(
+            ProviderQueryKind.NONE,
+            metadata_lookup(complete, (isbn, competing)).kind,
+        )
+
+    def test_work_lookup_admits_one_exact_work_and_strips_edition_authority(self) -> None:
+        lookup = MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "The Example",
+            ("Ada Author",),
+        )
+
+        def claim(
+            candidate: str,
+            kind: ClaimKind,
+            value: str,
+            scope: ClaimScope,
+            raw_order: int,
+            role: str | None = None,
+        ) -> ProviderClaim:
+            return ProviderClaim.create(
+                provider="catalogue",
+                candidate=candidate,
+                kind=kind,
+                value=value,
+                state=FieldState.VALID,
+                scope=scope,
+                applicability="ebook" if kind is ClaimKind.ISBN else "not_applicable",
+                role=role,
+                raw_order=raw_order,
+            )
+
+        identity = "edition-1"
+        candidate = ProviderCandidate(
+            identity,
+            "work-1",
+            (
+                claim(identity, ClaimKind.ISBN, "9780306406157", ClaimScope.EDITION, 0),
+                claim(identity, ClaimKind.TITLE, "The Example", ClaimScope.WORK, 1),
+                claim(
+                    identity,
+                    ClaimKind.CREATOR,
+                    "Ada Author",
+                    ClaimScope.WORK,
+                    2,
+                    "author",
+                ),
+                claim(identity, ClaimKind.DESCRIPTION, "Work description", ClaimScope.WORK, 3),
+            ),
+            tuple(
+                sorted(
+                    (
+                        ProviderEvidence(
+                            ProviderEvidenceKind.EDITION_COVER_ID,
+                            "123",
+                            ClaimScope.EDITION,
+                        ),
+                        ProviderEvidence(
+                            ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+                            "author-1",
+                            ClaimScope.WORK,
+                            "author",
+                        ),
+                        ProviderEvidence(
+                            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                            "2001-02-03",
+                            ClaimScope.WORK,
+                        ),
+                    ),
+                    key=lambda value: (
+                        value.scope.value,
+                        value.kind.value,
+                        value.value,
+                        value.role or "",
+                    ),
+                )
+            ),
+        )
+        qualified = qualify_provider_observation(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                (),
+                (candidate,),
+                ProviderQueryKind.WORK,
+            ),
+            lookup,
+        )
+        self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
+        self.assertEqual(
+            {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.DESCRIPTION},
+            {value.kind for value in qualified.candidates[0].claims},
+        )
+        self.assertEqual(
+            {
+                ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+                ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            },
+            {value.kind for value in qualified.candidates[0].evidence},
+        )
+
+    def test_work_lookup_fails_closed_for_competing_work_or_translation_markers(self) -> None:
+        lookup = MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "The Example",
+            ("Ada Author",),
+        )
+
+        def candidate(identity: str, work: str, role: str | None = None) -> ProviderCandidate:
+            values = [
+                ProviderClaim.create(
+                    provider="catalogue",
+                    candidate=identity,
+                    kind=ClaimKind.TITLE,
+                    value="The Example",
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    raw_order=0,
+                ),
+                ProviderClaim.create(
+                    provider="catalogue",
+                    candidate=identity,
+                    kind=ClaimKind.CREATOR,
+                    value="Ada Author",
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    role="author",
+                    raw_order=1,
+                ),
+            ]
+            if role is not None:
+                values.append(
+                    ProviderClaim.create(
+                        provider="catalogue",
+                        candidate=identity,
+                        kind=ClaimKind.CONTRIBUTOR,
+                        value="Pat Contributor",
+                        state=FieldState.VALID,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                        role=role,
+                        raw_order=2,
+                    )
+                )
+            return ProviderCandidate(identity, work, tuple(values))
+
+        for candidates in (
+            (candidate("edition-1", "work-1"), candidate("edition-2", "work-2")),
+            (candidate("edition-1", "work-1", "translator"),),
+            (candidate("edition-1", "work-1", "adapter"),),
+            (candidate("edition-1", "work-1", "abridger"),),
+        ):
+            with self.subTest(candidates=candidates):
+                result = qualify_provider_observation(
+                    ProviderObservation(
+                        "catalogue",
+                        ProviderStatus.CANDIDATES,
+                        (),
+                        candidates,
+                        ProviderQueryKind.WORK,
+                    ),
+                    lookup,
+                )
+                self.assertEqual(ProviderStatus.NO_MATCH, result.status)
+                self.assertEqual((), result.candidates)
+
+    def test_work_lookup_accepts_the_complete_author_set_in_provider_order(self) -> None:
+        lookup = MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "The Example",
+            ("Ada Author", "Bea Author"),
+        )
+        claims = tuple(
+            ProviderClaim.create(
+                provider="catalogue",
+                candidate="edition-1",
+                kind=kind,
+                value=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                role=role,
+                raw_order=index,
+            )
+            for index, (kind, value, role) in enumerate(
+                (
+                    (ClaimKind.TITLE, "The Example", None),
+                    (ClaimKind.CREATOR, "Bea Author", "author"),
+                    (ClaimKind.CREATOR, "Ada Author", "author"),
+                )
+            )
+        )
+        result = qualify_provider_observation(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                (),
+                (ProviderCandidate("edition-1", "work-1", claims),),
+                ProviderQueryKind.WORK,
+            ),
+            lookup,
+        )
+        self.assertEqual(ProviderStatus.CANDIDATES, result.status)
+
     def test_closed_claim_vocabulary_is_exact(self) -> None:
         self.assertEqual(
             {kind.value for kind in ClaimKind},
@@ -1377,6 +1676,54 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(repository.values, {})
         self.assertTrue(repository.closed)
         self.assertEqual((inspector.inspections, inspector.verifications), (1, 0))
+
+    def test_currentness_covers_every_target_destination(self) -> None:
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        initial = TargetSnapshot("ebook", "Current title", (selected,))
+        changed_fields = tuple(
+            TargetField(
+                field.destination,
+                TargetFieldState.VALUE,
+                ("Changed genre",),
+            )
+            if field.destination is TargetDestination.GENRES
+            else field
+            for field in initial.fields
+        )
+        target = _Target(
+            [
+                initial,
+                TargetSnapshot(
+                    "ebook",
+                    "Current title",
+                    (selected,),
+                    fields=changed_fields,
+                ),
+            ]
+        )
+        inspector = _Inspector(InspectionResult("c" * 64, ()))
+        repository = _Repository()
+        service = GenerateMetadataReport(
+            target=target,
+            inspector=inspector,
+            repository_factory=lambda: repository,
+            providers=(),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks", "primary", "library-id", "ebook", "books", ()
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+        )
+
+        with self.assertRaises(CurrentnessError):
+            service.run("item-1", 0)
+        self.assertEqual(repository.values, {})
+        self.assertTrue(repository.closed)
 
     def test_cli_has_only_required_contract_and_redacts_failure(self) -> None:
         output = io.StringIO()

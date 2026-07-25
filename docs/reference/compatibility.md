@@ -4,17 +4,18 @@ The current installed contract is intentionally narrow:
 
 - Python 3.13 or 3.14;
 - `config-v4` only;
-- an absent database or the installed exact current `metadata-report-v6` or `catalogue-v1`
+- an absent database or the installed exact current `metadata-report-v7` or `catalogue-v1`
   schema, using separate database files for their separate stores;
 - strict `batch-manifest-v2` for foreground evidence batches;
 - Audiobookshelf v2.35.1 library, library-items, and current-item responses for
   explicitly configured book libraries;
 - an explicitly selected EPUB on a mapped read-only mount; and
 - fixed Hardcover and Open Library metadata operations for referenced enabled
-  providers;
-- report-only bounded cover evidence from ABS, an EPUB-declared cover, and one
-  configured cover-enabled provider: up to five candidate-bound Hardcover cover
-  descriptors or at most one Open Library edition and one distinct-work cover;
+  providers: exact ISBN-family observation when one usable family exists, or
+  one exact title-plus-complete-author work observation when none exists;
+- report-only bounded cover evidence from ABS, an EPUB-declared cover, and
+  configured cover-enabled providers: at most eight provider sources overall
+  and four per provider, with explicit provider/gallery truncation;
 - serial foreground execution for explicit selections or at most 10,000
   all-eligible catalogue entries when Open Library is disabled. With Open
   Library enabled, only an explicit selection of at most five entries is

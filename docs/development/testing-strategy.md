@@ -29,16 +29,21 @@ The suite covers:
   title normalization, and ISBN applicability;
 - strict configuration, duplicate/reference rejection, and no implicit inputs;
 - scoped Audiobookshelf item reading, response bounds, root mounts,
-  `relPath`/`path` agreement, multiple files, and opaque identity across reorder;
+  `relPath`/`path` agreement, all 16 destination states/currentness, multiple
+  files, and opaque identity across reorder;
 - isolated EPUB traversal, expansion limits, malformed markup, external/entity
   exclusion, timeout, child failure, invalid IPC, and output bounds;
 - provider input selection, no-input zero egress, one-request cardinality,
   observable cap overflow, cross-provider claim-reference uniqueness, sparse
-  candidates, all-or-nothing malformed handling, and identity order;
+  candidates, exact ISBN versus complete-author work fallback, fail-closed work
+  qualification, typed taxonomy/publication scope, all-or-nothing malformed
+  handling, and identity order;
 - Open Library exact ISBN-family Search admission, canonical edition/work
   request order, shared one-second pacing, finite rich evidence, terminal
   failure mapping, identified metadata/cover requests, cover-failure isolation,
   provider-order/contact privacy, and the explicit five-item batch envelope;
+- cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
+  states, visible truncation, and digest deduplication with all provenance;
 - exact three-table DELETE-mode schema, side-effect-free existing-file
   validation, no-follow connection binding, Linux owner-directory lock and
   root-to-parent chain validation, verified private-alias binding, raced

@@ -17,16 +17,26 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     ClaimKind,
+    FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
+    ProviderCandidate,
+    ProviderEvidenceKind,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderStatus,
+    TargetDestination,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
+    default_target_fields,
     derive_field_results,
+    isbn_family,
     normalize_title,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    CoverProvenance,
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
@@ -91,9 +101,51 @@ class TargetCover:
 @dataclass(frozen=True, slots=True)
 class TargetSnapshot:
     media_kind: str
-    title: str
+    title: str | None
     files: tuple[TargetFile, ...]
     cover: TargetCover | None = None
+    fields: tuple[TargetField, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.fields:
+            object.__setattr__(self, "fields", default_target_fields(self.title))
+        facts = TargetFacts("snapshot", "snapshot", "snapshot", self.title, self.fields)
+        if (
+            self.cover is None
+            and facts.fields[-1].state is TargetFieldState.VALUE
+        ):
+            raise MetadataReportError("target cover field is inconsistent")
+
+
+@dataclass(frozen=True, slots=True)
+class MetadataLookup:
+    """One closed provider lookup, independent of provider wire shape."""
+
+    kind: ProviderQueryKind
+    local_claims: tuple[LocalClaim, ...]
+    title: str | None = None
+    authors: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.kind) is not ProviderQueryKind
+            or type(self.local_claims) is not tuple
+            or any(type(value) is not LocalClaim for value in self.local_claims)
+            or type(self.authors) is not tuple
+            or any(type(value) is not str for value in self.authors)
+        ):
+            raise MetadataReportError("provider lookup is invalid")
+        if self.kind is ProviderQueryKind.ISBN:
+            if self.title is not None or self.authors:
+                raise MetadataReportError("provider lookup is invalid")
+        elif self.kind is ProviderQueryKind.WORK:
+            if self.title is None or not self.authors:
+                raise MetadataReportError("provider lookup is invalid")
+            normalize_title(self.title)
+            for author in self.authors:
+                normalize_title(author)
+        elif self.title is not None or self.authors:
+            raise MetadataReportError("provider lookup is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,9 +162,11 @@ class ProviderCoverDescriptor:
     kind: CoverSourceKind
     source_id: str
     url: str | None
+    provenance: CoverProvenance | None = None
     wait: Callable[[float | None], bool] | None = None
     allow_redirects: bool = True
     user_agent: str | None = None
+    terminal_state: CoverSourceState | None = None
 
 
 class TargetReader(Protocol):
@@ -129,7 +183,7 @@ class EpubInspector(Protocol):
 
 
 class MetadataProvider(Protocol):
-    def observe(self, local_claims: tuple[LocalClaim, ...]) -> ProviderObservation: ...
+    def observe(self, lookup: MetadataLookup) -> ProviderObservation: ...
 
 
 class CoverObserver(Protocol):
@@ -158,6 +212,184 @@ class ProviderBinding:
     name: str
     enabled: bool
     factory: Callable[[], MetadataProvider]
+
+
+def metadata_lookup(
+    target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
+) -> MetadataLookup:
+    usable = tuple(
+        claim
+        for claim in local_claims
+        if claim.kind is ClaimKind.ISBN
+        and claim.canonical is not None
+        and claim.applicability in {"ebook", "unknown"}
+        and claim.basis == "opening_matter"
+        and claim.rear_provenance is None
+        and isbn_family(claim.canonical) is not None
+    )
+    families = {isbn_family(claim.canonical) for claim in usable}
+    if len(families) == 1:
+        return MetadataLookup(ProviderQueryKind.ISBN, local_claims)
+    if families:
+        return MetadataLookup(ProviderQueryKind.NONE, local_claims)
+    fields = {field.destination: field for field in target.fields}
+    title = fields[TargetDestination.TITLE]
+    authors = fields[TargetDestination.AUTHORS]
+    if (
+        title.state is not TargetFieldState.VALUE
+        or type(title.value) is not str
+        or authors.state is not TargetFieldState.VALUE
+        or type(authors.value) is not tuple
+        or not authors.value
+        or any(type(value) is not str for value in authors.value)
+        or len(
+            {
+                normalize_title(value).casefold()
+                for value in authors.value
+            }
+        )
+        != len(authors.value)
+    ):
+        return MetadataLookup(ProviderQueryKind.NONE, local_claims)
+    return MetadataLookup(
+        ProviderQueryKind.WORK,
+        local_claims,
+        normalize_title(title.value),
+        tuple(normalize_title(value) for value in authors.value),
+    )
+
+
+def qualify_provider_observation(
+    observation: ProviderObservation, lookup: MetadataLookup
+) -> ProviderObservation:
+    if lookup.kind is not ProviderQueryKind.WORK:
+        return ProviderObservation(
+            observation.provider,
+            observation.status,
+            observation.input_references,
+            observation.candidates,
+            lookup.kind,
+        )
+    if observation.status is not ProviderStatus.CANDIDATES:
+        return ProviderObservation(
+            observation.provider,
+            observation.status,
+            (),
+            (),
+            ProviderQueryKind.WORK,
+        )
+    expected_title = normalize_title(lookup.title or "").casefold()
+    expected_authors = tuple(
+        normalize_title(value).casefold() for value in lookup.authors
+    )
+    qualified: dict[str, list[ProviderCandidate]] = {}
+    blocked_work_identities: set[str] = set()
+    for candidate in observation.candidates:
+        titles = tuple(
+            normalize_title(claim.value).casefold()
+            for claim in candidate.claims
+            if claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.TITLE
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+        )
+        authors = tuple(
+            normalize_title(claim.value).casefold()
+            for claim in candidate.claims
+            if claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CREATOR
+            and claim.role == "author"
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+        )
+        disqualifying_roles = {
+            claim.role
+            for claim in candidate.claims
+            if claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CONTRIBUTOR
+            and claim.role in {"abridger", "adapter", "translator"}
+        }
+        variant_marker = any(
+            _variant_marker(claim.value)
+            for claim in candidate.claims
+            if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+        )
+        if disqualifying_roles or variant_marker:
+            blocked_work_identities.add(candidate.work_identity)
+        if (
+            titles == (expected_title,)
+            and len(authors) == len(expected_authors)
+            and set(authors) == set(expected_authors)
+            and not disqualifying_roles
+            and not variant_marker
+        ):
+            qualified.setdefault(candidate.work_identity, []).append(candidate)
+    for identity in blocked_work_identities:
+        qualified.pop(identity, None)
+    if len(qualified) != 1:
+        return ProviderObservation(
+            observation.provider,
+            ProviderStatus.NO_MATCH,
+            (),
+            (),
+            ProviderQueryKind.WORK,
+        )
+    candidate = min(next(iter(qualified.values())), key=lambda value: value.identity)
+    allowed_claims = {
+        ClaimKind.TITLE,
+        ClaimKind.CREATOR,
+        ClaimKind.SERIES,
+        ClaimKind.SERIES_SEQUENCE,
+        ClaimKind.DESCRIPTION,
+        ClaimKind.GENRE,
+        ClaimKind.TAG,
+    }
+    allowed_evidence = {
+        ProviderEvidenceKind.AUTHOR_IDENTITY,
+        ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+        ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+        ProviderEvidenceKind.WORK_COVER_ID,
+    }
+    filtered = ProviderCandidate(
+        candidate.identity,
+        candidate.work_identity,
+        tuple(
+            claim
+            for claim in candidate.claims
+            if claim.scope is ClaimScope.WORK and claim.kind in allowed_claims
+        ),
+        tuple(
+            value
+            for value in candidate.evidence
+            if value.scope is ClaimScope.WORK and value.kind in allowed_evidence
+        ),
+    )
+    return ProviderObservation(
+        observation.provider,
+        ProviderStatus.CANDIDATES,
+        (),
+        (filtered,),
+        ProviderQueryKind.WORK,
+    )
+
+
+def _variant_marker(value: str) -> bool:
+    tokens = {
+        "".join(character for character in token if character.isalnum())
+        for token in normalize_title(value).casefold().split()
+    }
+    return bool(
+        tokens
+        & {
+            "abridged",
+            "adaptation",
+            "adapted",
+            "translation",
+            "translated",
+        }
+    )
 
 
 class GenerateMetadataReport:
@@ -233,22 +465,29 @@ class GenerateMetadataReport:
                 repository.close()
             raise MetadataReportError("EPUB inspection failed") from error
 
-        target_title_claim = LocalClaim.create(
-            kind=ClaimKind.TITLE,
-            observed=initial.title,
-            canonical=normalize_title(initial.title),
-            excerpt=initial.title,
-            applicability="not_applicable",
-            basis="target_metadata",
-            checksum="not_applicable",
-            applicability_basis="not_applicable",
-            scope=ClaimScope.WORK,
-            occurrence=0,
+        target_title_claim = (
+            ()
+            if initial.title is None
+            else (
+                LocalClaim.create(
+                    kind=ClaimKind.TITLE,
+                    observed=initial.title,
+                    canonical=normalize_title(initial.title),
+                    excerpt=initial.title,
+                    applicability="not_applicable",
+                    basis="target_metadata",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    scope=ClaimScope.WORK,
+                    occurrence=0,
+                ),
+            )
         )
         # Claims are evidence, not a set: retain the target observation first and
         # then the inspector's DOM/source occurrence order.  Content-addressed
         # references are deliberately not an ordering key.
-        combined_claims = (target_title_claim, *local.claims)
+        combined_claims = (*target_title_claim, *local.claims)
+        lookup = metadata_lookup(initial, combined_claims)
         observations: list[ProviderObservation] = []
         descriptors: list[ProviderCoverDescriptor] = []
         cover_aggregate_deadline = time.monotonic() + 60.0
@@ -268,9 +507,9 @@ class GenerateMetadataReport:
                 raise CredentialError("provider credential unavailable") from error
             try:
                 observation = (
-                    provider.observe(combined_claims, deadline=cover_aggregate_deadline)
+                    provider.observe(lookup, deadline=cover_aggregate_deadline)
                     if hasattr(provider, "cover_descriptors")
-                    else provider.observe(combined_claims)
+                    else provider.observe(lookup)
                 )
             except Exception:
                 observation = ProviderObservation(
@@ -279,35 +518,17 @@ class GenerateMetadataReport:
             if observation.provider != binding.name:
                 repository.close()
                 raise MetadataReportError("provider result is invalid")
+            observation = qualify_provider_observation(observation, lookup)
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())
-            if type(candidate_descriptors) is tuple:
-                cover_kind = getattr(
-                    provider, "cover_kind", CoverSourceKind.HARDCOVER
-                )
-                cover_pacer = getattr(provider, "cover_pacer", None)
-                allow_redirects = getattr(provider, "cover_allow_redirects", True)
-                user_agent = getattr(provider, "cover_user_agent", None)
-                if (
-                    type(cover_kind) is not CoverSourceKind
-                    or type(allow_redirects) is not bool
-                    or (cover_pacer is not None and not callable(getattr(cover_pacer, "wait", None)))
-                    or (user_agent is not None and type(user_agent) is not str)
-                ):
-                    repository.close()
-                    raise MetadataReportError("provider cover result is invalid")
-                descriptors.extend(
-                    ProviderCoverDescriptor(
-                        binding.name,
-                        cover_kind,
-                        source_id,
-                        url,
-                        None if cover_pacer is None else cover_pacer.wait,
-                        allow_redirects,
-                        user_agent,
-                    )
-                    for source_id, url in candidate_descriptors
-                )
+            if type(candidate_descriptors) is not tuple or any(
+                type(value) is not ProviderCoverDescriptor
+                or value.provider != binding.name
+                for value in candidate_descriptors
+            ):
+                repository.close()
+                raise MetadataReportError("provider cover result is invalid")
+            descriptors.extend(candidate_descriptors)
 
         reasons = tuple(
             sorted(
@@ -321,7 +542,13 @@ class GenerateMetadataReport:
                 initial, tuple(observations), local.cover_sources, tuple(descriptors), cover_aggregate_deadline
             )
             report = MetadataReport.create(
-                target=TargetFacts(self._connection.name, self._library.name, item, initial.title),
+                target=TargetFacts(
+                    self._connection.name,
+                    self._library.name,
+                    item,
+                    initial.title,
+                    initial.fields,
+                ),
                 file=FileFacts(file_index, selected.identity, local.content_digest),
                 local_claims=combined_claims, local_reasons=reasons,
                 providers=tuple(sorted(observations, key=lambda value: value.provider)),
@@ -363,6 +590,7 @@ class GenerateMetadataReport:
         if (
             final.media_kind != "ebook"
             or final.title != initial.title
+            or final.fields != initial.fields
             or final.cover != initial.cover
             or len(matches) != 1
             or matches[0].format != "epub"
@@ -417,7 +645,10 @@ class GenerateMetadataReport:
 
 __all__ = [
     "CoverObserver", "CoverReadError", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
-    "ArtifactAuthorityError", "InspectionResult", "ItemInspectionError", "MetadataProvider", "MetadataReportError", "ProviderBinding", "ProviderCoverDescriptor",
+    "ArtifactAuthorityError", "InspectionResult", "ItemInspectionError",
+    "MetadataLookup", "MetadataProvider", "MetadataReportError",
+    "ProviderBinding", "ProviderCoverDescriptor",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
+    "metadata_lookup", "qualify_provider_observation",
 ]

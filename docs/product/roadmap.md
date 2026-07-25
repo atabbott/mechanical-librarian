@@ -127,12 +127,11 @@ The historical sequence was completed F06 #142 to F07a #143/#30/#31/#188 to F07b
 F09g #238/#243. F09g is the 0.3.0 checkpoint exit. Completing this internal
 checkpoint does not publish a release.
 
-The current 1.0 outcome set is #70, F08 #144, F10b #240, F11 #147, F15a
-#151, F16a #152, F13 #149, F14 #150, and F17 #153. The retained `F` IDs are
-planned designations rather than `Ready` status. Issue #70 remains unassigned
-as a planned but unpromoted outcome with target release and milestone `1.0.0`;
-it has no `F` designation and must be explicitly promoted before delivery.
-Open Library #210 is the completed 0.8.0 F09l slice tracker, while the other
+The current 1.0 outcome set is F08 #144, F10b #240, F11 #147, F15a #151,
+F16a #152, F13 #149, F14 #150, and F17 #153. The retained `F` IDs are planned
+designations rather than `Ready` status. F09o #70 has moved into milestone
+0.9.0 with #344 as its pre-activation evidence-report increment. Open Library
+#210 is the completed 0.8.0 F09l slice tracker, while the other
 deferred provider outcomes remain outside this checkpoint. Closed WP parents,
 provider trackers, and constituent forests are historical planning inputs, not
 current delivery work. The authoritative outcome definitions are in the
@@ -254,8 +253,21 @@ single-attempt posture; it adds no cache, retry, scheduling, rate-policy, or
 provider-cost framework.
 
 Open Library #210 completes milestone 0.8.0 as the one-issue F09l vertical
-slice with no constituents. Issue #70 remains a separate planned but
-unpromoted 1.0.0 outcome.
+slice with no constituents.
+
+### 0.9.0 explainable ebook proposal checkpoint
+
+The [0.9 working plan](0-9-working-plan.md) records F09o. Its #344
+pre-activation increment deepens the report to `metadata-report-v7`, binding
+all 16 current ABS destinations, exact ISBN versus fail-closed complete-author
+work observation, typed taxonomy/first-publication evidence, and the bounded
+provenance-bearing provider cover gallery. The #70 activation increment then
+derives one deterministic immutable result for each destination from that
+exact report without further provider access.
+
+This checkpoint remains report/proposal-only. It adds no review admission,
+human or AI decision, apply/write authority, fuzzy discovery, configurable
+policy, background execution, migration, tag, or release publication.
 
 ## M3: AI review in shadow mode
 

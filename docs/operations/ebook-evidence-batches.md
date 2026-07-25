@@ -52,10 +52,12 @@ The manifest path must be absent. Preview atomically creates one immutable
 canonical `batch-manifest-v2` document. It records scoped identities, the
 catalogue generation and fingerprint, a secret-free configuration fingerprint,
 enabled provider names and adapter discriminators, and conservative call-count
-maxima. Open Library allows at most five metadata requests and two one-hop cover
-requests per entry; Hardcover retains one metadata request and at most five
-four-hop cover chains per entry. The maxima add the enabled adapters without a
-generic cost or scheduling framework. The manifest contains no title, author,
+maxima. Open Library allows at most five metadata requests; Hardcover retains
+one metadata request. The report gallery admits at most four cover sources per
+provider and eight overall. The existing manifest keeps a conservative
+adapter-level remote-cover ceiling, while runtime admission is narrower. The
+maxima add the enabled adapters without a generic cost or scheduling framework.
+The manifest contains no title, author,
 path, credential, operational contact email, report body, execution state, or
 history.
 

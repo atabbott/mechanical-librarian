@@ -10,6 +10,9 @@ from PIL import Image
 from mechanical_librarian.adapters.cover_artifacts import CoverDecodeTimeout
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.providers.remote_cover import CoverDeadline, RemoteCover
+from mechanical_librarian.application.configuration import (
+    ProviderConnectionConfiguration,
+)
 from mechanical_librarian.application.metadata_report import (
     CoverReadError,
     CoverSourceChangedError,
@@ -20,9 +23,17 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
 from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverProvenance,
     CoverSourceKind,
     CoverSourceState,
+    CoverTruncationReason,
     cover_source_id,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ProviderCandidate,
+    ProviderObservation,
+    ProviderStatus,
 )
 
 
@@ -48,6 +59,224 @@ class _Target:
 
 
 class CoverObserverTests(unittest.TestCase):
+    def test_gallery_admission_caps_provider_and_total_with_visible_truncation(self) -> None:
+        configurations = tuple(
+            ProviderConnectionConfiguration(
+                name,
+                True,
+                True,
+                f"/secrets/{name}",
+            )
+            for name in ("alpha", "beta", "gamma")
+        )
+        observations = tuple(
+            ProviderObservation(
+                name,
+                ProviderStatus.CANDIDATES,
+                (),
+                (
+                    ProviderCandidate(
+                        f"{name}-edition",
+                        f"{name}-work",
+                        (),
+                    ),
+                ),
+            )
+            for name in ("alpha", "beta", "gamma")
+        )
+        descriptors = tuple(
+            ProviderCoverDescriptor(
+                provider,
+                CoverSourceKind.HARDCOVER,
+                cover_source_id(
+                    CoverSourceKind.HARDCOVER,
+                    f"{provider}:edition:{index}",
+                ),
+                None,
+                CoverProvenance(
+                    provider,
+                    CoverDesignation.RELATED_EDITION,
+                    f"{provider}-work",
+                    f"{provider}-edition-{index}",
+                ),
+            )
+            for provider in ("alpha", "beta", "gamma")
+            for index in range(5)
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            values = _CoverEvidenceObserver(
+                _Target(None),
+                CoverArtifactStore(Path(directory)),
+                configurations,
+            ).observe(
+                TargetSnapshot("ebook", "Title", (), None),
+                observations,
+                (),
+                descriptors,
+            )
+        provider_values = [
+            value
+            for value in values
+            if value.kind is CoverSourceKind.HARDCOVER
+        ]
+        admitted = [
+            value
+            for value in provider_values
+            if value.state is not CoverSourceState.TRUNCATED
+        ]
+        self.assertEqual(8, len(admitted))
+        self.assertTrue(
+            all(
+                sum(
+                    value.provenance is not None
+                    and value.provenance.provider == provider
+                    for value in admitted
+                )
+                <= 4
+                for provider in ("alpha", "beta", "gamma")
+            )
+        )
+        reasons = {
+            value.provenance.truncation_reason
+            for value in provider_values
+            if value.state is CoverSourceState.TRUNCATED
+            and value.provenance is not None
+        }
+        self.assertEqual(
+            {
+                CoverTruncationReason.PROVIDER_LIMIT,
+                CoverTruncationReason.GALLERY_LIMIT,
+            },
+            reasons,
+        )
+
+    def test_digest_deduplication_retains_every_provider_provenance(self) -> None:
+        configuration = ProviderConnectionConfiguration(
+            "catalogue",
+            True,
+            True,
+            "/secrets/catalogue",
+        )
+        observation = ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (ProviderCandidate("edition-1", "work-1", ()),),
+        )
+        descriptors = tuple(
+            ProviderCoverDescriptor(
+                "catalogue",
+                CoverSourceKind.HARDCOVER,
+                cover_source_id(CoverSourceKind.HARDCOVER, identity),
+                f"https://example.com/{identity}.jpg",
+                CoverProvenance(
+                    "catalogue",
+                    designation,
+                    "work-1",
+                    identity if designation is CoverDesignation.RELATED_EDITION else None,
+                ),
+            )
+            for identity, designation in (
+                ("edition-2", CoverDesignation.RELATED_EDITION),
+                ("work-1", CoverDesignation.WORK),
+            )
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+                return_value=RemoteCover(
+                    "https://example.com/cover.jpg",
+                    "image/jpeg",
+                    _jpeg(),
+                ),
+            ),
+        ):
+            values = _CoverEvidenceObserver(
+                _Target(None),
+                CoverArtifactStore(Path(directory)),
+                (configuration,),
+            ).observe(
+                TargetSnapshot("ebook", "Title", (), None),
+                (observation,),
+                (),
+                descriptors,
+            )
+        retrieved = [
+            value
+            for value in values
+            if value.state is CoverSourceState.RETRIEVED
+        ]
+        self.assertEqual(2, len(retrieved))
+        self.assertEqual(
+            1,
+            len(
+                {
+                    value.artifact.original_digest
+                    for value in retrieved
+                    if value.artifact is not None
+                }
+            ),
+        )
+        self.assertEqual(
+            {CoverDesignation.RELATED_EDITION, CoverDesignation.WORK},
+            {
+                value.provenance.designation
+                for value in retrieved
+                if value.provenance is not None
+            },
+        )
+
+    def test_terminal_descriptor_state_is_published_without_remote_fetch(self) -> None:
+        configuration = ProviderConnectionConfiguration(
+            "catalogue",
+            True,
+            True,
+            "/secrets/catalogue",
+        )
+        observation = ProviderObservation(
+            "catalogue",
+            ProviderStatus.CANDIDATES,
+            (),
+            (ProviderCandidate("edition-1", "work-1", ()),),
+        )
+        descriptor = ProviderCoverDescriptor(
+            "catalogue",
+            CoverSourceKind.HARDCOVER,
+            cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:edition-1"),
+            None,
+            CoverProvenance(
+                "catalogue",
+                CoverDesignation.RELATED_EDITION,
+                "work-1",
+                "edition-1",
+            ),
+            terminal_state=CoverSourceState.OVERSIZED,
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
+            ) as fetch,
+        ):
+            values = _CoverEvidenceObserver(
+                _Target(None),
+                CoverArtifactStore(Path(directory)),
+                (configuration,),
+            ).observe(
+                TargetSnapshot("ebook", "Title", (), None),
+                (observation,),
+                (),
+                (descriptor,),
+            )
+        provider_value = next(
+            value
+            for value in values
+            if value.kind is CoverSourceKind.HARDCOVER
+        )
+        self.assertEqual(CoverSourceState.OVERSIZED, provider_value.state)
+        fetch.assert_not_called()
+
     def test_abs_result_is_recorded_without_a_request(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             target = _Target(b"unexpected")

@@ -1,6 +1,6 @@
 # Data privacy
 
-0.8 minimizes retained data to one neutral evidence document per distinct
+0.9 minimizes retained data to one neutral evidence document per distinct
 observation. It retains the configured logical connection/library names,
 target item identifier, current title, opaque file identity and digest, bounded
 local field claims and results, fact-local opening excerpts of at most 280
@@ -10,8 +10,12 @@ work identities. Open Library may add only its closed finite rich-evidence
 allowlist: bounded upstream identities and provenance, selected identifiers and
 classifications, subjects, edition characteristics, contributor identity and
 role, edition-work relation, first-publication date, and cover IDs.
+The target projection retains exactly 16 bounded Audiobookshelf destinations.
+Provider cover rows retain only safe opaque source/work/edition identities,
+typed designation, allowlisted edition context, artifact digests, dimensions,
+media type, and preview references.
 
-It does not retain credentials, authorization headers, the Open Library
+It does not retain credentials, authorization headers, provider cover URLs, the Open Library
 operational contact email, endpoint paths, private filesystem paths, raw
 target/provider responses, arbitrary upstream properties or links, arbitrary
 EPUB fragments, inventory, cover bytes, reviewer data, job history, request
@@ -22,7 +26,7 @@ diagnostics contain no rejected values.
 The isolated child returns one bounded result for one EPUB session; neither its
 input snapshot nor source body is retained after the report projection.
 
-Reports are append-only and 0.8 provides no retention, pruning, purge, export,
+Reports are append-only and 0.9 provides no retention, pruning, purge, export,
 or deletion feature. Operators must account for that deliberate limitation
 when selecting the database location and backup policy.
 

@@ -84,10 +84,10 @@ it is excluded from reports, report IDs, manifests, fingerprints, logs, errors,
 and persisted application artifacts. Changing it does not supersede reports or
 invalidate an already frozen batch.
 
-Each library may reference several enabled metadata providers, but at most one
-of them may set `cover_enabled: true`. This preserves the existing closed cover
-source bound while allowing independent Hardcover and Open Library metadata
-observations in the same report.
+Each library may reference several enabled metadata providers and more than one
+may set `cover_enabled: true`. The report admits no more than four provider
+cover sources per named connection and eight provider sources overall; excess
+descriptors produce explicit truncation evidence.
 
 Target and enabled-Hardcover `secret_file` values are bounded absolute paths.
 Relative secret paths are rejected by both the generated schema and runtime
@@ -102,5 +102,6 @@ ranking policy:
 - `timeout_seconds` (1–60; default 30)
 
 There are no provider defaults, inheritance, overrides, weights, priorities,
-fallbacks, rules, environment substitutions, or undocumented configuration
-sources.
+configurable fallback rules, environment substitutions, or undocumented
+configuration sources. The fixed no-ISBN title-plus-complete-author fallback is
+part of the report contract rather than operator policy.
