@@ -158,6 +158,7 @@ class EpubInspectionField(StrEnum):
     ISBN = "isbn"
     PUBLICATION_DATE = "publication_date"
     PUBLISHER = "publisher"
+    IMPRINT = "imprint"
     DESCRIPTION = "description"
     LANGUAGE = "language"
     SUBJECT = "subject"
@@ -289,7 +290,7 @@ class EpubInspection:
             OpeningField.SERIES_ORDER: EpubInspectionField.SERIES_SEQUENCE,
             OpeningField.PUBLICATION_DATE: EpubInspectionField.PUBLICATION_DATE,
             OpeningField.PUBLISHER: EpubInspectionField.PUBLISHER,
-            OpeningField.IMPRINT: EpubInspectionField.PUBLISHER,
+            OpeningField.IMPRINT: EpubInspectionField.IMPRINT,
         }
         contributor_index: int | None = None
         creator_index: int | None = None

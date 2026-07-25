@@ -133,6 +133,10 @@ metadata supports only title in this slice, while EPUB supports the complete
 local field vocabulary. Source and DOM occurrence order is retained from the
 isolated inspector through persisted replay; content-derived references never
 reorder evidence. Unsafe and oversized sentinels remain non-canonical evidence.
+Explicit opening-matter publisher and imprint observations remain distinct
+edition claims through inspection, immutable report serialization, and exact
+replay. Provider comparisons link only claims with the same role; no
+publisher/imprint hierarchy is inferred.
 
 The credential-bearing parent combines those facts with the exact current
 target title. Every referenced, enabled Hardcover connection makes at most one
