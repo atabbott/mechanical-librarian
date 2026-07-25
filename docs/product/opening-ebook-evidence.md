@@ -88,6 +88,14 @@ The package modification timestamp is not a publication date. A package unique
 identifier is not assumed to be an ISBN. Legacy or vendor-specific fields are
 normalized only through a versioned source adapter.
 
+Publication-typed package dates admit the existing year, year-month, date, and
+UTC-`Z` forms plus a complete ISO date-time with an explicit signed `HH:MM`
+offset. Signed offsets are limited to `-14:00` through `+14:00`, including the
+exact boundary only at minute `00`. The extractor preserves the lexical value,
+declared event, occurrence order, and applicability; it does not convert the
+instant to another offset. Signed-offset creation, modification, copyright, and
+unknown events remain inapplicable, as do unsigned or malformed date-times.
+
 Declared contributor roles remain present in the raw package report. The local
 bibliographic projection excludes a contributor whose normalized MARC relator
 code is exactly `bkp` (book producer), because that production credit is not an

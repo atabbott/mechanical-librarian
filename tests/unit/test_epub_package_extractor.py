@@ -1300,6 +1300,98 @@ class EpubPackageExtractorTests(unittest.TestCase):
             }.issubset(warning_codes)
         )
 
+    def test_signed_offset_publication_datetimes_are_bounded_and_event_typed(self) -> None:
+        additions = b'''
+    <dc:date xmlns:opf="http://www.idpf.org/2007/opf" opf:event="publication">2026-01-13T00:00:00+00:00</dc:date>
+    <dc:date>2026-01-13T12:34:56.789-14:00</dc:date>
+    <dc:date xmlns:opf="http://www.idpf.org/2007/opf" opf:event="publication">2026-01-13T23:59:59+14:00</dc:date>
+    <dc:date xmlns:opf="http://www.idpf.org/2007/opf" opf:event="publication">2026-01-13T00:00:00Z</dc:date>'''
+        package = EPUB3_PACKAGE.replace(
+            b"</metadata>", additions + b"\n  </metadata>"
+        )
+        report = EpubPackageExtractor().extract(
+            request(epub_bytes(package=package))
+        )
+        dates = [
+            observation
+            for observation in report.observations
+            if observation.field is EpubPackageField.PUBLICATION_DATE
+        ]
+
+        self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
+        self.assertEqual(
+            [observation.raw_value for observation in dates],
+            [
+                "2026-01-13T00:00:00+00:00",
+                "2026-01-13T12:34:56.789-14:00",
+                "2026-01-13T23:59:59+14:00",
+                "2026-01-13T00:00:00Z",
+            ],
+        )
+        self.assertTrue(
+            all(
+                observation.normalized_value == observation.raw_value
+                and observation.applicability is EpubObservationApplicability.WORK
+                for observation in dates
+            )
+        )
+        self.assertEqual(
+            [
+                observation.normalized_value
+                for observation in report.observations
+                if observation.field is EpubPackageField.DATE_EVENT
+            ],
+            ["publication", "publication", "publication"],
+        )
+
+    def test_signed_offset_dates_reject_invalid_offsets_and_nonpublication_events(self) -> None:
+        cases = (
+            ("publication", "2026-01-13T00:00:00", EpubPackageField.PUBLICATION_DATE),
+            ("publication", "2026-01-13T00:00:00+14:01", EpubPackageField.PUBLICATION_DATE),
+            ("publication", "2026-01-13T00:00:00-14:01", EpubPackageField.PUBLICATION_DATE),
+            ("publication", "2026-01-13T00:00:00+15:00", EpubPackageField.PUBLICATION_DATE),
+            ("publication", "2026-02-30T00:00:00+01:00", EpubPackageField.PUBLICATION_DATE),
+            ("creation", "2026-01-13T00:00:00+01:00", EpubPackageField.CREATION_DATE),
+            ("modification", "2026-01-13T00:00:00+01:00", EpubPackageField.MODIFICATION_DATE),
+            ("copyright", "2026-01-13T00:00:00+01:00", EpubPackageField.COPYRIGHT_DATE),
+            ("future-event", "2026-01-13T00:00:00+01:00", EpubPackageField.PUBLICATION_DATE),
+        )
+        for event, value, field in cases:
+            with self.subTest(event=event, value=value):
+                addition = (
+                    '<dc:date xmlns:opf="http://www.idpf.org/2007/opf" '
+                    f'opf:event="{event}">{value}</dc:date>'
+                ).encode()
+                package = EPUB3_PACKAGE.replace(
+                    b"</metadata>", addition + b"</metadata>"
+                )
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(package=package))
+                )
+                observation = next(
+                    item
+                    for item in report.observations
+                    if item.field is field and item.raw_value == value
+                )
+
+                self.assertIsNone(observation.normalized_value)
+                self.assertIs(
+                    observation.applicability,
+                    EpubObservationApplicability.INAPPLICABLE,
+                )
+                self.assertIn(
+                    "invalid_date",
+                    {warning.code for warning in report.warnings},
+                )
+                self.assertIn(
+                    event,
+                    {
+                        item.normalized_value
+                        for item in report.observations
+                        if item.field is EpubPackageField.DATE_EVENT
+                    },
+                )
+
     def test_identifier_region_format_and_prefix_normalization_are_allowlisted(self) -> None:
         additions = b'''
     <dc:identifier>urn:uuid:12345678-1234-4abc-8123-123456789abc</dc:identifier>
