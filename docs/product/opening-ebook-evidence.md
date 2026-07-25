@@ -129,12 +129,12 @@ matter is not automatically evidence of title, author, edition, or series.
 When both publisher and imprint are explicit, the local projection preserves
 their source order and separate edition roles. It does not infer a hierarchy,
 promote one role into the other, or compare unlike roles.
-Alongside an explicit `Book N of/in Series` statement, the extractor admits the
-complete text of a short paragraph in the form
-`Series Name Book|Volume N[.N]`. The series name is limited to six
-whitespace-separated tokens, the position must use Arabic digits, and headings,
-embedded prose, word or Roman-numeral positions, and trailing text are not
-admitted by this cue.
+The extractor admits only an explicit `Book|Volume N[.N] of|in Series`
+statement as a local series-and-position cue. An unqualified trailing
+`Series Name Book|Volume N[.N]` form is not admitted because it cannot be
+distinguished proportionately from directives, promotions, and story prose.
+Word or Roman-numeral positions and trailing text are likewise not admitted by
+this cue.
 
 ### Navigation and structure
 
