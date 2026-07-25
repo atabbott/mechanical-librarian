@@ -47,6 +47,9 @@
   primaries are projected as ebook identifiers, while inferred primaries,
   print labels, ambiguous labels, and conflicts remain unresolved unless
   bounded provider-local evidence proves association.
+- Keep provider-work ISBN collisions unresolved: an accepted ISBN family is a
+  work-association anchor only when it maps to exactly one work within that
+  provider, without weakening independent provider evidence.
 
 - Preserve source-spine slot positions for bounded local EPUB rear evidence and
   make exact-ID report reopening non-creating.
