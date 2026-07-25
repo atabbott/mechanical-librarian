@@ -34,6 +34,7 @@
 - [Delivery slices](product/delivery-slices.md)
 - [0.7.0 metadata qualification scope](product/0-7-metadata-qualification.md)
 - [0.8.0 independent multi-provider evidence contract](product/0-8-working-plan.md)
+- [0.9.0 explainable ebook proposal plan](product/0-9-working-plan.md)
 - [Architecture decisions](architecture/decisions/README.md)
 - [Contributing](../CONTRIBUTING.md)
 - [Security reporting](../SECURITY.md)

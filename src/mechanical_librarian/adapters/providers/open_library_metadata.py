@@ -12,7 +12,15 @@ from typing import Any
 
 import httpx
 
+from mechanical_librarian.application.metadata_report import (
+    MetadataLookup,
+    ProviderCoverDescriptor,
+)
 from mechanical_librarian.domain.cover_evidence import (
+    CoverContext,
+    CoverContextField,
+    CoverDesignation,
+    CoverProvenance,
     CoverSourceKind,
     cover_source_id,
 )
@@ -33,6 +41,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidence,
     ProviderEvidenceKind,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderStatus,
     comparison_links,
     isbn_family,
@@ -108,7 +117,7 @@ class OpenLibraryMetadataProvider:
         self._timeout_seconds = float(timeout_seconds)
         self._pacer = pacer if pacer is not None else OpenLibraryPacer()
         self._called = False
-        self.cover_descriptors: tuple[tuple[str, str], ...] = ()
+        self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         self.cover_pacer = self._pacer
         self.cover_kind = CoverSourceKind.OPEN_LIBRARY
         self.cover_allow_redirects = False
@@ -116,13 +125,20 @@ class OpenLibraryMetadataProvider:
 
     def observe(
         self,
-        local_claims: tuple[LocalClaim, ...],
+        lookup: MetadataLookup,
         *,
         deadline: float | None = None,
     ) -> ProviderObservation:
+        if type(lookup) is not MetadataLookup:
+            raise ValueError("provider lookup is invalid")
         if self._called:
-            return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE)
+            return ProviderObservation(
+                self._name,
+                ProviderStatus.UNAVAILABLE,
+                query_kind=lookup.kind,
+            )
         self._called = True
+        local_claims = lookup.local_claims
         usable = tuple(
             sorted(
                 (
@@ -142,45 +158,90 @@ class OpenLibraryMetadataProvider:
             for claim in usable
             if (family := isbn_family(claim.canonical)) is not None
         }
-        if len(families) != 1:
+        if lookup.kind is ProviderQueryKind.ISBN and len(families) != 1:
             self._client.close()
-            return ProviderObservation(self._name, ProviderStatus.INSUFFICIENT_INPUT)
-        family = next(iter(families))
-        references = tuple(
-            sorted(
-                claim.reference
-                for claim in usable
-                if isbn_family(claim.canonical) == family
+            return ProviderObservation(
+                self._name,
+                ProviderStatus.INSUFFICIENT_INPUT,
+                query_kind=lookup.kind,
             )
-        )
+        if lookup.kind is ProviderQueryKind.ISBN:
+            family: str | None = next(iter(families))
+            references = tuple(
+                sorted(
+                    claim.reference
+                    for claim in usable
+                    if isbn_family(claim.canonical) == family
+                )
+            )
+        elif lookup.kind is ProviderQueryKind.WORK:
+            family = None
+            references = ()
+        else:
+            self._client.close()
+            return ProviderObservation(
+                self._name,
+                ProviderStatus.INSUFFICIENT_INPUT,
+                query_kind=lookup.kind,
+            )
+        def result(
+            status: ProviderStatus,
+            candidates: tuple[ProviderCandidate, ...] = (),
+        ) -> ProviderObservation:
+            return ProviderObservation(
+                self._name,
+                status,
+                references,
+                candidates,
+                lookup.kind,
+            )
         try:
             with self._client:
-                search = self._request(
-                    OPEN_LIBRARY_SEARCH_URL,
-                    params={
-                        "q": f"isbn:{family}",
-                        "fields": "key,editions,editions.key,editions.isbn",
-                        "limit": str(_MAX_SEARCH_ROWS),
-                    },
-                    deadline=deadline,
-                )
-                admitted = _admitted_candidates(search, family)
+                if lookup.kind is ProviderQueryKind.ISBN:
+                    search = self._request(
+                        OPEN_LIBRARY_SEARCH_URL,
+                        params={
+                            "q": f"isbn:{family}",
+                            "fields": "key,editions,editions.key,editions.isbn",
+                            "limit": str(_MAX_SEARCH_ROWS),
+                        },
+                        deadline=deadline,
+                    )
+                    admitted = tuple(
+                        (edition, work, ())
+                        for edition, work in _admitted_candidates(
+                            search, family or ""
+                        )
+                    )
+                else:
+                    search = self._request(
+                        OPEN_LIBRARY_SEARCH_URL,
+                        params={
+                            "title": lookup.title or "",
+                            "author": " ".join(lookup.authors),
+                            "fields": "key,author_name,editions,editions.key",
+                            "limit": str(_MAX_SEARCH_ROWS),
+                        },
+                        deadline=deadline,
+                    )
+                    admitted = _admitted_work_candidates(search)
                 if len(admitted) > 2:
-                    return ProviderObservation(
-                        self._name,
-                        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
-                        references,
-                    )
+                    return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
                 if not admitted:
-                    return ProviderObservation(
-                        self._name, ProviderStatus.NO_MATCH, references
-                    )
+                    return result(ProviderStatus.NO_MATCH)
                 work_documents: dict[str, dict[str, Any]] = {}
                 candidates: list[ProviderCandidate] = []
                 cover_candidates: list[
-                    tuple[str, int | None, str, int | None]
+                    tuple[
+                        str,
+                        int | None,
+                        str,
+                        int | None,
+                        dict[str, Any],
+                        dict[str, Any],
+                    ]
                 ] = []
-                for edition_key, work_key in admitted:
+                for edition_key, work_key, work_authors in admitted:
                     edition = self._request(
                         OPEN_LIBRARY_ORIGIN + edition_key + ".json",
                         deadline=deadline,
@@ -198,14 +259,28 @@ class OpenLibraryMetadataProvider:
                         work_documents[work_key],
                         local_claims,
                         family,
+                        work_authors,
                     )
                     candidates.append(candidate)
                     cover_candidates.append(
-                        (edition_key, edition_cover, work_key, work_cover)
+                        (
+                            edition_key,
+                            edition_cover,
+                            work_key,
+                            work_cover,
+                            edition,
+                            work_documents[work_key],
+                        )
                     )
-                self.cover_descriptors = _cover_descriptors(cover_candidates)
+                self.cover_descriptors = _cover_descriptors(
+                    self._name,
+                    lookup.kind,
+                    cover_candidates,
+                    self._pacer.wait,
+                    self.cover_user_agent,
+                )
         except _ProviderFailure as error:
-            return ProviderObservation(self._name, error.status, references)
+            return result(error.status)
         except (
             EvidenceValueError,
             KeyError,
@@ -215,13 +290,9 @@ class OpenLibraryMetadataProvider:
             RecursionError,
             json.JSONDecodeError,
         ):
-            return ProviderObservation(
-                self._name, ProviderStatus.MALFORMED, references
-            )
-        return ProviderObservation(
-            self._name,
+            return result(ProviderStatus.MALFORMED)
+        return result(
             ProviderStatus.CANDIDATES,
-            references,
             tuple(sorted(candidates, key=lambda candidate: candidate.identity)),
         )
 
@@ -323,6 +394,35 @@ def _admitted_candidates(
     return tuple(sorted(admitted.items()))
 
 
+def _admitted_work_candidates(
+    source: dict[str, Any],
+) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    docs = source.get("docs")
+    if type(docs) is not list or len(docs) > _MAX_SEARCH_ROWS:
+        raise ValueError("search result is malformed")
+    admitted: dict[tuple[str, str], tuple[str, ...]] = {}
+    for raw_work in docs:
+        work = _mapping(raw_work)
+        work_key = _key(work.get("key"), _WORK_KEY)
+        authors = _string_list(work.get("author_name", []), _MAX_VALUES)
+        editions = _mapping(work.get("editions"))
+        edition_docs = editions.get("docs")
+        if type(edition_docs) is not list:
+            raise ValueError("search editions are malformed")
+        for raw_edition in edition_docs:
+            edition = _mapping(raw_edition)
+            edition_key = _key(edition.get("key"), _EDITION_KEY)
+            previous = admitted.setdefault((edition_key, work_key), authors)
+            if previous != authors:
+                raise ValueError("search work authors are ambiguous")
+            if len(admitted) > 2:
+                break
+    return tuple(
+        (edition, work, authors)
+        for (edition, work), authors in sorted(admitted.items())
+    )
+
+
 def _candidate(
     provider: str,
     edition_key: str,
@@ -330,7 +430,8 @@ def _candidate(
     edition: dict[str, Any],
     work: dict[str, Any],
     local_claims: tuple[LocalClaim, ...],
-    requested_family: str,
+    requested_family: str | None,
+    work_authors: tuple[str, ...] = (),
 ) -> tuple[ProviderCandidate, int | None, int | None]:
     if _key(edition.get("key"), _EDITION_KEY) != edition_key:
         raise ValueError("edition identity is malformed")
@@ -380,7 +481,7 @@ def _candidate(
             if isbn_family(compact) is None:
                 raise ValueError("edition ISBN is malformed")
             edition_isbns.append(compact)
-    if requested_family not in {
+    if requested_family is not None and requested_family not in {
         family
         for value in edition_isbns
         if (family := isbn_family(value)) is not None
@@ -433,12 +534,21 @@ def _candidate(
 
     add(ClaimKind.TITLE, work.get("title"), ClaimScope.WORK)
     add(ClaimKind.DESCRIPTION, _description(work.get("description")), ClaimScope.WORK)
-    add(
-        ClaimKind.CREATOR,
-        None,
-        ClaimScope.WORK,
-        state=FieldState.UNSUPPORTED,
-    )
+    if work_authors:
+        for author in work_authors:
+            add(
+                ClaimKind.CREATOR,
+                author,
+                ClaimScope.WORK,
+                role="author",
+            )
+    else:
+        add(
+            ClaimKind.CREATOR,
+            None,
+            ClaimScope.WORK,
+            state=FieldState.UNSUPPORTED,
+        )
     add(
         ClaimKind.CONTRIBUTOR,
         None,
@@ -714,38 +824,126 @@ def _cover_id(source: dict[str, Any]) -> int | None:
 
 
 def _cover_descriptors(
-    values: list[tuple[str, int | None, str, int | None]],
-) -> tuple[tuple[str, str], ...]:
-    descriptors: list[tuple[str, str]] = []
-    for edition_key, cover, _, _ in values:
-        if cover is not None:
-            descriptors.append(
+    provider: str,
+    query_kind: ProviderQueryKind,
+    values: list[
+        tuple[
+            str,
+            int | None,
+            str,
+            int | None,
+            dict[str, Any],
+            dict[str, Any],
+        ]
+    ],
+    wait: Callable[[float | None], bool],
+    user_agent: str,
+) -> tuple[ProviderCoverDescriptor, ...]:
+    descriptors: list[ProviderCoverDescriptor] = []
+    for edition_key, cover, work_key, _, edition, _ in values:
+        descriptors.append(
+            ProviderCoverDescriptor(
+                provider,
+                CoverSourceKind.OPEN_LIBRARY,
+                cover_source_id(
+                    CoverSourceKind.OPEN_LIBRARY,
+                    f"edition:{edition_key}",
+                ),
                 (
-                    cover_source_id(
-                        CoverSourceKind.OPEN_LIBRARY,
-                        f"edition:{edition_key}:{cover}",
+                    None
+                    if cover is None
+                    else f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover}-L.jpg?default=false"
+                ),
+                CoverProvenance(
+                    provider,
+                    (
+                        CoverDesignation.EXACT_EDITION
+                        if query_kind is ProviderQueryKind.ISBN
+                        else CoverDesignation.RELATED_EDITION
                     ),
-                    f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover}-L.jpg?default=false",
-                )
+                    "open-library-work-" + work_key.removeprefix("/works/"),
+                    "open-library-edition-"
+                    + edition_key.removeprefix("/books/"),
+                    _open_library_cover_context(edition),
+                ),
+                wait,
+                False,
+                user_agent,
             )
-            break
+        )
     seen_works: set[str] = set()
-    for _, _, work_key, cover in values:
+    for _, _, work_key, cover, _, work in values:
         if work_key in seen_works:
             continue
         seen_works.add(work_key)
-        if cover is not None:
-            descriptors.append(
+        descriptors.append(
+            ProviderCoverDescriptor(
+                provider,
+                CoverSourceKind.OPEN_LIBRARY,
+                cover_source_id(
+                    CoverSourceKind.OPEN_LIBRARY,
+                    f"work:{work_key}",
+                ),
                 (
-                    cover_source_id(
-                        CoverSourceKind.OPEN_LIBRARY,
-                        f"work:{work_key}:{cover}",
-                    ),
-                    f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover}-L.jpg?default=false",
+                    None
+                    if cover is None
+                    else f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover}-L.jpg?default=false"
+                ),
+                CoverProvenance(
+                    provider,
+                    CoverDesignation.WORK,
+                    "open-library-work-" + work_key.removeprefix("/works/"),
+                    context=_open_library_cover_context(work),
+                ),
+                wait,
+                False,
+                user_agent,
+            )
+        )
+    return tuple(descriptors)
+
+
+def _open_library_cover_context(
+    source: dict[str, Any],
+) -> tuple[CoverContext, ...]:
+    values: set[CoverContext] = set()
+    for key in ("isbn_10", "isbn_13"):
+        for value in _string_list(source.get(key, []), _MAX_VALUES):
+            values.add(CoverContext(CoverContextField.ISBN, value))
+    for item in _object_list(source.get("languages", []), _MAX_VALUES):
+        match = _LANGUAGE_KEY.fullmatch(_key(item.get("key"), _LANGUAGE_KEY))
+        if match is None:
+            raise ValueError("cover language is malformed")
+        values.add(CoverContext(CoverContextField.LANGUAGE, match.group(1)))
+    for value in _string_list(source.get("publishers", []), _MAX_VALUES):
+        values.add(CoverContext(CoverContextField.PUBLISHER, value))
+    for value in _string_list(source.get("publish_places", []), _MAX_VALUES):
+        values.add(CoverContext(CoverContextField.PUBLICATION_PLACE, value))
+    if source.get("publish_country") is not None:
+        values.add(
+            CoverContext(
+                CoverContextField.COUNTRY,
+                _text(source["publish_country"]),
+            )
+        )
+    for field in ("publish_date", "first_publish_date"):
+        if source.get(field) is not None:
+            values.add(
+                CoverContext(
+                    CoverContextField.PUBLICATION_DATE,
+                    _text(source[field]),
                 )
             )
-            break
-    return tuple(descriptors)
+    if source.get("physical_format") is not None:
+        values.add(
+            CoverContext(
+                CoverContextField.FORMAT,
+                _text(source["physical_format"]),
+            )
+        )
+    return tuple(
+        sorted(values, key=lambda value: (value.field.value, value.value))
+    )
 
 
 def _body(

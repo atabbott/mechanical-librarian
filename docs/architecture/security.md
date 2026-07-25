@@ -64,8 +64,11 @@ metadata and Covers origins. HTTP clients ignore ambient proxy/environment
 configuration and redirects.
 
 Disabled providers cause no secret access, client construction, or egress.
-Unreferenced providers are never bound. A provider with no usable ISBN input
-returns `insufficient_input` without egress. There is no automatic retry.
+Unreferenced providers are never bound. One usable ISBN family selects only
+the exact ISBN operation. With no usable family, the application permits one
+title-plus-complete-author operation; title-only, incomplete authors, or
+multiple usable families return `insufficient_input` without egress. There is
+no automatic retry.
 
 Cover acquisition remains report-only. The ABS raw-cover route is bracketed by
 the final item read and has no credentials, cookies, referrer, or user agent.
@@ -77,6 +80,10 @@ validated content digests, dimensions, media type, and preview references.
 Open Library cover requests use the same transport and decoder boundary, but
 allow no redirect, use constructed fixed-origin numeric-ID URLs, and share the
 adapter's one-second request-start pacer.
+Provider cover admission is limited to four sources per provider and eight
+overall. Only descriptors bound to a qualified provider-local work are
+admitted. Reports retain safe allowlisted provenance and explicit truncation,
+never the remote URL.
 
 ## Output and persistence
 

@@ -16,12 +16,13 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_role_projection,
 )
 from mechanical_librarian.domain.cover_evidence import (
-    CoverArtifact, CoverEvidenceError, CoverSource, CoverSourceKind,
-    CoverSourceState, publication_ready,
+    CoverArtifact, CoverContext, CoverContextField, CoverDesignation,
+    CoverEvidenceError, CoverProvenance, CoverSource, CoverSourceKind,
+    CoverSourceState, CoverTruncationReason, publication_ready,
 )
 
 
-REPORT_SCHEMA = "metadata-report-v6"
+REPORT_SCHEMA = "metadata-report-v7"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -104,6 +105,125 @@ class FieldSource(StrEnum):
     TARGET_METADATA = "target_metadata"
 
 
+class TargetDestination(StrEnum):
+    TITLE = "title"
+    SUBTITLE = "subtitle"
+    AUTHORS = "authors"
+    NARRATORS = "narrators"
+    SERIES = "series"
+    GENRES = "genres"
+    PUBLISHED_YEAR = "publishedYear"
+    PUBLISHED_DATE = "publishedDate"
+    PUBLISHER = "publisher"
+    DESCRIPTION = "description"
+    ISBN = "isbn"
+    ASIN = "asin"
+    LANGUAGE = "language"
+    EXPLICIT = "explicit"
+    TAGS = "tags"
+    COVER = "cover"
+
+
+class TargetFieldState(StrEnum):
+    VALUE = "value"
+    MISSING = "missing"
+    NULL = "null"
+    EMPTY = "empty"
+    UNLOADED = "unloaded"
+    MALFORMED = "malformed"
+    OVERSIZED = "oversized"
+
+
+@dataclass(frozen=True, slots=True)
+class TargetSeries:
+    name: str
+    sequence: str | None = None
+
+    def __post_init__(self) -> None:
+        _projection_text(self.name, "target series name", MAX_SCALAR_CHARACTERS)
+        if self.sequence is not None:
+            _projection_text(
+                self.sequence, "target series sequence", MAX_SCALAR_CHARACTERS
+            )
+
+    def to_data(self) -> dict[str, str | None]:
+        return {"name": self.name, "sequence": self.sequence}
+
+
+@dataclass(frozen=True, slots=True)
+class TargetField:
+    destination: TargetDestination
+    state: TargetFieldState
+    value: str | bool | tuple[str, ...] | tuple[TargetSeries, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.destination) is not TargetDestination
+            or type(self.state) is not TargetFieldState
+        ):
+            raise ReportValueError("target field is invalid")
+        if self.state is not TargetFieldState.VALUE:
+            if self.value is not None:
+                raise ReportValueError("nonvalue target field has a value")
+            return
+        if self.destination is TargetDestination.EXPLICIT:
+            if type(self.value) is not bool:
+                raise ReportValueError("target explicit field is invalid")
+            return
+        if self.destination is TargetDestination.SERIES:
+            if (
+                type(self.value) is not tuple
+                or not self.value
+                or len(self.value) > MAX_SERIES
+                or any(type(item) is not TargetSeries for item in self.value)
+            ):
+                raise ReportValueError("target series field is invalid")
+            return
+        if self.destination in {
+            TargetDestination.AUTHORS,
+            TargetDestination.NARRATORS,
+            TargetDestination.GENRES,
+            TargetDestination.TAGS,
+        }:
+            maximum = MAX_CONTRIBUTIONS if self.destination in {
+                TargetDestination.AUTHORS,
+                TargetDestination.NARRATORS,
+            } else MAX_TAGS
+            if (
+                type(self.value) is not tuple
+                or not self.value
+                or len(self.value) > maximum
+                or any(type(item) is not str for item in self.value)
+            ):
+                raise ReportValueError("target list field is invalid")
+            for item in self.value:
+                _projection_text(
+                    item, "target list value", MAX_SCALAR_CHARACTERS
+                )
+            return
+        if type(self.value) is not str or not self.value:
+            raise ReportValueError("target scalar field is invalid")
+        _projection_text(
+            self.value,
+            "target scalar value",
+            MAX_DESCRIPTION_CHARACTERS
+            if self.destination is TargetDestination.DESCRIPTION
+            else MAX_SCALAR_CHARACTERS,
+        )
+
+    def to_data(self) -> dict[str, object]:
+        value: object = self.value
+        if self.destination is TargetDestination.SERIES and self.value is not None:
+            value = [item.to_data() for item in self.value]
+        elif type(self.value) is tuple:
+            value = list(self.value)
+        return {
+            "destination": self.destination.value,
+            "state": self.state.value,
+            "value": value,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class FieldSourceResult:
     source: FieldSource
@@ -165,6 +285,12 @@ class ProviderStatus(StrEnum):
     MALFORMED = "malformed"
     OVERSIZED = "oversized"
     CANDIDATE_LIMIT_EXCEEDED = "candidate_limit_exceeded"
+
+
+class ProviderQueryKind(StrEnum):
+    NONE = "none"
+    ISBN = "isbn"
+    WORK = "work"
 
 
 class Comparison(StrEnum):
@@ -329,21 +455,69 @@ class TargetFacts:
     connection: str
     library: str
     item: str
-    current_title: str
+    current_title: str | None
+    fields: tuple[TargetField, ...] = ()
 
     def __post_init__(self) -> None:
         _name(self.connection, "connection")
         _name(self.library, "library")
         _text(self.item, "item", 512)
-        validate_observed_title(self.current_title)
+        if not self.fields:
+            object.__setattr__(
+                self,
+                "fields",
+                default_target_fields(self.current_title),
+            )
+        if (
+            type(self.fields) is not tuple
+            or any(type(value) is not TargetField for value in self.fields)
+            or tuple(value.destination for value in self.fields)
+            != tuple(TargetDestination)
+        ):
+            raise ReportValueError("target fields are invalid")
+        title = self.fields[0]
+        if title.state is TargetFieldState.VALUE:
+            if type(title.value) is not str or self.current_title != title.value:
+                raise ReportValueError("target title is inconsistent")
+            validate_observed_title(self.current_title)
+        elif self.current_title is not None:
+            raise ReportValueError("target title is inconsistent")
 
-    def to_data(self) -> dict[str, str]:
-        return {
+    @property
+    def fingerprint(self) -> str:
+        data = {
             "connection": self.connection,
-            "current_title": self.current_title,
+            "fields": [value.to_data() for value in self.fields],
             "item": self.item,
             "library": self.library,
         }
+        return hashlib.sha256(canonical_json(data).encode("utf-8")).hexdigest()
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "connection": self.connection,
+            "current_title": self.current_title,
+            "fields": [value.to_data() for value in self.fields],
+            "fingerprint": self.fingerprint,
+            "item": self.item,
+            "library": self.library,
+        }
+
+
+def default_target_fields(title: str | None) -> tuple[TargetField, ...]:
+    values: list[TargetField] = []
+    for destination in TargetDestination:
+        if destination is TargetDestination.TITLE and title is not None:
+            values.append(
+                TargetField(
+                    destination,
+                    TargetFieldState.VALUE,
+                    validate_observed_title(title),
+                )
+            )
+        else:
+            values.append(TargetField(destination, TargetFieldState.MISSING))
+    return tuple(values)
 
 
 @dataclass(frozen=True, slots=True)
@@ -660,10 +834,14 @@ class ProviderObservation:
     status: ProviderStatus
     input_references: tuple[str, ...] = ()
     candidates: tuple[ProviderCandidate, ...] = ()
+    query_kind: ProviderQueryKind = ProviderQueryKind.NONE
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
-        if type(self.status) is not ProviderStatus:
+        if (
+            type(self.status) is not ProviderStatus
+            or type(self.query_kind) is not ProviderQueryKind
+        ):
             raise ReportValueError("provider status is invalid")
         if type(self.input_references) is not tuple or tuple(sorted(set(self.input_references))) != self.input_references or any(
             _REFERENCE.fullmatch(value) is None or not value.startswith("local_")
@@ -695,6 +873,7 @@ class ProviderObservation:
             "candidates": [value.to_data() for value in self.candidates],
             "input_references": list(self.input_references),
             "provider": self.provider,
+            "query_kind": self.query_kind.value,
             "status": self.status.value,
         }
 
@@ -1208,7 +1387,17 @@ def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_cla
 
 def _report_from_data(value: object) -> MetadataReport:
     root = _object(value, {"comparison_version", "covers", "field_results", "file", "identifier_evidence", "local", "providers", "report_id", "schema_version", "target"})
-    target = _object(root["target"], {"connection", "current_title", "item", "library"})
+    target = _object(
+        root["target"],
+        {
+            "connection",
+            "current_title",
+            "fields",
+            "fingerprint",
+            "item",
+            "library",
+        },
+    )
     file = _object(root["file"], {"content_digest", "format", "identity", "selected_index"})
     local = _object(root["local"], {"claims", "reasons", "status"})
     claims = tuple(_local_claim_from_data(item) for item in _list(local["claims"]))
@@ -1217,9 +1406,18 @@ def _report_from_data(value: object) -> MetadataReport:
     identifier_evidence = tuple(_identifier_evidence_from_data(item) for item in _list(root["identifier_evidence"]))
     reasons = tuple(_strings(local["reasons"]))
     covers = tuple(_cover_source_from_data(item) for item in _list(root["covers"]))
+    target_facts = TargetFacts(
+        target["connection"],
+        target["library"],
+        target["item"],
+        target["current_title"],
+        tuple(_target_field_from_data(item) for item in _list(target["fields"])),
+    )
+    if target["fingerprint"] != target_facts.fingerprint:
+        raise ReportValueError("target fingerprint is inconsistent")
     return MetadataReport(
         root["report_id"],
-        TargetFacts(target["connection"], target["library"], target["item"], target["current_title"]),
+        target_facts,
         FileFacts(file["selected_index"], file["identity"], file["content_digest"], file["format"]),
         claims,
         local["status"],
@@ -1229,6 +1427,38 @@ def _report_from_data(value: object) -> MetadataReport:
         identifier_evidence,
         covers, root["schema_version"], root["comparison_version"],
     )
+
+
+def _target_field_from_data(value: object) -> TargetField:
+    item = _object(value, {"destination", "state", "value"})
+    destination = TargetDestination(item["destination"])
+    state = TargetFieldState(item["state"])
+    raw = item["value"]
+    parsed: (
+        str | bool | tuple[str, ...] | tuple[TargetSeries, ...] | None
+    ) = None
+    if state is TargetFieldState.VALUE:
+        if destination is TargetDestination.SERIES:
+            parsed = tuple(
+                TargetSeries(
+                    series["name"],
+                    series["sequence"],
+                )
+                for source in _list(raw)
+                for series in [_object(source, {"name", "sequence"})]
+            )
+        elif destination in {
+            TargetDestination.AUTHORS,
+            TargetDestination.NARRATORS,
+            TargetDestination.GENRES,
+            TargetDestination.TAGS,
+        }:
+            parsed = tuple(_strings(raw))
+        else:
+            parsed = raw
+    elif raw is not None:
+        raise ReportValueError("nonvalue target field has a value")
+    return TargetField(destination, state, parsed)
 
 
 def _field_result_from_data(value: object) -> FieldResult:
@@ -1261,11 +1491,62 @@ def _identifier_evidence_from_data(value: object) -> IdentifierEvidence:
 
 
 def _cover_source_from_data(value: object) -> CoverSource:
-    item = _object(value, {"artifact", "kind", "source_id", "state", "timeout_scope"})
+    item = _object(
+        value,
+        {
+            "artifact",
+            "kind",
+            "provenance",
+            "source_id",
+            "state",
+            "timeout_scope",
+        },
+    )
     artifact = None
     if item["artifact"] is not None:
         artifact = CoverArtifact(**_object(item["artifact"], {"artifact_id", "height", "media_type", "original_digest", "preview_digest", "preview_variant", "width"}))
-    return CoverSource(item["source_id"], CoverSourceKind(item["kind"]), CoverSourceState(item["state"]), artifact, item["timeout_scope"])
+    provenance = None
+    if item["provenance"] is not None:
+        source = _object(
+            item["provenance"],
+            {
+                "context",
+                "designation",
+                "edition_identity",
+                "provider",
+                "truncation_reason",
+                "work_identity",
+            },
+        )
+        provenance = CoverProvenance(
+            source["provider"],
+            CoverDesignation(source["designation"]),
+            source["work_identity"],
+            source["edition_identity"],
+            tuple(
+                CoverContext(
+                    CoverContextField(context["field"]),
+                    context["value"],
+                )
+                for context in (
+                    _object(value, {"field", "value"})
+                    for value in source["context"]
+                )
+            ),
+            (
+                None
+                if source["truncation_reason"] is None
+                else CoverTruncationReason(source["truncation_reason"])
+            ),
+        )
+    return CoverSource(
+        item["source_id"],
+        CoverSourceKind(item["kind"]),
+        CoverSourceState(item["state"]),
+        artifact,
+        item["timeout_scope"],
+        provenance,
+    )
 
 
 def _local_claim_from_data(value: object) -> LocalClaim:
@@ -1275,9 +1556,24 @@ def _local_claim_from_data(value: object) -> LocalClaim:
 
 
 def _provider_from_data(value: object) -> ProviderObservation:
-    item = _object(value, {"candidates", "input_references", "provider", "status"})
+    item = _object(
+        value,
+        {
+            "candidates",
+            "input_references",
+            "provider",
+            "query_kind",
+            "status",
+        },
+    )
     candidates = tuple(_candidate_from_data(candidate) for candidate in _list(item["candidates"]))
-    return ProviderObservation(item["provider"], ProviderStatus(item["status"]), tuple(_strings(item["input_references"])), candidates)
+    return ProviderObservation(
+        item["provider"],
+        ProviderStatus(item["status"]),
+        tuple(_strings(item["input_references"])),
+        candidates,
+        ProviderQueryKind(item["query_kind"]),
+    )
 
 
 def _candidate_from_data(value: object) -> ProviderCandidate:
@@ -1377,8 +1673,11 @@ __all__ = [
     "IdentifierEvidence", "IdentifierEvidenceBasis", "IdentifierRelation",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
     "ProviderEvidence", "ProviderEvidenceKind",
-    "ProviderObservation", "ProviderStatus", "REPORT_SCHEMA", "ReportValueError",
-    "TargetFacts", "canonical_json", "claim_scope", "comparison_links",
+    "ProviderObservation", "ProviderQueryKind", "ProviderStatus",
+    "REPORT_SCHEMA", "ReportValueError",
+    "TargetDestination", "TargetFacts", "TargetField", "TargetFieldState",
+    "TargetSeries", "canonical_json", "claim_scope", "comparison_links",
+    "default_target_fields",
     "derive_identifier_evidence", "isbn_family", "normalize_title",
     "stable_reference", "validate_observed_title",
 ]

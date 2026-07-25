@@ -58,7 +58,7 @@ target, provider, or remote-cover transport and it cannot retrieve originals.
 
 - The database path is absent for the first invocation or already contains the
   exact current schema required by the installed increment.
-- `metadata-report-v1`, `metadata-report-v5`, and all earlier development
+- `metadata-report-v1`, `metadata-report-v6`, and all earlier development
   schemas are rejected before mutation. There is no migration, import,
   preservation, or compatibility parser. Keep an old database offline if
   required, initialize a clean database, and rerun the supported report command.
@@ -99,9 +99,15 @@ but do not claim the Linux production exclusion guarantee.
 ## Evidence and replay
 
 The command reads the current target item directly; it does not persist an
-inventory. The selected file index resolves once to an opaque identity derived
-by the Audiobookshelf adapter. Final currentness locates that identity again,
-so a harmless file-list reorder does not change the target.
+inventory. The target projection contains exactly title, subtitle, authors,
+narrators, series, genres, publishedYear, publishedDate, publisher,
+description, isbn, asin, language, explicit, tags, and cover. Each destination
+preserves one exact `value`, `missing`, `null`, `empty`, `unloaded`,
+`malformed`, or `oversized` state, including source list order. Every
+destination participates in the target fingerprint and final currentness
+check. The selected file index resolves once to an opaque identity derived by
+the Audiobookshelf adapter. Final currentness locates that identity again, so a
+harmless file-list reorder does not change the target.
 
 The isolated child receives only the already-open read-only EPUB descriptor,
 source fingerprint, and fixed limits. It first captures one bounded immutable
@@ -138,24 +144,38 @@ edition claims through inspection, immutable report serialization, and exact
 replay. Provider comparisons link only claims with the same role; no
 publisher/imprint hierarchy is inferred.
 
-The credential-bearing parent combines those facts with the exact current
-target title. Every referenced, enabled Hardcover connection makes at most one
-fresh credential-bearing GraphQL metadata request. For admitted candidate cover
-descriptors, it may then make up to five separately credential-free bounded
-cover request chains. Every referenced, enabled Open Library connection
-requires exactly one usable edition-applicable ISBN family and may make one
-exact ISBN Search request, at most two exact edition requests, and at most two
-distinct exact work requests. Search admission is exact, deduplicated, and
-canonical by edition key; a third exact candidate is terminal before detail
-requests. Open Library request starts, including its at-most-one edition and
-one distinct-work cover, are spaced by the same fixed one-second pacer and are
-single-attempt. Disabled references produce one `disabled` observation without
-client construction, credential access, or egress. Unreferenced providers are
-absent.
+The credential-bearing parent combines those facts with the target projection.
+Exactly one usable edition-applicable ISBN family selects the existing exact
+ISBN flow and forbids fallback. Multiple usable families fail closed. Only
+when no usable family exists may the application make one bounded exact
+title-plus-complete-author lookup; title-only or incomplete authors cause zero
+egress. Candidate admission then requires one exact normalized work title, the
+complete ordered author list, one provider-local work identity, and no
+translation, adaptation, or uncertain abridgement marker. Competing works and
+same-title/different-author results are `no_match`.
+
+Every referenced, enabled Hardcover connection makes at most one fresh
+credential-bearing GraphQL metadata request. Every referenced, enabled Open
+Library connection makes one exact ISBN or title/author Search request, at most
+two edition requests, and at most two distinct work requests. Search admission
+is bounded, deduplicated, and canonical by edition key; a third candidate is
+terminal before detail requests. Open Library request starts are spaced by the
+same fixed one-second pacer and are single-attempt. Disabled references produce
+one `disabled` observation without client construction, credential access, or
+egress. Unreferenced providers are absent.
 
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order
 with their distinct edition identity and opaque provider-local work identity.
+Work fallback retains only work title, complete authors, series and sequence,
+description, typed taxonomy, same-work first publication, and same-work cover
+evidence. It strips ISBN/ASIN, publisher/imprint, edition language,
+explicit/subtitle, and every other edition claim. Hardcover preserves its
+upstream category exactly: `Genre` maps to genre and `Mood` or
+`ContentWarning` maps to tag; unknown, conflicting, malformed, or overflowing
+taxonomy fails closed. Open Library subjects remain neutral evidence rather
+than genres or tags.
+
 Open Library additionally preserves a closed, bounded rich-evidence allowlist
 from only those required edition and work records: provider identities and
 revision provenance, selected identifiers and classifications, subjects,
@@ -166,7 +186,19 @@ enumeration, fuzzy fallback, ranking, voting, or provider fusion.
 The fixed request asks for one row beyond the retained cap so overflow remains
 observable. Malformed or oversized provider fields remain explicit field-local
 claims; structural or join failures make the observation `malformed`. No
-winner, score, merge, fallback search, retry, or cache exists.
+winner, score, merge, fuzzy search, retry, or cache exists.
+
+In addition to one ABS and one declared EPUB outcome, cover-enabled providers
+contribute at most eight admitted sources overall and four per provider. Exact
+edition, qualified-work/default, and related-edition designations retain safe
+provider/work/edition identities plus available ISBN, language, country or
+publication place, publisher, publication date, and format context. Each
+source records absence, timeout, rejection, unavailability, or a validated
+artifact with media type, dimensions, original/preview digests, and safe
+artifact references. Identical bytes share content-addressed storage while all
+source provenance remains in the report. Per-provider and aggregate truncation
+are explicit terminal rows. Raw cover URLs and private paths are never
+serialized.
 
 The report ID is derived from the complete canonical document. Exact fresh
 re-observation returns the same ID and bytes without accumulating another row.

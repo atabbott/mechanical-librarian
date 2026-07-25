@@ -5,7 +5,8 @@
 `MetadataReport` is one closed typed observation of one explicitly selected
 EPUB. It contains:
 
-- target connection, library, item, and exact current title;
+- target connection, library, item, and the exact ordered state of all 16
+  Audiobookshelf destinations, with one fingerprint binding them all;
 - selected file index, opaque file identity, EPUB format, and content digest;
 - stable source-attributed local field claims with bounded occurrence and, where
   applicable, rear-spine provenance;
@@ -13,7 +14,9 @@ EPUB. It contains:
 - independent provider observations with stable input references and zero or
   more provider-identity-ordered candidates, each with an opaque provider-local
   work identity distinct from its edition identity and an optional closed,
-  canonical, bounded tuple of provider-specific rich evidence; and
+  canonical, bounded tuple of provider-specific rich evidence;
+- bounded ABS, EPUB, and provider cover outcomes with safe typed provenance,
+  artifact facts, and explicit truncation; and
 - one derived ISBN relationship for every local and provider ISBN claim.
 
 The local field vocabulary is title/subtitle, creator/contributor and role,
@@ -67,6 +70,22 @@ upstream properties or raw payloads. No outcome is a decision or winner.
 Provider-local work identity may associate alternate ebook or print ISBNs with
 an accepted identifier, but it cannot corroborate another provider or make an
 unresolved claim accepted.
+
+`ProviderQueryKind` records whether no request, exact ISBN-family observation,
+or work fallback produced the provider observation. Work fallback is admitted
+only from an exact title and complete ordered target-author list and only when
+no usable ISBN exists. It retains work-scoped title, authors, series/sequence,
+description, typed taxonomy, first publication, and cover evidence; its
+application filter removes edition claims and fails closed for competing or
+translated/adapted/abridged works.
+
+Provider covers use exact-edition, related-edition, work, default, or
+truncation designation. Provenance contains only the configured provider,
+opaque work/edition identities, and an allowlist of safe ISBN, language,
+country/publication-place, publisher, date, and format context. The report
+admits at most four source outcomes per provider and eight provider outcomes
+overall. Content-addressed artifact reuse does not discard distinct source
+provenance.
 
 Claim references and the report ID are derived from canonical content. Exact
 replay therefore preserves IDs and bytes without an idempotency subsystem.

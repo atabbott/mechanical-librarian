@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Expand the immutable ebook evidence report to `metadata-report-v7`: preserve
+  all 16 Audiobookshelf metadata destinations and their exact loading/value
+  states in target currentness, use one exact title-plus-complete-author work
+  lookup only when no usable ISBN exists, retain typed Hardcover taxonomy and
+  same-work first-publication evidence, and keep fallback work evidence from
+  acquiring edition authority.
+- Expand the report-only cover gallery to at most eight provider sources and
+  four per provider. Each admitted source retains safe provider/work/edition
+  provenance and available edition context; content-addressed duplicate bytes
+  preserve every provenance row, and provider/gallery truncation is explicit.
 - Make public installed-artifact qualification exact-source: build with caches
   disabled from a clean bound revision, validate its archive and `RECORD`, seed
   a new environment from locked dependencies, install the explicit wheel

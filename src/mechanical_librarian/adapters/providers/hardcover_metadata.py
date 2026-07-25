@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import time
 import unicodedata
@@ -12,12 +11,24 @@ from typing import Any
 
 import httpx
 
+from mechanical_librarian.application.metadata_report import (
+    MetadataLookup,
+    ProviderCoverDescriptor,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverContext,
+    CoverContextField,
+    CoverDesignation,
+    CoverProvenance,
+    CoverSourceKind,
+    cover_source_id,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind, ClaimScope, FieldState, LocalClaim, MAX_CANDIDATES,
     MAX_CONTRIBUTIONS, MAX_DESCRIPTION_CHARACTERS, MAX_SCALAR_CHARACTERS,
     MAX_SERIES, MAX_TAGS, ProviderCandidate, ProviderClaim,
-    ProviderObservation, ProviderStatus, canonical_json,
-    comparison_links,
+    ProviderEvidence, ProviderEvidenceKind, ProviderObservation,
+    ProviderQueryKind, ProviderStatus, canonical_json, comparison_links,
 )
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
 
@@ -25,13 +36,21 @@ from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, vali
 HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
 HARDCOVER_SCHEMA_COMMIT = "2c03110845765c32af945ed550a942330c394a3e"
 MAX_RESPONSE_BYTES = 262_144
-_QUERY = (
+_ISBN_QUERY = (
     "query MetadataEvidenceByIsbn($isbns:[String!]!){editions(where:{_or:["
     f"{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
     "{id book_id isbn_10 isbn_13 asin title subtitle release_date image{url} publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
     "books:books(where:{editions:{_or:[{isbn_13:{_in:$isbns}},{isbn_10:{_in:$isbns}}]}},order_by:{id:asc},limit:6)"
-    "{id title description contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag{id tag}}}}}"
+    "{id title description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag{id tag tag_category{id category}}}}}}"
 )
+_WORK_QUERY = (
+    "query MetadataEvidenceByWork($title:String!,$authors:[String!]!){"
+    f"editions(where:{{book:{{title:{{_eq:$title}},contributions:{{author:{{name:{{_in:$authors}}}}}}}}}},order_by:{{id:asc}},limit:{MAX_CANDIDATES + 1})"
+    "{id book_id isbn_10 isbn_13 asin title subtitle release_date image{url} publisher{id name parent_id} language{id code2 code3 language} contributions(order_by:{id:asc},limit:17){id contribution author{id name}}} "
+    "books:books(where:{title:{_eq:$title},contributions:{author:{name:{_in:$authors}}}},order_by:{id:asc},limit:6)"
+    "{id title description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag{id tag tag_category{id category}}}}}}"
+)
+_QUERY = _ISBN_QUERY
 
 
 class HardcoverMetadataProvider:
@@ -44,51 +63,110 @@ class HardcoverMetadataProvider:
         self._maximum_bytes = min(maximum_bytes, MAX_RESPONSE_BYTES)
         self._timeout_seconds = float(timeout_seconds)
         self._called = False
-        self.cover_descriptors: tuple[tuple[str, str | None], ...] = ()
+        self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
-    def observe(self, local_claims: tuple[LocalClaim, ...], *, deadline: float | None = None) -> ProviderObservation:
+    def observe(self, lookup: MetadataLookup, *, deadline: float | None = None) -> ProviderObservation:
+        if type(lookup) is not MetadataLookup:
+            raise ValueError("provider lookup is invalid")
         if self._called:
-            return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE)
+            return ProviderObservation(
+                self._name,
+                ProviderStatus.UNAVAILABLE,
+                query_kind=lookup.kind,
+            )
         self._called = True
+        local_claims = lookup.local_claims
         usable = tuple(sorted((claim for claim in local_claims if claim.kind is ClaimKind.ISBN and claim.canonical is not None and claim.applicability in {"ebook", "unknown"} and claim.basis == "opening_matter" and claim.rear_provenance is None), key=lambda claim: (claim.canonical or "", claim.reference)))
-        if not usable:
+        references: tuple[str, ...] = ()
+        if lookup.kind is ProviderQueryKind.ISBN:
+            if not usable:
+                self._client.close()
+                return ProviderObservation(
+                    self._name,
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    query_kind=lookup.kind,
+                )
+            references = tuple(sorted(claim.reference for claim in usable))
+            body = {
+                "operationName": "MetadataEvidenceByIsbn",
+                "query": _ISBN_QUERY,
+                "variables": {
+                    "isbns": sorted(
+                        {
+                            claim.canonical
+                            for claim in usable
+                            if claim.canonical is not None
+                        }
+                    )
+                },
+            }
+        elif lookup.kind is ProviderQueryKind.WORK:
+            body = {
+                "operationName": "MetadataEvidenceByWork",
+                "query": _WORK_QUERY,
+                "variables": {
+                    "authors": list(lookup.authors),
+                    "title": lookup.title,
+                },
+            }
+        else:
             self._client.close()
-            return ProviderObservation(self._name, ProviderStatus.INSUFFICIENT_INPUT)
-        references = tuple(sorted(claim.reference for claim in usable))
-        body = {"operationName": "MetadataEvidenceByIsbn", "query": _QUERY, "variables": {"isbns": sorted({claim.canonical for claim in usable if claim.canonical is not None})}}
+            return ProviderObservation(
+                self._name,
+                ProviderStatus.INSUFFICIENT_INPUT,
+                query_kind=lookup.kind,
+            )
+        def result(
+            status: ProviderStatus,
+            candidates: tuple[ProviderCandidate, ...] = (),
+        ) -> ProviderObservation:
+            return ProviderObservation(
+                self._name,
+                status,
+                references,
+                candidates,
+                lookup.kind,
+            )
         try:
             remaining = self._timeout_seconds if deadline is None else min(self._timeout_seconds, deadline - time.monotonic())
             if remaining <= 0:
-                return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
+                return result(ProviderStatus.UNAVAILABLE)
             with self._client, self._client.stream("POST", HARDCOVER_URL, content=canonical_json(body).encode(), headers={"Accept": "application/json", "Content-Type": "application/json", "Accept-Encoding": "identity"}, timeout=remaining) as response:
                 if response.status_code == 401:
-                    return ProviderObservation(self._name, ProviderStatus.AUTHENTICATION, references)
+                    return result(ProviderStatus.AUTHENTICATION)
                 if response.status_code == 403:
-                    return ProviderObservation(self._name, ProviderStatus.AUTHORIZATION, references)
+                    return result(ProviderStatus.AUTHORIZATION)
                 if response.status_code == 429:
-                    return ProviderObservation(self._name, ProviderStatus.RATE_LIMITED, references)
+                    return result(ProviderStatus.RATE_LIMITED)
                 if response.status_code != 200:
-                    return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
+                    return result(ProviderStatus.UNAVAILABLE)
                 if response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
-                    return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
+                    return result(ProviderStatus.MALFORMED)
                 if response.headers.get("content-encoding", "identity").strip().lower() not in {"", "identity"}:
-                    return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
+                    return result(ProviderStatus.MALFORMED)
                 payload = _body(response, self._maximum_bytes, deadline=deadline)
         except _ResponseOversized:
-            return ProviderObservation(self._name, ProviderStatus.OVERSIZED, references)
+            return result(ProviderStatus.OVERSIZED)
         except (httpx.HTTPError, OSError, ValueError):
-            return ProviderObservation(self._name, ProviderStatus.UNAVAILABLE, references)
+            return result(ProviderStatus.UNAVAILABLE)
         try:
             candidates = _parse_candidates(payload, self._name, local_claims)
         except _CandidateLimit:
-            return ProviderObservation(self._name, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, references)
+            return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
-            return ProviderObservation(self._name, ProviderStatus.MALFORMED, references)
+            return result(ProviderStatus.MALFORMED)
         try:
-            self.cover_descriptors = _parse_cover_descriptors(payload)
+            self.cover_descriptors = _parse_cover_descriptors(
+                payload,
+                self._name,
+                lookup.kind,
+            )
         except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
             self.cover_descriptors = ()
-        return ProviderObservation(self._name, ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH, references, candidates)
+        return result(
+            ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH,
+            candidates,
+        )
 
 
 def _body(response: httpx.Response, maximum: int, *, deadline: float | None = None) -> bytes:
@@ -113,7 +191,20 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
     rows, books = data["editions"], data["books"]
     if type(rows) is not list or type(books) is not list or len(rows) > MAX_CANDIDATES:
         raise _CandidateLimit if type(rows) is list and len(rows) > MAX_CANDIDATES else ValueError("provider rows invalid")
-    indexed = {_identifier(_closed(book, {"id", "title", "description", "contributions", "book_series", "taggings"})["id"]): _closed(book, {"id", "title", "description", "contributions", "book_series", "taggings"}) for book in books}
+    work_keys = {
+        "id",
+        "title",
+        "description",
+        "release_date",
+        "image",
+        "contributions",
+        "book_series",
+        "taggings",
+    }
+    indexed = {
+        _identifier(_closed(book, work_keys)["id"]): _closed(book, work_keys)
+        for book in books
+    }
     if len(indexed) != len(books):
         raise ValueError("provider work invalid")
     candidates: list[ProviderCandidate] = []
@@ -130,18 +221,36 @@ def _parse_candidates(payload: bytes, provider: str, local_claims: tuple[LocalCl
         work_identity = f"hardcover-work-{book_id:010d}"
         claims = _edition_claims(provider, identity, row, local_claims)
         claims.extend(_work_claims(provider, identity, indexed[book_id], local_claims, len(claims)))
-        candidates.append(ProviderCandidate(identity, work_identity, tuple(claims)))
+        candidates.append(
+            ProviderCandidate(
+                identity,
+                work_identity,
+                tuple(claims),
+                _work_evidence(indexed[book_id]),
+            )
+        )
     if used != set(indexed) or len({candidate.identity for candidate in candidates}) != len(candidates):
         raise ValueError("provider join invalid")
     return tuple(sorted(candidates, key=lambda candidate: candidate.identity))
 
 
-def _parse_cover_descriptors(payload: bytes) -> tuple[tuple[str, str | None], ...]:
+def _parse_cover_descriptors(
+    payload: bytes,
+    provider: str,
+    query_kind: ProviderQueryKind,
+) -> tuple[ProviderCoverDescriptor, ...]:
     source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
-    rows = _closed(_closed(source, {"data"})["data"], {"editions", "books"})["editions"]
-    if type(rows) is not list or len(rows) > MAX_CANDIDATES:
+    data = _closed(_closed(source, {"data"})["data"], {"editions", "books"})
+    rows = data["editions"]
+    books = data["books"]
+    if (
+        type(rows) is not list
+        or len(rows) > MAX_CANDIDATES
+        or type(books) is not list
+        or len(books) > MAX_CANDIDATES + 1
+    ):
         raise ValueError("provider rows invalid")
-    descriptors: list[tuple[str, str | None]] = []
+    descriptors: list[ProviderCoverDescriptor] = []
     for row_value in rows:
         if type(row_value) is dict and "image" not in row_value:
             row_value = {**row_value, "image": None}
@@ -150,9 +259,113 @@ def _parse_cover_descriptors(payload: bytes) -> tuple[tuple[str, str | None], ..
         if image is not None and (type(image["url"]) is not str or not image["url"] or len(image["url"]) > 2048):
             raise ValueError("provider image invalid")
         url = None if image is None else image["url"]
-        source_identity = f"{row['id']}:{url if url is not None else 'absent'}"
-        descriptors.append(("hardcover_" + hashlib.sha256(source_identity.encode()).hexdigest(), url))
+        edition_id = _identifier(row["id"])
+        book_id = _identifier(row["book_id"])
+        work_identity = f"hardcover-work-{book_id:010d}"
+        edition_identity = f"hardcover-edition-{edition_id:010d}"
+        descriptors.append(
+            ProviderCoverDescriptor(
+                provider,
+                CoverSourceKind.HARDCOVER,
+                cover_source_id(
+                    CoverSourceKind.HARDCOVER,
+                    f"edition:{edition_id}",
+                ),
+                url,
+                CoverProvenance(
+                    provider,
+                    (
+                        CoverDesignation.EXACT_EDITION
+                        if query_kind is ProviderQueryKind.ISBN
+                        else CoverDesignation.RELATED_EDITION
+                    ),
+                    work_identity,
+                    edition_identity,
+                    _edition_cover_context(row),
+                ),
+            )
+        )
+    work_keys = {
+        "id",
+        "title",
+        "description",
+        "release_date",
+        "image",
+        "contributions",
+        "book_series",
+        "taggings",
+    }
+    for raw_book in books:
+        book = _closed(raw_book, work_keys)
+        book_id = _identifier(book["id"])
+        image = _closed_or_none(book["image"], {"url"})
+        if image is not None and (
+            type(image["url"]) is not str
+            or not image["url"]
+            or len(image["url"]) > 2048
+        ):
+            raise ValueError("provider image invalid")
+        descriptors.append(
+            ProviderCoverDescriptor(
+                provider,
+                CoverSourceKind.HARDCOVER,
+                cover_source_id(
+                    CoverSourceKind.HARDCOVER,
+                    f"work:{book_id}:default",
+                ),
+                None if image is None else image["url"],
+                CoverProvenance(
+                    provider,
+                    CoverDesignation.DEFAULT,
+                    f"hardcover-work-{book_id:010d}",
+                ),
+            )
+        )
     return tuple(descriptors)
+
+
+def _edition_cover_context(row: dict[str, Any]) -> tuple[CoverContext, ...]:
+    values: set[CoverContext] = set()
+    for key in ("isbn_10", "isbn_13"):
+        if row[key] is not None:
+            values.add(
+                CoverContext(
+                    CoverContextField.ISBN,
+                    _text(row[key], MAX_SCALAR_CHARACTERS),
+                )
+            )
+    language = _closed_or_none(
+        row["language"], {"id", "code2", "code3", "language"}
+    )
+    if language is not None and (language["code2"] or language["code3"]):
+        values.add(
+            CoverContext(
+                CoverContextField.LANGUAGE,
+                _text(
+                    language["code2"] or language["code3"],
+                    MAX_SCALAR_CHARACTERS,
+                ),
+            )
+        )
+    publisher = _closed_or_none(
+        row["publisher"], {"id", "name", "parent_id"}
+    )
+    if publisher is not None and publisher["name"] is not None:
+        values.add(
+            CoverContext(
+                CoverContextField.PUBLISHER,
+                _text(publisher["name"], MAX_SCALAR_CHARACTERS),
+            )
+        )
+    if row["release_date"] is not None:
+        value = _text(row["release_date"], MAX_SCALAR_CHARACTERS)
+        date.fromisoformat(value)
+        values.add(
+            CoverContext(CoverContextField.PUBLICATION_DATE, value)
+        )
+    return tuple(
+        sorted(values, key=lambda value: (value.field.value, value.value))
+    )
 
 
 def _edition_claims(provider: str, identity: str, row: dict[str, Any], local: tuple[LocalClaim, ...]) -> list[ProviderClaim]:
@@ -183,17 +396,153 @@ def _work_claims(provider: str, identity: str, book: dict[str, Any], local: tupl
         series = _closed_or_none(item["series"], {"id", "name"})
         claims.append(_claim(provider, identity, ClaimKind.SERIES, None if series is None else series["name"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
         claims.append(_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, item["position"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
-    taggings, taggings_overflow = _bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"})
+    taggings, taggings_overflow = _bounded_list(
+        book["taggings"], MAX_TAGS, {"id", "tag"}
+    )
+    categorized: list[tuple[ClaimKind, str]] = []
+    seen: dict[str, ClaimKind] = {}
     for item in taggings:
-        _closed_or_none(item["tag"], {"id", "tag"})
+        tag = _closed_or_none(item["tag"], {"id", "tag", "tag_category"})
+        if tag is None:
+            raise ValueError("provider taxonomy is malformed")
+        _identifier(tag["id"])
+        category = _closed_or_none(
+            tag["tag_category"], {"id", "category"}
+        )
+        if category is None:
+            raise ValueError("provider taxonomy is malformed")
+        _identifier(category["id"])
+        name = _text(tag["tag"], MAX_SCALAR_CHARACTERS)
+        category_name = _text(category["category"], MAX_SCALAR_CHARACTERS)
+        if category_name == "Genre":
+            kind = ClaimKind.GENRE
+        elif category_name in {"Mood", "ContentWarning"}:
+            kind = ClaimKind.TAG
+        else:
+            raise ValueError("provider taxonomy category is unsupported")
+        taxonomy_identity = " ".join(
+            unicodedata.normalize("NFC", name).split()
+        ).casefold()
+        previous = seen.get(taxonomy_identity)
+        if previous is not None and previous is not kind:
+            raise ValueError("provider taxonomy conflicts")
+        if previous is None:
+            seen[taxonomy_identity] = kind
+            categorized.append((kind, name))
     if taggings_overflow:
-        claims.append(_state_claim(provider, identity, ClaimKind.TAG, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset))
-        taggings = []
-    for item in taggings:
-        tag = _closed_or_none(item["tag"], {"id", "tag"})
-        claims.append(_claim(provider, identity, ClaimKind.TAG, None if tag is None else tag["tag"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset))
-    claims.append(_state_claim(provider, identity, ClaimKind.GENRE, FieldState.UNSUPPORTED, ClaimScope.WORK, local, len(claims) + offset))
+        claims.extend(
+            _state_claim(
+                provider,
+                identity,
+                kind,
+                FieldState.OVERSIZED,
+                ClaimScope.WORK,
+                local,
+                len(claims) + offset + index,
+            )
+            for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
+        )
+        return claims
+    for kind, name in categorized:
+        claims.append(
+            _claim(
+                provider,
+                identity,
+                kind,
+                name,
+                ClaimScope.WORK,
+                "not_applicable",
+                None,
+                local,
+                len(claims) + offset,
+            )
+        )
+    present = {kind for kind, _ in categorized}
+    for kind in (ClaimKind.GENRE, ClaimKind.TAG):
+        if kind not in present:
+            claims.append(
+                _state_claim(
+                    provider,
+                    identity,
+                    kind,
+                    FieldState.ABSENT,
+                    ClaimScope.WORK,
+                    local,
+                    len(claims) + offset,
+                )
+            )
     return claims
+
+
+def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
+    evidence: set[ProviderEvidence] = set()
+    release_date = book["release_date"]
+    if release_date is not None:
+        value = _text(release_date, MAX_SCALAR_CHARACTERS)
+        date.fromisoformat(value)
+        evidence.add(
+            ProviderEvidence(
+                ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                value,
+                ClaimScope.WORK,
+            )
+        )
+    contributions, overflow = _bounded_list(
+        book["contributions"],
+        MAX_CONTRIBUTIONS,
+        {"id", "contribution", "author"},
+    )
+    if overflow:
+        return tuple(
+            sorted(
+                evidence,
+                key=lambda value: (
+                    value.scope.value,
+                    value.kind.value,
+                    value.value,
+                    value.role or "",
+                ),
+            )
+        )
+    for contribution in contributions:
+        author = _closed_or_none(contribution["author"], {"id", "name"})
+        if author is None:
+            raise ValueError("provider author evidence is malformed")
+        author_id = _identifier(author["id"])
+        try:
+            role = validate_role_projection(
+                contribution["contribution"]
+            ).casefold()
+        except EvidenceValueError:
+            raise ValueError("provider contribution role invalid") from None
+        if role == "author":
+            evidence.add(
+                ProviderEvidence(
+                    ProviderEvidenceKind.AUTHOR_IDENTITY,
+                    f"hardcover-author-{author_id:010d}",
+                    ClaimScope.WORK,
+                )
+            )
+        else:
+            evidence.add(
+                ProviderEvidence(
+                    ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+                    f"hardcover-author-{author_id:010d}",
+                    ClaimScope.WORK,
+                    role,
+                )
+            )
+    return tuple(
+        sorted(
+            evidence,
+            key=lambda value: (
+                value.scope.value,
+                value.kind.value,
+                value.value,
+                value.role or "",
+            ),
+        )
+    )
 
 
 def _contributions(provider: str, identity: str, value: object, scope: ClaimScope, local: tuple[LocalClaim, ...], offset: int) -> list[ProviderClaim]:

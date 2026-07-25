@@ -11,10 +11,16 @@ import re
 from dataclasses import dataclass
 from enum import StrEnum
 
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_projection_text,
+)
+
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _ARTIFACT_ID = re.compile(r"^cover_[0-9a-f]{64}$")
 _SOURCE_ID = re.compile(r"^(?:abs|epub|hardcover|open_library)_[0-9a-f]{64}$")
+_IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 PREVIEW_VARIANT = "preview-320x480-rgba-png-v1"
 
 
@@ -41,6 +47,104 @@ class CoverSourceState(StrEnum):
     UNAVAILABLE = "unavailable"
     SOURCE_CHANGED = "source_changed"
     TIMEOUT = "timeout"
+    TRUNCATED = "truncated"
+
+
+class CoverDesignation(StrEnum):
+    EXACT_EDITION = "exact_edition"
+    RELATED_EDITION = "related_edition"
+    WORK = "work"
+    DEFAULT = "default"
+    TRUNCATION = "truncation"
+
+
+class CoverContextField(StrEnum):
+    ISBN = "isbn"
+    LANGUAGE = "language"
+    COUNTRY = "country"
+    PUBLICATION_PLACE = "publication_place"
+    PUBLISHER = "publisher"
+    PUBLICATION_DATE = "publication_date"
+    FORMAT = "format"
+
+
+class CoverTruncationReason(StrEnum):
+    PROVIDER_LIMIT = "provider_limit"
+    GALLERY_LIMIT = "gallery_limit"
+
+
+@dataclass(frozen=True, slots=True)
+class CoverContext:
+    field: CoverContextField
+    value: str
+
+    def __post_init__(self) -> None:
+        if type(self.field) is not CoverContextField:
+            raise CoverEvidenceError("cover context is invalid")
+        try:
+            validate_projection_text(self.value, "cover context", 280)
+        except EvidenceValueError as error:
+            raise CoverEvidenceError("cover context is invalid") from error
+
+    def to_data(self) -> dict[str, str]:
+        return {"field": self.field.value, "value": self.value}
+
+
+@dataclass(frozen=True, slots=True)
+class CoverProvenance:
+    provider: str
+    designation: CoverDesignation
+    work_identity: str | None = None
+    edition_identity: str | None = None
+    context: tuple[CoverContext, ...] = ()
+    truncation_reason: CoverTruncationReason | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            _IDENTITY.fullmatch(self.provider) is None
+            or type(self.designation) is not CoverDesignation
+            or type(self.context) is not tuple
+            or len(self.context) > 16
+            or any(type(value) is not CoverContext for value in self.context)
+            or self.context
+            != tuple(sorted(set(self.context), key=lambda value: (value.field.value, value.value)))
+        ):
+            raise CoverEvidenceError("cover provenance is invalid")
+        for identity in (self.work_identity, self.edition_identity):
+            if identity is not None and _IDENTITY.fullmatch(identity) is None:
+                raise CoverEvidenceError("cover provenance is invalid")
+        if self.designation is CoverDesignation.TRUNCATION:
+            if (
+                self.work_identity is not None
+                or self.edition_identity is not None
+                or self.context
+                or type(self.truncation_reason) is not CoverTruncationReason
+            ):
+                raise CoverEvidenceError("cover truncation provenance is invalid")
+        elif (
+            self.work_identity is None
+            or (
+                self.designation
+                in {CoverDesignation.EXACT_EDITION, CoverDesignation.RELATED_EDITION}
+                and self.edition_identity is None
+            )
+            or self.truncation_reason is not None
+        ):
+            raise CoverEvidenceError("cover provenance is invalid")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "context": [value.to_data() for value in self.context],
+            "designation": self.designation.value,
+            "edition_identity": self.edition_identity,
+            "provider": self.provider,
+            "truncation_reason": (
+                None
+                if self.truncation_reason is None
+                else self.truncation_reason.value
+            ),
+            "work_identity": self.work_identity,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +213,7 @@ class CoverSource:
     state: CoverSourceState
     artifact: CoverArtifact | None = None
     timeout_scope: str | None = None
+    provenance: CoverProvenance | None = None
 
     def __post_init__(self) -> None:
         if _SOURCE_ID.fullmatch(self.source_id) is None or type(self.kind) is not CoverSourceKind or type(self.state) is not CoverSourceState:
@@ -121,6 +226,16 @@ class CoverSource:
             raise CoverEvidenceError("cover timeout scope is invalid")
         if (self.state is CoverSourceState.TIMEOUT) != (self.timeout_scope is not None):
             raise CoverEvidenceError("cover timeout scope is inconsistent")
+        if (self.state is CoverSourceState.TRUNCATED) != (
+            self.provenance is not None
+            and self.provenance.designation is CoverDesignation.TRUNCATION
+        ):
+            raise CoverEvidenceError("cover truncation is inconsistent")
+        if self.kind in {CoverSourceKind.ABS, CoverSourceKind.EPUB}:
+            if self.provenance is not None:
+                raise CoverEvidenceError("local cover provenance is invalid")
+        elif self.provenance is not None and self.provenance.provider == "":
+            raise CoverEvidenceError("provider cover provenance is invalid")
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -129,6 +244,9 @@ class CoverSource:
             "source_id": self.source_id,
             "state": self.state.value,
             "timeout_scope": self.timeout_scope,
+            "provenance": (
+                None if self.provenance is None else self.provenance.to_data()
+            ),
         }
 
 
@@ -142,12 +260,61 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
     """Validate the closed set of published terminal source outcomes."""
     if type(sources) is not tuple or any(type(source) is not CoverSource for source in sources):
         raise CoverEvidenceError("cover sources are invalid")
-    if len(sources) > 7 or len({source.source_id for source in sources}) != len(sources):
+    # Two local rows, eight admitted provider rows, and at most two explicit
+    # truncation rows for each of the configuration schema's 32 providers.
+    if len(sources) > 74 or len({source.source_id for source in sources}) != len(sources):
         raise CoverEvidenceError("cover sources are invalid")
+    local = [
+        source
+        for source in sources
+        if source.kind in {CoverSourceKind.ABS, CoverSourceKind.EPUB}
+    ]
+    provider = [
+        source
+        for source in sources
+        if source.kind in {CoverSourceKind.HARDCOVER, CoverSourceKind.OPEN_LIBRARY}
+    ]
+    if (
+        len(local) > 2
+        or any(source.provenance is None for source in provider)
+        or len(
+            {
+                source.artifact.original_digest
+                for source in provider
+                if source.artifact is not None
+            }
+        )
+        > 8
+    ):
+        raise CoverEvidenceError("cover sources are invalid")
+    providers = {
+        source.provenance.provider
+        for source in provider
+        if source.provenance is not None
+    }
+    for name in providers:
+        admitted = [
+            source
+            for source in provider
+            if source.provenance is not None
+            and source.provenance.provider == name
+            and source.state is not CoverSourceState.TRUNCATED
+        ]
+        truncations = [
+            source
+            for source in provider
+            if source.provenance is not None
+            and source.provenance.provider == name
+            and source.state is CoverSourceState.TRUNCATED
+        ]
+        if len(admitted) > 4 or len(truncations) > 2:
+            raise CoverEvidenceError("cover sources are invalid")
     return True
 
 
 __all__ = [
-    "CoverArtifact", "CoverEvidenceError", "CoverSource", "CoverSourceKind",
-    "CoverSourceState", "PREVIEW_VARIANT", "cover_source_id", "publication_ready",
+    "CoverArtifact", "CoverContext", "CoverContextField", "CoverDesignation",
+    "CoverEvidenceError", "CoverProvenance", "CoverSource", "CoverSourceKind",
+    "CoverSourceState", "CoverTruncationReason", "PREVIEW_VARIANT",
+    "cover_source_id", "publication_ready",
 ]

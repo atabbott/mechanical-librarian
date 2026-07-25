@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import posixpath
+import re
 import time
 from collections.abc import Callable
+from datetime import date
 from typing import Any
 from urllib.parse import quote
 
@@ -22,9 +24,28 @@ from mechanical_librarian.application.metadata_report import (
     TargetSnapshot,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_CONTRIBUTIONS,
+    MAX_DESCRIPTION_CHARACTERS,
+    MAX_SCALAR_CHARACTERS,
+    MAX_SERIES,
+    MAX_TAGS,
+    ReportValueError,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
+    TargetSeries,
     canonical_json,
+    isbn_family,
     validate_observed_title,
 )
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_projection_text,
+)
+
+
+_ASIN = re.compile(r"^[A-Za-z0-9]{10}$")
+_MISSING = object()
 
 
 class AudiobookshelfItemReader:
@@ -134,9 +155,6 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
     ):
         raise MetadataReportError("target response is invalid")
     media = _mapping(root.get("media"))
-    metadata = _mapping(media.get("metadata"))
-    title_value = metadata.get("title")
-    title = validate_observed_title(title_value)
     files_value = media.get("ebookFiles")
     single = media.get("ebookFile")
     if files_value is not None and single is not None:
@@ -157,17 +175,213 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
     cover_path = root.get("coverPath")
     cover = None
     if cover_path is not None:
-        if type(cover_path) is not str or not cover_path.startswith("/") or len(cover_path) > 1024:
-            raise MetadataReportError("target response is invalid")
-        # The service's metadata-provided route is evidence of presence only.
-        # Acquisition is pinned to its one documented raw endpoint so a hostile
-        # detail response cannot redirect this credential-free request.
-        cover = TargetCover(
-            hashlib.sha256(cover_path.encode()).hexdigest(),
-            f"/api/items/{quote(item, safe='')}/cover?raw=1",
-            item,
-        )
-    return TargetSnapshot(media_kind, title, files, cover)
+        if (
+            type(cover_path) is str
+            and cover_path.startswith("/")
+            and len(cover_path) <= 1024
+        ):
+            # The service's metadata-provided route is evidence of presence only.
+            # Acquisition is pinned to its one documented raw endpoint so a hostile
+            # detail response cannot redirect this credential-free request.
+            cover = TargetCover(
+                hashlib.sha256(cover_path.encode()).hexdigest(),
+                f"/api/items/{quote(item, safe='')}/cover?raw=1",
+                item,
+            )
+    fields = _target_fields(root, media, cover)
+    title_field = fields[0]
+    title = (
+        title_field.value
+        if title_field.state is TargetFieldState.VALUE
+        and type(title_field.value) is str
+        else None
+    )
+    return TargetSnapshot(media_kind, title, files, cover, fields)
+
+
+def _target_fields(
+    root: dict[str, Any],
+    media: dict[str, Any],
+    cover: TargetCover | None,
+) -> tuple[TargetField, ...]:
+    source = media.get("metadata", _MISSING)
+    if source is _MISSING:
+        fields = [
+            TargetField(destination, TargetFieldState.UNLOADED)
+            for destination in TargetDestination
+        ]
+    elif type(source) is not dict:
+        fields = [
+            TargetField(destination, TargetFieldState.MALFORMED)
+            for destination in TargetDestination
+        ]
+    else:
+        fields = [
+            _target_field(source, destination)
+            for destination in TargetDestination
+        ]
+    fields[-1] = _cover_field(root, cover)
+    return tuple(fields)
+
+
+def _target_field(
+    metadata: dict[str, Any], destination: TargetDestination
+) -> TargetField:
+    raw = metadata.get(destination.value, _MISSING)
+    if raw is _MISSING:
+        return TargetField(destination, TargetFieldState.MISSING)
+    if raw is None:
+        return TargetField(destination, TargetFieldState.NULL)
+    if raw == "" or raw == []:
+        return TargetField(destination, TargetFieldState.EMPTY)
+    try:
+        if destination is TargetDestination.TITLE:
+            if type(raw) is str and len(raw) > MAX_SCALAR_CHARACTERS:
+                return TargetField(destination, TargetFieldState.OVERSIZED)
+            try:
+                title = validate_observed_title(raw)
+            except ReportValueError as error:
+                if type(raw) is str:
+                    raise MetadataReportError("target response is invalid") from error
+                raise ValueError("target title is malformed") from None
+            except (TypeError, ValueError):
+                raise ValueError("target title is malformed") from None
+            return TargetField(
+                destination,
+                TargetFieldState.VALUE,
+                title,
+            )
+        if destination in {
+            TargetDestination.SUBTITLE,
+            TargetDestination.PUBLISHER,
+            TargetDestination.ISBN,
+            TargetDestination.ASIN,
+            TargetDestination.LANGUAGE,
+        }:
+            value = validate_projection_text(
+                raw, "target scalar", MAX_SCALAR_CHARACTERS
+            )
+            if (
+                destination is TargetDestination.ISBN
+                and isbn_family(value) is None
+            ) or (
+                destination is TargetDestination.ASIN
+                and _ASIN.fullmatch(value) is None
+            ):
+                raise ValueError("target identifier is malformed")
+            return TargetField(destination, TargetFieldState.VALUE, value)
+        if destination is TargetDestination.DESCRIPTION:
+            return TargetField(
+                destination,
+                TargetFieldState.VALUE,
+                validate_projection_text(
+                    raw, "target description", MAX_DESCRIPTION_CHARACTERS
+                ),
+            )
+        if destination in {
+            TargetDestination.AUTHORS,
+            TargetDestination.NARRATORS,
+            TargetDestination.GENRES,
+            TargetDestination.TAGS,
+        }:
+            maximum = (
+                MAX_CONTRIBUTIONS
+                if destination
+                in {TargetDestination.AUTHORS, TargetDestination.NARRATORS}
+                else MAX_TAGS
+            )
+            if type(raw) is not list:
+                raise ValueError("target list is malformed")
+            if len(raw) > maximum:
+                return TargetField(destination, TargetFieldState.OVERSIZED)
+            values = tuple(
+                validate_projection_text(
+                    item.get("name") if type(item) is dict else item,
+                    "target list value",
+                    MAX_SCALAR_CHARACTERS,
+                )
+                for item in raw
+            )
+            return TargetField(destination, TargetFieldState.VALUE, values)
+        if destination is TargetDestination.SERIES:
+            if type(raw) is not list:
+                raise ValueError("target series is malformed")
+            if len(raw) > MAX_SERIES:
+                return TargetField(destination, TargetFieldState.OVERSIZED)
+            values: list[TargetSeries] = []
+            for item in raw:
+                if type(item) is not dict:
+                    raise ValueError("target series is malformed")
+                name = validate_projection_text(
+                    item.get("name"),
+                    "target series name",
+                    MAX_SCALAR_CHARACTERS,
+                )
+                sequence_source = item.get("sequence")
+                sequence = None
+                if sequence_source is not None:
+                    if type(sequence_source) is int and type(sequence_source) is not bool:
+                        sequence_source = str(sequence_source)
+                    sequence = validate_projection_text(
+                        sequence_source,
+                        "target series sequence",
+                        MAX_SCALAR_CHARACTERS,
+                    )
+                values.append(TargetSeries(name, sequence))
+            return TargetField(
+                destination, TargetFieldState.VALUE, tuple(values)
+            )
+        if destination is TargetDestination.PUBLISHED_YEAR:
+            value = raw
+            if type(value) is int and type(value) is not bool:
+                value = str(value)
+            if (
+                type(value) is not str
+                or len(value) != 4
+                or not value.isascii()
+                or not value.isdigit()
+            ):
+                raise ValueError("target year is malformed")
+            return TargetField(destination, TargetFieldState.VALUE, value)
+        if destination is TargetDestination.PUBLISHED_DATE:
+            value = validate_projection_text(
+                raw, "target publication date", MAX_SCALAR_CHARACTERS
+            )
+            date.fromisoformat(value)
+            return TargetField(destination, TargetFieldState.VALUE, value)
+        if destination is TargetDestination.EXPLICIT:
+            if type(raw) is not bool:
+                raise ValueError("target explicit value is malformed")
+            return TargetField(destination, TargetFieldState.VALUE, raw)
+    except EvidenceValueError as error:
+        if destination is TargetDestination.TITLE and type(raw) is str:
+            raise MetadataReportError("target response is invalid") from error
+        return TargetField(destination, TargetFieldState.MALFORMED)
+    except (TypeError, ValueError):
+        if type(raw) is str and len(raw) > (
+            MAX_DESCRIPTION_CHARACTERS
+            if destination is TargetDestination.DESCRIPTION
+            else MAX_SCALAR_CHARACTERS
+        ):
+            return TargetField(destination, TargetFieldState.OVERSIZED)
+        return TargetField(destination, TargetFieldState.MALFORMED)
+    raise MetadataReportError("target metadata destination is unsupported")
+
+
+def _cover_field(
+    root: dict[str, Any], cover: TargetCover | None
+) -> TargetField:
+    destination = TargetDestination.COVER
+    if "coverPath" not in root:
+        return TargetField(destination, TargetFieldState.MISSING)
+    raw = root["coverPath"]
+    if raw is None:
+        return TargetField(destination, TargetFieldState.NULL)
+    if raw == "":
+        return TargetField(destination, TargetFieldState.EMPTY)
+    if cover is None:
+        return TargetField(destination, TargetFieldState.MALFORMED)
+    return TargetField(destination, TargetFieldState.VALUE, cover.identity)
 
 
 def _file(source: object, service_path: str) -> TargetFile:

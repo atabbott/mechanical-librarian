@@ -485,6 +485,25 @@ branch, commit, or pull request.
 - the runtime remains report-only and creates no provider fusion, proposal,
   review, decision, mutation, generic provider framework, tag, or release.
 
+## Delivery checkpoint 0.9.0: explainable ebook proposals
+
+The [0.9 working plan](0-9-working-plan.md) promotes F09o #70 with #344 as its
+sole pre-activation sub-issue. #344 completes `metadata-report-v7`: all 16 ABS
+destinations, exact ISBN versus complete-author work lookup, fail-closed work
+qualification, typed taxonomy/first-publication evidence, and the bounded
+provenance-bearing provider cover gallery. #70 then consumes that exact report
+to activate one deterministic immutable ProposalSet covering all 16
+destinations.
+
+| Outcome | Issue | Demonstrable result | Planning state |
+| --- | --- | --- | --- |
+| F09o evidence input | #344 | One selected ABS EPUB produces or reopens the complete immutable evidence report required by explainable proposals, without proposal or write authority. | Pre-activation increment delivered before #70. |
+| F09o explainable proposals | #70 | One exact completed evidence report deterministically produces one immutable result for every destination, without review or write authority. | Activation increment follows #344. |
+
+The checkpoint excludes new providers or discovery, fuzzy search, configurable
+policy, AI, review/admission/decision/apply/write, batch/background/retry/cache,
+UI/API, migration, compatibility, tag, release, and deployment.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit
@@ -497,7 +516,6 @@ recreated.
 
 | Outcome | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
-| Explainable field proposals and policy | #70 | Current provenance-bearing evidence produces deterministic field-level proposals and closed explainable policy dispositions without review or write authority. | Live tracking remains a planned but unpromoted 1.0 outcome. The proposed 0.8 working plan leaves this issue unchanged while the second-provider seam is proved first. |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Retained planned designation. |
 | F10b Production review admission | #240 | One qualifying current proposal becomes a durable undecided production review case with exact freshness, evidence, replay, and supersession proof. | Retained planned designation. |
 | F11 Isolated AI shadow recommendation | #147 | An isolated reviewer returns one bounded closed-schema recommendation per selected proposal without credentials, provider payloads, or apply authority. | Retained planned designation. |
@@ -509,10 +527,10 @@ recreated.
 
 The retained `F` IDs are planned designations on the assigned outcome issues,
 not proof of `Ready` status or authority to begin. Each tracker still must meet
-the normal readiness and selection rules. Issue #70 remains planned but
-unpromoted in live 1.0.0 tracking, with `Unassigned backlog` and no `F`
-designation. The selected 0.8 plan leaves #70 unchanged. Open Library #210 is
-the completed F09l tracker in milestone 0.8.0.
+the normal readiness and selection rules. F09o #70 moved into the 0.9.0
+checkpoint and supplies the proposal prerequisite used by later review
+outcomes. Open Library #210 remains the completed F09l tracker in milestone
+0.8.0.
 
 The outcomes are not one serial chain. Readiness records the real dependencies:
 #70 supplies explainable proposals; F10b admits eligible proposals; F16a records

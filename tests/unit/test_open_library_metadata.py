@@ -10,12 +10,17 @@ from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
     OpenLibraryPacer,
 )
+from mechanical_librarian.application.metadata_report import (
+    MetadataLookup,
+    qualify_provider_observation,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     Comparison,
     LocalClaim,
     ProviderEvidenceKind,
+    ProviderQueryKind,
     ProviderStatus,
 )
 from mechanical_librarian.domain.cover_evidence import (
@@ -41,6 +46,19 @@ def _isbn(
         checksum="valid_isbn_10" if len(value) == 10 else "valid_isbn_13",
         applicability_basis=applicability,
         scope=ClaimScope.EDITION,
+    )
+
+
+def _isbn_lookup(claims: tuple[LocalClaim, ...]) -> MetadataLookup:
+    return MetadataLookup(ProviderQueryKind.ISBN, claims)
+
+
+def _work_lookup() -> MetadataLookup:
+    return MetadataLookup(
+        ProviderQueryKind.WORK,
+        (),
+        "Local work title",
+        ("Ada Example",),
     )
 
 
@@ -144,6 +162,73 @@ def _work(key: str = "/works/OL5W", *, cover: int | None = None) -> dict[str, ob
 
 
 class OpenLibraryMetadataTests(unittest.TestCase):
+    def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_work_evidence(self) -> None:
+        requests: list[httpx.Request] = []
+        values = {
+            "/search.json": {
+                "docs": [
+                    {
+                        "key": "/works/OL5W",
+                        "author_name": ["Ada Example"],
+                        "editions": {"docs": [{"key": "/books/OL1M"}]},
+                    }
+                ]
+            },
+            "/books/OL1M.json": _edition("/books/OL1M", cover=100),
+            "/works/OL5W.json": _work(cover=300),
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=values[request.url.path],
+            )
+
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        lookup = _work_lookup()
+        observation = provider.observe(lookup)
+        self.assertEqual(ProviderQueryKind.WORK, observation.query_kind)
+        self.assertEqual("Local work title", requests[0].url.params["title"])
+        self.assertEqual("Ada Example", requests[0].url.params["author"])
+        self.assertEqual(
+            "key,author_name,editions,editions.key",
+            requests[0].url.params["fields"],
+        )
+        qualified = qualify_provider_observation(observation, lookup)
+        self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
+        candidate = qualified.candidates[0]
+        self.assertFalse(
+            {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLISHER}
+            & {claim.kind for claim in candidate.claims}
+        )
+        self.assertFalse(
+            {ClaimKind.GENRE, ClaimKind.TAG}
+            & {
+                claim.kind
+                for claim in candidate.claims
+                if claim.state.value == "valid"
+            }
+        )
+        self.assertIn(
+            ProviderEvidenceKind.SUBJECT,
+            {value.kind for value in observation.candidates[0].evidence},
+        )
+        self.assertNotIn(
+            ProviderEvidenceKind.SUBJECT,
+            {value.kind for value in candidate.evidence},
+        )
+        self.assertIn(
+            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            {value.kind for value in candidate.evidence},
+        )
+
     def test_exact_search_details_rich_evidence_and_covers_are_bounded(self) -> None:
         now = [0.0]
         request_starts: list[float] = []
@@ -182,7 +267,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             65_536,
             pacer=OpenLibraryPacer(clock=lambda: now[0], sleep=sleep),
         )
-        observation = provider.observe((_isbn(), _title()))
+        observation = provider.observe(_isbn_lookup((_isbn(), _title())))
 
         self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
         self.assertEqual(
@@ -249,28 +334,34 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             if claim.kind is ClaimKind.TITLE and claim.scope is ClaimScope.WORK
         )
         self.assertEqual(Comparison.AGREEMENT, work_title.links[0].outcome)
+        self.assertEqual(3, len(provider.cover_descriptors))
         self.assertEqual(
-            (
-                (
-                    cover_source_id(
-                        CoverSourceKind.OPEN_LIBRARY,
-                        "edition:/books/OL10M:100",
-                    ),
-                    f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/100-L.jpg?default=false",
+            {
+                cover_source_id(
+                    CoverSourceKind.OPEN_LIBRARY,
+                    "edition:/books/OL10M",
                 ),
-                (
-                    cover_source_id(
-                        CoverSourceKind.OPEN_LIBRARY,
-                        "work:/works/OL5W:300",
-                    ),
-                    f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/300-L.jpg?default=false",
+                cover_source_id(
+                    CoverSourceKind.OPEN_LIBRARY,
+                    "edition:/books/OL20M",
                 ),
-            ),
-            provider.cover_descriptors,
+                cover_source_id(
+                    CoverSourceKind.OPEN_LIBRARY,
+                    "work:/works/OL5W",
+                ),
+            },
+            {value.source_id for value in provider.cover_descriptors},
+        )
+        self.assertTrue(
+            all(
+                value.provenance is not None
+                and value.provenance.provider == "open_library"
+                for value in provider.cover_descriptors
+            )
         )
         self.assertEqual(
             ProviderStatus.UNAVAILABLE,
-            provider.observe((_isbn(),)).status,
+            provider.observe(_isbn_lookup((_isbn(),))).status,
         )
         self.assertEqual(4, len(requests))
 
@@ -294,7 +385,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             with self.subTest(count=len(claims)):
                 self.assertEqual(
                     ProviderStatus.INSUFFICIENT_INPUT,
-                    provider.observe(claims).status,
+                    provider.observe(_isbn_lookup(claims)).status,
                 )
                 self.assertEqual([], requests)
 
@@ -315,7 +406,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             "open_library",
             httpx.Client(transport=httpx.MockTransport(handler)),
             65_536,
-        ).observe((ten, thirteen))
+        ).observe(_isbn_lookup((ten, thirteen)))
         self.assertEqual(ProviderStatus.NO_MATCH, observation.status)
         self.assertEqual(
             tuple(sorted((ten.reference, thirteen.reference))),
@@ -379,7 +470,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             httpx.Client(transport=httpx.MockTransport(handler)),
             65_536,
             pacer=OpenLibraryPacer(sleep=lambda _: None),
-        ).observe((_isbn(),))
+        ).observe(_isbn_lookup((_isbn(),)))
         self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
         self.assertEqual(
             [
@@ -416,7 +507,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             "open_library",
             httpx.Client(transport=httpx.MockTransport(handler)),
             65_536,
-        ).observe((_isbn(),))
+        ).observe(_isbn_lookup((_isbn(),)))
         self.assertEqual(
             ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
             observation.status,
@@ -441,7 +532,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             "open_library",
             httpx.Client(transport=httpx.MockTransport(handler)),
             65_536,
-        ).observe((_isbn(),))
+        ).observe(_isbn_lookup((_isbn(),)))
         self.assertEqual(ProviderStatus.NO_MATCH, observation.status)
         self.assertEqual(["/search.json"], [request.url.path for request in requests])
 
@@ -506,7 +597,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 pacer=OpenLibraryPacer(sleep=lambda _: None),
             )
             with self.subTest(label=label):
-                observation = provider.observe((_isbn(),))
+                observation = provider.observe(_isbn_lookup((_isbn(),)))
                 self.assertEqual(expected, observation.status)
                 self.assertEqual((), observation.candidates)
                 self.assertEqual(
@@ -540,10 +631,13 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             65_536,
             pacer=OpenLibraryPacer(sleep=lambda _: None),
         )
-        observation = provider.observe((_isbn(),))
+        observation = provider.observe(_isbn_lookup((_isbn(),)))
         self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
         self.assertEqual(1, len(observation.candidates))
-        self.assertEqual((), provider.cover_descriptors)
+        self.assertEqual(2, len(provider.cover_descriptors))
+        self.assertTrue(
+            all(value.url is None for value in provider.cover_descriptors)
+        )
         self.assertFalse(
             {
                 ProviderEvidenceKind.EDITION_COVER_ID,
@@ -577,7 +671,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             httpx.Client(transport=httpx.MockTransport(handler)),
             65_536,
             pacer=OpenLibraryPacer(sleep=lambda _: None),
-        ).observe((_isbn(),))
+        ).observe(_isbn_lookup((_isbn(),)))
         self.assertEqual(ProviderStatus.MALFORMED, observation.status)
         self.assertEqual((), observation.candidates)
         self.assertEqual(
@@ -615,7 +709,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             httpx.Client(transport=httpx.MockTransport(handler)),
             65_536,
             pacer=OpenLibraryPacer(sleep=lambda _: None),
-        ).observe((_isbn(),))
+        ).observe(_isbn_lookup((_isbn(),)))
         self.assertEqual(ProviderStatus.MALFORMED, observation.status)
         self.assertEqual((), observation.candidates)
 

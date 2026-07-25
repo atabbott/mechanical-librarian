@@ -66,9 +66,12 @@ from mechanical_librarian.application.metadata_report import (
     UnsupportedMediaError,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverProvenance,
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
+    CoverTruncationReason,
     cover_source_id,
 )
 from mechanical_librarian.domain.epub_inspection import (
@@ -81,6 +84,7 @@ from mechanical_librarian.domain.metadata_report import (
     FieldState,
     LocalClaim,
     ProviderObservation,
+    ProviderStatus,
     RearClaimProvenance,
     claim_scope,
 )
@@ -240,37 +244,143 @@ class _CoverEvidenceObserver:
         return (source, *local_sources, *self._provider_covers(providers, descriptors, deadline=deadline))
 
     def _provider_covers(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[ProviderCoverDescriptor, ...], *, deadline: CoverDeadline) -> tuple[CoverSource, ...]:
+        admitted, truncations = self._admit_provider_descriptors(
+            observations, descriptors
+        )
         results: list[CoverSource] = []
-        for observation in observations:
-            configuration = self._providers.get(observation.provider)
-            if configuration is None:
-                continue
-            if not configuration.cover_enabled:
-                continue
-            values = tuple(
-                descriptor
-                for descriptor in descriptors
-                if descriptor.provider == observation.provider
-            )
-            if not values:
-                continue
+        for provider in sorted(admitted):
+            values = admitted[provider]
             if time.monotonic() >= deadline.aggregate_deadline:
-                results.extend(CoverSource(value.source_id, value.kind, CoverSourceState.TIMEOUT, timeout_scope="not_started_due_to_aggregate_deadline") for value in values)
+                results.extend(
+                    CoverSource(
+                        value.source_id,
+                        value.kind,
+                        CoverSourceState.TIMEOUT,
+                        timeout_scope="not_started_due_to_aggregate_deadline",
+                        provenance=value.provenance,
+                    )
+                    for value in values
+                )
                 continue
             for value in values:
                 results.append(
                     self._remote(value, deadline)
                 )
-        return tuple(results)
+        return (*results, *truncations)
+
+    def _admit_provider_descriptors(
+        self,
+        observations: tuple[ProviderObservation, ...],
+        descriptors: tuple[ProviderCoverDescriptor, ...],
+    ) -> tuple[
+        dict[str, tuple[ProviderCoverDescriptor, ...]],
+        tuple[CoverSource, ...],
+    ]:
+        works = {
+            observation.provider: {
+                candidate.work_identity for candidate in observation.candidates
+            }
+            for observation in observations
+            if observation.status is ProviderStatus.CANDIDATES
+        }
+        values: dict[str, list[ProviderCoverDescriptor]] = {}
+        seen_ids: set[str] = set()
+        for descriptor in descriptors:
+            configuration = self._providers.get(descriptor.provider)
+            if (
+                configuration is None
+                or not configuration.cover_enabled
+                or descriptor.provenance is None
+                or descriptor.provenance.provider != descriptor.provider
+                or descriptor.provenance.work_identity
+                not in works.get(descriptor.provider, set())
+            ):
+                continue
+            if descriptor.source_id in seen_ids:
+                raise MetadataReportError("provider cover result is invalid")
+            seen_ids.add(descriptor.source_id)
+            values.setdefault(descriptor.provider, []).append(descriptor)
+
+        priority = {
+            CoverDesignation.EXACT_EDITION: 0,
+            CoverDesignation.DEFAULT: 1,
+            CoverDesignation.WORK: 2,
+            CoverDesignation.RELATED_EDITION: 3,
+        }
+        admitted: dict[str, tuple[ProviderCoverDescriptor, ...]] = {}
+        truncations: list[CoverSource] = []
+        remaining = 8
+        for provider in sorted(values):
+            ordered = tuple(
+                sorted(
+                    values[provider],
+                    key=lambda value: (
+                        priority.get(value.provenance.designation, 99)
+                        if value.provenance is not None
+                        else 99,
+                        value.source_id,
+                    ),
+                )
+            )
+            provider_values = ordered[:4]
+            kind = ordered[0].kind
+            if len(ordered) > 4:
+                truncations.append(
+                    self._truncation_source(
+                        provider,
+                        kind,
+                        CoverTruncationReason.PROVIDER_LIMIT,
+                    )
+                )
+            selected = provider_values[:remaining]
+            admitted[provider] = selected
+            if len(provider_values) > len(selected):
+                truncations.append(
+                    self._truncation_source(
+                        provider,
+                        kind,
+                        CoverTruncationReason.GALLERY_LIMIT,
+                    )
+                )
+            remaining -= len(selected)
+        return admitted, tuple(truncations)
+
+    @staticmethod
+    def _truncation_source(
+        provider: str,
+        kind: CoverSourceKind,
+        reason: CoverTruncationReason,
+    ) -> CoverSource:
+        return CoverSource(
+            cover_source_id(kind, f"truncation:{provider}:{reason.value}"),
+            kind,
+            CoverSourceState.TRUNCATED,
+            provenance=CoverProvenance(
+                provider,
+                CoverDesignation.TRUNCATION,
+                truncation_reason=reason,
+            ),
+        )
 
     def _remote(self, descriptor: ProviderCoverDescriptor, deadline: CoverDeadline) -> CoverSource:
         source_id = descriptor.source_id
         kind = descriptor.kind
         if descriptor.url is None:
-            return CoverSource(source_id, kind, CoverSourceState.ABSENT)
+            return CoverSource(
+                source_id,
+                kind,
+                CoverSourceState.ABSENT,
+                provenance=descriptor.provenance,
+            )
         try:
             if descriptor.wait is not None and not descriptor.wait(deadline.aggregate_deadline):
-                return CoverSource(source_id, kind, CoverSourceState.TIMEOUT, timeout_scope="not_started_due_to_aggregate_deadline")
+                return CoverSource(
+                    source_id,
+                    kind,
+                    CoverSourceState.TIMEOUT,
+                    timeout_scope="not_started_due_to_aggregate_deadline",
+                    provenance=descriptor.provenance,
+                )
             attempt = deadline.next_attempt()
             remote = fetch_remote_cover(
                 descriptor.url,
@@ -283,21 +393,51 @@ class _CoverEvidenceObserver:
                 deadline=deadline.aggregate_deadline,
             )
             self._artifacts.stage(decoded.artifact, remote.content, decoded.preview)
-            return CoverSource(source_id, kind, CoverSourceState.RETRIEVED, decoded.artifact)
+            return CoverSource(
+                source_id,
+                kind,
+                CoverSourceState.RETRIEVED,
+                decoded.artifact,
+                provenance=descriptor.provenance,
+            )
         except RemoteCoverTimeout:
-            return CoverSource(source_id, kind, CoverSourceState.TIMEOUT, timeout_scope="attempted")
+            return CoverSource(
+                source_id,
+                kind,
+                CoverSourceState.TIMEOUT,
+                timeout_scope="attempted",
+                provenance=descriptor.provenance,
+            )
         except CoverDecodeTimeout:
-            return CoverSource(source_id, kind, CoverSourceState.TIMEOUT, timeout_scope="attempted")
+            return CoverSource(
+                source_id,
+                kind,
+                CoverSourceState.TIMEOUT,
+                timeout_scope="attempted",
+                provenance=descriptor.provenance,
+            )
         except RemoteCoverError as error:
             message = str(error)
             state = CoverSourceState.UNSAFE_REMOTE if "unsafe" in message else CoverSourceState.UNSUPPORTED_FORMAT if "format" in message else CoverSourceState.OVERSIZED if "oversized" in message else CoverSourceState.UNAVAILABLE
-            return CoverSource(source_id, kind, state)
+            return CoverSource(
+                source_id, kind, state, provenance=descriptor.provenance
+            )
         except CoverDecodeRejected as error:
-            return CoverSource(source_id, kind, error.state)
+            return CoverSource(
+                source_id,
+                kind,
+                error.state,
+                provenance=descriptor.provenance,
+            )
         except ArtifactAuthorityError:
             raise
         except MetadataReportError:
-            return CoverSource(source_id, kind, CoverSourceState.UNAVAILABLE)
+            return CoverSource(
+                source_id,
+                kind,
+                CoverSourceState.UNAVAILABLE,
+                provenance=descriptor.provenance,
+            )
 
 def run_metadata_report(config_path: Path, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
     # Validate the separately authorized private store before credentials or

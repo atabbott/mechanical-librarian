@@ -73,17 +73,29 @@ class MetadataConfigurationTests(unittest.TestCase):
             missing_provider_secret = _source(root)
             missing_provider_secret["providers"][0]["enabled"] = True
             cases.append(missing_provider_secret)
-            multiple_cover_providers = _source(root)
-            for provider in multiple_cover_providers["providers"]:
-                provider["enabled"] = True
-                provider["cover_enabled"] = True
-                provider["secret_file"] = str(root / f"{provider['name']}.secret")
-            cases.append(multiple_cover_providers)
             for index, source in enumerate(cases):
                 path = root / f"bad-{index}.json"
                 path.write_text(json.dumps(source), encoding="utf-8")
                 with self.subTest(index=index), self.assertRaises(ConfigurationError):
                     load_configuration_file(path)
+
+    def test_multiple_referenced_cover_providers_share_the_bounded_gallery(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = _source(root)
+            for provider in source["providers"]:
+                provider["enabled"] = True
+                provider["cover_enabled"] = True
+                provider["secret_file"] = str(
+                    root / f"{provider['name']}.secret"
+                )
+            path = root / "config.json"
+            path.write_text(json.dumps(source), encoding="utf-8")
+            configuration = load_configuration_file(path)
+        self.assertEqual(
+            (True, True),
+            tuple(value.cover_enabled for value in configuration.providers),
+        )
 
     def test_generated_schema_is_current(self) -> None:
         expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v4.schema.json").read_text(encoding="utf-8")

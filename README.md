@@ -6,7 +6,7 @@ production image, supported release, or write-capable runtime yet.
 
 ## Current checkpoint
 
-The current 0.8 development checkpoint installs a bounded, report-only ebook
+The current 0.9 development checkpoint installs a bounded, report-only ebook
 evidence workflow. An operator can:
 
 - refresh and inspect a current catalogue across configured Audiobookshelf book
@@ -17,10 +17,14 @@ evidence workflow. An operator can:
 - generate or reopen one complete source-attributed EPUB metadata-and-cover
   evidence report.
 
-The report combines current Audiobookshelf state, bounded structured EPUB
-evidence, independent configured Hardcover and Open Library observations, and
-validated cover artifacts. Open Library uses exact ISBN-family admission and a
-strict low-volume request envelope; it does not fuse or rank provider evidence.
+The report combines all 16 current Audiobookshelf metadata destinations,
+bounded structured EPUB evidence, independent configured Hardcover and Open
+Library observations, and validated cover artifacts. One usable ISBN family
+keeps the exact ISBN path. Only when no usable ISBN exists may a configured
+provider receive one exact title-plus-complete-author work lookup; qualified
+work evidence never becomes edition evidence. The provider gallery retains at
+most eight sources and four per provider with safe provenance and explicit
+truncation. It does not fuse, rank, or propose from provider evidence.
 Catalogue and batch operations retain the same read-only boundary. There is no
 review, decision, apply, target write, media write, background execution,
 automatic retry, or supported release.
