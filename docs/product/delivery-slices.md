@@ -423,7 +423,7 @@ published its actual aggregate result.
 
 ## Delivery checkpoint 0.8.0: independent multi-provider ebook evidence
 
-The completed [0.8.0 working plan](0-8-working-plan.md) adds Open Library as
+The [0.8.0 working plan](0-8-working-plan.md) adds Open Library as
 a second real metadata adapter and proves that the report and
 foreground-batch boundaries preserve independent Hardcover and Open Library
 observations. Exact ISBN evidence, candidate identity, lineage, failure,
@@ -456,6 +456,13 @@ framework.
 Open Library #210 is the completed F09l tracker in milestone 0.8.0. It is a
 one-issue vertical slice: configuration, schema, adapter, covers, batch
 participation, proof, and documentation have no separate constituents.
+Focused issue #341 is non-slice qualification work: it binds the installed
+artifact to exact clean source, wheel, and installed-payload evidence without
+adding a constituent to F09l. The checkpoint also requires two ignored,
+maintainer-local completion conditions: an exact-clean-snapshot rebaseline of
+the unchanged 50-case regression gate, and a separately observable bounded
+publisher/imprint role cohort. Those local controls create no GitHub issue,
+branch, commit, or pull request.
 
 ### 0.8.0 checkpoint exit
 
@@ -467,6 +474,14 @@ participation, proof, and documentation have no separate constituents.
   from report identity, persistence, manifests, fingerprints, and diagnostics;
 - `batch-manifest-v2` binds provider adapters and truthful maxima, while enabled
   Open Library accepts only explicit batches of at most five items; and
+- the public gate builds an explicit wheel from the exact clean event source
+  with caches disabled, proves its installed payload and origin in a new
+  environment, and runs its console command outside the checkout;
+- the private 50-case regression thresholds equal one accepted clean-main
+  snapshot with no headroom and row-level readable-rate reset justification;
+- a bounded publisher/imprint cohort scores those roles distinctly and proves
+  zero cross-role or inferred matches while the unchanged 50-case comparison
+  remains separately visible; and
 - the runtime remains report-only and creates no provider fusion, proposal,
   review, decision, mutation, generic provider framework, tag, or release.
 

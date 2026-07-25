@@ -2,7 +2,7 @@
 
 ## Status
 
-Milestone [0.8.0 — Independent multi-provider ebook evidence](https://github.com/atabbott/mechanical-librarian/milestone/9) is implemented by its single F09l slice tracker, [#210](https://github.com/atabbott/mechanical-librarian/issues/210), `independent Open Library ebook evidence`. This document records the delivered report-only contract; it does not authorize operation beyond that runtime.
+Milestone [0.8.0 — Independent multi-provider ebook evidence](https://github.com/atabbott/mechanical-librarian/milestone/9) is implemented by its sole one-issue F09l slice tracker, [#210](https://github.com/atabbott/mechanical-librarian/issues/210), `independent Open Library ebook evidence`. Focused non-slice issue [#341](https://github.com/atabbott/mechanical-librarian/issues/341) makes installed-artifact qualification exact-source without changing that product slice. Milestone completion also requires two maintainer-local qualification conditions: an exact-clean-snapshot regression-gate rebaseline and separately observable publisher/imprint role-cohort coverage. This document records the delivered report-only contract and its completion proof; it does not authorize operation beyond that runtime.
 
 ## Outcome
 
@@ -40,9 +40,20 @@ bounded parsing and claim parity; canonical provider ordering and failure
 isolation; exact replay and supersession; cover safety and failure isolation;
 truthful pre-egress batch maxima; and ADR-0013 absent-or-exact-current
 `metadata-report-v6` behavior without migration, import, or conversion.
-Installed-artifact, configuration, documentation, security, architecture, and
-full required tests use only synthetic fixtures and mocked provider transport.
+The public installed-artifact gate builds from the exact clean event source
+with caches disabled, installs the explicit wheel pathname into a new isolated
+environment, proves wheel-to-install payload identity, and exercises the
+installed command outside the checkout. Configuration, documentation,
+security, architecture, and full required tests use only synthetic fixtures
+and mocked provider transport. Maintainer-local qualification additionally
+requires every protected 50-case regression threshold to equal the same
+accepted clean-main snapshot with row-level justification for any readable-rate
+reset and no headroom. A bounded role-aware cohort must score publisher and
+imprint distinctly, prove zero cross-role or inferred matches, and keep the
+unchanged original-cohort comparison separately visible. Only aggregate-safe
+summaries are retained.
 
-The single implementation pull request closes #210. Completing the milestone
-does not create a tag, release, publication artifact, or production write
-authority.
+The single F09l implementation pull request closes #210; the focused
+qualification pull request closes #341. Completing the milestone requires both
+local qualification conditions as well, and does not create a tag, release,
+publication artifact, or production write authority.

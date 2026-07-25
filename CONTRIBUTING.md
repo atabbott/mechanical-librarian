@@ -42,21 +42,18 @@ The initial scaffold uses Python 3.13 or 3.14 and
 committed lockfile:
 
 ```text
-uv sync --frozen --no-editable --all-groups --reinstall-package mechanical-librarian
-uv run --frozen --no-editable python -m unittest discover -s tests -p 'test_*.py'
-uv build
-uv run --frozen --no-editable mechanical-librarian metadata-report --help
+uv lock --check
+python3 scripts/qualify_exact_artifact.py --source-sha "$(git rev-parse HEAD)"
 ```
 
-The final command verifies that the installed artifact exposes the sole current
-operator command without creating local state. The integration suite exercises
-that command end to end against disposable synthetic target, media, credential,
-and database fixtures.
+The final command runs the
+[canonical exact-artifact procedure](docs/development/testing-strategy.md)
+against a clean checkout. The integration suite exercises the installed command
+end to end against disposable synthetic target, media, credential, and database
+fixtures.
 Issue #36 owns the future platform-neutral bootstrap and one-command
-verification wrapper. Re-run the cache-safe non-editable sync after changing
-package source. The explicit project-package reinstall prevents the stable
-pre-release version from reusing a wheel built from an earlier checkout, so
-tests exercise the same installed shape as the current built wheel.
+verification wrapper. The qualifier alone supplies source-bound installed-
+artifact evidence and runs the public tests against that exact wheel.
 
 Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph
