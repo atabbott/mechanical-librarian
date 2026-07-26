@@ -321,7 +321,7 @@ class _LinuxDatabaseBinding:
             _require_owner_only_database_parent(
                 os.fstat(parent_descriptor)
             )
-            fcntl.flock(parent_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(parent_descriptor, fcntl.LOCK_EX)
             locked = True
             expected = os.fstat(descriptor)
             expected_identity = (expected.st_dev, expected.st_ino)

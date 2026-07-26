@@ -1,7 +1,8 @@
 import json
+import os
+import sys
 import tempfile
 import threading
-import os
 import unittest
 from pathlib import Path
 
@@ -341,9 +342,10 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal); repository.close()
             barrier, results = threading.Barrier(2), []
             def admit() -> None:
+                barrier.wait()
                 local = open_repository(database, create=False)
                 try:
-                    barrier.wait(); results.append(json.loads(local.admit_review_case(proposal)))
+                    results.append(json.loads(local.admit_review_case(proposal)))
                 finally: local.close()
             threads = [threading.Thread(target=admit) for _ in range(2)]
             [thread.start() for thread in threads]; [thread.join() for thread in threads]
@@ -421,6 +423,8 @@ class ReviewCasePersistenceTests(unittest.TestCase):
                 os.chmod(database, 0o600)
 
     def test_held_immediate_lock_serializes_identical_admission(self) -> None:
+        if sys.platform.startswith("linux"):
+            self.skipTest("Linux serializes repository processes at the binding lock")
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reports.sqlite"
             repository = open_repository(database)

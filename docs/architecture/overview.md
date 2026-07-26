@@ -101,10 +101,13 @@ On supported Linux deployments, the repository retains a no-follow,
 identity-checked directory chain from the filesystem root, holds an exclusive
 lock on the owner-only database parent, and opens SQLite through an
 unpredictable verified hard-link alias to the already-opened database inode.
-SQLite journal artifacts are therefore private-alias scoped. Before writes and
-at the final pre-commit boundary, the runtime rewalks the current absolute
-chain and requires the configured path to name that inode without recovery
-sidecars. Protected ancestor permissions and a dedicated process identity make
-that check stable against other unprivileged identities. Catalogue and batch
-manifest filesystem operations apply their own bounded no-follow,
-identity-checked publication and read contracts.
+SQLite journal artifacts are therefore private-alias scoped. A competing
+repository process waits on that exclusive binding lock, then performs the
+same identity and currentness checks after the preceding process closes; this
+makes concurrent identical admissions converge without weakening the binding.
+Before writes and at the final pre-commit boundary, the runtime rewalks the
+current absolute chain and requires the configured path to name that inode
+without recovery sidecars. Protected ancestor permissions and a dedicated
+process identity make that check stable against other unprivileged identities.
+Catalogue and batch manifest filesystem operations apply their own bounded
+no-follow, identity-checked publication and read contracts.

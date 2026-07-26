@@ -49,7 +49,8 @@ The suite covers:
   states, visible truncation, and digest deduplication with all provenance;
 - exact clean-state DELETE-mode report/ProposalSet/ReviewCase schema, side-effect-free existing-file
   validation, no-follow connection binding, Linux owner-directory lock and
-  root-to-parent chain validation, verified private-alias binding, raced
+  competing-process serialization, root-to-parent chain validation, verified
+  private-alias binding, raced
   configured-sidecar isolation, final-precommit parent replacement rollback,
   alias cleanup, append-only history, replay, scope-checked successor
   pointers, restart readback, corrupt-row rejection, and rollback;

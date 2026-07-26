@@ -175,7 +175,7 @@ def qualify_exact_artifact(
         _verify_source_checkout(build_source, expected_source_sha)
 
         run_directory = root / "run"
-        run_directory.mkdir()
+        run_directory.mkdir(mode=0o700)
         retained = wheel_output is not None
         if retained:
             output = _new_directory(wheel_output, "retained_workspace_invalid")

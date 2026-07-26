@@ -105,8 +105,9 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
             repository.publish(report, lambda: True); proposal = _actionable(report); repository.publish_proposal(proposal); repository.close()
             barrier, outcomes = threading.Barrier(2), []
             def admit():
+                barrier.wait()
                 local = open_repository(database, create=False)
-                try: barrier.wait(); outcomes.append(json.loads(local.admit_review_case(proposal)))
+                try: outcomes.append(json.loads(local.admit_review_case(proposal)))
                 finally: local.close()
             workers = [threading.Thread(target=admit) for _ in range(2)]
             [worker.start() for worker in workers]; [worker.join() for worker in workers]
