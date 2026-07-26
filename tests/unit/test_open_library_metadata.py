@@ -816,34 +816,40 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                     self.assertEqual((), edition_descriptor.provenance.context)
 
     def test_unsafe_cover_context_remains_provider_malformed(self) -> None:
-        values = {
-            "/search.json": _search("/books/OL1M"),
-            "/books/OL1M.json": {
-                **_edition("/books/OL1M", cover=1),
-                "publish_country": "/Users/private",
-            },
-            "/works/OL5W.json": _work(),
-        }
-        provider = OpenLibraryMetadataProvider(
-            "open_library",
-            httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda request: httpx.Response(
-                        200,
-                        headers={"content-type": "application/json"},
-                        json=values[request.url.path],
-                    )
+        for value in (
+            "/Users/private",
+            "/Users/private/" + "x" * 500,
+            "sk-abcdefgh" + "x" * 502,
+        ):
+            with self.subTest(value=value[:20]):
+                values = {
+                    "/search.json": _search("/books/OL1M"),
+                    "/books/OL1M.json": {
+                        **_edition("/books/OL1M", cover=1),
+                        "publish_country": value,
+                    },
+                    "/works/OL5W.json": _work(),
+                }
+                provider = OpenLibraryMetadataProvider(
+                    "open_library",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda request: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=values[request.url.path],
+                            )
+                        )
+                    ),
+                    65_536,
+                    pacer=OpenLibraryPacer(sleep=lambda _: None),
                 )
-            ),
-            65_536,
-            pacer=OpenLibraryPacer(sleep=lambda _: None),
-        )
 
-        observation = provider.observe(_isbn_lookup((_isbn(),)))
+                observation = provider.observe(_isbn_lookup((_isbn(),)))
 
-        self.assertEqual(ProviderStatus.MALFORMED, observation.status)
-        self.assertEqual((), observation.candidates)
-        self.assertEqual((), provider.cover_descriptors)
+                self.assertEqual(ProviderStatus.MALFORMED, observation.status)
+                self.assertEqual((), observation.candidates)
+                self.assertEqual((), provider.cover_descriptors)
 
     def test_invalid_required_detail_content_discards_all_candidates(self) -> None:
         requests: list[httpx.Request] = []

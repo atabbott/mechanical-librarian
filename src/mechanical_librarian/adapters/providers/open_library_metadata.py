@@ -28,6 +28,7 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
+    MAX_FIELD_VALUE_LENGTH,
     validate_projection_text,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -927,9 +928,6 @@ def _cover_provenance(
             ),
             None,
         )
-    except EvidenceValueError as error:
-        if not str(error).endswith(" exceeds its size limit"):
-            raise
     except CoverEvidenceError:
         pass
     return (
@@ -963,7 +961,7 @@ def _open_library_cover_context(
         values.add(
             CoverContext(
                 CoverContextField.COUNTRY,
-                _text(source["publish_country"]),
+                _cover_context_text(source["publish_country"]),
             )
         )
     for field in ("publish_date", "first_publish_date"):
@@ -984,6 +982,20 @@ def _open_library_cover_context(
     return tuple(
         sorted(values, key=lambda value: (value.field.value, value.value))
     )
+
+
+def _cover_context_text(value: object) -> str:
+    try:
+        return _text(value)
+    except EvidenceValueError as error:
+        if not str(error).endswith(" exceeds its size limit"):
+            raise
+        validate_projection_text(
+            value,
+            "provider evidence value",
+            MAX_FIELD_VALUE_LENGTH,
+        )
+        raise CoverEvidenceError("cover context is oversized") from None
 
 
 def _body(
