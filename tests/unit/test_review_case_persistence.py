@@ -1,6 +1,7 @@
 import json
 import tempfile
 import threading
+import os
 import unittest
 from pathlib import Path
 
@@ -171,6 +172,26 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             repository = open_repository(database); repository.close()
             backup = Path(directory) / "backup.sqlite"; backup.write_bytes(database.read_bytes())
             restored = open_repository(backup, create=False); restored.close()
+
+    def test_malformed_current_pointer_is_not_projected_as_historical(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
+            case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            repository._connection.execute("UPDATE current_review_case_lineages SET review_case_id='bad' WHERE item_id='item-1'")
+            with self.assertRaises(Exception): repository.get_review_case(case_id)
+            repository.close()
+
+    def test_read_only_database_is_rejected_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            repository = open_repository(database); repository.close()
+            os.chmod(database, 0o400)
+            try:
+                with self.assertRaises(Exception): open_repository(database, create=False)
+            finally:
+                os.chmod(database, 0o600)
 
 
 if __name__ == "__main__":

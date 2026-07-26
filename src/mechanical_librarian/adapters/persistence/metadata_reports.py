@@ -702,6 +702,11 @@ class SQLiteMetadataReportRepository:
             if (case.review_case_id, case.proposal_set_id, case.report_id) != row[:3]:
                 raise MetadataReportError("review case is invalid")
             current = self._connection.execute("SELECT review_case_id FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", (case.target["connection"], case.target["library"], case.target["item"])).fetchone()
+            if current is not None and current[0] is not None and (
+                type(current[0]) is not str
+                or not current[0].startswith("review_case_")
+            ):
+                raise MetadataReportError("review case pointer is invalid")
             return _canonical_json({"case": case.to_data(), "current": current == (case.review_case_id,), "schema_version": "review-case-get-v1"})
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
