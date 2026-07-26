@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import httpx
@@ -22,8 +23,11 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     MetadataReportError,
     TargetCover,
+    TargetSnapshot,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
+    MAX_SCALAR_CHARACTERS,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -1722,6 +1726,150 @@ class AudiobookshelfItemTests(unittest.TestCase):
                 for field in unloaded.fields[:-1]
             )
         )
+
+    def test_target_text_bounds_preserve_oversized_and_malformed_states(self) -> None:
+        def read(metadata: dict[str, object]) -> TargetSnapshot:
+            payload = {
+                "id": "item-1",
+                "libraryId": "library-id",
+                "isInvalid": False,
+                "isMissing": False,
+                "mediaType": "book",
+                "media": {
+                    "metadata": metadata,
+                    "ebookFile": {
+                        "ebookFormat": "epub",
+                        "ino": "inode-1",
+                        "metadata": {
+                            "relPath": "book.epub",
+                            "path": "/library/book.epub",
+                            "size": 1,
+                        },
+                    },
+                },
+            }
+            return AudiobookshelfItemReader(
+                client_factory=lambda: httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=payload,
+                        )
+                    )
+                ),
+                endpoint="https://example.invalid",
+                library_id="library-id",
+                service_path="/library",
+                maximum_bytes=65_536,
+            ).read("item-1")
+
+        exact = read(
+            {
+                "title": "Current title",
+                "subtitle": "s" * MAX_SCALAR_CHARACTERS,
+                "authors": [{"name": "a" * MAX_SCALAR_CHARACTERS}],
+                "series": [{"name": "r" * MAX_SCALAR_CHARACTERS}],
+                "description": "d" * MAX_DESCRIPTION_CHARACTERS,
+            }
+        )
+        exact_states = {
+            field.destination: field.state for field in exact.fields
+        }
+        for destination in (
+            TargetDestination.SUBTITLE,
+            TargetDestination.AUTHORS,
+            TargetDestination.SERIES,
+            TargetDestination.DESCRIPTION,
+        ):
+            with self.subTest(boundary="exact", destination=destination):
+                self.assertIs(
+                    TargetFieldState.VALUE, exact_states[destination]
+                )
+
+        oversized = read(
+            {
+                "title": "Current title",
+                "subtitle": "s" * (MAX_SCALAR_CHARACTERS + 1),
+                "authors": [
+                    {"name": "a" * (MAX_SCALAR_CHARACTERS + 1)}
+                ],
+                "series": [
+                    {"name": "r" * (MAX_SCALAR_CHARACTERS + 1)}
+                ],
+                "publisher": "Publisher",
+                "description": "d" * (MAX_DESCRIPTION_CHARACTERS + 1),
+            }
+        )
+        oversized_destinations = {
+            TargetDestination.SUBTITLE,
+            TargetDestination.AUTHORS,
+            TargetDestination.SERIES,
+            TargetDestination.DESCRIPTION,
+        }
+        self.assertEqual(
+            oversized_destinations,
+            {
+                field.destination
+                for field in oversized.fields
+                if field.state is TargetFieldState.OVERSIZED
+            },
+        )
+        aggregate = TargetFacts(
+            "primary", "ebooks", "item-1", oversized.fields
+        )
+        serialized_fields = cast(
+            list[dict[str, object]], aggregate.to_data()["fields"]
+        )
+        self.assertEqual(
+            {
+                entry["destination"]
+                for entry in serialized_fields
+                if entry["state"] == TargetFieldState.OVERSIZED.value
+            },
+            {destination.value for destination in oversized_destinations},
+        )
+        self.assertIs(
+            TargetFieldState.VALUE,
+            next(
+                field.state
+                for field in oversized.fields
+                if field.destination is TargetDestination.PUBLISHER
+            ),
+        )
+
+        for unsafe_prefix in (
+            "/Users/private/",
+            "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+        ):
+            unsafe_scalar = unsafe_prefix + "x" * (
+                MAX_SCALAR_CHARACTERS - len(unsafe_prefix) + 1
+            )
+            unsafe_description = unsafe_prefix + "x" * (
+                MAX_DESCRIPTION_CHARACTERS - len(unsafe_prefix) + 1
+            )
+            malformed = read(
+                {
+                    "title": "Current title",
+                    "subtitle": unsafe_scalar,
+                    "authors": [{"name": unsafe_scalar}],
+                    "series": [{"name": unsafe_scalar}],
+                    "description": unsafe_description,
+                }
+            )
+            malformed_states = {
+                field.destination: field.state for field in malformed.fields
+            }
+            for destination in oversized_destinations:
+                with self.subTest(
+                    boundary="unsafe",
+                    prefix=unsafe_prefix[:13],
+                    destination=destination,
+                ):
+                    self.assertIs(
+                        TargetFieldState.MALFORMED,
+                        malformed_states[destination],
+                    )
 
     def test_safe_noncanonical_title_is_preserved_exactly(self) -> None:
         title = "Cafe\u0301  Story"

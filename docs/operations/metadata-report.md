@@ -110,9 +110,12 @@ description, isbn, asin, language, explicit, tags, and cover. Each destination
 preserves one exact `value`, `missing`, `null`, `empty`, `unloaded`,
 `malformed`, or `oversized` state, including source list order. Every
 destination participates in the target fingerprint and final currentness
-check. The selected file index resolves once to an opaque identity derived by
-the Audiobookshelf adapter. Final currentness locates that identity again, so a
-harmless file-list reorder does not change the target.
+check. A structurally safe target scalar, contributor/list member, series
+component, or description that exceeds its fixed field bound is `oversized`;
+unsafe, private-path, credential-shaped, or otherwise invalid input remains
+`malformed`. The selected file index resolves once to an opaque identity
+derived by the Audiobookshelf adapter. Final currentness locates that identity
+again, so a harmless file-list reorder does not change the target.
 
 The isolated child receives only the already-open read-only EPUB descriptor,
 source fingerprint, and fixed limits. It first captures one bounded immutable

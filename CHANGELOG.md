@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve safe Audiobookshelf target values that exceed their existing field
+  bounds as `oversized`; malformed, private-path, and credential-shaped values
+  remain `malformed`, without widening report limits.
 - Advance the exact-current report/database contract to `metadata-report-v8`.
   Existing `metadata-report-v7` databases are rejected under the pre-release
   clean-schema policy; no migration, import, or conversion is provided.
