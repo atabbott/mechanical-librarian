@@ -152,6 +152,26 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             with self.assertRaises(Exception): open_repository(old, create=False)
             self.assertEqual(before, old.read_bytes())
 
+    def test_corrupt_case_is_redacted_and_unrelated_history_survives(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
+            case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            self.assertEqual(proposal.to_json(), repository.get_proposal(proposal.proposal_set_id))
+            repository._connection.execute("DROP TRIGGER review_cases_no_update")
+            repository._connection.execute("UPDATE review_cases SET document='{}' WHERE review_case_id=?", (case_id,))
+            with self.assertRaises(Exception): repository.get_review_case(case_id)
+            self.assertEqual(proposal.to_json(), repository.get_proposal(proposal.proposal_set_id))
+            repository.close()
+
+    def test_exact_current_backup_restore_reopens(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            repository = open_repository(database); repository.close()
+            backup = Path(directory) / "backup.sqlite"; backup.write_bytes(database.read_bytes())
+            restored = open_repository(backup, create=False); restored.close()
+
 
 if __name__ == "__main__":
     unittest.main()
