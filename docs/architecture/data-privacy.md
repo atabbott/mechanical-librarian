@@ -32,13 +32,13 @@ diagnostics contain no rejected values.
 The isolated child returns one bounded result for one EPUB session; neither its
 input snapshot nor source body is retained after the report projection.
 
-Reports and ProposalSets are append-only and 0.9 provides no retention,
+Reports and ProposalSets are append-only and provide no retention, pruning,
+purge, export, or deletion feature. Operators must account for that deliberate limitation
+when selecting the database location and backup policy.
 
 Review cases are likewise append-only, retaining only the already bounded
 ProposalSet projection and target facts needed for exact currentness. Admission
 does not add reviewer identity, decision text, raw evidence, or service secrets.
-pruning, purge, export, or deletion feature. Operators must account for that deliberate limitation
-when selecting the database location and backup policy.
 
 Prior and intermediate development databases are never imported, migrated, or
 rewritten. Operators may retain them offline, subject to the same data-handling

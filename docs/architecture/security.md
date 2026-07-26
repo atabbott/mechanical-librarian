@@ -119,15 +119,15 @@ verifies every referenced private cover preview without constructing provider
 clients. After that external read finishes, an immediate SQLite transaction
 rechecks the exact immutable report and current pointer before inserting
 the ProposalSet. Drift or malformed input inserts nothing. The unavoidable
-
-Review admission rechecks the persisted ProposalSet, exact report, and stable
-target-lineage pointer inside its SQLite transaction. It stores bounded
-identities and canonical proposal projections only; no credentials, raw
-provider payloads, reviewer identity, decision, or target-write capability is
-accepted by the command.
 interval after the last external read is documented; later review admission
 must revalidate freshness. Proposal rows are append-only and have no current
 pointer, review state, lifecycle, or mutation authority.
+
+Review admission rechecks persisted ProposalSet/report and durable current
+pointers inside SQLite. External target/media/artifact currentness remains an
+application preflight. It stores bounded identities and canonical proposal
+projections only; no credentials, reviewer identity, decision, or target-write
+capability is accepted by the command.
 
 The final report database, `catalogue-v1` database, `config-v4`, artifact
 records, and `batch-manifest-v2` each accept only absent or their exact current
