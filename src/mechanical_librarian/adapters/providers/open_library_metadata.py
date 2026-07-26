@@ -916,7 +916,6 @@ def _cover_provenance(
     edition_identity: str | None,
     source: dict[str, Any],
 ) -> tuple[CoverProvenance, CoverSourceState | None]:
-    context = _open_library_cover_context(source)
     try:
         return (
             CoverProvenance(
@@ -924,13 +923,11 @@ def _cover_provenance(
                 designation,
                 work_identity,
                 edition_identity,
-                context,
+                _open_library_cover_context(source),
             ),
             None,
         )
     except CoverEvidenceError:
-        if len(context) <= 16:
-            raise
         return (
             CoverProvenance(
                 provider,
