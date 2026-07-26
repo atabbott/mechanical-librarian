@@ -8,14 +8,22 @@ import re
 from dataclasses import dataclass
 from typing import Self
 
-from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination, TargetFacts
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+    TargetFacts,
+)
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
 
 REVIEW_CASE_SCHEMA = "review-case-v1"
 REVIEW_ADMISSION_SCHEMA = "review-admission-v1"
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
-_ADMISSION_STATUS = frozenset({"admitted", "replayed", "superseded", "no_case", "retired", "stale"})
-_ADMISSION_FAILURE = frozenset({"invalid", "incompatible", "currentness", "persistence"})
+_ADMISSION_STATUS = frozenset(
+    {"admitted", "replayed", "superseded", "no_case", "retired", "stale"}
+)
+_ADMISSION_FAILURE = frozenset(
+    {"invalid", "incompatible", "currentness", "persistence"}
+)
 _TRANSITION_KIND = frozenset({"admitted", "superseded", "no_case", "retired"})
 MAX_REVIEW_CASE_BYTES = 2_097_152
 
@@ -32,21 +40,39 @@ class ReviewAdmissionResult:
     schema_version: str = REVIEW_ADMISSION_SCHEMA
 
     def __post_init__(self) -> None:
-        if self.status not in _ADMISSION_STATUS or self.schema_version != REVIEW_ADMISSION_SCHEMA:
+        if (
+            self.status not in _ADMISSION_STATUS
+            or self.schema_version != REVIEW_ADMISSION_SCHEMA
+        ):
             raise ReviewCaseValueError("review admission result is invalid")
-        if self.review_case_id is not None and _CASE_ID.fullmatch(self.review_case_id) is None:
+        if (
+            self.review_case_id is not None
+            and _CASE_ID.fullmatch(self.review_case_id) is None
+        ):
             raise ReviewCaseValueError("review admission result is invalid")
-        if (self.status in {"admitted", "replayed", "superseded"}) != (self.review_case_id is not None):
+        if (self.status in {"admitted", "replayed", "superseded"}) != (
+            self.review_case_id is not None
+        ):
             raise ReviewCaseValueError("review admission result is invalid")
 
     def to_json(self) -> str:
-        return _canonical({"review_case_id": self.review_case_id, "schema_version": self.schema_version, "status": self.status})
+        return _canonical(
+            {
+                "review_case_id": self.review_case_id,
+                "schema_version": self.schema_version,
+                "status": self.status,
+            }
+        )
 
     @classmethod
     def from_json(cls, serialized: str) -> Self:
         try:
             raw = json.loads(serialized, object_pairs_hook=_unique_object)
-            if type(raw) is not dict or set(raw) != {"review_case_id", "schema_version", "status"}:
+            if type(raw) is not dict or set(raw) != {
+                "review_case_id",
+                "schema_version",
+                "status",
+            }:
                 raise ValueError
             value = cls(raw["status"], raw["review_case_id"], raw["schema_version"])
         except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -58,11 +84,15 @@ class ReviewAdmissionResult:
 
 @dataclass(frozen=True, slots=True)
 class ReviewAdmissionFailure:
+    """Closed redacted failure result for untrusted admission failures."""
     code: str
     schema_version: str = "review-admission-failure-v1"
 
     def __post_init__(self) -> None:
-        if self.code not in _ADMISSION_FAILURE or self.schema_version != "review-admission-failure-v1":
+        if (
+            self.code not in _ADMISSION_FAILURE
+            or self.schema_version != "review-admission-failure-v1"
+        ):
             raise ReviewCaseValueError("review admission failure is invalid")
 
     def to_json(self) -> str:
@@ -71,6 +101,7 @@ class ReviewAdmissionFailure:
 
 @dataclass(frozen=True, slots=True)
 class ReviewTransition:
+    """Immutable attributed lineage checkpoint transition."""
     connection: str
     library: str
     item: str
@@ -84,7 +115,12 @@ class ReviewTransition:
     actor: str = "review-admission-v1"
 
     def __post_init__(self) -> None:
-        if (self.checkpoint < 1 or self.actor != "review-admission-v1" or self.kind not in _TRANSITION_KIND or self.reason not in {"actionable", "nonactionable"}):
+        if (
+            self.checkpoint < 1
+            or self.actor != "review-admission-v1"
+            or self.kind not in _TRANSITION_KIND
+            or self.reason not in {"actionable", "nonactionable"}
+        ):
             raise ReviewCaseValueError("review transition is invalid")
         if self.kind in {"admitted", "superseded"} and self.to_review_case_id is None:
             raise ReviewCaseValueError("review transition is invalid")
@@ -93,7 +129,9 @@ class ReviewTransition:
 
     @property
     def transition_id(self) -> str:
-        return "review_transition_" + hashlib.sha256(_canonical(self.to_data()).encode("utf-8")).hexdigest()
+        return "review_transition_" + hashlib.sha256(
+            _canonical(self.to_data()).encode("utf-8")
+        ).hexdigest()
 
     def to_data(self) -> dict[str, object]:
         return {"actor": self.actor, "checkpoint": self.checkpoint, "connection": self.connection, "from_review_case_id": self.from_review_case_id, "item": self.item, "kind": self.kind, "library": self.library, "proposal_set_id": self.proposal_set_id, "reason": self.reason, "report_id": self.report_id, "to_review_case_id": self.to_review_case_id}
