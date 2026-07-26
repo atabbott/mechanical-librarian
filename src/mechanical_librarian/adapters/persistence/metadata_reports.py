@@ -89,7 +89,7 @@ _REVIEW_POINTERS_SQL = (
 _REVIEW_TRANSITIONS_SQL = (
     "CREATE TABLE review_case_transitions ("
     "transition_id INTEGER PRIMARY KEY, connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
-    "from_review_case_id TEXT, to_review_case_id TEXT, proposal_set_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('admitted','superseded','retired')) )"
+    "from_review_case_id TEXT, to_review_case_id TEXT, proposal_set_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('admitted','superseded','no_case','retired')) )"
 )
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
@@ -675,17 +675,20 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("review proposal is stale")
             prior = self._connection.execute("SELECT proposal_set_id,report_id,review_case_id FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone()
             if prior is not None and prior[0] == proposal_set.proposal_set_id:
+                transition = self._connection.execute("SELECT kind FROM review_case_transitions WHERE connection_name=? AND library_name=? AND item_id=? AND proposal_set_id=? ORDER BY transition_id DESC LIMIT 1", (*lineage, proposal_set.proposal_set_id)).fetchone()
+                if transition is None:
+                    raise MetadataReportError("review transition is unavailable")
                 if self._binding is not None:
                     self._binding.require_current()
                 self._connection.commit()
-                return _admission_json("replayed", prior[2])
+                return _admission_json(transition[0], prior[2])
             if not is_actionable(proposal_set):
                 self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id) VALUES(?,?,?,?,?,NULL) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=NULL", (*lineage, proposal_set.proposal_set_id, report.report_id))
-                self._connection.execute("INSERT INTO review_case_transitions(connection_name,library_name,item_id,from_review_case_id,to_review_case_id,proposal_set_id,kind) VALUES(?,?,?,?,?,?,?)", (*lineage, prior[2] if prior else None, None, proposal_set.proposal_set_id, "retired"))
+                self._connection.execute("INSERT INTO review_case_transitions(connection_name,library_name,item_id,from_review_case_id,to_review_case_id,proposal_set_id,kind) VALUES(?,?,?,?,?,?,?)", (*lineage, prior[2] if prior else None, None, proposal_set.proposal_set_id, "retired" if prior is not None else "no_case"))
                 if self._binding is not None:
                     self._binding.require_current()
                 self._connection.commit()
-                return _admission_json("retired", None)
+                return _admission_json("retired" if prior is not None else "no_case", None)
             case = ReviewCase.create(proposal_set, report)
             existing = self._connection.execute("SELECT document FROM review_cases WHERE review_case_id=?", (case.review_case_id,)).fetchone()
             if existing is not None and existing != (case.to_json(),):
@@ -697,7 +700,7 @@ class SQLiteMetadataReportRepository:
             if self._binding is not None:
                 self._binding.require_current()
             self._connection.commit()
-            return _admission_json("admitted", case.review_case_id)
+            return _admission_json("superseded" if prior is not None else "admitted", case.review_case_id)
         except MetadataReportError:
             self._connection.rollback(); raise
         except (sqlite3.Error, ProposalValueError, ReportValueError, ReviewCaseValueError) as error:
