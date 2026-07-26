@@ -15,14 +15,18 @@ ebook media mounts are read-only. The configuration and supported egress rules
 are defined in the [configuration reference](../reference/configuration.md) and
 [security model](../architecture/security.md).
 
-Qualification-only reviewer commands additionally require an owner-only
-qualification profile, private `0700` auth-store, empty private job parent, and
-the exact maintainer-provisioned Codex CLI and Bubblewrap artifacts declared by
-that profile. The runtime neither installs, upgrades, nor bundles those
-artifacts; their profile, authentication, and isolation requirements are
-authoritative in the [shadow-review guide](shadow-review.md). Authentication and
-shadow advice do not activate normal review or grant decision, apply, or write
-authority.
+Reviewer authentication, shadow request, and explicit reevaluation additionally
+require an owner-only qualification profile, private `0700` auth-store, empty
+private job parent, and the exact maintainer-provisioned Codex CLI and
+Bubblewrap artifacts declared by that profile. Preview and inspect remain
+offline: they require the complete owner-only canonical qualification profile
+file and application database, validate the profile bytes, and do not require
+or inspect its declared executable, auth-store, or job-parent paths. The runtime
+neither installs, upgrades, nor bundles the external artifacts; their profile,
+authentication, and isolation requirements are authoritative in the
+[shadow-review guide](shadow-review.md).
+Authentication and shadow advice do not activate normal review or grant
+decision, apply, or write authority.
 
 The process needs no HTTP port, queue, scheduler, worker, external database, or
 writable media mount. Do not mount the Docker socket or grant host networking,
@@ -31,12 +35,11 @@ read-only where packaging permits.
 
 ## Backup and recovery
 
-Back up the complete application SQLite file using a SQLite-supported
-consistent method, and keep configuration, qualification profiles, executable
-paths, and auth stores in the host's encrypted secret-backup policy. Restore
-only a verified complete copy or start clean exact-current state; never edit
-rows or pointers. The full procedure and retained-data posture are in
-[backups and recovery](backups-and-recovery.md).
+Back up the stopped application SQLite database together with its paired cover
+artifact store using the recovery procedure in
+[backups and recovery](backups-and-recovery.md). Keep configuration,
+qualification profiles, executable paths, and auth stores in the host's
+encrypted secret-backup policy.
 
 The runtime has no target or media write authority. Future container release,
 dashboard, worker, normal reviewer activation, and write-capable deployment

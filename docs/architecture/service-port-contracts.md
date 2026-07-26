@@ -21,9 +21,11 @@ credentials. The domain does not depend on those implementations.
 - Catalogue and batch contracts publish or inspect a bounded current catalogue,
   create and inspect immutable manifests, and serially execute the selected
   report work in the foreground.
-- Proposal and review contracts reopen immutable report evidence, create or
-  reopen deterministic ProposalSets, and admit or reopen an immutable ReviewCase
-  only at the documented exact-current boundary.
+- Proposal and review contracts reopen immutable report and ProposalSet evidence
+  by exact ID, create or reopen deterministic ProposalSets, and admit a
+  ReviewCase only at the documented exact-current boundary. Exact ReviewCase
+  reopening deliberately supports immutable historical or superseded cases and
+  reports `current: false` when that case is no longer current.
 - Qualification-only reviewer contracts preview, request, inspect, or
   explicitly reevaluate one isolated shadow-review attempt through the
   application-owned runner and repository contracts, without exposing target or

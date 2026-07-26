@@ -298,10 +298,11 @@ identity agreed, and the closed typed document was validated on write and read.
 Exact re-observation replayed the same whole report identity and bytes; changed
 evidence created a successor without changing the prior document.
 
-Only a new database was a supported 0.4 starting state. Pre-0.4 development
-databases had no recognition, migration, import, preservation, or tailored
-compatibility path. No partial 0.4 runtime was exposed before #197. The
-existing final-0.3 report stayed report-only during the contributor work.
+An absent database or an existing exact two-table 0.4 schema was supported at
+that boundary. Earlier or inexact development state had no recognition,
+migration, import, preservation, or tailored compatibility path. No partial 0.4
+runtime was exposed before #197. The existing final-0.3 report stayed
+report-only during the contributor work.
 
 ### 0.4.0 checkpoint exit
 
