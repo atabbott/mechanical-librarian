@@ -64,6 +64,11 @@ from mechanical_librarian.application.metadata_report import (
     TargetCoverReader,
     TargetSnapshot,
     UnsupportedMediaError,
+    require_report_current,
+)
+from mechanical_librarian.application.proposal_sets import (
+    CreateProposalSet,
+    GetProposalSet,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -493,7 +498,11 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                     pacer=open_library_pacer,
                 )
             raise MetadataReportError("provider configuration is invalid")
-        bindings.append(ProviderBinding(provider.name, provider.enabled, factory))
+        bindings.append(
+            ProviderBinding(
+                provider.name, provider.enabled, factory, provider.adapter
+            )
+        )
     def repository_factory():
         repository = open_repository(database_path, expected_identity=repository_identity)
         try:
@@ -541,6 +550,64 @@ def reopen_cover_preview(database_path: Path, artifact_store_path: Path, report_
     try:
         digest = repository.preview_digest(report_id, artifact_id, preview_variant)
         return CoverArtifactStore(artifact_store_path, create=False).read_preview_digest(digest)
+    finally:
+        repository.close()
+
+
+def create_proposal_set(
+    config_path: Path,
+    database_path: Path,
+    artifact_store_path: Path,
+    report_id: str,
+) -> str:
+    """Create one ProposalSet without provider calls or write authority."""
+    configuration = load_configuration_file(config_path)
+    artifacts = CoverArtifactStore(artifact_store_path, create=False)
+    repository = open_repository(database_path, create=False)
+
+    def current(report) -> bool:
+        connection, library, mount, _ = configuration.select(
+            report.target.connection, report.target.library
+        )
+        if mount is None:
+            raise CurrentnessError("target or media changed")
+        target = AudiobookshelfItemReader(
+            client_factory=lambda: target_client(
+                connection.endpoint,
+                connection.secret_file,
+                configuration.limits.timeout_seconds,
+            ),
+            endpoint=connection.endpoint,
+            library_id=library.library_id,
+            service_path=mount.service_path,
+            maximum_bytes=configuration.limits.target_response_bytes,
+            timeout_seconds=configuration.limits.timeout_seconds,
+        )
+        valid = require_report_current(
+            target,
+            _IsolatedEpubInspector(artifacts),
+            mount,
+            configuration.limits,
+            report,
+        )
+        for source in report.cover_sources:
+            if source.artifact is not None:
+                artifacts.require_artifact(source.artifact)
+        artifacts.require_current()
+        return valid
+
+    try:
+        return CreateProposalSet(repository, current).run(report_id)
+    finally:
+        repository.close()
+
+
+def reopen_proposal_set(
+    database_path: Path, proposal_set_id: str
+) -> str:
+    repository = open_repository(database_path, create=False)
+    try:
+        return GetProposalSet(repository).run(proposal_set_id)
     finally:
         repository.close()
 
@@ -711,7 +778,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         batch_preview_runner=preview_batch,
         batch_inspect_runner=inspect_batch,
         batch_run_runner=run_batch,
+        proposal_create_runner=create_proposal_set,
+        proposal_get_runner=reopen_proposal_set,
     )
 
 
-__all__ = ["inspect_batch", "main", "preview_batch", "reopen_cover_preview", "reopen_current_metadata_report", "reopen_metadata_report", "run_batch", "run_catalogue", "run_metadata_report"]
+__all__ = [
+    "create_proposal_set", "inspect_batch", "main", "preview_batch",
+    "reopen_cover_preview", "reopen_current_metadata_report",
+    "reopen_metadata_report", "reopen_proposal_set", "run_batch",
+    "run_catalogue", "run_metadata_report",
+]

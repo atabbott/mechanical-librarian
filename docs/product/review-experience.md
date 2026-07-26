@@ -139,9 +139,10 @@ AI approval is never itself production authority. An `auto_apply` disposition
 requires a separate immutable automatic-policy qualification bound to the exact
 review case, policy version, and deterministic rule codes; disposition alone is
 never authority. A qualified deterministic policy may authorize without a human
-decision. A `needs_review` case requires an applicable human decision before an
-apply plan can be built. Destructive work always requires typed explicit
-authorization.
+decision. Planned F10b admission requires a complete target-shaped ProposalSet
+with at least one `propose_change` or `unresolved_choice`; an admitted case
+requires an applicable human decision before an apply plan can be built.
+Destructive work always requires typed explicit authorization.
 
 Human actions are explicit and field-aware:
 

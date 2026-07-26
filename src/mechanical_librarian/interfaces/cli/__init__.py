@@ -17,6 +17,7 @@ from mechanical_librarian.application.metadata_report import (
     UnsupportedMediaError,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport, ReportValueError
+from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
 
 Runner = Callable[[Path, Path, Path, str, str, str, int], str]
 ReopenRunner = Callable[[Path, str], str]
@@ -26,6 +27,8 @@ CatalogueRunner = Callable[[Path, Path, str, str | None, str | None, str | None,
 BatchPreviewRunner = Callable[[Path, Path, Path, tuple[tuple[str, str, str, str], ...], bool], str]
 BatchInspectRunner = Callable[[Path], str]
 BatchRunRunner = Callable[[Path, Path, Path, str, Path, Path, Callable[[dict[str, object]], None]], bool]
+ProposalCreateRunner = Callable[[Path, Path, Path, str], str]
+ProposalGetRunner = Callable[[Path, str], str]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -86,6 +89,30 @@ def _parser() -> _Parser:
     preview.add_argument("--report-id", required=True, metavar="REPORT_ID", type=_report_id)
     preview.add_argument("--artifact-id", required=True, metavar="ARTIFACT_ID", type=_artifact_id)
     preview.add_argument("--preview-variant", required=True, metavar="VARIANT", type=_preview_variant)
+    proposal = commands.add_parser(
+        "proposal-set-create",
+        help="create or reopen one ProposalSet from an exact current report",
+    )
+    proposal.add_argument("--config", required=True, metavar="PATH", type=Path)
+    proposal.add_argument("--database", required=True, metavar="PATH", type=Path)
+    proposal.add_argument(
+        "--artifact-store", required=True, metavar="PATH", type=Path
+    )
+    proposal.add_argument(
+        "--report-id", required=True, metavar="REPORT_ID", type=_report_id
+    )
+    proposal_get = commands.add_parser(
+        "proposal-set-get", help="reopen one exact persisted ProposalSet"
+    )
+    proposal_get.add_argument(
+        "--database", required=True, metavar="PATH", type=Path
+    )
+    proposal_get.add_argument(
+        "--proposal-set-id",
+        required=True,
+        metavar="PROPOSAL_SET_ID",
+        type=_proposal_set_id,
+    )
     catalogue = commands.add_parser("catalogue", help="refresh or inspect the current book catalogue")
     catalogue.add_argument("--config", required=True, metavar="PATH", type=Path)
     catalogue.add_argument("--database", required=True, metavar="PATH", type=Path)
@@ -129,6 +156,12 @@ def _artifact_id(value: str) -> str:
     return value
 
 
+def _proposal_set_id(value: str) -> str:
+    if re.fullmatch(r"proposal_set_[0-9a-f]{64}", value) is None:
+        raise argparse.ArgumentTypeError("invalid proposal set id")
+    return value
+
+
 def _preview_variant(value: str) -> str:
     if value != "preview-320x480-rgba-png-v1":
         raise argparse.ArgumentTypeError("invalid preview variant")
@@ -151,7 +184,7 @@ def _opaque(value: str) -> str:
     return value
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, proposal_create_runner: ProposalCreateRunner | None = None, proposal_get_runner: ProposalGetRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     try:
@@ -159,6 +192,36 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
     except _ArgumentFailure:
         errors.write("Metadata report failed: invalid invocation.\n")
         return 2
+    if arguments.command in {"proposal-set-create", "proposal-set-get"}:
+        try:
+            if arguments.command == "proposal-set-create":
+                if proposal_create_runner is None:
+                    raise ValueError
+                serialized = proposal_create_runner(
+                    arguments.config,
+                    arguments.database,
+                    arguments.artifact_store,
+                    arguments.report_id,
+                )
+                proposal_set = ProposalSet.from_json(serialized)
+                if proposal_set.report_id != arguments.report_id:
+                    raise ProposalValueError("proposal output is invalid")
+            else:
+                if proposal_get_runner is None:
+                    raise ValueError
+                serialized = proposal_get_runner(
+                    arguments.database, arguments.proposal_set_id
+                )
+                proposal_set = ProposalSet.from_json(serialized)
+                if proposal_set.proposal_set_id != arguments.proposal_set_id:
+                    raise ProposalValueError("proposal output is invalid")
+            if proposal_set.to_json() != serialized:
+                raise ProposalValueError("proposal output is invalid")
+        except Exception:
+            errors.write("Proposal set failed safely.\n")
+            return 1
+        output.write(serialized + "\n")
+        return 0
     if arguments.command == "batch":
         try:
             if arguments.batch_action == "preview":

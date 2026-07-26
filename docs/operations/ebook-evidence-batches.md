@@ -1,6 +1,6 @@
 # Foreground ebook evidence batches
 
-The 0.8 runtime can preview and explicitly run one immutable foreground batch
+The 0.9 runtime can preview and explicitly run one immutable foreground batch
 over the current Audiobookshelf book catalogue. It serially reuses the complete
 metadata-and-cover report operation and remains report-only.
 

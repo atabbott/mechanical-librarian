@@ -14,6 +14,12 @@ The target projection retains exactly 16 bounded Audiobookshelf destinations.
 Provider cover rows retain only safe opaque source/work/edition identities,
 typed designation, allowlisted edition context, artifact digests, dimensions,
 media type, and preview references.
+One ProposalSet per distinct exact report/policy result retains only the report
+ID, derived target fingerprint, fixed policy version, bounded candidate values,
+assessments, evidence references, hashed correlation groups, reasons,
+dependencies, and an optional selected alternative ID. It does not duplicate
+report excerpts, provider evidence records, target current-state storage, or
+cover provenance.
 
 It does not retain credentials, authorization headers, provider cover URLs, the Open Library
 operational contact email, endpoint paths, private filesystem paths, raw
@@ -26,8 +32,8 @@ diagnostics contain no rejected values.
 The isolated child returns one bounded result for one EPUB session; neither its
 input snapshot nor source body is retained after the report projection.
 
-Reports are append-only and 0.9 provides no retention, pruning, purge, export,
-or deletion feature. Operators must account for that deliberate limitation
+Reports and ProposalSets are append-only and 0.9 provides no retention,
+pruning, purge, export, or deletion feature. Operators must account for that deliberate limitation
 when selecting the database location and backup policy.
 
 Prior and intermediate development databases are never imported, migrated, or

@@ -13,6 +13,9 @@ from mechanical_librarian.application.metadata_report import ArtifactAuthorityEr
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
 
+_MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
+
+
 class CoverArtifactStore:
     """Stores originals and previews by digest; it never resolves arbitrary paths."""
 
@@ -45,6 +48,13 @@ class CoverArtifactStore:
         if type(artifact) is not CoverArtifact:
             raise MetadataReportError("artifact is invalid")
         return self._read(artifact.preview_digest, 1_048_576)
+
+    def require_artifact(self, artifact: CoverArtifact) -> None:
+        """Verify both immutable blobs without exposing the original."""
+        if type(artifact) is not CoverArtifact:
+            raise MetadataReportError("artifact is invalid")
+        self._read(artifact.original_digest, _MAX_ORIGINAL_BYTES)
+        self._read(artifact.preview_digest, 1_048_576)
 
     def read_preview_digest(self, digest: str) -> bytes:
         """Read a preview only after a repository has authorized its digest."""

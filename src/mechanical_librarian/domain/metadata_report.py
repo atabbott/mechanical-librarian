@@ -455,19 +455,12 @@ class TargetFacts:
     connection: str
     library: str
     item: str
-    current_title: str | None
-    fields: tuple[TargetField, ...] = ()
+    fields: tuple[TargetField, ...]
 
     def __post_init__(self) -> None:
         _name(self.connection, "connection")
         _name(self.library, "library")
         _text(self.item, "item", 512)
-        if not self.fields:
-            object.__setattr__(
-                self,
-                "fields",
-                default_target_fields(self.current_title),
-            )
         if (
             type(self.fields) is not tuple
             or any(type(value) is not TargetField for value in self.fields)
@@ -475,13 +468,15 @@ class TargetFacts:
             != tuple(TargetDestination)
         ):
             raise ReportValueError("target fields are invalid")
+
+    @property
+    def current_title(self) -> str | None:
         title = self.fields[0]
-        if title.state is TargetFieldState.VALUE:
-            if type(title.value) is not str or self.current_title != title.value:
-                raise ReportValueError("target title is inconsistent")
-            validate_observed_title(self.current_title)
-        elif self.current_title is not None:
+        if title.state is not TargetFieldState.VALUE:
+            return None
+        if type(title.value) is not str:
             raise ReportValueError("target title is inconsistent")
+        return validate_observed_title(title.value)
 
     @property
     def fingerprint(self) -> str:
@@ -496,9 +491,7 @@ class TargetFacts:
     def to_data(self) -> dict[str, object]:
         return {
             "connection": self.connection,
-            "current_title": self.current_title,
             "fields": [value.to_data() for value in self.fields],
-            "fingerprint": self.fingerprint,
             "item": self.item,
             "library": self.library,
         }
@@ -835,12 +828,14 @@ class ProviderObservation:
     input_references: tuple[str, ...] = ()
     candidates: tuple[ProviderCandidate, ...] = ()
     query_kind: ProviderQueryKind = ProviderQueryKind.NONE
+    authority: str | None = None
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
         if (
             type(self.status) is not ProviderStatus
             or type(self.query_kind) is not ProviderQueryKind
+            or self.authority not in {None, "hardcover", "open_library"}
         ):
             raise ReportValueError("provider status is invalid")
         if type(self.input_references) is not tuple or tuple(sorted(set(self.input_references))) != self.input_references or any(
@@ -875,6 +870,7 @@ class ProviderObservation:
             "provider": self.provider,
             "query_kind": self.query_kind.value,
             "status": self.status.value,
+            "authority": self.authority,
         }
 
 
@@ -1391,9 +1387,7 @@ def _report_from_data(value: object) -> MetadataReport:
         root["target"],
         {
             "connection",
-            "current_title",
             "fields",
-            "fingerprint",
             "item",
             "library",
         },
@@ -1410,11 +1404,8 @@ def _report_from_data(value: object) -> MetadataReport:
         target["connection"],
         target["library"],
         target["item"],
-        target["current_title"],
         tuple(_target_field_from_data(item) for item in _list(target["fields"])),
     )
-    if target["fingerprint"] != target_facts.fingerprint:
-        raise ReportValueError("target fingerprint is inconsistent")
     return MetadataReport(
         root["report_id"],
         target_facts,
@@ -1559,6 +1550,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
     item = _object(
         value,
         {
+            "authority",
             "candidates",
             "input_references",
             "provider",
@@ -1573,6 +1565,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
         tuple(_strings(item["input_references"])),
         candidates,
         ProviderQueryKind(item["query_kind"]),
+        item["authority"],
     )
 
 

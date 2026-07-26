@@ -26,6 +26,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.bootstrap.composition import reopen_metadata_report, run_metadata_report
 from mechanical_librarian.bootstrap.composition import reopen_cover_preview
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.cover_evidence import PREVIEW_VARIANT
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client as real_hardcover_client,
@@ -1044,11 +1045,72 @@ class MetadataReportCommandTests(unittest.TestCase):
                 replay = run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0)
                 server.payload["media"]["metadata"]["title"] = "Changed service title"
                 successor = run_metadata_report(config, database, artifact_store, "primary", "books", "item-1", 0)
+                successor_report = MetadataReport.from_json(successor)
+                stale_output = io.StringIO()
+                stale_errors = io.StringIO()
+                with redirect_stdout(stale_output), redirect_stderr(stale_errors):
+                    stale_result = composition.main(
+                        [
+                            "proposal-set-create",
+                            "--config",
+                            str(config),
+                            "--database",
+                            str(database),
+                            "--artifact-store",
+                            str(artifact_store),
+                            "--report-id",
+                            MetadataReport.from_json(first).report_id,
+                        ]
+                    )
+                proposal_output = io.StringIO()
+                proposal_errors = io.StringIO()
+                with (
+                    patch.object(composition, "hardcover_client") as provider_client,
+                    redirect_stdout(proposal_output),
+                    redirect_stderr(proposal_errors),
+                ):
+                    proposal_result = composition.main(
+                        [
+                            "proposal-set-create",
+                            "--config",
+                            str(config),
+                            "--database",
+                            str(database),
+                            "--artifact-store",
+                            str(artifact_store),
+                            "--report-id",
+                            successor_report.report_id,
+                        ]
+                    )
+                provider_client.assert_not_called()
 
             first_report = MetadataReport.from_json(first)
-            successor_report = MetadataReport.from_json(successor)
+            proposal_set = ProposalSet.from_json(
+                proposal_output.getvalue().removesuffix("\n")
+            )
+            reopened_output = io.StringIO()
+            reopened_errors = io.StringIO()
+            with redirect_stdout(reopened_output), redirect_stderr(reopened_errors):
+                reopened_result = composition.main(
+                    [
+                        "proposal-set-get",
+                        "--database",
+                        str(database),
+                        "--proposal-set-id",
+                        proposal_set.proposal_set_id,
+                    ]
+                )
             self.assertEqual(first, replay)
             self.assertNotEqual(first_report.report_id, successor_report.report_id)
+            self.assertEqual((1, ""), (stale_result, stale_output.getvalue()))
+            self.assertEqual(
+                "Proposal set failed safely.\n", stale_errors.getvalue()
+            )
+            self.assertEqual((0, ""), (proposal_result, proposal_errors.getvalue()))
+            self.assertEqual(16, len(proposal_set.results))
+            self.assertEqual(successor_report.report_id, proposal_set.report_id)
+            self.assertEqual((0, ""), (reopened_result, reopened_errors.getvalue()))
+            self.assertEqual(proposal_output.getvalue(), reopened_output.getvalue())
             self.assertEqual({claim.kind.value for claim in first_report.local_claims}, {"title", "isbn", "language"})
             isbn_claims = [claim for claim in first_report.local_claims if claim.kind.value == "isbn"]
             self.assertEqual({claim.checksum for claim in isbn_claims}, {"valid_isbn_13"})
@@ -1059,7 +1121,7 @@ class MetadataReportCommandTests(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM metadata_reports").fetchone(), (2,))
             self.assertEqual(connection.execute("SELECT COUNT(*) FROM current_metadata_reports").fetchone(), (1,))
             connection.close()
-            self.assertEqual(server.requests, 6)
+            self.assertEqual(server.requests, 8)
             self.assertEqual(source.read_bytes(), original_media)
 
     def test_rear_limit_warning_survives_real_child_report_reopen(self) -> None:

@@ -92,8 +92,11 @@ item identity, opaque file identity/digest, current title, fact-local opening
 excerpts, typed claims, provider candidate edition and provider-local work
 identities, comparison facts, and derived ISBN relationships containing only
 claim references and those already-admitted bounded identities. The
-relationship projection does not duplicate observations or excerpts. It
-performs no egress and grants no proposal, decision, or write authority. They
+relationship projection does not duplicate observations or excerpts. Report
+generation performs no decision and grants no write authority. The separate
+ProposalSet contains only bounded alternatives, assessments, stable evidence
+references, hashed correlation groups, and policy/version bindings; it does
+not duplicate report excerpts or provider/cover payloads. These documents
 contain no credentials, private paths, raw provider bodies, or arbitrary EPUB
 text. Target and provider titles pass the same closed public-safe projection
 before they can enter a report. Failure output is fixed and value-free.
@@ -109,6 +112,15 @@ report-bound preview digests can be reopened offline; raw originals and remote
 locations have no CLI or replay surface. A failed currentness check leaves no
 new report or pointer; any unreferenced staged bytes are recoverable cleanup,
 not a database repair protocol.
+
+Proposal creation performs one fresh target/media/ABS-cover validation and
+verifies every referenced private cover preview without constructing provider
+clients. After that external read finishes, an immediate SQLite transaction
+rechecks the exact immutable report and current pointer before inserting
+the ProposalSet. Drift or malformed input inserts nothing. The unavoidable
+interval after the last external read is documented; later review admission
+must revalidate freshness. Proposal rows are append-only and have no current
+pointer, review state, lifecycle, or mutation authority.
 
 The final report database, `catalogue-v1` database, `config-v4`, artifact
 records, and `batch-manifest-v2` each accept only absent or their exact current

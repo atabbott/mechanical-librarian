@@ -1,6 +1,6 @@
 # Architecture overview
 
-The 0.8 runtime has three synchronous CLI paths:
+The 0.9 runtime has four synchronous CLI paths:
 
 ```text
 CLI catalogue -> application RefreshCurrentCatalogue
@@ -17,6 +17,12 @@ CLI metadata-report -> application GenerateMetadataReport
 CLI batch -> application manifest selection / ForegroundBatchRun
           -> current catalogue snapshot
           -> GenerateMetadataReport once per frozen eligible entry
+
+CLI proposal-set-create -> application CreateProposalSet
+                        |-> exact current report
+                        |-> reused target/media/cover currentness
+                        |-> pure fixed-policy evaluator
+                        `-> append-only ProposalSet repository
 ```
 
 Dependency direction remains:
@@ -31,11 +37,12 @@ bootstrap composes all layers
 The application layer owns narrow contracts for current catalogue observation,
 catalogue persistence, frozen manifest selection, serial foreground execution,
 scoped target reading, EPUB inspection/currentness, provider and cover
-observation, artifact publication, and report publication/readback. There is no
-central speculative ports module, generic provider registry, queue, worker, or
-scheduler. Bootstrap explicitly composes Audiobookshelf, the isolated EPUB and
-cover children, the closed Hardcover/Open Library adapter choice, private-file
-credentials, SQLite, and the private artifact store.
+observation, artifact publication, and report publication/readback. The
+ProposalSet seam adds exact create/get orchestration but no provider or write
+port. There is no central speculative ports module, generic provider registry,
+queue, worker, or scheduler. Bootstrap explicitly composes Audiobookshelf, the
+isolated EPUB and cover children, the closed Hardcover/Open Library adapter
+choice, private-file credentials, SQLite, and the private artifact store.
 
 The catalogue adapter uses bounded Audiobookshelf library, library-items, and
 item-detail GET routes. It atomically publishes one current generation of at
@@ -63,8 +70,11 @@ stores no attempt, progress, history, resume, retry, or lock state.
 
 SQLite stores immutable canonical documents in `metadata_reports`, one separate
 pointer per target/file scope in `current_metadata_reports`, and immutable
-report-bound cover references in `metadata_report_cover_references`. Report
-insert and pointer advance share one transaction. The sole baseline uses
+report-bound cover references in `metadata_report_cover_references`.
+`proposal_sets` stores one content-addressed result document bound to an exact
+report and has no current pointer. Report insert and pointer advance share one
+transaction. Proposal insertion separately rechecks the exact report and
+current pointer after external currentness. The sole baseline uses
 rollback-journal `DELETE` mode. The separate catalogue database stores one
 exact-current `catalogue-v1` schema. The final report database, catalogue
 database, configuration, artifacts, and manifest each recognize only absent or

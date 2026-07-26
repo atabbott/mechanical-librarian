@@ -5,6 +5,7 @@
 - [Current book catalogue](operations/catalogue.md)
 - [Foreground ebook evidence batches](operations/ebook-evidence-batches.md)
 - [Metadata report operation](operations/metadata-report.md)
+- [ProposalSet operation](operations/proposal-set.md)
 - [Configuration](reference/configuration.md)
 - [Compatibility and clean-state boundary](reference/compatibility.md)
 - [Architecture overview](architecture/overview.md)

@@ -1,0 +1,104 @@
+# ProposalSet operation
+
+The 0.9 runtime can create one immutable ProposalSet from an exact current
+metadata report:
+
+```text
+mechanical-librarian proposal-set-create \
+  --config /run/secrets/mechanical-librarian.json \
+  --database /data/reports.sqlite \
+  --artifact-store /data/cover-artifacts \
+  --report-id report_<64-lowercase-hex-characters>
+```
+
+Every option is required. The command reopens the exact report, revalidates its
+current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
+both blobs of every referenced private cover artifact, then evaluates the built-in
+`fixed-conservative-v1` policy. It does not construct or contact a metadata or
+cover provider.
+
+An exact ProposalSet can be reopened offline:
+
+```text
+mechanical-librarian proposal-set-get \
+  --database /data/reports.sqlite \
+  --proposal-set-id proposal_set_<64-lowercase-hex-characters>
+```
+
+Success is exactly one canonical `proposal-set-v1` JSON document plus a
+newline. Failure emits no document and one value-free diagnostic.
+
+## Fixed policy
+
+Every ProposalSet is bound to the exact report ID, derived target fingerprint,
+and fixed policy version. It
+contains exactly one ordered result for title, subtitle, authors, narrators,
+series, genres, publishedYear, publishedDate, publisher, description, isbn,
+asin, language, explicit, tags, and cover. Each result is one of
+`propose_change`, `unresolved_choice`, `keep`, `reject`, `defer`, or
+`ineligible`.
+The canonical document does not serialize its content-addressed ProposalSet ID;
+the ID is derived from those canonical bytes and remains the exact-get input.
+
+Alternatives retain only their bounded candidate value, work/edition/cover
+scope, assessment, stable evidence references, and hashed correlation groups.
+They do not copy report excerpts, raw provider evidence, responses, URLs,
+paths, or image bytes.
+
+`propose_change` carries exactly one selected safe candidate. `unresolved_choice`
+carries one or more bounded candidates but selects none. `defer` carries no
+candidate because evidence or capability prevents a decision surface. `keep`
+records one positive preservation alternative. `reject` is a closed no-choice
+variant for a future explicit policy rejection; the fixed 0.9 evaluator has no
+deletion inference and does not emit it. `ineligible` likewise has no choice.
+None of these outcomes admits a review, decision, apply, or write action.
+
+The policy is deliberately conservative:
+
+- populated values need positive preservation evidence for `keep`;
+- populated replacement candidates normally need one unique value from at
+  least two materially independent correlation groups. Otherwise, bounded
+  choices remain `unresolved_choice`. Connections to the same upstream adapter
+  are one group; Hardcover and Open Library are distinct groups;
+- ordered author and narrator lists, series name/sequence, and date/year remain
+  complete and linked rather than being edited piecemeal; untyped contributor
+  evidence cannot become a partial narrator list;
+- refining a populated year into a full date requires two materially
+  independent correlation groups;
+- work first-publication evidence can fill an empty date/year consistently but
+  cannot replace a valid populated edition value;
+- direct year-only edition evidence can fill `publishedYear` but is not
+  promoted into a full `publishedDate`;
+- local work subtitles and exact-edition provider subtitles remain in their
+  respective evidence scopes;
+- populated description, genres, and tags are never merged, replaced, or
+  cleaned; exact evidence may preserve them and candidates may fill only an
+  empty field;
+- ISBNs must have an `accepted` report relationship proving validated,
+  edition-applicable evidence; unresolved applicability defers, and ISBN-13
+  and ASIN are never manufactured;
+- explicit changes require direct evidence, so absence supports neither
+  `false` nor `keep`; and
+- an existing verified ABS cover is kept. An absent target gets a selected
+  cover only when the complete bounded gallery contains exactly one distinct
+  safe artifact; complete competing bounded galleries are
+  `unresolved_choice`, while incomplete galleries defer with no choices.
+
+There are no scores, provider priority, configured policy, fuzzy matching, AI,
+review admission, decision, or apply behavior.
+
+## Currentness and persistence
+
+External target, media, cover, and artifact validation finishes before the
+ProposalSet insertion transaction. The transaction then immediately rechecks
+that the immutable report document has the expected digest and that
+`current_metadata_reports` still points to that exact report for its complete
+scope. Drift inserts nothing. Audiobookshelf or media may change after the last
+external read; perpetual cross-system atomicity is not claimed, and the future
+review-admission stage must validate freshness again.
+
+`proposal_sets` is append-only and has no current pointer, lifecycle, retry,
+job, or normalized evidence tables. Identical exact inputs converge on the
+same ID and bytes. The report database accepts only an absent database or its
+exact current report-plus-ProposalSet schema; earlier development schemas are
+rejected without migration, import, or conversion.
