@@ -85,7 +85,19 @@ mechanical-librarian shadow-review-reevaluate --database reports.sqlite \
   --qualification-profile profile.json
 ```
 
+The reevaluation claim compares the exact latest attempt inside the write
+transaction, so concurrent operators cannot both append or overlap. If a
+process ended after durable dispatch but before a terminal outcome was stored,
+inspection reports `unknown`. If the application stopped before dispatch, the
+attempt remains `pending`; explicit reevaluation first proves the exact
+persisted claimant PID and Linux start token absent, then may safely claim its
+successor. Any unreleased controller could not execute or egress.
+
+Executable paths are opened, verified, and held by descriptor through version,
+auth, and sandbox invocation. Authentication also ignores auth-store
+configuration and supplies exact ChatGPT/file-store/update/telemetry
+constraints, so a local `config.toml` cannot widen the auth invocation.
+
 Failures are the value-free codes `runtime`, `setup`, `auth`, `profile`,
 `timeout`, `cancel`, `output`, or `currentness`. Raw stdout, stderr, reasoning,
 malformed content, profile paths, and auth data are discarded.
-

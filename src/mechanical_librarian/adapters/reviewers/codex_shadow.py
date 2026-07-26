@@ -15,8 +15,10 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 from mechanical_librarian.application.shadow_reviews import ShadowReviewError
 from mechanical_librarian.domain.shadow_review import (
@@ -193,55 +195,50 @@ class CodexShadowReviewer:
     def auth(self, action: str) -> str:
         if action not in {"start", "status", "logout"}:
             raise ShadowReviewerError("profile")
-        with self._auth_lock():
-            self._verify_codex()
-            command = [str(self._profile.codex_path)]
-            if action == "start":
-                command.extend(("login", "--device-auth"))
-                completed = subprocess.run(
-                    command,
-                    env=self._auth_environment(),
-                    stdin=None,
-                    stdout=None,
-                    stderr=None,
-                    timeout=self._profile.identity.timeout_seconds,
-                    check=False,
-                )
-                if completed.returncode != 0:
-                    raise ShadowReviewerError("auth")
+        with _bound_artifact(
+            self._profile.codex_path,
+            self._profile.identity.executable_sha256,
+        ) as codex:
+            with self._auth_lock():
+                self._verify_codex(codex)
+                command = self._auth_command(codex)
+                if action == "start":
+                    completed = self._run_auth(
+                        [*command, "login", "--device-auth"],
+                        codex,
+                        interactive=True,
+                    )
+                    if completed.returncode != 0:
+                        raise ShadowReviewerError("auth")
+                    return canonical_json(
+                        {
+                            "mode": QUALIFICATION_MODE,
+                            "schema_version": "reviewer-auth-v1",
+                            "status": "started",
+                        }
+                    )
+                if action == "logout":
+                    self._require_chatgpt_auth(command, codex)
+                    completed = self._run_auth(
+                        [*command, "logout"], codex
+                    )
+                    if completed.returncode != 0:
+                        raise ShadowReviewerError("auth")
+                    return canonical_json(
+                        {
+                            "mode": QUALIFICATION_MODE,
+                            "schema_version": "reviewer-auth-v1",
+                            "status": "logged_out",
+                        }
+                    )
+                self._require_chatgpt_auth(command, codex)
                 return canonical_json(
                     {
                         "mode": QUALIFICATION_MODE,
                         "schema_version": "reviewer-auth-v1",
-                        "status": "started",
+                        "status": "chatgpt",
                     }
                 )
-            if action == "logout":
-                self._require_chatgpt_auth(command)
-                completed = subprocess.run(
-                    [*command, "logout"],
-                    env=self._auth_environment(),
-                    capture_output=True,
-                    timeout=self._profile.identity.timeout_seconds,
-                    check=False,
-                )
-                if completed.returncode != 0:
-                    raise ShadowReviewerError("auth")
-                return canonical_json(
-                    {
-                        "mode": QUALIFICATION_MODE,
-                        "schema_version": "reviewer-auth-v1",
-                        "status": "logged_out",
-                    }
-                )
-            self._require_chatgpt_auth(command)
-            return canonical_json(
-                {
-                    "mode": QUALIFICATION_MODE,
-                    "schema_version": "reviewer-auth-v1",
-                    "status": "chatgpt",
-                }
-            )
 
     def run(
         self,
@@ -250,89 +247,93 @@ class CodexShadowReviewer:
     ) -> ShadowReviewResult:
         if not sys.platform.startswith("linux"):
             raise ShadowReviewerError("setup")
-        self._verify_sandbox()
         job_path: Path | None = None
-        with self._auth_lock():
-            self._verify_codex()
-            self._require_chatgpt_auth([str(self._profile.codex_path)])
-            try:
-                self._require_private_directory(self._profile.job_root_path)
-                job_path = Path(
-                    tempfile.mkdtemp(
-                        prefix="shadow-review-", dir=self._profile.job_root_path
-                    )
-                )
-                os.chmod(job_path, 0o700)
-                schema_path = job_path / "output-schema.json"
-                result_path = job_path / "result.json"
-                schema_path.write_text(
-                    canonical_json(_output_schema(request)), encoding="utf-8"
-                )
-                os.chmod(schema_path, 0o600)
-                prompt = _prompt(request).encode("utf-8")
-                stdout_path = job_path / "stdout.bin"
-                stderr_path = job_path / "stderr.bin"
-                with stdout_path.open("w+b") as stdout_file, stderr_path.open(
-                    "w+b"
-                ) as stderr_file:
-                    process = subprocess.Popen(
-                        self._sandbox_command(job_path, result_path),
-                        stdin=subprocess.PIPE,
-                        stdout=stdout_file,
-                        stderr=stderr_file,
-                        env={},
-                        start_new_session=True,
-                        preexec_fn=self._limit_child,
-                    )
-                    pid = process.pid
-                    pgid = os.getpgid(pid)
-                    token = _process_start_token(pid)
-                    try:
-                        dispatched(pid, pgid, token)
-                    except Exception:
-                        _kill_and_prove_dead(process, pgid, token)
-                        raise
-                    try:
-                        process.communicate(
-                            prompt, timeout=self._profile.identity.timeout_seconds
+        self._require_private_directory(self._profile.auth_store_path)
+        self._require_private_directory(self._profile.job_root_path)
+        with (
+            _bound_artifact(
+                self._profile.codex_path,
+                self._profile.identity.executable_sha256,
+            ) as codex,
+            _bound_artifact(
+                self._profile.sandbox_path,
+                self._profile.identity.sandbox_sha256,
+            ) as sandbox,
+        ):
+            with self._auth_lock():
+                self._verify_codex(codex)
+                self._require_chatgpt_auth(self._auth_command(codex), codex)
+                try:
+                    job_path = Path(
+                        tempfile.mkdtemp(
+                            prefix="shadow-review-",
+                            dir=self._profile.job_root_path,
                         )
-                    except subprocess.TimeoutExpired as error:
-                        _kill_and_prove_dead(process, pgid, token)
-                        raise ShadowReviewerError("timeout") from error
-                    except KeyboardInterrupt as error:
-                        _kill_and_prove_dead(process, pgid, token)
-                        raise ShadowReviewerError("cancel") from error
-                    if process.returncode != 0:
-                        count, digest = _diagnostic(stdout_file, stderr_file)
+                    )
+                    os.chmod(job_path, 0o700)
+                    schema_path = job_path / "output-schema.json"
+                    result_path = job_path / "result.json"
+                    prompt_path = job_path / "prompt.bin"
+                    schema_path.write_text(
+                        canonical_json(_output_schema(request)), encoding="utf-8"
+                    )
+                    prompt_path.write_bytes(_prompt(request).encode("utf-8"))
+                    os.chmod(schema_path, 0o600)
+                    os.chmod(prompt_path, 0o600)
+                    stdout_path = job_path / "stdout.bin"
+                    stderr_path = job_path / "stderr.bin"
+                    with (
+                        prompt_path.open("rb") as prompt_file,
+                        stdout_path.open("w+b") as stdout_file,
+                        stderr_path.open("w+b") as stderr_file,
+                    ):
+                        returncode = self._run_gated(
+                            self._sandbox_command(
+                                job_path,
+                                result_path,
+                                codex.invocation_path,
+                                sandbox.invocation_path,
+                            ),
+                            codex,
+                            sandbox,
+                            prompt_file.fileno(),
+                            stdout_file.fileno(),
+                            stderr_file.fileno(),
+                            dispatched,
+                        )
+                        if returncode != 0:
+                            count, digest = _diagnostic(
+                                stdout_file, stderr_file
+                            )
+                            raise ShadowReviewerError(
+                                "runtime", count=count, digest=digest
+                            )
+                    try:
+                        result_bytes = result_path.read_bytes()
+                    except OSError as error:
+                        raise ShadowReviewerError("output") from error
+                    if len(result_bytes) > self._profile.identity.output_bytes:
+                        raise ShadowReviewerError("output")
+                    try:
+                        serialized = result_bytes.decode("utf-8", errors="strict")
+                        return ShadowReviewResult.from_json(serialized, request)
+                    except (UnicodeError, ShadowReviewValueError) as error:
                         raise ShadowReviewerError(
-                            "runtime", count=count, digest=digest
-                        )
-                try:
-                    result_bytes = result_path.read_bytes()
-                except OSError as error:
-                    raise ShadowReviewerError("output") from error
-                if len(result_bytes) > self._profile.identity.output_bytes:
-                    raise ShadowReviewerError("output")
-                try:
-                    serialized = result_bytes.decode("utf-8", errors="strict")
-                    return ShadowReviewResult.from_json(serialized, request)
-                except (UnicodeError, ShadowReviewValueError) as error:
-                    raise ShadowReviewerError(
-                        "output",
-                        count=len(result_bytes),
-                        digest=hashlib.sha256(result_bytes).hexdigest(),
-                    ) from error
-            finally:
-                if job_path is not None:
-                    shutil.rmtree(job_path, ignore_errors=True)
+                            "output",
+                            count=len(result_bytes),
+                            digest=hashlib.sha256(result_bytes).hexdigest(),
+                        ) from error
+                finally:
+                    if job_path is not None:
+                        shutil.rmtree(job_path, ignore_errors=True)
 
-    def _verify_codex(self) -> None:
-        _verify_file(self._profile.codex_path, self._profile.identity.executable_sha256)
+    def _verify_codex(self, codex: "_BoundArtifact") -> None:
         try:
             completed = subprocess.run(
-                [str(self._profile.codex_path), "--version"],
+                [codex.invocation_path, "--version"],
                 env=self._auth_environment(),
                 capture_output=True,
+                pass_fds=(codex.descriptor,),
                 timeout=min(self._profile.identity.timeout_seconds, 30),
                 check=False,
             )
@@ -346,28 +347,53 @@ class CodexShadowReviewer:
         ):
             raise ShadowReviewerError("setup")
 
-    def _verify_sandbox(self) -> None:
-        _verify_file(self._profile.sandbox_path, self._profile.identity.sandbox_sha256)
-        self._require_private_directory(self._profile.auth_store_path)
-        self._require_private_directory(self._profile.job_root_path)
-
-    def _require_chatgpt_auth(self, command: list[str]) -> None:
-        try:
-            completed = subprocess.run(
-                [*command, "login", "status"],
-                env=self._auth_environment(),
-                capture_output=True,
-                timeout=min(self._profile.identity.timeout_seconds, 30),
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError) as error:
-            raise ShadowReviewerError("auth") from error
+    def _require_chatgpt_auth(
+        self, command: list[str], codex: "_BoundArtifact"
+    ) -> None:
+        completed = self._run_auth(
+            [*command, "login", "status"], codex, timeout=30
+        )
         if (
             completed.returncode != 0
             or completed.stderr
             or completed.stdout.rstrip(b"\r\n") != b"Logged in using ChatGPT"
         ):
             raise ShadowReviewerError("auth")
+
+    def _auth_command(self, codex: "_BoundArtifact") -> list[str]:
+        command = [codex.invocation_path, "--ignore-user-config"]
+        for value in _auth_config():
+            command.extend(("-c", value))
+        return command
+
+    def _run_auth(
+        self,
+        command: list[str],
+        codex: "_BoundArtifact",
+        *,
+        interactive: bool = False,
+        timeout: int | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        try:
+            return subprocess.run(
+                command,
+                env=self._auth_environment(),
+                stdin=None,
+                stdout=None if interactive else subprocess.PIPE,
+                stderr=None if interactive else subprocess.PIPE,
+                pass_fds=(codex.descriptor,),
+                timeout=min(
+                    self._profile.identity.timeout_seconds,
+                    timeout or self._profile.identity.timeout_seconds,
+                ),
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ShadowReviewerError("timeout") from error
+        except KeyboardInterrupt as error:
+            raise ShadowReviewerError("cancel") from error
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ShadowReviewerError("auth") from error
 
     def _auth_environment(self) -> dict[str, str]:
         return {
@@ -423,9 +449,15 @@ class CodexShadowReviewer:
         ):
             raise ShadowReviewerError("setup")
 
-    def _sandbox_command(self, job_path: Path, result_path: Path) -> list[str]:
+    def _sandbox_command(
+        self,
+        job_path: Path,
+        result_path: Path,
+        codex_path: str,
+        sandbox_path: str,
+    ) -> list[str]:
         command = [
-            str(self._profile.sandbox_path),
+            sandbox_path,
             "--die-with-parent",
             "--unshare-user",
             "--unshare-pid",
@@ -461,7 +493,7 @@ class CodexShadowReviewer:
         command.extend(
             (
                 "--ro-bind",
-                str(self._profile.codex_path),
+                codex_path,
                 "/runtime/codex",
                 "--bind",
                 str(self._profile.auth_store_path),
@@ -503,6 +535,80 @@ class CodexShadowReviewer:
             command.extend(("-c", value))
         command.append("-")
         return command
+
+    def _run_gated(
+        self,
+        command: list[str],
+        codex: "_BoundArtifact",
+        sandbox: "_BoundArtifact",
+        stdin_descriptor: int,
+        stdout_descriptor: int,
+        stderr_descriptor: int,
+        dispatched: Callable[[int, int, str], None],
+    ) -> int:
+        release_read, release_write = os.pipe()
+        ready_read, ready_write = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.close(release_write)
+                os.close(ready_read)
+                os.setsid()
+                os.write(ready_write, b"R")
+                os.close(ready_write)
+                if os.read(release_read, 1) != b"G":
+                    os._exit(125)
+                os.close(release_read)
+                os.dup2(stdin_descriptor, 0)
+                os.dup2(stdout_descriptor, 1)
+                os.dup2(stderr_descriptor, 2)
+                os.set_inheritable(codex.descriptor, True)
+                os.set_inheritable(sandbox.descriptor, True)
+                self._limit_child()
+                os.execve(sandbox.invocation_path, command, {})
+            except BaseException:
+                os._exit(126)
+        os.close(release_read)
+        os.close(ready_write)
+        released = False
+        try:
+            if os.read(ready_read, 1) != b"R":
+                raise ShadowReviewerError("runtime")
+            pgid = pid
+            token = _process_start_token(pid)
+            try:
+                dispatched(pid, pgid, token)
+            except Exception:
+                os.close(release_write)
+                release_write = -1
+                _wait_for_exit(pid, 5)
+                if process_identity_alive(pid, pgid, token):
+                    _kill_and_prove_dead(pid, pgid, token)
+                raise
+            os.write(release_write, b"G")
+            released = True
+            os.close(release_write)
+            release_write = -1
+            return _wait_for_exit(
+                pid, self._profile.identity.timeout_seconds
+            )
+        except TimeoutError as error:
+            _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
+            raise ShadowReviewerError("timeout") from error
+        except KeyboardInterrupt as error:
+            _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
+            raise ShadowReviewerError("cancel") from error
+        finally:
+            os.close(ready_read)
+            if release_write >= 0:
+                os.close(release_write)
+            if not released:
+                try:
+                    _wait_for_exit(pid, 5)
+                except TimeoutError:
+                    _kill_and_prove_dead(
+                        pid, pid, _safe_start_token(pid)
+                    )
 
     def _limit_child(self) -> None:
         resource.setrlimit(
@@ -548,16 +654,44 @@ def process_identity_alive(pid: int, pgid: int, start_token: str) -> bool:
             continue
         try:
             raw = Path("/proc", name, "stat").read_text(encoding="ascii")
-            tail = raw[raw.rindex(")") + 2 :].split()
-            member_group = int(tail[2])
-        except (IndexError, OSError, UnicodeError, ValueError):
+            _, member_group = _proc_identity(raw)
+        except (OSError, UnicodeError, ValueError):
             continue
         if member_group == pgid:
             return True
     return False
 
 
-def _verify_file(path: Path, expected_digest: str) -> None:
+def process_identity_matches(pid: int, start_token: str) -> bool:
+    if (
+        type(pid) is not int
+        or pid < 2
+        or type(start_token) is not str
+        or not start_token.isascii()
+        or not start_token.isdigit()
+    ):
+        raise ShadowReviewerError("runtime")
+    try:
+        return _process_start_token(pid) == start_token
+    except ShadowReviewerError:
+        return False
+
+
+def current_process_identity() -> tuple[int, str]:
+    pid = os.getpid()
+    return pid, _process_start_token(pid)
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundArtifact:
+    descriptor: int
+    invocation_path: str
+
+
+@contextmanager
+def _bound_artifact(
+    path: Path, expected_digest: str
+) -> Iterator[_BoundArtifact]:
     descriptor = -1
     try:
         descriptor = os.open(
@@ -577,6 +711,11 @@ def _verify_file(path: Path, expected_digest: str) -> None:
             digest.update(chunk)
         if digest.hexdigest() != expected_digest:
             raise ShadowReviewerError("setup")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        invocation_root = "/proc/self/fd" if sys.platform.startswith("linux") else "/dev/fd"
+        yield _BoundArtifact(
+            descriptor, f"{invocation_root}/{descriptor}"
+        )
     except ShadowReviewerError:
         raise
     except OSError as error:
@@ -588,24 +727,65 @@ def _verify_file(path: Path, expected_digest: str) -> None:
 
 def _process_start_token(pid: int) -> str:
     try:
-        fields = Path(f"/proc/{pid}/stat").read_text(encoding="ascii").split()
-        token = fields[21]
-    except (IndexError, OSError, UnicodeError) as error:
+        token, _ = _proc_identity(
+            Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+        )
+    except (OSError, UnicodeError, ValueError) as error:
         raise ShadowReviewerError("runtime") from error
-    if not token.isascii() or not token.isdigit():
-        raise ShadowReviewerError("runtime")
     return token
 
 
-def _kill_and_prove_dead(
-    process: subprocess.Popen[bytes], pgid: int, start_token: str
-) -> None:
+def _proc_identity(raw: str) -> tuple[str, int]:
+    try:
+        tail = raw[raw.rindex(")") + 2 :].split()
+        process_group = int(tail[2], 10)
+        start_token = tail[19]
+    except (IndexError, ValueError) as error:
+        raise ValueError("invalid proc stat") from error
+    if (
+        not start_token.isascii()
+        or not start_token.isdigit()
+        or process_group < 1
+    ):
+        raise ValueError("invalid proc stat")
+    return start_token, process_group
+
+
+def _safe_start_token(pid: int) -> str:
+    try:
+        return _process_start_token(pid)
+    except ShadowReviewerError:
+        return "0"
+
+
+def _wait_for_exit(pid: int, timeout_seconds: int) -> int:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            waited, status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            return 0
+        if waited == pid:
+            if os.WIFEXITED(status):
+                return os.WEXITSTATUS(status)
+            if os.WIFSIGNALED(status):
+                return 128 + os.WTERMSIG(status)
+            return 126
+        if time.monotonic() >= deadline:
+            raise TimeoutError
+        time.sleep(0.01)
+
+
+def _kill_and_prove_dead(pid: int, pgid: int, start_token: str) -> None:
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    process.wait()
-    if process_identity_alive(process.pid, pgid, start_token):
+    try:
+        _wait_for_exit(pid, 5)
+    except TimeoutError as error:
+        raise ShadowReviewerError("runtime") from error
+    if process_identity_alive(pid, pgid, start_token):
         raise ShadowReviewerError("runtime")
 
 
@@ -715,6 +895,12 @@ def _exact_config(reasoning: str) -> tuple[str, ...]:
         "agents.enabled=false",
         "features.multi_agent=false",
         "features.apps=false",
+        "features.plugins=false",
+        "features.browser_use=false",
+        "features.computer_use=false",
+        "features.image_generation=false",
+        "features.skill_search=false",
+        "features.tool_call_mcp_elicitation=false",
         "apps._default.enabled=false",
         'web_search="disabled"',
         "features.hooks=false",
@@ -728,6 +914,23 @@ def _exact_config(reasoning: str) -> tuple[str, ...]:
         "feedback.enabled=false",
         "analytics.enabled=false",
         'shell_environment_policy.inherit="none"',
+    )
+
+
+def _auth_config() -> tuple[str, ...]:
+    return (
+        'forced_login_method="chatgpt"',
+        'cli_auth_credentials_store="file"',
+        "check_for_update_on_startup=false",
+        "feedback.enabled=false",
+        "analytics.enabled=false",
+        'history.persistence="none"',
+        "features.hooks=false",
+        "features.memories=false",
+        "features.remote_plugin=false",
+        "features.plugins=false",
+        "features.apps=false",
+        "apps._default.enabled=false",
     )
 
 
@@ -745,6 +948,8 @@ __all__ = [
     "PROFILE_SCHEMA",
     "QualificationProfile",
     "ShadowReviewerError",
+    "current_process_identity",
     "load_qualification_profile",
     "process_identity_alive",
+    "process_identity_matches",
 ]

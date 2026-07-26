@@ -1,2 +1,1 @@
 """Reviewer adapters."""
-

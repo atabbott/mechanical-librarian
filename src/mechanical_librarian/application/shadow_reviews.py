@@ -57,10 +57,13 @@ class ShadowReviewRepository(Protocol):
     ) -> str: ...
     def prepare_shadow_request(
         self,
-        review_case_id: str,
+        exact_id: str,
         profile_identity: str,
         *,
         reevaluate: bool,
+        claim_pid: int,
+        claim_start_token: str,
+        expected_prior_attempt_id: str | None,
     ) -> str: ...
     def inspect_shadow_request(
         self, review_request_id: str, profile_identity: str
@@ -72,9 +75,16 @@ class ShadowReviewRepository(Protocol):
     def record_shadow_failure(
         self, attempt_id: str, code: str, count: int, digest: str | None
     ) -> None: ...
-    def last_shadow_process(
+    def last_shadow_claim(
         self, review_request_id: str
-    ) -> tuple[int, int, str] | None: ...
+    ) -> tuple[
+        str,
+        int,
+        str,
+        int | None,
+        int | None,
+        str | None,
+    ]: ...
 
 
 def preview_shadow_review(
@@ -124,19 +134,37 @@ def execute_shadow_review(
     identity: ReviewerProfileIdentity,
     runner: ShadowReviewRunner,
     *,
+    claimant: tuple[int, str],
     reevaluate: bool = False,
     process_alive: Callable[[int, int, str], bool] | None = None,
+    claim_alive: Callable[[int, str], bool] | None = None,
 ) -> str:
+    expected_prior_attempt_id = None
     if reevaluate:
         if process_alive is None:
             raise ShadowReviewError("runtime")
-        prior = repository.last_shadow_process(review_case_id)
-        if prior is None or process_alive(*prior):
+        prior = repository.last_shadow_claim(review_case_id)
+        expected_prior_attempt_id = prior[0]
+        dispatch = prior[3:]
+        if dispatch[0] is not None and (
+            dispatch[1] is None
+            or dispatch[2] is None
+            or process_alive(dispatch[0], dispatch[1], dispatch[2])
+        ):
+            raise ShadowReviewError("runtime")
+        if dispatch[0] is None and (
+            claim_alive is None or claim_alive(prior[1], prior[2])
+        ):
             raise ShadowReviewError("runtime")
     try:
         prepared = json.loads(
             repository.prepare_shadow_request(
-                review_case_id, identity.to_json(), reevaluate=reevaluate
+                review_case_id,
+                identity.to_json(),
+                reevaluate=reevaluate,
+                claim_pid=claimant[0],
+                claim_start_token=claimant[1],
+                expected_prior_attempt_id=expected_prior_attempt_id,
             )
         )
         if (

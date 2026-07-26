@@ -44,8 +44,10 @@ from mechanical_librarian.adapters.providers.remote_cover import (
 )
 from mechanical_librarian.adapters.reviewers.codex_shadow import (
     CodexShadowReviewer,
+    current_process_identity,
     load_qualification_profile,
     process_identity_alive,
+    process_identity_matches,
 )
 from mechanical_librarian.application.batch import BatchError, BatchSelection, batch_fingerprint, catalogue_fingerprint as batch_catalogue_fingerprint, manifest as batch_manifest, parse_manifest, select
 from mechanical_librarian.application.batch_run import ForegroundBatchRun
@@ -694,6 +696,7 @@ def request_shadow_review(
             review_case_id,
             profile.identity,
             CodexShadowReviewer(profile),
+            claimant=current_process_identity(),
         )
     finally:
         repository.close()
@@ -723,8 +726,10 @@ def reevaluate_shadow_review(
             review_request_id,
             profile.identity,
             CodexShadowReviewer(profile),
+            claimant=current_process_identity(),
             reevaluate=True,
             process_alive=process_identity_alive,
+            claim_alive=process_identity_matches,
         )
     finally:
         repository.close()

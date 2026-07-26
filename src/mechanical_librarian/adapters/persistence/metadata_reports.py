@@ -130,6 +130,8 @@ _SHADOW_ATTEMPTS_SQL = (
     "attempt_id TEXT PRIMARY KEY NOT NULL CHECK(attempt_id GLOB 'review_attempt_[0-9a-f]*' AND length(attempt_id)=79), "
     "review_request_id TEXT NOT NULL REFERENCES shadow_review_requests(review_request_id), "
     "attempt_number INTEGER NOT NULL CHECK(attempt_number BETWEEN 1 AND 32), "
+    "claim_pid INTEGER NOT NULL CHECK(claim_pid>1), "
+    "claim_start_token TEXT NOT NULL CHECK(length(claim_start_token) BETWEEN 1 AND 32 AND claim_start_token NOT GLOB '*[^0-9]*'), "
     "UNIQUE(review_request_id,attempt_number))"
 )
 _SHADOW_DISPATCHES_SQL = (
@@ -867,10 +869,22 @@ class SQLiteMetadataReportRepository:
         profile_identity: str,
         *,
         reevaluate: bool,
+        claim_pid: int,
+        claim_start_token: str,
+        expected_prior_attempt_id: str | None = None,
     ) -> str:
         """Persist one request and attempt before any reviewer process starts."""
         try:
             identity = ReviewerProfileIdentity.from_json(profile_identity)
+            if (
+                type(claim_pid) is not int
+                or claim_pid < 2
+                or type(claim_start_token) is not str
+                or not 1 <= len(claim_start_token) <= 32
+                or not claim_start_token.isascii()
+                or not claim_start_token.isdigit()
+            ):
+                raise MetadataReportError("shadow review claim is invalid")
             self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
@@ -882,17 +896,22 @@ class SQLiteMetadataReportRepository:
                 if current.to_json() != request.to_json():
                     raise ReviewAdmissionStaleError
                 previous = self._connection.execute(
-                    "SELECT a.attempt_number,d.attempt_id "
+                    "SELECT a.attempt_id,a.attempt_number,"
+                    "d.pid,d.pgid,d.start_token "
                     "FROM shadow_review_attempts a "
                     "LEFT JOIN shadow_review_dispatches d ON d.attempt_id=a.attempt_id "
                     "WHERE a.review_request_id=? ORDER BY a.attempt_number DESC LIMIT 1",
                     (request.review_request_id,),
                 ).fetchone()
-                if previous is None or previous[1] is None:
+                if (
+                    previous is None
+                    or expected_prior_attempt_id is None
+                    or previous[0] != expected_prior_attempt_id
+                ):
                     raise MetadataReportError(
-                        "shadow review has no supervised prior dispatch"
+                        "shadow review reevaluation claim changed"
                     )
-                attempt_number = previous[0] + 1
+                attempt_number = previous[1] + 1
                 run = True
             else:
                 request = self._shadow_request(exact_id, identity)
@@ -940,8 +959,15 @@ class SQLiteMetadataReportRepository:
             )
             self._connection.execute(
                 "INSERT INTO shadow_review_attempts("
-                "attempt_id,review_request_id,attempt_number) VALUES(?,?,?)",
-                (attempt_id, request.review_request_id, attempt_number),
+                "attempt_id,review_request_id,attempt_number,"
+                "claim_pid,claim_start_token) VALUES(?,?,?,?,?)",
+                (
+                    attempt_id,
+                    request.review_request_id,
+                    attempt_number,
+                    claim_pid,
+                    claim_start_token,
+                ),
             )
             if self._binding is not None:
                 self._binding.require_current()
@@ -976,6 +1002,17 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
+            latest = self._connection.execute(
+                "SELECT latest.attempt_id "
+                "FROM shadow_review_attempts selected "
+                "JOIN shadow_review_attempts latest "
+                "ON latest.review_request_id=selected.review_request_id "
+                "WHERE selected.attempt_id=? "
+                "ORDER BY latest.attempt_number DESC LIMIT 1",
+                (attempt_id,),
+            ).fetchone()
+            if latest != (attempt_id,):
+                raise MetadataReportError("shadow review dispatch fence changed")
             self._connection.execute(
                 "INSERT INTO shadow_review_dispatches("
                 "attempt_id,pid,pgid,start_token) VALUES(?,?,?,?)",
@@ -1082,6 +1119,7 @@ class SQLiteMetadataReportRepository:
                 current = False
             rows = self._connection.execute(
                 "SELECT a.attempt_id,a.attempt_number,"
+                "a.claim_pid,a.claim_start_token,"
                 "d.pid,d.pgid,d.start_token,"
                 "o.kind,o.result_document,o.failure_code,"
                 "o.diagnostic_count,o.diagnostic_digest "
@@ -1099,6 +1137,8 @@ class SQLiteMetadataReportRepository:
                 (
                     attempt_id,
                     attempt_number,
+                    claim_pid,
+                    claim_start_token,
                     pid,
                     pgid,
                     start_token,
@@ -1124,10 +1164,16 @@ class SQLiteMetadataReportRepository:
                         "count": diagnostic_count,
                         "diagnostic_digest": diagnostic_digest,
                     }
+                elif pid is not None:
+                    status = "unknown"
                 attempts.append(
                     {
                         "attempt_id": attempt_id,
                         "attempt_number": attempt_number,
+                        "claim": {
+                            "pid": claim_pid,
+                            "start_token": claim_start_token,
+                        },
                         "dispatch": (
                             None
                             if pid is None
@@ -1164,20 +1210,30 @@ class SQLiteMetadataReportRepository:
         ) as error:
             raise MetadataReportError("shadow review inspection failed") from error
 
-    def last_shadow_process(
+    def last_shadow_claim(
         self, review_request_id: str
-    ) -> tuple[int, int, str] | None:
+    ) -> tuple[
+        str,
+        int,
+        str,
+        int | None,
+        int | None,
+        str | None,
+    ]:
         try:
             self._validated_shadow_request(review_request_id)
             row = self._connection.execute(
-                "SELECT d.pid,d.pgid,d.start_token "
+                "SELECT a.attempt_id,a.claim_pid,a.claim_start_token,"
+                "d.pid,d.pgid,d.start_token "
                 "FROM shadow_review_attempts a "
-                "JOIN shadow_review_dispatches d ON d.attempt_id=a.attempt_id "
+                "LEFT JOIN shadow_review_dispatches d ON d.attempt_id=a.attempt_id "
                 "WHERE a.review_request_id=? "
                 "ORDER BY a.attempt_number DESC LIMIT 1",
                 (review_request_id,),
             ).fetchone()
-            return None if row is None else row
+            if row is None:
+                raise MetadataReportError("shadow review attempt is unavailable")
+            return row
         except (sqlite3.Error, ShadowReviewValueError) as error:
             raise MetadataReportError("shadow review process is unavailable") from error
 
