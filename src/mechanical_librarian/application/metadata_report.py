@@ -388,6 +388,8 @@ def _variant_marker(value: str) -> bool:
     return bool(
         tokens
         & {
+            "abridgement",
+            "abridgment",
             "abridged",
             "adaptation",
             "adapted",

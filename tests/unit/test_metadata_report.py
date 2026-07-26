@@ -21,6 +21,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetSnapshot,
     UnsupportedMediaError,
     MetadataReportError,
+    _variant_marker,
     metadata_lookup,
     qualify_provider_observation,
 )
@@ -127,6 +128,28 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_variant_marker_fails_closed_for_abridgement_nouns_and_preserves_token_boundaries(
+        self,
+    ) -> None:
+        for field, value in (
+            ("title", "The Example: An Abridgement"),
+            ("subtitle", "An Abridgment"),
+            ("title", "The Abridged Example"),
+            ("subtitle", "An Adapted Translation"),
+        ):
+            with self.subTest(field=field, value=value):
+                self.assertTrue(_variant_marker(value))
+
+        for value in (
+            "The Example",
+            "Abridgementary Notes",
+            "Abridgmental Notes",
+            "Adaptational Notes",
+            "Translationist Notes",
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(_variant_marker(value))
+
     def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_authors(self) -> None:
         def target(
             title: str | None,
@@ -309,7 +332,7 @@ class MetadataReportTests(unittest.TestCase):
             {value.kind for value in qualified.candidates[0].evidence},
         )
 
-    def test_work_lookup_fails_closed_for_competing_work_or_translation_markers(self) -> None:
+    def test_work_lookup_fails_closed_for_competing_work_or_variant_markers(self) -> None:
         lookup = MetadataLookup(
             ProviderQueryKind.WORK,
             (),
@@ -317,13 +340,19 @@ class MetadataReportTests(unittest.TestCase):
             ("Ada Author",),
         )
 
-        def candidate(identity: str, work: str, role: str | None = None) -> ProviderCandidate:
+        def candidate(
+            identity: str,
+            work: str,
+            role: str | None = None,
+            title: str = "The Example",
+            subtitle: str | None = None,
+        ) -> ProviderCandidate:
             values = [
                 ProviderClaim.create(
                     provider="catalogue",
                     candidate=identity,
                     kind=ClaimKind.TITLE,
-                    value="The Example",
+                    value=title,
                     state=FieldState.VALID,
                     scope=ClaimScope.WORK,
                     applicability="not_applicable",
@@ -355,7 +384,32 @@ class MetadataReportTests(unittest.TestCase):
                         raw_order=2,
                     )
                 )
+            if subtitle is not None:
+                values.append(
+                    ProviderClaim.create(
+                        provider="catalogue",
+                        candidate=identity,
+                        kind=ClaimKind.SUBTITLE,
+                        value=subtitle,
+                        state=FieldState.VALID,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                        raw_order=3,
+                    )
+                )
             return ProviderCandidate(identity, work, tuple(values))
+
+        def qualify(candidates: tuple[ProviderCandidate, ...]) -> ProviderObservation:
+            return qualify_provider_observation(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    candidates,
+                    ProviderQueryKind.WORK,
+                ),
+                lookup,
+            )
 
         for candidates in (
             (candidate("edition-1", "work-1"), candidate("edition-2", "work-2")),
@@ -364,18 +418,36 @@ class MetadataReportTests(unittest.TestCase):
             (candidate("edition-1", "work-1", "abridger"),),
         ):
             with self.subTest(candidates=candidates):
-                result = qualify_provider_observation(
-                    ProviderObservation(
-                        "catalogue",
-                        ProviderStatus.CANDIDATES,
-                        (),
-                        candidates,
-                        ProviderQueryKind.WORK,
-                    ),
-                    lookup,
-                )
+                result = qualify(candidates)
                 self.assertEqual(ProviderStatus.NO_MATCH, result.status)
                 self.assertEqual((), result.candidates)
+
+        for spelling in ("Abridgement", "Abridgment"):
+            for field, candidates in (
+                (
+                    "title",
+                    (
+                        candidate("edition-1", "work-1"),
+                        candidate(
+                            "edition-2",
+                            "work-1",
+                            title=f"The Example: An {spelling}",
+                        ),
+                    ),
+                ),
+                (
+                    "subtitle",
+                    (candidate("edition-1", "work-1", subtitle=f"An {spelling}"),),
+                ),
+            ):
+                with self.subTest(field=field, spelling=spelling):
+                    result = qualify(candidates)
+                    self.assertEqual(ProviderStatus.NO_MATCH, result.status)
+                    self.assertEqual((), result.candidates)
+
+        qualified = qualify((candidate("edition-1", "work-1"),))
+        self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
+        self.assertEqual(("edition-1",), tuple(value.identity for value in qualified.candidates))
 
     def test_work_lookup_accepts_the_complete_author_set_in_provider_order(self) -> None:
         lookup = MetadataLookup(

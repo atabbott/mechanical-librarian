@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fail closed during no-ISBN work fallback when a candidate title or subtitle
+  identifies an abridgement or abridgment.
 - Activate immutable explainable ebook proposals. `proposal-set-create`
   revalidates one exact current `metadata-report-v7` target, media snapshot,
   ABS cover, and private artifact authority, then evaluates a fixed
