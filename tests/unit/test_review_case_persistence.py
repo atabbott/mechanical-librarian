@@ -83,6 +83,17 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             self.assertTrue(json.loads(repository.get_review_case(successor_case))["current"])
             repository.close()
 
+    def test_newer_report_immediately_makes_case_historical(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            first = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(first, lambda: True); proposal = self._actionable(first); repository.publish_proposal(proposal)
+            case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            newer = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("New")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(newer, lambda: True)
+            self.assertFalse(json.loads(repository.get_review_case(case_id))["current"])
+            repository.close()
+
     def test_nonactionable_successor_retires_current_case_without_empty_case(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
