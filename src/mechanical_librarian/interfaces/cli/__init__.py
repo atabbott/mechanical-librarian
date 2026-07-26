@@ -20,6 +20,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.metadata_report import MetadataReport, ReportValueError
 from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
 from mechanical_librarian.domain.review_case import ReviewAdmissionFailure
+from mechanical_librarian.application.review_cases import ReviewCaseError
 
 Runner = Callable[[Path, Path, Path, str, str, str, int], str]
 ReopenRunner = Callable[[Path, str], str]
@@ -209,6 +210,9 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
             serialized = (review_admit_runner(arguments.config, arguments.database, arguments.artifact_store, arguments.proposal_set_id) if arguments.command == "review-case-admit" and review_admit_runner else review_get_runner(arguments.database, arguments.review_case_id) if arguments.command == "review-case-get" and review_get_runner else None)
             if type(serialized) is not str or json.loads(serialized) is None:
                 raise ValueError
+        except ReviewCaseError as error:
+            errors.write(ReviewAdmissionFailure(error.code).to_json() + "\n")
+            return 1
         except Exception:
             errors.write(ReviewAdmissionFailure("persistence").to_json() + "\n")
             return 1

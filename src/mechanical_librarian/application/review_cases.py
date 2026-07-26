@@ -3,9 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
+from mechanical_librarian.domain.review_case import ReviewAdmissionResult
 
 class ReviewCaseError(RuntimeError):
     """A value-free production-review admission failure."""
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 class ReviewCaseRepository(Protocol):
     def get_proposal(self, proposal_set_id: str) -> str: ...
@@ -20,13 +24,13 @@ class AdmitReviewCase:
         try:
             proposal = ProposalSet.from_json(self._repository.get_proposal(proposal_set_id))
             if proposal.proposal_set_id != proposal_set_id:
-                raise ReviewCaseError("review proposal identity disagrees")
+                raise ReviewCaseError("incompatible")
             if self._require_current(proposal) is not True:
-                raise ReviewCaseError("review proposal is stale")
+                return ReviewAdmissionResult("stale", None).to_json()
             return self._repository.admit_review_case(proposal)
         except ReviewCaseError: raise
         except Exception as error:
-            raise ReviewCaseError("review admission failed") from error
+            raise ReviewCaseError("persistence") from error
 
 class GetReviewCase:
     def __init__(self, repository: ReviewCaseRepository) -> None: self._repository = repository
