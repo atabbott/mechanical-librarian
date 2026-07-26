@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Accept the pinned Codex CLI's exact canonical ChatGPT subscription status on
+  either process stream only when the other stream is empty and the command
+  succeeds. Mixed, additional, malformed, API-key, and nonzero results remain
+  rejected. (#368)
 - Isolate qualification reviewer authentication under the exact pinned
   Bubblewrap artifact with an immutable empty `config.toml` data bind. Auth now
   uses only supported Codex CLI command scopes; it adds no model invocation or

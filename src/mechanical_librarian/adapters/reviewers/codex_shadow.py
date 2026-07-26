@@ -377,10 +377,14 @@ class CodexShadowReviewer:
             empty_config,
             timeout=30,
         )
+        status = b"Logged in using ChatGPT"
+        canonical = {status, status + b"\n", status + b"\r\n"}
         if (
             completed.returncode != 0
-            or completed.stderr
-            or completed.stdout.rstrip(b"\r\n") != b"Logged in using ChatGPT"
+            or not (
+                (completed.stdout in canonical and not completed.stderr)
+                or (completed.stderr in canonical and not completed.stdout)
+            )
         ):
             raise ShadowReviewerError("auth")
 

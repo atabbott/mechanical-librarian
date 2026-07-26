@@ -794,6 +794,51 @@ class CodexShadowAdapterTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 os.fstat(descriptor)
 
+    def test_chatgpt_auth_status_requires_one_exact_canonical_stream(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            reviewer = CodexShadowReviewer(self._profile(root, codex, sandbox))
+            canonical = b"Logged in using ChatGPT"
+            accepted = [
+                subprocess.CompletedProcess([], 0, value, b"")
+                for value in (canonical, canonical + b"\n", canonical + b"\r\n")
+            ] + [
+                subprocess.CompletedProcess([], 0, b"", value)
+                for value in (canonical, canonical + b"\n", canonical + b"\r\n")
+            ]
+            rejected = [
+                subprocess.CompletedProcess([], 0, canonical, canonical),
+                subprocess.CompletedProcess([], 0, canonical, b"extra"),
+                subprocess.CompletedProcess([], 0, canonical + b"\n\n", b""),
+                subprocess.CompletedProcess([], 0, b"", b""),
+                subprocess.CompletedProcess(
+                    [], 0, b"Logged in using an API key\n", b""
+                ),
+                subprocess.CompletedProcess([], 0, b"prefix " + canonical, b""),
+                subprocess.CompletedProcess([], 1, canonical, b""),
+            ]
+            for completed in accepted:
+                with self.subTest(
+                    accepted=True,
+                    stdout=bool(completed.stdout),
+                    ending=completed.stdout[-2:] or completed.stderr[-2:],
+                ), patch.object(reviewer, "_run_auth", return_value=completed):
+                    reviewer._require_chatgpt_auth([], object(), object(), 0)
+            for completed in rejected:
+                with self.subTest(
+                    accepted=False,
+                    returncode=completed.returncode,
+                    stdout=bool(completed.stdout),
+                    stderr=bool(completed.stderr),
+                ), patch.object(reviewer, "_run_auth", return_value=completed):
+                    with self.assertRaisesRegex(ShadowReviewerError, "auth"):
+                        reviewer._require_chatgpt_auth([], object(), object(), 0)
+
     def test_sandbox_command_has_exact_tool_disable_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
