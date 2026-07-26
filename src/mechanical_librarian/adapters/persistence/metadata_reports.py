@@ -685,7 +685,12 @@ class SQLiteMetadataReportRepository:
                 if self._binding is not None:
                     self._binding.require_current()
                 self._connection.commit()
-                return _admission_json(transition[0], prior[2])
+                replay_status = (
+                    "replayed"
+                    if transition[0] in {"admitted", "superseded"}
+                    else transition[0]
+                )
+                return _admission_json(replay_status, prior[2])
             if not is_actionable(proposal_set):
                 outcome = "retired" if prior is not None else "no_case"
                 transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior[2] if prior else None, None, "nonactionable")

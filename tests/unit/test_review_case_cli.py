@@ -20,6 +20,11 @@ class ReviewCaseCliTests(unittest.TestCase):
     def test_invalid_syntax_fails_before_runner(self) -> None:
         output, errors = io.StringIO(), io.StringIO()
         self.assertEqual(2, main(["review-case-get", "--database", "/d", "--review-case-id", "bad"], review_get_runner=lambda *_: self.fail("called"), stdout=output, stderr=errors))
+        self.assertEqual("", output.getvalue())
+        self.assertEqual(
+            '{"code":"invalid","schema_version":"review-admission-failure-v1"}\n',
+            errors.getvalue(),
+        )
 
 
 if __name__ == "__main__":

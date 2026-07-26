@@ -1,6 +1,6 @@
 # Data privacy
 
-0.9 minimizes retained data to one neutral evidence document per distinct
+0.10 minimizes retained data to one neutral evidence document per distinct
 observation. It retains the configured logical connection/library names,
 target item identifier, current title, opaque file identity and digest, bounded
 local field claims and results, fact-local opening excerpts of at most 280

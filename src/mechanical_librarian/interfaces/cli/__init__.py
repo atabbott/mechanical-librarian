@@ -200,10 +200,14 @@ def _opaque(value: str) -> str:
 def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, proposal_create_runner: ProposalCreateRunner | None = None, proposal_get_runner: ProposalGetRunner | None = None, review_admit_runner: ReviewAdmitRunner | None = None, review_get_runner: ReviewGetRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
+    raw_arguments = tuple(sys.argv[1:] if argv is None else argv)
     try:
-        arguments = _parser().parse_args(None if argv is None else list(argv))
+        arguments = _parser().parse_args(list(raw_arguments))
     except _ArgumentFailure:
-        errors.write("Metadata report failed: invalid invocation.\n")
+        if raw_arguments[:1] in {("review-case-admit",), ("review-case-get",)}:
+            errors.write(ReviewAdmissionFailure("invalid").to_json() + "\n")
+        else:
+            errors.write("Metadata report failed: invalid invocation.\n")
         return 2
     if arguments.command in {"review-case-admit", "review-case-get"}:
         try:

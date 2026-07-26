@@ -41,7 +41,7 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
             first = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
             repository.publish(first, lambda: True); proposal = _actionable(first); repository.publish_proposal(proposal)
             admitted = json.loads(repository.admit_review_case(proposal)); case_id = admitted["review_case_id"]
-            self.assertEqual("admitted", admitted["status"]); self.assertEqual("admitted", json.loads(repository.admit_review_case(proposal))["status"])
+            self.assertEqual("admitted", admitted["status"]); self.assertEqual("replayed", json.loads(repository.admit_review_case(proposal))["status"])
             repository.close(); repository = open_repository(database, create=False)
             self.assertTrue(json.loads(repository.get_review_case(case_id))["current"])
             successor = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Changed")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())

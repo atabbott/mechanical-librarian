@@ -101,6 +101,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         self.assertEqual(second.distribution_version, "0.0.0")
         self.assertFalse(first.full_suite_executed)
         self.assertFalse(partial.full_suite_executed)
+        self.assertFalse(second.review_case_lifecycle_executed)
         self.assertNotEqual(first.source_sha, second.source_sha)
         self.assertNotEqual(first.wheel_sha256, second.wheel_sha256)
         self.assertEqual(

@@ -1,6 +1,6 @@
 # Architecture overview
 
-The 0.9 runtime has four synchronous CLI paths:
+The 0.10 development runtime has five synchronous CLI paths:
 
 ```text
 CLI catalogue -> application RefreshCurrentCatalogue

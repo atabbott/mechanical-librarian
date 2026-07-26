@@ -21,7 +21,10 @@ Its path-free JSON evidence binds the source SHA, wheel SHA-256, payload
 SHA-256, and console-output SHA-256. A dirty or different source, ambiguous or
 changed wheel, invalid archive/record, reused destination, unlocked dependency,
 origin mismatch, payload mismatch, stale test install, or non-installed
-import/command fails closed.
+import/command fails closed. The installed console proof performs exact-ID
+report and ProposalSet creation, concurrent admission, replay, restart-backed
+get, successor/historical projection, and nonactionable retirement against a
+disposable loopback target and synthetic EPUB.
 
 The suite covers:
 

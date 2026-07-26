@@ -270,10 +270,14 @@ class MetadataPersistenceTests(unittest.TestCase):
             self.assertEqual(
                 tables,
                 [
+                    ("current_metadata_report_lineages",),
                     ("current_metadata_reports",),
+                    ("current_review_case_lineages",),
                     ("metadata_report_cover_references",),
                     ("metadata_reports",),
                     ("proposal_sets",),
+                    ("review_case_transitions",),
+                    ("review_cases",),
                 ],
             )
             self.assertEqual(len(rows), 2)

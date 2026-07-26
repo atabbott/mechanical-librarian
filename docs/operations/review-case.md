@@ -7,11 +7,11 @@ mechanical-librarian review-case-admit --config config.json --database reports.s
   --artifact-store artifacts --proposal-set-id proposal_set_<64-lowercase-hex-characters>
 ```
 
-The typed canonical result is `admitted`, `superseded`, `no_case`, `retired`,
-or `stale`. Only `propose_change` and `unresolved_choice` results create a
-case; `no_case` and `retired` have no empty case. Untrusted failures are
-redacted as fixed `invalid`, `incompatible`, `currentness`, or `persistence`
-codes.
+The typed canonical result is `admitted`, `replayed`, `superseded`, `no_case`,
+`retired`, or `stale`. Only `propose_change` and `unresolved_choice` results
+create a case; `no_case` and `retired` have no empty case. Untrusted failures
+are redacted as fixed `invalid`, `incompatible`, `currentness`, or
+`persistence` codes.
 
 The complete case binds the exact ProposalSet, report, target and file identity.
 Lineage checkpoints retain an attributable fixed-system audit transition. A
