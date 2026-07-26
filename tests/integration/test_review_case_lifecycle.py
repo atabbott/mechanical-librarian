@@ -7,23 +7,65 @@ import unittest
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.domain.metadata_report import FileFacts, MetadataReport, TargetFacts, default_target_fields
-from mechanical_librarian.domain.proposal_set import ProposalAlternative, ProposalAssessment, ProposalOutcome, ProposalResult, ProposalScope, ProposalSet, ProposalValue, ProposalValueKind, evaluate_report
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FileFacts,
+    LocalClaim,
+    MetadataReport,
+    TargetFacts,
+    default_target_fields,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.interfaces.cli import main as cli_main
 
 
 def _actionable(report):
-    base = evaluate_report(report)
-    alternative = ProposalAlternative.create(ProposalValue(ProposalValueKind.TEXT, "Synthetic revised title"), ProposalAssessment.REPLACES_TARGET, ("local_" + "a" * 64,), ("correlation_" + "b" * 64,), ProposalScope.WORK)
-    result = ProposalResult(base.results[0].destination, ProposalOutcome.PROPOSE_CHANGE, (alternative,), alternative.alternative_id, ("unique_typed_candidate",), base.results[0].dependencies)
-    return ProposalSet.create(report_id=base.report_id, target_fingerprint=base.target_fingerprint, results=(result, *base.results[1:]))
+    return evaluate_report(report)
+
+
+def _report(
+    title: str = "Title",
+    content_digest: str = "a",
+    file_identity: str = "b",
+    *,
+    actionable: bool = True,
+) -> MetadataReport:
+    claims = ()
+    reasons = ("no_opening_claims",)
+    if actionable:
+        claims = (
+            LocalClaim.create(
+                kind=ClaimKind.TITLE,
+                observed="Exact evaluator candidate",
+                canonical="Exact evaluator candidate",
+                excerpt="Exact evaluator candidate",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+            ),
+        )
+        reasons = ("opening_matter_title",)
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary",
+            "ebooks",
+            "item-1",
+            default_target_fields(title),
+        ),
+        file=FileFacts(0, content_digest * 64, file_identity * 64),
+        local_claims=claims,
+        local_reasons=reasons,
+        providers=(),
+    )
 
 
 class ReviewCaseLifecycleTests(unittest.TestCase):
     def test_exact_cli_admit_and_get_serialization(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reviews.sqlite"; repository = open_repository(database)
-            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            report = _report()
             repository.publish(report, lambda: True); proposal = _actionable(report); repository.publish_proposal(proposal)
             out, err = io.StringIO(), io.StringIO()
             code = cli_main(["review-case-admit", "--config", "/synthetic-config", "--database", str(database), "--artifact-store", "/synthetic-artifacts", "--proposal-set-id", proposal.proposal_set_id], review_admit_runner=lambda *_: repository.admit_review_case(proposal), stdout=out, stderr=err)
@@ -38,17 +80,19 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reviews.sqlite"
             repository = open_repository(database)
-            first = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            first = _report()
             repository.publish(first, lambda: True); proposal = _actionable(first); repository.publish_proposal(proposal)
             admitted = json.loads(repository.admit_review_case(proposal)); case_id = admitted["review_case_id"]
             self.assertEqual("admitted", admitted["status"]); self.assertEqual("replayed", json.loads(repository.admit_review_case(proposal))["status"])
             repository.close(); repository = open_repository(database, create=False)
             self.assertTrue(json.loads(repository.get_review_case(case_id))["current"])
-            successor = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Changed")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            successor = _report("Changed", "c", "d")
             repository.publish(successor, lambda: True); later = _actionable(successor); repository.publish_proposal(later)
             later_case = json.loads(repository.admit_review_case(later))["review_case_id"]
             self.assertFalse(json.loads(repository.get_review_case(case_id))["current"]); self.assertTrue(json.loads(repository.get_review_case(later_case))["current"])
-            retired = evaluate_report(successor); repository.publish_proposal(retired)
+            retired_report = _report("Retired", "e", "f", actionable=False)
+            repository.publish(retired_report, lambda: True)
+            retired = evaluate_report(retired_report); repository.publish_proposal(retired)
             self.assertEqual("retired", json.loads(repository.admit_review_case(retired))["status"])
             self.assertFalse(json.loads(repository.get_review_case(later_case))["current"])
             self.assertEqual((2,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
@@ -57,7 +101,7 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
     def test_concurrent_identical_admission_converges(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reviews.sqlite"; repository = open_repository(database)
-            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            report = _report()
             repository.publish(report, lambda: True); proposal = _actionable(report); repository.publish_proposal(proposal); repository.close()
             barrier, outcomes = threading.Barrier(2), []
             def admit():

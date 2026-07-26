@@ -18,6 +18,8 @@ from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSe
 REVIEW_CASE_SCHEMA = "review-case-v1"
 REVIEW_ADMISSION_SCHEMA = "review-admission-v1"
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
+_PROPOSAL_SET_ID = re.compile(r"^proposal_set_[0-9a-f]{64}$")
+_REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
 _ADMISSION_STATUS = frozenset(
     {"admitted", "replayed", "superseded", "no_case", "retired", "stale"}
 )
@@ -30,6 +32,14 @@ MAX_REVIEW_CASE_BYTES = 2_097_152
 
 class ReviewCaseValueError(ValueError):
     """A review case is outside the closed production-admission contract."""
+
+
+class ReviewAdmissionStaleError(RuntimeError):
+    """The exact ProposalSet lost currentness before atomic admission."""
+
+
+class ReviewAdmissionIncompatibleError(RuntimeError):
+    """The ProposalSet is not the exact evaluator output for its report."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,15 +126,39 @@ class ReviewTransition:
 
     def __post_init__(self) -> None:
         if (
-            self.checkpoint < 1
+            type(self.checkpoint) is not int
+            or self.checkpoint < 1
             or self.actor != "review-admission-v1"
             or self.kind not in _TRANSITION_KIND
             or self.reason not in {"actionable", "nonactionable"}
+            or type(self.proposal_set_id) is not str
+            or _PROPOSAL_SET_ID.fullmatch(self.proposal_set_id) is None
+            or type(self.report_id) is not str
+            or _REPORT_ID.fullmatch(self.report_id) is None
+            or any(
+                type(value) is not str or not value
+                for value in (self.connection, self.library, self.item)
+            )
+            or any(
+                value is not None
+                and (
+                    type(value) is not str
+                    or _CASE_ID.fullmatch(value) is None
+                )
+                for value in (
+                    self.from_review_case_id,
+                    self.to_review_case_id,
+                )
+            )
         ):
             raise ReviewCaseValueError("review transition is invalid")
-        if self.kind in {"admitted", "superseded"} and self.to_review_case_id is None:
+        if self.kind in {"admitted", "superseded"} and (
+            self.to_review_case_id is None or self.reason != "actionable"
+        ):
             raise ReviewCaseValueError("review transition is invalid")
-        if self.kind in {"no_case", "retired"} and self.to_review_case_id is not None:
+        if self.kind in {"no_case", "retired"} and (
+            self.to_review_case_id is not None or self.reason != "nonactionable"
+        ):
             raise ReviewCaseValueError("review transition is invalid")
 
     @property
@@ -281,4 +315,4 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-__all__ = ["MAX_REVIEW_CASE_BYTES", "REVIEW_ADMISSION_SCHEMA", "REVIEW_CASE_SCHEMA", "ReviewAdmissionFailure", "ReviewAdmissionResult", "ReviewCase", "ReviewCaseValueError", "is_actionable"]
+__all__ = ["MAX_REVIEW_CASE_BYTES", "REVIEW_ADMISSION_SCHEMA", "REVIEW_CASE_SCHEMA", "ReviewAdmissionFailure", "ReviewAdmissionIncompatibleError", "ReviewAdmissionResult", "ReviewAdmissionStaleError", "ReviewCase", "ReviewCaseValueError", "is_actionable"]

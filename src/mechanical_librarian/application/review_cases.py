@@ -5,8 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
-from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
-from mechanical_librarian.domain.review_case import ReviewAdmissionResult
+from mechanical_librarian.application.metadata_report import CurrentnessError
+from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.review_case import (
+    ReviewAdmissionIncompatibleError,
+    ReviewAdmissionResult,
+    ReviewAdmissionStaleError,
+)
 
 
 class ReviewCaseError(RuntimeError):
@@ -22,6 +27,7 @@ class ReviewCaseRepository(Protocol):
     def admit_review_case(self, proposal_set: ProposalSet) -> str: ...
     def get_review_case(self, review_case_id: str) -> str: ...
     def close(self) -> None: ...
+
 
 class AdmitReviewCase:
     def __init__(
@@ -42,10 +48,15 @@ class AdmitReviewCase:
             if self._require_current(proposal) is not True:
                 return ReviewAdmissionResult("stale", None).to_json()
             return self._repository.admit_review_case(proposal)
+        except (CurrentnessError, ReviewAdmissionStaleError):
+            return ReviewAdmissionResult("stale", None).to_json()
+        except ReviewAdmissionIncompatibleError as error:
+            raise ReviewCaseError("incompatible") from error
         except ReviewCaseError:
             raise
         except Exception as error:
             raise ReviewCaseError("persistence") from error
+
 
 class GetReviewCase:
     def __init__(self, repository: ReviewCaseRepository) -> None:
@@ -58,4 +69,9 @@ class GetReviewCase:
             raise ReviewCaseError("persistence") from error
 
 
-__all__ = ["AdmitReviewCase", "GetReviewCase", "ReviewCaseError", "ReviewCaseRepository"]
+__all__ = [
+    "AdmitReviewCase",
+    "GetReviewCase",
+    "ReviewCaseError",
+    "ReviewCaseRepository",
+]

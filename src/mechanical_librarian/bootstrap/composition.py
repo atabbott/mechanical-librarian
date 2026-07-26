@@ -625,7 +625,10 @@ def admit_review_case(config_path: Path, database_path: Path, artifact_store_pat
         if mount is None:
             return False
         target = AudiobookshelfItemReader(client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds), endpoint=connection.endpoint, library_id=library.library_id, service_path=mount.service_path, maximum_bytes=configuration.limits.target_response_bytes, timeout_seconds=configuration.limits.timeout_seconds)
-        valid = require_report_current(target, _IsolatedEpubInspector(artifacts), mount, configuration.limits, report)
+        try:
+            valid = require_report_current(target, _IsolatedEpubInspector(artifacts), mount, configuration.limits, report)
+        except CurrentnessError:
+            return False
         for source in report.cover_sources:
             if source.artifact is not None:
                 artifacts.require_artifact(source.artifact)

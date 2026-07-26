@@ -14,6 +14,10 @@ are redacted as fixed `invalid`, `incompatible`, `currentness`, or
 `persistence` codes.
 
 The complete case binds the exact ProposalSet, report, target and file identity.
+Inside the admission transaction, the service recomputes the fixed F09o
+evaluator output from the bound report; a synthetic or otherwise different
+ProposalSet is `incompatible` and publishes no review state. A report or media
+pointer that loses currentness returns `stale`.
 Lineage checkpoints retain an attributable fixed-system audit transition. A
 newer report makes an earlier case historical without rewriting it. Use a
 clean rebuild and regenerate supported reports/ProposalSets for an older

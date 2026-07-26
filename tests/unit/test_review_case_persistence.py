@@ -6,7 +6,15 @@ import unittest
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.domain.metadata_report import FileFacts, MetadataReport, TargetFacts, default_target_fields
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FileFacts,
+    LocalClaim,
+    MetadataReport,
+    TargetFacts,
+    default_target_fields,
+)
 from mechanical_librarian.domain.proposal_set import (
     ProposalAlternative,
     ProposalAssessment,
@@ -18,8 +26,50 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalValueKind,
     evaluate_report,
 )
-from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase, ReviewCaseValueError
+from mechanical_librarian.domain.review_case import (
+    ReviewAdmissionIncompatibleError,
+    ReviewAdmissionResult,
+    ReviewCase,
+    ReviewCaseValueError,
+)
 from mechanical_librarian.domain.review_case import ReviewTransition
+
+
+def _report(
+    title: str = "Title",
+    content_digest: str = "a",
+    file_identity: str = "b",
+    *,
+    actionable: bool = True,
+) -> MetadataReport:
+    claims = ()
+    reasons = ("no_opening_claims",)
+    if actionable:
+        claims = (
+            LocalClaim.create(
+                kind=ClaimKind.TITLE,
+                observed="Exact evaluator candidate",
+                canonical="Exact evaluator candidate",
+                excerpt="Exact evaluator candidate",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+            ),
+        )
+        reasons = ("opening_matter_title",)
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary",
+            "ebooks",
+            "item-1",
+            default_target_fields(title),
+        ),
+        file=FileFacts(0, content_digest * 64, file_identity * 64),
+        local_claims=claims,
+        local_reasons=reasons,
+        providers=(),
+    )
 
 
 class ReviewCasePersistenceTests(unittest.TestCase):
@@ -41,23 +91,23 @@ class ReviewCasePersistenceTests(unittest.TestCase):
         with self.assertRaises(ReviewCaseValueError):
             ReviewTransition("primary", "ebooks", "item-1", 0, "x", "y", "admitted", None, None, "actionable")
     def _actionable(self, report: MetadataReport) -> ProposalSet:
-        base = evaluate_report(report)
-        alternative = ProposalAlternative.create(
-            ProposalValue(ProposalValueKind.TEXT, "Revised title"),
-            ProposalAssessment.REPLACES_TARGET,
-            ("local_" + "a" * 64,), ("correlation_" + "b" * 64,), ProposalScope.WORK,
+        proposal = evaluate_report(report)
+        self.assertTrue(
+            any(
+                result.outcome
+                in {
+                    ProposalOutcome.PROPOSE_CHANGE,
+                    ProposalOutcome.UNRESOLVED_CHOICE,
+                }
+                for result in proposal.results
+            )
         )
-        changed = ProposalResult(base.results[0].destination, ProposalOutcome.PROPOSE_CHANGE, (alternative,), alternative.alternative_id, ("unique_typed_candidate",), base.results[0].dependencies)
-        return ProposalSet.create(report_id=base.report_id, target_fingerprint=base.target_fingerprint, results=(changed, *base.results[1:]))
+        return proposal
 
     def test_nonactionable_set_retires_without_creating_case_and_replays(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
-            report = MetadataReport.create(
-                target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")),
-                file=FileFacts(0, "a" * 64, "b" * 64),
-                local_claims=(), local_reasons=("no_opening_claims",), providers=(),
-            )
+            report = _report(actionable=False)
             repository.publish(report, lambda: True)
             proposal = evaluate_report(report)
             repository.publish_proposal(proposal)
@@ -72,11 +122,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
     def test_actionable_set_creates_complete_case_and_exact_get(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
-            report = MetadataReport.create(
-                target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")),
-                file=FileFacts(0, "a" * 64, "b" * 64),
-                local_claims=(), local_reasons=("no_opening_claims",), providers=(),
-            )
+            report = _report()
             repository.publish(report, lambda: True)
             proposal = self._actionable(report)
             repository.publish_proposal(proposal)
@@ -90,11 +136,11 @@ class ReviewCasePersistenceTests(unittest.TestCase):
     def test_successor_makes_prior_case_historical(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
-            first = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            first = _report()
             repository.publish(first, lambda: True)
             first_set = self._actionable(first); repository.publish_proposal(first_set)
             first_case = json.loads(repository.admit_review_case(first_set))["review_case_id"]
-            successor = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Changed")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            successor = _report("Changed", "c", "d")
             repository.publish(successor, lambda: True)
             successor_set = self._actionable(successor); repository.publish_proposal(successor_set)
             successor_case = json.loads(repository.admit_review_case(successor_set))["review_case_id"]
@@ -105,10 +151,10 @@ class ReviewCasePersistenceTests(unittest.TestCase):
     def test_newer_report_immediately_makes_case_historical(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
-            first = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            first = _report()
             repository.publish(first, lambda: True); proposal = self._actionable(first); repository.publish_proposal(proposal)
             case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
-            newer = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("New")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            newer = _report("New", "c", "d")
             repository.publish(newer, lambda: True)
             self.assertFalse(json.loads(repository.get_review_case(case_id))["current"])
             repository.close()
@@ -116,10 +162,10 @@ class ReviewCasePersistenceTests(unittest.TestCase):
     def test_nonactionable_successor_retires_current_case_without_empty_case(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
-            first = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            first = _report()
             repository.publish(first, lambda: True); first_set = self._actionable(first); repository.publish_proposal(first_set)
             case_id = json.loads(repository.admit_review_case(first_set))["review_case_id"]
-            successor = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Changed")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            successor = _report("Changed", "c", "d", actionable=False)
             repository.publish(successor, lambda: True); successor_set = evaluate_report(successor); repository.publish_proposal(successor_set)
             self.assertEqual("retired", json.loads(repository.admit_review_case(successor_set))["status"])
             self.assertFalse(json.loads(repository.get_review_case(case_id))["current"])
@@ -129,20 +175,169 @@ class ReviewCasePersistenceTests(unittest.TestCase):
     def test_stale_and_cross_target_proposals_mutate_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
-            first = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            first = _report()
             repository.publish(first, lambda: True); stale = self._actionable(first); repository.publish_proposal(stale)
-            current = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Changed")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            current = _report("Changed", "c", "d")
             repository.publish(current, lambda: True)
             with self.assertRaises(Exception): repository.admit_review_case(stale)
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_case_transitions").fetchone())
             repository.close()
 
+    def test_synthetic_evaluator_output_is_incompatible_and_mutates_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = _report()
+            repository.publish(report, lambda: True)
+            base = evaluate_report(report)
+            alternative = ProposalAlternative.create(
+                ProposalValue(ProposalValueKind.TEXT, "Fabricated title"),
+                ProposalAssessment.REPLACES_TARGET,
+                ("local_" + "a" * 64,),
+                ("correlation_" + "b" * 64,),
+                ProposalScope.WORK,
+            )
+            result = ProposalResult(
+                base.results[0].destination,
+                ProposalOutcome.PROPOSE_CHANGE,
+                (alternative,),
+                alternative.alternative_id,
+                ("unique_typed_candidate",),
+                base.results[0].dependencies,
+            )
+            synthetic = ProposalSet.create(
+                report_id=report.report_id,
+                target_fingerprint=report.target.fingerprint,
+                results=(result, *base.results[1:]),
+            )
+            repository._connection.execute(
+                "INSERT INTO proposal_sets(proposal_set_id,report_id,document) "
+                "VALUES(?,?,?)",
+                (
+                    synthetic.proposal_set_id,
+                    report.report_id,
+                    synthetic.to_json(),
+                ),
+            )
+            repository._connection.commit()
+            with self.assertRaises(ReviewAdmissionIncompatibleError):
+                repository.admit_review_case(synthetic)
+            for table in (
+                "review_cases",
+                "review_case_transitions",
+                "current_review_case_lineages",
+            ):
+                self.assertEqual(
+                    (0,),
+                    repository._connection.execute(
+                        f"SELECT COUNT(*) FROM {table}"
+                    ).fetchone(),
+                )
+            repository.close()
+
+    def test_target_incompatible_nonactionable_set_mutates_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = _report(actionable=False)
+            repository.publish(report, lambda: True)
+            exact = evaluate_report(report)
+            incompatible = ProposalSet.create(
+                report_id=report.report_id,
+                target_fingerprint="f" * 64,
+                results=exact.results,
+            )
+            repository._connection.execute(
+                "INSERT INTO proposal_sets(proposal_set_id,report_id,document) "
+                "VALUES(?,?,?)",
+                (
+                    incompatible.proposal_set_id,
+                    report.report_id,
+                    incompatible.to_json(),
+                ),
+            )
+            repository._connection.commit()
+            with self.assertRaises(ReviewAdmissionIncompatibleError):
+                repository.admit_review_case(incompatible)
+            for table in (
+                "review_cases",
+                "review_case_transitions",
+                "current_review_case_lineages",
+            ):
+                self.assertEqual(
+                    (0,),
+                    repository._connection.execute(
+                        f"SELECT COUNT(*) FROM {table}"
+                    ).fetchone(),
+                )
+            repository.close()
+
+    def test_replay_uses_current_checkpoint_outcome_not_transition_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            first = _report(actionable=False)
+            repository.publish(first, lambda: True)
+            first_set = evaluate_report(first)
+            repository.publish_proposal(first_set)
+            self.assertEqual(
+                "no_case",
+                json.loads(repository.admit_review_case(first_set))["status"],
+            )
+
+            successor = _report("Changed", "c", "d")
+            repository.publish(successor, lambda: True)
+            successor_set = self._actionable(successor)
+            repository.publish_proposal(successor_set)
+            repository.admit_review_case(successor_set)
+
+            repository.publish(
+                first,
+                lambda: True,
+                expected_current=successor.report_id,
+            )
+            self.assertEqual(
+                "retired",
+                json.loads(repository.admit_review_case(first_set))["status"],
+            )
+            self.assertEqual(
+                "retired",
+                json.loads(repository.admit_review_case(first_set))["status"],
+            )
+            repository.close()
+
+    def test_impossible_transition_pointer_combination_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = _report(actionable=False)
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+            transition_id = repository._connection.execute(
+                "SELECT transition_id FROM current_review_case_lineages"
+            ).fetchone()[0]
+            repository._connection.execute(
+                "DROP TRIGGER review_case_transitions_no_update"
+            )
+            repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+            repository._connection.execute(
+                "UPDATE review_case_transitions SET kind='admitted',"
+                "reason='actionable' WHERE transition_id=?",
+                (transition_id,),
+            )
+            repository._connection.execute(
+                "UPDATE current_review_case_lineages SET outcome='admitted'"
+            )
+            repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
+            repository._connection.commit()
+            with self.assertRaises(Exception):
+                repository.admit_review_case(proposal)
+            repository.close()
+
     def test_concurrent_identical_admission_converges(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reports.sqlite"
             repository = open_repository(database)
-            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            report = _report()
             repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal); repository.close()
             barrier, results = threading.Barrier(2), []
             def admit() -> None:
@@ -158,7 +353,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
     def test_transition_failure_rolls_back_case_and_pointer(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
-            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            report = _report()
             repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
             repository._connection.execute("CREATE TRIGGER injected_review_transition_failure BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'injected'); END")
             with self.assertRaises(Exception): repository.admit_review_case(proposal)
@@ -186,7 +381,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
     def test_corrupt_case_is_redacted_and_unrelated_history_survives(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
-            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            report = _report()
             repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
             case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
             self.assertEqual(proposal.to_json(), repository.get_proposal(proposal.proposal_set_id))
@@ -206,7 +401,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
     def test_malformed_current_pointer_is_not_projected_as_historical(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
-            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            report = _report()
             repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
             case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
             repository._connection.execute("PRAGMA foreign_keys=OFF")
@@ -229,7 +424,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reports.sqlite"
             repository = open_repository(database)
-            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            report = _report()
             repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
             repository._connection.execute("BEGIN IMMEDIATE")
             result = []
@@ -246,7 +441,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
     def test_disk_full_equivalent_rolls_back_every_review_row(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
-            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            report = _report()
             repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
             repository._connection.execute("CREATE TRIGGER injected_full BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END")
             with self.assertRaises(Exception): repository.admit_review_case(proposal)

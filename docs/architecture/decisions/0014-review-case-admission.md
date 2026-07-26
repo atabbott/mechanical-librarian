@@ -11,6 +11,9 @@ one current pointer for the stable configured target lineage `(connection,
 library, item)`. Admission uses `BEGIN IMMEDIATE` and rechecks the exact
 ProposalSet, report, and lineage pointer before it creates a case, replaces a
 current case with a successor, or retires applicability without an empty case.
+The transaction also requires byte-exact agreement with the deterministic
+fixed-policy evaluator output for the bound report, so structurally valid
+synthetic ProposalSets cannot enter the review lineage.
 
 Only `propose_change` and `unresolved_choice` results are actionable. The case
 retains all sixteen results as context and remains undecided; no reviewer

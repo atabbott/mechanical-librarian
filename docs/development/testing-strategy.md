@@ -58,7 +58,8 @@ The suite covers:
   applicability, year-only/date consistency, populated subjective-field
   closure, complete cover-gallery selection, deterministic ProposalSet replay,
   stale-report no-insert, transaction-local report/current-pointer recheck,
-  and zero provider calls during proposal creation;
+  exact evaluator recomputation before review admission, synthetic ProposalSet
+  rejection, and zero provider calls during proposal creation;
 - rejection before unauthorized parser/provider/publication activity,
   transaction-bound currentness drift, exact-byte snapshot binding, title
   privacy rejection, redaction, and absence of product/media writes; and

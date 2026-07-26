@@ -19,8 +19,20 @@ from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     ReportValueError,
 )
-from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
-from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase, ReviewCaseValueError, ReviewTransition, is_actionable
+from mechanical_librarian.domain.proposal_set import (
+    ProposalSet,
+    ProposalValueError,
+    evaluate_report,
+)
+from mechanical_librarian.domain.review_case import (
+    ReviewAdmissionResult,
+    ReviewAdmissionIncompatibleError,
+    ReviewAdmissionStaleError,
+    ReviewCase,
+    ReviewCaseValueError,
+    ReviewTransition,
+    is_actionable,
+)
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -85,13 +97,16 @@ _REVIEW_POINTERS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
     "transition_id TEXT NOT NULL REFERENCES review_case_transitions(transition_id), checkpoint INTEGER NOT NULL CHECK(checkpoint > 0), outcome TEXT NOT NULL CHECK(outcome IN ('admitted','superseded','no_case','retired')), "
+    "CHECK ((outcome IN ('admitted','superseded') AND review_case_id IS NOT NULL) OR (outcome IN ('no_case','retired') AND review_case_id IS NULL)), "
     "PRIMARY KEY (connection_name,library_name,item_id))"
 )
 _REVIEW_TRANSITIONS_SQL = (
     "CREATE TABLE review_case_transitions ("
     "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'review_transition_[0-9a-f]*' AND length(transition_id)=82), "
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, checkpoint INTEGER NOT NULL CHECK(checkpoint > 0), actor TEXT NOT NULL CHECK(actor='review-admission-v1'), "
-    "from_review_case_id TEXT REFERENCES review_cases(review_case_id), to_review_case_id TEXT REFERENCES review_cases(review_case_id), proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), kind TEXT NOT NULL CHECK(kind IN ('admitted','superseded','no_case','retired')), reason TEXT NOT NULL CHECK(reason IN ('actionable','nonactionable')), UNIQUE(connection_name,library_name,item_id,checkpoint) )"
+    "from_review_case_id TEXT REFERENCES review_cases(review_case_id), to_review_case_id TEXT REFERENCES review_cases(review_case_id), proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), kind TEXT NOT NULL CHECK(kind IN ('admitted','superseded','no_case','retired')), reason TEXT NOT NULL CHECK(reason IN ('actionable','nonactionable')), "
+    "CHECK ((kind IN ('admitted','superseded') AND reason='actionable' AND to_review_case_id IS NOT NULL) OR (kind IN ('no_case','retired') AND reason='nonactionable' AND to_review_case_id IS NULL)), "
+    "UNIQUE(connection_name,library_name,item_id,checkpoint) )"
 )
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
@@ -671,26 +686,39 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("review report is unavailable")
             report = MetadataReport.from_json(_validate_report_row(report_row))
             lineage = (report.target.connection, report.target.library, report.target.item)
+            if (
+                proposal_set.report_id != report.report_id
+                or proposal_set.target_fingerprint != report.target.fingerprint
+                or proposal_set.to_json() != evaluate_report(report).to_json()
+            ):
+                raise ReviewAdmissionIncompatibleError
             if self._connection.execute("SELECT report_id FROM current_metadata_report_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone() != (report.report_id,):
-                raise MetadataReportError("review proposal is stale")
+                raise ReviewAdmissionStaleError
             if self._connection.execute("SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (*lineage, report.file.identity)).fetchone() != (report.report_id,):
-                raise MetadataReportError("review proposal is stale")
-            prior = self._connection.execute("SELECT proposal_set_id,report_id,review_case_id,checkpoint,outcome FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone()
+                raise ReviewAdmissionStaleError
+            validated = self._validated_review_pointer(lineage)
+            prior = (
+                None
+                if validated is None
+                else (
+                    validated[0],
+                    validated[1],
+                    validated[2],
+                    validated[4],
+                    validated[5],
+                )
+            )
             checkpoint = 1 if prior is None else prior[3] + 1
             if prior is not None and prior[0] == proposal_set.proposal_set_id:
-                self._validated_review_pointer(lineage)
-                transition = self._connection.execute("SELECT kind FROM review_case_transitions WHERE connection_name=? AND library_name=? AND item_id=? AND proposal_set_id=? ORDER BY transition_id DESC LIMIT 1", (*lineage, proposal_set.proposal_set_id)).fetchone()
-                if transition is None:
-                    raise MetadataReportError("review transition is unavailable")
                 if self._binding is not None:
                     self._binding.require_current()
                 self._connection.commit()
                 replay_status = (
                     "replayed"
-                    if transition[0] in {"admitted", "superseded"}
-                    else transition[0]
+                    if validated[5] in {"admitted", "superseded"}
+                    else validated[5]
                 )
-                return _admission_json(replay_status, prior[2])
+                return _admission_json(replay_status, validated[2])
             if not is_actionable(proposal_set):
                 outcome = "retired" if prior is not None else "no_case"
                 transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior[2] if prior else None, None, "nonactionable")
@@ -714,7 +742,11 @@ class SQLiteMetadataReportRepository:
                 self._binding.require_current()
             self._connection.commit()
             return _admission_json("superseded" if prior is not None else "admitted", case.review_case_id)
-        except MetadataReportError:
+        except (
+            MetadataReportError,
+            ReviewAdmissionIncompatibleError,
+            ReviewAdmissionStaleError,
+        ):
             self._connection.rollback(); raise
         except (sqlite3.Error, ProposalValueError, ReportValueError, ReviewCaseValueError) as error:
             self._connection.rollback(); raise MetadataReportError("review admission failed") from error
@@ -744,6 +776,7 @@ class SQLiteMetadataReportRepository:
                 proposal.proposal_set_id != case.proposal_set_id
                 or proposal.report_id != case.report_id
                 or proposal.target_fingerprint != case.target_fingerprint
+                or proposal.to_json() != evaluate_report(report).to_json()
                 or report.target.to_data() != case.target
                 or report.target.fingerprint != case.target_fingerprint
                 or report.file.identity != case.file_identity
@@ -768,11 +801,56 @@ class SQLiteMetadataReportRepository:
             return None
         proposal_id, report_id, case_id, transition_id, checkpoint, outcome = pointer
         transition = self._connection.execute("SELECT connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason FROM review_case_transitions WHERE transition_id=?", (transition_id,)).fetchone()
-        if transition is None or transition[:4] != (*lineage, checkpoint) or transition[7:10] != (proposal_id, report_id, outcome) or transition[4] != "review-admission-v1" or transition[10] not in {"actionable", "nonactionable"}:
+        if transition is None:
             raise MetadataReportError("review pointer is invalid")
-        if case_id is not None and (type(case_id) is not str or not case_id.startswith("review_case_") or transition[6] != case_id or self._connection.execute("SELECT 1 FROM review_cases WHERE review_case_id=?", (case_id,)).fetchone() is None):
+        try:
+            value = ReviewTransition(
+                transition[0],
+                transition[1],
+                transition[2],
+                transition[3],
+                transition[7],
+                transition[8],
+                transition[9],
+                transition[5],
+                transition[6],
+                transition[10],
+                transition[4],
+            )
+        except (TypeError, ReviewCaseValueError) as error:
+            raise MetadataReportError("review pointer is invalid") from error
+        if (
+            value.transition_id != transition_id
+            or transition[:4] != (*lineage, checkpoint)
+            or (value.proposal_set_id, value.report_id, value.kind)
+            != (proposal_id, report_id, outcome)
+            or value.to_review_case_id != case_id
+        ):
             raise MetadataReportError("review pointer is invalid")
-        if case_id is None and transition[6] is not None:
+        if case_id is not None:
+            case_source = self._connection.execute(
+                "SELECT proposal_set_id,report_id,document FROM review_cases WHERE review_case_id=?",
+                (case_id,),
+            ).fetchone()
+            if case_source is None:
+                raise MetadataReportError("review pointer is invalid")
+            try:
+                case = ReviewCase.from_json(case_source[2])
+            except (TypeError, ReviewCaseValueError) as error:
+                raise MetadataReportError("review pointer is invalid") from error
+            if (
+                case_source[:2] != (proposal_id, report_id)
+                or (case.review_case_id, case.proposal_set_id, case.report_id)
+                != (case_id, proposal_id, report_id)
+                or (
+                    case.target["connection"],
+                    case.target["library"],
+                    case.target["item"],
+                )
+                != lineage
+            ):
+                raise MetadataReportError("review pointer is invalid")
+        elif outcome not in {"no_case", "retired"}:
             raise MetadataReportError("review pointer is invalid")
         return pointer
 
