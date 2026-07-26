@@ -111,7 +111,9 @@ work/edition/cover scope, target assessment, stable evidence references, and
 hashed correlation identities. `reject` is reserved for future explicit policy
 rejection; the fixed evaluator never infers deletion or emits it. `keep`
 requires positive preservation evidence and never encodes a replacement. The
-ProposalSet references observations owned by the report
+ProposalSet references observations owned by the report rather than copying
+excerpts, provider payloads, cover provenance, URLs, paths, or bytes. Its ID
+is derived from its canonical document rather than serialized in it.
 
 ## ReviewCase admission
 
@@ -119,9 +121,6 @@ An immutable undecided ReviewCase preserves all sixteen ProposalSet results for
 one exact current target lineage. Only `propose_change` and
 `unresolved_choice` are actionable; the remaining results are context, not
 queue work. Cases do not record decisions or write authority.
-rather than copying excerpts, provider payloads, cover provenance, URLs, paths,
-or bytes.
-Its ID is derived from its canonical document rather than serialized in it.
 
 The pure evaluator has no configuration, provider, network, persistence, or
 write authority. Its fixed rules preserve ordered complete people lists,

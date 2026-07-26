@@ -34,7 +34,7 @@ exact/current report reopen, report-bound cover-preview reopen, exact-current
 ProposalSet create, offline exact ProposalSet reopen, review-case admission,
 and offline exact ReviewCase reopen. It does not support
 durable batch attempts, resume, automatic retry, workers, schedulers, parallel
-execution, or review/admission/decision/apply.
+execution, review decisions, or apply.
 
 Until the first production release, every database, report, artifact,
 configuration, and internal-document schema accepts only absent state or its
