@@ -52,8 +52,9 @@ The manifest path must be absent. Preview atomically creates one immutable
 canonical `batch-manifest-v2` document. It records scoped identities, the
 catalogue generation and fingerprint, a secret-free configuration fingerprint,
 enabled provider names and adapter discriminators, and conservative call-count
-maxima. Open Library allows at most five metadata requests and four remote
-cover requests per selected item: two exact editions plus two distinct works.
+maxima. Each enabled Open Library adapter allows at most five metadata requests
+and four remote cover requests per selected item: two editions plus two distinct
+works.
 Hardcover retains one metadata request. The report gallery admits at most four
 cover sources per provider and eight overall. The maxima add the enabled
 adapters without a generic cost or scheduling framework.
