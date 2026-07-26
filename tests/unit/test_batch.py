@@ -47,10 +47,12 @@ class BatchTests(unittest.TestCase):
   base=CatalogueSnapshot(1,"a"*64,()); value=BatchSelection("primary","books","library","item","a"*64,"singular-supported",True)
   with self.assertRaises(BatchError):manifest(base,"b"*64,(value,value),(),())
 
- def test_open_library_call_maxima_are_exact_and_contact_is_not_fingerprinted(self):
+ def test_open_library_call_maxima_cover_bounded_descriptor_fan_out_and_contact_is_not_fingerprinted(self):
   base=CatalogueSnapshot(1,"a"*64,()); selected=(BatchSelection("primary","books","library","item","a"*64,"singular-supported",True),)
   raw=manifest(base,"b"*64,selected,("catalogue","open"),("hardcover","open_library"))
-  self.assertEqual(parse_manifest(raw)["call_maxima"],{"target_item_observations":6,"target_raw_cover_requests":4,"provider_metadata_requests":6,"remote_cover_requests":22})
+  self.assertEqual(parse_manifest(raw)["call_maxima"],{"target_item_observations":6,"target_raw_cover_requests":4,"provider_metadata_requests":6,"remote_cover_requests":24})
+  open_only=manifest(base,"b"*64,selected,("open",),("open_library",))
+  self.assertEqual(parse_manifest(open_only)["call_maxima"]["remote_cover_requests"],4)
   first=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/target"),),(LibraryConfiguration("books","primary","library","book",None,("open",)),),(),(ProviderConnectionConfiguration("open",True,False,None,"open_library","first@example.org"),))
   second=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/other-target"),),(LibraryConfiguration("books","primary","library","book",None,("open",)),),(),(ProviderConnectionConfiguration("open",True,False,None,"open_library","second@example.org"),))
   self.assertEqual(batch_fingerprint(first,selected),batch_fingerprint(second,selected))

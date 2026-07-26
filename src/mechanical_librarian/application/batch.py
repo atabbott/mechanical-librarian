@@ -152,7 +152,7 @@ def _maxima(entries: int, adapters: tuple[str, ...]) -> dict[str, int]:
         "provider_metadata_requests": entries
         * (hardcover + open_library * 5),
         "remote_cover_requests": entries
-        * (hardcover * 5 * 4 + open_library * 2),
+        * (hardcover * 5 * 4 + open_library * 4),
     }
 
 
