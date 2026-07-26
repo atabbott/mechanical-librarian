@@ -1,5 +1,6 @@
 """Synthetic installed-surface lifecycle proof for review admission storage."""
 import json
+import io
 import tempfile
 import threading
 import unittest
@@ -8,6 +9,7 @@ from pathlib import Path
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.domain.metadata_report import FileFacts, MetadataReport, TargetFacts, default_target_fields
 from mechanical_librarian.domain.proposal_set import ProposalAlternative, ProposalAssessment, ProposalOutcome, ProposalResult, ProposalScope, ProposalSet, ProposalValue, ProposalValueKind, evaluate_report
+from mechanical_librarian.interfaces.cli import main as cli_main
 
 
 def _actionable(report):
@@ -18,6 +20,20 @@ def _actionable(report):
 
 
 class ReviewCaseLifecycleTests(unittest.TestCase):
+    def test_exact_cli_admit_and_get_serialization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reviews.sqlite"; repository = open_repository(database)
+            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(report, lambda: True); proposal = _actionable(report); repository.publish_proposal(proposal)
+            out, err = io.StringIO(), io.StringIO()
+            code = cli_main(["review-case-admit", "--config", "/synthetic-config", "--database", str(database), "--artifact-store", "/synthetic-artifacts", "--proposal-set-id", proposal.proposal_set_id], review_admit_runner=lambda *_: repository.admit_review_case(proposal), stdout=out, stderr=err)
+            self.assertEqual(0, code); self.assertEqual("", err.getvalue())
+            admitted = json.loads(out.getvalue()); case_id = admitted["review_case_id"]
+            out = io.StringIO()
+            self.assertEqual(0, cli_main(["review-case-get", "--database", str(database), "--review-case-id", case_id], review_get_runner=lambda *_: repository.get_review_case(case_id), stdout=out, stderr=err))
+            self.assertTrue(json.loads(out.getvalue())["current"])
+            self.assertEqual(2, cli_main(["review-case-get", "--database", str(database), "--review-case-id", "bad"], review_get_runner=lambda *_: self.fail("called"), stdout=io.StringIO(), stderr=io.StringIO()))
+            repository.close()
     def test_absent_restart_replay_successor_and_retirement(self):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reviews.sqlite"
