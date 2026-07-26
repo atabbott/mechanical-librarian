@@ -265,8 +265,8 @@ provenance-bearing provider cover gallery. The delivered #70 activation
 increment derives one deterministic immutable result for each destination from
 that exact current report without further provider access.
 
-This checkpoint remains report/proposal-only. It adds no review admission,
-human or AI decision, apply/write authority, fuzzy discovery, configurable
+This checkpoint now includes exact-current immutable review admission. It adds no
+reviewer or AI decision, approval, apply, target or media write, fuzzy discovery, configurable
 policy, background execution, migration, tag, or release publication.
 
 ## M3: AI review in shadow mode
