@@ -641,6 +641,93 @@ class ProposalSetTests(unittest.TestCase):
                 self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
                 self.assertEqual((), result.alternatives)
 
+    def test_unrepresentable_author_like_or_unknown_contributor_withholds_authors(
+        self,
+    ) -> None:
+        for source in ("local", "provider"):
+            for role in ("author", "pseudonym", "collective", None):
+                with self.subTest(source=source, role=role):
+                    if source == "local":
+                        claims = (
+                            LocalClaim.create(
+                                kind=ClaimKind.CREATOR,
+                                observed="Ada Author",
+                                canonical="Ada Author",
+                                excerpt="Ada Author",
+                                applicability="not_applicable",
+                                checksum="not_applicable",
+                                applicability_basis="not_applicable",
+                                scope=ClaimScope.WORK,
+                                role="author",
+                            ),
+                            LocalClaim.create(
+                                kind=ClaimKind.CONTRIBUTOR,
+                                observed="Unrepresentable Credit",
+                                canonical=None,
+                                excerpt="Unrepresentable Credit",
+                                applicability="not_applicable",
+                                checksum="not_applicable",
+                                applicability_basis="not_applicable",
+                                scope=ClaimScope.WORK,
+                                state=FieldState.MALFORMED,
+                                role=role,
+                                occurrence=1,
+                            ),
+                        )
+                        proposal_set = evaluate_report(
+                            _report(
+                                title=None,
+                                fields=_fields(
+                                    None,
+                                    authors=TargetField(
+                                        TargetDestination.AUTHORS,
+                                        TargetFieldState.MISSING,
+                                    ),
+                                ),
+                                local_claims=claims,
+                            )
+                        )
+                    else:
+                        claims = (
+                            _claim(
+                                "catalogue",
+                                "edition-1",
+                                ClaimKind.CREATOR,
+                                "Ada Author",
+                                scope=ClaimScope.WORK,
+                                role="author",
+                            ),
+                            ProviderClaim.create(
+                                provider="catalogue",
+                                candidate="edition-1",
+                                kind=ClaimKind.CONTRIBUTOR,
+                                value=None,
+                                state=FieldState.MALFORMED,
+                                scope=ClaimScope.WORK,
+                                applicability="not_applicable",
+                                role=role,
+                                raw_order=1,
+                            ),
+                        )
+                        proposal_set = evaluate_report(
+                            _report(
+                                title=None,
+                                fields=_fields(
+                                    None,
+                                    authors=TargetField(
+                                        TargetDestination.AUTHORS,
+                                        TargetFieldState.MISSING,
+                                    ),
+                                ),
+                                providers=(
+                                    _provider("catalogue", "edition-1", claims),
+                                ),
+                            )
+                        )
+                    result = _result(proposal_set, TargetDestination.AUTHORS)
+                    self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
+                    self.assertEqual((), result.alternatives)
+
     def test_equivalent_observations_coalesce_with_a_deterministic_display(self) -> None:
         providers = (
             _provider(

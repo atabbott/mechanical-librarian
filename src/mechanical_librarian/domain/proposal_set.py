@@ -614,10 +614,10 @@ def _list_observations(
         )
         if destination is TargetDestination.AUTHORS and any(
             claim.scope is ClaimScope.WORK
-            and claim.state is FieldState.VALID
             and (
                 (
                     claim.kind is ClaimKind.CREATOR
+                    and claim.state is FieldState.VALID
                     and claim.role != "author"
                 )
                 or (
@@ -665,7 +665,6 @@ def _list_observations(
             if destination is TargetDestination.AUTHORS and any(
                 claim.kind is ClaimKind.CONTRIBUTOR
                 and claim.scope is ClaimScope.WORK
-                and claim.state is FieldState.VALID
                 and claim.role in {None, "author", "pseudonym", "collective"}
                 for claim in candidate.claims
             ):
