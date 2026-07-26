@@ -91,6 +91,26 @@ class ReviewCase:
     def actionable(self) -> tuple[dict[str, object], ...]:
         return tuple(value for value in self.results if value.get("outcome") in {ProposalOutcome.PROPOSE_CHANGE.value, ProposalOutcome.UNRESOLVED_CHOICE.value})
 
+    @property
+    def proposals(self) -> tuple[dict[str, object], ...]:
+        """Target-ordered immutable proposal projections with stable identities."""
+        return tuple(
+            {
+                "destination": result["destination"],
+                "proposal_id": "review_proposal_" + hashlib.sha256(
+                    _canonical(
+                        {
+                            "destination": result["destination"],
+                            "proposal_set_id": self.proposal_set_id,
+                            "result": result,
+                        }
+                    ).encode("utf-8")
+                ).hexdigest(),
+                "result": result,
+            }
+            for result in self.results
+        )
+
     def to_data(self) -> dict[str, object]:
         return self._data(self.proposal_set_id, self.report_id, self.target, self.target_fingerprint, self.file_identity, self.results, self.proposal_document)
 
