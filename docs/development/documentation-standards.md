@@ -15,6 +15,15 @@ Documentation is versioned product behavior. Incorrect documentation is a bug.
 - `docs/reference/`: exact configuration, state, API, and vocabulary contracts.
 - `CHANGELOG.md`: user-visible changes.
 
+## Authority and lifecycle
+
+Current installed behavior is defined by the README current-status section and
+the operations, reference, and generated contracts it links. Delivery slices
+own milestone outcomes and historical exit boundaries; the roadmap summarizes
+them but does not override them. Accepted ADRs preserve their decision boundary,
+with later evolution recorded explicitly. Historical and future plans cannot
+grant current behavior.
+
 ## Writing rules
 
 - Lead with the outcome or governing rule.

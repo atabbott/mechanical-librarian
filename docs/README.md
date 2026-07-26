@@ -8,9 +8,12 @@
 - [ProposalSet operation](operations/proposal-set.md)
 - [Review-case admission](operations/review-case.md)
 - [Qualification-only shadow review](operations/shadow-review.md)
+- [Observability](operations/observability.md)
+- [Deployment model](operations/deployment.md)
 - [Configuration](reference/configuration.md)
 - [Compatibility and clean-state boundary](reference/compatibility.md)
 - [Architecture overview](architecture/overview.md)
+- [Application service contracts](architecture/service-port-contracts.md)
 - [Security and threat model](architecture/security.md)
 - [Data privacy](architecture/data-privacy.md)
 - [ADR-0010: clean-state neutral evidence baseline](architecture/decisions/0010-0-4-neutral-evidence-baseline.md)
@@ -23,6 +26,7 @@
 ## Development
 
 - [Quality strategy](development/quality-strategy.md)
+- [Documentation standards](development/documentation-standards.md)
 - [Recoverability qualification](development/recoverability-qualification.md)
 - [Testing strategy](development/testing-strategy.md)
 - [Repository structure](development/repository-structure.md)

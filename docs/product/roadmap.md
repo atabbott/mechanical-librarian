@@ -127,15 +127,15 @@ The historical sequence was completed F06 #142 to F07a #143/#30/#31/#188 to F07b
 F09g #238/#243. F09g is the 0.3.0 checkpoint exit. Completing this internal
 checkpoint does not publish a release.
 
-The current 1.0 outcome set is F08 #144, F10b #240, F11 #147, F15a #151,
-F16a #152, F13 #149, F14 #150, and F17 #153. The retained `F` IDs are planned
-designations rather than `Ready` status. F09o #70 has moved into milestone
-0.9.0 with #344 as its pre-activation evidence-report increment. Open Library
-#210 is the completed 0.8.0 F09l slice tracker, while the other
-deferred provider outcomes remain outside this checkpoint. Closed WP parents,
-provider trackers, and constituent forests are historical planning inputs, not
-current delivery work. The authoritative outcome definitions are in the
-[delivery-slice plan](delivery-slices.md).
+The remaining 1.0 outcome set is F08 #144, F15a #151, F16a #152, F13 #149,
+F14 #150, and F17 #153. F10b #240 is delivered and F11 #147 remains open under
+the 0.10 checkpoint. The retained 1.0 `F` IDs are planned designations rather
+than `Ready` status. F09o #70 has moved into milestone 0.9.0 with #344 as its
+pre-activation evidence-report increment. Open Library #210 is the completed
+0.8.0 F09l slice tracker, while the other deferred provider outcomes remain
+outside this checkpoint. Closed WP parents, provider trackers, and constituent
+forests are historical planning inputs, not current delivery work. The
+authoritative outcome definitions are in the [delivery-slice plan](delivery-slices.md).
 
 F09g #238 remains historical characterization evidence for the current report
 boundary, not an active F10b input. Release artifact production #94 and
@@ -265,11 +265,13 @@ provenance-bearing provider cover gallery. The delivered #70 activation
 increment derives one deterministic immutable result for each destination from
 that exact current report without further provider access.
 
-This checkpoint now includes exact-current immutable review admission and one
-isolated qualification-only Codex shadow-advice path. Shadow advice is not a
-decision or approval and normal activation remains unreachable. The checkpoint
-adds no apply, target or media write, fuzzy discovery, configurable policy,
-background execution, automatic retry, migration, tag, or release publication.
+This checkpoint remains report/proposal-only. It adds no review admission,
+human or AI decision, apply/write authority, fuzzy discovery, configurable
+policy, background execution, migration, tag, or release publication.
+
+0.10.0 owns exact-current immutable review admission and the isolated
+qualification-only Codex shadow-advice path; shadow advice is not a decision or
+approval and normal activation remains unreachable.
 
 ## M3: AI review in shadow mode
 

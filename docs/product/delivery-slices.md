@@ -284,42 +284,38 @@ proposal gate with the neutral evidence-report contract.
 | Linked-work gate | #261 | Simplify the independent GitHub policy gate after #253. |
 | Activation | #197 | Sole runtime/schema reset after all four contributors. |
 
-The installed activation observation command is exactly
-`metadata-report --config PATH --database PATH --artifact-store PATH --connection NAME --library NAME --item ITEM_ID --file-index INDEX`.
-All three path inputs are required; no defaults, CWD discovery, implicit filenames,
-or undocumented environment fallbacks exist. Success emits exactly the
-persisted canonical JSON report plus a newline; failure emits no stdout, one
+The 0.4 activation command was exactly
+`metadata-report --config PATH --database PATH --connection NAME --library NAME --item ITEM_ID --file-index INDEX`.
+At that boundary, both path inputs were required; no defaults, CWD discovery,
+implicit filenames, or undocumented environment fallbacks existed. Success
+emitted exactly the persisted canonical JSON report plus a newline; failure
+emitted no stdout, one
 bounded redacted stderr diagnostic, and a nonzero exit.
-The separate configuration-free `metadata-report-get` surface reopens either an
-exact immutable ID or the current report for a full connection/library/item/file
-identity scope; neither lookup observes a target or advances a pointer.
 
-Each report has a small relational identity, lookup, digest, and schema-version
+Each report had a small relational identity, lookup, digest, and schema-version
 envelope plus one immutable canonical JSON document. The envelope and document
-identity agree, and the closed typed document is validated on write and read.
-Exact re-observation replays the same whole report identity and bytes; changed
-evidence creates a successor without changing the prior document.
+identity agreed, and the closed typed document was validated on write and read.
+Exact re-observation replayed the same whole report identity and bytes; changed
+evidence created a successor without changing the prior document.
 
-ADR-0013 generalizes this clean-schema policy: until the first production
-release, every database, report, artifact, configuration, and internal-document
-schema accepts only absent or exact-current state. Earlier state has no
-recognition, migration, import, preservation, or tailored compatibility path.
-No partial 0.4 runtime is exposed before #197. The existing final-0.3 report
-stays report-only during the contributor work.
+Only a new database was a supported 0.4 starting state. Pre-0.4 development
+databases had no recognition, migration, import, preservation, or tailored
+compatibility path. No partial 0.4 runtime was exposed before #197. The
+existing final-0.3 report stayed report-only during the contributor work.
 
 ### 0.4.0 checkpoint exit
 
 - #253, #255, #257, and #261 are complete; #197 alone activates the complete
   outcome and reconciles historical #254, #256, #258, and #260;
-- an installed artifact demonstrates the exact observation-command, clean-state
-  contract, configuration-free exact-ID/current-scope replay, agreeing relational
-  envelope and canonical document, privacy/currentness/hostile-input safeguards,
-  and report-only/no-write boundary; and
+- an installed artifact demonstrated the exact one-command, clean-state
+  contract, agreeing relational envelope and canonical document, whole-report
+  replay, privacy/currentness/hostile-input safeguards, and report-only/no-write
+  boundary; and
 - no review, decision, approval, apply, target/media write, background worker,
   retry, provider cache, compatibility machinery, tag, release, or release
-  artifact is introduced.
+  artifact was introduced.
 
-Completing this internal checkpoint does not create a release train, supported
+Completing this internal checkpoint did not create a release train, supported
 version, tag, GitHub Release, or published artifact.
 
 ## Delivery checkpoint 0.5.0: complete ebook metadata and cover evidence
@@ -504,6 +500,25 @@ The checkpoint excludes new providers or discovery, fuzzy search, configurable
 policy, AI, review/admission/decision/apply/write, batch/background/retry/cache,
 UI/API, migration, compatibility, tag, release, and deployment.
 
+### 0.9.0 checkpoint exit
+
+- one exact current `metadata-report-v8` produces one immutable ProposalSet for
+  all 16 Audiobookshelf destinations without further provider access; and
+- no review admission, shadow advice, decision, apply, target/media write, or
+  background authority is introduced.
+
+## Delivery checkpoint 0.10.0: review admission and qualification-only shadow advice
+
+This in-progress checkpoint owns the later exact-current ReviewCase admission
+and isolated qualification-only shadow-advice surfaces. It does not grant human
+or AI decision, approval, apply, target/media write, or normal activation
+authority.
+
+| Outcome | Issue | Demonstrable result | Planning state |
+| --- | --- | --- | --- |
+| F10b Production review admission | #240 | One qualifying exact-current ProposalSet becomes an immutable undecided ReviewCase, or records typed no-case retirement, without a decision or write. | Delivered. |
+| F11 Isolated AI shadow recommendation | #147 | One exact current ReviewCase can be previewed, requested, inspected, or explicitly reevaluated through an isolated qualification-only path with no normal activation authority. | Qualification-only path delivered; broader F11 qualification remains planned. |
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit
@@ -517,8 +532,6 @@ recreated.
 | Outcome | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
 | F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Retained planned designation. |
-| F10b Production review admission | #240 | One qualifying current target-shaped ProposalSet with at least one `propose_change` or `unresolved_choice` becomes a durable undecided production review case with exact freshness, evidence, replay, and supersession proof. | Delivered: `review-case-admit` and `review-case-get` retain complete ProposalSet context without decisions or writes. |
-| F11 Isolated AI shadow recommendation | #147 | An isolated reviewer returns one bounded closed-schema recommendation per selected proposal without credentials, provider payloads, or apply authority. | Qualification-only Codex path delivered by #352; activation remains blocked on #147 qualification evidence and explicit owner approval. |
 | F15a Supported container operation | #151 | The supported single container starts safely, runs the report and review product, survives current-schema restart, and exposes bounded redacted health, diagnostics, support, backup, and recovery evidence. | Consolidated container plus diagnostics/recovery outcome with a retained planned designation. |
 | F16a Authenticated browser review and decision | #152 | An authenticated owner finds one current case, inspects bounded evidence, makes one individual field decision, and observes immutable server-authoritative history after refresh or restart. The individual round trip passes the first-release responsive, keyboard/focus, accessibility, private caching/storage, content-security, hostile-rendering, performance, synthetic-artifact, and primary-supported-browser baseline. | Consolidated API, browser, one-human-decision, and first-release browser-baseline outcome with a retained planned designation. |
 | F13 Guarded fake-service apply | #149 | A current human-approved field change from F16a is planned, backed up, idempotently applied to a fake service, read back, verified, audited, and safely failed or rolled back. | Retained planned designation; requires an applicable current human decision from F16a. |
