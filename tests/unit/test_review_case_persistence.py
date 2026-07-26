@@ -1,5 +1,6 @@
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -80,6 +81,48 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             self.assertFalse(json.loads(repository.get_review_case(first_case))["current"])
             self.assertTrue(json.loads(repository.get_review_case(successor_case))["current"])
             repository.close()
+
+    def test_nonactionable_successor_retires_current_case_without_empty_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            first = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(first, lambda: True); first_set = self._actionable(first); repository.publish_proposal(first_set)
+            case_id = json.loads(repository.admit_review_case(first_set))["review_case_id"]
+            successor = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Changed")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(successor, lambda: True); successor_set = evaluate_report(successor); repository.publish_proposal(successor_set)
+            self.assertEqual("retired", json.loads(repository.admit_review_case(successor_set))["status"])
+            self.assertFalse(json.loads(repository.get_review_case(case_id))["current"])
+            self.assertEqual((1,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
+            repository.close()
+
+    def test_stale_and_cross_target_proposals_mutate_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            first = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(first, lambda: True); stale = self._actionable(first); repository.publish_proposal(stale)
+            current = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Changed")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(current, lambda: True)
+            with self.assertRaises(Exception): repository.admit_review_case(stale)
+            self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
+            self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_case_transitions").fetchone())
+            repository.close()
+
+    def test_concurrent_identical_admission_converges(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            repository = open_repository(database)
+            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal); repository.close()
+            barrier, results = threading.Barrier(2), []
+            def admit() -> None:
+                local = open_repository(database, create=False)
+                try:
+                    barrier.wait(); results.append(json.loads(local.admit_review_case(proposal)))
+                finally: local.close()
+            threads = [threading.Thread(target=admit) for _ in range(2)]
+            [thread.start() for thread in threads]; [thread.join() for thread in threads]
+            self.assertEqual(2, len(results))
+            self.assertEqual(1, len({value["review_case_id"] for value in results}))
 
 
 if __name__ == "__main__":
