@@ -8,19 +8,18 @@ change policy, construct service requests, or execute writes.
 
 ## Reviewer contract
 
-Input is a versioned evidence packet containing:
+The current qualification-only `shadow-review-packet-v1` contains:
 
-- target and snapshot IDs using non-sensitive logical identifiers;
+- only the opaque content-addressed ReviewCase ID, never the connection,
+  library, item, file identity, path, or service identifier;
 - the exact bounded normalized current snapshot for the reviewed target and an
   explicit loaded, missing, or unavailable state for each applicable field;
 - explicit candidate values;
 - supporting and contradicting evidence summaries;
 - bounded excerpts labelled as untrusted content;
-- image attachments selected by the curator;
-- field applicability and policy instructions;
-- optional typed, bounded, versioned operator intent, explicitly separated from
-  policy instructions and untrusted evidence; and
-- closed decision and problem vocabularies.
+- no images or operator-authored intent; and
+- the fixed prompt/profile/packet/output/policy identities bound by the
+  qualification profile.
 
 Packet assembly records candidate and policy versions, source completeness, and
 the join provenance for every authoritative row. If the current snapshot,
@@ -45,10 +44,11 @@ into system or policy instructions; only allowlisted typed values may affect
 review behavior. Intent cannot suppress required evidence, contradictions,
 applicability checks, output validation, or any other mandatory input or gate.
 
-Output is JSON conforming to a versioned schema. Each field decision contains:
+Output is one direct JSON object conforming to
+`shadow-review-result-v1`. Each field recommendation contains:
 
 - proposal ID;
-- `approve`, `reject`, or `manual`;
+- `recommend_candidate(candidate ID)`, `recommend_keep_current`, or `manual`;
 - concise reason;
 - required `problems`, containing unresolved or adverse problem codes only;
 - cited evidence IDs;
@@ -110,17 +110,31 @@ backend-independent.
 
 ## Codex CLI runner
 
-The initial backend should:
+The current qualification-only backend:
 
-- run non-interactively;
-- use schema-constrained output;
-- receive prompt content through a bounded input channel;
-- attach only staged images;
-- run under the reviewer principal;
-- have command and filesystem access denied beyond its job directory;
+- invokes only the exact maintainer-provisioned executable identity with
+  `gpt-5.6-sol` and `medium` reasoning;
+- ignores user configuration and rules and disables shell/execution tools, web
+  search, apps, MCP/plugin discovery, subagents, hooks, memories, updates,
+  feedback, analytics, history persistence, and approval;
+- uses schema-constrained direct output and a bounded input channel;
+- attaches no images;
+- runs only on Linux inside the exact pinned Bubblewrap identity, with an empty
+  private job directory, minimal environment, bounded resources, and no
+  repository, database, media, configuration, service credential, target, or
+  provider access;
 - serialize access to its persisted authentication state;
-- expose typed authentication, quota, timeout, schema, and model failures;
-- support a user-friendly device-authentication recovery flow.
+- accepts only ChatGPT subscription device authentication and rejects API-key
+  status; and
+- records typed runtime/setup/auth/profile/timeout/cancel/output/currentness
+  failures while discarding raw streams, reasoning, and malformed output.
+
+The profile's local executable, sandbox, auth-store, and job paths never enter
+the packet or durable request. A request is persisted before dispatch, has no
+automatic retry, and becomes `unknown` after ambiguous dispatched failure.
+Only explicit reevaluation may egress again, after complete prior process-tree
+death. Successful advice remains permanently `qualification_only`; the normal
+owner-approved reviewer tuple and any apply authority remain unreachable.
 
 ## Evaluation
 

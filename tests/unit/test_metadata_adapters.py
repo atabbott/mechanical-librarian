@@ -279,6 +279,10 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("proposal_sets",),
                     ("review_case_transitions",),
                     ("review_cases",),
+                    ("shadow_review_attempts",),
+                    ("shadow_review_dispatches",),
+                    ("shadow_review_outcomes",),
+                    ("shadow_review_requests",),
                 ],
             )
             self.assertEqual(len(rows), 2)

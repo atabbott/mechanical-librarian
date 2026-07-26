@@ -42,6 +42,13 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     RemoteCoverTimeout,
     fetch_remote_cover,
 )
+from mechanical_librarian.adapters.reviewers.codex_shadow import (
+    CodexShadowReviewer,
+    current_process_identity,
+    load_qualification_profile,
+    process_identity_alive,
+    process_identity_matches,
+)
 from mechanical_librarian.application.batch import BatchError, BatchSelection, batch_fingerprint, catalogue_fingerprint as batch_catalogue_fingerprint, manifest as batch_manifest, parse_manifest, select
 from mechanical_librarian.application.batch_run import ForegroundBatchRun
 from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue
@@ -74,6 +81,11 @@ from mechanical_librarian.application.review_cases import (
     AdmitReviewCase,
     GetReviewCase,
     ReviewCaseError,
+)
+from mechanical_librarian.application.shadow_reviews import (
+    execute_shadow_review,
+    inspect_shadow_review,
+    preview_shadow_review,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.cover_evidence import (
@@ -655,6 +667,74 @@ def reopen_review_case(database_path: Path, review_case_id: str) -> str:
         repository.close()
 
 
+def run_reviewer_auth(profile_path: Path, action: str) -> str:
+    profile = load_qualification_profile(profile_path)
+    return CodexShadowReviewer(profile).auth(action)
+
+
+def preview_shadow_review_case(
+    database_path: Path, review_case_id: str, profile_path: Path
+) -> str:
+    profile = load_qualification_profile(profile_path)
+    repository = open_repository(database_path, create=False)
+    try:
+        return preview_shadow_review(
+            repository, review_case_id, profile.identity
+        )
+    finally:
+        repository.close()
+
+
+def request_shadow_review(
+    database_path: Path, review_case_id: str, profile_path: Path
+) -> str:
+    profile = load_qualification_profile(profile_path)
+    repository = open_repository(database_path, create=False)
+    try:
+        return execute_shadow_review(
+            repository,
+            review_case_id,
+            profile.identity,
+            CodexShadowReviewer(profile),
+            claimant=current_process_identity(),
+        )
+    finally:
+        repository.close()
+
+
+def inspect_shadow_review_request(
+    database_path: Path, review_request_id: str, profile_path: Path
+) -> str:
+    profile = load_qualification_profile(profile_path)
+    repository = open_repository(database_path, create=False)
+    try:
+        return inspect_shadow_review(
+            repository, review_request_id, profile.identity
+        )
+    finally:
+        repository.close()
+
+
+def reevaluate_shadow_review(
+    database_path: Path, review_request_id: str, profile_path: Path
+) -> str:
+    profile = load_qualification_profile(profile_path)
+    repository = open_repository(database_path, create=False)
+    try:
+        return execute_shadow_review(
+            repository,
+            review_request_id,
+            profile.identity,
+            CodexShadowReviewer(profile),
+            claimant=current_process_identity(),
+            reevaluate=True,
+            process_alive=process_identity_alive,
+            claim_alive=process_identity_matches,
+        )
+    finally:
+        repository.close()
+
+
 def run_catalogue(config_path: Path, database_path: Path, action: str, connection: str | None, library: str | None, library_id: str | None, selector: str | None, limit: int = 100) -> str:
     """Refresh or inspect the one current catalogue through explicit composition."""
     configuration = load_configuration_file(config_path)
@@ -825,12 +905,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         proposal_get_runner=reopen_proposal_set,
         review_admit_runner=admit_review_case,
         review_get_runner=reopen_review_case,
+        reviewer_auth_runner=run_reviewer_auth,
+        shadow_preview_runner=preview_shadow_review_case,
+        shadow_request_runner=request_shadow_review,
+        shadow_inspect_runner=inspect_shadow_review_request,
+        shadow_reevaluate_runner=reevaluate_shadow_review,
     )
 
 
 __all__ = [
     "create_proposal_set", "inspect_batch", "main", "preview_batch",
     "reopen_cover_preview", "reopen_current_metadata_report",
-    "reopen_metadata_report", "reopen_proposal_set", "admit_review_case", "reopen_review_case", "run_batch",
+    "reopen_metadata_report", "reopen_proposal_set", "admit_review_case", "reopen_review_case",
+    "run_reviewer_auth", "preview_shadow_review_case", "request_shadow_review",
+    "inspect_shadow_review_request", "reevaluate_shadow_review", "run_batch",
     "run_catalogue", "run_metadata_report",
 ]

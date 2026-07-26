@@ -19,7 +19,9 @@ evidence workflow. An operator can:
 - create or reopen one immutable fixed-policy ProposalSet from an exact current
   report; and
 - admit one exact current actionable ProposalSet as an immutable undecided
-  review case, with typed no-case retirement for non-actionable sets.
+  review case, with typed no-case retirement for non-actionable sets; and
+- preview, request, inspect, or explicitly reevaluate one isolated
+  qualification-only Codex shadow recommendation over an exact current case.
 
 The report combines all 16 current Audiobookshelf metadata destinations,
 bounded structured EPUB evidence, independent configured Hardcover and Open
@@ -33,7 +35,9 @@ produces exactly one explainable result for each destination without contacting
 providers, configurable ranking, or write authority. Catalogue and batch
 operations retain the same read-only boundary. Review admission records no
 decision, apply, target write, media write, background execution, automatic
-retry, or supported release.
+retry, or supported release. Shadow advice is permanently
+`qualification_only`, uses an exact pinned tuple under a Linux sandbox, and
+adds no normal review activation or authority.
 
 Only absent or exact-current pre-release state is supported. Earlier
 development databases, manifests, configuration schemas, and retired commands
@@ -42,7 +46,8 @@ are intentionally rejected rather than migrated or interpreted.
 See the [catalogue guide](docs/operations/catalogue.md),
 [foreground batch guide](docs/operations/ebook-evidence-batches.md),
 [metadata report guide](docs/operations/metadata-report.md),
-[ProposalSet guide](docs/operations/proposal-set.md), [review-case guide](docs/operations/review-case.md), and
+[ProposalSet guide](docs/operations/proposal-set.md), [review-case guide](docs/operations/review-case.md),
+[shadow-review guide](docs/operations/shadow-review.md), and
 [documentation index](docs/README.md).
 
 ## Product direction

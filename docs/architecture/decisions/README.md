@@ -28,6 +28,8 @@ context and consequences rather than reproducing code.
 | [0011](0011-isolated-epub-inspector.md) | accepted | Keep EPUB package inspection private to its isolated child |
 | [0012](0012-metadata-report-activation.md) | accepted; pre-release schema policy superseded by 0013 | Activate one clean-state three-table DELETE-mode metadata-report runtime |
 | [0013](0013-pre-release-clean-schema.md) | accepted | Require clean schemas until the first production release |
+| [0014](0014-review-case-admission.md) | accepted | Atomically admit immutable review cases from current ProposalSets |
+| [0015](0015-isolated-shadow-reviewer.md) | accepted | Isolate one exact qualification-only Codex shadow reviewer |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

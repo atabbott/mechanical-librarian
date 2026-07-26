@@ -129,6 +129,27 @@ application preflight. It stores bounded identities and canonical proposal
 projections only; no credentials, reviewer identity, decision, or target-write
 capability is accepted by the command.
 
+Qualification-only shadow review rechecks one exact current ReviewCase and its
+report/ProposalSet bindings inside SQLite before it persists a content-addressed
+sanitized packet and attempt. Preview reads only profile bytes and application
+state; it constructs no executable, auth, target, provider, reviewer, or other
+network client and is not fresh eligibility proof. Request may invoke only the
+exact declared Codex/model/reasoning/prompt/profile/packet/output/policy tuple.
+All auth and reviewer processes serialize on one owner-only auth-store lock.
+Only exact ChatGPT subscription status is accepted; API-key status fails.
+
+The Linux Bubblewrap boundary exposes the pinned runtime and system libraries,
+protected auth store, and one empty private job directory, but no repository,
+database, profile, media, service configuration, or target/provider
+credentials. User configuration and rules are ignored; shell and unified
+execution, web search, apps, agents, hooks, memories, remote plugins, update,
+feedback, analytics, history, and approval are disabled by exact configuration.
+Resource, time, file, output, and process counts are bounded. Request, attempt,
+dispatch, and outcome facts are append-only. Raw streams and reasoning are
+discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and
+explicit reevaluation requires proof that the complete prior supervised process
+group is absent.
+
 The final report database, `catalogue-v1` database, `config-v4`, artifact
 records, and `batch-manifest-v2` each accept only absent or their exact current
 schema. `metadata-report-v1` through `metadata-report-v7`, prior development schemas, extra objects, altered
