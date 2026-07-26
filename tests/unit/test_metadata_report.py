@@ -21,6 +21,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetSnapshot,
     UnsupportedMediaError,
     MetadataReportError,
+    _variant_marker,
     metadata_lookup,
     qualify_provider_observation,
 )
@@ -127,6 +128,28 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_variant_marker_fails_closed_for_abridgement_nouns_and_preserves_token_boundaries(
+        self,
+    ) -> None:
+        for field, value in (
+            ("title", "The Example: An Abridgement"),
+            ("subtitle", "An Abridgment"),
+            ("title", "The Abridged Example"),
+            ("subtitle", "An Adapted Translation"),
+        ):
+            with self.subTest(field=field, value=value):
+                self.assertTrue(_variant_marker(value))
+
+        for value in (
+            "The Example",
+            "Abridgementary Notes",
+            "Abridgmental Notes",
+            "Adaptational Notes",
+            "Translationist Notes",
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(_variant_marker(value))
+
     def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_authors(self) -> None:
         def target(
             title: str | None,
