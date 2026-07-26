@@ -79,7 +79,8 @@ static WebP bytes are decoded in a constrained child; reports retain only
 validated content digests, dimensions, media type, and preview references.
 Open Library cover requests use the same transport and decoder boundary, but
 allow no redirect, use constructed fixed-origin numeric-ID URLs, and share the
-adapter's one-second request-start pacer.
+adapter's one-second request-start pacer. Its bounded two-edition/two-distinct-
+work observation can make at most four remote cover requests.
 Provider cover admission is limited to four sources per provider and eight
 overall. Only descriptors bound to a qualified provider-local work are
 admitted. Reports retain safe allowlisted provenance and explicit truncation,

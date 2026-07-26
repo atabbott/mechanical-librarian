@@ -29,7 +29,8 @@
 - Add independent, report-only Open Library evidence for an exact usable ISBN
   family alongside Hardcover. The built-in adapter uses canonical exact
   Search/edition/work requests, a fixed one-request-per-second pace, at most two
-  candidates and two covers, and a closed finite rich-evidence allowlist.
+  candidates and four covers (two editions plus two distinct works), and a
+  closed finite rich-evidence allowlist.
 - Add adapter-specific `config-v4`, `metadata-report-v6`, and
   `batch-manifest-v2` contracts. Open Library's non-secret operational contact
   is used only in identified requests and excluded from persisted data and

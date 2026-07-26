@@ -448,13 +448,15 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             "/books/OL1M.json": _edition(
                 "/books/OL1M",
                 work="/works/OL5W",
+                cover=100,
             ),
-            "/works/OL5W.json": _work("/works/OL5W"),
+            "/works/OL5W.json": _work("/works/OL5W", cover=200),
             "/books/OL2M.json": _edition(
                 "/books/OL2M",
                 work="/works/OL9W",
+                cover=300,
             ),
-            "/works/OL9W.json": _work("/works/OL9W"),
+            "/works/OL9W.json": _work("/works/OL9W", cover=400),
         }
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -465,12 +467,13 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 json=responses[request.url.path],
             )
 
-        observation = OpenLibraryMetadataProvider(
+        provider = OpenLibraryMetadataProvider(
             "open_library",
             httpx.Client(transport=httpx.MockTransport(handler)),
             65_536,
             pacer=OpenLibraryPacer(sleep=lambda _: None),
-        ).observe(_isbn_lookup((_isbn(),)))
+        )
+        observation = provider.observe(_isbn_lookup((_isbn(),)))
         self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
         self.assertEqual(
             [
@@ -481,6 +484,16 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 "/works/OL9W.json",
             ],
             [request.url.path for request in requests],
+        )
+        self.assertEqual(4, len(provider.cover_descriptors))
+        self.assertEqual(
+            {
+                "https://covers.openlibrary.org/b/id/100-L.jpg?default=false",
+                "https://covers.openlibrary.org/b/id/200-L.jpg?default=false",
+                "https://covers.openlibrary.org/b/id/300-L.jpg?default=false",
+                "https://covers.openlibrary.org/b/id/400-L.jpg?default=false",
+            },
+            {value.url for value in provider.cover_descriptors},
         )
 
     def test_third_exact_candidate_is_terminal_before_detail_requests(self) -> None:
@@ -503,16 +516,18 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 json=value,
             )
 
-        observation = OpenLibraryMetadataProvider(
+        provider = OpenLibraryMetadataProvider(
             "open_library",
             httpx.Client(transport=httpx.MockTransport(handler)),
             65_536,
-        ).observe(_isbn_lookup((_isbn(),)))
+        )
+        observation = provider.observe(_isbn_lookup((_isbn(),)))
         self.assertEqual(
             ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
             observation.status,
         )
         self.assertEqual((), observation.candidates)
+        self.assertEqual((), provider.cover_descriptors)
         self.assertEqual(["/search.json"], [request.url.path for request in requests])
 
     def test_nonmatching_search_rows_are_ignored_without_detail_requests(self) -> None:
