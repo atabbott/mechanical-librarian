@@ -49,10 +49,11 @@ class ReviewCase:
     target_fingerprint: str
     file_identity: str
     results: tuple[dict[str, object], ...]
+    disposition: str = "undecided"
     schema_version: str = REVIEW_CASE_SCHEMA
 
     def __post_init__(self) -> None:
-        if (not _CASE_ID.fullmatch(self.review_case_id) or self.schema_version != REVIEW_CASE_SCHEMA
+        if (not _CASE_ID.fullmatch(self.review_case_id) or self.schema_version != REVIEW_CASE_SCHEMA or self.disposition != "undecided"
                 or len(self.results) != len(TargetDestination) or not isinstance(self.target, dict)):
             raise ReviewCaseValueError("review case is invalid")
         if self.review_case_id != self._expected_id():
@@ -71,7 +72,7 @@ class ReviewCase:
 
     @staticmethod
     def _data(proposal_set_id: str, report_id: str, target: dict[str, object], target_fingerprint: str, file_identity: str, results: tuple[dict[str, object], ...]) -> dict[str, object]:
-        return {"proposal_set_id": proposal_set_id, "report_id": report_id, "target": target,
+        return {"disposition": "undecided", "proposal_set_id": proposal_set_id, "report_id": report_id, "target": target,
                 "target_fingerprint": target_fingerprint, "file_identity": file_identity,
                 "results": list(results), "schema_version": REVIEW_CASE_SCHEMA}
 
@@ -92,7 +93,7 @@ class ReviewCase:
     def from_json(cls, serialized: str) -> Self:
         try:
             raw = json.loads(serialized)
-            if type(raw) is not dict or set(raw) != {"proposal_set_id","report_id","target","target_fingerprint","file_identity","results","schema_version"}:
+            if type(raw) is not dict or set(raw) != {"disposition","proposal_set_id","report_id","target","target_fingerprint","file_identity","results","schema_version"}:
                 raise ValueError
             value = cls.create_from_data(raw)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -103,7 +104,7 @@ class ReviewCase:
 
     @classmethod
     def create_from_data(cls, raw: dict[str, object]) -> Self:
-        if raw.get("schema_version") != REVIEW_CASE_SCHEMA or type(raw.get("results")) is not list or type(raw.get("target")) is not dict:
+        if raw.get("schema_version") != REVIEW_CASE_SCHEMA or raw.get("disposition") != "undecided" or type(raw.get("results")) is not list or type(raw.get("target")) is not dict:
             raise ReviewCaseValueError("review case is invalid")
         results = tuple(raw["results"])
         if any(type(value) is not dict for value in results):
