@@ -85,6 +85,84 @@ class ProposalAssessment(StrEnum):
     REPLACES_TARGET = "replaces_target"
 
 
+_DESTINATION_VALUE_SCOPES: dict[
+    TargetDestination, frozenset[tuple[ProposalValueKind, ProposalScope]]
+] = {
+    TargetDestination.TITLE: frozenset({(ProposalValueKind.TEXT, ProposalScope.WORK)}),
+    TargetDestination.SUBTITLE: frozenset(
+        {
+            (ProposalValueKind.TEXT, ProposalScope.WORK),
+            (ProposalValueKind.TEXT, ProposalScope.EDITION),
+        }
+    ),
+    TargetDestination.AUTHORS: frozenset({(ProposalValueKind.LIST, ProposalScope.WORK)}),
+    TargetDestination.NARRATORS: frozenset(
+        {(ProposalValueKind.LIST, ProposalScope.EDITION)}
+    ),
+    TargetDestination.SERIES: frozenset({(ProposalValueKind.SERIES, ProposalScope.WORK)}),
+    TargetDestination.GENRES: frozenset({(ProposalValueKind.LIST, ProposalScope.WORK)}),
+    TargetDestination.PUBLISHED_YEAR: frozenset(
+        {
+            (ProposalValueKind.TEXT, ProposalScope.WORK),
+            (ProposalValueKind.TEXT, ProposalScope.EDITION),
+        }
+    ),
+    TargetDestination.PUBLISHED_DATE: frozenset(
+        {
+            (ProposalValueKind.TEXT, ProposalScope.WORK),
+            (ProposalValueKind.TEXT, ProposalScope.EDITION),
+        }
+    ),
+    TargetDestination.PUBLISHER: frozenset(
+        {(ProposalValueKind.TEXT, ProposalScope.EDITION)}
+    ),
+    TargetDestination.DESCRIPTION: frozenset(
+        {(ProposalValueKind.TEXT, ProposalScope.WORK)}
+    ),
+    TargetDestination.ISBN: frozenset({(ProposalValueKind.TEXT, ProposalScope.EDITION)}),
+    TargetDestination.ASIN: frozenset({(ProposalValueKind.TEXT, ProposalScope.EDITION)}),
+    TargetDestination.LANGUAGE: frozenset(
+        {(ProposalValueKind.TEXT, ProposalScope.EDITION)}
+    ),
+    TargetDestination.EXPLICIT: frozenset(
+        {(ProposalValueKind.BOOLEAN, ProposalScope.EDITION)}
+    ),
+    TargetDestination.TAGS: frozenset({(ProposalValueKind.LIST, ProposalScope.WORK)}),
+    TargetDestination.COVER: frozenset({(ProposalValueKind.COVER, ProposalScope.COVER)}),
+}
+
+_OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
+    ProposalOutcome.PROPOSE_CHANGE: frozenset(
+        {("unique_safe_cover",), ("unique_typed_candidate",)}
+    ),
+    ProposalOutcome.UNRESOLVED_CHOICE: frozenset(
+        {
+            ("competing_evidence",),
+            ("date_refinement_requires_corroboration", "unique_typed_candidate"),
+            ("date_year_conflict", "unique_typed_candidate"),
+            ("insufficient_independent_corroboration",),
+            ("populated_subjective_field",),
+            ("work_publication_cannot_replace",),
+        }
+    ),
+    ProposalOutcome.KEEP: frozenset(
+        {("current_cover_verified",), ("positive_preservation_evidence",)}
+    ),
+    ProposalOutcome.REJECT: frozenset({("policy_reject",)}),
+    ProposalOutcome.DEFER: frozenset(
+        {
+            ("cover_gallery_incomplete",),
+            ("current_cover_unverified",),
+            ("identifier_applicability_unresolved",),
+            ("no_positive_preservation_evidence",),
+        }
+    ),
+    ProposalOutcome.INELIGIBLE: frozenset(
+        {("no_supported_evidence",), ("target_state_unusable",)}
+    ),
+}
+
+
 @dataclass(frozen=True, slots=True)
 class ProposalValue:
     kind: ProposalValueKind
@@ -231,6 +309,14 @@ class ProposalResult:
             != tuple(sorted(set(self.dependencies), key=order.__getitem__))
         ):
             raise ProposalValueError("proposal result is invalid")
+        if any(
+            (alternative.value.kind, alternative.scope)
+            not in _DESTINATION_VALUE_SCOPES[self.destination]
+            for alternative in self.alternatives
+        ):
+            raise ProposalValueError("proposal alternative is incompatible with destination")
+        if self.reasons not in _OUTCOME_REASON_SETS[self.outcome]:
+            raise ProposalValueError("proposal reasons are incompatible with outcome")
         selected = {value.alternative_id for value in self.alternatives}
         if self.outcome is ProposalOutcome.PROPOSE_CHANGE:
             if (

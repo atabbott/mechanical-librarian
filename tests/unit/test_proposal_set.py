@@ -1,3 +1,4 @@
+import json
 import unittest
 from dataclasses import replace
 
@@ -27,15 +28,21 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    TargetSeries,
+    canonical_json,
     comparison_links,
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import (
+    ProposalAlternative,
+    ProposalAssessment,
     ProposalOutcome,
     ProposalResult,
     ProposalSet,
     ProposalScope,
+    ProposalValue,
     ProposalValueError,
+    ProposalValueKind,
     evaluate_report,
 )
 
@@ -292,6 +299,132 @@ class ProposalSetTests(unittest.TestCase):
                 ("policy_reject",),
             ).outcome,
         )
+
+    def test_destination_value_scope_contract_is_exhaustive(self) -> None:
+        values = {
+            ProposalValueKind.TEXT: ProposalValue(ProposalValueKind.TEXT, "Value"),
+            ProposalValueKind.BOOLEAN: ProposalValue(ProposalValueKind.BOOLEAN, True),
+            ProposalValueKind.LIST: ProposalValue(ProposalValueKind.LIST, ("Value",)),
+            ProposalValueKind.SERIES: ProposalValue(
+                ProposalValueKind.SERIES, (TargetSeries("Series"),)
+            ),
+            ProposalValueKind.COVER: ProposalValue(
+                ProposalValueKind.COVER, "cover_" + "a" * 64
+            ),
+        }
+        expected = {
+            TargetDestination.TITLE: {(ProposalValueKind.TEXT, ProposalScope.WORK)},
+            TargetDestination.SUBTITLE: {
+                (ProposalValueKind.TEXT, ProposalScope.WORK),
+                (ProposalValueKind.TEXT, ProposalScope.EDITION),
+            },
+            TargetDestination.AUTHORS: {(ProposalValueKind.LIST, ProposalScope.WORK)},
+            TargetDestination.NARRATORS: {(ProposalValueKind.LIST, ProposalScope.EDITION)},
+            TargetDestination.SERIES: {(ProposalValueKind.SERIES, ProposalScope.WORK)},
+            TargetDestination.GENRES: {(ProposalValueKind.LIST, ProposalScope.WORK)},
+            TargetDestination.PUBLISHED_YEAR: {
+                (ProposalValueKind.TEXT, ProposalScope.WORK),
+                (ProposalValueKind.TEXT, ProposalScope.EDITION),
+            },
+            TargetDestination.PUBLISHED_DATE: {
+                (ProposalValueKind.TEXT, ProposalScope.WORK),
+                (ProposalValueKind.TEXT, ProposalScope.EDITION),
+            },
+            TargetDestination.PUBLISHER: {(ProposalValueKind.TEXT, ProposalScope.EDITION)},
+            TargetDestination.DESCRIPTION: {(ProposalValueKind.TEXT, ProposalScope.WORK)},
+            TargetDestination.ISBN: {(ProposalValueKind.TEXT, ProposalScope.EDITION)},
+            TargetDestination.ASIN: {(ProposalValueKind.TEXT, ProposalScope.EDITION)},
+            TargetDestination.LANGUAGE: {(ProposalValueKind.TEXT, ProposalScope.EDITION)},
+            TargetDestination.EXPLICIT: {(ProposalValueKind.BOOLEAN, ProposalScope.EDITION)},
+            TargetDestination.TAGS: {(ProposalValueKind.LIST, ProposalScope.WORK)},
+            TargetDestination.COVER: {(ProposalValueKind.COVER, ProposalScope.COVER)},
+        }
+        self.assertEqual(set(TargetDestination), set(expected))
+        for destination, allowed in expected.items():
+            for kind, value in values.items():
+                for scope in ProposalScope:
+                    alternative = ProposalAlternative.create(
+                        value,
+                        ProposalAssessment.FILLS_EMPTY,
+                        ("local_" + "a" * 64,),
+                        ("correlation_" + "a" * 64,),
+                        scope,
+                    )
+                    arguments = (
+                        destination,
+                        ProposalOutcome.PROPOSE_CHANGE,
+                        (alternative,),
+                        alternative.alternative_id,
+                        (
+                            "unique_safe_cover",
+                        )
+                        if destination is TargetDestination.COVER
+                        else ("unique_typed_candidate",),
+                    )
+                    with self.subTest(destination=destination, kind=kind, scope=scope):
+                        if (kind, scope) in allowed:
+                            ProposalResult(*arguments)
+                        else:
+                            with self.assertRaises(ProposalValueError):
+                                ProposalResult(*arguments)
+
+    def test_canonical_parse_rejects_forged_destination_payload_and_reasons(self) -> None:
+        proposal_set = evaluate_report(
+            _report(
+                title=None,
+                fields=_fields(
+                    None,
+                    title=TargetField(TargetDestination.TITLE, TargetFieldState.MISSING),
+                ),
+                providers=(
+                    _provider(
+                        "catalogue",
+                        "edition-1",
+                        (
+                            _claim(
+                                "catalogue",
+                                "edition-1",
+                                ClaimKind.TITLE,
+                                "A title",
+                                scope=ClaimScope.WORK,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        )
+        document = json.loads(proposal_set.to_json())
+        result = next(
+            value for value in document["results"] if value["destination"] == "title"
+        )
+        original = _result(proposal_set, TargetDestination.TITLE).alternatives[0]
+        for value, scope in (
+            (ProposalValue(ProposalValueKind.BOOLEAN, True), ProposalScope.WORK),
+            (ProposalValue(ProposalValueKind.TEXT, "A title"), ProposalScope.COVER),
+        ):
+            forged = ProposalAlternative.create(
+                value,
+                original.assessment,
+                original.evidence_references,
+                original.correlations,
+                scope,
+            )
+            result["alternatives"] = [forged.to_data()]
+            result["selected_alternative_id"] = forged.alternative_id
+            with self.subTest(value=value.kind, scope=scope):
+                with self.assertRaises(ProposalValueError):
+                    ProposalSet.from_json(canonical_json(document))
+        result["alternatives"] = []
+        result["selected_alternative_id"] = None
+        for outcome, reasons in (
+            ("defer", ["unique_typed_candidate"]),
+            ("reject", ["no_supported_evidence"]),
+        ):
+            result["outcome"] = outcome
+            result["reasons"] = reasons
+            with self.subTest(outcome=outcome, reasons=reasons):
+                with self.assertRaises(ProposalValueError):
+                    ProposalSet.from_json(canonical_json(document))
 
     def test_unique_empty_fill_and_positive_preservation_are_explainable(self) -> None:
         title_claim = _claim(

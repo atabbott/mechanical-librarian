@@ -81,7 +81,8 @@ The policy is deliberately conservative:
   `false` nor `keep`; and
 - an existing verified ABS cover is kept. An absent target gets a selected
   cover only when the complete bounded gallery contains exactly one distinct
-  safe artifact; incomplete or competing galleries defer.
+  safe artifact; complete competing bounded galleries are
+  `unresolved_choice`, while incomplete galleries defer with no choices.
 
 There are no scores, provider priority, configured policy, fuzzy matching, AI,
 review admission, decision, or apply behavior.
