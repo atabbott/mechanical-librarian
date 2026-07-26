@@ -28,10 +28,24 @@ CLI review-case-admit -> application AdmitReviewCase
                       `-> exact-current ProposalSet/report/lineage recheck
                       `-> append-only immutable ReviewCase repository
 
-CLI shadow-review-* -> application preview/execute/inspect shadow review
-                     |-> exact current ReviewCase/repository recheck
-                     |-> isolated Codex reviewer for one request only
-                     `-> append-only request/attempt/dispatch/outcome records
+CLI shadow-review-preview -> application preview
+                          -> profile bytes + exact-current ReviewCase lineage
+                          -> no reviewer construction or egress
+
+CLI shadow-review-inspect -> application inspect
+                          -> exact persisted request, including historical
+                             `current: false` state
+                          -> no reviewer construction or egress
+
+CLI shadow-review-request -> application execution
+                          |-> exact-current case/report/proposal/profile/packet
+                          |-> append-only request/attempt/dispatch/outcome records
+                          `-> isolated Codex reviewer for one request only
+
+CLI shadow-review-reevaluate -> application explicit reevaluation
+                             |-> latest-attempt and process-absence checks
+                             |-> append-only successor attempt records
+                             `-> isolated Codex reviewer for one request only
 
 CLI reviewer-auth-* -> bootstrap profile load -> CodexShadowReviewer.auth
 ```

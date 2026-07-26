@@ -10,8 +10,23 @@ database and copy its paired artifact-store directory. The database references
 the artifact identities that remain current for its reports, so restore the
 matching database and artifact-store pair together. This is not a transactional
 cross-filesystem backup guarantee; stopped invocations are the consistency
-boundary. Verify the database copy with SQLite integrity and foreign-key checks
-before relying on it.
+boundary. Before backup, preserve a complete inventory of retained report IDs
+from the operator's records or the IDs returned by report creation; the CLI
+cannot enumerate retained reports. Verify the database copy with SQLite
+integrity and foreign-key checks before relying on it. Then use
+`metadata-report-get` to reopen every ID in that inventory. For every
+report-bound cover artifact reference in those canonical reports, use a
+read-only verifier that refuses symlinks to require regular artifact-store files
+named by both `original_digest` and `preview_digest`, and require the SHA-256
+of each file to equal that filename/digest. Do not print or log artifact
+contents. Also run `metadata-report-cover-preview` with that report ID,
+artifact ID, and preview variant, directing its raw stdout to a non-interactive
+sink. Success verifies the persisted report/reference authorization and the
+restored preview bytes. The preview command alone does not verify originals,
+and there is no bulk pair-verification command. Without a complete inventory,
+the pair cannot be called fully verified: restore it only as unverified
+historical evidence, or start clean and regenerate reports for supported current
+operation; clean regeneration does not preserve history.
 
 The separate catalogue database and immutable batch manifests are regenerable
 from current configuration and supported catalogue/batch operations; preserve

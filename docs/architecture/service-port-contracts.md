@@ -8,10 +8,12 @@ foreground manifest batches, deterministic ProposalSet creation and reopening,
 exact-current ReviewCase admission and reopening, and qualification-only
 shadow-review execution and persistence.
 
-Each contract exchanges typed, bounded application or domain values. Adapters
-contain target/provider payloads, transport clients, SQLite rows, filesystem
-paths, and credentials; the composition root selects the concrete adapter and
-credentials. The domain does not depend on those implementations.
+Each contract exchanges typed, bounded application or domain values, including
+explicit mount and relative-path values where the application protocol requires
+them. Vendor payloads, concrete transport clients, SQLite rows, credential
+bytes, and direct filesystem operations remain implementation-side; the
+composition root selects the concrete adapter and credentials. The domain does
+not depend on those implementations.
 
 ## Contract families
 

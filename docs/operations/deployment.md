@@ -7,13 +7,15 @@ container release.
 
 ## Runtime prerequisites
 
-Run as a non-root dedicated identity with an explicit `config-v4` file,
-exact-current SQLite application and catalogue databases on reliable local
-storage, an owner-controlled artifact store, and—when using batches—an immutable
-manifest path. Target and enabled-provider secrets must remain owner-only, and
-ebook media mounts are read-only. The configuration and supported egress rules
-are defined in the [configuration reference](../reference/configuration.md) and
-[security model](../architecture/security.md).
+Run as a non-root dedicated identity with an explicit `config-v4` file and
+application and catalogue database paths on reliable local storage. Each
+database path is either absent for its clean first invocation or already holds
+the exact-current schema. The owner-controlled artifact-store directory must
+already exist. When using batches, provide an immutable manifest path. Target
+and enabled-provider secrets must remain owner-only, and ebook media mounts are
+read-only. The configuration and supported egress rules are defined in the
+[configuration reference](../reference/configuration.md) and [security
+model](../architecture/security.md).
 
 Reviewer authentication, shadow request, and explicit reevaluation additionally
 require an owner-only qualification profile, private `0700` auth-store, empty
