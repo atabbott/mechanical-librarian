@@ -14,10 +14,30 @@ from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSe
 REVIEW_CASE_SCHEMA = "review-case-v1"
 REVIEW_ADMISSION_SCHEMA = "review-admission-v1"
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
+_ADMISSION_STATUS = frozenset({"admitted", "replayed", "superseded", "no_case", "retired", "stale"})
 
 
 class ReviewCaseValueError(ValueError):
     """A review case is outside the closed production-admission contract."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewAdmissionResult:
+    """Closed canonical outcome of one review-admission attempt."""
+    status: str
+    review_case_id: str | None
+    schema_version: str = REVIEW_ADMISSION_SCHEMA
+
+    def __post_init__(self) -> None:
+        if self.status not in _ADMISSION_STATUS or self.schema_version != REVIEW_ADMISSION_SCHEMA:
+            raise ReviewCaseValueError("review admission result is invalid")
+        if self.review_case_id is not None and _CASE_ID.fullmatch(self.review_case_id) is None:
+            raise ReviewCaseValueError("review admission result is invalid")
+        if (self.status in {"admitted", "replayed", "superseded"}) != (self.review_case_id is not None):
+            raise ReviewCaseValueError("review admission result is invalid")
+
+    def to_json(self) -> str:
+        return _canonical({"review_case_id": self.review_case_id, "schema_version": self.schema_version, "status": self.status})
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,4 +121,4 @@ def _canonical(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
-__all__ = ["REVIEW_ADMISSION_SCHEMA", "REVIEW_CASE_SCHEMA", "ReviewCase", "ReviewCaseValueError", "is_actionable"]
+__all__ = ["REVIEW_ADMISSION_SCHEMA", "REVIEW_CASE_SCHEMA", "ReviewAdmissionResult", "ReviewCase", "ReviewCaseValueError", "is_actionable"]

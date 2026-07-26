@@ -20,7 +20,7 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
-from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError, is_actionable
+from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase, ReviewCaseValueError, is_actionable
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -1208,7 +1208,7 @@ def _canonical_json(value: object) -> str:
 
 
 def _admission_json(status: str, review_case_id: str | None) -> str:
-    return _canonical_json({"review_case_id": review_case_id, "schema_version": "review-admission-v1", "status": status})
+    return ReviewAdmissionResult(status, review_case_id).to_json()
 
 
 def _validate_report_row(row: tuple[object, ...]) -> str:
