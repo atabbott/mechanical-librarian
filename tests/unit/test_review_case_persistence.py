@@ -18,9 +18,15 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalValueKind,
     evaluate_report,
 )
+from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
 
 
 class ReviewCasePersistenceTests(unittest.TestCase):
+    def test_case_parser_rejects_duplicate_and_oversized_documents(self) -> None:
+        with self.assertRaises(ReviewCaseValueError):
+            ReviewCase.from_json('{"schema_version":"review-case-v1","schema_version":"review-case-v1"}')
+        with self.assertRaises(ReviewCaseValueError):
+            ReviewCase.from_json("x" * 2_097_153)
     def _actionable(self, report: MetadataReport) -> ProposalSet:
         base = evaluate_report(report)
         alternative = ProposalAlternative.create(

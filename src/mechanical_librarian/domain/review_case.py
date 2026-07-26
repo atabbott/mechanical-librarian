@@ -15,6 +15,7 @@ REVIEW_CASE_SCHEMA = "review-case-v1"
 REVIEW_ADMISSION_SCHEMA = "review-admission-v1"
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _ADMISSION_STATUS = frozenset({"admitted", "replayed", "superseded", "no_case", "retired", "stale"})
+MAX_REVIEW_CASE_BYTES = 2_097_152
 
 
 class ReviewCaseValueError(ValueError):
@@ -92,7 +93,9 @@ class ReviewCase:
     @classmethod
     def from_json(cls, serialized: str) -> Self:
         try:
-            raw = json.loads(serialized)
+            if type(serialized) is not str or not serialized or len(serialized.encode("utf-8")) > MAX_REVIEW_CASE_BYTES:
+                raise ValueError
+            raw = json.loads(serialized, object_pairs_hook=_unique_object)
             if type(raw) is not dict or set(raw) != {"disposition","proposal_set_id","report_id","target","target_fingerprint","file_identity","results","schema_version"}:
                 raise ValueError
             value = cls.create_from_data(raw)
@@ -122,4 +125,13 @@ def _canonical(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
-__all__ = ["REVIEW_ADMISSION_SCHEMA", "REVIEW_CASE_SCHEMA", "ReviewAdmissionResult", "ReviewCase", "ReviewCaseValueError", "is_actionable"]
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ReviewCaseValueError("review case has duplicate keys")
+        result[key] = value
+    return result
+
+
+__all__ = ["MAX_REVIEW_CASE_BYTES", "REVIEW_ADMISSION_SCHEMA", "REVIEW_CASE_SCHEMA", "ReviewAdmissionResult", "ReviewCase", "ReviewCaseValueError", "is_actionable"]
