@@ -202,7 +202,10 @@ source records absence, timeout, rejection, unavailability, or a validated
 artifact with media type, dimensions, original/preview digests, and safe
 artifact references. Identical bytes share content-addressed storage while all
 source provenance remains in the report. Per-provider and aggregate truncation
-are explicit terminal rows. Raw cover URLs and private paths are never
+are explicit terminal rows. Optional Open Library cover context that exceeds
+its fixed provenance bounds preserves valid metadata and records that cover as
+`oversized`; it neither widens the bound nor makes the provider observation
+`malformed`. Raw cover URLs and private paths are never
 serialized.
 
 The report ID is derived from the complete canonical document. Exact fresh
