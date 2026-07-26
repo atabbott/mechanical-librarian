@@ -193,6 +193,35 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             finally:
                 os.chmod(database, 0o600)
 
+    def test_held_immediate_lock_serializes_identical_admission(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            repository = open_repository(database)
+            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
+            repository._connection.execute("BEGIN IMMEDIATE")
+            result = []
+            def admit() -> None:
+                local = open_repository(database, create=False)
+                try: result.append(json.loads(local.admit_review_case(proposal))["status"])
+                finally: local.close()
+            thread = threading.Thread(target=admit); thread.start()
+            import time; time.sleep(0.05)
+            repository._connection.commit(); thread.join()
+            self.assertEqual(["admitted"], result)
+            repository.close()
+
+    def test_disk_full_equivalent_rolls_back_every_review_row(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
+            repository._connection.execute("CREATE TRIGGER injected_full BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END")
+            with self.assertRaises(Exception): repository.admit_review_case(proposal)
+            for table in ("review_cases", "review_case_transitions", "current_review_case_lineages"):
+                self.assertEqual((0,), repository._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone())
+            repository.close()
+
 
 if __name__ == "__main__":
     unittest.main()
