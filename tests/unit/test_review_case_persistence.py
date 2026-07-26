@@ -120,6 +120,57 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             self.assertEqual((1,), repository._connection.execute("SELECT COUNT(*) FROM review_case_transitions").fetchone())
             repository.close()
 
+    def test_transition_kind_tracks_an_active_prior_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            outcomes: list[str] = []
+
+            first = _report(actionable=False)
+            repository.publish(first, lambda: True)
+            first_set = evaluate_report(first)
+            repository.publish_proposal(first_set)
+            outcomes.append(
+                json.loads(repository.admit_review_case(first_set))["status"]
+            )
+
+            second = _report("Second", "c", "d")
+            repository.publish(second, lambda: True)
+            second_set = self._actionable(second)
+            repository.publish_proposal(second_set)
+            outcomes.append(
+                json.loads(repository.admit_review_case(second_set))["status"]
+            )
+
+            third = _report("Third", "e", "f", actionable=False)
+            repository.publish(third, lambda: True)
+            third_set = evaluate_report(third)
+            repository.publish_proposal(third_set)
+            outcomes.append(
+                json.loads(repository.admit_review_case(third_set))["status"]
+            )
+
+            fourth = _report("Fourth", "0", "1", actionable=False)
+            repository.publish(fourth, lambda: True)
+            fourth_set = evaluate_report(fourth)
+            repository.publish_proposal(fourth_set)
+            outcomes.append(
+                json.loads(repository.admit_review_case(fourth_set))["status"]
+            )
+
+            transitions = [
+                row[0]
+                for row in repository._connection.execute(
+                    "SELECT kind FROM review_case_transitions ORDER BY checkpoint"
+                ).fetchall()
+            ]
+            repository.close()
+
+        self.assertEqual(
+            ["no_case", "admitted", "retired", "no_case"],
+            outcomes,
+        )
+        self.assertEqual(outcomes, transitions)
+
     def test_actionable_set_creates_complete_case_and_exact_get(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
@@ -342,8 +393,12 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal); repository.close()
             barrier, results = threading.Barrier(2), []
             def admit() -> None:
-                barrier.wait()
-                local = open_repository(database, create=False)
+                if sys.platform.startswith("linux"):
+                    barrier.wait()
+                    local = open_repository(database, create=False)
+                else:
+                    local = open_repository(database, create=False)
+                    barrier.wait()
                 try:
                     results.append(json.loads(local.admit_review_case(proposal)))
                 finally: local.close()

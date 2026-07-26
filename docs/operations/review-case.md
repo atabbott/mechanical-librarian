@@ -12,6 +12,9 @@ The typed canonical result is `admitted`, `replayed`, `superseded`, `no_case`,
 create a case; `no_case` and `retired` have no empty case. Untrusted failures
 are redacted as fixed `invalid`, `incompatible`, `currentness`, or
 `persistence` codes.
+`superseded` and `retired` require an active prior case. After a `no_case` or
+`retired` checkpoint, the next actionable set is `admitted` and another
+nonactionable set is `no_case`.
 
 The complete case binds the exact ProposalSet, report, target and file identity.
 Inside the admission transaction, the service recomputes the fixed F09o
@@ -29,4 +32,5 @@ mechanical-librarian review-case-get --database reports.sqlite \
 ```
 
 Get returns the immutable case and derived currentness without writing it.
-Earlier schemas are rejected under the clean-state policy.
+Both commands validate the complete canonical typed result before printing
+success. Earlier schemas are rejected under the clean-state policy.

@@ -1,6 +1,7 @@
 """Synthetic installed-surface lifecycle proof for review admission storage."""
 import json
 import io
+import sys
 import tempfile
 import threading
 import unittest
@@ -105,8 +106,12 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
             repository.publish(report, lambda: True); proposal = _actionable(report); repository.publish_proposal(proposal); repository.close()
             barrier, outcomes = threading.Barrier(2), []
             def admit():
-                barrier.wait()
-                local = open_repository(database, create=False)
+                if sys.platform.startswith("linux"):
+                    barrier.wait()
+                    local = open_repository(database, create=False)
+                else:
+                    local = open_repository(database, create=False)
+                    barrier.wait()
                 try: outcomes.append(json.loads(local.admit_review_case(proposal)))
                 finally: local.close()
             workers = [threading.Thread(target=admit) for _ in range(2)]

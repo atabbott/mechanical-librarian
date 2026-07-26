@@ -19,7 +19,12 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport, ReportValueError
 from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
-from mechanical_librarian.domain.review_case import ReviewAdmissionFailure
+from mechanical_librarian.domain.review_case import (
+    MAX_REVIEW_CASE_BYTES,
+    ReviewAdmissionFailure,
+    ReviewAdmissionResult,
+    ReviewCase,
+)
 from mechanical_librarian.application.review_cases import ReviewCaseError
 
 Runner = Callable[[Path, Path, Path, str, str, str, int], str]
@@ -175,6 +180,40 @@ def _proposal_set_id(value: str) -> str:
     return value
 
 
+def _validated_review_get(serialized: str, review_case_id: str) -> str:
+    if (
+        type(serialized) is not str
+        or not serialized
+        or len(serialized.encode("utf-8")) > MAX_REVIEW_CASE_BYTES + 128
+    ):
+        raise ValueError("review case output is invalid")
+    raw = json.loads(serialized)
+    if (
+        type(raw) is not dict
+        or set(raw) != {"case", "current", "schema_version"}
+        or raw.get("schema_version") != "review-case-get-v1"
+        or type(raw.get("current")) is not bool
+        or type(raw.get("case")) is not dict
+    ):
+        raise ValueError("review case output is invalid")
+    case = ReviewCase.create_from_data(raw["case"])
+    if case.review_case_id != review_case_id:
+        raise ValueError("review case output is invalid")
+    canonical = json.dumps(
+        {
+            "case": case.to_data(),
+            "current": raw["current"],
+            "schema_version": "review-case-get-v1",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    if canonical != serialized:
+        raise ValueError("review case output is invalid")
+    return canonical
+
+
 def _preview_variant(value: str) -> str:
     if value != "preview-320x480-rgba-png-v1":
         raise argparse.ArgumentTypeError("invalid preview variant")
@@ -211,8 +250,25 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
         return 2
     if arguments.command in {"review-case-admit", "review-case-get"}:
         try:
-            serialized = (review_admit_runner(arguments.config, arguments.database, arguments.artifact_store, arguments.proposal_set_id) if arguments.command == "review-case-admit" and review_admit_runner else review_get_runner(arguments.database, arguments.review_case_id) if arguments.command == "review-case-get" and review_get_runner else None)
-            if type(serialized) is not str or json.loads(serialized) is None:
+            if arguments.command == "review-case-admit":
+                if review_admit_runner is None:
+                    raise ValueError
+                serialized = review_admit_runner(
+                    arguments.config,
+                    arguments.database,
+                    arguments.artifact_store,
+                    arguments.proposal_set_id,
+                )
+                serialized = ReviewAdmissionResult.from_json(serialized).to_json()
+            elif review_get_runner is not None:
+                serialized = _validated_review_get(
+                    review_get_runner(
+                        arguments.database,
+                        arguments.review_case_id,
+                    ),
+                    arguments.review_case_id,
+                )
+            else:
                 raise ValueError
         except ReviewCaseError as error:
             errors.write(ReviewAdmissionFailure(error.code).to_json() + "\n")

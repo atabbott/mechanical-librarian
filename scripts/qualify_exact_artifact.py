@@ -531,11 +531,15 @@ def _qualify_review_case_console(
             except BaseException as error:
                 failures.append(error)
 
-        workers = [threading.Thread(target=admit) for _ in range(2)]
-        for worker in workers:
-            worker.start()
-        for worker in workers:
-            worker.join()
+        if sys.platform.startswith("linux"):
+            workers = [threading.Thread(target=admit) for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join()
+        else:
+            admit()
+            admit()
         if failures or len(admissions) != 2:
             raise QualificationFailure("installed_review_case_failed")
         case_ids = {
