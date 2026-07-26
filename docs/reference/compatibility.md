@@ -31,7 +31,8 @@ unsupported. They are rejected rather than migrated, imported, or interpreted.
 The installed runtime supports current catalogue refresh/list/get, immutable
 foreground batch preview/inspect/run, single-item metadata report generation,
 exact/current report reopen, report-bound cover-preview reopen, exact-current
-ProposalSet create, and offline exact ProposalSet reopen. It does not support
+ProposalSet create, offline exact ProposalSet reopen, review-case admission,
+and offline exact ReviewCase reopen. It does not support
 durable batch attempts, resume, automatic retry, workers, schedulers, parallel
 execution, or review/admission/decision/apply.
 

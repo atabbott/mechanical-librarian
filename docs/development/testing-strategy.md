@@ -44,7 +44,7 @@ The suite covers:
   provider-order/contact privacy, and the explicit five-item batch envelope;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
-- exact four-table DELETE-mode report/ProposalSet schema, side-effect-free existing-file
+- exact clean-state DELETE-mode report/ProposalSet/ReviewCase schema, side-effect-free existing-file
   validation, no-follow connection binding, Linux owner-directory lock and
   root-to-parent chain validation, verified private-alias binding, raced
   configured-sidecar isolation, final-precommit parent replacement rollback,
