@@ -48,6 +48,7 @@ from mechanical_librarian.domain.identifiers import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind, FieldState, FileFacts, LocalClaim, MetadataReport, TargetFacts,
+    default_target_fields,
     claim_scope,
 )
 from tests.support.epub_packages import EPUB2_PACKAGE, EPUB3_PACKAGE, _opening_epub, _opening_package, _xhtml, epub_bytes, opening_resource_limit
@@ -424,7 +425,7 @@ class EpubChildRearSpineTests(unittest.TestCase):
             state=FieldState(title.state),
         )
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(claim,),
             local_reasons=("package_metadata_title",), providers=(),
         )
@@ -466,7 +467,7 @@ class EpubChildRearSpineTests(unittest.TestCase):
                     state=FieldState(creator.state), role=creator.role,
                 )
                 report = MetadataReport.create(
-                    target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+                    target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
                     file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(claim,),
                     local_reasons=("package_metadata_creator",), providers=(),
                 )
@@ -760,7 +761,7 @@ class EpubChildRearSpineTests(unittest.TestCase):
         inspection = child._inspection(package_report, opening_report, rear)
         self.assertEqual([(fact.field.value, fact.canonical_value) for fact in inspection.facts if fact.field.value in {"creator", "contributor"}], [("creator", "Ada Creator"), ("contributor", "Bea Contributor")])
         claims = tuple(LocalClaim.create(kind=ClaimKind(fact.field.value), observed=fact.observed_value, canonical=fact.canonical_value, excerpt=fact.supporting_context, applicability=fact.media, checksum=fact.checksum, applicability_basis=fact.classification_basis, basis=fact.basis, state=FieldState(fact.state), role=fact.role) for fact in inspection.facts if fact.field.value in {"creator", "contributor"})
-        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=claims, local_reasons=("opening_matter",), providers=())
+        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=claims, local_reasons=("opening_matter",), providers=())
         self.assertEqual({field.kind: field.state for field in report.field_results if field.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}}, {ClaimKind.CREATOR: FieldState.VALID, ClaimKind.CONTRIBUTOR: FieldState.VALID})
 
     def test_child_preserves_explicit_publisher_and_imprint_as_distinct_report_fields(self) -> None:
@@ -819,7 +820,7 @@ class EpubChildRearSpineTests(unittest.TestCase):
             for occurrence, fact in enumerate(edition_facts, 1)
         )
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64),
             local_claims=claims,
             local_reasons=("opening_matter",),

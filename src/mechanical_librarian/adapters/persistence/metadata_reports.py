@@ -18,14 +18,7 @@ from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     ReportValueError,
 )
-from mechanical_librarian.domain.proposal_set import (
-    CONTRACT_VERSION,
-    POLICY_VERSION,
-    PROPOSAL_SCHEMA,
-    TEMPLATE_VERSION,
-    ProposalSet,
-    ProposalValueError,
-)
+from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -71,13 +64,6 @@ _PROPOSAL_SETS_SQL = (
     "CREATE TABLE proposal_sets ("
     "proposal_set_id TEXT PRIMARY KEY NOT NULL CHECK (proposal_set_id GLOB 'proposal_set_[0-9a-f]*' AND length(proposal_set_id) = 77), "
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
-    "report_digest TEXT NOT NULL CHECK (length(report_digest) = 64 AND report_digest NOT GLOB '*[^0-9a-f]*'), "
-    "target_fingerprint TEXT NOT NULL CHECK (length(target_fingerprint) = 64 AND target_fingerprint NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'proposal-set-v1'), "
-    "policy_version TEXT NOT NULL CHECK (policy_version = 'fixed-conservative-v1'), "
-    "contract_version TEXT NOT NULL CHECK (contract_version = 'explainable-ebook-proposal-v1'), "
-    "template_version TEXT NOT NULL CHECK (template_version = 'proposal-result-v1'), "
-    "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
 )
 _NO_UPDATE_SQL = (
@@ -555,17 +541,9 @@ class SQLiteMetadataReportRepository:
         if type(proposal_set) is not ProposalSet:
             raise MetadataReportError("proposal publication failed")
         document = proposal_set.to_json()
-        document_digest = hashlib.sha256(document.encode("utf-8")).hexdigest()
         values = (
             proposal_set.proposal_set_id,
             proposal_set.report_id,
-            proposal_set.report_digest,
-            proposal_set.target_fingerprint,
-            proposal_set.schema_version,
-            proposal_set.policy_version,
-            proposal_set.contract_version,
-            proposal_set.template_version,
-            document_digest,
             document,
         )
         try:
@@ -573,7 +551,7 @@ class SQLiteMetadataReportRepository:
             if self._binding is not None:
                 self._binding.require_current()
             existing = self._connection.execute(
-                "SELECT report_id,report_digest,target_fingerprint,schema_version,policy_version,contract_version,template_version,document_digest,document "
+                "SELECT report_id,document "
                 "FROM proposal_sets WHERE proposal_set_id=?",
                 (proposal_set.proposal_set_id,),
             ).fetchone()
@@ -600,16 +578,14 @@ class SQLiteMetadataReportRepository:
                 ),
             ).fetchone()
             if (
-                hashlib.sha256(report_document.encode("utf-8")).hexdigest()
-                != proposal_set.report_digest
+                report.report_id != proposal_set.report_id
                 or report.target.fingerprint != proposal_set.target_fingerprint
                 or current != (proposal_set.report_id,)
             ):
                 raise MetadataReportError("proposal report changed")
             if existing is None:
                 self._connection.execute(
-                    "INSERT INTO proposal_sets(proposal_set_id,report_id,report_digest,target_fingerprint,schema_version,policy_version,contract_version,template_version,document_digest,document) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO proposal_sets(proposal_set_id,report_id,document) VALUES(?,?,?)",
                     values,
                 )
             if self._binding is not None:
@@ -631,7 +607,7 @@ class SQLiteMetadataReportRepository:
     def get_proposal(self, proposal_set_id: str) -> str:
         try:
             row = self._connection.execute(
-                "SELECT proposal_set_id,report_id,report_digest,target_fingerprint,schema_version,policy_version,contract_version,template_version,document_digest,document "
+                "SELECT proposal_set_id,report_id,document "
                 "FROM proposal_sets WHERE proposal_set_id=?",
                 (proposal_set_id,),
             ).fetchone()
@@ -1117,29 +1093,12 @@ def _validate_report_row(row: tuple[object, ...]) -> str:
 
 
 def _validate_proposal_row(row: tuple[object, ...]) -> str:
-    if len(row) != 10:
+    if len(row) != 3:
         raise MetadataReportError("persisted proposal is invalid")
-    (
-        proposal_set_id,
-        report_id,
-        report_digest,
-        target_fingerprint,
-        schema,
-        policy,
-        contract,
-        template,
-        digest,
-        document,
-    ) = row
+    proposal_set_id, report_id, document = row
     if (
         type(proposal_set_id) is not str
         or type(document) is not str
-        or schema != PROPOSAL_SCHEMA
-        or policy != POLICY_VERSION
-        or contract != CONTRACT_VERSION
-        or template != TEMPLATE_VERSION
-        or type(digest) is not str
-        or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest
     ):
         raise MetadataReportError("persisted proposal is invalid")
     try:
@@ -1149,13 +1108,9 @@ def _validate_proposal_row(row: tuple[object, ...]) -> str:
     if (
         proposal_set.proposal_set_id,
         proposal_set.report_id,
-        proposal_set.report_digest,
-        proposal_set.target_fingerprint,
     ) != (
         proposal_set_id,
         report_id,
-        report_digest,
-        target_fingerprint,
     ):
         raise MetadataReportError("persisted proposal envelope disagrees")
     return document

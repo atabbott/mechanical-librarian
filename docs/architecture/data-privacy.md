@@ -15,8 +15,8 @@ Provider cover rows retain only safe opaque source/work/edition identities,
 typed designation, allowlisted edition context, artifact digests, dimensions,
 media type, and preview references.
 One ProposalSet per distinct exact report/policy result retains only the report
-ID/digest and target fingerprint, fixed version bindings, bounded candidate
-values, assessments, evidence references, hashed correlation groups, reasons,
+ID, derived target fingerprint, fixed policy version, bounded candidate values,
+assessments, evidence references, hashed correlation groups, reasons,
 dependencies, and an optional selected alternative ID. It does not duplicate
 report excerpts, provider evidence records, target current-state storage, or
 cover provenance.

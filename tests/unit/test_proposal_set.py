@@ -31,6 +31,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome,
     ProposalSet,
+    ProposalScope,
     ProposalValueError,
     evaluate_report,
 )
@@ -104,7 +105,6 @@ def _report(
             "primary",
             "ebooks",
             "item-1",
-            title,
             _fields(title) if fields is None else fields,
         ),
         file=FileFacts(0, "a" * 64, "b" * 64),
@@ -116,6 +116,22 @@ def _report(
         ),
         providers=tuple(sorted(providers, key=lambda value: value.provider)),
         cover_sources=covers,
+    )
+
+
+def _local_subtitle(value: str, scope: ClaimScope) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.SUBTITLE,
+        observed=value,
+        canonical=value,
+        state=FieldState.VALID,
+        scope=scope,
+        basis="package_metadata",
+        excerpt=value,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=0,
     )
 
 
@@ -133,6 +149,44 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(tuple(TargetDestination), tuple(
             value.destination for value in proposal_set.results
         ))
+        self.assertEqual(
+            {"connection", "fields", "item", "library"},
+            set(_report().to_data()["target"]),
+        )
+        self.assertEqual(
+            {
+                "policy_version",
+                "proposal_set_id",
+                "report",
+                "results",
+                "schema_version",
+            },
+            set(proposal_set.to_data()),
+        )
+
+    def test_linked_destinations_retain_fixed_dependencies(self) -> None:
+        proposal_set = evaluate_report(_report())
+        dependencies = {
+            result.destination: result.dependencies for result in proposal_set.results
+        }
+        self.assertEqual(
+            (TargetDestination.SUBTITLE, TargetDestination.SERIES),
+            dependencies[TargetDestination.TITLE],
+        )
+        self.assertEqual(
+            (TargetDestination.TITLE,), dependencies[TargetDestination.SUBTITLE]
+        )
+        self.assertEqual(
+            (TargetDestination.TITLE,), dependencies[TargetDestination.SERIES]
+        )
+        self.assertEqual(
+            (TargetDestination.PUBLISHED_YEAR,),
+            dependencies[TargetDestination.PUBLISHED_DATE],
+        )
+        self.assertEqual(
+            (TargetDestination.PUBLISHED_DATE,),
+            dependencies[TargetDestination.PUBLISHED_YEAR],
+        )
         self.assertEqual(proposal_set, ProposalSet.from_json(proposal_set.to_json()))
         self.assertEqual(proposal_set, evaluate_report(_report()))
         self.assertNotIn("excerpt", proposal_set.to_json())
@@ -228,7 +282,7 @@ class ProposalSetTests(unittest.TestCase):
                 (("Ada Author", "author"), ("Unknown Credit", None))
             )
         )
-        result = _result(
+        local_result = _result(
             evaluate_report(
                 _report(
                     title=None,
@@ -243,6 +297,80 @@ class ProposalSetTests(unittest.TestCase):
                 )
             ),
             TargetDestination.AUTHORS,
+        )
+        self.assertEqual(ProposalOutcome.INELIGIBLE, local_result.outcome)
+        self.assertEqual((), local_result.alternatives)
+
+    def test_ambiguous_local_contributor_does_not_become_partial_narrators(
+        self,
+    ) -> None:
+        claims = tuple(
+            LocalClaim.create(
+                kind=ClaimKind.CONTRIBUTOR,
+                observed=name,
+                canonical=name,
+                excerpt=name,
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.EDITION,
+                role=role,
+                occurrence=index,
+            )
+            for index, (name, role) in enumerate(
+                (("Nora Narrator", "narrator"), ("Unknown Credit", None))
+            )
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        narrators=TargetField(
+                            TargetDestination.NARRATORS,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    local_claims=claims,
+                )
+            ),
+            TargetDestination.NARRATORS,
+        )
+        self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
+        self.assertEqual((), result.alternatives)
+
+    def test_ambiguous_provider_contributor_does_not_become_partial_narrators(
+        self,
+    ) -> None:
+        claims = (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CONTRIBUTOR,
+                "Nora Narrator",
+                scope=ClaimScope.EDITION,
+                role="narrator",
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CONTRIBUTOR,
+                "Unknown Credit",
+                scope=ClaimScope.EDITION,
+            ),
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        narrators=TargetField(
+                            TargetDestination.NARRATORS,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    providers=(_provider("catalogue", "edition-1", claims),),
+                )
+            ),
+            TargetDestination.NARRATORS,
         )
         self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
         self.assertEqual((), result.alternatives)
@@ -294,6 +422,118 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.NEEDS_REVIEW, result.outcome)
         self.assertEqual(2, len(result.alternatives[0].correlations))
+
+    def test_local_work_subtitle_and_provider_edition_subtitle_are_admitted(self) -> None:
+        local = _local_subtitle("Local work subtitle", ClaimScope.WORK)
+        local_result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        subtitle=TargetField(
+                            TargetDestination.SUBTITLE,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    local_claims=(local,),
+                )
+            ),
+            TargetDestination.SUBTITLE,
+        )
+        self.assertEqual(
+            {"Local work subtitle"},
+            {str(value.value.value) for value in local_result.alternatives},
+        )
+        self.assertEqual(
+            {ProposalScope.WORK},
+            {value.scope for value in local_result.alternatives},
+        )
+        for name in ("hardcover", "open_library"):
+            with self.subTest(provider=name):
+                provider = _provider(
+                    name,
+                    "edition-1",
+                    (
+                        _claim(
+                            name,
+                            "edition-1",
+                            ClaimKind.SUBTITLE,
+                            "Edition subtitle",
+                            scope=ClaimScope.EDITION,
+                        ),
+                    ),
+                )
+                provider_result = _result(
+                    evaluate_report(
+                        _report(
+                            fields=_fields(
+                                subtitle=TargetField(
+                                    TargetDestination.SUBTITLE,
+                                    TargetFieldState.MISSING,
+                                ),
+                            ),
+                            providers=(provider,),
+                        )
+                    ),
+                    TargetDestination.SUBTITLE,
+                )
+                self.assertEqual(
+                    {"Edition subtitle"},
+                    {str(value.value.value) for value in provider_result.alternatives},
+                )
+                self.assertEqual(
+                    {ProposalScope.EDITION},
+                    {value.scope for value in provider_result.alternatives},
+                )
+
+    def test_subtitle_scope_admission_is_source_sensitive(self) -> None:
+        local_edition = _local_subtitle(
+            "Wrong local edition subtitle", ClaimScope.EDITION
+        )
+        provider_work = _provider(
+            "open_library",
+            "edition-1",
+            (
+                _claim(
+                    "open_library",
+                    "edition-1",
+                    ClaimKind.SUBTITLE,
+                    "Wrong provider work subtitle",
+                    scope=ClaimScope.WORK,
+                ),
+            ),
+        )
+        local_result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        subtitle=TargetField(
+                            TargetDestination.SUBTITLE,
+                            TargetFieldState.MISSING,
+                        )
+                    ),
+                    local_claims=(local_edition,),
+                )
+            ),
+            TargetDestination.SUBTITLE,
+        )
+        self.assertEqual(ProposalOutcome.INELIGIBLE, local_result.outcome)
+        self.assertEqual((), local_result.alternatives)
+        provider_result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        subtitle=TargetField(
+                            TargetDestination.SUBTITLE,
+                            TargetFieldState.MISSING,
+                        )
+                    ),
+                    providers=(provider_work,),
+                )
+            ),
+            TargetDestination.SUBTITLE,
+        )
+        self.assertEqual(ProposalOutcome.INELIGIBLE, provider_result.outcome)
+        self.assertEqual((), provider_result.alternatives)
 
     def test_candidates_from_one_provider_are_one_correlation_group(self) -> None:
         candidates = tuple(
@@ -443,6 +683,41 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.NEEDS_REVIEW, two_sources.outcome)
 
+    def test_year_only_edition_evidence_proposes_only_published_year(
+        self,
+    ) -> None:
+        claim = _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.PUBLICATION_DATE,
+            "2001",
+            scope=ClaimScope.EDITION,
+        )
+        proposal_set = evaluate_report(
+            _report(
+                fields=_fields(
+                    published_year=TargetField(
+                        TargetDestination.PUBLISHED_YEAR,
+                        TargetFieldState.MISSING,
+                    ),
+                    published_date=TargetField(
+                        TargetDestination.PUBLISHED_DATE,
+                        TargetFieldState.MISSING,
+                    ),
+                ),
+                providers=(_provider("catalogue", "edition-1", (claim,)),),
+            )
+        )
+        year_result = _result(
+            proposal_set, TargetDestination.PUBLISHED_YEAR
+        )
+        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, year_result.outcome)
+        self.assertEqual("2001", year_result.alternatives[0].value.value)
+        self.assertEqual(
+            ProposalOutcome.INELIGIBLE,
+            _result(proposal_set, TargetDestination.PUBLISHED_DATE).outcome,
+        )
+
     def test_cover_requires_one_complete_safe_artifact(self) -> None:
         artifact = CoverArtifact.create(
             b"cover", b"preview", "image/png", 10, 20
@@ -580,14 +855,43 @@ class ProposalSetTests(unittest.TestCase):
             )
         )
         isbn_result = _result(proposal_set, TargetDestination.ISBN)
-        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, isbn_result.outcome)
-        self.assertEqual(
-            "0306406152", isbn_result.alternatives[0].value.value
+        self.assertEqual(ProposalOutcome.DEFER, isbn_result.outcome)
+        self.assertEqual((), isbn_result.alternatives)
+        self.assertIn(
+            "identifier_applicability_unresolved", isbn_result.reasons
         )
         self.assertEqual(
             ProposalOutcome.DEFER,
             _result(proposal_set, TargetDestination.EXPLICIT).outcome,
         )
+
+    def test_explicit_local_ebook_isbn_remains_eligible(self) -> None:
+        isbn = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="0306406152",
+            canonical="0306406152",
+            excerpt="0306406152",
+            applicability="ebook",
+            checksum="valid_isbn_10",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        isbn=TargetField(
+                            TargetDestination.ISBN,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    local_claims=(isbn,),
+                )
+            ),
+            TargetDestination.ISBN,
+        )
+        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, result.outcome)
+        self.assertEqual("0306406152", result.alternatives[0].value.value)
 
     def test_non_review_result_cannot_carry_any_selection(self) -> None:
         result = _result(evaluate_report(_report()), TargetDestination.TITLE)

@@ -6,6 +6,7 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
     TargetFacts,
+    default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.interfaces.cli import main
@@ -13,7 +14,7 @@ from mechanical_librarian.interfaces.cli import main
 
 def _proposal():
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", "Title"),
+        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=(),
         local_reasons=("no_opening_claims",),

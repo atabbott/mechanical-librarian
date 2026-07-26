@@ -50,11 +50,12 @@ The suite covers:
   configured-sidecar isolation, final-precommit parent replacement rollback,
   alias cleanup, append-only history, replay, scope-checked successor
   pointers, restart readback, corrupt-row rejection, and rollback;
-- fixed-policy exact 16-result enumeration, complete authors and atomic series,
-  independent corroboration, date/year consistency, populated subjective-field
+- fixed-policy exact 16-result enumeration, complete author/narrator lists and
+  atomic series, independent corroboration, accepted-versus-unresolved ISBN
+  applicability, year-only/date consistency, populated subjective-field
   closure, complete cover-gallery selection, deterministic ProposalSet replay,
-  stale-report no-insert, transaction-local report/current-pointer recheck, and
-  zero provider calls during proposal creation;
+  stale-report no-insert, transaction-local report/current-pointer recheck,
+  and zero provider calls during proposal creation;
 - rejection before unauthorized parser/provider/publication activity,
   transaction-bound currentness drift, exact-byte snapshot binding, title
   privacy rejection, redaction, and absence of product/media writes; and

@@ -35,8 +35,9 @@ access, or network access.
 `proposal-set-v1` document is a separate content-addressed immutable artifact
 with one closed result for every target destination. Creation revalidates the
 external target/media/cover/artifact state, performs no provider call, and
-transactionally rechecks the report digest plus current pointer before insert.
-The fixed conservative policy is versioned in the artifact and introduces no
+transactionally rechecks the exact report plus current pointer before insert.
+The minimum envelope retains only schema version, fixed policy version, report
+ID, derived target fingerprint, and results. It introduces no
 review, decision, or apply authority.
 
 ## Exclusions

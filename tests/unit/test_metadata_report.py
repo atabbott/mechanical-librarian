@@ -570,7 +570,7 @@ class MetadataReportTests(unittest.TestCase):
             claims += [claim(identity, ClaimKind.TAG, f"t{number:03d}-{index:03d}" + "x" * (MAX_SCALAR_CHARACTERS - 8), offset + index) for index in range(MAX_TAGS)]
             candidates.append(ProviderCandidate(identity, f"work-{identity}", tuple(claims)))
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64), local_claims=local_claims,
             local_reasons=("opening_matter_contributor",),
             providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, (), tuple(candidates)),),
@@ -580,7 +580,7 @@ class MetadataReportTests(unittest.TestCase):
     def test_field_results_are_complete_canonical_and_separate_from_claims(self) -> None:
         results = derive_field_results(())
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64),
             local_claims=(),
             local_reasons=("no_opening_claims",),
@@ -637,7 +637,7 @@ class MetadataReportTests(unittest.TestCase):
             state=FieldState.OVERSIZED,
         )
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64),
             local_claims=(claim,), local_reasons=("package_metadata_description",), providers=(),
         )
@@ -656,7 +656,7 @@ class MetadataReportTests(unittest.TestCase):
                               applicability_basis="not_applicable", state=FieldState.INAPPLICABLE),
         )
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64), local_claims=claims,
             local_reasons=("no_opening_claims",), providers=(),
         )
@@ -671,7 +671,7 @@ class MetadataReportTests(unittest.TestCase):
             checksum="not_applicable", applicability_basis="not_applicable",
         )
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(title,),
             local_reasons=("no_opening_claims",), providers=(),
         )
@@ -724,7 +724,7 @@ class MetadataReportTests(unittest.TestCase):
             with self.subTest(rear_field=field), self.assertRaises(ReportValueError):
                 RearClaimProvenance("a" * 64, 1, 1, values["marker"], values["citation"])
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(valid,),
             local_reasons=("no_opening_claims",), providers=(),
         )
@@ -751,7 +751,7 @@ class MetadataReportTests(unittest.TestCase):
                     checksum="not_applicable", applicability_basis="not_applicable", role=role,
                 )
         replay = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(
                 LocalClaim.create(
                     kind=ClaimKind.CREATOR, observed="Ada Example", canonical="Ada Example",
@@ -798,8 +798,8 @@ class MetadataReportTests(unittest.TestCase):
         provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.TITLE, value="Shared title", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable")
         links = tuple(sorted((ComparisonLink(agree.reference, Comparison.AGREEMENT), ComparisonLink(disagree.reference, Comparison.DISAGREEMENT), ComparisonLink(invalid.reference, Comparison.NOT_COMPARABLE), ComparisonLink(edition.reference, Comparison.NOT_COMPARABLE)), key=lambda link: link.local_reference))
         linked = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.TITLE, value="Shared title", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable", links=links)
-        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", "work-candidate", (linked,)),)),))
-        changed_work = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", "different-work", (linked,)),)),))
+        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", "work-candidate", (linked,)),)),))
+        changed_work = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", "different-work", (linked,)),)),))
         self.assertEqual(provider.links, ())
         self.assertEqual({link.outcome for link in linked.links}, {Comparison.AGREEMENT, Comparison.DISAGREEMENT, Comparison.NOT_COMPARABLE})
         self.assertNotIn(author.reference, {link.local_reference for link in linked.links})
@@ -1040,7 +1040,7 @@ class MetadataReportTests(unittest.TestCase):
         )
 
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64),
             local_claims=local_claims,
             local_reasons=("opening_matter_isbn",),
@@ -1286,7 +1286,7 @@ class MetadataReportTests(unittest.TestCase):
             ),
         )
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64),
             local_claims=claims,
             local_reasons=("opening_matter_isbn",),
@@ -1453,7 +1453,7 @@ class MetadataReportTests(unittest.TestCase):
             applicability_basis="not_applicable", state=FieldState.UNSUPPORTED,
         )
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(claim,),
             local_reasons=("package_metadata_title",), providers=(),
         )
@@ -1495,7 +1495,7 @@ class MetadataReportTests(unittest.TestCase):
             applicability_basis="not_applicable",
         )
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64),
             local_claims=(claim,),
             local_reasons=("opening_title",),
@@ -1518,7 +1518,7 @@ class MetadataReportTests(unittest.TestCase):
             applicability_basis="not_applicable",
         )
         self.assertEqual(claim.observed, title)
-        self.assertEqual(TargetFacts("primary", "ebooks", "item-1", title).current_title, title)
+        self.assertEqual(TargetFacts("primary", "ebooks", "item-1", default_target_fields(title)).current_title, title)
         with self.assertRaises(ReportValueError):
             LocalClaim.create(
                 kind=ClaimKind.ISBN,
@@ -1546,14 +1546,14 @@ class MetadataReportTests(unittest.TestCase):
                 applicability_basis="not_applicable",
             )
             report = MetadataReport.create(
-                target=TargetFacts("primary", "ebooks", "item-1", title),
+                target=TargetFacts("primary", "ebooks", "item-1", default_target_fields(title)),
                 file=FileFacts(0, "a" * 64, "b" * 64),
                 local_claims=(claim,),
                 local_reasons=("no_opening_claims",),
                 providers=(),
             )
             replay = MetadataReport.create(
-                target=TargetFacts("primary", "ebooks", "item-1", title),
+                target=TargetFacts("primary", "ebooks", "item-1", default_target_fields(title)),
                 file=FileFacts(0, "a" * 64, "b" * 64),
                 local_claims=(claim,),
                 local_reasons=("no_opening_claims",),
@@ -1625,7 +1625,7 @@ class MetadataReportTests(unittest.TestCase):
 
     def test_duplicate_occurrences_are_serialized_in_source_order_and_replay_stably(self) -> None:
         claims = tuple(LocalClaim.create(kind=ClaimKind.CREATOR, observed="Repeated person", canonical="Repeated person", excerpt="Repeated person", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", occurrence=ordinal) for ordinal in (2, 1))
-        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", "Current title"), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=claims, local_reasons=("package_metadata_creator",), providers=())
+        report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=claims, local_reasons=("package_metadata_creator",), providers=())
         self.assertEqual([claim.occurrence for claim in report.local_claims], [2, 1])
         self.assertEqual(MetadataReport.from_json(report.to_json()).to_json(), report.to_json())
 
@@ -1736,7 +1736,7 @@ class MetadataReportTests(unittest.TestCase):
 
     def test_cli_success_is_exact_and_unexpected_failures_are_redacted(self) -> None:
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64),
             local_claims=(),
             local_reasons=("no_opening_claims",),

@@ -109,7 +109,7 @@ class TargetSnapshot:
     def __post_init__(self) -> None:
         if not self.fields:
             object.__setattr__(self, "fields", default_target_fields(self.title))
-        facts = TargetFacts("snapshot", "snapshot", "snapshot", self.title, self.fields)
+        facts = TargetFacts("snapshot", "snapshot", "snapshot", self.fields)
         if (
             self.cover is None
             and facts.fields[-1].state is TargetFieldState.VALUE
@@ -546,7 +546,6 @@ class GenerateMetadataReport:
                     self._connection.name,
                     self._library.name,
                     item,
-                    initial.title,
                     initial.fields,
                 ),
                 file=FileFacts(file_index, selected.identity, local.content_digest),

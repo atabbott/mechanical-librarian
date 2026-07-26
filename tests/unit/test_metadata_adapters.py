@@ -41,6 +41,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetFacts,
     TargetFieldState,
+    default_target_fields,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact, CoverSource, CoverSourceKind, CoverSourceState, cover_source_id,
@@ -71,7 +72,7 @@ def _report(title: str = "Current title") -> MetadataReport:
         scope=ClaimScope.WORK,
     )
     return MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", title),
+        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields(title)),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=(claim,),
         local_reasons=("no_opening_claims",),
@@ -372,7 +373,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             path = Path(directory) / "reports.sqlite"
             repository = open_repository(path)
             primary = _report()
-            other = MetadataReport.create(target=TargetFacts("secondary", "ebooks", "item-2", "Other title"), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            other = MetadataReport.create(target=TargetFacts("secondary", "ebooks", "item-2", default_target_fields("Other title")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
             repository.publish(primary, lambda: True)
             repository.publish(other, lambda: True)
             repository.close()
@@ -393,7 +394,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             path = Path(directory) / "reports.sqlite"
             repository = open_repository(path)
             primary = _report()
-            other = MetadataReport.create(target=TargetFacts("secondary", "ebooks", "item-2", "Other title"), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            other = MetadataReport.create(target=TargetFacts("secondary", "ebooks", "item-2", default_target_fields("Other title")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
             repository.publish(primary, lambda: True); repository.publish(other, lambda: True); repository.close()
             connection = sqlite3.connect(path)
             connection.execute("UPDATE current_metadata_reports SET report_id=? WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (other.report_id, primary.target.connection, primary.target.library, primary.target.item, primary.file.identity))
@@ -762,7 +763,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             repository = open_repository(path)
             primary = _report("Primary title")
             other = MetadataReport.create(
-                target=TargetFacts("secondary", "other", "item-2", "Other title"),
+                target=TargetFacts("secondary", "other", "item-2", default_target_fields("Other title")),
                 file=FileFacts(0, "c" * 64, "d" * 64),
                 local_claims=(),
                 local_reasons=("no_opening_claims",),
@@ -1503,7 +1504,7 @@ class ProviderAdapterTests(unittest.TestCase):
             )
         )
         report = MetadataReport.create(
-            target=TargetFacts("primary", "ebooks", "item-1", "Current title"),
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
             file=FileFacts(0, "a" * 64, "b" * 64),
             local_claims=(self._claim(), self._title_claim()),
             local_reasons=("opening_isbn",),

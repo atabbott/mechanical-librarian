@@ -22,6 +22,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
+    IdentifierRelation,
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
@@ -38,8 +39,6 @@ from mechanical_librarian.domain.metadata_report import (
 
 PROPOSAL_SCHEMA = "proposal-set-v1"
 POLICY_VERSION = "fixed-conservative-v1"
-CONTRACT_VERSION = "explainable-ebook-proposal-v1"
-TEMPLATE_VERSION = "proposal-result-v1"
 MAX_PROPOSAL_BYTES = 2_097_152
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _REPORT_ID = re.compile(r"^report_[0-9a-f]{64}$")
@@ -60,7 +59,6 @@ class ProposalValueError(ValueError):
 class ProposalOutcome(StrEnum):
     NEEDS_REVIEW = "needs_review"
     KEEP = "keep"
-    REJECT = "reject"
     DEFER = "defer"
     INELIGIBLE = "ineligible"
 
@@ -259,24 +257,18 @@ class ProposalResult:
 class ProposalSet:
     proposal_set_id: str
     report_id: str
-    report_digest: str
     target_fingerprint: str
     results: tuple[ProposalResult, ...]
     schema_version: str = PROPOSAL_SCHEMA
     policy_version: str = POLICY_VERSION
-    contract_version: str = CONTRACT_VERSION
-    template_version: str = TEMPLATE_VERSION
 
     def __post_init__(self) -> None:
         if (
             _PROPOSAL_SET_ID.fullmatch(self.proposal_set_id) is None
             or _REPORT_ID.fullmatch(self.report_id) is None
-            or _DIGEST.fullmatch(self.report_digest) is None
             or _DIGEST.fullmatch(self.target_fingerprint) is None
             or self.schema_version != PROPOSAL_SCHEMA
             or self.policy_version != POLICY_VERSION
-            or self.contract_version != CONTRACT_VERSION
-            or self.template_version != TEMPLATE_VERSION
             or type(self.results) is not tuple
             or tuple(value.destination for value in self.results)
             != tuple(TargetDestination)
@@ -295,14 +287,12 @@ class ProposalSet:
         cls,
         *,
         report_id: str,
-        report_digest: str,
         target_fingerprint: str,
         results: tuple[ProposalResult, ...],
     ) -> Self:
         data = _proposal_data(
             "",
             report_id,
-            report_digest,
             target_fingerprint,
             results,
         )
@@ -313,7 +303,6 @@ class ProposalSet:
         return cls(
             identity,
             report_id,
-            report_digest,
             target_fingerprint,
             results,
         )
@@ -327,7 +316,6 @@ class ProposalSet:
         return _proposal_data(
             self.proposal_set_id,
             self.report_id,
-            self.report_digest,
             self.target_fingerprint,
             self.results,
         )
@@ -392,22 +380,37 @@ def evaluate_report(report: MetadataReport) -> ProposalSet:
         }:
             continue
         observations = _observations(report, destination)
-        results[destination] = _evaluate(
+        result = _evaluate(
             destination,
             targets[destination],
             observations,
             _dependencies(destination),
         )
+        if (
+            destination is TargetDestination.ISBN
+            and not observations
+            and any(
+                evidence.relation is IdentifierRelation.UNRESOLVED
+                for evidence in report.identifier_evidence
+            )
+        ):
+            result = ProposalResult(
+                destination,
+                ProposalOutcome.DEFER,
+                (),
+                None,
+                ("identifier_applicability_unresolved",),
+                _dependencies(destination),
+            )
+        results[destination] = result
     publication = _publication_results(report, targets)
     results.update(publication)
     results[TargetDestination.COVER] = _cover_result(
         report, targets[TargetDestination.COVER]
     )
     ordered = tuple(results[value] for value in TargetDestination)
-    serialized_report = report.to_json()
     return ProposalSet.create(
         report_id=report.report_id,
-        report_digest=hashlib.sha256(serialized_report.encode("utf-8")).hexdigest(),
         target_fingerprint=report.target.fingerprint,
         results=ordered,
     )
@@ -430,23 +433,27 @@ def _observations(
         return _series_observations(report)
     mapping = {
         TargetDestination.TITLE: (ClaimKind.TITLE, ClaimScope.WORK),
-        TargetDestination.SUBTITLE: (ClaimKind.SUBTITLE, ClaimScope.WORK),
         TargetDestination.PUBLISHER: (ClaimKind.PUBLISHER, ClaimScope.EDITION),
         TargetDestination.DESCRIPTION: (ClaimKind.DESCRIPTION, ClaimScope.WORK),
         TargetDestination.ISBN: (ClaimKind.ISBN, ClaimScope.EDITION),
         TargetDestination.ASIN: (ClaimKind.ASIN, ClaimScope.EDITION),
         TargetDestination.LANGUAGE: (ClaimKind.LANGUAGE, ClaimScope.EDITION),
     }
-    kind, scope = mapping[destination]
+    kind, scope = mapping.get(destination, (ClaimKind.SUBTITLE, ClaimScope.WORK))
+    local_scope = ClaimScope.WORK if destination is TargetDestination.SUBTITLE else scope
+    provider_scope = ClaimScope.EDITION if destination is TargetDestination.SUBTITLE else scope
     values: list[_Observed] = []
     for claim in report.local_claims:
         if (
             claim.kind is kind
-            and claim.scope is scope
+            and claim.scope is local_scope
             and claim.state is FieldState.VALID
             and claim.canonical is not None
             and claim.basis != "target_metadata"
             and _eligible_identifier(destination, claim.canonical, claim.applicability)
+            and _eligible_identifier_reference(
+                report, destination, claim.reference
+            )
             and _eligible_description(destination, claim.canonical)
         ):
             values.append(
@@ -454,7 +461,7 @@ def _observations(
                     _value(destination, claim.canonical),
                     (claim.reference,),
                     _correlation("local:selected_epub"),
-                    _scope(scope),
+                    _scope(claim.scope),
                 )
             )
     for provider in report.providers:
@@ -462,11 +469,14 @@ def _observations(
             for claim in candidate.claims:
                 if (
                     claim.kind is kind
-                    and claim.scope is scope
+                    and claim.scope is provider_scope
                     and claim.state is FieldState.VALID
                     and claim.value is not None
                     and _eligible_identifier(
                         destination, claim.value, claim.applicability
+                    )
+                    and _eligible_identifier_reference(
+                        report, destination, claim.reference
                     )
                     and _eligible_description(destination, claim.value)
                 ):
@@ -475,7 +485,7 @@ def _observations(
                             _value(destination, claim.value),
                             (claim.reference,),
                             _correlation(f"provider:{provider.provider}"),
-                            _scope(scope),
+                            _scope(claim.scope),
                         )
                     )
     return tuple(values)
@@ -522,6 +532,14 @@ def _list_observations(
             for claim in basis_claims
         ):
             continue
+        if destination is TargetDestination.NARRATORS and any(
+            claim.kind is ClaimKind.CONTRIBUTOR
+            and claim.scope is ClaimScope.EDITION
+            and claim.state is FieldState.VALID
+            and claim.role is None
+            for claim in basis_claims
+        ):
+            continue
         claims = tuple(
             claim
             for claim in basis_claims
@@ -546,6 +564,14 @@ def _list_observations(
                 claim.kind is ClaimKind.CONTRIBUTOR
                 and claim.scope is ClaimScope.WORK
                 and claim.state is FieldState.VALID
+                for claim in candidate.claims
+            ):
+                continue
+            if destination is TargetDestination.NARRATORS and any(
+                claim.kind is ClaimKind.CONTRIBUTOR
+                and claim.scope is ClaimScope.EDITION
+                and claim.state is FieldState.VALID
+                and claim.role is None
                 for claim in candidate.claims
             ):
                 continue
@@ -723,7 +749,12 @@ def _publication_results(
 ) -> dict[TargetDestination, ProposalResult]:
     date_target = targets[TargetDestination.PUBLISHED_DATE]
     year_target = targets[TargetDestination.PUBLISHED_YEAR]
-    dates = _date_observations(report, date_target)
+    publication_values = _date_observations(report, date_target)
+    dates = tuple(
+        value
+        for value in publication_values
+        if type(value.value.value) is str and len(value.value.value) == 10
+    )
     years = tuple(
         _Observed(
             ProposalValue(ProposalValueKind.TEXT, str(value.value.value)[:4]),
@@ -731,7 +762,7 @@ def _publication_results(
             value.correlation,
             value.scope,
         )
-        for value in dates
+        for value in publication_values
     )
     date_result = _evaluate(
         TargetDestination.PUBLISHED_DATE,
@@ -1093,6 +1124,20 @@ def _eligible_identifier(
     return True
 
 
+def _eligible_identifier_reference(
+    report: MetadataReport,
+    destination: TargetDestination,
+    reference: str,
+) -> bool:
+    if destination is not TargetDestination.ISBN:
+        return True
+    return any(
+        evidence.reference == reference
+        and evidence.relation is IdentifierRelation.ACCEPTED
+        for evidence in report.identifier_evidence
+    )
+
+
 def _eligible_description(
     destination: TargetDestination, value: str
 ) -> bool:
@@ -1122,6 +1167,9 @@ def _dependencies(
 
 
 def _date(value: str) -> str | None:
+    if re.fullmatch(r"[0-9]{4}", value) is not None:
+        year = int(value)
+        return value if 1 <= year <= 9999 else None
     try:
         parsed = date.fromisoformat(value)
     except ValueError:
@@ -1181,22 +1229,18 @@ def _alternative_id(
 def _proposal_data(
     proposal_set_id: str,
     report_id: str,
-    report_digest: str,
     target_fingerprint: str,
     results: tuple[ProposalResult, ...],
 ) -> dict[str, object]:
     return {
-        "contract_version": CONTRACT_VERSION,
         "policy_version": POLICY_VERSION,
         "proposal_set_id": proposal_set_id,
         "report": {
-            "document_digest": report_digest,
             "report_id": report_id,
             "target_fingerprint": target_fingerprint,
         },
         "results": [value.to_data() for value in results],
         "schema_version": PROPOSAL_SCHEMA,
-        "template_version": TEMPLATE_VERSION,
     }
 
 
@@ -1204,30 +1248,25 @@ def _proposal_from_data(raw: object) -> ProposalSet:
     root = _object(
         raw,
         {
-            "contract_version",
             "policy_version",
             "proposal_set_id",
             "report",
             "results",
             "schema_version",
-            "template_version",
         },
     )
     report = _object(
         root["report"],
-        {"document_digest", "report_id", "target_fingerprint"},
+        {"report_id", "target_fingerprint"},
     )
     results = tuple(_result_from_data(value) for value in _list(root["results"]))
     return ProposalSet(
         root["proposal_set_id"],
         report["report_id"],
-        report["document_digest"],
         report["target_fingerprint"],
         results,
         root["schema_version"],
         root["policy_version"],
-        root["contract_version"],
-        root["template_version"],
     )
 
 
@@ -1341,7 +1380,6 @@ def _projection(value: object, maximum: int) -> str:
 
 
 __all__ = [
-    "CONTRACT_VERSION",
     "MAX_PROPOSAL_BYTES",
     "POLICY_VERSION",
     "PROPOSAL_SCHEMA",
@@ -1354,6 +1392,5 @@ __all__ = [
     "ProposalValue",
     "ProposalValueError",
     "ProposalValueKind",
-    "TEMPLATE_VERSION",
     "evaluate_report",
 ]

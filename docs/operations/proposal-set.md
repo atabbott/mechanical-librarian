@@ -30,12 +30,12 @@ newline. Failure emits no document and one value-free diagnostic.
 
 ## Fixed policy
 
-Every ProposalSet is bound to the exact report ID and document digest, target
-fingerprint, policy version, contract version, and result-template version. It
+Every ProposalSet is bound to the exact report ID, derived target fingerprint,
+and fixed policy version. It
 contains exactly one ordered result for title, subtitle, authors, narrators,
 series, genres, publishedYear, publishedDate, publisher, description, isbn,
 asin, language, explicit, tags, and cover. Each result is one of
-`needs_review`, `keep`, `reject`, `defer`, or `ineligible`.
+`needs_review`, `keep`, `defer`, or `ineligible`.
 
 Alternatives retain only their bounded candidate value, work/edition/cover
 scope, assessment, stable evidence references, and hashed correlation groups.
@@ -47,17 +47,23 @@ The policy is deliberately conservative:
 - populated values need positive preservation evidence for `keep`;
 - populated replacement candidates normally need one unique value from at
   least two materially independent correlation groups;
-- ordered author lists, series name/sequence, and date/year remain complete
-  and linked rather than being edited piecemeal;
+- ordered author and narrator lists, series name/sequence, and date/year remain
+  complete and linked rather than being edited piecemeal; untyped contributor
+  evidence cannot become a partial narrator list;
 - refining a populated year into a full date requires two materially
   independent correlation groups;
 - work first-publication evidence can fill an empty date/year consistently but
   cannot replace a valid populated edition value;
+- direct year-only edition evidence can fill `publishedYear` but is not
+  promoted into a full `publishedDate`;
+- local work subtitles and exact-edition provider subtitles remain in their
+  respective evidence scopes;
 - populated description, genres, and tags are never merged, replaced, or
   cleaned; exact evidence may preserve them and candidates may fill only an
   empty field;
-- ISBNs remain validated, edition-applicable observations; ISBN-13 and ASIN are
-  never manufactured;
+- ISBNs must have an `accepted` report relationship proving validated,
+  edition-applicable evidence; unresolved applicability defers, and ISBN-13
+  and ASIN are never manufactured;
 - explicit changes require direct evidence, so absence supports neither
   `false` nor `keep`; and
 - an existing verified ABS cover is kept. An absent target gets a selected

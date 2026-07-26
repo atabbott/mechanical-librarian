@@ -116,7 +116,7 @@ not a database repair protocol.
 Proposal creation performs one fresh target/media/ABS-cover validation and
 verifies every referenced private cover preview without constructing provider
 clients. After that external read finishes, an immediate SQLite transaction
-rechecks the exact immutable report digest and current pointer before inserting
+rechecks the exact immutable report and current pointer before inserting
 the ProposalSet. Drift or malformed input inserts nothing. The unavoidable
 interval after the last external read is documented; later review admission
 must revalidate freshness. Proposal rows are append-only and have no current

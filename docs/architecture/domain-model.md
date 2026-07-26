@@ -98,12 +98,12 @@ does not interpret reports from prior or intermediate development schemas.
 
 `ProposalSet` is the deterministic, content-addressed evaluation of one exact
 `MetadataReport` under `fixed-conservative-v1`. It binds the report ID and
-document digest, target fingerprint, policy, contract, and result-template
-versions. Its ordered result tuple contains exactly one result for every
+derived target fingerprint and fixed policy version. Its ordered result tuple
+contains exactly one result for every
 `TargetDestination`.
 
-Results use the closed outcome vocabulary `needs_review`, `keep`, `reject`,
-`defer`, or `ineligible`. An alternative contains one bounded typed value, its
+Results use the closed outcome vocabulary `needs_review`, `keep`, `defer`, or
+`ineligible`. An alternative contains one bounded typed value, its
 work/edition/cover scope, target assessment, stable evidence references, and
 hashed correlation identities. Only `needs_review` identifies a selected
 alternative. `keep` requires positive preservation evidence and never encodes a
@@ -113,9 +113,13 @@ or bytes.
 
 The pure evaluator has no configuration, provider, network, persistence, or
 write authority. Its fixed rules preserve ordered complete people lists,
-atomic series name/sequence, linked publication date/year, edition identifier
-applicability, and cover-gallery completeness. A full date that refines a
-populated target year needs two independent correlation groups. Populated
+atomic series name/sequence, linked publication date/year, accepted
+edition-identifier applicability, and cover-gallery completeness. Untyped
+contributor evidence cannot become a partial narrator list, and unresolved
+ISBN applicability defers. Year-only edition evidence remains a year rather
+than becoming a full date. Local work subtitles and exact-edition provider
+subtitles retain their source-appropriate scope. A full date that refines a populated target year
+needs two independent correlation groups. Populated
 subjective fields are not merged or replaced. Multiple values, weak
 correlation, malformed/unloaded target state, role ambiguity, or incomplete
 cover evidence defer or become ineligible rather than being silently resolved.

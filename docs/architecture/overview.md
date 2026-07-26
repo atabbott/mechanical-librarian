@@ -73,8 +73,8 @@ pointer per target/file scope in `current_metadata_reports`, and immutable
 report-bound cover references in `metadata_report_cover_references`.
 `proposal_sets` stores one content-addressed result document bound to an exact
 report and has no current pointer. Report insert and pointer advance share one
-transaction. Proposal insertion separately rechecks the exact report digest
-and current pointer after external currentness. The sole baseline uses
+transaction. Proposal insertion separately rechecks the exact report and
+current pointer after external currentness. The sole baseline uses
 rollback-journal `DELETE` mode. The separate catalogue database stores one
 exact-current `catalogue-v1` schema. The final report database, catalogue
 database, configuration, artifacts, and manifest each recognize only absent or

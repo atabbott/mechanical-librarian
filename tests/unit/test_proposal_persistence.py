@@ -10,13 +10,14 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
     TargetFacts,
+    default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 
 
 def _report(title: str, digest: str) -> MetadataReport:
     return MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", title),
+        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields(title)),
         file=FileFacts(0, "a" * 64, digest),
         local_claims=(),
         local_reasons=("no_opening_claims",),
@@ -42,6 +43,13 @@ class ProposalPersistenceTests(unittest.TestCase):
             )
             self.assertEqual(
                 expected, repository.get_proposal(proposal_set.proposal_set_id)
+            )
+            columns = repository._connection.execute(
+                "PRAGMA table_info(proposal_sets)"
+            ).fetchall()
+            self.assertEqual(
+                ["proposal_set_id", "report_id", "document"],
+                [column[1] for column in columns],
             )
             repository.close()
 
