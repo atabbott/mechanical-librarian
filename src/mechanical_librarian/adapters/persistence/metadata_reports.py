@@ -678,6 +678,7 @@ class SQLiteMetadataReportRepository:
             prior = self._connection.execute("SELECT proposal_set_id,report_id,review_case_id,checkpoint,outcome FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone()
             checkpoint = 1 if prior is None else prior[3] + 1
             if prior is not None and prior[0] == proposal_set.proposal_set_id:
+                self._validated_review_pointer(lineage)
                 transition = self._connection.execute("SELECT kind FROM review_case_transitions WHERE connection_name=? AND library_name=? AND item_id=? AND proposal_set_id=? ORDER BY transition_id DESC LIMIT 1", (*lineage, proposal_set.proposal_set_id)).fetchone()
                 if transition is None:
                     raise MetadataReportError("review transition is unavailable")
@@ -721,6 +722,7 @@ class SQLiteMetadataReportRepository:
             case = ReviewCase.from_json(row[3])
             if (case.review_case_id, case.proposal_set_id, case.report_id) != row[:3]:
                 raise MetadataReportError("review case is invalid")
+            self._validated_review_pointer((case.target["connection"], case.target["library"], case.target["item"]))
             proposal_row = self._connection.execute(
                 "SELECT proposal_set_id,report_id,document FROM proposal_sets WHERE proposal_set_id=?",
                 (case.proposal_set_id,),
@@ -754,6 +756,20 @@ class SQLiteMetadataReportRepository:
             return _canonical_json({"case": case.to_data(), "current": current == (case.review_case_id,) and source_current == (case.report_id,) and file_current == (case.report_id,), "schema_version": "review-case-get-v1"})
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
+
+    def _validated_review_pointer(self, lineage: tuple[str, str, str]) -> tuple[object, ...] | None:
+        pointer = self._connection.execute("SELECT proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone()
+        if pointer is None:
+            return None
+        proposal_id, report_id, case_id, transition_id, checkpoint, outcome = pointer
+        transition = self._connection.execute("SELECT connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason FROM review_case_transitions WHERE transition_id=?", (transition_id,)).fetchone()
+        if transition is None or transition[:4] != (*lineage, checkpoint) or transition[7:10] != (proposal_id, report_id, outcome) or transition[4] != "review-admission-v1" or transition[10] not in {"actionable", "nonactionable"}:
+            raise MetadataReportError("review pointer is invalid")
+        if case_id is not None and (type(case_id) is not str or not case_id.startswith("review_case_") or transition[6] != case_id or self._connection.execute("SELECT 1 FROM review_cases WHERE review_case_id=?", (case_id,)).fetchone() is None):
+            raise MetadataReportError("review pointer is invalid")
+        if case_id is None and transition[6] is not None:
+            raise MetadataReportError("review pointer is invalid")
+        return pointer
 
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
         document = self.current_optional(connection, library, item, file_identity)
