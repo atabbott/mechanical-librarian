@@ -154,14 +154,24 @@ class ReviewCase:
     schema_version: str = REVIEW_CASE_SCHEMA
 
     def __post_init__(self) -> None:
-        if (not _CASE_ID.fullmatch(self.review_case_id) or self.schema_version != REVIEW_CASE_SCHEMA or self.disposition != "undecided"
-                or len(self.results) != len(TargetDestination) or not isinstance(self.target, dict)):
+        if (
+            _CASE_ID.fullmatch(self.review_case_id) is None
+            or self.schema_version != REVIEW_CASE_SCHEMA
+            or self.disposition != "undecided"
+            or len(self.results) != len(TargetDestination)
+            or not isinstance(self.target, dict)
+        ):
             raise ReviewCaseValueError("review case is invalid")
         try:
             proposal = ProposalSet.from_json(self.proposal_document)
         except Exception as error:
             raise ReviewCaseValueError("review case proposal is invalid") from error
-        if proposal.proposal_set_id != self.proposal_set_id or proposal.report_id != self.report_id or proposal.target_fingerprint != self.target_fingerprint or tuple(value.to_data() for value in proposal.results) != self.results:
+        if (
+            proposal.proposal_set_id != self.proposal_set_id
+            or proposal.report_id != self.report_id
+            or proposal.target_fingerprint != self.target_fingerprint
+            or tuple(value.to_data() for value in proposal.results) != self.results
+        ):
             raise ReviewCaseValueError("review case proposal is invalid")
         if self.review_case_id != self._expected_id():
             raise ReviewCaseValueError("review case identity is inconsistent")
@@ -170,11 +180,16 @@ class ReviewCase:
     def create(cls, proposal_set: ProposalSet, report: MetadataReport) -> Self:
         if type(proposal_set) is not ProposalSet or type(report) is not MetadataReport:
             raise ReviewCaseValueError("review case input is invalid")
-        if proposal_set.report_id != report.report_id or proposal_set.target_fingerprint != report.target.fingerprint:
+        if (
+            proposal_set.report_id != report.report_id
+            or proposal_set.target_fingerprint != report.target.fingerprint
+        ):
             raise ReviewCaseValueError("review case binding is invalid")
         results = tuple(value.to_data() for value in proposal_set.results)
         data = cls._data(proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, proposal_set.to_json())
-        identity = "review_case_" + hashlib.sha256(_canonical(data).encode("utf-8")).hexdigest()
+        identity = "review_case_" + hashlib.sha256(
+            _canonical(data).encode("utf-8")
+        ).hexdigest()
         return cls(identity, proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, proposal_set.to_json())
 
     @staticmethod
