@@ -57,8 +57,10 @@ class ProposalValueError(ValueError):
 
 
 class ProposalOutcome(StrEnum):
-    NEEDS_REVIEW = "needs_review"
+    PROPOSE_CHANGE = "propose_change"
+    UNRESOLVED_CHOICE = "unresolved_choice"
     KEEP = "keep"
+    REJECT = "reject"
     DEFER = "defer"
     INELIGIBLE = "ineligible"
 
@@ -229,16 +231,31 @@ class ProposalResult:
             != tuple(sorted(set(self.dependencies), key=order.__getitem__))
         ):
             raise ProposalValueError("proposal result is invalid")
-        selected = {
-            value.alternative_id for value in self.alternatives
-        }
-        if self.outcome is ProposalOutcome.NEEDS_REVIEW:
+        selected = {value.alternative_id for value in self.alternatives}
+        if self.outcome is ProposalOutcome.PROPOSE_CHANGE:
             if (
-                self.selected_alternative_id is None
+                len(self.alternatives) != 1
+                or self.selected_alternative_id is None
                 or self.selected_alternative_id not in selected
+                or self.alternatives[0].assessment
+                is ProposalAssessment.PRESERVES_TARGET
             ):
                 raise ProposalValueError("proposal selection is inconsistent")
-        elif self.selected_alternative_id is not None:
+        elif self.outcome is ProposalOutcome.UNRESOLVED_CHOICE:
+            if not self.alternatives or self.selected_alternative_id is not None:
+                raise ProposalValueError("proposal selection is inconsistent")
+        elif self.outcome is ProposalOutcome.KEEP:
+            if (
+                len(self.alternatives) != 1
+                or self.alternatives[0].assessment
+                is not ProposalAssessment.PRESERVES_TARGET
+                or self.selected_alternative_id is not None
+            ):
+                raise ProposalValueError("proposal selection is inconsistent")
+        elif (
+            self.alternatives
+            or self.selected_alternative_id is not None
+        ):
             raise ProposalValueError("proposal selection is inconsistent")
 
     def to_data(self) -> dict[str, object]:
@@ -778,7 +795,7 @@ def _publication_results(
             if value.alternative_id == date_result.selected_alternative_id
         )
         if str(selected.value.value)[:4] != year_target.value:
-            date_result = _deferred(date_result, "date_year_conflict")
+            date_result = _unresolved(date_result, "date_year_conflict")
     if (
         year_result.selected_alternative_id is not None
         and date_target.state is TargetFieldState.VALUE
@@ -790,7 +807,7 @@ def _publication_results(
             if value.alternative_id == year_result.selected_alternative_id
         )
         if str(selected.value.value) != date_target.value[:4]:
-            year_result = _deferred(year_result, "date_year_conflict")
+            year_result = _unresolved(year_result, "date_year_conflict")
     if (
         date_result.selected_alternative_id is not None
         and year_target.state is TargetFieldState.VALUE
@@ -801,7 +818,7 @@ def _publication_results(
             if value.alternative_id == date_result.selected_alternative_id
         )
         if len(selected.correlations) < 2:
-            date_result = _deferred(
+            date_result = _unresolved(
                 date_result,
                 "date_refinement_requires_corroboration",
             )
@@ -862,7 +879,7 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
         return ProposalResult(
             TargetDestination.COVER,
             ProposalOutcome.INELIGIBLE,
-            ordered,
+            (),
             None,
             ("target_state_unusable",),
         )
@@ -878,7 +895,7 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
         return ProposalResult(
             TargetDestination.COVER,
             ProposalOutcome.KEEP,
-            ordered,
+            (current,),
             None,
             ("current_cover_verified",),
         )
@@ -886,7 +903,7 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
         return ProposalResult(
             TargetDestination.COVER,
             ProposalOutcome.DEFER,
-            ordered,
+            (),
             None,
             ("current_cover_unverified",),
         )
@@ -903,8 +920,8 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
     if len(candidates) == 1 and not incomplete:
         return ProposalResult(
             TargetDestination.COVER,
-            ProposalOutcome.NEEDS_REVIEW,
-            ordered,
+            ProposalOutcome.PROPOSE_CHANGE,
+            candidates,
             candidates[0].alternative_id,
             ("unique_safe_cover",),
         )
@@ -912,16 +929,24 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
         return ProposalResult(
             TargetDestination.COVER,
             ProposalOutcome.INELIGIBLE,
-            ordered,
+            (),
             None,
             ("no_supported_evidence",),
         )
+    if incomplete:
+        return ProposalResult(
+            TargetDestination.COVER,
+            ProposalOutcome.DEFER,
+            (),
+            None,
+            ("cover_gallery_incomplete",),
+        )
     return ProposalResult(
         TargetDestination.COVER,
-        ProposalOutcome.DEFER,
-        ordered,
+        ProposalOutcome.UNRESOLVED_CHOICE,
+        candidates,
         None,
-        ("cover_gallery_incomplete" if incomplete else "competing_evidence",),
+        ("competing_evidence",),
     )
 
 
@@ -940,7 +965,7 @@ def _evaluate(
         return ProposalResult(
             destination,
             ProposalOutcome.INELIGIBLE,
-            alternatives,
+            (),
             None,
             ("target_state_unusable",),
             dependencies,
@@ -962,7 +987,7 @@ def _evaluate(
     if len(alternatives) != 1:
         return ProposalResult(
             destination,
-            ProposalOutcome.DEFER,
+            ProposalOutcome.UNRESOLVED_CHOICE,
             alternatives,
             None,
             ("competing_evidence",),
@@ -987,7 +1012,7 @@ def _evaluate(
         if subjective:
             return ProposalResult(
                 destination,
-                ProposalOutcome.DEFER,
+                ProposalOutcome.UNRESOLVED_CHOICE,
                 alternatives,
                 None,
                 ("populated_subjective_field",),
@@ -1003,7 +1028,7 @@ def _evaluate(
         ):
             return ProposalResult(
                 destination,
-                ProposalOutcome.DEFER,
+                ProposalOutcome.UNRESOLVED_CHOICE,
                 alternatives,
                 None,
                 ("work_publication_cannot_replace",),
@@ -1012,7 +1037,7 @@ def _evaluate(
         if len(alternative.correlations) < 2:
             return ProposalResult(
                 destination,
-                ProposalOutcome.DEFER,
+                ProposalOutcome.UNRESOLVED_CHOICE,
                 alternatives,
                 None,
                 ("insufficient_independent_corroboration",),
@@ -1020,7 +1045,7 @@ def _evaluate(
             )
     return ProposalResult(
         destination,
-        ProposalOutcome.NEEDS_REVIEW,
+        ProposalOutcome.PROPOSE_CHANGE,
         alternatives,
         alternative.alternative_id,
         ("unique_typed_candidate",),
@@ -1169,10 +1194,10 @@ def _date(value: str) -> str | None:
     return parsed.isoformat()
 
 
-def _deferred(result: ProposalResult, reason: str) -> ProposalResult:
+def _unresolved(result: ProposalResult, reason: str) -> ProposalResult:
     return ProposalResult(
         result.destination,
-        ProposalOutcome.DEFER,
+        ProposalOutcome.UNRESOLVED_CHOICE,
         result.alternatives,
         None,
         tuple(sorted(set((*result.reasons, reason)))),

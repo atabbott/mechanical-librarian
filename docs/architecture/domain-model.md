@@ -102,12 +102,16 @@ derived target fingerprint and fixed policy version. Its ordered result tuple
 contains exactly one result for every
 `TargetDestination`.
 
-Results use the closed outcome vocabulary `needs_review`, `keep`, `defer`, or
-`ineligible`. An alternative contains one bounded typed value, its
+Results use the closed outcome vocabulary `propose_change`, `unresolved_choice`,
+`keep`, `reject`, `defer`, or `ineligible`. A `propose_change` has one selected
+alternative; an `unresolved_choice` retains bounded alternatives without a
+selection; `defer`, `reject`, and `ineligible` have no alternative. `keep`
+has one preservation alternative. An alternative contains one bounded typed value, its
 work/edition/cover scope, target assessment, stable evidence references, and
-hashed correlation identities. Only `needs_review` identifies a selected
-alternative. `keep` requires positive preservation evidence and never encodes a
-replacement. The ProposalSet references observations owned by the report
+hashed correlation identities. `reject` is reserved for future explicit policy
+rejection; the fixed evaluator never infers deletion or emits it. `keep`
+requires positive preservation evidence and never encodes a replacement. The
+ProposalSet references observations owned by the report
 rather than copying excerpts, provider payloads, cover provenance, URLs, paths,
 or bytes.
 Its ID is derived from its canonical document rather than serialized in it.
@@ -124,7 +128,8 @@ needs two independent correlation groups. Populated
 subjective fields are not merged or replaced. Multiple values, weak
 correlation, duplicate connections to one provider authority, malformed/unloaded
 target state, role ambiguity, or incomplete
-cover evidence defer or become ineligible rather than being silently resolved.
+cover evidence become unresolved choices, defer, or ineligible rather than
+being silently resolved.
 There is no score, provider priority, ranking, configurable policy, review, or
 decision concept.
 

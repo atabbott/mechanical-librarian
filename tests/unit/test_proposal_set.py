@@ -32,6 +32,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome,
+    ProposalResult,
     ProposalSet,
     ProposalScope,
     ProposalValueError,
@@ -201,6 +202,97 @@ class ProposalSetTests(unittest.TestCase):
         with self.assertRaises(ProposalValueError):
             ProposalSet.from_json(proposal_set.to_json() + " ")
 
+    def test_result_variants_reject_contradictory_choices(self) -> None:
+        proposed = _result(
+            evaluate_report(
+                _report(
+                    title=None,
+                    fields=_fields(
+                        None,
+                        title=TargetField(
+                            TargetDestination.TITLE,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    providers=(
+                        _provider(
+                            "catalogue",
+                            "edition-1",
+                            (
+                                _claim(
+                                    "catalogue",
+                                    "edition-1",
+                                    ClaimKind.TITLE,
+                                    "A title",
+                                    scope=ClaimScope.WORK,
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+            ),
+            TargetDestination.TITLE,
+        )
+        alternative = proposed.alternatives[0]
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.TITLE,
+                ProposalOutcome.PROPOSE_CHANGE,
+                (),
+                None,
+                ("unique_typed_candidate",),
+            )
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.TITLE,
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                (alternative,),
+                alternative.alternative_id,
+                ("competing_evidence",),
+            )
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.TITLE,
+                ProposalOutcome.DEFER,
+                (alternative,),
+                None,
+                ("provider_unavailable",),
+            )
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.TITLE,
+                ProposalOutcome.KEEP,
+                (alternative,),
+                None,
+                ("positive_preservation_evidence",),
+            )
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.TITLE,
+                ProposalOutcome.REJECT,
+                (alternative,),
+                None,
+                ("policy_reject",),
+            )
+        with self.assertRaises(ProposalValueError):
+            ProposalResult(
+                TargetDestination.TITLE,
+                ProposalOutcome.INELIGIBLE,
+                (alternative,),
+                None,
+                ("target_state_unusable",),
+            )
+        self.assertEqual(
+            ProposalOutcome.REJECT,
+            ProposalResult(
+                TargetDestination.TITLE,
+                ProposalOutcome.REJECT,
+                (),
+                None,
+                ("policy_reject",),
+            ).outcome,
+        )
+
     def test_unique_empty_fill_and_positive_preservation_are_explainable(self) -> None:
         title_claim = _claim(
             "catalogue",
@@ -224,7 +316,7 @@ class ProposalSetTests(unittest.TestCase):
             )
         )
         result = _result(empty, TargetDestination.TITLE)
-        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, result.outcome)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
         self.assertIsNotNone(result.selected_alternative_id)
         matching_claim = _claim(
             "catalogue",
@@ -266,7 +358,7 @@ class ProposalSetTests(unittest.TestCase):
             )
         )
         result = _result(proposal_set, TargetDestination.AUTHORS)
-        self.assertEqual(ProposalOutcome.DEFER, result.outcome)
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, result.outcome)
         self.assertIn(
             "insufficient_independent_corroboration", result.reasons
         )
@@ -402,7 +494,7 @@ class ProposalSetTests(unittest.TestCase):
             )
         )
         self.assertEqual(
-            ProposalOutcome.DEFER,
+            ProposalOutcome.UNRESOLVED_CHOICE,
             _result(proposal_set, TargetDestination.GENRES).outcome,
         )
 
@@ -431,7 +523,7 @@ class ProposalSetTests(unittest.TestCase):
             evaluate_report(_report(providers=providers)),
             TargetDestination.TITLE,
         )
-        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, result.outcome)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
         self.assertEqual(2, len(result.alternatives[0].correlations))
 
     def test_same_adapter_connections_do_not_corroborate_each_other(self) -> None:
@@ -462,7 +554,7 @@ class ProposalSetTests(unittest.TestCase):
             ),
             TargetDestination.TITLE,
         )
-        self.assertEqual(ProposalOutcome.DEFER, duplicate.outcome)
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, duplicate.outcome)
         self.assertEqual(1, len(duplicate.alternatives[0].correlations))
         independent = _result(
             evaluate_report(
@@ -475,7 +567,7 @@ class ProposalSetTests(unittest.TestCase):
             ),
             TargetDestination.TITLE,
         )
-        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, independent.outcome)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, independent.outcome)
         self.assertEqual(2, len(independent.alternatives[0].correlations))
 
     def test_local_work_subtitle_and_provider_edition_subtitle_are_admitted(self) -> None:
@@ -661,7 +753,7 @@ class ProposalSetTests(unittest.TestCase):
             evaluate_report(_report(providers=(provider,))),
             TargetDestination.TITLE,
         )
-        self.assertEqual(ProposalOutcome.DEFER, result.outcome)
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, result.outcome)
         self.assertEqual(1, len(result.alternatives[0].correlations))
         self.assertIn(
             "insufficient_independent_corroboration", result.reasons
@@ -731,7 +823,7 @@ class ProposalSetTests(unittest.TestCase):
         date_result = _result(
             proposal_set, TargetDestination.PUBLISHED_DATE
         )
-        self.assertEqual(ProposalOutcome.DEFER, date_result.outcome)
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, date_result.outcome)
         self.assertIn("date_year_conflict", date_result.reasons)
 
     def test_full_date_refining_a_populated_year_needs_independent_sources(
@@ -766,7 +858,7 @@ class ProposalSetTests(unittest.TestCase):
             ),
             TargetDestination.PUBLISHED_DATE,
         )
-        self.assertEqual(ProposalOutcome.DEFER, one_source.outcome)
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, one_source.outcome)
         self.assertIn(
             "date_refinement_requires_corroboration",
             one_source.reasons,
@@ -789,7 +881,7 @@ class ProposalSetTests(unittest.TestCase):
             ),
             TargetDestination.PUBLISHED_DATE,
         )
-        self.assertEqual(ProposalOutcome.DEFER, duplicate_authority.outcome)
+        self.assertEqual(ProposalOutcome.UNRESOLVED_CHOICE, duplicate_authority.outcome)
         self.assertIn(
             "date_refinement_requires_corroboration",
             duplicate_authority.reasons,
@@ -812,7 +904,7 @@ class ProposalSetTests(unittest.TestCase):
             ),
             TargetDestination.PUBLISHED_DATE,
         )
-        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, two_sources.outcome)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, two_sources.outcome)
 
     def test_year_only_edition_evidence_proposes_only_published_year(
         self,
@@ -842,7 +934,7 @@ class ProposalSetTests(unittest.TestCase):
         year_result = _result(
             proposal_set, TargetDestination.PUBLISHED_YEAR
         )
-        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, year_result.outcome)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, year_result.outcome)
         self.assertEqual("2001", year_result.alternatives[0].value.value)
         self.assertEqual(
             ProposalOutcome.INELIGIBLE,
@@ -866,7 +958,7 @@ class ProposalSetTests(unittest.TestCase):
         )
         proposal_set = evaluate_report(_report(covers=(source,)))
         result = _result(proposal_set, TargetDestination.COVER)
-        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, result.outcome)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
         timeout = CoverSource(
             cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:timeout"),
             CoverSourceKind.HARDCOVER,
@@ -1021,7 +1113,7 @@ class ProposalSetTests(unittest.TestCase):
             ),
             TargetDestination.ISBN,
         )
-        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, result.outcome)
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
         self.assertEqual("0306406152", result.alternatives[0].value.value)
 
     def test_non_review_result_cannot_carry_any_selection(self) -> None:

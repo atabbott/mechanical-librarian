@@ -35,7 +35,8 @@ and fixed policy version. It
 contains exactly one ordered result for title, subtitle, authors, narrators,
 series, genres, publishedYear, publishedDate, publisher, description, isbn,
 asin, language, explicit, tags, and cover. Each result is one of
-`needs_review`, `keep`, `defer`, or `ineligible`.
+`propose_change`, `unresolved_choice`, `keep`, `reject`, `defer`, or
+`ineligible`.
 The canonical document does not serialize its content-addressed ProposalSet ID;
 the ID is derived from those canonical bytes and remains the exact-get input.
 
@@ -44,13 +45,21 @@ scope, assessment, stable evidence references, and hashed correlation groups.
 They do not copy report excerpts, raw provider evidence, responses, URLs,
 paths, or image bytes.
 
+`propose_change` carries exactly one selected safe candidate. `unresolved_choice`
+carries one or more bounded candidates but selects none. `defer` carries no
+candidate because evidence or capability prevents a decision surface. `keep`
+records one positive preservation alternative. `reject` is a closed no-choice
+variant for a future explicit policy rejection; the fixed 0.9 evaluator has no
+deletion inference and does not emit it. `ineligible` likewise has no choice.
+None of these outcomes admits a review, decision, apply, or write action.
+
 The policy is deliberately conservative:
 
 - populated values need positive preservation evidence for `keep`;
 - populated replacement candidates normally need one unique value from at
-  least two materially independent correlation groups. Connections to the same
-  upstream adapter are one group; Hardcover and Open Library are distinct
-  groups;
+  least two materially independent correlation groups. Otherwise, bounded
+  choices remain `unresolved_choice`. Connections to the same upstream adapter
+  are one group; Hardcover and Open Library are distinct groups;
 - ordered author and narrator lists, series name/sequence, and date/year remain
   complete and linked rather than being edited piecemeal; untyped contributor
   evidence cannot become a partial narrator list;
