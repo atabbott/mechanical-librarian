@@ -50,6 +50,7 @@ class ReviewCase:
     target_fingerprint: str
     file_identity: str
     results: tuple[dict[str, object], ...]
+    proposal_document: str
     disposition: str = "undecided"
     schema_version: str = REVIEW_CASE_SCHEMA
 
@@ -57,6 +58,12 @@ class ReviewCase:
         if (not _CASE_ID.fullmatch(self.review_case_id) or self.schema_version != REVIEW_CASE_SCHEMA or self.disposition != "undecided"
                 or len(self.results) != len(TargetDestination) or not isinstance(self.target, dict)):
             raise ReviewCaseValueError("review case is invalid")
+        try:
+            proposal = ProposalSet.from_json(self.proposal_document)
+        except Exception as error:
+            raise ReviewCaseValueError("review case proposal is invalid") from error
+        if proposal.proposal_set_id != self.proposal_set_id or proposal.report_id != self.report_id or proposal.target_fingerprint != self.target_fingerprint or tuple(value.to_data() for value in proposal.results) != self.results:
+            raise ReviewCaseValueError("review case proposal is invalid")
         if self.review_case_id != self._expected_id():
             raise ReviewCaseValueError("review case identity is inconsistent")
 
@@ -67,15 +74,15 @@ class ReviewCase:
         if proposal_set.report_id != report.report_id or proposal_set.target_fingerprint != report.target.fingerprint:
             raise ReviewCaseValueError("review case binding is invalid")
         results = tuple(value.to_data() for value in proposal_set.results)
-        data = cls._data(proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results)
+        data = cls._data(proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, proposal_set.to_json())
         identity = "review_case_" + hashlib.sha256(_canonical(data).encode("utf-8")).hexdigest()
-        return cls(identity, proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results)
+        return cls(identity, proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, proposal_set.to_json())
 
     @staticmethod
-    def _data(proposal_set_id: str, report_id: str, target: dict[str, object], target_fingerprint: str, file_identity: str, results: tuple[dict[str, object], ...]) -> dict[str, object]:
+    def _data(proposal_set_id: str, report_id: str, target: dict[str, object], target_fingerprint: str, file_identity: str, results: tuple[dict[str, object], ...], proposal_document: str) -> dict[str, object]:
         return {"disposition": "undecided", "proposal_set_id": proposal_set_id, "report_id": report_id, "target": target,
                 "target_fingerprint": target_fingerprint, "file_identity": file_identity,
-                "results": list(results), "schema_version": REVIEW_CASE_SCHEMA}
+                "results": list(results), "proposal_document": proposal_document, "schema_version": REVIEW_CASE_SCHEMA}
 
     def _expected_id(self) -> str:
         return "review_case_" + hashlib.sha256(_canonical(self.to_data()).encode("utf-8")).hexdigest()
@@ -85,7 +92,7 @@ class ReviewCase:
         return tuple(value for value in self.results if value.get("outcome") in {ProposalOutcome.PROPOSE_CHANGE.value, ProposalOutcome.UNRESOLVED_CHOICE.value})
 
     def to_data(self) -> dict[str, object]:
-        return self._data(self.proposal_set_id, self.report_id, self.target, self.target_fingerprint, self.file_identity, self.results)
+        return self._data(self.proposal_set_id, self.report_id, self.target, self.target_fingerprint, self.file_identity, self.results, self.proposal_document)
 
     def to_json(self) -> str:
         return _canonical(self.to_data())
@@ -96,7 +103,7 @@ class ReviewCase:
             if type(serialized) is not str or not serialized or len(serialized.encode("utf-8")) > MAX_REVIEW_CASE_BYTES:
                 raise ValueError
             raw = json.loads(serialized, object_pairs_hook=_unique_object)
-            if type(raw) is not dict or set(raw) != {"disposition","proposal_set_id","report_id","target","target_fingerprint","file_identity","results","schema_version"}:
+            if type(raw) is not dict or set(raw) != {"disposition","proposal_set_id","report_id","target","target_fingerprint","file_identity","results","proposal_document","schema_version"}:
                 raise ValueError
             value = cls.create_from_data(raw)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -118,9 +125,9 @@ class ReviewCase:
             raise ReviewCaseValueError("review case is invalid")
         if target.to_data() != raw["target"] or target.fingerprint != raw["target_fingerprint"]:
             raise ReviewCaseValueError("review case target is invalid")
-        data = cls._data(raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results)  # type: ignore[arg-type]
+        data = cls._data(raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results, raw["proposal_document"])  # type: ignore[arg-type]
         identity = "review_case_" + hashlib.sha256(_canonical(data).encode("utf-8")).hexdigest()
-        return cls(identity, raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results)  # type: ignore[arg-type]
+        return cls(identity, raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results, raw["proposal_document"])  # type: ignore[arg-type]
 
 
 def is_actionable(proposal_set: ProposalSet) -> bool:
