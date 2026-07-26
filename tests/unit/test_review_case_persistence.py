@@ -124,6 +124,34 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             self.assertEqual(2, len(results))
             self.assertEqual(1, len({value["review_case_id"] for value in results}))
 
+    def test_transition_failure_rolls_back_case_and_pointer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
+            repository._connection.execute("CREATE TRIGGER injected_review_transition_failure BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'injected'); END")
+            with self.assertRaises(Exception): repository.admit_review_case(proposal)
+            self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
+            self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM current_review_case_lineages").fetchone())
+            self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_case_transitions").fetchone())
+            repository._connection.execute("DROP TRIGGER injected_review_transition_failure")
+            self.assertEqual("admitted", json.loads(repository.admit_review_case(proposal))["status"])
+            repository.close()
+
+    def test_exact_current_schema_restarts_and_prior_schema_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reports.sqlite"
+            repository = open_repository(database); repository.close()
+            reopened = open_repository(database, create=False); reopened.close()
+            old = Path(directory) / "old.sqlite"
+            old.write_bytes(database.read_bytes())
+            import sqlite3
+            connection = sqlite3.connect(old)
+            connection.execute("DROP TABLE review_case_transitions"); connection.commit(); connection.close()
+            before = old.read_bytes()
+            with self.assertRaises(Exception): open_repository(old, create=False)
+            self.assertEqual(before, old.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()
