@@ -714,6 +714,28 @@ class SQLiteMetadataReportRepository:
             case = ReviewCase.from_json(row[3])
             if (case.review_case_id, case.proposal_set_id, case.report_id) != row[:3]:
                 raise MetadataReportError("review case is invalid")
+            proposal_row = self._connection.execute(
+                "SELECT proposal_set_id,report_id,document FROM proposal_sets WHERE proposal_set_id=?",
+                (case.proposal_set_id,),
+            ).fetchone()
+            report_row = self._connection.execute(
+                "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
+                (case.report_id,),
+            ).fetchone()
+            if proposal_row is None or report_row is None:
+                raise MetadataReportError("review case source is unavailable")
+            proposal = ProposalSet.from_json(_validate_proposal_row(proposal_row))
+            report = MetadataReport.from_json(_validate_report_row(report_row))
+            if (
+                proposal.proposal_set_id != case.proposal_set_id
+                or proposal.report_id != case.report_id
+                or proposal.target_fingerprint != case.target_fingerprint
+                or report.target.to_data() != case.target
+                or report.target.fingerprint != case.target_fingerprint
+                or report.file.identity != case.file_identity
+                or tuple(value.to_data() for value in proposal.results) != case.results
+            ):
+                raise MetadataReportError("review case source disagrees")
             current = self._connection.execute("SELECT review_case_id FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", (case.target["connection"], case.target["library"], case.target["item"])).fetchone()
             if current is not None and current[0] is not None and (
                 type(current[0]) is not str
