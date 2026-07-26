@@ -40,6 +40,19 @@ class ReviewAdmissionResult:
     def to_json(self) -> str:
         return _canonical({"review_case_id": self.review_case_id, "schema_version": self.schema_version, "status": self.status})
 
+    @classmethod
+    def from_json(cls, serialized: str) -> Self:
+        try:
+            raw = json.loads(serialized, object_pairs_hook=_unique_object)
+            if type(raw) is not dict or set(raw) != {"review_case_id", "schema_version", "status"}:
+                raise ValueError
+            value = cls(raw["status"], raw["review_case_id"], raw["schema_version"])
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise ReviewCaseValueError("review admission result is invalid") from error
+        if value.to_json() != serialized:
+            raise ReviewCaseValueError("review admission result is not canonical")
+        return value
+
 
 @dataclass(frozen=True, slots=True)
 class ReviewCase:
