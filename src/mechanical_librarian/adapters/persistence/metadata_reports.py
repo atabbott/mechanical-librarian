@@ -83,13 +83,15 @@ _REVIEW_CASES_SQL = (
 _REVIEW_POINTERS_SQL = (
     "CREATE TABLE current_review_case_lineages ("
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
-    "proposal_set_id TEXT NOT NULL, report_id TEXT NOT NULL, review_case_id TEXT, "
+    "proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "transition_id TEXT NOT NULL REFERENCES review_case_transitions(transition_id), checkpoint INTEGER NOT NULL CHECK(checkpoint > 0), outcome TEXT NOT NULL CHECK(outcome IN ('admitted','superseded','no_case','retired')), "
     "PRIMARY KEY (connection_name,library_name,item_id))"
 )
 _REVIEW_TRANSITIONS_SQL = (
     "CREATE TABLE review_case_transitions ("
-    "transition_id INTEGER PRIMARY KEY, connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
-    "from_review_case_id TEXT, to_review_case_id TEXT, proposal_set_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('admitted','superseded','no_case','retired')) )"
+    "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'review_transition_[0-9a-f]*' AND length(transition_id)=82), "
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, checkpoint INTEGER NOT NULL CHECK(checkpoint > 0), actor TEXT NOT NULL CHECK(actor='review-admission-v1'), "
+    "from_review_case_id TEXT REFERENCES review_cases(review_case_id), to_review_case_id TEXT REFERENCES review_cases(review_case_id), proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), kind TEXT NOT NULL CHECK(kind IN ('admitted','superseded','no_case','retired')), reason TEXT NOT NULL CHECK(reason IN ('actionable','nonactionable')), UNIQUE(connection_name,library_name,item_id,checkpoint) )"
 )
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
@@ -1202,6 +1204,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_metadata_reports_2", None),
         ("index", "sqlite_autoindex_proposal_sets_1", None),
         ("index", "sqlite_autoindex_review_cases_1", None),
+        ("index", "sqlite_autoindex_review_case_transitions_1", None),
+        ("index", "sqlite_autoindex_review_case_transitions_2", None),
         ("table", "current_metadata_reports", _CURRENT_SQL),
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
