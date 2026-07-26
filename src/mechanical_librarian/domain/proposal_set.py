@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -24,6 +25,7 @@ from mechanical_librarian.domain.metadata_report import (
     FieldState,
     IdentifierRelation,
     LocalClaim,
+    MAX_DESCRIPTION_CHARACTERS,
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
@@ -658,6 +660,7 @@ def _list_observations(
                 claim.kind is ClaimKind.CONTRIBUTOR
                 and claim.scope is ClaimScope.WORK
                 and claim.state is FieldState.VALID
+                and claim.role in {None, "author", "pseudonym", "collective"}
                 for claim in candidate.claims
             ):
                 continue
@@ -1205,15 +1208,23 @@ def _matches(
     if destination is TargetDestination.SERIES:
         return target == candidate.value
     if type(target) is tuple and type(candidate.value) is tuple:
-        return tuple(_comparison(item) for item in target) == tuple(
-            _comparison(item) for item in candidate.value
+        return tuple(_comparison(destination, item) for item in target) == tuple(
+            _comparison(destination, item) for item in candidate.value
         )
     if type(target) is str and type(candidate.value) is str:
-        return _comparison(target) == _comparison(candidate.value)
+        return _comparison(destination, target) == _comparison(
+            destination, candidate.value
+        )
     return target == candidate.value
 
 
-def _comparison(value: str) -> str:
+def _comparison(destination: TargetDestination, value: str) -> str:
+    if destination is TargetDestination.DESCRIPTION:
+        return " ".join(
+            unicodedata.normalize(
+                "NFC", _projection(value, MAX_DESCRIPTION_CHARACTERS)
+            ).split()
+        ).casefold()
     return normalize_title(value).casefold()
 
 

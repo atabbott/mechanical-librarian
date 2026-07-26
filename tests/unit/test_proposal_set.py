@@ -496,6 +496,106 @@ class ProposalSetTests(unittest.TestCase):
             "insufficient_independent_corroboration", result.reasons
         )
 
+    def test_provider_typed_non_author_credits_preserve_complete_authors(self) -> None:
+        claims = (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                "Ada Author",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                "Bea Author",
+                scope=ClaimScope.WORK,
+                role="author",
+                order=1,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CONTRIBUTOR,
+                "Ed Editor",
+                scope=ClaimScope.WORK,
+                role="editor",
+                order=2,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CONTRIBUTOR,
+                "Ivy Illustrator",
+                scope=ClaimScope.WORK,
+                role="illustrator",
+                order=3,
+            ),
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    title=None,
+                    fields=_fields(
+                        None,
+                        authors=TargetField(
+                            TargetDestination.AUTHORS,
+                            TargetFieldState.MISSING,
+                        ),
+                    ),
+                    providers=(_provider("catalogue", "edition-1", claims),),
+                )
+            ),
+            TargetDestination.AUTHORS,
+        )
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual(("Ada Author", "Bea Author"), result.alternatives[0].value.value)
+
+    def test_ambiguous_provider_author_credits_do_not_become_partial_authors(self) -> None:
+        for role in (None, "author", "pseudonym", "collective"):
+            with self.subTest(role=role):
+                claims = (
+                    _claim(
+                        "catalogue",
+                        "edition-1",
+                        ClaimKind.CREATOR,
+                        "Ada Author",
+                        scope=ClaimScope.WORK,
+                        role="author",
+                    ),
+                    _claim(
+                        "catalogue",
+                        "edition-1",
+                        ClaimKind.CONTRIBUTOR,
+                        "Ambiguous Credit",
+                        scope=ClaimScope.WORK,
+                        role=role,
+                        order=1,
+                    ),
+                )
+                result = _result(
+                    evaluate_report(
+                        _report(
+                            title=None,
+                            fields=_fields(
+                                None,
+                                authors=TargetField(
+                                    TargetDestination.AUTHORS,
+                                    TargetFieldState.MISSING,
+                                ),
+                            ),
+                            providers=(
+                                _provider("catalogue", "edition-1", claims),
+                            ),
+                        )
+                    ),
+                    TargetDestination.AUTHORS,
+                )
+                self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
+                self.assertEqual((), result.alternatives)
+
     def test_ambiguous_local_creator_does_not_become_partial_authors(self) -> None:
         claims = tuple(
             LocalClaim.create(
@@ -1157,6 +1257,44 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
         self.assertEqual((), result.alternatives)
+
+    def test_long_descriptions_compare_without_title_bounds(self) -> None:
+        matching = "A complete description " + "x" * 700
+        differing = "A different description " + "y" * 700
+        field = TargetField(
+            TargetDestination.DESCRIPTION,
+            TargetFieldState.VALUE,
+            matching,
+        )
+        for candidate, expected in (
+            (matching, ProposalOutcome.KEEP),
+            (differing, ProposalOutcome.UNRESOLVED_CHOICE),
+        ):
+            with self.subTest(candidate=candidate[:12]):
+                result = _result(
+                    evaluate_report(
+                        _report(
+                            fields=_fields(description=field),
+                            providers=(
+                                _provider(
+                                    "catalogue",
+                                    "edition-1",
+                                    (
+                                        _claim(
+                                            "catalogue",
+                                            "edition-1",
+                                            ClaimKind.DESCRIPTION,
+                                            candidate,
+                                            scope=ClaimScope.WORK,
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        )
+                    ),
+                    TargetDestination.DESCRIPTION,
+                )
+                self.assertEqual(expected, result.outcome)
 
     def test_malformed_target_is_ineligible_even_with_evidence(self) -> None:
         claim = _claim(
