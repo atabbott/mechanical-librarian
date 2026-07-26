@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import os
 import stat
 import subprocess
@@ -18,6 +19,7 @@ from scripts.qualify_exact_artifact import (
     QualificationFailure,
     _decode_stdout,
     _qualification_environment,
+    _review_probe_epub,
     _run,
     _validate_wheel,
     _verify_installed_payload,
@@ -26,6 +28,16 @@ from scripts.qualify_exact_artifact import (
 
 
 class ExactArtifactQualificationTests(unittest.TestCase):
+    def test_review_probe_epub_has_fixed_member_timestamps(self) -> None:
+        for actionable in (False, True):
+            with self.subTest(actionable=actionable):
+                payload = _review_probe_epub(actionable=actionable)
+                with ZipFile(io.BytesIO(payload)) as archive:
+                    self.assertEqual(
+                        {(2026, 1, 13, 0, 0, 0)},
+                        {member.date_time for member in archive.infolist()},
+                    )
+
     def test_review_probe_runs_from_owner_only_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)

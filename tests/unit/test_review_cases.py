@@ -1,11 +1,14 @@
 import json
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from mechanical_librarian.application.metadata_report import CurrentnessError
 from mechanical_librarian.application.review_cases import (
     AdmitReviewCase,
     ReviewCaseError,
 )
+from mechanical_librarian.bootstrap.composition import admit_review_case
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
@@ -90,6 +93,71 @@ class ReviewCaseApplicationTests(unittest.TestCase):
             )
         )
         self.assertEqual("stale", result["status"])
+
+    def test_indeterminate_preflight_failure_is_typed_currentness(self) -> None:
+        repository = _Repository()
+
+        def unavailable(_):
+            raise RuntimeError("synthetic service unavailable")
+
+        with self.assertRaises(ReviewCaseError) as raised:
+            AdmitReviewCase(repository, unavailable).run(
+                repository.proposal.proposal_set_id
+            )
+        self.assertEqual("currentness", raised.exception.code)
+        self.assertEqual(0, repository.admissions)
+
+    def test_preflight_persistence_failure_retains_its_typed_boundary(self) -> None:
+        repository = _Repository()
+
+        def unavailable(_):
+            raise ReviewCaseError("persistence")
+
+        with self.assertRaises(ReviewCaseError) as raised:
+            AdmitReviewCase(repository, unavailable).run(
+                repository.proposal.proposal_set_id
+            )
+        self.assertEqual("persistence", raised.exception.code)
+        self.assertEqual(0, repository.admissions)
+
+    def test_composed_preflight_repository_read_is_typed_persistence(self) -> None:
+        class UnavailableRepository(_Repository):
+            def get(self, report_id: str) -> str:
+                raise RuntimeError("synthetic persistence failure")
+
+        repository = UnavailableRepository()
+        with (
+            patch(
+                "mechanical_librarian.bootstrap.composition.load_configuration_file",
+                return_value=object(),
+            ),
+            patch(
+                "mechanical_librarian.bootstrap.composition.CoverArtifactStore",
+                return_value=object(),
+            ),
+            patch(
+                "mechanical_librarian.bootstrap.composition.open_repository",
+                return_value=repository,
+            ),
+            self.assertRaises(ReviewCaseError) as raised,
+        ):
+            admit_review_case(
+                Path("/synthetic/config"),
+                Path("/synthetic/database"),
+                Path("/synthetic/artifacts"),
+                repository.proposal.proposal_set_id,
+            )
+        self.assertEqual("persistence", raised.exception.code)
+        self.assertEqual(0, repository.admissions)
+
+    def test_repository_failure_remains_typed_persistence(self) -> None:
+        repository = _Repository(RuntimeError("synthetic persistence failure"))
+        with self.assertRaises(ReviewCaseError) as raised:
+            AdmitReviewCase(repository, lambda _: True).run(
+                repository.proposal.proposal_set_id
+            )
+        self.assertEqual("persistence", raised.exception.code)
+        self.assertEqual(1, repository.admissions)
 
     def test_incompatible_evaluator_output_retains_typed_failure(self) -> None:
         repository = _Repository(ReviewAdmissionIncompatibleError())

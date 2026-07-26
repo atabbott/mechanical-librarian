@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Self
 
 from mechanical_librarian.domain.metadata_report import (
@@ -40,6 +40,70 @@ class ReviewAdmissionStaleError(RuntimeError):
 
 class ReviewAdmissionIncompatibleError(RuntimeError):
     """The ProposalSet is not the exact evaluator output for its report."""
+
+
+class _FrozenJsonDict(dict[str, object]):
+    """A JSON-object value that preserves dict equality and serialization."""
+
+    def _reject_mutation(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("review case content is immutable")
+
+    __delitem__ = _reject_mutation
+    __ior__ = _reject_mutation
+    __setitem__ = _reject_mutation
+    clear = _reject_mutation
+    pop = _reject_mutation
+    popitem = _reject_mutation
+    setdefault = _reject_mutation
+    update = _reject_mutation
+
+
+class _FrozenJsonList(list[object]):
+    """A JSON-array value that preserves list equality and serialization."""
+
+    def _reject_mutation(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("review case content is immutable")
+
+    __delitem__ = _reject_mutation
+    __iadd__ = _reject_mutation
+    __imul__ = _reject_mutation
+    __setitem__ = _reject_mutation
+    append = _reject_mutation
+    clear = _reject_mutation
+    extend = _reject_mutation
+    insert = _reject_mutation
+    pop = _reject_mutation
+    remove = _reject_mutation
+    reverse = _reject_mutation
+    sort = _reject_mutation
+
+
+def _freeze_json(value: object) -> object:
+    if type(value) is dict:
+        return _FrozenJsonDict(
+            {key: _freeze_json(item) for key, item in value.items()}
+        )
+    if type(value) is list:
+        return _FrozenJsonList([_freeze_json(item) for item in value])
+    return value
+
+
+def _freeze_json_object(value: dict[str, object]) -> dict[str, object]:
+    return _FrozenJsonDict(
+        {key: _freeze_json(item) for key, item in value.items()}
+    )
+
+
+def _thaw_json(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw_json(item) for item in value]
+    return value
+
+
+def _thaw_json_object(value: dict[str, object]) -> dict[str, object]:
+    return {key: _thaw_json(item) for key, item in value.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +224,10 @@ class ReviewTransition:
             self.to_review_case_id is not None or self.reason != "nonactionable"
         ):
             raise ReviewCaseValueError("review transition is invalid")
+        if (self.kind in {"admitted", "no_case"}) != (
+            self.from_review_case_id is None
+        ):
+            raise ReviewCaseValueError("review transition is invalid")
 
     @property
     def transition_id(self) -> str:
@@ -179,10 +247,10 @@ class ReviewCase:
     review_case_id: str
     proposal_set_id: str
     report_id: str
-    target: dict[str, object]
+    _target: dict[str, object] = field(repr=False)
     target_fingerprint: str
     file_identity: str
-    results: tuple[dict[str, object], ...]
+    _results: tuple[dict[str, object], ...] = field(repr=False)
     proposal_document: str
     disposition: str = "undecided"
     schema_version: str = REVIEW_CASE_SCHEMA
@@ -192,8 +260,8 @@ class ReviewCase:
             _CASE_ID.fullmatch(self.review_case_id) is None
             or self.schema_version != REVIEW_CASE_SCHEMA
             or self.disposition != "undecided"
-            or len(self.results) != len(TargetDestination)
-            or not isinstance(self.target, dict)
+            or len(self._results) != len(TargetDestination)
+            or not isinstance(self._target, dict)
         ):
             raise ReviewCaseValueError("review case is invalid")
         try:
@@ -204,11 +272,17 @@ class ReviewCase:
             proposal.proposal_set_id != self.proposal_set_id
             or proposal.report_id != self.report_id
             or proposal.target_fingerprint != self.target_fingerprint
-            or tuple(value.to_data() for value in proposal.results) != self.results
+            or tuple(value.to_data() for value in proposal.results) != self._results
         ):
             raise ReviewCaseValueError("review case proposal is invalid")
         if self.review_case_id != self._expected_id():
             raise ReviewCaseValueError("review case identity is inconsistent")
+        object.__setattr__(self, "_target", _freeze_json_object(self._target))
+        object.__setattr__(
+            self,
+            "_results",
+            tuple(_freeze_json_object(value) for value in self._results),
+        )
 
     @classmethod
     def create(cls, proposal_set: ProposalSet, report: MetadataReport) -> Self:
@@ -228,16 +302,34 @@ class ReviewCase:
 
     @staticmethod
     def _data(proposal_set_id: str, report_id: str, target: dict[str, object], target_fingerprint: str, file_identity: str, results: tuple[dict[str, object], ...], proposal_document: str) -> dict[str, object]:
-        return {"disposition": "undecided", "proposal_set_id": proposal_set_id, "report_id": report_id, "target": target,
+        return {"disposition": "undecided", "proposal_set_id": proposal_set_id, "report_id": report_id, "target": _thaw_json_object(target),
                 "target_fingerprint": target_fingerprint, "file_identity": file_identity,
-                "results": list(results), "proposal_document": proposal_document, "schema_version": REVIEW_CASE_SCHEMA}
+                "results": [_thaw_json_object(value) for value in results], "proposal_document": proposal_document, "schema_version": REVIEW_CASE_SCHEMA}
 
     def _expected_id(self) -> str:
         return "review_case_" + hashlib.sha256(_canonical(self.to_data()).encode("utf-8")).hexdigest()
 
     @property
+    def target(self) -> dict[str, object]:
+        """Return a detached projection of the canonical target."""
+        return _thaw_json_object(self._target)
+
+    @property
+    def results(self) -> tuple[dict[str, object], ...]:
+        """Return detached target-ordered evaluator results."""
+        return tuple(_thaw_json_object(value) for value in self._results)
+
+    @property
     def actionable(self) -> tuple[dict[str, object], ...]:
-        return tuple(value for value in self.results if value.get("outcome") in {ProposalOutcome.PROPOSE_CHANGE.value, ProposalOutcome.UNRESOLVED_CHOICE.value})
+        return tuple(
+            _thaw_json_object(value)
+            for value in self._results
+            if value.get("outcome")
+            in {
+                ProposalOutcome.PROPOSE_CHANGE.value,
+                ProposalOutcome.UNRESOLVED_CHOICE.value,
+            }
+        )
 
     @property
     def proposals(self) -> tuple[dict[str, object], ...]:
@@ -254,13 +346,13 @@ class ReviewCase:
                         }
                     ).encode("utf-8")
                 ).hexdigest(),
-                "result": result,
+                "result": _thaw_json_object(result),
             }
-            for result in self.results
+            for result in self._results
         )
 
     def to_data(self) -> dict[str, object]:
-        return self._data(self.proposal_set_id, self.report_id, self.target, self.target_fingerprint, self.file_identity, self.results, self.proposal_document)
+        return self._data(self.proposal_set_id, self.report_id, self._target, self.target_fingerprint, self.file_identity, self._results, self.proposal_document)
 
     def to_json(self) -> str:
         return _canonical(self.to_data())

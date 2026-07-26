@@ -15,6 +15,8 @@ are redacted as fixed `invalid`, `incompatible`, `currentness`, or
 `superseded` and `retired` require an active prior case. After a `no_case` or
 `retired` checkpoint, the next actionable set is `admitted` and another
 nonactionable set is `no_case`.
+An unavailable external currentness preflight is `currentness`; repository
+read or write failure remains `persistence`.
 
 The complete case binds the exact ProposalSet, report, target and file identity.
 Inside the admission transaction, the service recomputes the fixed F09o

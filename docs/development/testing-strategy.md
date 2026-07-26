@@ -69,7 +69,9 @@ The suite covers:
 
 The exact-artifact suite includes the activation demonstration and exercises the
 CLI against a disposable loopback target, synthetic media, private secrets, and
-an absent database. No live library or provider is used in development or CI.
+an absent database. Every synthetic EPUB member has a fixed timestamp so the
+probe identity does not depend on the qualification wall clock. No live library
+or provider is used in development or CI.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product

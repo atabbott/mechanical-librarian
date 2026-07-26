@@ -70,7 +70,11 @@ from mechanical_librarian.application.proposal_sets import (
     CreateProposalSet,
     GetProposalSet,
 )
-from mechanical_librarian.application.review_cases import AdmitReviewCase, GetReviewCase
+from mechanical_librarian.application.review_cases import (
+    AdmitReviewCase,
+    GetReviewCase,
+    ReviewCaseError,
+)
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -620,7 +624,10 @@ def admit_review_case(config_path: Path, database_path: Path, artifact_store_pat
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     repository = open_repository(database_path, create=False)
     def current(proposal) -> bool:
-        report = MetadataReport.from_json(repository.get(proposal.report_id))
+        try:
+            report = MetadataReport.from_json(repository.get(proposal.report_id))
+        except Exception as error:
+            raise ReviewCaseError("persistence") from error
         connection, library, mount, _ = configuration.select(report.target.connection, report.target.library)
         if mount is None:
             return False

@@ -91,6 +91,55 @@ class ReviewCasePersistenceTests(unittest.TestCase):
         self.assertTrue(transition.transition_id.startswith("review_transition_"))
         with self.assertRaises(ReviewCaseValueError):
             ReviewTransition("primary", "ebooks", "item-1", 0, "x", "y", "admitted", None, None, "actionable")
+        case_id = "review_case_" + "c" * 64
+        invalid_predecessors = (
+            ("admitted", case_id, case_id, "actionable"),
+            ("no_case", case_id, None, "nonactionable"),
+            ("superseded", None, case_id, "actionable"),
+            ("retired", None, None, "nonactionable"),
+        )
+        for kind, predecessor, successor, reason in invalid_predecessors:
+            with self.subTest(kind=kind), self.assertRaises(
+                ReviewCaseValueError
+            ):
+                ReviewTransition(
+                    "primary",
+                    "ebooks",
+                    "item-1",
+                    1,
+                    "proposal_set_" + "a" * 64,
+                    "report_" + "b" * 64,
+                    kind,
+                    predecessor,
+                    successor,
+                    reason,
+                )
+
+    def test_case_projections_are_detached_from_content_identity(self) -> None:
+        report = _report()
+        case = ReviewCase.create(self._actionable(report), report)
+        baseline = case.to_json()
+
+        case.target["item"] = "mutated"
+        case.results[0]["outcome"] = "mutated"
+        case.target["fields"].append("mutated")  # type: ignore[union-attr]
+
+        data = case.to_data()
+        data["target"]["item"] = "mutated"  # type: ignore[index]
+        data["results"][0]["outcome"] = "mutated"  # type: ignore[index]
+        proposals = case.proposals
+        proposals[0]["result"]["outcome"] = "mutated"  # type: ignore[index]
+        actionable = case.actionable
+        actionable[0]["outcome"] = "mutated"
+
+        source = json.loads(baseline)
+        restored = ReviewCase.create_from_data(source)
+        source["target"]["item"] = "mutated"
+        source["results"][0]["outcome"] = "mutated"
+
+        self.assertEqual(baseline, case.to_json())
+        self.assertEqual(baseline, restored.to_json())
+        self.assertEqual(case.review_case_id, restored.review_case_id)
     def _actionable(self, report: MetadataReport) -> ProposalSet:
         proposal = evaluate_report(report)
         self.assertTrue(

@@ -45,7 +45,15 @@ class AdmitReviewCase:
             )
             if proposal.proposal_set_id != proposal_set_id:
                 raise ReviewCaseError("incompatible")
-            if self._require_current(proposal) is not True:
+            try:
+                current = self._require_current(proposal)
+            except CurrentnessError:
+                return ReviewAdmissionResult("stale", None).to_json()
+            except ReviewCaseError:
+                raise
+            except Exception as error:
+                raise ReviewCaseError("currentness") from error
+            if current is not True:
                 return ReviewAdmissionResult("stale", None).to_json()
             return self._repository.admit_review_case(proposal)
         except (CurrentnessError, ReviewAdmissionStaleError):

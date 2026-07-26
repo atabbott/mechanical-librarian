@@ -27,5 +27,8 @@ state: no migration, import, conversion, or alias is supported.
 
 Each target-lineage checkpoint records a deterministic transition identity,
 fixed `review-admission-v1` actor, source report and ProposalSet, and its
-admission outcome. Cases remain `undecided`; this decision grants no F11
-decision, reviewer, queue, or target-write authority.
+admission outcome. `admitted` and `no_case` have no active predecessor;
+`superseded` and `retired` require one. Case data and proposal projections are
+detached from the immutable content-addressed case. Cases remain `undecided`;
+this decision grants no F11 decision, reviewer, queue, or target-write
+authority.

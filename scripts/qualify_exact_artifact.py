@@ -936,17 +936,34 @@ def _review_probe_epub(*, actionable: bool) -> bytes:
         '</package>'
     ).encode("utf-8")
     with ZipFile(output, "w", allowZip64=True) as archive:
-        mimetype = ZipInfo("mimetype", (2026, 1, 13, 0, 0, 0))
-        mimetype.compress_type = ZIP_STORED
-        archive.writestr(mimetype, b"application/epub+zip")
-        archive.writestr("META-INF/container.xml", container, ZIP_DEFLATED)
-        archive.writestr("EPUB/package.opf", package, ZIP_DEFLATED)
         archive.writestr(
-            "EPUB/opening.xhtml" if actionable else "EPUB/chapter.xhtml",
+            _review_probe_member("mimetype", ZIP_STORED),
+            b"application/epub+zip",
+        )
+        archive.writestr(
+            _review_probe_member("META-INF/container.xml", ZIP_DEFLATED),
+            container,
+        )
+        archive.writestr(
+            _review_probe_member("EPUB/package.opf", ZIP_DEFLATED),
+            package,
+        )
+        archive.writestr(
+            _review_probe_member(
+                "EPUB/opening.xhtml"
+                if actionable
+                else "EPUB/chapter.xhtml",
+                ZIP_DEFLATED,
+            ),
             opening,
-            ZIP_DEFLATED,
         )
     return output.getvalue()
+
+
+def _review_probe_member(name: str, compression: int) -> ZipInfo:
+    member = ZipInfo(name, (2026, 1, 13, 0, 0, 0))
+    member.compress_type = compression
+    return member
 
 
 def _qualification_environment() -> dict[str, str]:
