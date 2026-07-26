@@ -15,6 +15,7 @@ REVIEW_CASE_SCHEMA = "review-case-v1"
 REVIEW_ADMISSION_SCHEMA = "review-admission-v1"
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _ADMISSION_STATUS = frozenset({"admitted", "replayed", "superseded", "no_case", "retired", "stale"})
+_ADMISSION_FAILURE = frozenset({"invalid", "incompatible", "currentness", "persistence"})
 MAX_REVIEW_CASE_BYTES = 2_097_152
 
 
@@ -52,6 +53,19 @@ class ReviewAdmissionResult:
         if value.to_json() != serialized:
             raise ReviewCaseValueError("review admission result is not canonical")
         return value
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewAdmissionFailure:
+    code: str
+    schema_version: str = "review-admission-failure-v1"
+
+    def __post_init__(self) -> None:
+        if self.code not in _ADMISSION_FAILURE or self.schema_version != "review-admission-failure-v1":
+            raise ReviewCaseValueError("review admission failure is invalid")
+
+    def to_json(self) -> str:
+        return _canonical({"code": self.code, "schema_version": self.schema_version})
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,4 +194,4 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-__all__ = ["MAX_REVIEW_CASE_BYTES", "REVIEW_ADMISSION_SCHEMA", "REVIEW_CASE_SCHEMA", "ReviewAdmissionResult", "ReviewCase", "ReviewCaseValueError", "is_actionable"]
+__all__ = ["MAX_REVIEW_CASE_BYTES", "REVIEW_ADMISSION_SCHEMA", "REVIEW_CASE_SCHEMA", "ReviewAdmissionFailure", "ReviewAdmissionResult", "ReviewCase", "ReviewCaseValueError", "is_actionable"]
