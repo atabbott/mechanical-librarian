@@ -237,6 +237,9 @@ def _target_field(
     try:
         if destination is TargetDestination.TITLE:
             if type(raw) is str and len(raw) > MAX_SCALAR_CHARACTERS:
+                _target_projection_text(
+                    raw, "target title", MAX_SCALAR_CHARACTERS
+                )
                 return TargetField(destination, TargetFieldState.OVERSIZED)
             try:
                 title = validate_observed_title(raw)
@@ -258,7 +261,7 @@ def _target_field(
             TargetDestination.ASIN,
             TargetDestination.LANGUAGE,
         }:
-            value = validate_projection_text(
+            value, oversized = _target_projection_text(
                 raw, "target scalar", MAX_SCALAR_CHARACTERS
             )
             if (
@@ -269,14 +272,19 @@ def _target_field(
                 and _ASIN.fullmatch(value) is None
             ):
                 raise ValueError("target identifier is malformed")
+            if oversized:
+                return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(destination, TargetFieldState.VALUE, value)
         if destination is TargetDestination.DESCRIPTION:
+            value, oversized = _target_projection_text(
+                raw, "target description", MAX_DESCRIPTION_CHARACTERS
+            )
+            if oversized:
+                return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(
                 destination,
                 TargetFieldState.VALUE,
-                validate_projection_text(
-                    raw, "target description", MAX_DESCRIPTION_CHARACTERS
-                ),
+                value,
             )
         if destination in {
             TargetDestination.AUTHORS,
@@ -292,44 +300,58 @@ def _target_field(
             )
             if type(raw) is not list:
                 raise ValueError("target list is malformed")
-            if len(raw) > maximum:
-                return TargetField(destination, TargetFieldState.OVERSIZED)
-            values = tuple(
-                validate_projection_text(
+            contributor_values: list[str] = []
+            oversized = len(raw) > maximum
+            for item in raw:
+                value, value_oversized = _target_projection_text(
                     item.get("name") if type(item) is dict else item,
                     "target list value",
                     MAX_SCALAR_CHARACTERS,
                 )
-                for item in raw
+                contributor_values.append(value)
+                oversized = oversized or value_oversized
+            if oversized:
+                return TargetField(destination, TargetFieldState.OVERSIZED)
+            return TargetField(
+                destination,
+                TargetFieldState.VALUE,
+                tuple(contributor_values),
             )
-            return TargetField(destination, TargetFieldState.VALUE, values)
         if destination is TargetDestination.SERIES:
             if type(raw) is not list:
                 raise ValueError("target series is malformed")
-            if len(raw) > MAX_SERIES:
-                return TargetField(destination, TargetFieldState.OVERSIZED)
-            values: list[TargetSeries] = []
+            series_values: list[tuple[str, str | None]] = []
+            oversized = len(raw) > MAX_SERIES
             for item in raw:
                 if type(item) is not dict:
                     raise ValueError("target series is malformed")
-                name = validate_projection_text(
+                name, name_oversized = _target_projection_text(
                     item.get("name"),
                     "target series name",
                     MAX_SCALAR_CHARACTERS,
                 )
+                oversized = oversized or name_oversized
                 sequence_source = item.get("sequence")
                 sequence = None
                 if sequence_source is not None:
                     if type(sequence_source) is int and type(sequence_source) is not bool:
                         sequence_source = str(sequence_source)
-                    sequence = validate_projection_text(
+                    sequence, sequence_oversized = _target_projection_text(
                         sequence_source,
                         "target series sequence",
                         MAX_SCALAR_CHARACTERS,
                     )
-                values.append(TargetSeries(name, sequence))
+                    oversized = oversized or sequence_oversized
+                series_values.append((name, sequence))
+            if oversized:
+                return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(
-                destination, TargetFieldState.VALUE, tuple(values)
+                destination,
+                TargetFieldState.VALUE,
+                tuple(
+                    TargetSeries(name, sequence)
+                    for name, sequence in series_values
+                ),
             )
         if destination is TargetDestination.PUBLISHED_YEAR:
             value = raw
@@ -344,10 +366,12 @@ def _target_field(
                 raise ValueError("target year is malformed")
             return TargetField(destination, TargetFieldState.VALUE, value)
         if destination is TargetDestination.PUBLISHED_DATE:
-            value = validate_projection_text(
+            value, oversized = _target_projection_text(
                 raw, "target publication date", MAX_SCALAR_CHARACTERS
             )
             date.fromisoformat(value)
+            if oversized:
+                return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(destination, TargetFieldState.VALUE, value)
         if destination is TargetDestination.EXPLICIT:
             if type(raw) is not bool:
@@ -358,14 +382,20 @@ def _target_field(
             raise MetadataReportError("target response is invalid") from error
         return TargetField(destination, TargetFieldState.MALFORMED)
     except (TypeError, ValueError):
-        if type(raw) is str and len(raw) > (
-            MAX_DESCRIPTION_CHARACTERS
-            if destination is TargetDestination.DESCRIPTION
-            else MAX_SCALAR_CHARACTERS
-        ):
-            return TargetField(destination, TargetFieldState.OVERSIZED)
         return TargetField(destination, TargetFieldState.MALFORMED)
     raise MetadataReportError("target metadata destination is unsupported")
+
+
+def _target_projection_text(
+    value: object, label: str, maximum: int
+) -> tuple[str, bool]:
+    validation_maximum = (
+        len(value)
+        if type(value) is str and len(value) > maximum
+        else maximum
+    )
+    text = validate_projection_text(value, label, validation_maximum)
+    return text, len(text) > maximum
 
 
 def _cover_field(
