@@ -265,15 +265,18 @@ provenance-bearing provider cover gallery. The delivered #70 activation
 increment derives one deterministic immutable result for each destination from
 that exact current report without further provider access.
 
-This checkpoint now includes exact-current immutable review admission. It adds no
-reviewer or AI decision, approval, apply, target or media write, fuzzy discovery, configurable
-policy, background execution, migration, tag, or release publication.
+This checkpoint now includes exact-current immutable review admission and one
+isolated qualification-only Codex shadow-advice path. Shadow advice is not a
+decision or approval and normal activation remains unreachable. The checkpoint
+adds no apply, target or media write, fuzzy discovery, configurable policy,
+background execution, automatic retry, migration, tag, or release publication.
 
 ## M3: AI review in shadow mode
 
-- Add isolated Codex CLI reviewer.
-- Enforce schema-constrained decisions.
-- Version prompts, policies, evidence, and models.
+- The isolated qualification-only Codex CLI path, schema-constrained
+  recommendations, and exact prompt/policy/evidence/model tuple are delivered.
+- Keep normal activation blocked until the owner accepts the exact public draft
+  and private aggregate qualification evidence.
 - Complete at least two shadow batches covering at least fifty mixed items.
 
 Exit: no systematic unsafe decision pattern remains unexplained.

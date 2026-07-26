@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add the qualification-only isolated Codex shadow-review path for one exact
+  current ReviewCase. It freezes the executable/model/reasoning/prompt/profile/
+  packet/output/policy tuple, supports explicit ChatGPT subscription auth,
+  no-egress packet preview, one foreground request, offline inspection, and
+  explicit reevaluation only after prior process-tree death. Append-only
+  request/attempt/dispatch/outcome facts retain only sanitized canonical data
+  and bounded diagnostics; no decision, apply, write, normal activation,
+  background work, automatic retry, runtime install, or fallback is added.
 - Add exact-current atomic review admission with immutable undecided cases,
   typed no-case retirement, derived currentness, and clean-schema-only SQLite
   lineage pointers and transitions.

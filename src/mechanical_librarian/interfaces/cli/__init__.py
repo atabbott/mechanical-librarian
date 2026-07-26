@@ -26,6 +26,7 @@ from mechanical_librarian.domain.review_case import (
     ReviewCase,
 )
 from mechanical_librarian.application.review_cases import ReviewCaseError
+from mechanical_librarian.application.shadow_reviews import ShadowReviewError
 
 Runner = Callable[[Path, Path, Path, str, str, str, int], str]
 ReopenRunner = Callable[[Path, str], str]
@@ -39,6 +40,10 @@ ProposalCreateRunner = Callable[[Path, Path, Path, str], str]
 ProposalGetRunner = Callable[[Path, str], str]
 ReviewAdmitRunner = Callable[[Path, Path, Path, str], str]
 ReviewGetRunner = Callable[[Path, str], str]
+ReviewerAuthRunner = Callable[[Path, str], str]
+ShadowPreviewRunner = Callable[[Path, str, Path], str]
+ShadowRequestRunner = Callable[[Path, str, Path], str]
+ShadowInspectRunner = Callable[[Path, str, Path], str]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -125,6 +130,57 @@ def _parser() -> _Parser:
     review_get = commands.add_parser("review-case-get", help="reopen one immutable review case")
     review_get.add_argument("--database", required=True, metavar="PATH", type=Path)
     review_get.add_argument("--review-case-id", required=True, metavar="REVIEW_CASE_ID", type=lambda value: value if re.fullmatch(r"review_case_[0-9a-f]{64}", value) else (_ for _ in ()).throw(argparse.ArgumentTypeError("invalid review case id")))
+    for action in ("start", "status", "logout"):
+        auth = commands.add_parser(
+            f"reviewer-auth-{action}",
+            help=f"{action} the exact qualification ChatGPT subscription session",
+        )
+        auth.add_argument(
+            "--qualification-profile", required=True, metavar="PATH", type=Path
+        )
+    shadow_preview = commands.add_parser(
+        "shadow-review-preview",
+        help="preview one sanitized exact-case reviewer packet without egress",
+    )
+    shadow_preview.add_argument("--database", required=True, metavar="PATH", type=Path)
+    shadow_preview.add_argument(
+        "--review-case-id",
+        required=True,
+        metavar="REVIEW_CASE_ID",
+        type=_review_case_id,
+    )
+    shadow_preview.add_argument(
+        "--qualification-profile", required=True, metavar="PATH", type=Path
+    )
+    shadow_request = commands.add_parser(
+        "shadow-review-request",
+        help="run one qualification-only reviewer attempt",
+    )
+    shadow_request.add_argument("--database", required=True, metavar="PATH", type=Path)
+    shadow_request.add_argument(
+        "--review-case-id",
+        required=True,
+        metavar="REVIEW_CASE_ID",
+        type=_review_case_id,
+    )
+    shadow_request.add_argument(
+        "--qualification-profile", required=True, metavar="PATH", type=Path
+    )
+    for action in ("inspect", "reevaluate"):
+        shadow = commands.add_parser(
+            f"shadow-review-{action}",
+            help=f"{action} one exact qualification-only review request",
+        )
+        shadow.add_argument("--database", required=True, metavar="PATH", type=Path)
+        shadow.add_argument(
+            "--review-request-id",
+            required=True,
+            metavar="REVIEW_REQUEST_ID",
+            type=_review_request_id,
+        )
+        shadow.add_argument(
+            "--qualification-profile", required=True, metavar="PATH", type=Path
+        )
     proposal_get.add_argument(
         "--proposal-set-id",
         required=True,
@@ -177,6 +233,18 @@ def _artifact_id(value: str) -> str:
 def _proposal_set_id(value: str) -> str:
     if re.fullmatch(r"proposal_set_[0-9a-f]{64}", value) is None:
         raise argparse.ArgumentTypeError("invalid proposal set id")
+    return value
+
+
+def _review_case_id(value: str) -> str:
+    if re.fullmatch(r"review_case_[0-9a-f]{64}", value) is None:
+        raise argparse.ArgumentTypeError("invalid review case id")
+    return value
+
+
+def _review_request_id(value: str) -> str:
+    if re.fullmatch(r"review_request_[0-9a-f]{64}", value) is None:
+        raise argparse.ArgumentTypeError("invalid review request id")
     return value
 
 
@@ -236,18 +304,104 @@ def _opaque(value: str) -> str:
     return value
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, proposal_create_runner: ProposalCreateRunner | None = None, proposal_get_runner: ProposalGetRunner | None = None, review_admit_runner: ReviewAdmitRunner | None = None, review_get_runner: ReviewGetRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, proposal_create_runner: ProposalCreateRunner | None = None, proposal_get_runner: ProposalGetRunner | None = None, review_admit_runner: ReviewAdmitRunner | None = None, review_get_runner: ReviewGetRunner | None = None, reviewer_auth_runner: ReviewerAuthRunner | None = None, shadow_preview_runner: ShadowPreviewRunner | None = None, shadow_request_runner: ShadowRequestRunner | None = None, shadow_inspect_runner: ShadowInspectRunner | None = None, shadow_reevaluate_runner: ShadowInspectRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     raw_arguments = tuple(sys.argv[1:] if argv is None else argv)
     try:
         arguments = _parser().parse_args(list(raw_arguments))
     except _ArgumentFailure:
-        if raw_arguments[:1] in {("review-case-admit",), ("review-case-get",)}:
+        if raw_arguments[:1] and (
+            raw_arguments[0].startswith("shadow-review-")
+            or raw_arguments[0].startswith("reviewer-auth-")
+        ):
+            errors.write(
+                '{"code":"profile","mode":"qualification_only",'
+                '"schema_version":"shadow-review-failure-v1"}\n'
+            )
+        elif raw_arguments[:1] in {("review-case-admit",), ("review-case-get",)}:
             errors.write(ReviewAdmissionFailure("invalid").to_json() + "\n")
         else:
             errors.write("Metadata report failed: invalid invocation.\n")
         return 2
+    if arguments.command.startswith("reviewer-auth-") or arguments.command.startswith(
+        "shadow-review-"
+    ):
+        try:
+            if arguments.command.startswith("reviewer-auth-"):
+                if reviewer_auth_runner is None:
+                    raise ShadowReviewError("runtime")
+                serialized = reviewer_auth_runner(
+                    arguments.qualification_profile,
+                    arguments.command.removeprefix("reviewer-auth-"),
+                )
+            elif arguments.command == "shadow-review-preview":
+                if shadow_preview_runner is None:
+                    raise ShadowReviewError("runtime")
+                serialized = shadow_preview_runner(
+                    arguments.database,
+                    arguments.review_case_id,
+                    arguments.qualification_profile,
+                )
+            elif arguments.command == "shadow-review-request":
+                if shadow_request_runner is None:
+                    raise ShadowReviewError("runtime")
+                serialized = shadow_request_runner(
+                    arguments.database,
+                    arguments.review_case_id,
+                    arguments.qualification_profile,
+                )
+            elif arguments.command == "shadow-review-inspect":
+                if shadow_inspect_runner is None:
+                    raise ShadowReviewError("runtime")
+                serialized = shadow_inspect_runner(
+                    arguments.database,
+                    arguments.review_request_id,
+                    arguments.qualification_profile,
+                )
+            else:
+                if shadow_reevaluate_runner is None:
+                    raise ShadowReviewError("runtime")
+                serialized = shadow_reevaluate_runner(
+                    arguments.database,
+                    arguments.review_request_id,
+                    arguments.qualification_profile,
+                )
+            raw = json.loads(serialized)
+            if (
+                type(raw) is not dict
+                or raw.get("mode") != "qualification_only"
+                or json.dumps(
+                    raw,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                != serialized
+            ):
+                raise ShadowReviewError("output")
+        except ShadowReviewError as error:
+            errors.write(
+                json.dumps(
+                    {
+                        "code": error.code,
+                        "mode": "qualification_only",
+                        "schema_version": "shadow-review-failure-v1",
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            return 1
+        except Exception:
+            errors.write(
+                '{"code":"runtime","mode":"qualification_only",'
+                '"schema_version":"shadow-review-failure-v1"}\n'
+            )
+            return 1
+        output.write(serialized + "\n")
+        return 0
     if arguments.command in {"review-case-admit", "review-case-get"}:
         try:
             if arguments.command == "review-case-admit":

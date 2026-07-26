@@ -7,6 +7,7 @@
 - [Metadata report operation](operations/metadata-report.md)
 - [ProposalSet operation](operations/proposal-set.md)
 - [Review-case admission](operations/review-case.md)
+- [Qualification-only shadow review](operations/shadow-review.md)
 - [Configuration](reference/configuration.md)
 - [Compatibility and clean-state boundary](reference/compatibility.md)
 - [Architecture overview](architecture/overview.md)
@@ -17,6 +18,7 @@
 - [ADR-0012: metadata-report activation](architecture/decisions/0012-metadata-report-activation.md)
 - [ADR-0013: pre-release clean schema](architecture/decisions/0013-pre-release-clean-schema.md)
 - [ADR-0014: review-case admission](architecture/decisions/0014-review-case-admission.md)
+- [ADR-0015: isolated qualification-only shadow review](architecture/decisions/0015-isolated-shadow-reviewer.md)
 
 ## Development
 

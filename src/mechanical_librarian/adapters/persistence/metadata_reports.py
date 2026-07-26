@@ -33,6 +33,14 @@ from mechanical_librarian.domain.review_case import (
     ReviewTransition,
     is_actionable,
 )
+from mechanical_librarian.domain.shadow_review import (
+    QUALIFICATION_MODE,
+    ReviewerProfileIdentity,
+    ShadowReviewPacket,
+    ShadowReviewRequest,
+    ShadowReviewResult,
+    ShadowReviewValueError,
+)
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -109,6 +117,38 @@ _REVIEW_TRANSITIONS_SQL = (
     "CHECK ((kind IN ('admitted','no_case') AND from_review_case_id IS NULL) OR (kind IN ('superseded','retired') AND from_review_case_id IS NOT NULL)), "
     "UNIQUE(connection_name,library_name,item_id,checkpoint) )"
 )
+_SHADOW_REQUESTS_SQL = (
+    "CREATE TABLE shadow_review_requests ("
+    "review_request_id TEXT PRIMARY KEY NOT NULL CHECK(review_request_id GLOB 'review_request_[0-9a-f]*' AND length(review_request_id)=79), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "profile_document TEXT NOT NULL CHECK(typeof(profile_document)='text' AND length(CAST(profile_document AS BLOB)) BETWEEN 2 AND 16384), "
+    "packet_document TEXT NOT NULL CHECK(typeof(packet_document)='text' AND length(CAST(packet_document AS BLOB)) BETWEEN 2 AND 1048576), "
+    "request_document TEXT NOT NULL CHECK(typeof(request_document)='text' AND length(CAST(request_document AS BLOB)) BETWEEN 2 AND 1064960))"
+)
+_SHADOW_ATTEMPTS_SQL = (
+    "CREATE TABLE shadow_review_attempts ("
+    "attempt_id TEXT PRIMARY KEY NOT NULL CHECK(attempt_id GLOB 'review_attempt_[0-9a-f]*' AND length(attempt_id)=79), "
+    "review_request_id TEXT NOT NULL REFERENCES shadow_review_requests(review_request_id), "
+    "attempt_number INTEGER NOT NULL CHECK(attempt_number BETWEEN 1 AND 32), "
+    "UNIQUE(review_request_id,attempt_number))"
+)
+_SHADOW_DISPATCHES_SQL = (
+    "CREATE TABLE shadow_review_dispatches ("
+    "attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES shadow_review_attempts(attempt_id), "
+    "pid INTEGER NOT NULL CHECK(pid>1), pgid INTEGER NOT NULL CHECK(pgid>1), "
+    "start_token TEXT NOT NULL CHECK(length(start_token) BETWEEN 1 AND 32 AND start_token NOT GLOB '*[^0-9]*'))"
+)
+_SHADOW_OUTCOMES_SQL = (
+    "CREATE TABLE shadow_review_outcomes ("
+    "attempt_id TEXT PRIMARY KEY NOT NULL REFERENCES shadow_review_attempts(attempt_id), "
+    "kind TEXT NOT NULL CHECK(kind IN ('result','failure')), "
+    "result_document TEXT CHECK(result_document IS NULL OR (typeof(result_document)='text' AND length(CAST(result_document AS BLOB)) BETWEEN 2 AND 262144)), "
+    "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('runtime','setup','auth','profile','timeout','cancel','output','currentness')), "
+    "diagnostic_count INTEGER NOT NULL CHECK(diagnostic_count BETWEEN 0 AND 2147483647), "
+    "diagnostic_digest TEXT CHECK(diagnostic_digest IS NULL OR (length(diagnostic_digest)=64 AND diagnostic_digest NOT GLOB '*[^0-9a-f]*')), "
+    "CHECK((kind='result' AND result_document IS NOT NULL AND failure_code IS NULL AND diagnostic_count=0 AND diagnostic_digest IS NULL) OR "
+    "(kind='failure' AND result_document IS NULL AND failure_code IS NOT NULL)))"
+)
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
     "BEGIN SELECT RAISE(ABORT, 'metadata reports are append-only'); END"
@@ -137,6 +177,14 @@ _REVIEW_NO_UPDATE_SQL = "CREATE TRIGGER review_cases_no_update BEFORE UPDATE ON 
 _REVIEW_NO_DELETE_SQL = "CREATE TRIGGER review_cases_no_delete BEFORE DELETE ON review_cases BEGIN SELECT RAISE(ABORT, 'review cases are append-only'); END"
 _REVIEW_TRANSITION_NO_UPDATE_SQL = "CREATE TRIGGER review_case_transitions_no_update BEFORE UPDATE ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'review transitions are append-only'); END"
 _REVIEW_TRANSITION_NO_DELETE_SQL = "CREATE TRIGGER review_case_transitions_no_delete BEFORE DELETE ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'review transitions are append-only'); END"
+_SHADOW_REQUEST_NO_UPDATE_SQL = "CREATE TRIGGER shadow_review_requests_no_update BEFORE UPDATE ON shadow_review_requests BEGIN SELECT RAISE(ABORT, 'shadow review requests are append-only'); END"
+_SHADOW_REQUEST_NO_DELETE_SQL = "CREATE TRIGGER shadow_review_requests_no_delete BEFORE DELETE ON shadow_review_requests BEGIN SELECT RAISE(ABORT, 'shadow review requests are append-only'); END"
+_SHADOW_ATTEMPT_NO_UPDATE_SQL = "CREATE TRIGGER shadow_review_attempts_no_update BEFORE UPDATE ON shadow_review_attempts BEGIN SELECT RAISE(ABORT, 'shadow review attempts are append-only'); END"
+_SHADOW_ATTEMPT_NO_DELETE_SQL = "CREATE TRIGGER shadow_review_attempts_no_delete BEFORE DELETE ON shadow_review_attempts BEGIN SELECT RAISE(ABORT, 'shadow review attempts are append-only'); END"
+_SHADOW_DISPATCH_NO_UPDATE_SQL = "CREATE TRIGGER shadow_review_dispatches_no_update BEFORE UPDATE ON shadow_review_dispatches BEGIN SELECT RAISE(ABORT, 'shadow review dispatches are append-only'); END"
+_SHADOW_DISPATCH_NO_DELETE_SQL = "CREATE TRIGGER shadow_review_dispatches_no_delete BEFORE DELETE ON shadow_review_dispatches BEGIN SELECT RAISE(ABORT, 'shadow review dispatches are append-only'); END"
+_SHADOW_OUTCOME_NO_UPDATE_SQL = "CREATE TRIGGER shadow_review_outcomes_no_update BEFORE UPDATE ON shadow_review_outcomes BEGIN SELECT RAISE(ABORT, 'shadow review outcomes are append-only'); END"
+_SHADOW_OUTCOME_NO_DELETE_SQL = "CREATE TRIGGER shadow_review_outcomes_no_delete BEFORE DELETE ON shadow_review_outcomes BEGIN SELECT RAISE(ABORT, 'shadow review outcomes are append-only'); END"
 
 
 class _LinuxDirectoryChain:
@@ -797,6 +845,402 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
 
+    def preview_shadow_request(
+        self, review_case_id: str, profile_identity: str
+    ) -> str:
+        """Build the exact no-egress packet without changing durable state."""
+        try:
+            identity = ReviewerProfileIdentity.from_json(profile_identity)
+            return self._shadow_request(review_case_id, identity).to_json()
+        except MetadataReportError:
+            raise
+        except (
+            sqlite3.Error,
+            ReviewCaseValueError,
+            ShadowReviewValueError,
+        ) as error:
+            raise MetadataReportError("shadow review preview failed") from error
+
+    def prepare_shadow_request(
+        self,
+        exact_id: str,
+        profile_identity: str,
+        *,
+        reevaluate: bool,
+    ) -> str:
+        """Persist one request and attempt before any reviewer process starts."""
+        try:
+            identity = ReviewerProfileIdentity.from_json(profile_identity)
+            self._connection.execute("BEGIN IMMEDIATE")
+            if self._binding is not None:
+                self._binding.require_current()
+            if reevaluate:
+                request = self._validated_shadow_request(exact_id)
+                if request.profile != identity:
+                    raise MetadataReportError("shadow review profile changed")
+                current = self._shadow_request(request.review_case_id, identity)
+                if current.to_json() != request.to_json():
+                    raise ReviewAdmissionStaleError
+                previous = self._connection.execute(
+                    "SELECT a.attempt_number,d.attempt_id "
+                    "FROM shadow_review_attempts a "
+                    "LEFT JOIN shadow_review_dispatches d ON d.attempt_id=a.attempt_id "
+                    "WHERE a.review_request_id=? ORDER BY a.attempt_number DESC LIMIT 1",
+                    (request.review_request_id,),
+                ).fetchone()
+                if previous is None or previous[1] is None:
+                    raise MetadataReportError(
+                        "shadow review has no supervised prior dispatch"
+                    )
+                attempt_number = previous[0] + 1
+                run = True
+            else:
+                request = self._shadow_request(exact_id, identity)
+                existing = self._connection.execute(
+                    "SELECT request_document FROM shadow_review_requests "
+                    "WHERE review_request_id=?",
+                    (request.review_request_id,),
+                ).fetchone()
+                if existing is not None:
+                    if existing != (request.to_json(),):
+                        raise MetadataReportError("shadow review identity conflicts")
+                    attempt = self._connection.execute(
+                        "SELECT attempt_id FROM shadow_review_attempts "
+                        "WHERE review_request_id=? ORDER BY attempt_number LIMIT 1",
+                        (request.review_request_id,),
+                    ).fetchone()
+                    if attempt is None:
+                        raise MetadataReportError("shadow review attempt is missing")
+                    if self._binding is not None:
+                        self._binding.require_current()
+                    self._connection.commit()
+                    return _canonical_json(
+                        {
+                            "attempt_id": attempt[0],
+                            "request": request.to_data(),
+                            "run": False,
+                        }
+                    )
+                self._connection.execute(
+                    "INSERT INTO shadow_review_requests("
+                    "review_request_id,review_case_id,profile_document,"
+                    "packet_document,request_document) VALUES(?,?,?,?,?)",
+                    (
+                        request.review_request_id,
+                        request.review_case_id,
+                        request.profile.to_json(),
+                        request.packet.to_json(),
+                        request.to_json(),
+                    ),
+                )
+                attempt_number = 1
+                run = True
+            attempt_id = _shadow_attempt_id(
+                request.review_request_id, attempt_number
+            )
+            self._connection.execute(
+                "INSERT INTO shadow_review_attempts("
+                "attempt_id,review_request_id,attempt_number) VALUES(?,?,?)",
+                (attempt_id, request.review_request_id, attempt_number),
+            )
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.commit()
+            return _canonical_json(
+                {
+                    "attempt_id": attempt_id,
+                    "request": request.to_data(),
+                    "run": run,
+                }
+            )
+        except (
+            MetadataReportError,
+            ReviewAdmissionStaleError,
+        ):
+            self._connection.rollback()
+            raise
+        except (
+            sqlite3.Error,
+            ReviewCaseValueError,
+            ShadowReviewValueError,
+            TypeError,
+            ValueError,
+        ) as error:
+            self._connection.rollback()
+            raise MetadataReportError("shadow review preparation failed") from error
+
+    def record_shadow_dispatch(
+        self, attempt_id: str, pid: int, pgid: int, start_token: str
+    ) -> None:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.execute(
+                "INSERT INTO shadow_review_dispatches("
+                "attempt_id,pid,pgid,start_token) VALUES(?,?,?,?)",
+                (attempt_id, pid, pgid, start_token),
+            )
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.commit()
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            self._connection.rollback()
+            raise MetadataReportError("shadow review dispatch failed") from error
+
+    def record_shadow_result(self, attempt_id: str, result: str) -> None:
+        try:
+            request = self._request_for_attempt(attempt_id)
+            validated = ShadowReviewResult.from_json(result, request)
+            self._connection.execute("BEGIN IMMEDIATE")
+            if self._binding is not None:
+                self._binding.require_current()
+            dispatch = self._connection.execute(
+                "SELECT 1 FROM shadow_review_dispatches WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if dispatch != (1,):
+                raise MetadataReportError("shadow review was not dispatched")
+            self._connection.execute(
+                "INSERT INTO shadow_review_outcomes("
+                "attempt_id,kind,result_document,failure_code,"
+                "diagnostic_count,diagnostic_digest) VALUES(?,'result',?,NULL,0,NULL)",
+                (attempt_id, validated.to_json()),
+            )
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.commit()
+        except MetadataReportError:
+            self._connection.rollback()
+            raise
+        except (sqlite3.Error, ShadowReviewValueError) as error:
+            self._connection.rollback()
+            raise MetadataReportError("shadow review result failed") from error
+
+    def record_shadow_failure(
+        self, attempt_id: str, code: str, count: int, digest: str | None
+    ) -> None:
+        try:
+            if (
+                code
+                not in {
+                    "runtime",
+                    "setup",
+                    "auth",
+                    "profile",
+                    "timeout",
+                    "cancel",
+                    "output",
+                    "currentness",
+                }
+                or type(count) is not int
+                or not 0 <= count <= 2_147_483_647
+                or (
+                    digest is not None
+                    and (
+                        type(digest) is not str
+                        or len(digest) != 64
+                        or any(value not in "0123456789abcdef" for value in digest)
+                    )
+                )
+            ):
+                raise MetadataReportError("shadow review failure is invalid")
+            self._connection.execute("BEGIN IMMEDIATE")
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.execute(
+                "INSERT INTO shadow_review_outcomes("
+                "attempt_id,kind,result_document,failure_code,"
+                "diagnostic_count,diagnostic_digest) "
+                "VALUES(?,'failure',NULL,?,?,?)",
+                (attempt_id, code, count, digest),
+            )
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.commit()
+        except MetadataReportError:
+            self._connection.rollback()
+            raise
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise MetadataReportError("shadow review failure recording failed") from error
+
+    def inspect_shadow_request(
+        self, review_request_id: str, profile_identity: str
+    ) -> str:
+        try:
+            identity = ReviewerProfileIdentity.from_json(profile_identity)
+            request = self._validated_shadow_request(review_request_id)
+            if request.profile != identity:
+                raise MetadataReportError("shadow review profile changed")
+            try:
+                current = (
+                    self._shadow_request(request.review_case_id, identity).to_json()
+                    == request.to_json()
+                )
+            except ReviewAdmissionStaleError:
+                current = False
+            rows = self._connection.execute(
+                "SELECT a.attempt_id,a.attempt_number,"
+                "d.pid,d.pgid,d.start_token,"
+                "o.kind,o.result_document,o.failure_code,"
+                "o.diagnostic_count,o.diagnostic_digest "
+                "FROM shadow_review_attempts a "
+                "LEFT JOIN shadow_review_dispatches d ON d.attempt_id=a.attempt_id "
+                "LEFT JOIN shadow_review_outcomes o ON o.attempt_id=a.attempt_id "
+                "WHERE a.review_request_id=? ORDER BY a.attempt_number",
+                (review_request_id,),
+            ).fetchall()
+            if not rows:
+                raise MetadataReportError("shadow review attempt is unavailable")
+            attempts: list[dict[str, object]] = []
+            top_status = "pending"
+            for row in rows:
+                (
+                    attempt_id,
+                    attempt_number,
+                    pid,
+                    pgid,
+                    start_token,
+                    kind,
+                    result_document,
+                    failure_code,
+                    diagnostic_count,
+                    diagnostic_digest,
+                ) = row
+                status = "pending"
+                result_data = None
+                failure_data = None
+                if kind == "result":
+                    result = ShadowReviewResult.from_json(
+                        result_document, request
+                    )
+                    result_data = result.to_data()
+                    status = QUALIFICATION_MODE
+                elif kind == "failure":
+                    status = "unknown" if pid is not None else "failed"
+                    failure_data = {
+                        "code": failure_code,
+                        "count": diagnostic_count,
+                        "diagnostic_digest": diagnostic_digest,
+                    }
+                attempts.append(
+                    {
+                        "attempt_id": attempt_id,
+                        "attempt_number": attempt_number,
+                        "dispatch": (
+                            None
+                            if pid is None
+                            else {
+                                "pgid": pgid,
+                                "pid": pid,
+                                "start_token": start_token,
+                            }
+                        ),
+                        "failure": failure_data,
+                        "result": result_data,
+                        "status": status,
+                    }
+                )
+                top_status = status
+            return _canonical_json(
+                {
+                    "attempts": attempts,
+                    "current": current,
+                    "mode": QUALIFICATION_MODE,
+                    "request": request.to_data(),
+                    "review_request_id": request.review_request_id,
+                    "schema_version": "shadow-review-inspect-v1",
+                    "status": top_status,
+                }
+            )
+        except MetadataReportError:
+            raise
+        except (
+            sqlite3.Error,
+            ShadowReviewValueError,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise MetadataReportError("shadow review inspection failed") from error
+
+    def last_shadow_process(
+        self, review_request_id: str
+    ) -> tuple[int, int, str] | None:
+        try:
+            self._validated_shadow_request(review_request_id)
+            row = self._connection.execute(
+                "SELECT d.pid,d.pgid,d.start_token "
+                "FROM shadow_review_attempts a "
+                "JOIN shadow_review_dispatches d ON d.attempt_id=a.attempt_id "
+                "WHERE a.review_request_id=? "
+                "ORDER BY a.attempt_number DESC LIMIT 1",
+                (review_request_id,),
+            ).fetchone()
+            return None if row is None else row
+        except (sqlite3.Error, ShadowReviewValueError) as error:
+            raise MetadataReportError("shadow review process is unavailable") from error
+
+    def _shadow_request(
+        self, review_case_id: str, identity: ReviewerProfileIdentity
+    ) -> ShadowReviewRequest:
+        reopened = json.loads(self.get_review_case(review_case_id))
+        if (
+            type(reopened) is not dict
+            or reopened.get("current") is not True
+            or type(reopened.get("case")) is not dict
+        ):
+            raise ReviewAdmissionStaleError
+        case = ReviewCase.create_from_data(reopened["case"])
+        proposal_row = self._connection.execute(
+            "SELECT proposal_set_id,report_id,document FROM proposal_sets "
+            "WHERE proposal_set_id=?",
+            (case.proposal_set_id,),
+        ).fetchone()
+        report_row = self._connection.execute(
+            "SELECT report_id,connection_name,library_name,item_id,file_identity,"
+            "content_digest,schema_version,document_digest,document "
+            "FROM metadata_reports WHERE report_id=?",
+            (case.report_id,),
+        ).fetchone()
+        if proposal_row is None or report_row is None:
+            raise MetadataReportError("shadow review source is unavailable")
+        proposal = ProposalSet.from_json(_validate_proposal_row(proposal_row))
+        report = MetadataReport.from_json(_validate_report_row(report_row))
+        packet = ShadowReviewPacket.create(case, proposal, report)
+        return ShadowReviewRequest.create(case, identity, packet)
+
+    def _validated_shadow_request(
+        self, review_request_id: str
+    ) -> ShadowReviewRequest:
+        row = self._connection.execute(
+            "SELECT review_case_id,profile_document,packet_document,"
+            "request_document FROM shadow_review_requests "
+            "WHERE review_request_id=?",
+            (review_request_id,),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("shadow review request is unavailable")
+        request = ShadowReviewRequest.from_json(row[3])
+        if (
+            request.review_request_id != review_request_id
+            or request.review_case_id != row[0]
+            or request.profile.to_json() != row[1]
+            or request.packet.to_json() != row[2]
+        ):
+            raise MetadataReportError("shadow review request is invalid")
+        return request
+
+    def _request_for_attempt(self, attempt_id: str) -> ShadowReviewRequest:
+        row = self._connection.execute(
+            "SELECT review_request_id FROM shadow_review_attempts "
+            "WHERE attempt_id=?",
+            (attempt_id,),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("shadow review attempt is unavailable")
+        return self._validated_shadow_request(row[0])
+
     def _validated_review_pointer(self, lineage: tuple[str, str, str]) -> tuple[object, ...] | None:
         pointer = self._connection.execute("SELECT proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone()
         if pointer is None:
@@ -1028,6 +1472,10 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_REVIEW_CASES_SQL)
             connection.execute(_REVIEW_POINTERS_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)
+            connection.execute(_SHADOW_REQUESTS_SQL)
+            connection.execute(_SHADOW_ATTEMPTS_SQL)
+            connection.execute(_SHADOW_DISPATCHES_SQL)
+            connection.execute(_SHADOW_OUTCOMES_SQL)
             connection.execute(_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_DELETE_SQL)
@@ -1037,6 +1485,14 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_REVIEW_NO_DELETE_SQL)
             connection.execute(_REVIEW_TRANSITION_NO_UPDATE_SQL)
             connection.execute(_REVIEW_TRANSITION_NO_DELETE_SQL)
+            connection.execute(_SHADOW_REQUEST_NO_UPDATE_SQL)
+            connection.execute(_SHADOW_REQUEST_NO_DELETE_SQL)
+            connection.execute(_SHADOW_ATTEMPT_NO_UPDATE_SQL)
+            connection.execute(_SHADOW_ATTEMPT_NO_DELETE_SQL)
+            connection.execute(_SHADOW_DISPATCH_NO_UPDATE_SQL)
+            connection.execute(_SHADOW_DISPATCH_NO_DELETE_SQL)
+            connection.execute(_SHADOW_OUTCOME_NO_UPDATE_SQL)
+            connection.execute(_SHADOW_OUTCOME_NO_DELETE_SQL)
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
         _validate_schema(connection)
@@ -1312,6 +1768,11 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_review_cases_1", None),
         ("index", "sqlite_autoindex_review_case_transitions_1", None),
         ("index", "sqlite_autoindex_review_case_transitions_2", None),
+        ("index", "sqlite_autoindex_shadow_review_attempts_1", None),
+        ("index", "sqlite_autoindex_shadow_review_attempts_2", None),
+        ("index", "sqlite_autoindex_shadow_review_dispatches_1", None),
+        ("index", "sqlite_autoindex_shadow_review_outcomes_1", None),
+        ("index", "sqlite_autoindex_shadow_review_requests_1", None),
         ("table", "current_metadata_reports", _CURRENT_SQL),
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
@@ -1320,6 +1781,10 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
         ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
         ("table", "review_cases", _REVIEW_CASES_SQL),
+        ("table", "shadow_review_attempts", _SHADOW_ATTEMPTS_SQL),
+        ("table", "shadow_review_dispatches", _SHADOW_DISPATCHES_SQL),
+        ("table", "shadow_review_outcomes", _SHADOW_OUTCOMES_SQL),
+        ("table", "shadow_review_requests", _SHADOW_REQUESTS_SQL),
         ("trigger", "metadata_report_cover_references_no_delete", _COVER_NO_DELETE_SQL),
         ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL),
         ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
@@ -1330,6 +1795,14 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("trigger", "review_case_transitions_no_update", _REVIEW_TRANSITION_NO_UPDATE_SQL),
         ("trigger", "review_cases_no_delete", _REVIEW_NO_DELETE_SQL),
         ("trigger", "review_cases_no_update", _REVIEW_NO_UPDATE_SQL),
+        ("trigger", "shadow_review_attempts_no_delete", _SHADOW_ATTEMPT_NO_DELETE_SQL),
+        ("trigger", "shadow_review_attempts_no_update", _SHADOW_ATTEMPT_NO_UPDATE_SQL),
+        ("trigger", "shadow_review_dispatches_no_delete", _SHADOW_DISPATCH_NO_DELETE_SQL),
+        ("trigger", "shadow_review_dispatches_no_update", _SHADOW_DISPATCH_NO_UPDATE_SQL),
+        ("trigger", "shadow_review_outcomes_no_delete", _SHADOW_OUTCOME_NO_DELETE_SQL),
+        ("trigger", "shadow_review_outcomes_no_update", _SHADOW_OUTCOME_NO_UPDATE_SQL),
+        ("trigger", "shadow_review_requests_no_delete", _SHADOW_REQUEST_NO_DELETE_SQL),
+        ("trigger", "shadow_review_requests_no_update", _SHADOW_REQUEST_NO_UPDATE_SQL),
     ))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
@@ -1341,6 +1814,18 @@ def _canonical_json(value: object) -> str:
 
 def _admission_json(status: str, review_case_id: str | None) -> str:
     return ReviewAdmissionResult(status, review_case_id).to_json()
+
+
+def _shadow_attempt_id(review_request_id: str, attempt_number: int) -> str:
+    return "review_attempt_" + hashlib.sha256(
+        _canonical_json(
+            {
+                "attempt_number": attempt_number,
+                "review_request_id": review_request_id,
+                "schema_version": "shadow-review-attempt-v1",
+            }
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _validate_report_row(row: tuple[object, ...]) -> str:

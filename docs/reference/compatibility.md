@@ -7,6 +7,11 @@ The current installed contract is intentionally narrow:
 - an absent database or the installed exact current report database containing
   `metadata-report-v8` plus `proposal-set-v1`, or the separate `catalogue-v1`
   schema;
+- `review-case-v1` and the exact-current append-only qualification-only shadow
+  request/attempt/dispatch/outcome schema;
+- canonical `reviewer-qualification-profile-v1` with exact
+  `gpt-5.6-sol`/`medium` and pinned Codex CLI/Bubblewrap identities; shadow
+  request execution requires Linux;
 - strict `batch-manifest-v2` for foreground evidence batches;
 - Audiobookshelf v2.35.1 library, library-items, and current-item responses for
   explicitly configured book libraries;
@@ -32,9 +37,11 @@ The installed runtime supports current catalogue refresh/list/get, immutable
 foreground batch preview/inspect/run, single-item metadata report generation,
 exact/current report reopen, report-bound cover-preview reopen, exact-current
 ProposalSet create, offline exact ProposalSet reopen, review-case admission,
-and offline exact ReviewCase reopen. It does not support
+offline exact ReviewCase reopen, ChatGPT subscription auth, no-egress shadow
+preview, one qualification-only foreground request, offline inspect, and
+explicit reevaluation. It does not support
 durable batch attempts, resume, automatic retry, workers, schedulers, parallel
-execution, review decisions, or apply.
+execution, normal reviewer activation, review decisions, or apply.
 
 Until the first production release, every database, report, artifact,
 configuration, and internal-document schema accepts only absent state or its
