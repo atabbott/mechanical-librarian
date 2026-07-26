@@ -26,8 +26,11 @@ from mechanical_librarian.application.metadata_report import (
     TargetSnapshot,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_CONTRIBUTIONS,
     MAX_DESCRIPTION_CHARACTERS,
     MAX_SCALAR_CHARACTERS,
+    MAX_SERIES,
+    MAX_TAGS,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -82,6 +85,43 @@ def _report(title: str = "Current title") -> MetadataReport:
         local_reasons=("no_opening_claims",),
         providers=(ProviderObservation("catalogue", ProviderStatus.DISABLED),),
     )
+
+
+def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
+    payload = {
+        "id": "item-1",
+        "libraryId": "library-id",
+        "isInvalid": False,
+        "isMissing": False,
+        "mediaType": "book",
+        "media": {
+            "metadata": metadata,
+            "ebookFile": {
+                "ebookFormat": "epub",
+                "ino": "inode-1",
+                "metadata": {
+                    "relPath": "book.epub",
+                    "path": "/library/book.epub",
+                    "size": 1,
+                },
+            },
+        },
+    }
+    return AudiobookshelfItemReader(
+        client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=payload,
+                )
+            )
+        ),
+        endpoint="https://example.invalid",
+        library_id="library-id",
+        service_path="/library",
+        maximum_bytes=65_536,
+    ).read("item-1")
 
 
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
@@ -1728,43 +1768,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
         )
 
     def test_target_text_bounds_preserve_oversized_and_malformed_states(self) -> None:
-        def read(metadata: dict[str, object]) -> TargetSnapshot:
-            payload = {
-                "id": "item-1",
-                "libraryId": "library-id",
-                "isInvalid": False,
-                "isMissing": False,
-                "mediaType": "book",
-                "media": {
-                    "metadata": metadata,
-                    "ebookFile": {
-                        "ebookFormat": "epub",
-                        "ino": "inode-1",
-                        "metadata": {
-                            "relPath": "book.epub",
-                            "path": "/library/book.epub",
-                            "size": 1,
-                        },
-                    },
-                },
-            }
-            return AudiobookshelfItemReader(
-                client_factory=lambda: httpx.Client(
-                    transport=httpx.MockTransport(
-                        lambda request: httpx.Response(
-                            200,
-                            headers={"content-type": "application/json"},
-                            json=payload,
-                        )
-                    )
-                ),
-                endpoint="https://example.invalid",
-                library_id="library-id",
-                service_path="/library",
-                maximum_bytes=65_536,
-            ).read("item-1")
-
-        exact = read(
+        exact = _target_snapshot(
             {
                 "title": "Current title",
                 "subtitle": "s" * MAX_SCALAR_CHARACTERS,
@@ -1787,7 +1791,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
                     TargetFieldState.VALUE, exact_states[destination]
                 )
 
-        oversized = read(
+        oversized = _target_snapshot(
             {
                 "title": "Current title",
                 "subtitle": "s" * (MAX_SCALAR_CHARACTERS + 1),
@@ -1848,7 +1852,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
             unsafe_description = unsafe_prefix + "x" * (
                 MAX_DESCRIPTION_CHARACTERS - len(unsafe_prefix) + 1
             )
-            malformed = read(
+            malformed = _target_snapshot(
                 {
                     "title": "Current title",
                     "subtitle": unsafe_scalar,
@@ -1870,6 +1874,152 @@ class AudiobookshelfItemTests(unittest.TestCase):
                         TargetFieldState.MALFORMED,
                         malformed_states[destination],
                     )
+
+    def test_typed_target_syntax_precedes_oversized_classification(self) -> None:
+        snapshot = _target_snapshot(
+            {
+                "title": "Current title",
+                "isbn": "x" * (MAX_SCALAR_CHARACTERS + 1),
+                "asin": "x" * (MAX_SCALAR_CHARACTERS + 1),
+                "publishedDate": "x" * (MAX_SCALAR_CHARACTERS + 1),
+                "publishedYear": "2" * (MAX_SCALAR_CHARACTERS + 1),
+            }
+        )
+        states = {
+            field.destination: field.state for field in snapshot.fields
+        }
+        for destination in (
+            TargetDestination.ISBN,
+            TargetDestination.ASIN,
+            TargetDestination.PUBLISHED_DATE,
+            TargetDestination.PUBLISHED_YEAR,
+        ):
+            with self.subTest(destination=destination):
+                self.assertIs(
+                    TargetFieldState.MALFORMED, states[destination]
+                )
+
+    def test_collection_safety_precedes_cardinality_oversized_state(self) -> None:
+        unsafe = "/Users/private/" + "x" * MAX_SCALAR_CHARACTERS
+        list_cases = (
+            (
+                TargetDestination.AUTHORS,
+                "authors",
+                MAX_CONTRIBUTIONS,
+                lambda value: {"name": value},
+            ),
+            (
+                TargetDestination.NARRATORS,
+                "narrators",
+                MAX_CONTRIBUTIONS,
+                lambda value: value,
+            ),
+            (
+                TargetDestination.GENRES,
+                "genres",
+                MAX_TAGS,
+                lambda value: value,
+            ),
+            (
+                TargetDestination.TAGS,
+                "tags",
+                MAX_TAGS,
+                lambda value: value,
+            ),
+        )
+        for destination, key, maximum, item in list_cases:
+            safe_values = [
+                item(f"Value {index}") for index in range(maximum + 1)
+            ]
+            unsafe_values = [
+                item(f"Value {index}") for index in range(maximum)
+            ] + [item(unsafe)]
+            malformed_values = [
+                item(f"Value {index}") for index in range(maximum)
+            ] + [{"unexpected": "value"}]
+            with self.subTest(destination=destination, case="safe"):
+                safe_state = {
+                    field.destination: field.state
+                    for field in _target_snapshot(
+                        {"title": "Current title", key: safe_values}
+                    ).fields
+                }
+                self.assertIs(
+                    TargetFieldState.OVERSIZED, safe_state[destination]
+                )
+            for case, values in (
+                ("unsafe", unsafe_values),
+                ("malformed", malformed_values),
+            ):
+                with self.subTest(destination=destination, case=case):
+                    states = {
+                        field.destination: field.state
+                        for field in _target_snapshot(
+                            {"title": "Current title", key: values}
+                        ).fields
+                    }
+                    self.assertIs(
+                        TargetFieldState.MALFORMED,
+                        states[destination],
+                    )
+
+        safe_series = [
+            {"name": f"Series {index}"}
+            for index in range(MAX_SERIES + 1)
+        ]
+        unsafe_series = safe_series[:MAX_SERIES] + [{"name": unsafe}]
+        malformed_series = safe_series[:MAX_SERIES] + ["not-a-series"]
+        for case, values, expected in (
+            ("safe", safe_series, TargetFieldState.OVERSIZED),
+            ("unsafe", unsafe_series, TargetFieldState.MALFORMED),
+            ("malformed", malformed_series, TargetFieldState.MALFORMED),
+        ):
+            with self.subTest(destination="series", case=case):
+                states = {
+                    field.destination: field.state
+                    for field in _target_snapshot(
+                        {"title": "Current title", "series": values}
+                    ).fields
+                }
+                self.assertIs(expected, states[TargetDestination.SERIES])
+
+        for case, sequence, expected in (
+            (
+                "safe_oversized_sequence",
+                "s" * (MAX_SCALAR_CHARACTERS + 1),
+                TargetFieldState.OVERSIZED,
+            ),
+            (
+                "unsafe_sequence",
+                unsafe,
+                TargetFieldState.MALFORMED,
+            ),
+        ):
+            with self.subTest(destination="series_sequence", case=case):
+                states = {
+                    field.destination: field.state
+                    for field in _target_snapshot(
+                        {
+                            "title": "Current title",
+                            "series": [
+                                {"name": "Series", "sequence": sequence}
+                            ],
+                        }
+                    ).fields
+                }
+                self.assertIs(expected, states[TargetDestination.SERIES])
+
+        safe_title = _target_snapshot(
+            {"title": "t" * (MAX_SCALAR_CHARACTERS + 1)}
+        )
+        self.assertIs(
+            TargetFieldState.OVERSIZED,
+            next(
+                field.state
+                for field in safe_title.fields
+                if field.destination is TargetDestination.TITLE
+            ),
+        )
 
     def test_safe_noncanonical_title_is_preserved_exactly(self) -> None:
         title = "Cafe\u0301  Story"
@@ -2009,7 +2159,11 @@ class AudiobookshelfItemTests(unittest.TestCase):
     def test_credential_and_private_path_target_titles_fail_without_raw_values(self) -> None:
         for hostile in (
             "Authorization: Bearer abcd1234",
+            "Authorization: Bearer abcd1234"
+            + "x" * MAX_SCALAR_CHARACTERS,
             "/Users/private/library/book.epub",
+            "/Users/private/library/book.epub"
+            + "x" * MAX_SCALAR_CHARACTERS,
         ):
             payload = {
                 "id": "item-1",

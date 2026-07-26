@@ -237,6 +237,9 @@ def _target_field(
     try:
         if destination is TargetDestination.TITLE:
             if type(raw) is str and len(raw) > MAX_SCALAR_CHARACTERS:
+                _target_projection_text(
+                    raw, "target title", MAX_SCALAR_CHARACTERS
+                )
                 return TargetField(destination, TargetFieldState.OVERSIZED)
             try:
                 title = validate_observed_title(raw)
@@ -261,8 +264,6 @@ def _target_field(
             value, oversized = _target_projection_text(
                 raw, "target scalar", MAX_SCALAR_CHARACTERS
             )
-            if oversized:
-                return TargetField(destination, TargetFieldState.OVERSIZED)
             if (
                 destination is TargetDestination.ISBN
                 and isbn_family(value) is None
@@ -271,6 +272,8 @@ def _target_field(
                 and _ASIN.fullmatch(value) is None
             ):
                 raise ValueError("target identifier is malformed")
+            if oversized:
+                return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(destination, TargetFieldState.VALUE, value)
         if destination is TargetDestination.DESCRIPTION:
             value, oversized = _target_projection_text(
@@ -297,10 +300,8 @@ def _target_field(
             )
             if type(raw) is not list:
                 raise ValueError("target list is malformed")
-            if len(raw) > maximum:
-                return TargetField(destination, TargetFieldState.OVERSIZED)
             contributor_values: list[str] = []
-            oversized = False
+            oversized = len(raw) > maximum
             for item in raw:
                 value, value_oversized = _target_projection_text(
                     item.get("name") if type(item) is dict else item,
@@ -319,10 +320,8 @@ def _target_field(
         if destination is TargetDestination.SERIES:
             if type(raw) is not list:
                 raise ValueError("target series is malformed")
-            if len(raw) > MAX_SERIES:
-                return TargetField(destination, TargetFieldState.OVERSIZED)
             series_values: list[tuple[str, str | None]] = []
-            oversized = False
+            oversized = len(raw) > MAX_SERIES
             for item in raw:
                 if type(item) is not dict:
                     raise ValueError("target series is malformed")
@@ -370,9 +369,9 @@ def _target_field(
             value, oversized = _target_projection_text(
                 raw, "target publication date", MAX_SCALAR_CHARACTERS
             )
+            date.fromisoformat(value)
             if oversized:
                 return TargetField(destination, TargetFieldState.OVERSIZED)
-            date.fromisoformat(value)
             return TargetField(destination, TargetFieldState.VALUE, value)
         if destination is TargetDestination.EXPLICIT:
             if type(raw) is not bool:
@@ -383,12 +382,6 @@ def _target_field(
             raise MetadataReportError("target response is invalid") from error
         return TargetField(destination, TargetFieldState.MALFORMED)
     except (TypeError, ValueError):
-        if type(raw) is str and len(raw) > (
-            MAX_DESCRIPTION_CHARACTERS
-            if destination is TargetDestination.DESCRIPTION
-            else MAX_SCALAR_CHARACTERS
-        ):
-            return TargetField(destination, TargetFieldState.OVERSIZED)
         return TargetField(destination, TargetFieldState.MALFORMED)
     raise MetadataReportError("target metadata destination is unsupported")
 

@@ -111,9 +111,11 @@ preserves one exact `value`, `missing`, `null`, `empty`, `unloaded`,
 `malformed`, or `oversized` state, including source list order. Every
 destination participates in the target fingerprint and final currentness
 check. A structurally safe target scalar, contributor/list member, series
-component, or description that exceeds its fixed field bound is `oversized`;
-unsafe, private-path, credential-shaped, or otherwise invalid input remains
-`malformed`. The selected file index resolves once to an opaque identity
+component, description, or collection cardinality that exceeds its fixed field
+bound is `oversized`; invalid typed syntax is never hidden by size. Unsafe,
+private-path, credential-shaped, or otherwise invalid non-title input remains
+`malformed`. An unusable required title rejects the target response before a
+report is created. The selected file index resolves once to an opaque identity
 derived by the Audiobookshelf adapter. Final currentness locates that identity
 again, so a harmless file-list reorder does not change the target.
 
