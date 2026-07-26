@@ -251,7 +251,7 @@ class CoverObserverTests(unittest.TestCase):
                 "work-1",
                 "edition-1",
             ),
-            terminal_state=CoverSourceState.OVERSIZED,
+            terminal_state=CoverSourceState.REJECTED,
         )
         with (
             tempfile.TemporaryDirectory() as directory,
@@ -274,7 +274,7 @@ class CoverObserverTests(unittest.TestCase):
             for value in values
             if value.kind is CoverSourceKind.HARDCOVER
         )
-        self.assertEqual(CoverSourceState.OVERSIZED, provider_value.state)
+        self.assertEqual(CoverSourceState.REJECTED, provider_value.state)
         fetch.assert_not_called()
 
     def test_abs_result_is_recorded_without_a_request(self) -> None:

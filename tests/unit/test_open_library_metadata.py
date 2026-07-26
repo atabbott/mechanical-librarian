@@ -654,6 +654,10 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self.assertTrue(
             all(value.url is None for value in provider.cover_descriptors)
         )
+        self.assertEqual(
+            (CoverSourceState.REJECTED, CoverSourceState.REJECTED),
+            tuple(value.terminal_state for value in provider.cover_descriptors),
+        )
         self.assertFalse(
             {
                 ProviderEvidenceKind.EDITION_COVER_ID,
@@ -661,6 +665,88 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             }
             & {value.kind for value in observation.candidates[0].evidence}
         )
+
+    def test_missing_and_empty_cover_ids_remain_absent_while_valid_ids_request(self) -> None:
+        for cover_fields, expected_url, expected_state in (
+            ({}, None, None),
+            ({"covers": None}, None, None),
+            ({"covers": []}, None, None),
+            (
+                {"covers": [1]},
+                f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/1-L.jpg?default=false",
+                None,
+            ),
+        ):
+            with self.subTest(cover_fields=cover_fields):
+                edition = {**_edition("/books/OL1M"), **cover_fields}
+                values = {
+                    "/search.json": _search("/books/OL1M"),
+                    "/books/OL1M.json": edition,
+                    "/works/OL5W.json": _work(),
+                }
+                provider = OpenLibraryMetadataProvider(
+                    "open_library",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda request: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=values[request.url.path],
+                            )
+                        )
+                    ),
+                    65_536,
+                    pacer=OpenLibraryPacer(sleep=lambda _: None),
+                )
+                provider.observe(_isbn_lookup((_isbn(),)))
+                descriptor = provider.cover_descriptors[0]
+                self.assertEqual(expected_url, descriptor.url)
+                self.assertEqual(expected_state, descriptor.terminal_state)
+
+    def test_invalid_present_cover_ids_are_rejected(self) -> None:
+        for covers in (
+            ["not-an-id"],
+            [True],
+            [0],
+            [-1],
+            [2_147_483_648],
+            [1, "not-an-id"],
+            {"not": "a list"},
+        ):
+            with self.subTest(covers=covers):
+                values = {
+                    "/search.json": _search("/books/OL1M"),
+                    "/books/OL1M.json": {
+                        **_edition("/books/OL1M"),
+                        "covers": covers,
+                    },
+                    "/works/OL5W.json": _work(),
+                }
+                provider = OpenLibraryMetadataProvider(
+                    "open_library",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda request: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=values[request.url.path],
+                            )
+                        )
+                    ),
+                    65_536,
+                    pacer=OpenLibraryPacer(sleep=lambda _: None),
+                )
+                observation = provider.observe(_isbn_lookup((_isbn(),)))
+                self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+                self.assertEqual(
+                    CoverSourceState.REJECTED,
+                    provider.cover_descriptors[0].terminal_state,
+                )
+                self.assertIsNone(provider.cover_descriptors[0].url)
+                self.assertNotIn(
+                    ProviderEvidenceKind.EDITION_COVER_ID,
+                    {value.kind for value in observation.candidates[0].evidence},
+                )
 
     def test_cover_context_at_its_limit_is_retained(self) -> None:
         context_isbns = [

@@ -37,6 +37,7 @@ class CoverSourceKind(StrEnum):
 
 class CoverSourceState(StrEnum):
     ABSENT = "absent"
+    REJECTED = "rejected"
     RETRIEVED = "retrieved"
     INVALID_DECLARATION = "invalid_declaration"
     UNSUPPORTED_FORMAT = "unsupported_format"

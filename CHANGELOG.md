@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve malformed present Open Library cover IDs as the bounded report
+  terminal state `rejected`, distinct from genuinely absent cover IDs; no cover
+  request or write is attempted.
 - Preserve valid Open Library metadata when optional cover provenance context
   exceeds its fixed bound; retain the bounded cover terminal state as
   `oversized` without widening candidate or cover limits.

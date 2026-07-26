@@ -6,6 +6,7 @@ import json
 import re
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -60,6 +61,12 @@ _AUTHOR_KEY = re.compile(r"^/authors/OL[1-9][0-9]*A$")
 _LANGUAGE_KEY = re.compile(r"^/languages/([a-z]{2,3})$")
 _MAX_SEARCH_ROWS = 3
 _MAX_VALUES = 8
+
+
+@dataclass(frozen=True, slots=True)
+class _CoverId:
+    value: int | None
+    terminal_state: CoverSourceState | None = None
 
 
 class OpenLibraryPacer:
@@ -237,9 +244,9 @@ class OpenLibraryMetadataProvider:
                 cover_candidates: list[
                     tuple[
                         str,
-                        int | None,
+                        _CoverId,
                         str,
-                        int | None,
+                        _CoverId,
                         dict[str, Any],
                         dict[str, Any],
                     ]
@@ -435,7 +442,7 @@ def _candidate(
     local_claims: tuple[LocalClaim, ...],
     requested_family: str | None,
     work_authors: tuple[str, ...] = (),
-) -> tuple[ProviderCandidate, int | None, int | None]:
+) -> tuple[ProviderCandidate, _CoverId, _CoverId]:
     if _key(edition.get("key"), _EDITION_KEY) != edition_key:
         raise ValueError("edition identity is malformed")
     if _key(work.get("key"), _WORK_KEY) != work_key:
@@ -643,19 +650,19 @@ def _candidate(
         )
     edition_cover = _cover_id(edition)
     work_cover = _cover_id(work)
-    if edition_cover is not None:
+    if edition_cover.value is not None:
         evidence.add(
             ProviderEvidence(
                 ProviderEvidenceKind.EDITION_COVER_ID,
-                str(edition_cover),
+                str(edition_cover.value),
                 ClaimScope.EDITION,
             )
         )
-    if work_cover is not None:
+    if work_cover.value is not None:
         evidence.add(
             ProviderEvidence(
                 ProviderEvidenceKind.WORK_COVER_ID,
-                str(work_cover),
+                str(work_cover.value),
                 ClaimScope.WORK,
             )
         )
@@ -804,12 +811,12 @@ def _identifier_evidence(
             )
 
 
-def _cover_id(source: dict[str, Any]) -> int | None:
+def _cover_id(source: dict[str, Any]) -> _CoverId:
     if "covers" not in source or source["covers"] is None:
-        return None
+        return _CoverId(None)
     covers = source["covers"]
     if type(covers) is not list:
-        return None
+        return _CoverId(None, CoverSourceState.REJECTED)
     values = tuple(
         sorted(
             {
@@ -822,8 +829,8 @@ def _cover_id(source: dict[str, Any]) -> int | None:
         )
     )
     if len(values) != len(covers):
-        return None
-    return values[0] if values else None
+        return _CoverId(None, CoverSourceState.REJECTED)
+    return _CoverId(values[0] if values else None)
 
 
 def _cover_descriptors(
@@ -832,9 +839,9 @@ def _cover_descriptors(
     values: list[
         tuple[
             str,
-            int | None,
+            _CoverId,
             str,
-            int | None,
+            _CoverId,
             dict[str, Any],
             dict[str, Any],
         ]
@@ -865,14 +872,18 @@ def _cover_descriptors(
                 ),
                 (
                     None
-                    if cover is None
-                    else f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover}-L.jpg?default=false"
+                    if cover.value is None
+                    else f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover.value}-L.jpg?default=false"
                 ),
                 provenance,
                 wait,
                 False,
                 user_agent,
-                terminal_state,
+                (
+                    terminal_state
+                    if terminal_state is not None
+                    else cover.terminal_state
+                ),
             )
         )
     seen_works: set[str] = set()
@@ -897,14 +908,18 @@ def _cover_descriptors(
                 ),
                 (
                     None
-                    if cover is None
-                    else f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover}-L.jpg?default=false"
+                    if cover.value is None
+                    else f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover.value}-L.jpg?default=false"
                 ),
                 provenance,
                 wait,
                 False,
                 user_agent,
-                terminal_state,
+                (
+                    terminal_state
+                    if terminal_state is not None
+                    else cover.terminal_state
+                ),
             )
         )
     return tuple(descriptors)
