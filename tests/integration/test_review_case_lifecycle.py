@@ -1,6 +1,7 @@
 """Synthetic installed-surface lifecycle proof for review admission storage."""
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -31,7 +32,25 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
             repository.publish(successor, lambda: True); later = _actionable(successor); repository.publish_proposal(later)
             later_case = json.loads(repository.admit_review_case(later))["review_case_id"]
             self.assertFalse(json.loads(repository.get_review_case(case_id))["current"]); self.assertTrue(json.loads(repository.get_review_case(later_case))["current"])
+            retired = evaluate_report(successor); repository.publish_proposal(retired)
+            self.assertEqual("retired", json.loads(repository.admit_review_case(retired))["status"])
+            self.assertFalse(json.loads(repository.get_review_case(later_case))["current"])
+            self.assertEqual((2,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
             repository.close()
+
+    def test_concurrent_identical_admission_converges(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "reviews.sqlite"; repository = open_repository(database)
+            report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+            repository.publish(report, lambda: True); proposal = _actionable(report); repository.publish_proposal(proposal); repository.close()
+            barrier, outcomes = threading.Barrier(2), []
+            def admit():
+                local = open_repository(database, create=False)
+                try: barrier.wait(); outcomes.append(json.loads(local.admit_review_case(proposal)))
+                finally: local.close()
+            workers = [threading.Thread(target=admit) for _ in range(2)]
+            [worker.start() for worker in workers]; [worker.join() for worker in workers]
+            self.assertEqual(1, len({value["review_case_id"] for value in outcomes}))
 
 
 if __name__ == "__main__": unittest.main()
