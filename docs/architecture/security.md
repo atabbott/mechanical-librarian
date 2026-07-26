@@ -119,6 +119,12 @@ verifies every referenced private cover preview without constructing provider
 clients. After that external read finishes, an immediate SQLite transaction
 rechecks the exact immutable report and current pointer before inserting
 the ProposalSet. Drift or malformed input inserts nothing. The unavoidable
+
+Review admission rechecks the persisted ProposalSet, exact report, and stable
+target-lineage pointer inside its SQLite transaction. It stores bounded
+identities and canonical proposal projections only; no credentials, raw
+provider payloads, reviewer identity, decision, or target-write capability is
+accepted by the command.
 interval after the last external read is documented; later review admission
 must revalidate freshness. Proposal rows are append-only and have no current
 pointer, review state, lifecycle, or mutation authority.

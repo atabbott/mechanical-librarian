@@ -33,6 +33,10 @@ The isolated child returns one bounded result for one EPUB session; neither its
 input snapshot nor source body is retained after the report projection.
 
 Reports and ProposalSets are append-only and 0.9 provides no retention,
+
+Review cases are likewise append-only, retaining only the already bounded
+ProposalSet projection and target facts needed for exact currentness. Admission
+does not add reviewer identity, decision text, raw evidence, or service secrets.
 pruning, purge, export, or deletion feature. Operators must account for that deliberate limitation
 when selecting the database location and backup policy.
 

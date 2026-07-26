@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import unicodedata
@@ -29,6 +30,8 @@ BatchInspectRunner = Callable[[Path], str]
 BatchRunRunner = Callable[[Path, Path, Path, str, Path, Path, Callable[[dict[str, object]], None]], bool]
 ProposalCreateRunner = Callable[[Path, Path, Path, str], str]
 ProposalGetRunner = Callable[[Path, str], str]
+ReviewAdmitRunner = Callable[[Path, Path, Path, str], str]
+ReviewGetRunner = Callable[[Path, str], str]
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
@@ -107,6 +110,14 @@ def _parser() -> _Parser:
     proposal_get.add_argument(
         "--database", required=True, metavar="PATH", type=Path
     )
+    review_admit = commands.add_parser("review-case-admit", help="admit one exact current ProposalSet")
+    review_admit.add_argument("--config", required=True, metavar="PATH", type=Path)
+    review_admit.add_argument("--database", required=True, metavar="PATH", type=Path)
+    review_admit.add_argument("--artifact-store", required=True, metavar="PATH", type=Path)
+    review_admit.add_argument("--proposal-set-id", required=True, metavar="PROPOSAL_SET_ID", type=_proposal_set_id)
+    review_get = commands.add_parser("review-case-get", help="reopen one immutable review case")
+    review_get.add_argument("--database", required=True, metavar="PATH", type=Path)
+    review_get.add_argument("--review-case-id", required=True, metavar="REVIEW_CASE_ID", type=lambda value: value if re.fullmatch(r"review_case_[0-9a-f]{64}", value) else (_ for _ in ()).throw(argparse.ArgumentTypeError("invalid review case id")))
     proposal_get.add_argument(
         "--proposal-set-id",
         required=True,
@@ -184,7 +195,7 @@ def _opaque(value: str) -> str:
     return value
 
 
-def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, proposal_create_runner: ProposalCreateRunner | None = None, proposal_get_runner: ProposalGetRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reopen_runner: ReopenRunner | None = None, current_reopen_runner: CurrentReopenRunner | None = None, preview_runner: PreviewRunner | None = None, catalogue_runner: CatalogueRunner | None = None, batch_preview_runner: BatchPreviewRunner | None = None, batch_inspect_runner: BatchInspectRunner | None = None, batch_run_runner: BatchRunRunner | None = None, proposal_create_runner: ProposalCreateRunner | None = None, proposal_get_runner: ProposalGetRunner | None = None, review_admit_runner: ReviewAdmitRunner | None = None, review_get_runner: ReviewGetRunner | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
     try:
@@ -192,6 +203,16 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner | None = None, reo
     except _ArgumentFailure:
         errors.write("Metadata report failed: invalid invocation.\n")
         return 2
+    if arguments.command in {"review-case-admit", "review-case-get"}:
+        try:
+            serialized = (review_admit_runner(arguments.config, arguments.database, arguments.artifact_store, arguments.proposal_set_id) if arguments.command == "review-case-admit" and review_admit_runner else review_get_runner(arguments.database, arguments.review_case_id) if arguments.command == "review-case-get" and review_get_runner else None)
+            if type(serialized) is not str or json.loads(serialized) is None:
+                raise ValueError
+        except Exception:
+            errors.write("Review case failed safely.\n")
+            return 1
+        output.write(serialized + "\n")
+        return 0
     if arguments.command in {"proposal-set-create", "proposal-set-get"}:
         try:
             if arguments.command == "proposal-set-create":

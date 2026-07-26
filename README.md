@@ -17,7 +17,9 @@ evidence workflow. An operator can:
 - generate or reopen one complete source-attributed EPUB metadata-and-cover
   evidence report; and
 - create or reopen one immutable fixed-policy ProposalSet from an exact current
-  report.
+  report; and
+- admit one exact current actionable ProposalSet as an immutable undecided
+  review case, with typed no-case retirement for non-actionable sets.
 
 The report combines all 16 current Audiobookshelf metadata destinations,
 bounded structured EPUB evidence, independent configured Hardcover and Open
@@ -29,7 +31,7 @@ most eight sources and four per provider with safe provenance and explicit
 truncation. The report remains neutral. A separate deterministic evaluator
 produces exactly one explainable result for each destination without contacting
 providers, configurable ranking, or write authority. Catalogue and batch
-operations retain the same read-only boundary. There is no review admission,
+operations retain the same read-only boundary. Review admission records no
 decision, apply, target write, media write, background execution, automatic
 retry, or supported release.
 

@@ -23,6 +23,10 @@ CLI proposal-set-create -> application CreateProposalSet
                         |-> reused target/media/cover currentness
                         |-> pure fixed-policy evaluator
                         `-> append-only ProposalSet repository
+
+CLI review-case-admit -> application AdmitReviewCase
+                      `-> exact-current ProposalSet/report/lineage recheck
+                      `-> append-only immutable ReviewCase repository
 ```
 
 Dependency direction remains:
