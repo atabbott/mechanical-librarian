@@ -771,6 +771,8 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         for length, terminal_state in (
             (280, None),
             (281, CoverSourceState.OVERSIZED),
+            (512, CoverSourceState.OVERSIZED),
+            (513, CoverSourceState.OVERSIZED),
         ):
             with self.subTest(length=length):
                 values = {
@@ -812,6 +814,36 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                     )
                 else:
                     self.assertEqual((), edition_descriptor.provenance.context)
+
+    def test_unsafe_cover_context_remains_provider_malformed(self) -> None:
+        values = {
+            "/search.json": _search("/books/OL1M"),
+            "/books/OL1M.json": {
+                **_edition("/books/OL1M", cover=1),
+                "publish_country": "/Users/private",
+            },
+            "/works/OL5W.json": _work(),
+        }
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],
+                    )
+                )
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+
+        observation = provider.observe(_isbn_lookup((_isbn(),)))
+
+        self.assertEqual(ProviderStatus.MALFORMED, observation.status)
+        self.assertEqual((), observation.candidates)
+        self.assertEqual((), provider.cover_descriptors)
 
     def test_invalid_required_detail_content_discards_all_candidates(self) -> None:
         requests: list[httpx.Request] = []

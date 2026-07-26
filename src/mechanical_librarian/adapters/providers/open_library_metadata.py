@@ -927,16 +927,20 @@ def _cover_provenance(
             ),
             None,
         )
+    except EvidenceValueError as error:
+        if not str(error).endswith(" exceeds its size limit"):
+            raise
     except CoverEvidenceError:
-        return (
-            CoverProvenance(
-                provider,
-                designation,
-                work_identity,
-                edition_identity,
-            ),
-            CoverSourceState.OVERSIZED,
-        )
+        pass
+    return (
+        CoverProvenance(
+            provider,
+            designation,
+            work_identity,
+            edition_identity,
+        ),
+        CoverSourceState.OVERSIZED,
+    )
 
 
 def _open_library_cover_context(
