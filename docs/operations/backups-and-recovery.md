@@ -1,12 +1,36 @@
 # Backups and recovery
 
 The 0.10 runtime performs no target or media writes. Its durable application
-state is the append-only report/ProposalSet/ReviewCase/shadow-review database
-and current pointers.
+state is the append-only report/ProposalSet/ReviewCase/shadow-review database,
+current pointers, and report-bound cover artifact store.
 
-For important history, stop invocations and copy the complete SQLite file using
-a SQLite-supported consistent backup method. Verify the copy with SQLite
-integrity and foreign-key checks before relying on it. Configuration,
+For important history, stop all invocations. Within that stopped consistency
+boundary, make a SQLite-supported consistent backup of the complete application
+database and copy its paired artifact-store directory. The database references
+the artifact identities that remain current for its reports, so restore the
+matching database and artifact-store pair together. This is not a transactional
+cross-filesystem backup guarantee; stopped invocations are the consistency
+boundary. Before backup, preserve a complete inventory of retained report IDs
+from the operator's records or the IDs returned by report creation; the CLI
+cannot enumerate retained reports. Verify the database copy with SQLite
+integrity and foreign-key checks before relying on it. Then use
+`metadata-report-get` to reopen every ID in that inventory. For every
+report-bound cover artifact reference in those canonical reports, use a
+read-only verifier that refuses symlinks to require regular artifact-store files
+named by both `original_digest` and `preview_digest`, and require the SHA-256
+of each file to equal that filename/digest. Do not print or log artifact
+contents. Also run `metadata-report-cover-preview` with that report ID,
+artifact ID, and preview variant, directing its raw stdout to a non-interactive
+sink. Success verifies the persisted report/reference authorization and the
+restored preview bytes. The preview command alone does not verify originals,
+and there is no bulk pair-verification command. Without a complete inventory,
+the pair cannot be called fully verified: restore it only as unverified
+historical evidence, or start clean and regenerate reports for supported current
+operation; clean regeneration does not preserve history.
+
+The separate catalogue database and immutable batch manifests are regenerable
+from current configuration and supported catalogue/batch operations; preserve
+them only when an operator needs their historical state. Configuration,
 qualification profiles, executable paths, and reviewer/target/provider auth
 stores follow the host's encrypted secret-backup policy and must not be
 embedded in the application database.
@@ -18,10 +42,11 @@ retention period for complete backups, and destroy expired complete copies
 through the storage system.
 
 There is no 0.10 per-record purge, repair, import, selective restore, migration,
-pruning, or purge command. If the database is corrupt or its schema is not the
-exact clean 0.10 baseline, stop and restore a verified complete copy or start
-with a new absent database path. Never edit rows or pointers directly to force
-recovery.
+pruning, or purge command. If the application database or paired artifact store
+is corrupt, missing, or not exact-current, stop and restore a verified matching
+pair or start with a new absent database path and empty artifact store, then
+regenerate supported reports. Never edit rows, pointers, or artifact files
+directly to force recovery.
 
-Restoring the application database cannot change Audiobookshelf or media
-because this runtime has no such write authority.
+Restoring the matching application database and artifact store cannot change
+Audiobookshelf or media because this runtime has no such write authority.

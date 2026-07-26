@@ -26,7 +26,7 @@ context and consequences rather than reproducing code.
 | [0009](0009-durable-epub-opening-evidence.md) | superseded by 0012; pre-release schema provisions superseded by 0013 | Bind durable EPUB opening evidence to inventory snapshots |
 | [0010](0010-0-4-neutral-evidence-baseline.md) | accepted | Set the 0.4 clean-state neutral evidence baseline |
 | [0011](0011-isolated-epub-inspector.md) | accepted | Keep EPUB package inspection private to its isolated child |
-| [0012](0012-metadata-report-activation.md) | accepted; pre-release schema policy superseded by 0013 | Activate one clean-state three-table DELETE-mode metadata-report runtime |
+| [0012](0012-metadata-report-activation.md) | accepted; pre-release schema policy superseded by 0013 | Activate the 0.4 clean-state two-table DELETE-mode metadata-report runtime; 0.5 later amended it |
 | [0013](0013-pre-release-clean-schema.md) | accepted | Require clean schemas until the first production release |
 | [0014](0014-review-case-admission.md) | accepted | Atomically admit immutable review cases from current ProposalSets |
 | [0015](0015-isolated-shadow-reviewer.md) | accepted | Isolate one exact qualification-only Codex shadow reviewer |

@@ -87,7 +87,7 @@ delivery dependency between the slices.
 
 ## Deliverable A: OpenRouter reviewer
 
-### Deferred outcome draft
+### OpenRouter deferred outcome draft
 
 **Title:** Deliver a qualified OpenRouter reviewer with owner-controlled
 credentials
@@ -104,7 +104,7 @@ reviewer contract without changing production authority.
 structured reviewer authentication references, and the authenticated owner
 configuration surface.
 
-### Supported demonstration
+### OpenRouter supported demonstration
 
 1. Configure an owner-controlled OpenRouter credential through a write-only
    value or file-secret reference and inspect redacted status.
@@ -132,7 +132,7 @@ configuration surface.
    deterministic and human workflows continue and no write authority is
    created.
 
-### Acceptance criteria
+### OpenRouter acceptance criteria
 
 - The image contains no project-owned or shared OpenRouter credential. Every
   installation uses an owner-controlled account and reviewer-scoped secret.
@@ -190,7 +190,7 @@ configuration surface.
 - Disabling or removing OpenRouter leaves historical provenance explainable
   and deterministic and human review operational.
 
-### Required qualification
+### OpenRouter required qualification
 
 The exact model and route selected when this slice is scheduled must pass the
 shared semantic qualification plus provider or model identity mismatch,
@@ -229,7 +229,7 @@ guarantees:
 - [provider routing and data policy](https://openrouter.ai/docs/guides/routing/provider-selection); and
 - [rate and usage limits](https://openrouter.ai/docs/api/reference/limits).
 
-### Failure behavior and test layers
+### OpenRouter failure behavior and test layers
 
 Expected operational failures are typed and redacted, preserve attempt budgets
 across restart, honor bounded server retry guidance, and never become negative
@@ -238,7 +238,7 @@ schema tests, reviewer adapter contract tests, credential and redaction tests,
 privacy-routing tests, persistence/restart tests, hostile-output tests,
 synthetic cohort replay, and a disposable end-to-end hosted shadow run.
 
-### Delivery boundary
+### OpenRouter delivery boundary
 
 If promoted, one outcome should deliver configuration,
 credential handling, the adapter, owner setup and status, immutable provenance,
@@ -248,7 +248,7 @@ provider aggregation, anonymous project-funded service, automatic model
 selection, silent fallback, production-write qualification, and unrelated
 local-model support.
 
-### Promotion considerations
+### OpenRouter promotion considerations
 
 1. Decide whether a qualified route pins one provider or permits an allowlist
    of separately qualified providers for the same model. Actual provider
@@ -262,7 +262,7 @@ local-model support.
    outcome is promoted because catalogue, capabilities, policies, and availability
    are time-sensitive.
 
-### Qualification constraints retained for promotion
+### OpenRouter qualification constraints retained for promotion
 
 If this outcome is promoted, its single concise outcome issue should incorporate
 the material constraints below unless an independently valuable increment
@@ -306,7 +306,7 @@ hostile-output suite, replayable cohort report, and end-to-end shadow run.
 
 ## Deliverable B: Externally operated compatible reviewer
 
-### Deferred outcome draft
+### External-server deferred outcome draft
 
 **Title:** Deliver a reviewer backed by an externally operated compatible model
 server
@@ -324,7 +324,7 @@ Librarian image.
 structured reviewer endpoint and authentication configuration, and the
 authenticated owner configuration surface.
 
-### Supported demonstration
+### External-server supported demonstration
 
 1. Start a disposable external compatible server or deterministic protocol
    fake independently of Mechanical Librarian.
@@ -349,7 +349,7 @@ authenticated owner configuration surface.
 9. Confirm that disabling or losing the endpoint leaves the container healthy
    and deterministic and human review available.
 
-### Acceptance criteria
+### External-server acceptance criteria
 
 - The Mechanical Librarian image contains no local inference runtime, model
   weights, model downloader, GPU dependency, or external-server lifecycle
@@ -404,7 +404,7 @@ authenticated owner configuration surface.
 - Unavailability affects reviewer readiness only, not container liveness or
   deterministic and human workflows.
 
-### Required qualification
+### External-server required qualification
 
 Qualification independently covers the shared semantic cohort plus
 endpoint-specific cases for:
@@ -432,7 +432,7 @@ exact endpoint/profile/server/model/prompt/schema/policy tuple and requires its
 own retained shadow evidence. Transport compatibility alone is never model
 qualification.
 
-### Failure behavior and test layers
+### External-server failure behavior and test layers
 
 Endpoint failures become typed, redacted reviewer states and never fail
 container liveness, create decisions, or trigger another backend. Required test
@@ -441,7 +441,7 @@ redirect/TLS tests, credential isolation and redaction tests, capability and
 identity tests, timeout/resource/restart tests, hostile-output replay, and a
 disposable end-to-end external-server shadow run.
 
-### Delivery boundary
+### External-server delivery boundary
 
 If promoted, one outcome should deliver configuration, the
 compatibility profile, the bounded network client, capability and identity
@@ -452,7 +452,7 @@ server supervision, GPU/device support, network discovery, arbitrary API
 compatibility, global private-network access, production-write qualification,
 and OpenRouter support.
 
-### Promotion considerations
+### External-server promotion considerations
 
 1. Select the initial compatibility profile: a narrow Mechanical Librarian
    profile over OpenAI-style chat completions is recommended, with named
@@ -465,7 +465,7 @@ and OpenRouter support.
 4. Decide how exact origins remain stable across DHCP or local DNS changes
    without weakening destination validation.
 
-### Qualification constraints retained for promotion
+### External-server qualification constraints retained for promotion
 
 If this outcome is promoted, its single concise outcome issue should incorporate
 the material constraints below unless an independently valuable increment

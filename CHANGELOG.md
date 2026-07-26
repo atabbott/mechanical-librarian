@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Correct historical documentation attribution: the 0.4 checkpoint had one
+  `metadata-report` command and a two-table report store; later 0.5 retrieval,
+  richer evidence, and cover-artifact additions remain current-runtime features.
+  The 0.9 checkpoint remains evidence-and-ProposalSet-only; review admission
+  and shadow advice belong to 0.10. (#370)
 - Accept the pinned Codex CLI's exact canonical ChatGPT subscription status on
   either process stream only when the other stream is empty and the command
   succeeds. Mixed, additional, malformed, API-key, and nonzero results remain
@@ -133,18 +138,16 @@
   Exact persisted reports can be reopened by report ID without operational
   configuration, credentials, target access, or network access.
 
-- Activated the clean-state 0.4 neutral metadata-evidence runtime. The installed
-  package exposes `metadata-report` with required config, database, connection,
-  library, item, and file-index inputs, plus configuration-free exact-ID and
-  current-scope `metadata-report-get` replay.
+- Activated the clean-state 0.4 neutral metadata-evidence runtime. At the 0.4
+  boundary, the installed package exposed only `metadata-report` with required
+  config, database, connection, library, item, and file-index inputs.
 - Added explicit named target connections, libraries, read-only mounts, and
   provider connections with per-library provider references and explicit
   enablement.
 - Added scoped current-item Audiobookshelf reading, the isolated EPUB inspector,
-  one fresh bounded credential-bearing Hardcover metadata request per applicable
-  provider, then separately credential-free bounded cover request chains, neutral
+  one fresh bounded Hardcover request per applicable provider, neutral
   all-candidate title/ISBN claims, exact canonical replay, final target/media
-  currentness, and an append-only three-table SQLite report baseline.
+  currentness, and an append-only two-table SQLite report baseline.
 - Removed the pre-0.4 inventory, workflow, job, preview, proposal, review,
   retry, cache, migration, and compatibility runtimes and their installed
   commands, schema, fixtures, scripts, and operational documentation.

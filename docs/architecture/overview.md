@@ -1,6 +1,6 @@
 # Architecture overview
 
-The 0.10 development runtime has five synchronous CLI paths:
+The 0.10 development runtime exposes synchronous CLI command families:
 
 ```text
 CLI catalogue -> application RefreshCurrentCatalogue
@@ -27,7 +27,31 @@ CLI proposal-set-create -> application CreateProposalSet
 CLI review-case-admit -> application AdmitReviewCase
                       `-> exact-current ProposalSet/report/lineage recheck
                       `-> append-only immutable ReviewCase repository
+
+CLI shadow-review-preview -> application preview
+                          -> profile bytes + exact-current ReviewCase lineage
+                          -> no reviewer construction or egress
+
+CLI shadow-review-inspect -> application inspect
+                          -> exact persisted request, including historical
+                             `current: false` state
+                          -> no reviewer construction or egress
+
+CLI shadow-review-request -> application execution
+                          |-> exact-current case/report/proposal/profile/packet
+                          |-> append-only request/attempt/dispatch/outcome records
+                          `-> isolated Codex reviewer for one request only
+
+CLI shadow-review-reevaluate -> application explicit reevaluation
+                             |-> latest-attempt and process-absence checks
+                             |-> append-only successor attempt records
+                             `-> isolated Codex reviewer for one request only
+
+CLI reviewer-auth-* -> bootstrap profile load -> CodexShadowReviewer.auth
 ```
+
+Reviewer authentication is deliberately bootstrap-owned; it is separate from
+the application-owned shadow-review execution and persistence contracts.
 
 Dependency direction remains:
 
@@ -43,10 +67,12 @@ catalogue persistence, frozen manifest selection, serial foreground execution,
 scoped target reading, EPUB inspection/currentness, provider and cover
 observation, artifact publication, and report publication/readback. The
 ProposalSet seam adds exact create/get orchestration but no provider or write
-port. There is no central speculative ports module, generic provider registry,
-queue, worker, or scheduler. Bootstrap explicitly composes Audiobookshelf, the
-isolated EPUB and cover children, the closed Hardcover/Open Library adapter
-choice, private-file credentials, SQLite, and the private artifact store.
+port. ReviewCase and shadow-review seams add exact-current admission and
+qualification-only execution/persistence. There is no central speculative ports
+module, generic provider registry, queue, worker, or scheduler. Bootstrap
+explicitly composes Audiobookshelf, the isolated EPUB and cover children, the
+closed Hardcover/Open Library adapter choice, private-file credentials, SQLite,
+the private artifact store, and the external reviewer tuple.
 
 The catalogue adapter uses bounded Audiobookshelf library, library-items, and
 item-detail GET routes. It atomically publishes one current generation of at
@@ -78,14 +104,18 @@ report-bound cover references in `metadata_report_cover_references`.
 `proposal_sets` stores one content-addressed result document bound to an exact
 report and has no current pointer. Report insert and pointer advance share one
 transaction. Proposal insertion separately rechecks the exact report and
-current pointer after external currentness. The sole baseline uses
+current pointer after external currentness. The report database also stores
+immutable ReviewCases with current lineages and append-only qualification-only
+shadow request, attempt, dispatch, and outcome records. The sole baseline uses
 rollback-journal `DELETE` mode. The separate catalogue database stores one
 exact-current `catalogue-v1` schema. The final report database, catalogue
 database, configuration, artifacts, and manifest each recognize only absent or
 their exact current pre-release state. Prior and intermediate schemas are
 rejected before mutation; there is no migration, import, compatibility parser,
-workflow, job, attempt, cache, or deletion surface. These rules are the
-current-runtime application of repository-wide ADR-0013.
+workflow, job, cache, or deletion surface. Batch work stores no attempt or
+resume state; shadow-review attempts are the explicit qualification-only
+exception. These rules are the current-runtime application of repository-wide
+ADR-0013.
 The `metadata-report-v8` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
@@ -111,3 +141,6 @@ without recovery sidecars. Protected ancestor permissions and a dedicated
 process identity make that check stable against other unprivileged identities.
 Catalogue and batch manifest filesystem operations apply their own bounded
 no-follow, identity-checked publication and read contracts.
+
+Normal activation, human or AI decision, approval, apply, target/media write,
+background execution, and automatic retry remain unavailable.
