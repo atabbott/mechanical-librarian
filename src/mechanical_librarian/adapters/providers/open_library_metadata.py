@@ -880,9 +880,9 @@ def _cover_descriptors(
                 False,
                 user_agent,
                 (
-                    terminal_state
-                    if terminal_state is not None
-                    else cover.terminal_state
+                    cover.terminal_state
+                    if cover.terminal_state is not None
+                    else terminal_state
                 ),
             )
         )
@@ -916,9 +916,9 @@ def _cover_descriptors(
                 False,
                 user_agent,
                 (
-                    terminal_state
-                    if terminal_state is not None
-                    else cover.terminal_state
+                    cover.terminal_state
+                    if cover.terminal_state is not None
+                    else terminal_state
                 ),
             )
         )

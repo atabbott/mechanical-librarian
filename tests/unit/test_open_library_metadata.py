@@ -901,6 +901,50 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 else:
                     self.assertEqual((), edition_descriptor.provenance.context)
 
+    def test_malformed_cover_ids_precede_oversized_context(self) -> None:
+        values = {
+            "/search.json": _search("/books/OL1M"),
+            "/books/OL1M.json": {
+                **_edition("/books/OL1M"),
+                "covers": ["not-an-id"],
+                "publish_country": "C" * 281,
+            },
+            "/works/OL5W.json": {
+                **_work(),
+                "covers": [True],
+                "publish_country": "C" * 281,
+            },
+        }
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],
+                    )
+                )
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        observation = provider.observe(_isbn_lookup((_isbn(),)))
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual(
+            (CoverSourceState.REJECTED, CoverSourceState.REJECTED),
+            tuple(value.terminal_state for value in provider.cover_descriptors),
+        )
+        self.assertTrue(all(value.url is None for value in provider.cover_descriptors))
+        self.assertFalse(
+            {
+                ProviderEvidenceKind.EDITION_COVER_ID,
+                ProviderEvidenceKind.WORK_COVER_ID,
+            }
+            & {value.kind for value in observation.candidates[0].evidence}
+        )
+
     def test_unsafe_cover_context_remains_provider_malformed(self) -> None:
         for value in (
             "/Users/private",

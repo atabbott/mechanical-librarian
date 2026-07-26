@@ -258,7 +258,7 @@ slice with no constituents.
 ### 0.9.0 explainable ebook proposal checkpoint
 
 The [0.9 working plan](0-9-working-plan.md) records F09o. Its #344
-pre-activation increment deepens the report to `metadata-report-v7`, binding
+pre-activation increment deepens the report to `metadata-report-v8`, binding
 all 16 current ABS destinations, exact ISBN versus fail-closed complete-author
 work observation, typed taxonomy/first-publication evidence, and the bounded
 provenance-bearing provider cover gallery. The delivered #70 activation

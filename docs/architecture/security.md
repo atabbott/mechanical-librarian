@@ -125,7 +125,7 @@ pointer, review state, lifecycle, or mutation authority.
 
 The final report database, `catalogue-v1` database, `config-v4`, artifact
 records, and `batch-manifest-v2` each accept only absent or their exact current
-schema. `metadata-report-v1`, prior development schemas, extra objects, altered
+schema. `metadata-report-v1` through `metadata-report-v7`, prior development schemas, extra objects, altered
 SQL, failed foreign-key/integrity checks, and other schemas fail closed before
 mutation. Persisted report content is validated when an exact-ID or
 current-scope read selects it and when a selected current report or exact-ID
@@ -148,6 +148,8 @@ logs, or diagnostics. Search and detail responses use existing strict byte,
 content-type, encoding, JSON, projection, and aggregate-deadline bounds.
 Candidate admission accepts only exact normalized ISBN-family rows with
 canonical Open Library edition/work keys. Cover URLs are constructed from
-bounded numeric IDs at the fixed Covers origin, are paced with metadata, reject
+bounded numeric IDs at the fixed Covers origin; malformed present IDs are
+retained as `rejected` report outcomes without a request. Valid URLs are paced
+with metadata, reject
 redirects, and still pass through the existing public-address pinning, bounded
 decoder, and private artifact path.

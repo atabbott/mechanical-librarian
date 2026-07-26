@@ -82,7 +82,7 @@ their exact current pre-release state. Prior and intermediate schemas are
 rejected before mutation; there is no migration, import, compatibility parser,
 workflow, job, attempt, cache, or deletion surface. These rules are the
 current-runtime application of repository-wide ADR-0013.
-The `metadata-report-v7` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v8` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability
