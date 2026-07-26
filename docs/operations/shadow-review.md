@@ -92,6 +92,10 @@ inspection reports `unknown`. If the application stopped before dispatch, the
 attempt remains `pending`; explicit reevaluation first proves the exact
 persisted claimant PID and Linux start token absent, then may safely claim its
 successor. Any unreleased controller could not execute or egress.
+The transaction permits reevaluation only when the latest attempt has no
+outcome, or has a failure after durable dispatch. A successful result and a
+known pre-dispatch failure are terminal; the command rejects them without
+starting another reviewer.
 
 Executable paths are opened, verified, and held by descriptor through version,
 auth, and sandbox invocation. Authentication also ignores auth-store

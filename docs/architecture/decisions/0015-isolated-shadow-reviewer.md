@@ -29,6 +29,9 @@ automatic retry. After a dispatched failure, the durable projection is
 after the supervised process group is proved absent. Reevaluation binds that
 proof to the exact latest attempt ID and claims its successor in one immediate
 transaction; a concurrent or changed latest attempt loses the compare-and-swap.
+The same transaction admits only unresolved state: no outcome, or a failure
+after durable dispatch. A successful result and a pre-dispatch failure are
+terminal and cannot be reevaluated.
 Every attempt also persists its claimant PID and Linux start token. An
 undispatched attempt is safe to reevaluate only after that exact claimant is
 absent, because the start gate makes dispatch persistence the durable release

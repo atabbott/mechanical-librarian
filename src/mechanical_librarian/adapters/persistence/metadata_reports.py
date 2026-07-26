@@ -897,9 +897,10 @@ class SQLiteMetadataReportRepository:
                     raise ReviewAdmissionStaleError
                 previous = self._connection.execute(
                     "SELECT a.attempt_id,a.attempt_number,"
-                    "d.pid,d.pgid,d.start_token "
+                    "d.pid,d.pgid,d.start_token,o.kind "
                     "FROM shadow_review_attempts a "
                     "LEFT JOIN shadow_review_dispatches d ON d.attempt_id=a.attempt_id "
+                    "LEFT JOIN shadow_review_outcomes o ON o.attempt_id=a.attempt_id "
                     "WHERE a.review_request_id=? ORDER BY a.attempt_number DESC LIMIT 1",
                     (request.review_request_id,),
                 ).fetchone()
@@ -910,6 +911,13 @@ class SQLiteMetadataReportRepository:
                 ):
                     raise MetadataReportError(
                         "shadow review reevaluation claim changed"
+                    )
+                if not (
+                    previous[5] is None
+                    or (previous[5] == "failure" and previous[2] is not None)
+                ):
+                    raise MetadataReportError(
+                        "shadow review latest attempt is terminal"
                     )
                 attempt_number = previous[1] + 1
                 run = True

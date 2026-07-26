@@ -11,7 +11,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    MetadataReportError,
+    open_repository,
+)
 from mechanical_librarian.adapters.reviewers import codex_shadow
 from mechanical_librarian.adapters.reviewers.codex_shadow import (
     CodexShadowReviewer,
@@ -201,6 +204,93 @@ class ShadowReviewTests(unittest.TestCase):
             )
             self.assertEqual("qualification_only", result["status"])
             self.assertEqual(2, len(result["attempts"]))
+            repository.close()
+
+    def test_completed_success_cannot_be_reevaluated_or_append(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = self._repository(directory)
+            serialized = execute_shadow_review(
+                repository,
+                case_id,
+                _identity(),
+                _Runner(),
+                claimant=(9001, "11"),
+            )
+            request_id = json.loads(serialized)["review_request_id"]
+            claim = repository.last_shadow_claim(request_id)
+            with self.assertRaises(MetadataReportError):
+                repository.prepare_shadow_request(
+                    request_id,
+                    _identity().to_json(),
+                    reevaluate=True,
+                    claim_pid=9002,
+                    claim_start_token="12",
+                    expected_prior_attempt_id=claim[0],
+                )
+            runner = _Runner()
+            with self.assertRaises(ShadowReviewError):
+                execute_shadow_review(
+                    repository,
+                    request_id,
+                    _identity(),
+                    runner,
+                    claimant=(9002, "12"),
+                    reevaluate=True,
+                    process_alive=lambda *_: False,
+                )
+            self.assertEqual(0, runner.calls)
+            self.assertEqual(
+                (1,),
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM shadow_review_attempts"
+                ).fetchone(),
+            )
+            repository.close()
+
+    def test_pre_dispatch_failure_is_terminal_and_cannot_be_reevaluated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = self._repository(directory)
+            prepared = json.loads(
+                repository.prepare_shadow_request(
+                    case_id,
+                    _identity().to_json(),
+                    reevaluate=False,
+                    claim_pid=9001,
+                    claim_start_token="11",
+                    expected_prior_attempt_id=None,
+                )
+            )
+            repository.record_shadow_failure(
+                prepared["attempt_id"], "setup", 0, None
+            )
+            request_id = prepared["request"]["review_request_id"]
+            inspected = json.loads(
+                repository.inspect_shadow_request(
+                    request_id, _identity().to_json()
+                )
+            )
+            self.assertEqual("failed", inspected["status"])
+            runner = _Runner()
+            with self.assertRaises(ShadowReviewError):
+                execute_shadow_review(
+                    repository,
+                    request_id,
+                    _identity(),
+                    runner,
+                    claimant=(9002, "12"),
+                    reevaluate=True,
+                    process_alive=lambda *_: self.fail(
+                        "no undispatched process may be probed"
+                    ),
+                    claim_alive=lambda *_: False,
+                )
+            self.assertEqual(0, runner.calls)
+            self.assertEqual(
+                (1,),
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM shadow_review_attempts"
+                ).fetchone(),
+            )
             repository.close()
 
     def test_dispatch_without_terminal_outcome_is_unknown(self) -> None:
