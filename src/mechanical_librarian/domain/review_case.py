@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from typing import Self
 
-from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
+from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination, TargetFacts
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
 
 REVIEW_CASE_SCHEMA = "review-case-v1"
@@ -109,9 +109,15 @@ class ReviewCase:
     def create_from_data(cls, raw: dict[str, object]) -> Self:
         if raw.get("schema_version") != REVIEW_CASE_SCHEMA or raw.get("disposition") != "undecided" or type(raw.get("results")) is not list or type(raw.get("target")) is not dict:
             raise ReviewCaseValueError("review case is invalid")
+        try:
+            target = TargetFacts.from_data(raw["target"])
+        except Exception as error:
+            raise ReviewCaseValueError("review case target is invalid") from error
         results = tuple(raw["results"])
         if any(type(value) is not dict for value in results):
             raise ReviewCaseValueError("review case is invalid")
+        if target.to_data() != raw["target"] or target.fingerprint != raw["target_fingerprint"]:
+            raise ReviewCaseValueError("review case target is invalid")
         data = cls._data(raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results)  # type: ignore[arg-type]
         identity = "review_case_" + hashlib.sha256(_canonical(data).encode("utf-8")).hexdigest()
         return cls(identity, raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results)  # type: ignore[arg-type]
