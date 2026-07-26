@@ -136,7 +136,9 @@ state; it constructs no executable, auth, target, provider, reviewer, or other
 network client and is not fresh eligibility proof. Request may invoke only the
 exact declared Codex/model/reasoning/prompt/profile/packet/output/policy tuple.
 All auth and reviewer processes serialize on one owner-only auth-store lock.
-Only exact ChatGPT subscription status is accepted; API-key status fails.
+Only the exact canonical ChatGPT subscription status on one process stream is
+accepted when the other stream is empty and the command succeeds. Mixed,
+additional, malformed, API-key, and nonzero results fail.
 
 The Linux Bubblewrap boundary exposes the pinned runtime and system libraries,
 protected auth store, and one empty private job directory, but no repository,

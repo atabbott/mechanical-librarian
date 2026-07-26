@@ -38,9 +38,11 @@ mechanical-librarian reviewer-auth-status --qualification-profile profile.json
 mechanical-librarian reviewer-auth-logout --qualification-profile profile.json
 ```
 
-Start uses device authentication. Status accepts only the exact ChatGPT
-subscription state; API-key authentication is rejected. Logout is explicit and
-never performed by preview, request, inspect, or reevaluate.
+Start uses device authentication. Status accepts only the exact canonical
+ChatGPT subscription line on either process stream when the command succeeds
+and the other stream is empty. Mixed, additional, malformed, API-key, and
+nonzero results are rejected. Logout is explicit and never performed by
+preview, request, inspect, or reevaluate.
 
 ## Preview and request
 
