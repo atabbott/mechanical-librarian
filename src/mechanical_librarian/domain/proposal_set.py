@@ -636,14 +636,20 @@ def _list_observations(
             for claim in basis_claims
         ):
             continue
-        claims = tuple(
+        members = tuple(
             claim
             for claim in basis_claims
-            if claim.kind is kind
-            and claim.scope is scope
-            and claim.role == role
-            and claim.state is FieldState.VALID
-            and claim.canonical is not None
+            if claim.kind is kind and claim.scope is scope and claim.role == role
+        )
+        if any(
+            claim.state is not FieldState.VALID or claim.canonical is None
+            for claim in members
+        ):
+            continue
+        claims = tuple(
+            claim
+            for claim in members
+            if claim.state is FieldState.VALID and claim.canonical is not None
         )
         if claims:
             values.append(
@@ -672,14 +678,20 @@ def _list_observations(
                 for claim in candidate.claims
             ):
                 continue
-            claims = tuple(
+            members = tuple(
                 claim
                 for claim in candidate.claims
-                if claim.kind is kind
-                and claim.scope is scope
-                and claim.role == role
-                and claim.state is FieldState.VALID
-                and claim.value is not None
+                if claim.kind is kind and claim.scope is scope and claim.role == role
+            )
+            if any(
+                claim.state is not FieldState.VALID or claim.value is None
+                for claim in members
+            ):
+                continue
+            claims = tuple(
+                claim
+                for claim in members
+                if claim.state is FieldState.VALID and claim.value is not None
             )
             if claims:
                 values.append(
@@ -704,14 +716,22 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
             }
         )
     ):
-        claims = tuple(
+        source_claims = tuple(
             claim
             for claim in report.local_claims
             if claim.basis == basis
             and claim.scope is ClaimScope.WORK
             and claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
-            and claim.state is FieldState.VALID
-            and claim.canonical is not None
+        )
+        if any(
+            claim.state is not FieldState.VALID or claim.canonical is None
+            for claim in source_claims
+        ):
+            continue
+        claims = tuple(
+            claim
+            for claim in source_claims
+            if claim.state is FieldState.VALID and claim.canonical is not None
         )
         observed = _series_from_claims(claims)
         if observed is not None:
@@ -725,13 +745,21 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
             )
     for provider in report.providers:
         for candidate in provider.candidates:
-            claims = tuple(
+            source_claims = tuple(
                 claim
                 for claim in candidate.claims
                 if claim.scope is ClaimScope.WORK
                 and claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
-                and claim.state is FieldState.VALID
-                and claim.value is not None
+            )
+            if any(
+                claim.state is not FieldState.VALID or claim.value is None
+                for claim in source_claims
+            ):
+                continue
+            claims = tuple(
+                claim
+                for claim in source_claims
+                if claim.state is FieldState.VALID and claim.value is not None
             )
             observed = _series_from_claims(claims)
             if observed is not None:
@@ -1150,12 +1178,15 @@ def _alternatives(
     grouped: dict[tuple[str, ProposalScope], list[_Observed]] = {}
     for value in observations:
         grouped.setdefault(
-            (canonical_json(value.value.to_data()), value.scope), []
+            (_observation_key(destination, value.value), value.scope), []
         ).append(value)
     alternatives: list[ProposalAlternative] = []
     for key in sorted(grouped, key=lambda item: (item[0], item[1].value)):
         values = grouped[key]
-        proposal_value = values[0].value
+        proposal_value = min(
+            (value.value for value in values),
+            key=lambda value: canonical_json(value.to_data()),
+        )
         if target.state is TargetFieldState.VALUE and _matches(
             destination, target.value, proposal_value
         ):
@@ -1206,7 +1237,18 @@ def _matches(
     candidate: ProposalValue,
 ) -> bool:
     if destination is TargetDestination.SERIES:
-        return target == candidate.value
+        return (
+            type(target) is tuple
+            and type(candidate.value) is tuple
+            and tuple(
+                (_comparison(TargetDestination.SERIES, value.name), value.sequence)
+                for value in target
+            )
+            == tuple(
+                (_comparison(TargetDestination.SERIES, value.name), value.sequence)
+                for value in candidate.value
+            )
+        )
     if type(target) is tuple and type(candidate.value) is tuple:
         return tuple(_comparison(destination, item) for item in target) == tuple(
             _comparison(destination, item) for item in candidate.value
@@ -1226,6 +1268,21 @@ def _comparison(destination: TargetDestination, value: str) -> str:
             ).split()
         ).casefold()
     return normalize_title(value).casefold()
+
+
+def _observation_key(destination: TargetDestination, value: ProposalValue) -> str:
+    if destination is TargetDestination.SERIES:
+        normalized: object = tuple(
+            (_comparison(TargetDestination.SERIES, item.name), item.sequence)
+            for item in value.value
+        )
+    elif type(value.value) is tuple:
+        normalized = tuple(_comparison(destination, item) for item in value.value)
+    elif type(value.value) is str:
+        normalized = _comparison(destination, value.value)
+    else:
+        normalized = value.value
+    return canonical_json({"kind": value.kind.value, "value": normalized})
 
 
 def _eligible_identifier(

@@ -596,6 +596,91 @@ class ProposalSetTests(unittest.TestCase):
                 self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
                 self.assertEqual((), result.alternatives)
 
+    def test_incomplete_provider_author_list_is_withheld(self) -> None:
+        for state in (FieldState.MALFORMED, FieldState.OVERSIZED):
+            with self.subTest(state=state):
+                claims = (
+                    _claim(
+                        "catalogue",
+                        "edition-1",
+                        ClaimKind.CREATOR,
+                        "Ada Author",
+                        scope=ClaimScope.WORK,
+                        role="author",
+                    ),
+                    ProviderClaim.create(
+                        provider="catalogue",
+                        candidate="edition-1",
+                        kind=ClaimKind.CREATOR,
+                        value=None,
+                        state=state,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                        role="author",
+                        raw_order=1,
+                    ),
+                )
+                result = _result(
+                    evaluate_report(
+                        _report(
+                            title=None,
+                            fields=_fields(
+                                None,
+                                authors=TargetField(
+                                    TargetDestination.AUTHORS,
+                                    TargetFieldState.MISSING,
+                                ),
+                            ),
+                            providers=(
+                                _provider("catalogue", "edition-1", claims),
+                            ),
+                        )
+                    ),
+                    TargetDestination.AUTHORS,
+                )
+                self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
+                self.assertEqual((), result.alternatives)
+
+    def test_equivalent_observations_coalesce_with_a_deterministic_display(self) -> None:
+        providers = (
+            _provider(
+                "hardcover",
+                "edition-1",
+                (
+                    _claim(
+                        "hardcover",
+                        "edition-1",
+                        ClaimKind.TITLE,
+                        "foo bar",
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+                authority="hardcover",
+            ),
+            _provider(
+                "open_library",
+                "edition-2",
+                (
+                    _claim(
+                        "open_library",
+                        "edition-2",
+                        ClaimKind.TITLE,
+                        "Foo  Bar",
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+                authority="open_library",
+            ),
+        )
+        result = _result(
+            evaluate_report(_report(title=None, providers=providers)),
+            TargetDestination.TITLE,
+        )
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+        self.assertEqual(1, len(result.alternatives))
+        self.assertEqual("Foo Bar", result.alternatives[0].value.value)
+        self.assertEqual(2, len(result.alternatives[0].correlations))
+
     def test_ambiguous_local_creator_does_not_become_partial_authors(self) -> None:
         claims = tuple(
             LocalClaim.create(
@@ -1029,6 +1114,84 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
         self.assertEqual((), result.alternatives)
+
+    def test_unusable_series_sequence_withholds_the_source_aggregate(self) -> None:
+        for state in (FieldState.MALFORMED, FieldState.OVERSIZED):
+            with self.subTest(state=state):
+                claims = (
+                    _claim(
+                        "catalogue",
+                        "edition-1",
+                        ClaimKind.SERIES,
+                        "Reading order",
+                        scope=ClaimScope.WORK,
+                    ),
+                    ProviderClaim.create(
+                        provider="catalogue",
+                        candidate="edition-1",
+                        kind=ClaimKind.SERIES_SEQUENCE,
+                        value=None,
+                        state=state,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                        raw_order=1,
+                    ),
+                )
+                result = _result(
+                    evaluate_report(
+                        _report(
+                            title=None,
+                            fields=_fields(
+                                None,
+                                series=TargetField(
+                                    TargetDestination.SERIES,
+                                    TargetFieldState.MISSING,
+                                ),
+                            ),
+                            providers=(
+                                _provider("catalogue", "edition-1", claims),
+                            ),
+                        )
+                    ),
+                    TargetDestination.SERIES,
+                )
+                self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
+                self.assertEqual((), result.alternatives)
+
+    def test_series_preservation_normalizes_names_but_not_sequences(self) -> None:
+        claims = (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.SERIES,
+                "Reading Order",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.SERIES_SEQUENCE,
+                "2",
+                scope=ClaimScope.WORK,
+                order=1,
+            ),
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        series=TargetField(
+                            TargetDestination.SERIES,
+                            TargetFieldState.VALUE,
+                            (TargetSeries("reading   order", "2"),),
+                        ),
+                    ),
+                    providers=(_provider("catalogue", "edition-1", claims),),
+                )
+            ),
+            TargetDestination.SERIES,
+        )
+        self.assertEqual(ProposalOutcome.KEEP, result.outcome)
 
     def test_work_publication_fill_preserves_year_date_consistency(self) -> None:
         evidence = (
