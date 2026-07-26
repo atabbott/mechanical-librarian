@@ -6,7 +6,7 @@ production image, supported release, or write-capable runtime yet.
 
 ## Current checkpoint
 
-The current 0.9 development checkpoint installs a bounded, report-only ebook
+The current 0.10 development checkpoint installs a bounded, evidence-first ebook
 evidence workflow. An operator can:
 
 - refresh and inspect a current catalogue across configured Audiobookshelf book
@@ -42,7 +42,7 @@ are intentionally rejected rather than migrated or interpreted.
 See the [catalogue guide](docs/operations/catalogue.md),
 [foreground batch guide](docs/operations/ebook-evidence-batches.md),
 [metadata report guide](docs/operations/metadata-report.md),
-[ProposalSet guide](docs/operations/proposal-set.md), and
+[ProposalSet guide](docs/operations/proposal-set.md), [review-case guide](docs/operations/review-case.md), and
 [documentation index](docs/README.md).
 
 ## Product direction

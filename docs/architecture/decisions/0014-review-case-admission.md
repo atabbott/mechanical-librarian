@@ -21,3 +21,8 @@ decision, target write, provider call, queue, or background work is introduced.
 Exact replay converges. Exact retrieval derives current or historical status
 without changing a case. ADR-0013 still permits only absent or exact-current
 state: no migration, import, conversion, or alias is supported.
+
+Each target-lineage checkpoint records a deterministic transition identity,
+fixed `review-admission-v1` actor, source report and ProposalSet, and its
+admission outcome. Cases remain `undecided`; this decision grants no F11
+decision, reviewer, queue, or target-write authority.
