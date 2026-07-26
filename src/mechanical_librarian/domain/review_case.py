@@ -16,6 +16,7 @@ REVIEW_ADMISSION_SCHEMA = "review-admission-v1"
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _ADMISSION_STATUS = frozenset({"admitted", "replayed", "superseded", "no_case", "retired", "stale"})
 _ADMISSION_FAILURE = frozenset({"invalid", "incompatible", "currentness", "persistence"})
+_TRANSITION_KIND = frozenset({"admitted", "superseded", "no_case", "retired"})
 MAX_REVIEW_CASE_BYTES = 2_097_152
 
 
@@ -66,6 +67,39 @@ class ReviewAdmissionFailure:
 
     def to_json(self) -> str:
         return _canonical({"code": self.code, "schema_version": self.schema_version})
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewTransition:
+    connection: str
+    library: str
+    item: str
+    checkpoint: int
+    proposal_set_id: str
+    report_id: str
+    kind: str
+    from_review_case_id: str | None
+    to_review_case_id: str | None
+    reason: str
+    actor: str = "review-admission-v1"
+
+    def __post_init__(self) -> None:
+        if (self.checkpoint < 1 or self.actor != "review-admission-v1" or self.kind not in _TRANSITION_KIND or self.reason not in {"actionable", "nonactionable"}):
+            raise ReviewCaseValueError("review transition is invalid")
+        if self.kind in {"admitted", "superseded"} and self.to_review_case_id is None:
+            raise ReviewCaseValueError("review transition is invalid")
+        if self.kind in {"no_case", "retired"} and self.to_review_case_id is not None:
+            raise ReviewCaseValueError("review transition is invalid")
+
+    @property
+    def transition_id(self) -> str:
+        return "review_transition_" + hashlib.sha256(_canonical(self.to_data()).encode("utf-8")).hexdigest()
+
+    def to_data(self) -> dict[str, object]:
+        return {"actor": self.actor, "checkpoint": self.checkpoint, "connection": self.connection, "from_review_case_id": self.from_review_case_id, "item": self.item, "kind": self.kind, "library": self.library, "proposal_set_id": self.proposal_set_id, "reason": self.reason, "report_id": self.report_id, "to_review_case_id": self.to_review_case_id}
+
+    def to_json(self) -> str:
+        return _canonical(self.to_data())
 
 
 @dataclass(frozen=True, slots=True)

@@ -20,7 +20,7 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
-from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase, ReviewCaseValueError, is_actionable
+from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase, ReviewCaseValueError, ReviewTransition, is_actionable
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -675,7 +675,8 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("review proposal is stale")
             if self._connection.execute("SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (*lineage, report.file.identity)).fetchone() != (report.report_id,):
                 raise MetadataReportError("review proposal is stale")
-            prior = self._connection.execute("SELECT proposal_set_id,report_id,review_case_id FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone()
+            prior = self._connection.execute("SELECT proposal_set_id,report_id,review_case_id,checkpoint,outcome FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone()
+            checkpoint = 1 if prior is None else prior[3] + 1
             if prior is not None and prior[0] == proposal_set.proposal_set_id:
                 transition = self._connection.execute("SELECT kind FROM review_case_transitions WHERE connection_name=? AND library_name=? AND item_id=? AND proposal_set_id=? ORDER BY transition_id DESC LIMIT 1", (*lineage, proposal_set.proposal_set_id)).fetchone()
                 if transition is None:
@@ -685,8 +686,10 @@ class SQLiteMetadataReportRepository:
                 self._connection.commit()
                 return _admission_json(transition[0], prior[2])
             if not is_actionable(proposal_set):
-                self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id) VALUES(?,?,?,?,?,NULL) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=NULL", (*lineage, proposal_set.proposal_set_id, report.report_id))
-                self._connection.execute("INSERT INTO review_case_transitions(connection_name,library_name,item_id,from_review_case_id,to_review_case_id,proposal_set_id,kind) VALUES(?,?,?,?,?,?,?)", (*lineage, prior[2] if prior else None, None, proposal_set.proposal_set_id, "retired" if prior is not None else "no_case"))
+                outcome = "retired" if prior is not None else "no_case"
+                transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior[2] if prior else None, None, "nonactionable")
+                self._connection.execute("INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (transition.transition_id, *lineage, checkpoint, transition.actor, transition.from_review_case_id, None, proposal_set.proposal_set_id, report.report_id, outcome, "nonactionable"))
+                self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?, ?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=NULL,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, None, transition.transition_id, checkpoint, outcome))
                 if self._binding is not None:
                     self._binding.require_current()
                 self._connection.commit()
@@ -697,8 +700,10 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError("review case identity conflicts")
             if existing is None:
                 self._connection.execute("INSERT INTO review_cases(review_case_id,proposal_set_id,report_id,document) VALUES(?,?,?,?)", (case.review_case_id, case.proposal_set_id, case.report_id, case.to_json()))
-            self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id) VALUES(?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id", (*lineage, proposal_set.proposal_set_id, report.report_id, case.review_case_id))
-            self._connection.execute("INSERT INTO review_case_transitions(connection_name,library_name,item_id,from_review_case_id,to_review_case_id,proposal_set_id,kind) VALUES(?,?,?,?,?,?,?)", (*lineage, prior[2] if prior else None, case.review_case_id, proposal_set.proposal_set_id, "superseded" if prior else "admitted"))
+            outcome = "superseded" if prior is not None else "admitted"
+            transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior[2] if prior else None, case.review_case_id, "actionable")
+            self._connection.execute("INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (transition.transition_id, *lineage, checkpoint, transition.actor, transition.from_review_case_id, case.review_case_id, proposal_set.proposal_set_id, report.report_id, outcome, "actionable"))
+            self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, case.review_case_id, transition.transition_id, checkpoint, outcome))
             if self._binding is not None:
                 self._binding.require_current()
             self._connection.commit()

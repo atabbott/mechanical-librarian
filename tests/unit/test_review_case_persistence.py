@@ -19,6 +19,7 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase, ReviewCaseValueError
+from mechanical_librarian.domain.review_case import ReviewTransition
 
 
 class ReviewCasePersistenceTests(unittest.TestCase):
@@ -33,6 +34,12 @@ class ReviewCasePersistenceTests(unittest.TestCase):
         self.assertEqual(value, ReviewAdmissionResult.from_json(value.to_json()))
         with self.assertRaises(ReviewCaseValueError):
             ReviewAdmissionResult.from_json('{"status":"no_case"}')
+
+    def test_transition_has_deterministic_identity(self) -> None:
+        transition = ReviewTransition("primary", "ebooks", "item-1", 1, "proposal_set_" + "a" * 64, "report_" + "b" * 64, "no_case", None, None, "nonactionable")
+        self.assertTrue(transition.transition_id.startswith("review_transition_"))
+        with self.assertRaises(ReviewCaseValueError):
+            ReviewTransition("primary", "ebooks", "item-1", 0, "x", "y", "admitted", None, None, "actionable")
     def _actionable(self, report: MetadataReport) -> ProposalSet:
         base = evaluate_report(report)
         alternative = ProposalAlternative.create(
@@ -202,7 +209,9 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
             repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
             case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            repository._connection.execute("PRAGMA foreign_keys=OFF")
             repository._connection.execute("UPDATE current_review_case_lineages SET review_case_id='bad' WHERE item_id='item-1'")
+            repository._connection.execute("PRAGMA foreign_keys=ON")
             with self.assertRaises(Exception): repository.get_review_case(case_id)
             repository.close()
 
