@@ -141,7 +141,11 @@ Only exact ChatGPT subscription status is accepted; API-key status fails.
 The Linux Bubblewrap boundary exposes the pinned runtime and system libraries,
 protected auth store, and one empty private job directory, but no repository,
 database, profile, media, service configuration, or target/provider
-credentials. User configuration and rules are ignored; shell and unified
+credentials. Auth uses the same descriptor-bound boundary and masks
+`/auth/config.toml` with an immutable empty `--perms 0400 --ro-bind-data`
+read-only bind for the entire child lifetime, so a same-UID creation or
+replacement after preflight cannot alter the authentication invocation. Review
+user configuration and rules are ignored; shell and unified
 execution, web search, apps, agents, hooks, memories, remote plugins, update,
 feedback, analytics, history, and approval are disabled by exact configuration.
 Resource, time, file, output, and process counts are bounded. Request, attempt,
