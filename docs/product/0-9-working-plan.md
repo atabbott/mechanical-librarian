@@ -9,7 +9,7 @@ evidence input before #70 activates deterministic field proposals.
 ## Evidence-report increment
 
 One selected current Audiobookshelf EPUB produces or reopens one
-`metadata-report-v7` document that:
+`metadata-report-v8` document that:
 
 - fingerprints the exact state of all 16 Audiobookshelf metadata destinations;
 - keeps the existing exact ISBN-family observation when one usable family

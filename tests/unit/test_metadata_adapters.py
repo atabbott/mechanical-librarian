@@ -83,12 +83,33 @@ def _report(title: str = "Current title") -> MetadataReport:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v7'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v8'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
     connection.execute(metadata_persistence._NO_UPDATE_SQL)
     connection.execute(metadata_persistence._NO_DELETE_SQL)
+
+
+def _create_v7_schema(connection: sqlite3.Connection) -> None:
+    statements = (
+        metadata_persistence._REPORTS_SQL.replace(
+            "= 'metadata-report-v8'", "= 'metadata-report-v7'"
+        ),
+        metadata_persistence._CURRENT_SQL,
+        metadata_persistence._COVER_REFERENCES_SQL,
+        metadata_persistence._COVER_ARTIFACT_INDEX_SQL,
+        metadata_persistence._COVER_PREVIEW_INDEX_SQL,
+        metadata_persistence._PROPOSAL_SETS_SQL,
+        metadata_persistence._NO_UPDATE_SQL,
+        metadata_persistence._NO_DELETE_SQL,
+        metadata_persistence._COVER_NO_UPDATE_SQL,
+        metadata_persistence._COVER_NO_DELETE_SQL,
+        metadata_persistence._PROPOSAL_NO_UPDATE_SQL,
+        metadata_persistence._PROPOSAL_NO_DELETE_SQL,
+    )
+    for statement in statements:
+        connection.execute(statement)
 
 
 def _leave_hot_journal(path: Path) -> Path:
@@ -119,6 +140,10 @@ class MetadataPersistenceTests(unittest.TestCase):
             (
                 "legacy v1",
                 _create_legacy_schema,
+            ),
+            (
+                "previous v7",
+                _create_v7_schema,
             ),
             (
                 "F09k report schema",
@@ -192,6 +217,9 @@ class MetadataPersistenceTests(unittest.TestCase):
 
             connection = sqlite3.connect(path)
             tables = connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
+            schema_version = connection.execute(
+                "SELECT schema_version FROM metadata_reports"
+            ).fetchone()
             rows = connection.execute("SELECT report_id FROM metadata_reports ORDER BY report_id").fetchall()
             current = connection.execute("SELECT report_id FROM current_metadata_reports").fetchone()
             connection.close()
@@ -205,6 +233,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
+            self.assertEqual(schema_version, ("metadata-report-v8",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)

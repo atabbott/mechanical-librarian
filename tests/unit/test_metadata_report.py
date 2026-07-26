@@ -27,6 +27,8 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
@@ -128,6 +130,30 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_rejected_cover_state_round_trips_in_serialized_report(self) -> None:
+        source = CoverSource(
+            cover_source_id(CoverSourceKind.OPEN_LIBRARY, "open_library:edition:OL1M"),
+            CoverSourceKind.OPEN_LIBRARY,
+            CoverSourceState.REJECTED,
+            provenance=CoverProvenance(
+                "open_library",
+                CoverDesignation.EXACT_EDITION,
+                "open-library-work-OL5W",
+                "open-library-edition-OL1M",
+            ),
+        )
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(),
+            cover_sources=(source,),
+        )
+        serialized = report.to_json()
+        self.assertIn('"state":"rejected"', serialized)
+        self.assertEqual(report, MetadataReport.from_json(serialized))
+
     def test_variant_marker_fails_closed_for_abridgement_nouns_and_preserves_token_boundaries(
         self,
     ) -> None:

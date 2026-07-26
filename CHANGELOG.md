@@ -2,13 +2,19 @@
 
 ## Unreleased
 
+- Advance the exact-current report/database contract to `metadata-report-v8`.
+  Existing `metadata-report-v7` databases are rejected under the pre-release
+  clean-schema policy; no migration, import, or conversion is provided.
+- Preserve malformed present Open Library cover IDs as the bounded report
+  terminal state `rejected`, distinct from genuinely absent cover IDs; no cover
+  request or write is attempted.
 - Preserve valid Open Library metadata when optional cover provenance context
   exceeds its fixed bound; retain the bounded cover terminal state as
   `oversized` without widening candidate or cover limits.
 - Fail closed during no-ISBN work fallback when a candidate title or subtitle
   identifies an abridgement or abridgment.
 - Activate immutable explainable ebook proposals. `proposal-set-create`
-  revalidates one exact current `metadata-report-v7` target, media snapshot,
+  revalidates one exact current `metadata-report-v8` target, media snapshot,
   ABS cover, and private artifact authority, then evaluates a fixed
   conservative policy into exactly one closed result for each of the 16
   Audiobookshelf destinations without provider calls. `proposal-set-get`

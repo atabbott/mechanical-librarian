@@ -488,7 +488,7 @@ branch, commit, or pull request.
 ## Delivery checkpoint 0.9.0: explainable ebook proposals
 
 The [0.9 working plan](0-9-working-plan.md) promotes F09o #70 with #344 as its
-sole pre-activation sub-issue. #344 completes `metadata-report-v7`: all 16 ABS
+sole pre-activation sub-issue. #344 completes `metadata-report-v8`: all 16 ABS
 destinations, exact ISBN versus complete-author work lookup, fail-closed work
 qualification, typed taxonomy/first-publication evidence, and the bounded
 provenance-bearing provider cover gallery. Delivered #70 consumes that exact
