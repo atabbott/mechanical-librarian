@@ -24,6 +24,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    CoverSourceState,
     CoverSourceKind,
     cover_source_id,
 )
@@ -660,6 +661,111 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             }
             & {value.kind for value in observation.candidates[0].evidence}
         )
+
+    def test_cover_context_at_its_limit_is_retained(self) -> None:
+        context_isbns = [
+            "9780306406157",
+            "9780306406003",
+            "9780306406010",
+            "9780306406027",
+            "9780306406034",
+            "9780306406041",
+            "9780306406058",
+            "9780306406065",
+        ]
+        edition = {
+            **_edition("/books/OL1M", cover=1),
+            "isbn_10": [],
+            "isbn_13": context_isbns,
+            "publish_date": None,
+            "publishers": [],
+            "publish_places": [],
+            "physical_format": None,
+            "languages": [
+                {"key": f"/languages/{value}"}
+                for value in ("aa", "ab", "ac", "ad", "ae", "af", "ag", "ah")
+            ],
+        }
+        values = {
+            "/search.json": _search("/books/OL1M"),
+            "/books/OL1M.json": edition,
+            "/works/OL5W.json": _work(),
+        }
+
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],
+                    )
+                )
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        observation = provider.observe(_isbn_lookup((_isbn(),)))
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        edition_descriptor = provider.cover_descriptors[0]
+        self.assertIsNone(edition_descriptor.terminal_state)
+        self.assertIsNotNone(edition_descriptor.provenance)
+        self.assertEqual(16, len(edition_descriptor.provenance.context))
+
+    def test_cover_context_overflow_retains_metadata_with_oversized_cover(self) -> None:
+        context_isbns = [
+            "9780306406157",
+            "9780306406003",
+            "9780306406010",
+            "9780306406027",
+            "9780306406034",
+            "9780306406041",
+            "9780306406058",
+            "9780306406065",
+        ]
+        edition = {
+            **_edition("/books/OL1M", cover=1),
+            "isbn_10": [],
+            "isbn_13": context_isbns,
+            "publish_date": None,
+            "languages": [
+                {"key": f"/languages/{value}"}
+                for value in ("aa", "ab", "ac", "ad", "ae", "af", "ag", "ah")
+            ],
+            "publishers": [f"Publisher {value}" for value in range(8)],
+            "publish_places": [],
+            "physical_format": None,
+        }
+        values = {
+            "/search.json": _search("/books/OL1M"),
+            "/books/OL1M.json": edition,
+            "/works/OL5W.json": _work(),
+        }
+
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],
+                    )
+                )
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        observation = provider.observe(_isbn_lookup((_isbn(),)))
+
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual(1, len(observation.candidates))
+        edition_descriptor = provider.cover_descriptors[0]
+        self.assertEqual(CoverSourceState.OVERSIZED, edition_descriptor.terminal_state)
+        self.assertIsNotNone(edition_descriptor.provenance)
+        self.assertEqual((), edition_descriptor.provenance.context)
 
     def test_invalid_required_detail_content_discards_all_candidates(self) -> None:
         requests: list[httpx.Request] = []

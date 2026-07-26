@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Preserve valid Open Library metadata when optional cover provenance context
+  exceeds its fixed bound; retain the bounded cover terminal state as
+  `oversized` without widening candidate or cover limits.
 - Fail closed during no-ISBN work fallback when a candidate title or subtitle
   identifies an abridgement or abridgment.
 - Activate immutable explainable ebook proposals. `proposal-set-create`

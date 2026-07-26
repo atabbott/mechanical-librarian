@@ -20,8 +20,10 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverContext,
     CoverContextField,
     CoverDesignation,
+    CoverEvidenceError,
     CoverProvenance,
     CoverSourceKind,
+    CoverSourceState,
     cover_source_id,
 )
 from mechanical_librarian.domain.evidence_bounds import (
@@ -841,6 +843,17 @@ def _cover_descriptors(
 ) -> tuple[ProviderCoverDescriptor, ...]:
     descriptors: list[ProviderCoverDescriptor] = []
     for edition_key, cover, work_key, _, edition, _ in values:
+        provenance, terminal_state = _cover_provenance(
+            provider,
+            (
+                CoverDesignation.EXACT_EDITION
+                if query_kind is ProviderQueryKind.ISBN
+                else CoverDesignation.RELATED_EDITION
+            ),
+            "open-library-work-" + work_key.removeprefix("/works/"),
+            "open-library-edition-" + edition_key.removeprefix("/books/"),
+            edition,
+        )
         descriptors.append(
             ProviderCoverDescriptor(
                 provider,
@@ -854,21 +867,11 @@ def _cover_descriptors(
                     if cover is None
                     else f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover}-L.jpg?default=false"
                 ),
-                CoverProvenance(
-                    provider,
-                    (
-                        CoverDesignation.EXACT_EDITION
-                        if query_kind is ProviderQueryKind.ISBN
-                        else CoverDesignation.RELATED_EDITION
-                    ),
-                    "open-library-work-" + work_key.removeprefix("/works/"),
-                    "open-library-edition-"
-                    + edition_key.removeprefix("/books/"),
-                    _open_library_cover_context(edition),
-                ),
+                provenance,
                 wait,
                 False,
                 user_agent,
+                terminal_state,
             )
         )
     seen_works: set[str] = set()
@@ -876,6 +879,13 @@ def _cover_descriptors(
         if work_key in seen_works:
             continue
         seen_works.add(work_key)
+        provenance, terminal_state = _cover_provenance(
+            provider,
+            CoverDesignation.WORK,
+            "open-library-work-" + work_key.removeprefix("/works/"),
+            None,
+            work,
+        )
         descriptors.append(
             ProviderCoverDescriptor(
                 provider,
@@ -889,18 +899,47 @@ def _cover_descriptors(
                     if cover is None
                     else f"{OPEN_LIBRARY_COVERS_ORIGIN}/b/id/{cover}-L.jpg?default=false"
                 ),
-                CoverProvenance(
-                    provider,
-                    CoverDesignation.WORK,
-                    "open-library-work-" + work_key.removeprefix("/works/"),
-                    context=_open_library_cover_context(work),
-                ),
+                provenance,
                 wait,
                 False,
                 user_agent,
+                terminal_state,
             )
         )
     return tuple(descriptors)
+
+
+def _cover_provenance(
+    provider: str,
+    designation: CoverDesignation,
+    work_identity: str,
+    edition_identity: str | None,
+    source: dict[str, Any],
+) -> tuple[CoverProvenance, CoverSourceState | None]:
+    context = _open_library_cover_context(source)
+    try:
+        return (
+            CoverProvenance(
+                provider,
+                designation,
+                work_identity,
+                edition_identity,
+                context,
+            ),
+            None,
+        )
+    except CoverEvidenceError:
+        if len(context) <= 16:
+            raise
+        return (
+            CoverProvenance(
+                provider,
+                designation,
+                work_identity,
+                edition_identity,
+            ),
+            CoverSourceState.OVERSIZED,
+        )
 
 
 def _open_library_cover_context(
