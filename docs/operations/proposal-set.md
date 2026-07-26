@@ -36,6 +36,8 @@ contains exactly one ordered result for title, subtitle, authors, narrators,
 series, genres, publishedYear, publishedDate, publisher, description, isbn,
 asin, language, explicit, tags, and cover. Each result is one of
 `needs_review`, `keep`, `defer`, or `ineligible`.
+The canonical document does not serialize its content-addressed ProposalSet ID;
+the ID is derived from those canonical bytes and remains the exact-get input.
 
 Alternatives retain only their bounded candidate value, work/edition/cover
 scope, assessment, stable evidence references, and hashed correlation groups.
@@ -46,7 +48,9 @@ The policy is deliberately conservative:
 
 - populated values need positive preservation evidence for `keep`;
 - populated replacement candidates normally need one unique value from at
-  least two materially independent correlation groups;
+  least two materially independent correlation groups. Connections to the same
+  upstream adapter are one group; Hardcover and Open Library are distinct
+  groups;
 - ordered author and narrator lists, series name/sequence, and date/year remain
   complete and linked rather than being edited piecemeal; untyped contributor
   evidence cannot become a partial narrator list;

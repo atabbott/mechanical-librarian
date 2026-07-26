@@ -8,10 +8,13 @@ from mechanical_librarian.application.proposal_sets import (
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
     TargetFacts,
     default_target_fields,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 
 
 def _report() -> MetadataReport:
@@ -81,6 +84,43 @@ class ProposalApplicationTests(unittest.TestCase):
             CreateProposalSet(repository, lambda _: False).run(report.report_id)
         self.assertNotIn("publish", repository.events)
         self.assertEqual({}, repository.proposals)
+
+    def test_nonvalue_title_states_create_without_current_title_failure(self) -> None:
+        for state in (
+            TargetFieldState.NULL,
+            TargetFieldState.EMPTY,
+            TargetFieldState.UNLOADED,
+            TargetFieldState.MALFORMED,
+            TargetFieldState.OVERSIZED,
+        ):
+            with self.subTest(state=state):
+                fields = tuple(
+                    TargetField(TargetDestination.TITLE, state)
+                    if field.destination is TargetDestination.TITLE
+                    else field
+                    for field in default_target_fields("Title")
+                )
+                report = MetadataReport.create(
+                    target=TargetFacts("primary", "ebooks", "item-1", fields),
+                    file=FileFacts(0, "a" * 64, "b" * 64),
+                    local_claims=(),
+                    local_reasons=("no_opening_claims",),
+                    providers=(),
+                )
+                repository = _Repository(report)
+                serialized = CreateProposalSet(
+                    repository,
+                    lambda value: value.target.current_title is None,
+                ).run(report.report_id)
+                proposal_set = evaluate_report(report)
+                title = next(
+                    result
+                    for result in proposal_set.results
+                    if result.destination is TargetDestination.TITLE
+                )
+                self.assertEqual(proposal_set.to_json(), serialized)
+                self.assertEqual(ProposalOutcome.INELIGIBLE, title.outcome)
+                self.assertIsNone(title.selected_alternative_id)
 
 
 if __name__ == "__main__":

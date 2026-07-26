@@ -110,6 +110,7 @@ alternative. `keep` requires positive preservation evidence and never encodes a
 replacement. The ProposalSet references observations owned by the report
 rather than copying excerpts, provider payloads, cover provenance, URLs, paths,
 or bytes.
+Its ID is derived from its canonical document rather than serialized in it.
 
 The pure evaluator has no configuration, provider, network, persistence, or
 write authority. Its fixed rules preserve ordered complete people lists,
@@ -121,7 +122,8 @@ than becoming a full date. Local work subtitles and exact-edition provider
 subtitles retain their source-appropriate scope. A full date that refines a populated target year
 needs two independent correlation groups. Populated
 subjective fields are not merged or replaced. Multiple values, weak
-correlation, malformed/unloaded target state, role ambiguity, or incomplete
+correlation, duplicate connections to one provider authority, malformed/unloaded
+target state, role ambiguity, or incomplete
 cover evidence defer or become ineligible rather than being silently resolved.
 There is no score, provider priority, ranking, configurable policy, review, or
 decision concept.

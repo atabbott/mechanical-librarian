@@ -498,7 +498,11 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                     pacer=open_library_pacer,
                 )
             raise MetadataReportError("provider configuration is invalid")
-        bindings.append(ProviderBinding(provider.name, provider.enabled, factory))
+        bindings.append(
+            ProviderBinding(
+                provider.name, provider.enabled, factory, provider.adapter
+            )
+        )
     def repository_factory():
         repository = open_repository(database_path, expected_identity=repository_identity)
         try:

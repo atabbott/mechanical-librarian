@@ -212,6 +212,7 @@ class ProviderBinding:
     name: str
     enabled: bool
     factory: Callable[[], MetadataProvider]
+    authority: str | None = None
 
 
 def metadata_lookup(
@@ -269,6 +270,7 @@ def qualify_provider_observation(
             observation.input_references,
             observation.candidates,
             lookup.kind,
+            observation.authority,
         )
     if observation.status is not ProviderStatus.CANDIDATES:
         return ProviderObservation(
@@ -277,6 +279,7 @@ def qualify_provider_observation(
             (),
             (),
             ProviderQueryKind.WORK,
+            observation.authority,
         )
     expected_title = normalize_title(lookup.title or "").casefold()
     expected_authors = tuple(
@@ -335,6 +338,7 @@ def qualify_provider_observation(
             (),
             (),
             ProviderQueryKind.WORK,
+            observation.authority,
         )
     candidate = min(next(iter(qualified.values())), key=lambda value: value.identity)
     allowed_claims = {
@@ -372,6 +376,7 @@ def qualify_provider_observation(
         (),
         (filtered,),
         ProviderQueryKind.WORK,
+        observation.authority,
     )
 
 
@@ -494,7 +499,10 @@ class GenerateMetadataReport:
         for binding in self._providers:
             if not binding.enabled:
                 observations.append(
-                    ProviderObservation(binding.name, ProviderStatus.DISABLED)
+                    ProviderObservation(
+                        binding.name, ProviderStatus.DISABLED,
+                        authority=binding.authority,
+                    )
                 )
                 continue
             try:
@@ -513,12 +521,21 @@ class GenerateMetadataReport:
                 )
             except Exception:
                 observation = ProviderObservation(
-                    binding.name, ProviderStatus.UNAVAILABLE
+                    binding.name, ProviderStatus.UNAVAILABLE,
+                    authority=binding.authority,
                 )
             if observation.provider != binding.name:
                 repository.close()
                 raise MetadataReportError("provider result is invalid")
             observation = qualify_provider_observation(observation, lookup)
+            observation = ProviderObservation(
+                observation.provider,
+                observation.status,
+                observation.input_references,
+                observation.candidates,
+                observation.query_kind,
+                binding.authority,
+            )
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())
             if type(candidate_descriptors) is not tuple or any(

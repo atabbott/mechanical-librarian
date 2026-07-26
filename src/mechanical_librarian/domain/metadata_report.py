@@ -472,7 +472,7 @@ class TargetFacts:
     @property
     def current_title(self) -> str | None:
         title = self.fields[0]
-        if title.state is TargetFieldState.MISSING:
+        if title.state is not TargetFieldState.VALUE:
             return None
         if type(title.value) is not str:
             raise ReportValueError("target title is inconsistent")
@@ -828,12 +828,14 @@ class ProviderObservation:
     input_references: tuple[str, ...] = ()
     candidates: tuple[ProviderCandidate, ...] = ()
     query_kind: ProviderQueryKind = ProviderQueryKind.NONE
+    authority: str | None = None
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
         if (
             type(self.status) is not ProviderStatus
             or type(self.query_kind) is not ProviderQueryKind
+            or self.authority not in {None, "hardcover", "open_library"}
         ):
             raise ReportValueError("provider status is invalid")
         if type(self.input_references) is not tuple or tuple(sorted(set(self.input_references))) != self.input_references or any(
@@ -868,6 +870,7 @@ class ProviderObservation:
             "provider": self.provider,
             "query_kind": self.query_kind.value,
             "status": self.status.value,
+            "authority": self.authority,
         }
 
 
@@ -1547,6 +1550,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
     item = _object(
         value,
         {
+            "authority",
             "candidates",
             "input_references",
             "provider",
@@ -1561,6 +1565,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
         tuple(_strings(item["input_references"])),
         candidates,
         ProviderQueryKind(item["query_kind"]),
+        item["authority"],
     )
 
 

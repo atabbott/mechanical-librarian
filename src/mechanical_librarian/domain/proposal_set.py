@@ -75,7 +75,6 @@ class ProposalScope(StrEnum):
     WORK = "work"
     EDITION = "edition"
     COVER = "cover"
-    MIXED = "mixed"
 
 
 class ProposalAssessment(StrEnum):
@@ -290,15 +289,10 @@ class ProposalSet:
         target_fingerprint: str,
         results: tuple[ProposalResult, ...],
     ) -> Self:
-        data = _proposal_data(
-            "",
-            report_id,
-            target_fingerprint,
-            results,
-        )
-        data.pop("proposal_set_id")
         identity = "proposal_set_" + hashlib.sha256(
-            canonical_json(data).encode("utf-8")
+            canonical_json(
+                _proposal_data(report_id, target_fingerprint, results)
+            ).encode("utf-8")
         ).hexdigest()
         return cls(
             identity,
@@ -308,13 +302,10 @@ class ProposalSet:
         )
 
     def _identity_data(self) -> dict[str, object]:
-        value = self.to_data()
-        value.pop("proposal_set_id")
-        return value
+        return self.to_data()
 
     def to_data(self) -> dict[str, object]:
         return _proposal_data(
-            self.proposal_set_id,
             self.report_id,
             self.target_fingerprint,
             self.results,
@@ -484,7 +475,7 @@ def _observations(
                         _Observed(
                             _value(destination, claim.value),
                             (claim.reference,),
-                            _correlation(f"provider:{provider.provider}"),
+                            _provider_correlation(provider),
                             _scope(claim.scope),
                         )
                     )
@@ -589,7 +580,7 @@ def _list_observations(
                     _Observed(
                         _value(destination, tuple(claim.value for claim in claims)),
                         tuple(claim.reference for claim in claims),
-                        _correlation(f"provider:{provider.provider}"),
+                        _provider_correlation(provider),
                         _scope(scope),
                     )
                 )
@@ -642,7 +633,7 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                     _Observed(
                         ProposalValue(ProposalValueKind.SERIES, observed),
                         tuple(claim.reference for claim in claims),
-                        _correlation(f"provider:{provider.provider}"),
+                        _provider_correlation(provider),
                         ProposalScope.WORK,
                     )
                 )
@@ -714,7 +705,7 @@ def _date_observations(
                             _Observed(
                                 ProposalValue(ProposalValueKind.TEXT, parsed),
                                 (claim.reference,),
-                                _correlation(f"provider:{provider.provider}"),
+                                _provider_correlation(provider),
                                 ProposalScope.EDITION,
                             )
                         )
@@ -737,7 +728,7 @@ def _date_observations(
                                         provider.provider, candidate, evidence.to_data()
                                     ),
                                 ),
-                                _correlation(f"provider:{provider.provider}"),
+                                _provider_correlation(provider),
                                 ProposalScope.WORK,
                             )
                         )
@@ -1042,11 +1033,13 @@ def _alternatives(
     target: TargetField,
     observations: tuple[_Observed, ...],
 ) -> tuple[ProposalAlternative, ...]:
-    grouped: dict[str, list[_Observed]] = {}
+    grouped: dict[tuple[str, ProposalScope], list[_Observed]] = {}
     for value in observations:
-        grouped.setdefault(canonical_json(value.value.to_data()), []).append(value)
+        grouped.setdefault(
+            (canonical_json(value.value.to_data()), value.scope), []
+        ).append(value)
     alternatives: list[ProposalAlternative] = []
-    for key in sorted(grouped):
+    for key in sorted(grouped, key=lambda item: (item[0], item[1].value)):
         values = grouped[key]
         proposal_value = values[0].value
         if target.state is TargetFieldState.VALUE and _matches(
@@ -1057,8 +1050,7 @@ def _alternatives(
             assessment = ProposalAssessment.REPLACES_TARGET
         else:
             assessment = ProposalAssessment.FILLS_EMPTY
-        scopes = {value.scope for value in values}
-        scope = next(iter(scopes)) if len(scopes) == 1 else ProposalScope.MIXED
+        scope = values[0].scope
         alternatives.append(
             ProposalAlternative.create(
                 proposal_value,
@@ -1206,6 +1198,10 @@ def _correlation(value: str) -> str:
     return "correlation_" + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _provider_correlation(provider: ProviderObservation) -> str:
+    return _correlation("provider:" + (provider.authority or "unknown"))
+
+
 def _alternative_id(
     value: ProposalValue,
     assessment: ProposalAssessment,
@@ -1227,14 +1223,12 @@ def _alternative_id(
 
 
 def _proposal_data(
-    proposal_set_id: str,
     report_id: str,
     target_fingerprint: str,
     results: tuple[ProposalResult, ...],
 ) -> dict[str, object]:
     return {
         "policy_version": POLICY_VERSION,
-        "proposal_set_id": proposal_set_id,
         "report": {
             "report_id": report_id,
             "target_fingerprint": target_fingerprint,
@@ -1249,7 +1243,6 @@ def _proposal_from_data(raw: object) -> ProposalSet:
         raw,
         {
             "policy_version",
-            "proposal_set_id",
             "report",
             "results",
             "schema_version",
@@ -1260,14 +1253,17 @@ def _proposal_from_data(raw: object) -> ProposalSet:
         {"report_id", "target_fingerprint"},
     )
     results = tuple(_result_from_data(value) for value in _list(root["results"]))
-    return ProposalSet(
-        root["proposal_set_id"],
-        report["report_id"],
-        report["target_fingerprint"],
-        results,
-        root["schema_version"],
-        root["policy_version"],
+    proposal_set = ProposalSet.create(
+        report_id=report["report_id"],
+        target_fingerprint=report["target_fingerprint"],
+        results=results,
     )
+    if (
+        root["schema_version"] != proposal_set.schema_version
+        or root["policy_version"] != proposal_set.policy_version
+    ):
+        raise ProposalValueError("proposal document is invalid")
+    return proposal_set
 
 
 def _result_from_data(raw: object) -> ProposalResult:

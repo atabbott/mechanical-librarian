@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -26,6 +27,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    comparison_links,
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import (
@@ -83,12 +85,14 @@ def _provider(
     candidate: str,
     claims: tuple[ProviderClaim, ...],
     evidence: tuple[ProviderEvidence, ...] = (),
+    authority: str | None = None,
 ) -> ProviderObservation:
     return ProviderObservation(
         name,
         ProviderStatus.CANDIDATES,
         (),
         (ProviderCandidate(candidate, f"{name}-work", claims, evidence),),
+        authority=authority,
     )
 
 
@@ -156,12 +160,15 @@ class ProposalSetTests(unittest.TestCase):
         self.assertEqual(
             {
                 "policy_version",
-                "proposal_set_id",
                 "report",
                 "results",
                 "schema_version",
             },
             set(proposal_set.to_data()),
+        )
+        self.assertEqual(
+            proposal_set.proposal_set_id,
+            ProposalSet.from_json(proposal_set.to_json()).proposal_set_id,
         )
 
     def test_linked_destinations_retain_fixed_dependencies(self) -> None:
@@ -413,8 +420,12 @@ class ProposalSetTests(unittest.TestCase):
                         scope=ClaimScope.WORK,
                     ),
                 ),
+                authority=authority,
             )
-            for name in ("alpha", "beta")
+            for name, authority in (
+                ("hardcover_primary", "hardcover"),
+                ("open_library_primary", "open_library"),
+            )
         )
         result = _result(
             evaluate_report(_report(providers=providers)),
@@ -422,6 +433,50 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.NEEDS_REVIEW, result.outcome)
         self.assertEqual(2, len(result.alternatives[0].correlations))
+
+    def test_same_adapter_connections_do_not_corroborate_each_other(self) -> None:
+        def provider(name: str, authority: str) -> ProviderObservation:
+            return _provider(
+                name,
+                f"{name}-edition",
+                (
+                    _claim(
+                        name,
+                        f"{name}-edition",
+                        ClaimKind.TITLE,
+                        "Corrected title",
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+                authority=authority,
+            )
+
+        duplicate = _result(
+            evaluate_report(
+                _report(
+                    providers=(
+                        provider("hardcover_one", "hardcover"),
+                        provider("hardcover_two", "hardcover"),
+                    )
+                )
+            ),
+            TargetDestination.TITLE,
+        )
+        self.assertEqual(ProposalOutcome.DEFER, duplicate.outcome)
+        self.assertEqual(1, len(duplicate.alternatives[0].correlations))
+        independent = _result(
+            evaluate_report(
+                _report(
+                    providers=(
+                        provider("hardcover_one", "hardcover"),
+                        provider("open_library_one", "open_library"),
+                    )
+                )
+            ),
+            TargetDestination.TITLE,
+        )
+        self.assertEqual(ProposalOutcome.NEEDS_REVIEW, independent.outcome)
+        self.assertEqual(2, len(independent.alternatives[0].correlations))
 
     def test_local_work_subtitle_and_provider_edition_subtitle_are_admitted(self) -> None:
         local = _local_subtitle("Local work subtitle", ClaimScope.WORK)
@@ -534,6 +589,50 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.INELIGIBLE, provider_result.outcome)
         self.assertEqual((), provider_result.alternatives)
+
+    def test_equal_subtitles_keep_local_and_provider_scopes_separate(self) -> None:
+        local = _local_subtitle("Shared subtitle", ClaimScope.WORK)
+        provisional = _claim(
+            "hardcover",
+            "edition-1",
+            ClaimKind.SUBTITLE,
+            "Shared subtitle",
+            scope=ClaimScope.EDITION,
+        )
+        provider_claim = replace(
+            provisional,
+            links=comparison_links(provisional, (local,)),
+        )
+        result = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        subtitle=TargetField(
+                            TargetDestination.SUBTITLE,
+                            TargetFieldState.MISSING,
+                        )
+                    ),
+                    local_claims=(local,),
+                    providers=(
+                        _provider(
+                            "hardcover",
+                            "edition-1",
+                            (provider_claim,),
+                            authority="hardcover",
+                        ),
+                    ),
+                )
+            ),
+            TargetDestination.SUBTITLE,
+        )
+        self.assertEqual(2, len(result.alternatives))
+        self.assertEqual(
+            {ProposalScope.WORK, ProposalScope.EDITION},
+            {alternative.scope for alternative in result.alternatives},
+        )
+        self.assertTrue(
+            all(len(alternative.correlations) == 1 for alternative in result.alternatives)
+        )
 
     def test_candidates_from_one_provider_are_one_correlation_group(self) -> None:
         candidates = tuple(
@@ -658,7 +757,10 @@ class ProposalSetTests(unittest.TestCase):
                 _report(
                     fields=_fields(published_year=year),
                     providers=(
-                        _provider("alpha", "alpha-edition", (claims[0],)),
+                        _provider(
+                            "alpha", "alpha-edition", (claims[0],),
+                            authority="hardcover",
+                        ),
                     ),
                 )
             ),
@@ -669,13 +771,42 @@ class ProposalSetTests(unittest.TestCase):
             "date_refinement_requires_corroboration",
             one_source.reasons,
         )
+        duplicate_authority = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(published_year=year),
+                    providers=(
+                        _provider(
+                            "alpha", "alpha-edition", (claims[0],),
+                            authority="hardcover",
+                        ),
+                        _provider(
+                            "beta", "beta-edition", (claims[1],),
+                            authority="hardcover",
+                        ),
+                    ),
+                )
+            ),
+            TargetDestination.PUBLISHED_DATE,
+        )
+        self.assertEqual(ProposalOutcome.DEFER, duplicate_authority.outcome)
+        self.assertIn(
+            "date_refinement_requires_corroboration",
+            duplicate_authority.reasons,
+        )
         two_sources = _result(
             evaluate_report(
                 _report(
                     fields=_fields(published_year=year),
                     providers=(
-                        _provider("alpha", "alpha-edition", (claims[0],)),
-                        _provider("beta", "beta-edition", (claims[1],)),
+                        _provider(
+                            "alpha", "alpha-edition", (claims[0],),
+                            authority="hardcover",
+                        ),
+                        _provider(
+                            "beta", "beta-edition", (claims[1],),
+                            authority="open_library",
+                        ),
                     ),
                 )
             ),
