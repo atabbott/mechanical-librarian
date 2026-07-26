@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add exact-current atomic review admission with immutable undecided cases,
+  typed no-case retirement, derived currentness, and clean-schema-only SQLite
+  lineage pointers and transitions.
+
 - Preserve safe Audiobookshelf target values that exceed their existing field
   bounds as `oversized` without letting size hide invalid syntax or unsafe
   content. Non-title failures remain `malformed`; unsafe string titles reject

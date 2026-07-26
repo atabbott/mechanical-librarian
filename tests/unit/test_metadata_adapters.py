@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import cast
@@ -270,10 +271,14 @@ class MetadataPersistenceTests(unittest.TestCase):
             self.assertEqual(
                 tables,
                 [
+                    ("current_metadata_report_lineages",),
                     ("current_metadata_reports",),
+                    ("current_review_case_lineages",),
                     ("metadata_report_cover_references",),
                     ("metadata_reports",),
                     ("proposal_sets",),
+                    ("review_case_transitions",),
+                    ("review_cases",),
                 ],
             )
             self.assertEqual(len(rows), 2)
@@ -650,11 +655,32 @@ class MetadataPersistenceTests(unittest.TestCase):
                 if value.name.startswith(".metadata-report-binding-")
             )
             self.assertEqual(len(aliases), 1)
-            with self.assertRaises(MetadataReportError):
-                open_repository(path)
+            competing_open_started = threading.Event()
+            reopened_after_close: list[bool] = []
+            reopen_failures: list[Exception] = []
+
+            def competing_open() -> None:
+                try:
+                    competing_open_started.set()
+                    competing = open_repository(path)
+                    reopened_after_close.append(True)
+                    competing.close()
+                except Exception as error:
+                    reopen_failures.append(error)
+
+            competitor = threading.Thread(target=competing_open)
+            competitor.start()
+            self.assertTrue(competing_open_started.wait(1))
+            competitor.join(0.05)
+            self.assertTrue(competitor.is_alive())
+            self.assertEqual([], reopened_after_close)
             report = _report()
             repository.publish(report, lambda: True)
             repository.close()
+            competitor.join(2)
+            self.assertFalse(competitor.is_alive())
+            self.assertEqual([], reopen_failures)
+            self.assertEqual([True], reopened_after_close)
             self.assertEqual(
                 tuple(
                     value.name

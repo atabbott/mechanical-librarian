@@ -123,6 +123,12 @@ interval after the last external read is documented; later review admission
 must revalidate freshness. Proposal rows are append-only and have no current
 pointer, review state, lifecycle, or mutation authority.
 
+Review admission rechecks persisted ProposalSet/report and durable current
+pointers inside SQLite. External target/media/artifact currentness remains an
+application preflight. It stores bounded identities and canonical proposal
+projections only; no credentials, reviewer identity, decision, or target-write
+capability is accepted by the command.
+
 The final report database, `catalogue-v1` database, `config-v4`, artifact
 records, and `batch-manifest-v2` each accept only absent or their exact current
 schema. `metadata-report-v1` through `metadata-report-v7`, prior development schemas, extra objects, altered

@@ -1,11 +1,12 @@
 # Documentation
 
-## Current 0.9 runtime
+## Current 0.10 development runtime
 
 - [Current book catalogue](operations/catalogue.md)
 - [Foreground ebook evidence batches](operations/ebook-evidence-batches.md)
 - [Metadata report operation](operations/metadata-report.md)
 - [ProposalSet operation](operations/proposal-set.md)
+- [Review-case admission](operations/review-case.md)
 - [Configuration](reference/configuration.md)
 - [Compatibility and clean-state boundary](reference/compatibility.md)
 - [Architecture overview](architecture/overview.md)
@@ -15,6 +16,7 @@
 - [ADR-0011: isolated EPUB inspector](architecture/decisions/0011-isolated-epub-inspector.md)
 - [ADR-0012: metadata-report activation](architecture/decisions/0012-metadata-report-activation.md)
 - [ADR-0013: pre-release clean schema](architecture/decisions/0013-pre-release-clean-schema.md)
+- [ADR-0014: review-case admission](architecture/decisions/0014-review-case-admission.md)
 
 ## Development
 
@@ -42,5 +44,5 @@
 - [Support](../SUPPORT.md)
 
 Historical product and architecture documents describe future direction, not
-installed 0.9 authority. Current operations and compatibility are defined only
-by the first section above.
+installed 0.10 development authority. Current operations and compatibility are
+defined only by the first section above.

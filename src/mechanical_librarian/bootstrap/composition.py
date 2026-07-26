@@ -70,6 +70,12 @@ from mechanical_librarian.application.proposal_sets import (
     CreateProposalSet,
     GetProposalSet,
 )
+from mechanical_librarian.application.review_cases import (
+    AdmitReviewCase,
+    GetReviewCase,
+    ReviewCaseError,
+)
+from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -612,6 +618,43 @@ def reopen_proposal_set(
         repository.close()
 
 
+def admit_review_case(config_path: Path, database_path: Path, artifact_store_path: Path, proposal_set_id: str) -> str:
+    """Admit one exact current ProposalSet; no decision or target mutation occurs."""
+    configuration = load_configuration_file(config_path)
+    artifacts = CoverArtifactStore(artifact_store_path, create=False)
+    repository = open_repository(database_path, create=False)
+    def current(proposal) -> bool:
+        try:
+            report = MetadataReport.from_json(repository.get(proposal.report_id))
+        except Exception as error:
+            raise ReviewCaseError("persistence") from error
+        connection, library, mount, _ = configuration.select(report.target.connection, report.target.library)
+        if mount is None:
+            return False
+        target = AudiobookshelfItemReader(client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds), endpoint=connection.endpoint, library_id=library.library_id, service_path=mount.service_path, maximum_bytes=configuration.limits.target_response_bytes, timeout_seconds=configuration.limits.timeout_seconds)
+        try:
+            valid = require_report_current(target, _IsolatedEpubInspector(artifacts), mount, configuration.limits, report)
+        except CurrentnessError:
+            return False
+        for source in report.cover_sources:
+            if source.artifact is not None:
+                artifacts.require_artifact(source.artifact)
+        artifacts.require_current()
+        return valid
+    try:
+        return AdmitReviewCase(repository, current).run(proposal_set_id)
+    finally:
+        repository.close()
+
+
+def reopen_review_case(database_path: Path, review_case_id: str) -> str:
+    repository = open_repository(database_path, create=False)
+    try:
+        return GetReviewCase(repository).run(review_case_id)
+    finally:
+        repository.close()
+
+
 def run_catalogue(config_path: Path, database_path: Path, action: str, connection: str | None, library: str | None, library_id: str | None, selector: str | None, limit: int = 100) -> str:
     """Refresh or inspect the one current catalogue through explicit composition."""
     configuration = load_configuration_file(config_path)
@@ -780,12 +823,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         batch_run_runner=run_batch,
         proposal_create_runner=create_proposal_set,
         proposal_get_runner=reopen_proposal_set,
+        review_admit_runner=admit_review_case,
+        review_get_runner=reopen_review_case,
     )
 
 
 __all__ = [
     "create_proposal_set", "inspect_batch", "main", "preview_batch",
     "reopen_cover_preview", "reopen_current_metadata_report",
-    "reopen_metadata_report", "reopen_proposal_set", "run_batch",
+    "reopen_metadata_report", "reopen_proposal_set", "admit_review_case", "reopen_review_case", "run_batch",
     "run_catalogue", "run_metadata_report",
 ]

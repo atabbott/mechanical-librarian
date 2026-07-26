@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -17,6 +19,7 @@ from scripts.qualify_exact_artifact import (
     QualificationFailure,
     _decode_stdout,
     _qualification_environment,
+    _review_probe_epub,
     _run,
     _validate_wheel,
     _verify_installed_payload,
@@ -25,6 +28,51 @@ from scripts.qualify_exact_artifact import (
 
 
 class ExactArtifactQualificationTests(unittest.TestCase):
+    def test_review_probe_epub_has_fixed_member_timestamps(self) -> None:
+        for actionable in (False, True):
+            with self.subTest(actionable=actionable):
+                payload = _review_probe_epub(actionable=actionable)
+                with ZipFile(io.BytesIO(payload)) as archive:
+                    self.assertEqual(
+                        {(2026, 1, 13, 0, 0, 0)},
+                        {member.date_time for member in archive.infolist()},
+                    )
+
+    def test_review_probe_runs_from_owner_only_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            _write_probe(source, "source")
+            source_sha = _commit(source, "source")
+            observed_modes: list[int] = []
+
+            def inspect_run_directory(
+                console: Path,
+                run_directory: Path,
+                environment: dict[str, str],
+            ) -> bytes:
+                del console, environment
+                observed_modes.append(stat.S_IMODE(run_directory.stat().st_mode))
+                return b"review-probe\n"
+
+            with patch.object(
+                qualifier_module,
+                "_qualify_review_case_console",
+                side_effect=inspect_run_directory,
+            ):
+                evidence = qualify_exact_artifact(
+                    source,
+                    source_sha,
+                    distribution="cache-probe",
+                    import_name="cache_probe",
+                    console_script="cache-probe",
+                    console_args=(),
+                    test_args=None,
+                    review_case_probe=True,
+                )
+
+        self.assertEqual([0o700], observed_modes)
+        self.assertTrue(evidence.review_case_lifecycle_executed)
+
     def test_same_version_shared_cache_executes_exact_second_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -101,6 +149,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
         self.assertEqual(second.distribution_version, "0.0.0")
         self.assertFalse(first.full_suite_executed)
         self.assertFalse(partial.full_suite_executed)
+        self.assertFalse(second.review_case_lifecycle_executed)
         self.assertNotEqual(first.source_sha, second.source_sha)
         self.assertNotEqual(first.wheel_sha256, second.wheel_sha256)
         self.assertEqual(

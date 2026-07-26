@@ -496,6 +496,18 @@ class TargetFacts:
             "library": self.library,
         }
 
+    @classmethod
+    def from_data(cls, raw: object) -> Self:
+        """Strictly reconstruct the public target envelope from canonical data."""
+        try:
+            value = _object(raw, {"connection", "fields", "item", "library"})
+            return cls(
+                value["connection"], value["library"], value["item"],
+                tuple(_target_field_from_data(item) for item in _list(value["fields"])),
+            )
+        except (KeyError, TypeError, ValueError, ReportValueError) as error:
+            raise ReportValueError("target facts are invalid") from error
+
 
 def default_target_fields(title: str | None) -> tuple[TargetField, ...]:
     values: list[TargetField] = []

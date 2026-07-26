@@ -21,9 +21,10 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from email.parser import BytesParser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Protocol
-from zipfile import BadZipFile, ZipFile, ZipInfo
+from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile, ZipInfo
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -94,6 +95,7 @@ class ExactArtifactEvidence:
     outside_checkout: bool
     locked_dependencies: bool
     full_suite_executed: bool
+    review_case_lifecycle_executed: bool
     wheel_record_validated: bool
     retained_wheel: bool
     retained_environment: bool
@@ -114,6 +116,7 @@ def qualify_exact_artifact(
     python_executable: str = sys.executable,
     wheel_output: Path | None = None,
     environment_path: Path | None = None,
+    review_case_probe: bool = False,
 ) -> ExactArtifactEvidence:
     """Qualify one clean Git source revision through its exact installed wheel."""
 
@@ -172,7 +175,7 @@ def qualify_exact_artifact(
         _verify_source_checkout(build_source, expected_source_sha)
 
         run_directory = root / "run"
-        run_directory.mkdir()
+        run_directory.mkdir(mode=0o700)
         retained = wheel_output is not None
         if retained:
             output = _new_directory(wheel_output, "retained_workspace_invalid")
@@ -342,17 +345,24 @@ def qualify_exact_artifact(
             source_root
         ) or run_directory.resolve().is_relative_to(build_source):
             raise QualificationFailure("outside_checkout_invalid")
-        completed = _run(
-            (str(console), *console_args),
-            cwd=run_directory,
-            env=runtime_environment,
-            reason="installed_console_failed",
-        )
-        console_stdout_sha256 = hashlib.sha256(completed.stdout).hexdigest()
+        if review_case_probe:
+            console_output = _qualify_review_case_console(
+                console,
+                run_directory,
+                runtime_environment,
+            )
+        else:
+            console_output = _run(
+                (str(console), *console_args),
+                cwd=run_directory,
+                env=runtime_environment,
+                reason="installed_console_failed",
+            ).stdout
+        console_stdout_sha256 = hashlib.sha256(console_output).hexdigest()
         _verify_source_checkout(source_root, expected_source_sha)
 
     return ExactArtifactEvidence(
-        schema="exact-artifact-evidence-v1",
+        schema="exact-artifact-evidence-v2",
         status="passed",
         source_sha=actual_sha,
         wheel_sha256=wheel_sha256,
@@ -368,10 +378,592 @@ def qualify_exact_artifact(
         outside_checkout=True,
         locked_dependencies=True,
         full_suite_executed=test_args == _CANONICAL_TEST_ARGS,
+        review_case_lifecycle_executed=review_case_probe,
         wheel_record_validated=True,
         retained_wheel=retained,
         retained_environment=retained,
     )
+
+
+class _ReviewProbeServer:
+    """Bounded loopback Audiobookshelf surface for installed qualification."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if (
+                    self.path != "/api/items/item-1?expanded=1"
+                    or self.headers.get("Authorization") != "Bearer target-token"
+                ):
+                    self.send_response(403)
+                    self.end_headers()
+                    return
+                body = json.dumps(
+                    owner.payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever,
+            daemon=True,
+        )
+
+    @property
+    def endpoint(self) -> str:
+        return f"http://127.0.0.1:{self._server.server_port}"
+
+    def __enter__(self) -> "_ReviewProbeServer":
+        self._thread.start()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self._server.shutdown()
+        self._thread.join()
+        self._server.server_close()
+
+
+def _qualify_review_case_console(
+    console: Path,
+    run_directory: Path,
+    environment: dict[str, str],
+) -> bytes:
+    """Exercise installed report, proposal, admit, replay, and get commands."""
+
+    media = run_directory / "review-probe-media"
+    artifacts = run_directory / "review-probe-artifacts"
+    media.mkdir(mode=0o700)
+    artifacts.mkdir(mode=0o700)
+    source = media / "book.epub"
+    source.write_bytes(_review_probe_epub(actionable=True))
+    secret = run_directory / "review-probe.secret"
+    secret.write_text("target-token", encoding="ascii")
+    secret.chmod(0o600)
+    database = run_directory / "review-probe.sqlite"
+    configuration = run_directory / "review-probe.json"
+    payload = _review_probe_item(source.stat().st_size)
+
+    with _ReviewProbeServer(payload) as server:
+        configuration.write_text(
+            json.dumps(
+                _review_probe_configuration(server.endpoint, media, secret),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
+        report = _run_console_json(
+            console,
+            (
+                "metadata-report",
+                "--config",
+                str(configuration),
+                "--database",
+                str(database),
+                "--artifact-store",
+                str(artifacts),
+                "--connection",
+                "primary",
+                "--library",
+                "books",
+                "--item",
+                "item-1",
+                "--file-index",
+                "0",
+            ),
+            run_directory,
+            environment,
+        )
+        report_id = _require_identifier(report, "report_id", "report")
+        proposal = _run_console_json(
+            console,
+            (
+                "proposal-set-create",
+                "--config",
+                str(configuration),
+                "--database",
+                str(database),
+                "--artifact-store",
+                str(artifacts),
+                "--report-id",
+                report_id,
+            ),
+            run_directory,
+            environment,
+        )
+        proposal_id = _proposal_identifier(proposal)
+        admission_args = (
+            "review-case-admit",
+            "--config",
+            str(configuration),
+            "--database",
+            str(database),
+            "--artifact-store",
+            str(artifacts),
+            "--proposal-set-id",
+            proposal_id,
+        )
+        admissions: list[dict[str, object]] = []
+        failures: list[BaseException] = []
+
+        def admit() -> None:
+            try:
+                admissions.append(
+                    _run_console_json(
+                        console,
+                        admission_args,
+                        run_directory,
+                        environment,
+                    )
+                )
+            except BaseException as error:
+                failures.append(error)
+
+        if sys.platform.startswith("linux"):
+            workers = [threading.Thread(target=admit) for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join()
+        else:
+            admit()
+            admit()
+        if failures or len(admissions) != 2:
+            raise QualificationFailure("installed_review_case_failed")
+        case_ids = {
+            _require_identifier(value, "review_case_id", "review_case")
+            for value in admissions
+        }
+        if len(case_ids) != 1 or {value.get("status") for value in admissions} != {
+            "admitted",
+            "replayed",
+        }:
+            raise QualificationFailure("installed_review_case_failed")
+        case_id = case_ids.pop()
+        replay = _run_console_json(
+            console,
+            admission_args,
+            run_directory,
+            environment,
+        )
+        opened = _run_console_json(
+            console,
+            (
+                "review-case-get",
+                "--database",
+                str(database),
+                "--review-case-id",
+                case_id,
+            ),
+            run_directory,
+            environment,
+        )
+        case = opened.get("case")
+        if (
+            replay.get("review_case_id") != case_id
+            or replay.get("status") != "replayed"
+            or opened.get("current") is not True
+            or type(case) is not dict
+            or case.get("proposal_set_id") != proposal_id
+            or case.get("report_id") != report_id
+            or case.get("disposition") != "undecided"
+        ):
+            raise QualificationFailure("installed_review_case_failed")
+
+        payload["media"]["metadata"]["title"] = "Changed service title"  # type: ignore[index]
+        successor_report = _run_console_json(
+            console,
+            (
+                "metadata-report",
+                "--config",
+                str(configuration),
+                "--database",
+                str(database),
+                "--artifact-store",
+                str(artifacts),
+                "--connection",
+                "primary",
+                "--library",
+                "books",
+                "--item",
+                "item-1",
+                "--file-index",
+                "0",
+            ),
+            run_directory,
+            environment,
+        )
+        successor_report_id = _require_identifier(
+            successor_report,
+            "report_id",
+            "report",
+        )
+        successor = _run_console_json(
+            console,
+            (
+                "proposal-set-create",
+                "--config",
+                str(configuration),
+                "--database",
+                str(database),
+                "--artifact-store",
+                str(artifacts),
+                "--report-id",
+                successor_report_id,
+            ),
+            run_directory,
+            environment,
+        )
+        successor_id = _proposal_identifier(successor)
+        successor_admission = _run_console_json(
+            console,
+            (
+                "review-case-admit",
+                "--config",
+                str(configuration),
+                "--database",
+                str(database),
+                "--artifact-store",
+                str(artifacts),
+                "--proposal-set-id",
+                successor_id,
+            ),
+            run_directory,
+            environment,
+        )
+        successor_case_id = _require_identifier(
+            successor_admission,
+            "review_case_id",
+            "review_case",
+        )
+        historical = _run_console_json(
+            console,
+            (
+                "review-case-get",
+                "--database",
+                str(database),
+                "--review-case-id",
+                case_id,
+            ),
+            run_directory,
+            environment,
+        )
+        if (
+            successor_admission.get("status") != "superseded"
+            or successor_case_id == case_id
+            or historical.get("current") is not False
+        ):
+            raise QualificationFailure("installed_review_case_failed")
+
+        source.write_bytes(_review_probe_epub(actionable=False))
+        payload["media"]["ebookFile"]["metadata"]["size"] = source.stat().st_size  # type: ignore[index]
+        payload["media"]["metadata"]["title"] = "Fixture Registry Title"  # type: ignore[index]
+        payload["media"]["metadata"]["language"] = "en-GB"  # type: ignore[index]
+        retired_report = _run_console_json(
+            console,
+            (
+                "metadata-report",
+                "--config",
+                str(configuration),
+                "--database",
+                str(database),
+                "--artifact-store",
+                str(artifacts),
+                "--connection",
+                "primary",
+                "--library",
+                "books",
+                "--item",
+                "item-1",
+                "--file-index",
+                "0",
+            ),
+            run_directory,
+            environment,
+        )
+        retired_report_id = _require_identifier(
+            retired_report,
+            "report_id",
+            "report",
+        )
+        retired_proposal = _run_console_json(
+            console,
+            (
+                "proposal-set-create",
+                "--config",
+                str(configuration),
+                "--database",
+                str(database),
+                "--artifact-store",
+                str(artifacts),
+                "--report-id",
+                retired_report_id,
+            ),
+            run_directory,
+            environment,
+        )
+        retired_proposal_id = _proposal_identifier(retired_proposal)
+        retired = _run_console_json(
+            console,
+            (
+                "review-case-admit",
+                "--config",
+                str(configuration),
+                "--database",
+                str(database),
+                "--artifact-store",
+                str(artifacts),
+                "--proposal-set-id",
+                retired_proposal_id,
+            ),
+            run_directory,
+            environment,
+        )
+        successor_opened = _run_console_json(
+            console,
+            (
+                "review-case-get",
+                "--database",
+                str(database),
+                "--review-case-id",
+                successor_case_id,
+            ),
+            run_directory,
+            environment,
+        )
+        if (
+            retired
+            != {
+                "review_case_id": None,
+                "schema_version": "review-admission-v1",
+                "status": "retired",
+            }
+            or successor_opened.get("current") is not False
+        ):
+            raise QualificationFailure("installed_review_case_failed")
+
+    summary = {
+        "concurrent_case_id": case_id,
+        "replay": replay["status"],
+        "retirement": retired["status"],
+        "schema": "installed-review-case-lifecycle-v1",
+        "successor_case_id": successor_case_id,
+    }
+    return json.dumps(summary, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _run_console_json(
+    console: Path,
+    arguments: tuple[str, ...],
+    cwd: Path,
+    environment: dict[str, str],
+) -> dict[str, object]:
+    completed = _run(
+        (str(console), *arguments),
+        cwd=cwd,
+        env=environment,
+        reason="installed_review_case_failed",
+    )
+    try:
+        decoded = completed.stdout.decode("utf-8", "strict")
+        value = json.loads(decoded)
+    except (UnicodeError, ValueError, json.JSONDecodeError):
+        raise QualificationFailure("installed_review_case_failed") from None
+    if (
+        type(value) is not dict
+        or decoded != json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+    ):
+        raise QualificationFailure("installed_review_case_failed")
+    return value
+
+
+def _require_identifier(
+    value: dict[str, object],
+    field: str,
+    prefix: str,
+) -> str:
+    identifier = value.get(field)
+    if (
+        type(identifier) is not str
+        or re.fullmatch(rf"{prefix}_[0-9a-f]{{64}}", identifier) is None
+    ):
+        raise QualificationFailure("installed_review_case_failed")
+    return identifier
+
+
+def _proposal_identifier(value: dict[str, object]) -> str:
+    if (
+        set(value) != {"policy_version", "report", "results", "schema_version"}
+        or value.get("schema_version") != "proposal-set-v1"
+    ):
+        raise QualificationFailure("installed_review_case_failed")
+    serialized = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return "proposal_set_" + hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _review_probe_item(size: int) -> dict[str, object]:
+    return {
+        "id": "item-1",
+        "isInvalid": False,
+        "isMissing": False,
+        "libraryId": "library-id",
+        "media": {
+            "ebookFile": {
+                "ebookFormat": "epub",
+                "ino": "opaque-probe-inode",
+                "metadata": {
+                    "path": "/library/book.epub",
+                    "relPath": "book.epub",
+                    "size": size,
+                },
+            },
+            "metadata": {"title": "Current service title"},
+        },
+        "mediaType": "book",
+    }
+
+
+def _review_probe_configuration(
+    endpoint: str,
+    media: Path,
+    secret: Path,
+) -> dict[str, object]:
+    return {
+        "connections": [
+            {
+                "adapter": "audiobookshelf",
+                "endpoint": endpoint,
+                "name": "primary",
+                "secret_file": str(secret),
+            }
+        ],
+        "libraries": [
+            {
+                "connection": "primary",
+                "library_id": "library-id",
+                "mount": "books",
+                "name": "books",
+                "provider_connections": ["catalogue"],
+            }
+        ],
+        "mounts": [
+            {
+                "container_path": str(media),
+                "name": "books",
+                "read_only": True,
+                "service_path": "/library",
+            }
+        ],
+        "providers": [
+            {
+                "adapter": "hardcover",
+                "cover_enabled": False,
+                "enabled": False,
+                "name": "catalogue",
+                "secret_file": None,
+            }
+        ],
+        "schema_version": "config-v4",
+    }
+
+
+def _review_probe_epub(*, actionable: bool) -> bytes:
+    output = io.BytesIO()
+    container = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<container version="1.0" '
+        'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+        '<rootfiles><rootfile full-path="EPUB/package.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    ).encode("utf-8")
+    manifest = ""
+    spine = ""
+    opening = b""
+    if actionable:
+        manifest = (
+            '<item id="opening" href="opening.xhtml" '
+            'media-type="application/xhtml+xml"/>'
+        )
+        spine = '<itemref idref="opening"/>'
+        opening = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml" '
+            'xmlns:epub="http://www.idpf.org/2007/ops"><head>'
+            '<title>Synthetic opening matter</title></head><body>'
+            '<section epub:type="titlepage"><h1>The Applicable Clock</h1></section>'
+            '<section epub:type="copyright-page"><p>'
+            'ISBN 9780306406157 (eBook), ISBN 9781861972712 (Paperback)'
+            '</p></section></body></html>'
+        ).encode("utf-8")
+    else:
+        manifest = (
+            '<item id="body" href="chapter.xhtml" '
+            'media-type="application/xhtml+xml"/>'
+        )
+        spine = '<itemref idref="body"/>'
+        opening = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml" '
+            'xmlns:epub="http://www.idpf.org/2007/ops"><head>'
+            '<title>Synthetic body matter</title></head><body>'
+            '<main epub:type="bodymatter"><p>'
+            'Opaque synthetic prose without bibliographic claims.'
+            '</p></main></body></html>'
+        ).encode("utf-8")
+    package = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<package xmlns="http://www.idpf.org/2007/opf" '
+        'unique-identifier="pub-id" version="3.0">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        '<dc:identifier id="pub-id">'
+        'urn:uuid:00000000-0000-4000-8000-000000000007'
+        '</dc:identifier><dc:title>Fixture Registry Title</dc:title>'
+        '<dc:language>en-GB</dc:language>'
+        '<meta property="dcterms:modified">2026-01-13T00:00:00Z</meta>'
+        f'</metadata><manifest>{manifest}</manifest><spine>{spine}</spine>'
+        '</package>'
+    ).encode("utf-8")
+    with ZipFile(output, "w", allowZip64=True) as archive:
+        archive.writestr(
+            _review_probe_member("mimetype", ZIP_STORED),
+            b"application/epub+zip",
+        )
+        archive.writestr(
+            _review_probe_member("META-INF/container.xml", ZIP_DEFLATED),
+            container,
+        )
+        archive.writestr(
+            _review_probe_member("EPUB/package.opf", ZIP_DEFLATED),
+            package,
+        )
+        archive.writestr(
+            _review_probe_member(
+                "EPUB/opening.xhtml"
+                if actionable
+                else "EPUB/chapter.xhtml",
+                ZIP_DEFLATED,
+            ),
+            opening,
+        )
+    return output.getvalue()
+
+
+def _review_probe_member(name: str, compression: int) -> ZipInfo:
+    member = ZipInfo(name, (2026, 1, 13, 0, 0, 0))
+    member.compress_type = compression
+    return member
 
 
 def _qualification_environment() -> dict[str, str]:
@@ -1021,13 +1613,14 @@ def main(argv: list[str] | None = None) -> int:
             arguments.source_sha,
             wheel_output=arguments.wheel_output,
             environment_path=arguments.environment,
+            review_case_probe=True,
         )
     except QualificationFailure as error:
         print(
             json.dumps(
                 {
                     "reason": error.reason,
-                    "schema": "exact-artifact-evidence-v1",
+                    "schema": "exact-artifact-evidence-v2",
                     "status": "failed",
                 },
                 sort_keys=True,

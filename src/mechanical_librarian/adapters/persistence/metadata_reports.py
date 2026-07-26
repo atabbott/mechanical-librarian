@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import secrets
 import sqlite3
@@ -18,7 +19,20 @@ from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     ReportValueError,
 )
-from mechanical_librarian.domain.proposal_set import ProposalSet, ProposalValueError
+from mechanical_librarian.domain.proposal_set import (
+    ProposalSet,
+    ProposalValueError,
+    evaluate_report,
+)
+from mechanical_librarian.domain.review_case import (
+    ReviewAdmissionResult,
+    ReviewAdmissionIncompatibleError,
+    ReviewAdmissionStaleError,
+    ReviewCase,
+    ReviewCaseValueError,
+    ReviewTransition,
+    is_actionable,
+)
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -43,6 +57,12 @@ _CURRENT_SQL = (
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
     "PRIMARY KEY (connection_name, library_name, item_id, file_identity))"
 )
+_CURRENT_LINEAGE_SQL = (
+    "CREATE TABLE current_metadata_report_lineages ("
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "PRIMARY KEY (connection_name, library_name, item_id))"
+)
 _COVER_REFERENCES_SQL = (
     "CREATE TABLE metadata_report_cover_references ("
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
@@ -65,6 +85,29 @@ _PROPOSAL_SETS_SQL = (
     "proposal_set_id TEXT PRIMARY KEY NOT NULL CHECK (proposal_set_id GLOB 'proposal_set_[0-9a-f]*' AND length(proposal_set_id) = 77), "
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
+)
+_REVIEW_CASES_SQL = (
+    "CREATE TABLE review_cases ("
+    "review_case_id TEXT PRIMARY KEY NOT NULL CHECK (review_case_id GLOB 'review_case_[0-9a-f]*' AND length(review_case_id)=76), "
+    "proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "document TEXT NOT NULL CHECK (typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
+)
+_REVIEW_POINTERS_SQL = (
+    "CREATE TABLE current_review_case_lineages ("
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
+    "proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "transition_id TEXT NOT NULL REFERENCES review_case_transitions(transition_id), checkpoint INTEGER NOT NULL CHECK(checkpoint > 0), outcome TEXT NOT NULL CHECK(outcome IN ('admitted','superseded','no_case','retired')), "
+    "CHECK ((outcome IN ('admitted','superseded') AND review_case_id IS NOT NULL) OR (outcome IN ('no_case','retired') AND review_case_id IS NULL)), "
+    "PRIMARY KEY (connection_name,library_name,item_id))"
+)
+_REVIEW_TRANSITIONS_SQL = (
+    "CREATE TABLE review_case_transitions ("
+    "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'review_transition_[0-9a-f]*' AND length(transition_id)=82), "
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, checkpoint INTEGER NOT NULL CHECK(checkpoint > 0), actor TEXT NOT NULL CHECK(actor='review-admission-v1'), "
+    "from_review_case_id TEXT REFERENCES review_cases(review_case_id), to_review_case_id TEXT REFERENCES review_cases(review_case_id), proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), kind TEXT NOT NULL CHECK(kind IN ('admitted','superseded','no_case','retired')), reason TEXT NOT NULL CHECK(reason IN ('actionable','nonactionable')), "
+    "CHECK ((kind IN ('admitted','superseded') AND reason='actionable' AND to_review_case_id IS NOT NULL) OR (kind IN ('no_case','retired') AND reason='nonactionable' AND to_review_case_id IS NULL)), "
+    "CHECK ((kind IN ('admitted','no_case') AND from_review_case_id IS NULL) OR (kind IN ('superseded','retired') AND from_review_case_id IS NOT NULL)), "
+    "UNIQUE(connection_name,library_name,item_id,checkpoint) )"
 )
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
@@ -90,6 +133,10 @@ _PROPOSAL_NO_DELETE_SQL = (
     "CREATE TRIGGER proposal_sets_no_delete BEFORE DELETE ON proposal_sets "
     "BEGIN SELECT RAISE(ABORT, 'proposal sets are append-only'); END"
 )
+_REVIEW_NO_UPDATE_SQL = "CREATE TRIGGER review_cases_no_update BEFORE UPDATE ON review_cases BEGIN SELECT RAISE(ABORT, 'review cases are append-only'); END"
+_REVIEW_NO_DELETE_SQL = "CREATE TRIGGER review_cases_no_delete BEFORE DELETE ON review_cases BEGIN SELECT RAISE(ABORT, 'review cases are append-only'); END"
+_REVIEW_TRANSITION_NO_UPDATE_SQL = "CREATE TRIGGER review_case_transitions_no_update BEFORE UPDATE ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'review transitions are append-only'); END"
+_REVIEW_TRANSITION_NO_DELETE_SQL = "CREATE TRIGGER review_case_transitions_no_delete BEFORE DELETE ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'review transitions are append-only'); END"
 
 
 class _LinuxDirectoryChain:
@@ -275,7 +322,7 @@ class _LinuxDatabaseBinding:
             _require_owner_only_database_parent(
                 os.fstat(parent_descriptor)
             )
-            fcntl.flock(parent_descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(parent_descriptor, fcntl.LOCK_EX)
             locked = True
             expected = os.fstat(descriptor)
             expected_identity = (expected.st_dev, expected.st_ino)
@@ -507,6 +554,11 @@ class SQLiteMetadataReportRepository:
                 "ON CONFLICT(connection_name,library_name,item_id,file_identity) DO UPDATE SET report_id=excluded.report_id",
                 (*values[1:5], report.report_id),
             )
+            self._connection.execute(
+                "INSERT INTO current_metadata_report_lineages(connection_name,library_name,item_id,report_id) VALUES(?,?,?,?) "
+                "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET report_id=excluded.report_id",
+                (report.target.connection, report.target.library, report.target.item, report.report_id),
+            )
             if self._binding is not None:
                 self._binding.require_current()
             self._connection.commit()
@@ -618,6 +670,191 @@ class SQLiteMetadataReportRepository:
             raise
         except (sqlite3.Error, ProposalValueError, UnicodeError) as error:
             raise MetadataReportError("persisted proposal is invalid") from error
+
+    def admit_review_case(self, proposal_set: ProposalSet) -> str:
+        """Atomically bind one exact current ProposalSet to its target lineage."""
+        if type(proposal_set) is not ProposalSet:
+            raise MetadataReportError("review admission failed")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            if self._binding is not None:
+                self._binding.require_current()
+            proposal_row = self._connection.execute("SELECT proposal_set_id,report_id,document FROM proposal_sets WHERE proposal_set_id=?", (proposal_set.proposal_set_id,)).fetchone()
+            if proposal_row is None or _validate_proposal_row(proposal_row) != proposal_set.to_json():
+                raise MetadataReportError("review proposal is unavailable")
+            report_row = self._connection.execute("SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?", (proposal_set.report_id,)).fetchone()
+            if report_row is None:
+                raise MetadataReportError("review report is unavailable")
+            report = MetadataReport.from_json(_validate_report_row(report_row))
+            lineage = (report.target.connection, report.target.library, report.target.item)
+            if (
+                proposal_set.report_id != report.report_id
+                or proposal_set.target_fingerprint != report.target.fingerprint
+                or proposal_set.to_json() != evaluate_report(report).to_json()
+            ):
+                raise ReviewAdmissionIncompatibleError
+            if self._connection.execute("SELECT report_id FROM current_metadata_report_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone() != (report.report_id,):
+                raise ReviewAdmissionStaleError
+            if self._connection.execute("SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (*lineage, report.file.identity)).fetchone() != (report.report_id,):
+                raise ReviewAdmissionStaleError
+            validated = self._validated_review_pointer(lineage)
+            prior = (
+                None
+                if validated is None
+                else (
+                    validated[0],
+                    validated[1],
+                    validated[2],
+                    validated[4],
+                    validated[5],
+                )
+            )
+            prior_case_id = None if prior is None else prior[2]
+            checkpoint = 1 if prior is None else prior[3] + 1
+            if prior is not None and prior[0] == proposal_set.proposal_set_id:
+                if self._binding is not None:
+                    self._binding.require_current()
+                self._connection.commit()
+                replay_status = (
+                    "replayed"
+                    if validated[5] in {"admitted", "superseded"}
+                    else validated[5]
+                )
+                return _admission_json(replay_status, validated[2])
+            if not is_actionable(proposal_set):
+                outcome = "retired" if prior_case_id is not None else "no_case"
+                transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior_case_id, None, "nonactionable")
+                self._connection.execute("INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (transition.transition_id, *lineage, checkpoint, transition.actor, transition.from_review_case_id, None, proposal_set.proposal_set_id, report.report_id, outcome, "nonactionable"))
+                self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?, ?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=NULL,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, None, transition.transition_id, checkpoint, outcome))
+                if self._binding is not None:
+                    self._binding.require_current()
+                self._connection.commit()
+                return _admission_json(outcome, None)
+            case = ReviewCase.create(proposal_set, report)
+            existing = self._connection.execute("SELECT document FROM review_cases WHERE review_case_id=?", (case.review_case_id,)).fetchone()
+            if existing is not None and existing != (case.to_json(),):
+                raise MetadataReportError("review case identity conflicts")
+            if existing is None:
+                self._connection.execute("INSERT INTO review_cases(review_case_id,proposal_set_id,report_id,document) VALUES(?,?,?,?)", (case.review_case_id, case.proposal_set_id, case.report_id, case.to_json()))
+            outcome = "superseded" if prior_case_id is not None else "admitted"
+            transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior_case_id, case.review_case_id, "actionable")
+            self._connection.execute("INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (transition.transition_id, *lineage, checkpoint, transition.actor, transition.from_review_case_id, case.review_case_id, proposal_set.proposal_set_id, report.report_id, outcome, "actionable"))
+            self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, case.review_case_id, transition.transition_id, checkpoint, outcome))
+            if self._binding is not None:
+                self._binding.require_current()
+            self._connection.commit()
+            return _admission_json(outcome, case.review_case_id)
+        except (
+            MetadataReportError,
+            ReviewAdmissionIncompatibleError,
+            ReviewAdmissionStaleError,
+        ):
+            self._connection.rollback(); raise
+        except (sqlite3.Error, ProposalValueError, ReportValueError, ReviewCaseValueError) as error:
+            self._connection.rollback(); raise MetadataReportError("review admission failed") from error
+
+    def get_review_case(self, review_case_id: str) -> str:
+        try:
+            row = self._connection.execute("SELECT review_case_id,proposal_set_id,report_id,document FROM review_cases WHERE review_case_id=?", (review_case_id,)).fetchone()
+            if row is None or len(row) != 4:
+                raise MetadataReportError("review case is unavailable")
+            case = ReviewCase.from_json(row[3])
+            if (case.review_case_id, case.proposal_set_id, case.report_id) != row[:3]:
+                raise MetadataReportError("review case is invalid")
+            self._validated_review_pointer((case.target["connection"], case.target["library"], case.target["item"]))
+            proposal_row = self._connection.execute(
+                "SELECT proposal_set_id,report_id,document FROM proposal_sets WHERE proposal_set_id=?",
+                (case.proposal_set_id,),
+            ).fetchone()
+            report_row = self._connection.execute(
+                "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
+                (case.report_id,),
+            ).fetchone()
+            if proposal_row is None or report_row is None:
+                raise MetadataReportError("review case source is unavailable")
+            proposal = ProposalSet.from_json(_validate_proposal_row(proposal_row))
+            report = MetadataReport.from_json(_validate_report_row(report_row))
+            if (
+                proposal.proposal_set_id != case.proposal_set_id
+                or proposal.report_id != case.report_id
+                or proposal.target_fingerprint != case.target_fingerprint
+                or proposal.to_json() != evaluate_report(report).to_json()
+                or report.target.to_data() != case.target
+                or report.target.fingerprint != case.target_fingerprint
+                or report.file.identity != case.file_identity
+                or tuple(value.to_data() for value in proposal.results) != case.results
+            ):
+                raise MetadataReportError("review case source disagrees")
+            current = self._connection.execute("SELECT review_case_id FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", (case.target["connection"], case.target["library"], case.target["item"])).fetchone()
+            if current is not None and current[0] is not None and (
+                type(current[0]) is not str
+                or not current[0].startswith("review_case_")
+            ):
+                raise MetadataReportError("review case pointer is invalid")
+            source_current = self._connection.execute("SELECT report_id FROM current_metadata_report_lineages WHERE connection_name=? AND library_name=? AND item_id=?", (case.target["connection"], case.target["library"], case.target["item"])).fetchone()
+            file_current = self._connection.execute("SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (case.target["connection"], case.target["library"], case.target["item"], case.file_identity)).fetchone()
+            return _canonical_json({"case": case.to_data(), "current": current == (case.review_case_id,) and source_current == (case.report_id,) and file_current == (case.report_id,), "schema_version": "review-case-get-v1"})
+        except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
+            raise MetadataReportError("review case is unavailable") from error
+
+    def _validated_review_pointer(self, lineage: tuple[str, str, str]) -> tuple[object, ...] | None:
+        pointer = self._connection.execute("SELECT proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone()
+        if pointer is None:
+            return None
+        proposal_id, report_id, case_id, transition_id, checkpoint, outcome = pointer
+        transition = self._connection.execute("SELECT connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason FROM review_case_transitions WHERE transition_id=?", (transition_id,)).fetchone()
+        if transition is None:
+            raise MetadataReportError("review pointer is invalid")
+        try:
+            value = ReviewTransition(
+                transition[0],
+                transition[1],
+                transition[2],
+                transition[3],
+                transition[7],
+                transition[8],
+                transition[9],
+                transition[5],
+                transition[6],
+                transition[10],
+                transition[4],
+            )
+        except (TypeError, ReviewCaseValueError) as error:
+            raise MetadataReportError("review pointer is invalid") from error
+        if (
+            value.transition_id != transition_id
+            or transition[:4] != (*lineage, checkpoint)
+            or (value.proposal_set_id, value.report_id, value.kind)
+            != (proposal_id, report_id, outcome)
+            or value.to_review_case_id != case_id
+        ):
+            raise MetadataReportError("review pointer is invalid")
+        if case_id is not None:
+            case_source = self._connection.execute(
+                "SELECT proposal_set_id,report_id,document FROM review_cases WHERE review_case_id=?",
+                (case_id,),
+            ).fetchone()
+            if case_source is None:
+                raise MetadataReportError("review pointer is invalid")
+            try:
+                case = ReviewCase.from_json(case_source[2])
+            except (TypeError, ReviewCaseValueError) as error:
+                raise MetadataReportError("review pointer is invalid") from error
+            if (
+                case_source[:2] != (proposal_id, report_id)
+                or (case.review_case_id, case.proposal_set_id, case.report_id)
+                != (case_id, proposal_id, report_id)
+                or (
+                    case.target["connection"],
+                    case.target["library"],
+                    case.target["item"],
+                )
+                != lineage
+            ):
+                raise MetadataReportError("review pointer is invalid")
+        elif outcome not in {"no_case", "retired"}:
+            raise MetadataReportError("review pointer is invalid")
+        return pointer
 
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
         document = self.current_optional(connection, library, item, file_identity)
@@ -783,15 +1020,23 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(_REPORTS_SQL)
             connection.execute(_CURRENT_SQL)
+            connection.execute(_CURRENT_LINEAGE_SQL)
             connection.execute(_COVER_REFERENCES_SQL)
             connection.execute(_COVER_ARTIFACT_INDEX_SQL)
             connection.execute(_COVER_PREVIEW_INDEX_SQL)
             connection.execute(_PROPOSAL_SETS_SQL)
+            connection.execute(_REVIEW_CASES_SQL)
+            connection.execute(_REVIEW_POINTERS_SQL)
+            connection.execute(_REVIEW_TRANSITIONS_SQL)
             connection.execute(_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_UPDATE_SQL)
             connection.execute(_COVER_NO_DELETE_SQL)
             connection.execute(_PROPOSAL_NO_UPDATE_SQL)
             connection.execute(_PROPOSAL_NO_DELETE_SQL)
+            connection.execute(_REVIEW_NO_UPDATE_SQL)
+            connection.execute(_REVIEW_NO_DELETE_SQL)
+            connection.execute(_REVIEW_TRANSITION_NO_UPDATE_SQL)
+            connection.execute(_REVIEW_TRANSITION_NO_DELETE_SQL)
             connection.execute(_NO_DELETE_SQL)
             connection.commit()
         _validate_schema(connection)
@@ -1056,25 +1301,46 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
     objects = connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
     expected_objects = sorted((
         ("index", "sqlite_autoindex_current_metadata_reports_1", None),
+        ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
+        ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
         ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
         ("index", "metadata_report_cover_references_artifact_id", _COVER_ARTIFACT_INDEX_SQL),
         ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
         ("index", "sqlite_autoindex_metadata_reports_1", None),
         ("index", "sqlite_autoindex_metadata_reports_2", None),
         ("index", "sqlite_autoindex_proposal_sets_1", None),
+        ("index", "sqlite_autoindex_review_cases_1", None),
+        ("index", "sqlite_autoindex_review_case_transitions_1", None),
+        ("index", "sqlite_autoindex_review_case_transitions_2", None),
         ("table", "current_metadata_reports", _CURRENT_SQL),
+        ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
+        ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
         ("table", "metadata_reports", _REPORTS_SQL),
         ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
+        ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
+        ("table", "review_cases", _REVIEW_CASES_SQL),
         ("trigger", "metadata_report_cover_references_no_delete", _COVER_NO_DELETE_SQL),
         ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL),
         ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
         ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
         ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
         ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
+        ("trigger", "review_case_transitions_no_delete", _REVIEW_TRANSITION_NO_DELETE_SQL),
+        ("trigger", "review_case_transitions_no_update", _REVIEW_TRANSITION_NO_UPDATE_SQL),
+        ("trigger", "review_cases_no_delete", _REVIEW_NO_DELETE_SQL),
+        ("trigger", "review_cases_no_update", _REVIEW_NO_UPDATE_SQL),
     ))
     if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _admission_json(status: str, review_case_id: str | None) -> str:
+    return ReviewAdmissionResult(status, review_case_id).to_json()
 
 
 def _validate_report_row(row: tuple[object, ...]) -> str:

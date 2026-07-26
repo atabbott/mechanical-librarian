@@ -21,7 +21,10 @@ Its path-free JSON evidence binds the source SHA, wheel SHA-256, payload
 SHA-256, and console-output SHA-256. A dirty or different source, ambiguous or
 changed wheel, invalid archive/record, reused destination, unlocked dependency,
 origin mismatch, payload mismatch, stale test install, or non-installed
-import/command fails closed.
+import/command fails closed. The installed console proof performs exact-ID
+report and ProposalSet creation, concurrent admission, replay, restart-backed
+get, successor/historical projection, and nonactionable retirement against a
+disposable loopback target and synthetic EPUB.
 
 The suite covers:
 
@@ -44,9 +47,10 @@ The suite covers:
   provider-order/contact privacy, and the explicit five-item batch envelope;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
-- exact four-table DELETE-mode report/ProposalSet schema, side-effect-free existing-file
+- exact clean-state DELETE-mode report/ProposalSet/ReviewCase schema, side-effect-free existing-file
   validation, no-follow connection binding, Linux owner-directory lock and
-  root-to-parent chain validation, verified private-alias binding, raced
+  competing-process serialization, root-to-parent chain validation, verified
+  private-alias binding, raced
   configured-sidecar isolation, final-precommit parent replacement rollback,
   alias cleanup, append-only history, replay, scope-checked successor
   pointers, restart readback, corrupt-row rejection, and rollback;
@@ -55,7 +59,8 @@ The suite covers:
   applicability, year-only/date consistency, populated subjective-field
   closure, complete cover-gallery selection, deterministic ProposalSet replay,
   stale-report no-insert, transaction-local report/current-pointer recheck,
-  and zero provider calls during proposal creation;
+  exact evaluator recomputation before review admission, synthetic ProposalSet
+  rejection, and zero provider calls during proposal creation;
 - rejection before unauthorized parser/provider/publication activity,
   transaction-bound currentness drift, exact-byte snapshot binding, title
   privacy rejection, redaction, and absence of product/media writes; and
@@ -64,7 +69,9 @@ The suite covers:
 
 The exact-artifact suite includes the activation demonstration and exercises the
 CLI against a disposable loopback target, synthetic media, private secrets, and
-an absent database. No live library or provider is used in development or CI.
+an absent database. Every synthetic EPUB member has a fixed timestamp so the
+probe identity does not depend on the qualification wall clock. No live library
+or provider is used in development or CI.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product
