@@ -98,9 +98,30 @@ known pre-dispatch failure are terminal; the command rejects them without
 starting another reviewer.
 
 Executable paths are opened, verified, and held by descriptor through version,
-auth, and sandbox invocation. Authentication also ignores auth-store
-configuration and supplies exact ChatGPT/file-store/update/telemetry
-constraints, so a local `config.toml` cannot widen the auth invocation.
+auth, and sandbox invocation. Authentication runs through the same pinned
+Bubblewrap boundary as review. Its private auth store is mounted at `/auth`,
+but `/auth/config.toml` is an immutable empty regular file from Bubblewrap's
+`--perms 0400 --ro-bind-data` bind for the whole child lifetime. This remains
+effective if the same UID creates or replaces the underlying file after
+preflight. Auth therefore uses only supported
+`login --device-auth`, `login status`, and `logout` command scopes plus exact
+ChatGPT/file-store/update/telemetry constraints; it never relies on the
+execution-only `--ignore-user-config` option.
+
+During maintainer qualification, invoke the wrapped real-artifact parser probe
+with the already provisioned exact Python environment. Provision the pinned
+Codex CLI and Bubblewrap tuple before freezing the profile; the probe never
+installs, syncs, or upgrades runtime artifacts. It suppresses raw process
+streams, runs only help shapes (no credential operation, network request,
+prompt, packet, or model invocation), adds a probe-only Bubblewrap network
+namespace, and emits only aggregate value-free evidence. It derives a temporary
+empty auth store under the private job root, so it neither opens nor mounts live
+credentials. Normal device auth retains its network access.
+
+```sh
+python scripts/qualify_reviewer_cli_parser.py \
+  --qualification-profile /absolute/private/profile.json
+```
 
 Failures are the value-free codes `runtime`, `setup`, `auth`, `profile`,
 `timeout`, `cancel`, `output`, or `currentness`. Raw stdout, stderr, reasoning,

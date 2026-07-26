@@ -198,47 +198,57 @@ class CodexShadowReviewer:
         with _bound_artifact(
             self._profile.codex_path,
             self._profile.identity.executable_sha256,
-        ) as codex:
+        ) as codex, _bound_artifact(
+            self._profile.sandbox_path,
+            self._profile.identity.sandbox_sha256,
+        ) as sandbox:
             with self._auth_lock():
-                self._verify_codex(codex)
-                command = self._auth_command(codex)
-                if action == "start":
-                    completed = self._run_auth(
-                        [*command, "login", "--device-auth"],
-                        codex,
-                        interactive=True,
+                with self._empty_auth_config() as empty_config:
+                    self._verify_codex(codex)
+                    command = self._auth_command(codex, sandbox, empty_config)
+                    if action == "start":
+                        completed = self._run_auth(
+                            [*command, "login", "--device-auth"],
+                            codex,
+                            sandbox,
+                            empty_config,
+                            interactive=True,
+                        )
+                        if completed.returncode != 0:
+                            raise ShadowReviewerError("auth")
+                        return canonical_json(
+                            {
+                                "mode": QUALIFICATION_MODE,
+                                "schema_version": "reviewer-auth-v1",
+                                "status": "started",
+                            }
+                        )
+                    if action == "logout":
+                        self._require_chatgpt_auth(
+                            command, codex, sandbox, empty_config
+                        )
+                        completed = self._run_auth(
+                            [*command, "logout"], codex, sandbox, empty_config
+                        )
+                        if completed.returncode != 0:
+                            raise ShadowReviewerError("auth")
+                        return canonical_json(
+                            {
+                                "mode": QUALIFICATION_MODE,
+                                "schema_version": "reviewer-auth-v1",
+                                "status": "logged_out",
+                            }
+                        )
+                    self._require_chatgpt_auth(
+                        command, codex, sandbox, empty_config
                     )
-                    if completed.returncode != 0:
-                        raise ShadowReviewerError("auth")
                     return canonical_json(
                         {
                             "mode": QUALIFICATION_MODE,
                             "schema_version": "reviewer-auth-v1",
-                            "status": "started",
+                            "status": "chatgpt",
                         }
                     )
-                if action == "logout":
-                    self._require_chatgpt_auth(command, codex)
-                    completed = self._run_auth(
-                        [*command, "logout"], codex
-                    )
-                    if completed.returncode != 0:
-                        raise ShadowReviewerError("auth")
-                    return canonical_json(
-                        {
-                            "mode": QUALIFICATION_MODE,
-                            "schema_version": "reviewer-auth-v1",
-                            "status": "logged_out",
-                        }
-                    )
-                self._require_chatgpt_auth(command, codex)
-                return canonical_json(
-                    {
-                        "mode": QUALIFICATION_MODE,
-                        "schema_version": "reviewer-auth-v1",
-                        "status": "chatgpt",
-                    }
-                )
 
     def run(
         self,
@@ -261,8 +271,14 @@ class CodexShadowReviewer:
             ) as sandbox,
         ):
             with self._auth_lock():
-                self._verify_codex(codex)
-                self._require_chatgpt_auth(self._auth_command(codex), codex)
+                with self._empty_auth_config() as empty_config:
+                    self._verify_codex(codex)
+                    self._require_chatgpt_auth(
+                        self._auth_command(codex, sandbox, empty_config),
+                        codex,
+                        sandbox,
+                        empty_config,
+                    )
                 try:
                     job_path = Path(
                         tempfile.mkdtemp(
@@ -348,10 +364,18 @@ class CodexShadowReviewer:
             raise ShadowReviewerError("setup")
 
     def _require_chatgpt_auth(
-        self, command: list[str], codex: "_BoundArtifact"
+        self,
+        command: list[str],
+        codex: "_BoundArtifact",
+        sandbox: "_BoundArtifact",
+        empty_config: int,
     ) -> None:
         completed = self._run_auth(
-            [*command, "login", "status"], codex, timeout=30
+            [*command, "login", "status"],
+            codex,
+            sandbox,
+            empty_config,
+            timeout=30,
         )
         if (
             completed.returncode != 0
@@ -360,8 +384,74 @@ class CodexShadowReviewer:
         ):
             raise ShadowReviewerError("auth")
 
-    def _auth_command(self, codex: "_BoundArtifact") -> list[str]:
-        command = [codex.invocation_path, "--ignore-user-config"]
+    def _auth_command(
+        self,
+        codex: "_BoundArtifact",
+        sandbox: "_BoundArtifact",
+        empty_config: int,
+    ) -> list[str]:
+        command = [
+            sandbox.invocation_path,
+            "--die-with-parent",
+            "--unshare-user",
+            "--unshare-pid",
+            "--unshare-ipc",
+            "--unshare-uts",
+            "--unshare-cgroup",
+            "--clearenv",
+            "--dir",
+            "/runtime",
+            "--dir",
+            "/auth",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--tmpfs",
+            "/tmp",
+        ]
+        for system_path in (
+            "/usr",
+            "/lib",
+            "/lib64",
+            "/etc/ssl/certs",
+            "/etc/ca-certificates",
+            "/etc/resolv.conf",
+            "/etc/hosts",
+            "/etc/nsswitch.conf",
+        ):
+            if Path(system_path).exists():
+                command.extend(("--ro-bind", system_path, system_path))
+        command.extend(
+            (
+                "--ro-bind",
+                codex.invocation_path,
+                "/runtime/codex",
+                "--bind",
+                str(self._profile.auth_store_path),
+                "/auth",
+                "--perms",
+                "0400",
+                "--ro-bind-data",
+                str(empty_config),
+                "/auth/config.toml",
+                "--chdir",
+                "/auth",
+                "--setenv",
+                "HOME",
+                "/auth",
+                "--setenv",
+                "CODEX_HOME",
+                "/auth",
+                "--setenv",
+                "LANG",
+                "C.UTF-8",
+                "--setenv",
+                "PATH",
+                "/runtime:/usr/bin:/bin",
+                "/runtime/codex",
+            )
+        )
         for value in _auth_config():
             command.extend(("-c", value))
         return command
@@ -370,6 +460,8 @@ class CodexShadowReviewer:
         self,
         command: list[str],
         codex: "_BoundArtifact",
+        sandbox: "_BoundArtifact",
+        empty_config: int,
         *,
         interactive: bool = False,
         timeout: int | None = None,
@@ -381,7 +473,7 @@ class CodexShadowReviewer:
                 stdin=None,
                 stdout=None if interactive else subprocess.PIPE,
                 stderr=None if interactive else subprocess.PIPE,
-                pass_fds=(codex.descriptor,),
+                pass_fds=(codex.descriptor, sandbox.descriptor, empty_config),
                 timeout=min(
                     self._profile.identity.timeout_seconds,
                     timeout or self._profile.identity.timeout_seconds,
@@ -394,6 +486,23 @@ class CodexShadowReviewer:
             raise ShadowReviewerError("cancel") from error
         except (OSError, subprocess.SubprocessError) as error:
             raise ShadowReviewerError("auth") from error
+
+    @contextmanager
+    def _empty_auth_config(self) -> Iterator[int]:
+        read_descriptor = -1
+        write_descriptor = -1
+        try:
+            read_descriptor, write_descriptor = os.pipe()
+            os.close(write_descriptor)
+            write_descriptor = -1
+            yield read_descriptor
+        except OSError as error:
+            raise ShadowReviewerError("setup") from error
+        finally:
+            if write_descriptor >= 0:
+                os.close(write_descriptor)
+            if read_descriptor >= 0:
+                os.close(read_descriptor)
 
     def _auth_environment(self) -> dict[str, str]:
         return {

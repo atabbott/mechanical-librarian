@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Isolate qualification reviewer authentication under the exact pinned
+  Bubblewrap artifact with an immutable empty `config.toml` data bind. Auth now
+  uses only supported Codex CLI command scopes; it adds no model invocation or
+  normal activation authority. (#365)
 - Add the qualification-only isolated Codex shadow-review path for one exact
   current ReviewCase. It freezes the executable/model/reasoning/prompt/profile/
   packet/output/policy tuple, supports explicit ChatGPT subscription auth,

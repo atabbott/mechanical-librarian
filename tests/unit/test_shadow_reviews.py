@@ -695,7 +695,7 @@ class CodexShadowAdapterTests(unittest.TestCase):
                 self.assertEqual(b"original", os.read(bound.descriptor, 64))
             self.assertEqual(b"replacement", path.read_bytes())
 
-    def test_auth_commands_ignore_store_config_and_pin_constraints(self) -> None:
+    def test_auth_commands_mask_store_config_and_pin_constraints(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             codex, sandbox = root / "codex", root / "bwrap"
@@ -730,8 +730,43 @@ class CodexShadowAdapterTests(unittest.TestCase):
                         call.args[0] for call in run.call_args_list[1:]
                     ]
                     self.assertEqual(tuple(invoked[-1][-len(suffix) :]), suffix)
-                    for command in invoked:
-                        self.assertIn("--ignore-user-config", command)
+                    self.assertEqual(
+                        1,
+                        len(
+                            {
+                                call.kwargs["pass_fds"][2]
+                                for call in run.call_args_list[1:]
+                            }
+                        ),
+                    )
+                    for index, command in enumerate(invoked, start=1):
+                        self.assertNotIn("--ignore-user-config", command)
+                        sandbox_descriptor = run.call_args_list[index].kwargs[
+                            "pass_fds"
+                        ][1]
+                        self.assertEqual(
+                            str(sandbox_descriptor), command[0].rsplit("/", 1)[1]
+                        )
+                        self.assertEqual(
+                            (
+                                "--perms",
+                                "0400",
+                                "--ro-bind-data",
+                                str(run.call_args_list[index].kwargs["pass_fds"][2]),
+                                "/auth/config.toml",
+                            ),
+                            tuple(
+                                command[
+                                    command.index("--perms", command.index("--bind"))
+                                    : command.index("--perms", command.index("--bind")) + 5
+                                ]
+                            ),
+                        )
+                        self.assertNotIn("/dev/null", command)
+                        self.assertEqual(
+                            "/auth",
+                            command[command.index("CODEX_HOME") + 1],
+                        )
                         overrides = {
                             command[index + 1]
                             for index, value in enumerate(command[:-1])
@@ -740,8 +775,24 @@ class CodexShadowAdapterTests(unittest.TestCase):
                         self.assertEqual(
                             set(codex_shadow._auth_config()), overrides
                         )
-                    for call in run.call_args_list:
-                        self.assertEqual(1, len(call.kwargs["pass_fds"]))
+                    self.assertEqual(1, len(run.call_args_list[0].kwargs["pass_fds"]))
+                    for call in run.call_args_list[1:]:
+                        self.assertEqual(3, len(call.kwargs["pass_fds"]))
+
+    def test_empty_auth_config_descriptor_is_eof_and_closes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            reviewer = CodexShadowReviewer(self._profile(root, codex, sandbox))
+            with reviewer._empty_auth_config() as descriptor:
+                self.assertEqual(b"", os.read(descriptor, 1))
+                os.fstat(descriptor)
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
 
     def test_sandbox_command_has_exact_tool_disable_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
