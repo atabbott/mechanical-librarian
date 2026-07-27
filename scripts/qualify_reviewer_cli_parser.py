@@ -97,6 +97,8 @@ def _qualify_probe_profile(profile: QualificationProfile) -> None:
                     sandbox.invocation_path,
                 )
                 command[-1] = "--help"
+                if "--skip-git-repo-check" not in command:
+                    raise ShadowReviewerError("schema")
                 _run(
                     _without_network(command),
                     (codex.descriptor, sandbox.descriptor),

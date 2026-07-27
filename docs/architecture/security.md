@@ -149,10 +149,14 @@ credentials. Auth uses the same descriptor-bound boundary and masks
 `/auth/config.toml` with an immutable empty `--perms 0400 --ro-bind-data`
 read-only bind for the entire child lifetime, so a same-UID creation or
 replacement after preflight cannot alter the authentication invocation. Review
-user configuration and rules are ignored; shell and unified
+user configuration and rules are ignored, and the isolated ordinary command
+uses `--skip-git-repo-check` because `/job` is deliberately empty; shell and unified
 execution, web search, apps, agents, hooks, memories, remote plugins, update,
 feedback, analytics, history, and approval are disabled by exact configuration.
-Resource, time, file, output, and process counts are bounded. Request, attempt,
+Resource, time, file, output, and process counts are bounded. The exact
+per-case structured-output schema bytes are subset-validated, digest-bound into
+the untrusted prompt receipt, and raw output failure classes remain value-free.
+Request, attempt,
 dispatch, and outcome facts are append-only. Raw streams and reasoning are
 discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and
 explicit reevaluation requires proof that the complete prior supervised process

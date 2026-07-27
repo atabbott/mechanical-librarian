@@ -444,7 +444,10 @@ def _validated_shadow_output(
                     "profile",
                     "timeout",
                     "cancel",
-                    "output",
+                    "schema",
+                    "response_format",
+                    "malformed_output",
+                    "semantic_validation",
                     "currentness",
                 }
                 or type(failure["count"]) is not int
@@ -494,7 +497,7 @@ def _validated_shadow_output(
         json.JSONDecodeError,
         ShadowReviewValueError,
     ) as error:
-        raise ShadowReviewError("output") from error
+        raise ShadowReviewError("malformed_output") from error
 
 
 def _unique_cli_object(

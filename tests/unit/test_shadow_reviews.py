@@ -588,7 +588,7 @@ class ShadowReviewTests(unittest.TestCase):
                 )
                 self.assertEqual("", output.getvalue())
                 self.assertEqual(
-                    '{"code":"output","mode":"qualification_only",'
+                    '{"code":"malformed_output","mode":"qualification_only",'
                     '"schema_version":"shadow-review-failure-v1"}\n',
                     errors.getvalue(),
                 )
@@ -644,7 +644,7 @@ class ShadowReviewTests(unittest.TestCase):
         )
         self.assertEqual("", output.getvalue())
         self.assertEqual(
-            '{"code":"output","mode":"qualification_only",'
+            '{"code":"malformed_output","mode":"qualification_only",'
             '"schema_version":"shadow-review-failure-v1"}\n',
             errors.getvalue(),
         )
@@ -874,6 +874,34 @@ class CodexShadowAdapterTests(unittest.TestCase):
             self.assertEqual("/proc/self/fd/11", command[0])
             bind = command.index("/runtime/codex")
             self.assertEqual("/proc/self/fd/10", command[bind - 1])
+            self.assertIn("--skip-git-repo-check", command)
+
+    def test_output_schema_is_typed_bound_and_digest_frozen(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository, case_id = ShadowReviewTests()._repository(directory)
+            request = ShadowReviewRequest.from_json(
+                repository.preview_shadow_request(case_id, _identity().to_json())
+            )
+            binding = codex_shadow._schema_binding(request)
+            schema = json.loads(binding.serialized)
+            self.assertEqual(
+                hashlib.sha256(binding.serialized).hexdigest(), binding.digest
+            )
+            properties = schema["properties"]
+            self.assertEqual("string", properties["review_request_id"]["type"])
+            item = properties["recommendations"]["items"]["properties"]
+            self.assertEqual("string", item["proposal_id"]["type"])
+            self.assertEqual("string", item["citations"]["items"]["type"])
+            self.assertNotIn("uniqueItems", item["citations"])
+            repository.close()
+
+    def test_output_schema_rejects_typeless_or_contradictory_bindings(self) -> None:
+        with self.assertRaisesRegex(ShadowReviewerError, "schema"):
+            codex_shadow._validate_output_schema({"enum": ["bound"]})
+        with self.assertRaisesRegex(ShadowReviewerError, "schema"):
+            codex_shadow._validate_output_schema(
+                {"const": "bound", "enum": ["other"], "type": "string"}
+            )
 
     def test_start_gate_does_not_exec_when_dispatch_persistence_fails(self) -> None:
         shell_source = Path(os.path.realpath("/bin/sh")).read_bytes()

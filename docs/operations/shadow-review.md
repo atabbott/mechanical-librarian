@@ -76,7 +76,8 @@ mechanical-librarian shadow-review-inspect --database reports.sqlite \
 ```
 
 A successful status is permanently `qualification_only`. A dispatched
-timeout, cancellation, runtime, or output failure remains `unknown`, because
+timeout, cancellation, runtime, response-format rejection, malformed output, or
+semantic-validation failure remains `unknown`, because
 the external service may have received the packet. There is no silent retry.
 After the supervised Linux process tree is proved absent, an operator may make
 one explicit new attempt:
@@ -126,5 +127,15 @@ python scripts/qualify_reviewer_cli_parser.py \
 ```
 
 Failures are the value-free codes `runtime`, `setup`, `auth`, `profile`,
-`timeout`, `cancel`, `output`, or `currentness`. Raw stdout, stderr, reasoning,
+`timeout`, `cancel`, `schema`, `response_format`, `malformed_output`,
+`semantic_validation`, or `currentness`. Raw stdout, stderr, reasoning,
 malformed content, profile paths, and auth data are discarded.
+
+The one-case parser compatibility canary runs before a larger qualification
+cohort. It uses the exact ordinary wrapped command from empty `/job`, including
+`--skip-git-repo-check`, and verifies the same gate without sending a packet.
+Each case freezes the canonical structured-output schema bytes and SHA-256 in
+the prompt receipt. The generated schema is restricted to the pinned
+structured-output subset: every `const` and `enum` has its primitive type, and
+citation cardinality remains bounded without `uniqueItems` so later duplicate
+normalization can remain compatible.

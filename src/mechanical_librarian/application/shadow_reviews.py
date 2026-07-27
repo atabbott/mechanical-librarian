@@ -25,7 +25,10 @@ _FAILURES = frozenset(
         "profile",
         "timeout",
         "cancel",
-        "output",
+        "schema",
+        "response_format",
+        "malformed_output",
+        "semantic_validation",
         "currentness",
     }
 )
