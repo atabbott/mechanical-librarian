@@ -134,8 +134,9 @@ malformed content, profile paths, and auth data are discarded.
 The one-case parser compatibility canary runs before a larger qualification
 cohort. It uses the exact ordinary wrapped command from empty `/job`, including
 `--skip-git-repo-check`, and verifies the same gate without sending a packet.
-Each case freezes the canonical structured-output schema bytes and SHA-256 in
-the prompt receipt. The generated schema is restricted to the pinned
+Each case binds the canonical structured-output schema bytes and SHA-256 into
+the persisted canonical request and its identity; the executor uses those exact
+bytes. The generated schema is restricted to the pinned
 structured-output subset: every `const` and `enum` has its primitive type, and
 citation cardinality remains bounded without `uniqueItems` so later duplicate
 normalization can remain compatible.

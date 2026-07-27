@@ -902,6 +902,10 @@ class CodexShadowAdapterTests(unittest.TestCase):
             codex_shadow._validate_output_schema(
                 {"const": "bound", "enum": ["other"], "type": "string"}
             )
+        with self.assertRaisesRegex(ShadowReviewerError, "schema"):
+            codex_shadow._validate_output_schema(
+                {"const": "bound", "enum": ["bound", 42], "type": "string"}
+            )
 
     def test_start_gate_does_not_exec_when_dispatch_persistence_fails(self) -> None:
         shell_source = Path(os.path.realpath("/bin/sh")).read_bytes()

@@ -339,7 +339,11 @@ class CodexShadowReviewer:
                     except OSError as error:
                         raise ShadowReviewerError("malformed_output") from error
                     if len(result_bytes) > self._profile.identity.output_bytes:
-                        raise ShadowReviewerError("output")
+                        raise ShadowReviewerError(
+                            "malformed_output",
+                            count=len(result_bytes),
+                            digest=hashlib.sha256(result_bytes).hexdigest(),
+                        )
                     try:
                         serialized = result_bytes.decode("utf-8", errors="strict")
                         result = ShadowReviewResult.from_json(serialized, request)
@@ -947,79 +951,19 @@ def _prompt(request: ShadowReviewRequest, *, schema_digest: str) -> str:
 
 
 def _output_schema(request: ShadowReviewRequest) -> dict[str, object]:
-    proposal_ids = [value["proposal_id"] for value in request.packet.proposals]
-    citation_ids = [value["citation_id"] for value in request.packet.citations]
-    candidate_ids = [
-        candidate["candidate_id"]
-        for proposal in request.packet.proposals
-        for candidate in cast(list[dict[str, object]], proposal["candidates"])
-    ]
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": False,
-        "properties": {
-            "recommendations": {
-                "items": {
-                    "additionalProperties": False,
-                    "properties": {
-                        "candidate_id": {
-                            "anyOf": [{"enum": candidate_ids, "type": "string"}, {"type": "null"}]
-                        },
-                        "citations": {
-                            "items": {"enum": citation_ids, "type": "string"},
-                            "maxItems": MAX_CITATIONS,
-                            "minItems": 1,
-                            "type": "array",
-                        },
-                        "problems": {
-                            "items": {
-                                "maxLength": 1_024,
-                                "minLength": 1,
-                                "type": "string",
-                            },
-                            "maxItems": MAX_PROBLEMS,
-                            "type": "array",
-                        },
-                        "proposal_id": {"enum": proposal_ids, "type": "string"},
-                        "reasons": {
-                            "items": {
-                                "maxLength": 1_024,
-                                "minLength": 1,
-                                "type": "string",
-                            },
-                            "maxItems": 16,
-                            "minItems": 1,
-                            "type": "array",
-                        },
-                        "recommendation": {"enum": sorted(_recommendations()), "type": "string"},
-                    },
-                    "required": [
-                        "candidate_id",
-                        "citations",
-                        "problems",
-                        "proposal_id",
-                        "reasons",
-                        "recommendation",
-                    ],
-                    "type": "object",
-                },
-                "maxItems": len(proposal_ids),
-                "minItems": len(proposal_ids),
-                "type": "array",
-            },
-            "review_request_id": {"const": request.review_request_id, "type": "string"},
-            "schema_version": {"const": RESULT_SCHEMA, "type": "string"},
-        },
-        "required": ["recommendations", "review_request_id", "schema_version"],
-        "type": "object",
-    }
+    raw = json.loads(request.output_schema)
+    if type(raw) is not dict:
+        raise ShadowReviewerError("schema")
+    return raw
 
 
 def _schema_binding(request: ShadowReviewRequest) -> _SchemaBinding:
     schema = _output_schema(request)
     _validate_output_schema(schema)
-    serialized = canonical_json(schema).encode("utf-8")
-    return _SchemaBinding(serialized, hashlib.sha256(serialized).hexdigest())
+    serialized = request.output_schema.encode("utf-8")
+    if hashlib.sha256(serialized).hexdigest() != request.output_schema_digest:
+        raise ShadowReviewerError("schema")
+    return _SchemaBinding(serialized, request.output_schema_digest)
 
 
 def _validate_output_schema(schema: object) -> None:
@@ -1030,15 +974,22 @@ def _validate_output_schema(schema: object) -> None:
         if type(value) is not dict or not set(value) <= allowed:
             raise ShadowReviewerError("schema")
         if "const" in value or "enum" in value:
-            values = [value["const"]] if "const" in value else value["enum"]
+            values = ([value["const"]] if "const" in value else []) + value.get("enum", [])
             primitive = value.get("type")
             json_types = {str: "string", int: "integer", float: "number", bool: "boolean", type(None): "null"}
-            if (type(primitive) is not str or type(values) is not list or not values or any(json_types.get(type(item)) != primitive for item in values)):
+            if (primitive not in set(json_types.values()) or type(values) is not list or not values or any(json_types.get(type(item)) != primitive for item in values)):
                 raise ShadowReviewerError("schema")
         if "const" in value and "enum" in value and value["const"] not in value["enum"]:
             raise ShadowReviewerError("schema")
         if "items" in value:
             visit(value["items"])
+        for key in ("maxItems", "minItems", "maxLength", "minLength"):
+            if key in value and (type(value[key]) is not int or value[key] < 0):
+                raise ShadowReviewerError("schema")
+        if "required" in value and (type(value["required"]) is not list or any(type(item) is not str for item in value["required"])):
+            raise ShadowReviewerError("schema")
+        if "additionalProperties" in value and type(value["additionalProperties"]) is not bool:
+            raise ShadowReviewerError("schema")
         if "anyOf" in value:
             if type(value["anyOf"]) is not list:
                 raise ShadowReviewerError("schema")

@@ -99,9 +99,10 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 )
                 self.assertIn("--ro-bind-data", command)
                 self.assertNotIn("/dev/null", command)
-            self.assertEqual("--help", commands[3][-1])
+            self.assertEqual("-", commands[3][-1])
             self.assertIn("--ignore-user-config", commands[3])
             self.assertIn("--ignore-rules", commands[3])
+            self.assertIn("--skip-git-repo-check", commands[3])
             self.assertEqual(
                 set(codex_shadow._exact_config("medium")),
                 {

@@ -88,29 +88,31 @@ def _qualify_probe_profile(profile: QualificationProfile) -> None:
             ) as directory:
                 job_path = Path(directory)
                 schema = job_path / "output-schema.json"
-                schema.write_text('{"type":"object"}', encoding="utf-8")
+                schema.write_text('{"additionalProperties":false,"type":"object"}', encoding="utf-8")
                 schema.chmod(0o600)
-                command = reviewer._sandbox_command(
+                prompt = job_path / "synthetic-prompt.json"
+                prompt.write_bytes(b'{"case":"synthetic-compatibility-canary"}')
+                prompt.chmod(0o600)
+                expected = reviewer._sandbox_command(
                     job_path,
                     job_path / "result.json",
                     codex.invocation_path,
                     sandbox.invocation_path,
                 )
-                command[-1] = "--help"
-                if "--skip-git-repo-check" not in command:
-                    raise ShadowReviewerError("schema")
-                _run(
-                    _without_network(command),
-                    (codex.descriptor, sandbox.descriptor),
-                    profile.identity.timeout_seconds,
+                command = reviewer._sandbox_command(
+                    job_path, job_path / "result.json", codex.invocation_path, sandbox.invocation_path
                 )
+                if command != expected or "--skip-git-repo-check" not in command:
+                    raise ShadowReviewerError("schema")
+                with prompt.open("rb") as prompt_file:
+                    _run(_without_network(command), (codex.descriptor, sandbox.descriptor), profile.identity.timeout_seconds, prompt_file)
 
 
-def _run(command: list[str], descriptors: tuple[int, ...], limit: int) -> None:
+def _run(command: list[str], descriptors: tuple[int, ...], limit: int, stdin=subprocess.DEVNULL) -> None:
     try:
         completed = subprocess.run(
             command,
-            stdin=subprocess.DEVNULL,
+            stdin=stdin,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             pass_fds=descriptors,

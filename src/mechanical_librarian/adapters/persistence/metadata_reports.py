@@ -1075,7 +1075,10 @@ class SQLiteMetadataReportRepository:
                     "profile",
                     "timeout",
                     "cancel",
-                    "output",
+                    "schema",
+                    "response_format",
+                    "malformed_output",
+                    "semantic_validation",
                     "currentness",
                 }
                 or type(count) is not int
