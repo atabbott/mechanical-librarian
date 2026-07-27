@@ -95,7 +95,22 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
             field = EpubInspectionField.ISBN
             valid = canonical is not None and len(canonical) in {10, 13} and opening._isbn_valid(canonical)
             scheme = identifier_schemes.get(observation.citation.source_ordinal)
-            explicit_isbn = _ISBN_LABEL.match(observation.raw_value) is not None or scheme in {"ISBN", "ISBN-10", "ISBN-13"}
+            scheme_key = None if scheme is None else scheme.casefold()
+            explicit_isbn = _ISBN_LABEL.match(observation.raw_value) is not None or scheme_key in {"isbn", "isbn-10", "isbn-13"}
+            if scheme_key is not None and scheme_key not in {"isbn", "isbn-10", "isbn-13"}:
+                continue
+            declared_length = {"isbn-10": 10, "isbn-13": 13}.get(scheme_key)
+            normalized_isbn = "" if canonical is None else "".join(
+                character
+                for character in canonical.upper()
+                if character.isdigit() or character == "X"
+            )
+            if (
+                declared_length is not None
+                and opening._isbn_valid(canonical or "")
+                and len(normalized_isbn) != declared_length
+            ):
+                continue
             if not valid and not explicit_isbn:
                 continue
             if not valid:
@@ -200,8 +215,11 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             elif byline is not None and len(byline.group(1)) <= 280: field, canonical, role = EpubInspectionField.CREATOR, byline.group(1), "author"
             elif element.semantics & {"creator"}: field, canonical, role = EpubInspectionField.CREATOR, value, "author"
             if field is not None: facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
+            owner_spans = opening._non_isbn_identifier_spans(value)
             for match in () if is_ancestor else opening._ISBN.finditer(value):
                 if resource_isbns >= 4: break
+                if opening._isbn_owned_by_non_isbn_identifier(match, owner_spans):
+                    continue
                 isbn = opening._normal(match.group(0), opening.OpeningField.IDENTIFIER)
                 if len(isbn) in {10, 13} and opening._isbn_valid(isbn):
                     facts.append(EpubInspectionFact(EpubInspectionField.ISBN, report.source_fingerprint, match.group(0), isbn, value, f"valid_isbn_{len(isbn)}", "unknown", "unlabelled", "opening_matter", rear_provenance=provenance)); resource_isbns += 1

@@ -105,6 +105,9 @@ _PAPERBACK_LABEL = re.compile(r"(?<![\w])paperback(?![\w])", re.I)
 _HARDCOVER_LABEL = re.compile(
     r"(?<![\w])(?:hardback|hardcover)(?![\w])", re.I
 )
+_NON_ISBN_IDENTIFIER = re.compile(
+    r"(?i)(?P<scheme>urn:isbn|[a-z][a-z0-9+.-]{0,31}):\s*(?://)?[^\s|]+"
+)
 _CHARSET_PARAMETER = re.compile(
     rb"(?:^|;)\s*charset\s*=\s*([A-Za-z0-9._-]+)(?:\s*;|\s*$)", re.I
 )
@@ -1774,6 +1777,29 @@ def _isbn_valid(value: str) -> bool:
     return False
 
 
+def _non_isbn_identifier_spans(value: str) -> tuple[tuple[int, int], ...]:
+    spans: list[tuple[int, int]] = []
+    for owner in _NON_ISBN_IDENTIFIER.finditer(value):
+        scheme = owner.group("scheme")
+        if (
+            scheme.casefold() in {"isbn", "urn:isbn", "print"}
+            or _EBOOK_LABEL.fullmatch(scheme) is not None
+            or _PRINT_LABEL.fullmatch(scheme) is not None
+        ):
+            continue
+        spans.append(owner.span())
+    return tuple(spans)
+
+
+def _isbn_owned_by_non_isbn_identifier(
+    match: re.Match[str], owner_spans: tuple[tuple[int, int], ...]
+) -> bool:
+    for start, end in owner_spans:
+        if start <= match.start() and match.end() <= end:
+            return True
+    return False
+
+
 def _claim(field: OpeningField, value: str, applicability: EpubObservationApplicability, element: _Element, projection: _Projection, source, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int, *, normalized: str | None = None, identifier_type: str | None = None, applicability_label: str | None = None, citation_context: tuple[_Element, int, int] | None = None) -> OpeningClaim | None:
     original = _SPACE.sub(" ", value).strip()
     if not original:
@@ -2207,7 +2233,10 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
         if "anthology" in lowered:
             add(OpeningField.ANTHOLOGY_MEMBERSHIP, text, EpubObservationApplicability.WORK)
         isbn_matches = list(_ISBN.finditer(text))
+        owner_spans = _non_isbn_identifier_spans(text)
         for match_index, match in enumerate(isbn_matches):
+            if _isbn_owned_by_non_isbn_identifier(match, owner_spans):
+                continue
             identifier = match.group(0)
             compact = _normal(identifier, OpeningField.IDENTIFIER)
             if len(compact) not in {10, 13}:
@@ -2218,6 +2247,10 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             separator = r"[;,|/\n\u2022]"
             left_vicinity = re.split(separator, lowered[left_boundary:match.start()])[-1]
             right_vicinity = re.split(separator, lowered[match.end():right_boundary])[0]
+            if match_index + 1 < len(isbn_matches):
+                right_label = _EBOOK_LABEL.search(right_vicinity) or _PRINT_LABEL.search(right_vicinity)
+                if right_label is not None and right_vicinity[right_label.end():].strip() in {"isbn", "isbn-10", "isbn-13"}:
+                    right_vicinity = right_vicinity[:right_label.start()]
             left_has_labels = bool(
                 _EBOOK_LABEL.search(left_vicinity)
                 or _PRINT_LABEL.search(left_vicinity)

@@ -34,6 +34,8 @@ basis. Invalid, unlabeled, and conflicting-label identifiers remain distinct
 facts; an ISBN-10 is not represented as an observed ISBN-13. Other bounded
 local fields remain source-attributed evidence, never decisions, and preserve
 their admitted source/DOM order and rear-spine provenance where present.
+An explicitly non-ISBN package scheme or URI owns its digit sequence, so a
+checksum-valid substring within it is not an ISBN fact.
 Publication package dates with an explicit standards-valid signed UTC offset
 retain their original lexical form and declared publication event. They are not
 converted to UTC or reclassified from creation, modification, copyright, or an

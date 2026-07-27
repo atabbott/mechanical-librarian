@@ -313,6 +313,52 @@ class EpubChildRearSpineTests(unittest.TestCase):
             [("unknown", "unlabelled")],
         )
 
+    def test_package_facts_reject_isbn_shaped_non_isbn_scheme_values(self) -> None:
+        package = EPUB2_PACKAGE.replace(
+            b'opf:scheme="ISBN">0-306-40615-2',
+            b'opf:scheme="LCCN">9780306406157',
+        )
+        facts = self._package_facts(package)
+        self.assertEqual([fact for fact in facts if fact.field.value == "isbn"], [])
+
+    def test_package_facts_casefold_declared_isbn_scheme(self) -> None:
+        package = EPUB2_PACKAGE.replace(
+            b'opf:scheme="ISBN">0-306-40615-2',
+            b'opf:scheme="iSbN">9780306406157',
+        )
+        facts = self._package_facts(package)
+        self.assertEqual(
+            [fact.canonical_value for fact in facts if fact.field.value == "isbn"],
+            ["9780306406157"],
+        )
+
+    def test_package_facts_reject_declared_isbn_length_mismatches(self) -> None:
+        for scheme, value in (
+            (b"ISBN-10", b"9780306406157"),
+            (b"iSbN-13", b"0306406152"),
+        ):
+            with self.subTest(scheme=scheme):
+                package = EPUB2_PACKAGE.replace(
+                    b'opf:scheme="ISBN">0-306-40615-2',
+                    b'opf:scheme="' + scheme + b'">' + value,
+                )
+                facts = self._package_facts(package)
+                self.assertEqual(
+                    [fact for fact in facts if fact.field.value == "isbn"], []
+                )
+
+    def test_package_facts_preserve_punctuated_invalid_declared_isbn(self) -> None:
+        package = EPUB2_PACKAGE.replace(
+            b'opf:scheme="ISBN">0-306-40615-2',
+            b'opf:scheme="ISBN-10">0-306-40615-3',
+        )
+        facts = self._package_facts(package)
+        isbn = next(fact for fact in facts if fact.field.value == "isbn")
+        self.assertEqual(
+            (isbn.observed_value, isbn.canonical_value, isbn.checksum, isbn.state),
+            ("0-306-40615-3", None, "invalid", "malformed"),
+        )
+
     def test_package_primary_isbn_is_distinct_from_secondary_isbn(self) -> None:
         package = EPUB3_PACKAGE.replace(
             b"</metadata>",
@@ -533,6 +579,30 @@ class EpubChildRearSpineTests(unittest.TestCase):
             [("title", "Nested Title"), ("creator", "Ada Example"), ("contributor", "Bea Contributor"), ("creator", "Cara Example"), ("isbn", "9780306406157")],
         )
         self.assertEqual(sum(fact.field.value == "isbn" for fact in facts), 1)
+
+    def test_rear_pool_rejects_isbn_shaped_digits_owned_by_a_uri(self) -> None:
+        request, (package, opening, _) = self._bundle(
+            _xhtml(
+                '<p>Copyright 2026</p><p>'
+                'x:9780306406157, '
+                'https://example.invalid/item;id=9780306406157'
+                '</p>'
+            )
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+        self.assertEqual([fact for fact in facts if fact.field.value == "isbn"], [])
+
+    def test_rear_pool_preserves_colon_delimited_media_label_isbns(self) -> None:
+        request, (package, opening, _) = self._bundle(
+            _xhtml('<p>Copyright 2026</p><p>Paperback: 9780306406157</p>')
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+        self.assertEqual(
+            [fact.canonical_value for fact in facts if fact.field.value == "isbn"],
+            ["9780306406157"],
+        )
 
     def test_rear_pool_does_not_replace_a_tail_slot_without_marker(self) -> None:
         request, (package, opening, _) = self._bundle(_xhtml('<h1 epub:type="fulltitle">Unmarked Tail</h1><p>ISBN 9780306406157</p>'))

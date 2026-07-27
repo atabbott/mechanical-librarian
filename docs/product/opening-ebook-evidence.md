@@ -214,8 +214,9 @@ Identifiers are typed and validated independently.
   several formats.
 - Treat an unlabelled identifier near format lists as ambiguous until another
   fact establishes applicability.
-- Never convert a UUID, DOI, ASIN, proprietary ID, or package identifier into an
-  ISBN-shaped field.
+- Never convert a UUID, DOI, ASIN, LCCN, proprietary ID, URI, or package
+  identifier into an ISBN-shaped field. Applicability labels are bound to their
+  own ISBN occurrence and cannot cross a neighbouring identifier.
 
 The package document's explicitly designated primary identifier is distinct
 from other declared identifiers. When that explicit primary identifier is
