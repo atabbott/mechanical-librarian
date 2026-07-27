@@ -21,13 +21,16 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     Comparison,
+    FileFacts,
     LocalClaim,
+    MetadataReport,
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
     TargetField,
     TargetFieldState,
+    TargetFacts,
     default_target_fields,
     isbn_family,
 )
@@ -172,6 +175,88 @@ def _work(key: str = "/works/OL5W", *, cover: int | None = None) -> dict[str, ob
 
 
 class OpenLibraryMetadataTests(unittest.TestCase):
+    def test_work_plan_persists_ordered_qualified_creators_through_replay(
+        self,
+    ) -> None:
+        title = _title()
+        fields = tuple(
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Example", "Bea Example"),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("Local work title")
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Local work title", (), fields=fields),
+            (title,),
+        )
+        responses = {
+            "/search.json": {
+                "docs": [
+                    {
+                        "key": "/works/OL5W",
+                        "author_name": ["Bea Example", "Ada Example"],
+                        "editions": {"docs": [{"key": "/books/OL1M"}]},
+                    }
+                ]
+            },
+            "/books/OL1M.json": _edition(
+                "/books/OL1M", work="/works/OL5W"
+            ),
+            "/works/OL5W.json": _work("/works/OL5W"),
+        }
+
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=responses[request.url.path],
+                    )
+                )
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        observation = provider.observe(plan)
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual(ProviderQueryKind.WORK, observation.query_kind)
+        self.assertEqual((title.reference,), observation.input_references)
+        self.assertEqual(
+            ("Ada Example", "Bea Example"),
+            tuple(
+                claim.value
+                for claim in observation.candidates[0].claims
+                if claim.kind is ClaimKind.CREATOR
+                and claim.state.value == "valid"
+                and claim.role == "author"
+            ),
+        )
+
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(title,),
+            local_reasons=("target_metadata_title",),
+            providers=(observation,),
+        )
+        replay = MetadataReport.from_json(report.to_json())
+        self.assertEqual(
+            ("Ada Example", "Bea Example"),
+            tuple(
+                claim.value
+                for claim in replay.providers[0].candidates[0].claims
+                if claim.kind is ClaimKind.CREATOR
+                and claim.state.value == "valid"
+                and claim.role == "author"
+            ),
+        )
+
     def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_work_evidence(self) -> None:
         requests: list[httpx.Request] = []
         values = {
@@ -441,7 +526,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             TargetField(
                 TargetDestination.AUTHORS,
                 TargetFieldState.VALUE,
-                ("Ada Example",),
+                ("Ada Example", "Bea Example"),
             )
             if field.destination is TargetDestination.AUTHORS
             else field
@@ -469,7 +554,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                         "docs": [
                             {
                                 "key": "/works/OL5W",
-                                "author_name": ["Ada Example"],
+                                "author_name": ["Bea Example", "Ada Example"],
                                 "editions": {
                                     "docs": [{"key": "/books/OL1M"}]
                                 },
@@ -527,6 +612,16 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             claim
             for claim in observation.candidates[0].claims
             if claim.kind is ClaimKind.ISBN and claim.value is not None
+        )
+        self.assertEqual(
+            ("Ada Example", "Bea Example"),
+            tuple(
+                claim.value
+                for claim in observation.candidates[0].claims
+                if claim.kind is ClaimKind.CREATOR
+                and claim.state.value == "valid"
+                and claim.role == "author"
+            ),
         )
         self.assertEqual(
             {

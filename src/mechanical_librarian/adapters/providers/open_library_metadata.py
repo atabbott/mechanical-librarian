@@ -187,30 +187,6 @@ class OpenLibraryMetadataProvider:
                 observation = qualify_provider_observation(
                     self._observe_lookup(lookup, deadline=deadline), lookup
                 )
-                if (
-                    lane.kind is ProviderQueryKind.WORK
-                    and observation.status is ProviderStatus.CANDIDATES
-                ):
-                    observation = ProviderObservation(
-                        observation.provider,
-                        observation.status,
-                        observation.input_references,
-                        tuple(
-                            ProviderCandidate(
-                                candidate.identity,
-                                candidate.work_identity,
-                                tuple(
-                                    claim
-                                    for claim in candidate.claims
-                                    if claim.kind is not ClaimKind.CREATOR
-                                ),
-                                candidate.evidence,
-                            )
-                            for candidate in observation.candidates
-                        ),
-                        observation.query_kind,
-                        observation.authority,
-                    )
                 results.append(
                     ProviderLaneResult(
                         lane, observation.status, observation.candidates
@@ -233,7 +209,10 @@ class OpenLibraryMetadataProvider:
         self.cover_descriptors = tuple(
             descriptors[key] for key in sorted(descriptors)
         )
-        return provider_observation(self._name, tuple(results))
+        return provider_observation(
+            self._name,
+            _canonical_discovery_results(self._name, tuple(results)),
+        )
 
     def _observe_lookup(
         self,
@@ -795,6 +774,127 @@ def _candidate(
         ),
         edition_cover,
         work_cover,
+    )
+
+
+def _canonical_discovery_results(
+    provider: str,
+    results: tuple[ProviderLaneResult, ...],
+) -> tuple[ProviderLaneResult, ...]:
+    """Combine only qualified work authors with independently admitted editions."""
+    isbn_candidates: dict[str, list[ProviderCandidate]] = {}
+    work_candidates: dict[str, ProviderCandidate] = {}
+    for result in results:
+        for candidate in result.candidates:
+            if result.lane.kind is ProviderQueryKind.ISBN:
+                isbn_candidates.setdefault(candidate.identity, []).append(candidate)
+            elif result.lane.kind is ProviderQueryKind.WORK:
+                work_candidates[candidate.identity] = candidate
+
+    merged: dict[str, ProviderCandidate] = {}
+    for identity, work in work_candidates.items():
+        editions = isbn_candidates.get(identity, [])
+        if (
+            not editions
+            or editions[0].work_identity != work.work_identity
+            or any(
+                candidate != editions[0]
+                or candidate.work_identity != work.work_identity
+                for candidate in editions[1:]
+            )
+        ):
+            continue
+        edition = editions[0]
+        creators = tuple(
+            claim
+            for claim in work.claims
+            if claim.kind is ClaimKind.CREATOR
+            and claim.scope is ClaimScope.WORK
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+            and claim.role == "author"
+        )
+        if not creators or len(creators) != len(
+            {
+                claim.value.casefold()
+                for claim in creators
+                if claim.value is not None
+            }
+        ):
+            continue
+        work_claim_content = {
+            (
+                claim.kind,
+                claim.value,
+                claim.state,
+                claim.scope,
+                claim.applicability,
+                claim.role,
+                claim.links,
+            )
+            for claim in work.claims
+            if claim.kind is not ClaimKind.CREATOR
+        }
+        edition_claim_content = {
+            (
+                claim.kind,
+                claim.value,
+                claim.state,
+                claim.scope,
+                claim.applicability,
+                claim.role,
+                claim.links,
+            )
+            for claim in edition.claims
+            if claim.kind is not ClaimKind.CREATOR
+        }
+        if (
+            not work_claim_content.issubset(edition_claim_content)
+            or not set(work.evidence).issubset(edition.evidence)
+        ):
+            continue
+        claims = [
+            claim
+            for claim in edition.claims
+            if not (
+                claim.kind is ClaimKind.CREATOR
+                and claim.scope is ClaimScope.WORK
+            )
+        ]
+        raw_order = max((claim.raw_order for claim in claims), default=-1) + 1
+        claims.extend(
+            ProviderClaim.create(
+                provider=provider,
+                candidate=identity,
+                kind=creator.kind,
+                value=creator.value,
+                state=creator.state,
+                scope=creator.scope,
+                applicability=creator.applicability,
+                role=creator.role,
+                raw_order=raw_order + index,
+                links=creator.links,
+            )
+            for index, creator in enumerate(creators)
+        )
+        merged[identity] = ProviderCandidate(
+            identity,
+            edition.work_identity,
+            tuple(claims),
+            edition.evidence,
+        )
+    if not merged:
+        return results
+    return tuple(
+        ProviderLaneResult(
+            result.lane,
+            result.status,
+            tuple(
+                merged.get(candidate.identity, candidate)
+                for candidate in result.candidates
+            ),
+        )
+        for result in results
     )
 
 
