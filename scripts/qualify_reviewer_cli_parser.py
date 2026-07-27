@@ -105,7 +105,7 @@ def _qualify_probe_profile(profile: QualificationProfile) -> None:
                 if command != expected or "--skip-git-repo-check" not in command:
                     raise ShadowReviewerError("schema")
                 with prompt.open("rb") as prompt_file:
-                    _run(_without_network(command), (codex.descriptor, sandbox.descriptor), profile.identity.timeout_seconds, prompt_file)
+                    _run(command, (codex.descriptor, sandbox.descriptor), profile.identity.timeout_seconds, prompt_file)
 
 
 def _run(command: list[str], descriptors: tuple[int, ...], limit: int, stdin=subprocess.DEVNULL) -> None:

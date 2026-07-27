@@ -131,9 +131,11 @@ Failures are the value-free codes `runtime`, `setup`, `auth`, `profile`,
 `semantic_validation`, or `currentness`. Raw stdout, stderr, reasoning,
 malformed content, profile paths, and auth data are discarded.
 
-The one-case parser compatibility canary runs before a larger qualification
-cohort. It uses the exact ordinary wrapped command from empty `/job`, including
-`--skip-git-repo-check`, and verifies the same gate without sending a packet.
+Offline parser-help probes remain no-network and use a temporary empty auth
+store. The one-case compatibility canary is a real synthetic,
+subscription-backed ordinary invocation before a larger qualification cohort;
+it uses the exact ordinary wrapped command from empty `/job`, including
+`--skip-git-repo-check`, never sends a holdout, and blocks the cohort on failure.
 Each case binds the canonical structured-output schema bytes and SHA-256 into
 the persisted canonical request and its identity; the executor uses those exact
 bytes. The generated schema is restricted to the pinned

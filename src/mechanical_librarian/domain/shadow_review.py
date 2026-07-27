@@ -384,6 +384,7 @@ class ShadowReviewRequest:
             or hashlib.sha256(self.output_schema.encode("utf-8")).hexdigest()
             != self.output_schema_digest
             or canonical_json(json.loads(self.output_schema)) != self.output_schema
+            or self.output_schema != canonical_json(_reviewer_output_schema(self.packet, self.review_request_id))
             or self.packet.review_case_id != self.review_case_id
             or self.review_request_id != self.expected_id()
         ):
@@ -393,24 +394,24 @@ class ShadowReviewRequest:
     def create(
         cls, case: ReviewCase, profile: ReviewerProfileIdentity, packet: ShadowReviewPacket
     ) -> Self:
-        schema = canonical_json(_reviewer_output_schema(packet))
         data = {
             "mode": QUALIFICATION_MODE,
             "packet": packet.to_data(),
             "profile": profile.to_data(),
             "review_case_id": case.review_case_id,
-            "output_schema": schema,
-            "output_schema_digest": hashlib.sha256(schema.encode("utf-8")).hexdigest(),
             "schema_version": REQUEST_SCHEMA,
         }
         identity = "review_request_" + hashlib.sha256(
             canonical_json(data).encode("utf-8")
         ).hexdigest()
-        return cls(identity, case.review_case_id, profile, packet, schema, data["output_schema_digest"])
+        schema = canonical_json(_reviewer_output_schema(packet, identity))
+        return cls(
+            identity, case.review_case_id, profile, packet, schema,
+            hashlib.sha256(schema.encode("utf-8")).hexdigest(),
+        )
 
     def expected_id(self) -> str:
-        data = self.to_data()
-        data.pop("review_request_id")
+        data = {"mode": self.mode, "packet": self.packet.to_data(), "profile": self.profile.to_data(), "review_case_id": self.review_case_id, "schema_version": self.schema_version}
         return "review_request_" + hashlib.sha256(
             canonical_json(data).encode("utf-8")
         ).hexdigest()
@@ -619,7 +620,7 @@ def _bounded_text(value: object) -> bool:
     )
 
 
-def _reviewer_output_schema(packet: ShadowReviewPacket) -> dict[str, object]:
+def _reviewer_output_schema(packet: ShadowReviewPacket, review_request_id: str) -> dict[str, object]:
     proposal_ids = [value["proposal_id"] for value in packet.proposals]
     citation_ids = [value["citation_id"] for value in packet.citations]
     candidate_ids = [
@@ -627,7 +628,7 @@ def _reviewer_output_schema(packet: ShadowReviewPacket) -> dict[str, object]:
         for proposal in packet.proposals
         for candidate in proposal["candidates"]  # type: ignore[union-attr]
     ]
-    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "additionalProperties": False, "properties": {"recommendations": {"items": {"additionalProperties": False, "properties": {"candidate_id": {"anyOf": [{"enum": candidate_ids, "type": "string"}, {"type": "null"}]}, "citations": {"items": {"enum": citation_ids, "type": "string"}, "maxItems": MAX_CITATIONS, "minItems": 1, "type": "array"}, "problems": {"items": {"maxLength": MAX_REASON_CHARACTERS, "minLength": 1, "type": "string"}, "maxItems": MAX_PROBLEMS, "type": "array"}, "proposal_id": {"enum": proposal_ids, "type": "string"}, "reasons": {"items": {"maxLength": MAX_REASON_CHARACTERS, "minLength": 1, "type": "string"}, "maxItems": 16, "minItems": 1, "type": "array"}, "recommendation": {"enum": ["manual", "recommend_candidate", "recommend_keep_current"], "type": "string"}}, "required": ["candidate_id", "citations", "problems", "proposal_id", "reasons", "recommendation"], "type": "object"}, "maxItems": len(proposal_ids), "minItems": len(proposal_ids), "type": "array"}, "review_request_id": {"type": "string"}, "schema_version": {"const": RESULT_SCHEMA, "type": "string"}}, "required": ["recommendations", "review_request_id", "schema_version"], "type": "object"}
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "additionalProperties": False, "properties": {"recommendations": {"items": {"additionalProperties": False, "properties": {"candidate_id": {"anyOf": [{"enum": candidate_ids, "type": "string"}, {"type": "null"}]}, "citations": {"items": {"enum": citation_ids, "type": "string"}, "maxItems": MAX_CITATIONS, "minItems": 1, "type": "array"}, "problems": {"items": {"maxLength": MAX_REASON_CHARACTERS, "minLength": 1, "type": "string"}, "maxItems": MAX_PROBLEMS, "type": "array"}, "proposal_id": {"enum": proposal_ids, "type": "string"}, "reasons": {"items": {"maxLength": MAX_REASON_CHARACTERS, "minLength": 1, "type": "string"}, "maxItems": 16, "minItems": 1, "type": "array"}, "recommendation": {"enum": ["manual", "recommend_candidate", "recommend_keep_current"], "type": "string"}}, "required": ["candidate_id", "citations", "problems", "proposal_id", "reasons", "recommendation"], "type": "object"}, "maxItems": len(proposal_ids), "minItems": len(proposal_ids), "type": "array"}, "review_request_id": {"const": review_request_id, "type": "string"}, "schema_version": {"const": RESULT_SCHEMA, "type": "string"}}, "required": ["recommendations", "review_request_id", "schema_version"], "type": "object"}
 
 
 def _canonical_object(serialized: str, maximum: int) -> dict[str, object]:

@@ -84,7 +84,8 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
             self.assertTrue(
                 all(str(profile.auth_store_path) not in command for command in commands)
             )
-            self.assertTrue(all(command[1] == "--unshare-net" for command in commands))
+            self.assertTrue(all(command[1] == "--unshare-net" for command in commands[:3]))
+            self.assertNotEqual("--unshare-net", commands[3][1])
             self.assertEqual(("login", "--device-auth", "--help"), tuple(commands[0][-3:]))
             self.assertEqual(("login", "status", "--help"), tuple(commands[1][-3:]))
             self.assertEqual(("logout", "--help"), tuple(commands[2][-2:]))
