@@ -14,7 +14,7 @@ directory, an empty-job parent, and explicit resource limits. Paths and auth
 material are never stored in the application database. The tuple is fixed to:
 
 - model `gpt-5.6-sol`, reasoning `medium`;
-- prompt `shadow-review-prompt-v1`;
+- prompt `shadow-review-prompt-v2`;
 - profile `codex-shadow-profile-v1`;
 - packet `shadow-review-packet-v1`;
 - output `shadow-review-result-v1`;

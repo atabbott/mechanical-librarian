@@ -72,7 +72,7 @@ class ReviewerProfileIdentity:
             or _DIGEST.fullmatch(self.sandbox_sha256) is None
             or self.model != "gpt-5.6-sol"
             or self.reasoning != "medium"
-            or self.prompt_version != "shadow-review-prompt-v1"
+            or self.prompt_version != "shadow-review-prompt-v2"
             or self.profile_version != "codex-shadow-profile-v1"
             or self.packet_version != PACKET_SCHEMA
             or self.output_version != RESULT_SCHEMA

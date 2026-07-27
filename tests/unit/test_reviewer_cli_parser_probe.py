@@ -29,7 +29,7 @@ def _profile(root: Path, codex: Path, sandbox: Path) -> QualificationProfile:
         "bubblewrap-v1",
         "gpt-5.6-sol",
         "medium",
-        "shadow-review-prompt-v1",
+        "shadow-review-prompt-v2",
         "codex-shadow-profile-v1",
         "shadow-review-packet-v1",
         "shadow-review-result-v1",
