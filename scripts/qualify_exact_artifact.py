@@ -504,6 +504,24 @@ def _qualify_review_case_console(
             environment,
         )
         proposal_id = _proposal_identifier(proposal)
+        results = proposal.get("results")
+        author_results = (
+            [
+                result
+                for result in results
+                if type(result) is dict
+                and result.get("destination") == "authors"
+            ]
+            if type(results) is list
+            else []
+        )
+        if (
+            len(author_results) != 1
+            or author_results[0].get("outcome") != "ineligible"
+            or author_results[0].get("alternatives") != []
+            or author_results[0].get("selected_alternative_id") is not None
+        ):
+            raise QualificationFailure("installed_review_case_failed")
         admission_args = (
             "review-case-admit",
             "--config",
@@ -930,6 +948,7 @@ def _review_probe_epub(*, actionable: bool) -> bytes:
         '<dc:identifier id="pub-id">'
         'urn:uuid:00000000-0000-4000-8000-000000000007'
         '</dc:identifier><dc:title>Fixture Registry Title</dc:title>'
+        '<dc:creator> \n ＵＮＫＮＯＷＮ \t</dc:creator>'
         '<dc:language>en-GB</dc:language>'
         '<meta property="dcterms:modified">2026-01-13T00:00:00Z</meta>'
         f'</metadata><manifest>{manifest}</manifest><spine>{spine}</spine>'

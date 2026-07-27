@@ -58,12 +58,14 @@ The suite covers:
   alias cleanup, append-only history, replay, scope-checked successor
   pointers, restart readback, corrupt-row rejection, and rollback;
 - fixed-policy exact 16-result enumeration, complete author/narrator lists and
-  atomic series, independent corroboration, accepted-versus-unresolved ISBN
-  applicability, year-only/date consistency, populated subjective-field
-  closure, complete cover-gallery selection, deterministic ProposalSet replay,
-  stale-report no-insert, transaction-local report/current-pointer recheck,
-  exact evaluator recomputation before review admission, synthetic ProposalSet
-  rejection, and zero provider calls during proposal creation;
+  package-creator placeholder exclusion without evidence mutation, explicit
+  anonymous/literal-name and context controls, atomic series, independent
+  corroboration, accepted-versus-unresolved ISBN applicability, year-only/date
+  consistency, populated subjective-field closure, complete cover-gallery
+  selection, deterministic ProposalSet replay, stale-report no-insert,
+  transaction-local report/current-pointer recheck, exact evaluator
+  recomputation before review admission, synthetic ProposalSet rejection, and
+  zero provider calls during proposal creation;
 - rejection before unauthorized parser/provider/publication activity,
   transaction-bound currentness drift, exact-byte snapshot binding, title
   privacy rejection, redaction, and absence of product/media writes;
@@ -76,9 +78,11 @@ The suite covers:
 
 The exact-artifact suite includes the activation demonstration and exercises the
 CLI against a disposable loopback target, synthetic media, private secrets, and
-an absent database. Every synthetic EPUB member has a fixed timestamp so the
-probe identity does not depend on the qualification wall clock. No live library
-or provider is used in development or CI.
+an absent database. Its installed proposal path includes a whitespace/case/
+width variant of the controlled package creator placeholder and requires a
+nonmutating authors result. Every synthetic EPUB member has a fixed timestamp
+so the probe identity does not depend on the qualification wall clock. No live
+library or provider is used in development or CI.
 
 Hostile-input tests name a supported external actor and reachable boundary.
 Typed in-process collaborators are not attacker-controlled unless the product

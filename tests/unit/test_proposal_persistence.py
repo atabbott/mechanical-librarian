@@ -7,12 +7,23 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FieldState,
     FileFacts,
+    LocalClaim,
     MetadataReport,
+    TargetDestination,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
     default_target_fields,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    ProposalSet,
+    evaluate_report,
+)
 
 
 def _report(title: str, digest: str) -> MetadataReport:
@@ -26,6 +37,73 @@ def _report(title: str, digest: str) -> MetadataReport:
 
 
 class ProposalPersistenceTests(unittest.TestCase):
+    def test_placeholder_report_and_nonmutating_proposal_replay_exactly(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o700)
+            fields = {
+                field.destination: field
+                for field in default_target_fields("Title")
+            }
+            fields[TargetDestination.AUTHORS] = TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.MISSING,
+            )
+            claim = LocalClaim.create(
+                kind=ClaimKind.CREATOR,
+                observed="UNKNOWN",
+                canonical="UNKNOWN",
+                excerpt="UNKNOWN",
+                applicability="not_applicable",
+                basis="package_metadata",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                scope=ClaimScope.WORK,
+                state=FieldState.VALID,
+                role="author",
+            )
+            report = MetadataReport.create(
+                target=TargetFacts(
+                    "primary",
+                    "ebooks",
+                    "item-1",
+                    tuple(
+                        fields[destination]
+                        for destination in TargetDestination
+                    ),
+                ),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=(claim,),
+                local_reasons=("package_metadata_creator",),
+                providers=(),
+            )
+            repository = open_repository(root / "reports.sqlite")
+            self.assertEqual(
+                report.to_json(), repository.publish(report, lambda: True)
+            )
+            proposal = evaluate_report(report)
+            authors = next(
+                result
+                for result in proposal.results
+                if result.destination is TargetDestination.AUTHORS
+            )
+            self.assertEqual(ProposalOutcome.INELIGIBLE, authors.outcome)
+            self.assertEqual((), authors.alternatives)
+            stored = repository.publish_proposal(proposal)
+            self.assertEqual(proposal.to_json(), stored)
+            self.assertEqual(
+                proposal,
+                ProposalSet.from_json(
+                    repository.get_proposal(proposal.proposal_set_id)
+                ),
+            )
+            self.assertEqual(
+                report.to_json(), repository.get(report.report_id)
+            )
+            repository.close()
+
     def test_publish_is_idempotent_and_reopens_exact_document(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

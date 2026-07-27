@@ -640,6 +640,10 @@ def _list_observations(
             claim
             for claim in basis_claims
             if claim.kind is kind and claim.scope is scope and claim.role == role
+            and not (
+                destination is TargetDestination.AUTHORS
+                and _controlled_creator_placeholder(claim)
+            )
         )
         if any(
             claim.state is not FieldState.VALID or claim.canonical is None
@@ -702,6 +706,22 @@ def _list_observations(
                     )
                 )
     return tuple(values)
+
+
+def _controlled_creator_placeholder(claim: LocalClaim) -> bool:
+    """Recognize the exact package-author sentinel without changing evidence."""
+    return (
+        claim.kind is ClaimKind.CREATOR
+        and claim.scope is ClaimScope.WORK
+        and claim.role == "author"
+        and claim.basis == "package_metadata"
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+        and " ".join(
+            unicodedata.normalize("NFKC", claim.canonical).split()
+        ).casefold()
+        == "unknown"
+    )
 
 
 def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:

@@ -63,6 +63,12 @@ The policy is deliberately conservative:
 - ordered author and narrator lists, series name/sequence, and date/year remain
   complete and linked rather than being edited piecemeal; untyped contributor
   evidence cannot become a partial narrator list;
+- an exact case/width/whitespace-normalized `Unknown` creator from package
+  metadata is a controlled placeholder, not an author candidate. The source claim,
+  provenance, report identity, and sibling results remain visible and
+  unchanged; real creators in the same report keep their source order, while
+  `Anonymous`, nonexact names, provider creators, and explicit opening-matter
+  creators remain eligible under the ordinary rules;
 - refining a populated year into a full date requires two materially
   independent correlation groups;
 - work first-publication evidence can fill an empty date/year consistently but

@@ -143,6 +143,10 @@ correlation, duplicate connections to one provider authority, malformed/unloaded
 target state, role ambiguity, or incomplete
 cover evidence become unresolved choices, defer, or ineligible rather than
 being silently resolved.
+An exact controlled `Unknown` package-metadata creator sentinel remains a
+versioned local claim in the report but is not an author candidate. Other
+creator contexts and nonexact names remain ordinary evidence, and filtering a
+sentinel does not reorder the remaining complete author list.
 There is no score, provider priority, ranking, configurable policy, review, or
 decision concept.
 

@@ -37,6 +37,10 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                         {(2026, 1, 13, 0, 0, 0)},
                         {member.date_time for member in archive.infolist()},
                     )
+                    self.assertIn(
+                        "<dc:creator> \n ＵＮＫＮＯＷＮ \t</dc:creator>",
+                        archive.read("EPUB/package.opf").decode("utf-8"),
+                    )
 
     def test_review_probe_runs_from_owner_only_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

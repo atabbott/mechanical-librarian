@@ -147,6 +147,28 @@ def _local_subtitle(value: str, scope: ClaimScope) -> LocalClaim:
     )
 
 
+def _local_creator(
+    value: str,
+    *,
+    basis: str = "package_metadata",
+    occurrence: int = 0,
+) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.CREATOR,
+        observed=value,
+        canonical=value,
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        basis=basis,
+        excerpt=value,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        role="author",
+        occurrence=occurrence,
+    )
+
+
 def _result(proposal_set: ProposalSet, destination: TargetDestination):
     return next(
         value
@@ -804,6 +826,292 @@ class ProposalSetTests(unittest.TestCase):
         )
         self.assertEqual(ProposalOutcome.INELIGIBLE, local_result.outcome)
         self.assertEqual((), local_result.alternatives)
+
+    def test_controlled_package_placeholder_never_becomes_an_author_candidate(
+        self,
+    ) -> None:
+        authors = TargetField(
+            TargetDestination.AUTHORS,
+            TargetFieldState.MISSING,
+        )
+        for value in (
+            "Unknown",
+            "UNKNOWN",
+            "UnKnOwN",
+            "Ｕｎｋｎｏｗｎ",
+        ):
+            with self.subTest(value=value):
+                claim = _local_creator(value)
+                report = _report(
+                    fields=_fields(None, authors=authors),
+                    local_claims=(claim,),
+                )
+                proposal_set = evaluate_report(report)
+                result = _result(proposal_set, TargetDestination.AUTHORS)
+                self.assertEqual(ProposalOutcome.INELIGIBLE, result.outcome)
+                self.assertEqual((), result.alternatives)
+                self.assertEqual(("no_supported_evidence",), result.reasons)
+                self.assertEqual(claim, report.local_claims[0])
+                self.assertEqual(
+                    report,
+                    MetadataReport.from_json(report.to_json()),
+                )
+                self.assertEqual(
+                    proposal_set,
+                    ProposalSet.from_json(proposal_set.to_json()),
+                )
+                self.assertEqual(proposal_set, evaluate_report(report))
+
+    def test_controlled_placeholder_uses_existing_nonmutating_target_outcome(
+        self,
+    ) -> None:
+        claim = _local_creator("Unknown")
+        cases = (
+            (
+                TargetFieldState.MISSING,
+                None,
+                ProposalOutcome.INELIGIBLE,
+                "no_supported_evidence",
+            ),
+            (
+                TargetFieldState.NULL,
+                None,
+                ProposalOutcome.INELIGIBLE,
+                "no_supported_evidence",
+            ),
+            (
+                TargetFieldState.EMPTY,
+                None,
+                ProposalOutcome.INELIGIBLE,
+                "no_supported_evidence",
+            ),
+            (
+                TargetFieldState.UNLOADED,
+                None,
+                ProposalOutcome.INELIGIBLE,
+                "target_state_unusable",
+            ),
+            (
+                TargetFieldState.VALUE,
+                ("Current Author",),
+                ProposalOutcome.DEFER,
+                "no_positive_preservation_evidence",
+            ),
+        )
+        for state, current, outcome, reason in cases:
+            with self.subTest(state=state):
+                result = _result(
+                    evaluate_report(
+                        _report(
+                            fields=_fields(
+                                None,
+                                authors=TargetField(
+                                    TargetDestination.AUTHORS,
+                                    state,
+                                    current,
+                                ),
+                            ),
+                            local_claims=(claim,),
+                        )
+                    ),
+                    TargetDestination.AUTHORS,
+                )
+                self.assertEqual(outcome, result.outcome)
+                self.assertEqual((), result.alternatives)
+                self.assertEqual((reason,), result.reasons)
+
+    def test_mixed_package_creators_keep_real_author_order(self) -> None:
+        authors = TargetField(
+            TargetDestination.AUTHORS,
+            TargetFieldState.MISSING,
+        )
+        cases = (
+            (
+                (
+                    _local_creator("Unknown", occurrence=0),
+                    _local_creator("Ada Author", occurrence=1),
+                    _local_creator("Bea Writer", occurrence=2),
+                ),
+                ("Ada Author", "Bea Writer"),
+            ),
+            (
+                (
+                    _local_creator("Ada Author", occurrence=0),
+                    _local_creator("UNKNOWN", occurrence=1),
+                    _local_creator("Bea Writer", occurrence=2),
+                ),
+                ("Ada Author", "Bea Writer"),
+            ),
+        )
+        for claims, expected in cases:
+            with self.subTest(expected=expected):
+                report = _report(
+                    fields=_fields(None, authors=authors),
+                    local_claims=claims,
+                )
+                result = _result(
+                    evaluate_report(report),
+                    TargetDestination.AUTHORS,
+                )
+                self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+                self.assertEqual(expected, result.alternatives[0].value.value)
+                self.assertEqual(
+                    tuple(
+                        sorted(
+                            claim.reference
+                            for claim in claims
+                            if claim.observed.strip().casefold() != "unknown"
+                        )
+                    ),
+                    result.alternatives[0].evidence_references,
+                )
+                self.assertEqual(claims, report.local_claims)
+
+    def test_placeholder_rule_is_exact_and_creator_context_specific(self) -> None:
+        authors = TargetField(
+            TargetDestination.AUTHORS,
+            TargetFieldState.MISSING,
+        )
+        for value in ("Anonymous", "Anon.", "Unknown Author", "The Unknown"):
+            with self.subTest(value=value):
+                result = _result(
+                    evaluate_report(
+                        _report(
+                            fields=_fields(None, authors=authors),
+                            local_claims=(_local_creator(value),),
+                        )
+                    ),
+                    TargetDestination.AUTHORS,
+                )
+                self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
+                self.assertEqual((value,), result.alternatives[0].value.value)
+
+        opening_unknown = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(None, authors=authors),
+                    local_claims=(
+                        _local_creator("Unknown", basis="opening_matter"),
+                    ),
+                )
+            ),
+            TargetDestination.AUTHORS,
+        )
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, opening_unknown.outcome)
+        self.assertEqual(
+            ("Unknown",), opening_unknown.alternatives[0].value.value
+        )
+
+        provider_unknown = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(None, authors=authors),
+                    providers=(
+                        _provider(
+                            "catalogue",
+                            "edition-1",
+                            (
+                                _claim(
+                                    "catalogue",
+                                    "edition-1",
+                                    ClaimKind.CREATOR,
+                                    "Unknown",
+                                    scope=ClaimScope.WORK,
+                                    role="author",
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+            ),
+            TargetDestination.AUTHORS,
+        )
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, provider_unknown.outcome)
+        self.assertEqual(
+            ("Unknown",), provider_unknown.alternatives[0].value.value
+        )
+
+        mixed_context = _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(None, authors=authors),
+                    local_claims=(
+                        _local_creator("Unknown", occurrence=0),
+                        _local_creator(
+                            "Real Author",
+                            basis="opening_matter",
+                            occurrence=1,
+                        ),
+                    ),
+                )
+            ),
+            TargetDestination.AUTHORS,
+        )
+        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, mixed_context.outcome)
+        self.assertEqual(
+            ("Real Author",), mixed_context.alternatives[0].value.value
+        )
+
+        unrelated_report = _report(
+            title=None,
+            fields=_fields(
+                None,
+                title=TargetField(
+                    TargetDestination.TITLE,
+                    TargetFieldState.MISSING,
+                ),
+                authors=authors,
+            ),
+            local_claims=(
+                LocalClaim.create(
+                    kind=ClaimKind.TITLE,
+                    observed="Unknown",
+                    canonical="Unknown",
+                    excerpt="Unknown",
+                    applicability="not_applicable",
+                    basis="package_metadata",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    scope=ClaimScope.WORK,
+                ),
+            ),
+        )
+        unrelated = evaluate_report(unrelated_report)
+        self.assertEqual(
+            ProposalOutcome.PROPOSE_CHANGE,
+            _result(unrelated, TargetDestination.TITLE).outcome,
+        )
+        self.assertEqual(
+            ProposalOutcome.INELIGIBLE,
+            _result(unrelated, TargetDestination.AUTHORS).outcome,
+        )
+
+    def test_placeholder_changes_only_the_authors_policy_result(self) -> None:
+        authors = TargetField(
+            TargetDestination.AUTHORS,
+            TargetFieldState.MISSING,
+        )
+        baseline = evaluate_report(
+            _report(fields=_fields(None, authors=authors))
+        )
+        with_placeholder = evaluate_report(
+            _report(
+                fields=_fields(None, authors=authors),
+                local_claims=(_local_creator("Unknown"),),
+            )
+        )
+        self.assertEqual(
+            {
+                result.destination: result
+                for result in baseline.results
+                if result.destination is not TargetDestination.AUTHORS
+            },
+            {
+                result.destination: result
+                for result in with_placeholder.results
+                if result.destination is not TargetDestination.AUTHORS
+            },
+        )
 
     def test_ambiguous_local_contributor_does_not_become_partial_narrators(
         self,

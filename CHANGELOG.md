@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep a controlled package-metadata `Unknown` creator visible in report
+  evidence while preventing it from becoming an authors replacement by itself.
+  Mixed real creators retain their order, and legitimate anonymous, nonexact,
+  provider, and opening-matter names remain eligible. (#376)
+
 - Accept order-insensitive, repeated known reviewer citations at the untrusted
   output boundary, then persist and replay one deterministic sorted unique set.
   Unknown, missing, malformed, mixed-validity, and over-bound citations remain
