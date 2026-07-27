@@ -7,8 +7,11 @@ import time
 import zipfile
 from datetime import datetime, timedelta, timezone
 import unittest
+from unittest.mock import patch
 
 from hypothesis import given, settings, strategies as st
+
+import mechanical_librarian.adapters.evidence_extractors.epub_opening as opening
 
 from mechanical_librarian.adapters.evidence_extractors.epub_opening import (
     EpubOpeningExtractor,
@@ -591,6 +594,52 @@ class EpubOpeningTests(unittest.TestCase):
                 if claim.field is OpeningField.IDENTIFIER
             ],
             ["ebook", "unlabelled"],
+        )
+
+    def test_colon_delimited_media_labels_and_uri_owners_are_local(self) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page"><p>'
+                    'Paperback: 9781861972712; Hardcover: 9780306406157; '
+                    'eBook: 9780140328721; x:9780306406157, '
+                    'https://lccn.loc.gov/9780306406157;'
+                    '</p></section>'
+                )
+            )
+        )
+        self.assertEqual(
+            [
+                (claim.normalized_value, claim.applicability_label)
+                for claim in report.claims
+                if claim.field is OpeningField.IDENTIFIER
+            ],
+            [
+                ("9781861972712", "paperback"),
+                ("9780306406157", "hardcover"),
+                ("9780140328721", "ebook"),
+            ],
+        )
+
+    def test_identifier_owner_spans_are_computed_once_per_element(self) -> None:
+        values = " ".join("9780306406157" for _ in range(12))
+        source = self._single(
+            _xhtml(
+                '<section epub:type="copyright-page"><p>'
+                + values
+                + '</p></section>'
+            )
+        )
+        with patch.object(
+            opening,
+            "_non_isbn_identifier_spans",
+            wraps=opening._non_isbn_identifier_spans,
+        ) as spans:
+            report = _extract(source)
+        self.assertEqual(spans.call_count, 1)
+        self.assertEqual(
+            sum(claim.field is OpeningField.IDENTIFIER for claim in report.claims),
+            12,
         )
 
     def test_canonical_envelope_rejects_forged_versions_lineage_and_usage(self) -> None:

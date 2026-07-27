@@ -729,13 +729,29 @@ def _normalize_identifier(
     stripped = raw.strip()
     urn_isbn = stripped.casefold().startswith("urn:isbn:")
     candidate = stripped[9:] if urn_isbn else raw
+    declared_scheme_key = (
+        None if declared_scheme is None else declared_scheme.casefold()
+    )
     declared_isbn = (
-        declared_scheme.upper()
-        if declared_scheme is not None
-        and declared_scheme.upper() in {"ISBN", "ISBN-10", "ISBN-13"}
+        declared_scheme_key.upper()
+        if declared_scheme_key in {"isbn", "isbn-10", "isbn-13"}
         else None
     )
     if declared_scheme is not None and declared_isbn is None:
+        uuid = _UUID.fullmatch(stripped)
+        if uuid and declared_scheme_key in {"uuid", "urn:uuid"}:
+            return (
+                "urn:uuid:" + uuid.group(1).lower(),
+                EpubObservationApplicability.EDITION,
+                "UUID",
+                False,
+            )
+        doi = _DOI.fullmatch(stripped)
+        if doi and declared_scheme_key == "doi":
+            return doi.group(1), EpubObservationApplicability.EDITION, "DOI", False
+        asin = _ASIN.fullmatch(stripped)
+        if asin and declared_scheme_key == "asin":
+            return asin.group(1).upper(), EpubObservationApplicability.EDITION, "ASIN", False
         return stripped, EpubObservationApplicability.UNKNOWN, None, False
     match = _ISBN.fullmatch(candidate)
     if not match:

@@ -321,6 +321,17 @@ class EpubChildRearSpineTests(unittest.TestCase):
         facts = self._package_facts(package)
         self.assertEqual([fact for fact in facts if fact.field.value == "isbn"], [])
 
+    def test_package_facts_casefold_declared_isbn_scheme(self) -> None:
+        package = EPUB2_PACKAGE.replace(
+            b'opf:scheme="ISBN">0-306-40615-2',
+            b'opf:scheme="iSbN">9780306406157',
+        )
+        facts = self._package_facts(package)
+        self.assertEqual(
+            [fact.canonical_value for fact in facts if fact.field.value == "isbn"],
+            ["9780306406157"],
+        )
+
     def test_package_primary_isbn_is_distinct_from_secondary_isbn(self) -> None:
         package = EPUB3_PACKAGE.replace(
             b"</metadata>",
@@ -544,11 +555,26 @@ class EpubChildRearSpineTests(unittest.TestCase):
 
     def test_rear_pool_rejects_isbn_shaped_digits_owned_by_a_uri(self) -> None:
         request, (package, opening, _) = self._bundle(
-            _xhtml('<p>Copyright 2026</p><p>LCCN https://lccn.loc.gov/9780306406157</p>')
+            _xhtml(
+                '<p>Copyright 2026</p><p>'
+                'x:9780306406157, https://lccn.loc.gov/9780306406157;'
+                '</p>'
+            )
         )
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
             facts = child._rear_facts(request, package, opening, archive)
         self.assertEqual([fact for fact in facts if fact.field.value == "isbn"], [])
+
+    def test_rear_pool_preserves_colon_delimited_media_label_isbns(self) -> None:
+        request, (package, opening, _) = self._bundle(
+            _xhtml('<p>Copyright 2026</p><p>Paperback: 9780306406157</p>')
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+        self.assertEqual(
+            [fact.canonical_value for fact in facts if fact.field.value == "isbn"],
+            ["9780306406157"],
+        )
 
     def test_rear_pool_does_not_replace_a_tail_slot_without_marker(self) -> None:
         request, (package, opening, _) = self._bundle(_xhtml('<h1 epub:type="fulltitle">Unmarked Tail</h1><p>ISBN 9780306406157</p>'))

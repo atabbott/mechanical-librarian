@@ -938,6 +938,40 @@ class EpubPackageExtractorTests(unittest.TestCase):
             },
         )
 
+    def test_declared_identifier_schemes_are_casefolded_and_normalized(self) -> None:
+        cases = (
+            (b'isbn', b'9780306406157', "9780306406157"),
+            (b'DoI', b'doi:10.1234/synthetic.1', "10.1234/synthetic.1"),
+            (b'aSiN', b'asin:b012345678', "B012345678"),
+            (
+                b'UuId',
+                b'12345678-1234-4abc-8123-123456789abc',
+                "urn:uuid:12345678-1234-4abc-8123-123456789abc",
+            ),
+        )
+        for scheme, raw, normalized in cases:
+            with self.subTest(scheme=scheme):
+                package = EPUB2_PACKAGE.replace(
+                    b'opf:scheme="ISBN">0-306-40615-2',
+                    b'opf:scheme="' + scheme + b'">' + raw,
+                )
+                report = EpubPackageExtractor().extract(
+                    request(epub_bytes(version=2, package=package))
+                )
+                identifier = next(
+                    item for item in report.observations
+                    if item.field is EpubPackageField.IDENTIFIER
+                )
+                self.assertEqual(identifier.normalized_value, normalized)
+                self.assertIn(
+                    scheme.decode(),
+                    {
+                        item.normalized_value
+                        for item in report.observations
+                        if item.field is EpubPackageField.IDENTIFIER_SCHEME
+                    },
+                )
+
     def test_repeated_legacy_cover_declarations_preserve_agreement_and_conflict(self) -> None:
         cover_meta = b'<meta name="cover" content="cover"/>'
         agreeing_package = EPUB2_PACKAGE.replace(
