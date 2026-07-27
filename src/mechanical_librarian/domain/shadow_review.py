@@ -544,7 +544,7 @@ class ShadowReviewRequest:
 
     @classmethod
     def from_json(cls, serialized: str) -> Self:
-        raw = _canonical_object(serialized, MAX_PACKET_BYTES + MAX_PROFILE_IDENTITY_BYTES)
+        raw = _canonical_object(serialized, MAX_REQUEST_BYTES)
         if set(raw) != {
             "mode",
             "packet",

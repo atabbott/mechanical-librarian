@@ -30,6 +30,7 @@ from mechanical_librarian.application.shadow_reviews import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.shadow_review import (
     MAX_PACKET_BYTES,
+    MAX_PROFILE_IDENTITY_BYTES,
     MAX_REQUEST_BYTES,
     ReviewerProfileIdentity,
     ShadowReviewDocumentError,
@@ -470,6 +471,14 @@ class ShadowReviewTests(unittest.TestCase):
 
             def packet_with_padding(size: int) -> ShadowReviewPacket:
                 data = json.loads(base.to_json())
+                original = data["proposals"][0]["candidates"][0]
+                data["proposals"][0]["candidates"] = [
+                    {
+                        **original,
+                        "candidate_id": f"alternative_{index:064x}",
+                    }
+                    for index in range(512)
+                ]
                 data["citations"][0]["fact"]["request_bound_padding"] = "x" * size
                 return ShadowReviewPacket(
                     data["review_case_id"],
@@ -493,6 +502,10 @@ class ShadowReviewTests(unittest.TestCase):
                 MAX_PACKET_BYTES - len(packet.to_json().encode("utf-8")), 1
             )
             request = ShadowReviewRequest.create_from_packet(_identity(), packet)
+            self.assertGreater(
+                len(request.to_json().encode("utf-8")),
+                MAX_PACKET_BYTES + MAX_PROFILE_IDENTITY_BYTES,
+            )
             self.assertLessEqual(
                 len(request.to_json().encode("utf-8")), MAX_REQUEST_BYTES
             )
@@ -520,6 +533,12 @@ class ShadowReviewTests(unittest.TestCase):
             self.assertIsNotNone(stored)
             self.assertEqual(
                 request, ShadowReviewRequest.from_json(stored[0])
+            )
+            self.assertEqual(
+                request,
+                repository._validated_shadow_request(
+                    request.review_request_id
+                ),
             )
             schema = repository._connection.execute(
                 "SELECT sql FROM sqlite_master "
