@@ -56,6 +56,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     comparison_links,
     isbn_family,
+    normalize_title,
 )
 
 
@@ -500,7 +501,7 @@ def _admitted_work_candidates(
     for raw_work in docs:
         work = _mapping(raw_work)
         work_key = _key(work.get("key"), _WORK_KEY)
-        authors = _string_list(work.get("author_name", []), _MAX_VALUES)
+        authors = _author_list(work.get("author_name", []), _MAX_VALUES)
         editions = _mapping(work.get("editions"))
         edition_docs = editions.get("docs")
         if type(edition_docs) is not list:
@@ -1274,6 +1275,16 @@ def _string_list(value: object, maximum: int) -> tuple[str, ...]:
         raise ValueError("provider string list is malformed")
     values = tuple(_text(item) for item in value)
     return tuple(sorted(set(values)))[:maximum]
+
+
+def _author_list(value: object, maximum: int) -> tuple[str, ...]:
+    if type(value) is not list or len(value) > maximum:
+        raise ValueError("provider author list is malformed")
+    values = tuple(_text(item) for item in value)
+    normalized = tuple(normalize_title(item).casefold() for item in values)
+    if len(set(normalized)) != len(normalized):
+        raise ValueError("provider author list is malformed")
+    return values
 
 
 def _search_isbn_families(value: object) -> set[str]:

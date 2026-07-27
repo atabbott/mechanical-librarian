@@ -183,7 +183,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             TargetField(
                 TargetDestination.AUTHORS,
                 TargetFieldState.VALUE,
-                ("Ada Example", "Bea Example"),
+                ("Zed Author", "Ada Author"),
             )
             if field.destination is TargetDestination.AUTHORS
             else field
@@ -198,7 +198,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 "docs": [
                     {
                         "key": "/works/OL5W",
-                        "author_name": ["Bea Example", "Ada Example"],
+                        "author_name": ["Zed Author", "Ada Author"],
                         "editions": {"docs": [{"key": "/books/OL1M"}]},
                     }
                 ]
@@ -228,7 +228,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self.assertEqual(ProviderQueryKind.WORK, observation.query_kind)
         self.assertEqual((title.reference,), observation.input_references)
         self.assertEqual(
-            ("Ada Example", "Bea Example"),
+            ("Zed Author", "Ada Author"),
             tuple(
                 claim.value
                 for claim in observation.candidates[0].claims
@@ -247,7 +247,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         )
         replay = MetadataReport.from_json(report.to_json())
         self.assertEqual(
-            ("Ada Example", "Bea Example"),
+            ("Zed Author", "Ada Author"),
             tuple(
                 claim.value
                 for claim in replay.providers[0].candidates[0].claims
@@ -256,6 +256,85 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 and claim.role == "author"
             ),
         )
+
+    def test_work_plan_rejects_reordered_duplicate_invalid_and_overflow_authors(
+        self,
+    ) -> None:
+        title = _title()
+        fields = tuple(
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Zed Author", "Ada Author"),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("Local work title")
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Local work title", (), fields=fields),
+            (title,),
+        )
+        for label, authors, expected in (
+            (
+                "reordered",
+                ["Ada Author", "Zed Author"],
+                ProviderStatus.NO_MATCH,
+            ),
+            (
+                "duplicate",
+                ["Zed Author", "Ada Author", "Ada Author"],
+                ProviderStatus.MALFORMED,
+            ),
+            ("invalid", ["Zed Author", 7], ProviderStatus.MALFORMED),
+            (
+                "overflow",
+                [f"Author {index}" for index in range(9)],
+                ProviderStatus.MALFORMED,
+            ),
+        ):
+            requests: list[str] = []
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                requests.append(request.url.path)
+                if request.url.path == "/search.json":
+                    value = {
+                        "docs": [
+                            {
+                                "key": "/works/OL5W",
+                                "author_name": authors,
+                                "editions": {
+                                    "docs": [{"key": "/books/OL1M"}]
+                                },
+                            }
+                        ]
+                    }
+                elif request.url.path == "/books/OL1M.json":
+                    value = _edition(
+                        "/books/OL1M", work="/works/OL5W"
+                    )
+                else:
+                    self.assertEqual("/works/OL5W.json", request.url.path)
+                    value = _work("/works/OL5W")
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=value,
+                )
+
+            observation = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(transport=httpx.MockTransport(handler)),
+                65_536,
+                pacer=OpenLibraryPacer(sleep=lambda _: None),
+            ).observe(plan)
+            with self.subTest(label=label):
+                self.assertEqual(expected, observation.status)
+                self.assertEqual((), observation.candidates)
+                self.assertEqual(
+                    3 if expected is ProviderStatus.NO_MATCH else 1,
+                    len(requests),
+                )
 
     def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_work_evidence(self) -> None:
         requests: list[httpx.Request] = []
@@ -526,7 +605,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             TargetField(
                 TargetDestination.AUTHORS,
                 TargetFieldState.VALUE,
-                ("Ada Example", "Bea Example"),
+                ("Zed Author", "Ada Author"),
             )
             if field.destination is TargetDestination.AUTHORS
             else field
@@ -554,7 +633,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                         "docs": [
                             {
                                 "key": "/works/OL5W",
-                                "author_name": ["Bea Example", "Ada Example"],
+                                "author_name": ["Zed Author", "Ada Author"],
                                 "editions": {
                                     "docs": [{"key": "/books/OL1M"}]
                                 },
@@ -614,7 +693,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             if claim.kind is ClaimKind.ISBN and claim.value is not None
         )
         self.assertEqual(
-            ("Ada Example", "Bea Example"),
+            ("Zed Author", "Ada Author"),
             tuple(
                 claim.value
                 for claim in observation.candidates[0].claims
