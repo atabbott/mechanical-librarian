@@ -99,6 +99,9 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
             explicit_isbn = _ISBN_LABEL.match(observation.raw_value) is not None or scheme_key in {"isbn", "isbn-10", "isbn-13"}
             if scheme_key is not None and scheme_key not in {"isbn", "isbn-10", "isbn-13"}:
                 continue
+            declared_length = {"isbn-10": 10, "isbn-13": 13}.get(scheme_key)
+            if declared_length is not None and (canonical is None or len(canonical) != declared_length):
+                continue
             if not valid and not explicit_isbn:
                 continue
             if not valid:

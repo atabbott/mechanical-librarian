@@ -106,7 +106,7 @@ _HARDCOVER_LABEL = re.compile(
     r"(?<![\w])(?:hardback|hardcover)(?![\w])", re.I
 )
 _NON_ISBN_IDENTIFIER = re.compile(
-    r"(?i)(?P<scheme>urn:isbn|[a-z][a-z0-9+.-]{0,31}):\s*(?://)?[^\s;,|]+"
+    r"(?i)(?P<scheme>urn:isbn|[a-z][a-z0-9+.-]{0,31}):\s*(?://)?[^\s|]+"
 )
 _CHARSET_PARAMETER = re.compile(
     rb"(?:^|;)\s*charset\s*=\s*([A-Za-z0-9._-]+)(?:\s*;|\s*$)", re.I

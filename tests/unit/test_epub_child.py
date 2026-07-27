@@ -332,6 +332,21 @@ class EpubChildRearSpineTests(unittest.TestCase):
             ["9780306406157"],
         )
 
+    def test_package_facts_reject_declared_isbn_length_mismatches(self) -> None:
+        for scheme, value in (
+            (b"ISBN-10", b"9780306406157"),
+            (b"iSbN-13", b"0306406152"),
+        ):
+            with self.subTest(scheme=scheme):
+                package = EPUB2_PACKAGE.replace(
+                    b'opf:scheme="ISBN">0-306-40615-2',
+                    b'opf:scheme="' + scheme + b'">' + value,
+                )
+                facts = self._package_facts(package)
+                self.assertEqual(
+                    [fact for fact in facts if fact.field.value == "isbn"], []
+                )
+
     def test_package_primary_isbn_is_distinct_from_secondary_isbn(self) -> None:
         package = EPUB3_PACKAGE.replace(
             b"</metadata>",
@@ -557,7 +572,8 @@ class EpubChildRearSpineTests(unittest.TestCase):
         request, (package, opening, _) = self._bundle(
             _xhtml(
                 '<p>Copyright 2026</p><p>'
-                'x:9780306406157, https://lccn.loc.gov/9780306406157;'
+                'x:9780306406157, '
+                'https://example.invalid/item;id=9780306406157'
                 '</p>'
             )
         )

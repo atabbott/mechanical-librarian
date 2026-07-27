@@ -603,7 +603,8 @@ class EpubOpeningTests(unittest.TestCase):
                     '<section epub:type="copyright-page"><p>'
                     'Paperback: 9781861972712; Hardcover: 9780306406157; '
                     'eBook: 9780140328721; x:9780306406157, '
-                    'https://lccn.loc.gov/9780306406157;'
+                    'https://lccn.loc.gov/9780306406157; '
+                    'https://example.invalid/item;id=9780306406157'
                     '</p></section>'
                 )
             )
