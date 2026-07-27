@@ -2,7 +2,7 @@
 
 `mechanical-librarian catalogue refresh --config CONFIG --database CATALOGUE`
 creates one bounded, read-only observation across configured Audiobookshelf book
-libraries. The command accepts only `config-v4`; it reads no provider credential
+libraries. The command accepts only `config-v5`; it reads no provider credential
 and makes no target or media write.
 
 The catalogue stores no more than 10,000 entries. A current generation is

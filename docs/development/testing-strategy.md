@@ -48,6 +48,11 @@ The suite covers:
   request order, shared one-second pacing, finite rich evidence, terminal
   failure mapping, identified metadata/cover requests, cover-failure isolation,
   provider-order/contact privacy, and the explicit five-item batch envelope;
+- Google Books keyed and credential-free fixed-origin requests, disabled
+  zero-egress, exact ISBN/work qualification, unresolved work linkage,
+  evidence-only publication strings, deterministic replay and provider order,
+  response/candidate/request/aggregate bounds, quota/4xx/5xx/no-match typing,
+  cancellation/timeout behavior, and credential/raw-response redaction;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
 - exact clean-state DELETE-mode report/ProposalSet/ReviewCase schema, side-effect-free existing-file

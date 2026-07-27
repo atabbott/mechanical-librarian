@@ -385,7 +385,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v10", report.schema_version)
+        self.assertEqual("metadata-report-v11", report.schema_version)
 
     def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
         self,

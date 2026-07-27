@@ -7,7 +7,7 @@ src/mechanical_librarian/
 ├── adapters/
 │   ├── library_services/    # scoped Audiobookshelf item reader
 │   ├── evidence_extractors/ # private EPUB package/opening implementation
-│   ├── providers/           # fixed Hardcover and Open Library observations
+│   ├── providers/           # fixed Hardcover, Open Library, and Google Books observations
 │   └── persistence/         # exact SQLite reports, ProposalSets, and review cases
 ├── infrastructure/  # strict config, private files, local media
 ├── interfaces/cli/  # sole metadata-report surface
@@ -17,7 +17,7 @@ src/mechanical_librarian/
 Tests are grouped into unit, integration, and static architecture suites.
 Synthetic EPUBs are generated in memory; no media files or production payloads
 are committed. `scripts/generate_configuration_schema.py` is the sole product
-generator and must reproduce `docs/reference/config-v4.schema.json`.
+generator and must reproduce `docs/reference/config-v5.schema.json`.
 
 The dependency direction and responsibilities are defined by the
 [architecture overview](../architecture/overview.md). Empty packages for

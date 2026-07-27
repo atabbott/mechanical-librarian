@@ -467,7 +467,7 @@ branch, commit, or pull request.
   Open Library observations in one immutable `metadata-report-v6`;
 - Open Library retains only the closed finite rich-evidence allowlist from exact
   admitted edition/work records and at most two cover sources;
-- adapter-specific `config-v4` excludes the Open Library operational contact
+- adapter-specific `config-v5` excludes the Open Library operational contact
   from report identity, persistence, manifests, fingerprints, and diagnostics;
 - `batch-manifest-v2` binds provider adapters and truthful maxima, while enabled
   Open Library accepts only explicit batches of at most five items; and

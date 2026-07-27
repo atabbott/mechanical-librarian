@@ -112,7 +112,7 @@ def _item(size: int) -> dict[str, object]:
 
 def _config(endpoint: str, media: Path, target_secret: Path, *, audiobook: bool = False, provider_secret: str | None = None) -> dict[str, object]:
     return {
-        "schema_version": "config-v4",
+        "schema_version": "config-v5",
         "connections": [
             {
                 "name": "primary",

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add Google Books as an ordinary report-only metadata provider with
+  credential-free and optional controller-owned API-key modes, fixed bounded
+  ISBN/work discovery, provider-local volume identities, explicit unresolved
+  work linkage, evidence-only publication strings, typed transport/quota
+  outcomes, deterministic replay, and end-to-end proposal/review evidence
+  persistence. Advance the exact configuration and report contracts to
+  `config-v5`, `metadata-report-v11`, and `batch-manifest-v4`; earlier
+  development state remains clean-schema incompatible. (#315)
+
 - Accept order-insensitive, repeated known reviewer citations at the untrusted
   output boundary, then persist and replay one deterministic sorted unique set.
   Unknown, missing, malformed, mixed-validity, and over-bound citations remain

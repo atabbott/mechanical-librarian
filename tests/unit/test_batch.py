@@ -16,12 +16,12 @@ class BatchTests(unittest.TestCase):
   with self.assertRaises(BatchError): select(CatalogueSnapshot(1,"a"*64,(entry(),)),(),False)
  def test_manifest_is_canonical_and_private(self):
   value=manifest(CatalogueSnapshot(1,"a"*64,(entry(),)),"b"*64,(BatchSelection("primary","books","library","one","a"*64,"singular-supported",True),),("catalogue",),("hardcover",))
-  self.assertNotIn(b"Title",value); self.assertIn(b'"schema":"batch-manifest-v3"',value)
+  self.assertNotIn(b"Title",value); self.assertIn(b'"schema":"batch-manifest-v4"',value)
   self.assertEqual(parse_manifest(value)["id"],parse_manifest(value)["id"])
  def test_manifest_rejects_tamper_and_config_fingerprint_excludes_secret_path(self):
   raw=manifest(CatalogueSnapshot(1,"a"*64,()),"b"*64,(),(),())
   with self.assertRaises(BatchError): parse_manifest(raw.replace(b'"entries":[]',b'"entries":[{}]'))
-  with self.assertRaises(BatchError): parse_manifest(raw.replace(b"batch-manifest-v3",b"batch-manifest-v2"))
+  with self.assertRaises(BatchError): parse_manifest(raw.replace(b"batch-manifest-v4",b"batch-manifest-v2"))
   first=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/private/a"),),(LibraryConfiguration("books","primary","library","book",None,()),),(),(),ReportLimits())
   second=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/private/b"),),(LibraryConfiguration("books","primary","library","book",None,()),),(),(),ReportLimits())
   self.assertEqual(batch_fingerprint(first),batch_fingerprint(second))
@@ -53,6 +53,8 @@ class BatchTests(unittest.TestCase):
   self.assertEqual(parse_manifest(raw)["call_maxima"],{"target_item_observations":6,"target_raw_cover_requests":4,"provider_metadata_requests":54,"remote_cover_requests":24})
   open_only=manifest(base,"b"*64,selected,("open",),("open_library",))
   self.assertEqual(parse_manifest(open_only)["call_maxima"]["remote_cover_requests"],4)
+  google=manifest(base,"b"*64,selected,("google",),("google_books",))
+  self.assertEqual(parse_manifest(google)["call_maxima"],{"target_item_observations":6,"target_raw_cover_requests":4,"provider_metadata_requests":9,"remote_cover_requests":0})
   first=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/target"),),(LibraryConfiguration("books","primary","library","book",None,("open",)),),(),(ProviderConnectionConfiguration("open",True,False,None,"open_library","first@example.org"),))
   second=ApplicationConfiguration((TargetConnectionConfiguration("primary","https://example.invalid","/other-target"),),(LibraryConfiguration("books","primary","library","book",None,("open",)),),(),(ProviderConnectionConfiguration("open",True,False,None,"open_library","second@example.org"),))
   self.assertEqual(batch_fingerprint(first,selected),batch_fingerprint(second,selected))

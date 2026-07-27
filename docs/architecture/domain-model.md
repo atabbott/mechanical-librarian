@@ -168,7 +168,7 @@ snapshot.
 
 ## Foreground evidence batch
 
-One `batch-manifest-v3` document freezes an ordered set of exact catalogue
+One `batch-manifest-v4` document freezes an ordered set of exact catalogue
 entries. It binds the current catalogue generation and fingerprint, selected
 file identities, a secret-free report-configuration fingerprint, enabled
 provider names and adapter discriminators, and bounded call maxima. Its content

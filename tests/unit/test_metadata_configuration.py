@@ -20,7 +20,7 @@ from mechanical_librarian.infrastructure.security.credentials import read_secret
 
 def _source(root: Path) -> dict[str, object]:
     return {
-        "schema_version": "config-v4",
+        "schema_version": "config-v5",
         "connections": [
             {"name": "secondary", "adapter": "audiobookshelf", "endpoint": "https://secondary.invalid", "secret_file": str(root / "secondary.secret")},
             {"name": "primary", "adapter": "audiobookshelf", "endpoint": "https://primary.invalid", "secret_file": str(root / "primary.secret")},
@@ -98,15 +98,17 @@ class MetadataConfigurationTests(unittest.TestCase):
         )
 
     def test_generated_schema_is_current(self) -> None:
-        expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v4.schema.json").read_text(encoding="utf-8")
+        expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v5.schema.json").read_text(encoding="utf-8")
         self.assertEqual(configuration_schema_json(), expected)
 
     def test_generated_schema_enforces_provider_variants(self) -> None:
         schema = json.loads(configuration_schema_json())["$defs"]
         self.assertEqual(
             {
+                "DisabledGoogleBooksProviderInput",
                 "DisabledHardcoverProviderInput",
                 "DisabledOpenLibraryProviderInput",
+                "EnabledGoogleBooksProviderInput",
                 "EnabledHardcoverProviderInput",
                 "EnabledOpenLibraryProviderInput",
             },
@@ -135,6 +137,27 @@ class MetadataConfigurationTests(unittest.TestCase):
                 },
                 {
                     "name": "provider",
+                    "adapter": "google_books",
+                    "enabled": True,
+                    "cover_enabled": False,
+                    "secret_file": None,
+                },
+                {
+                    "name": "provider",
+                    "adapter": "google_books",
+                    "enabled": True,
+                    "cover_enabled": False,
+                    "secret_file": str(root / "provider.secret"),
+                },
+                {
+                    "name": "provider",
+                    "adapter": "google_books",
+                    "enabled": False,
+                    "cover_enabled": False,
+                    "secret_file": None,
+                },
+                {
+                    "name": "provider",
                     "adapter": "open_library",
                     "enabled": True,
                     "cover_enabled": True,
@@ -155,6 +178,17 @@ class MetadataConfigurationTests(unittest.TestCase):
                 ConfigurationInput.model_validate(source)
 
             invalid = (
+                {
+                    "adapter": "google_books",
+                    "enabled": False,
+                    "secret_file": str(root / "provider.secret"),
+                },
+                {
+                    "adapter": "google_books",
+                    "enabled": True,
+                    "cover_enabled": True,
+                    "secret_file": None,
+                },
                 {
                     "adapter": "open_library",
                     "enabled": True,
@@ -198,6 +232,13 @@ class MetadataConfigurationTests(unittest.TestCase):
                 },
                 {
                     "name": "second",
+                    "adapter": "google_books",
+                    "enabled": True,
+                    "cover_enabled": False,
+                    "secret_file": None,
+                },
+                {
+                    "name": "third",
                     "adapter": "open_library",
                     "enabled": True,
                     "cover_enabled": True,
@@ -210,7 +251,11 @@ class MetadataConfigurationTests(unittest.TestCase):
             configuration = load_configuration_file(path)
             self.assertEqual(
                 tuple((value.name, value.adapter) for value in configuration.providers),
-                (("first", "hardcover"), ("second", "open_library")),
+                (
+                    ("first", "hardcover"),
+                    ("second", "google_books"),
+                    ("third", "open_library"),
+                ),
             )
             self.assertNotIn("operator@example.org", repr(configuration))
 

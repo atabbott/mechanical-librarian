@@ -875,7 +875,7 @@ def _review_probe_configuration(
                 "secret_file": None,
             }
         ],
-        "schema_version": "config-v4",
+        "schema_version": "config-v5",
     }
 
 

@@ -7,13 +7,14 @@ container release.
 
 ## Runtime prerequisites
 
-Run as a non-root dedicated identity with an explicit `config-v4` file and
+Run as a non-root dedicated identity with an explicit `config-v5` file and
 application and catalogue database paths on reliable local storage. Each
 database path is either absent for its clean first invocation or already holds
 the exact-current schema. The owner-controlled artifact-store directory must
 already exist. When using batches, provide an immutable manifest path. Target
-and enabled-provider secrets must remain owner-only, and ebook media mounts are
-read-only. The configuration and supported egress rules are defined in the
+and configured provider secrets must remain owner-only (Google Books may
+instead use credential-free access), and ebook media mounts are read-only. The
+configuration and supported egress rules are defined in the
 [configuration reference](../reference/configuration.md) and [security
 model](../architecture/security.md).
 

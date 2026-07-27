@@ -32,6 +32,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
+from mechanical_librarian.adapters.providers.google_books_metadata import (
+    GoogleBooksMetadataProvider,
+)
 from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
     OpenLibraryPacer,
@@ -118,6 +121,7 @@ from mechanical_librarian.infrastructure.local_media import (
     sha256_descriptor,
 )
 from mechanical_librarian.infrastructure.security.credentials import (
+    google_books_client,
     hardcover_client,
     hardcover_client_token,
     open_library_client,
@@ -498,6 +502,23 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
         def factory(value=provider):
+            if value.adapter == "google_books":
+                api_key = (
+                    None
+                    if value.secret_file is None
+                    else (
+                        read_secret(value.secret_file)
+                        if credentials is None
+                        else credentials["provider:" + value.name]
+                    )
+                )
+                return GoogleBooksMetadataProvider(
+                    value.name,
+                    google_books_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    api_key=api_key,
+                )
             if value.adapter == "hardcover":
                 if value.secret_file is None:
                     raise MetadataReportError("provider credential unavailable")

@@ -1,0 +1,425 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+import httpx
+
+from mechanical_librarian.adapters.providers.google_books_metadata import (
+    GOOGLE_BOOKS_URL,
+    GoogleBooksMetadataProvider,
+)
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    open_repository,
+)
+from mechanical_librarian.application.metadata_report import (
+    MetadataLookup,
+    qualify_provider_observation,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FieldState,
+    LocalClaim,
+    MetadataReport,
+    ProviderEvidence,
+    ProviderEvidenceKind,
+    ProviderQueryKind,
+    ProviderStatus,
+    default_target_fields,
+    FileFacts,
+    TargetFacts,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+
+
+def _isbn(value: str = "9780306406157") -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed=value,
+        canonical=value,
+        excerpt=f"ISBN {value}",
+        applicability="ebook",
+        basis="opening_matter",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+        scope=ClaimScope.EDITION,
+    )
+
+
+def _volume(volume_id: str = "volume_1") -> dict[str, object]:
+    return {
+        "id": volume_id,
+        "volumeInfo": {
+            "title": "Example Book",
+            "subtitle": "A Test",
+            "authors": ["Ada Example"],
+            "publisher": "Example Press",
+            "publishedDate": "2026-Spring",
+            "description": "Synthetic description",
+            "industryIdentifiers": [
+                {"type": "ISBN_10", "identifier": "0306406152"},
+                {"type": "ISBN_13", "identifier": "9780306406157"},
+            ],
+            "pageCount": 321,
+            "printType": "BOOK",
+            "categories": ["Synthetic fiction"],
+            "language": "en",
+            "contentVersion": "1.2.3.0.preview.0",
+        },
+    }
+
+
+def _lookup() -> MetadataLookup:
+    claim = _isbn()
+    return MetadataLookup(
+        ProviderQueryKind.ISBN,
+        (claim,),
+        matched_family="9780306406157",
+    )
+
+
+class GoogleBooksMetadataTests(unittest.TestCase):
+    def test_keyless_and_keyed_requests_are_fixed_and_credentials_never_persist(
+        self,
+    ) -> None:
+        for api_key in (None, "private-api-key"):
+            requests: list[httpx.Request] = []
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                requests.append(request)
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"totalItems": 1, "items": [_volume()]},
+                )
+
+            observation = GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(transport=httpx.MockTransport(handler)),
+                65_536,
+                api_key=api_key,
+            ).observe(_lookup())
+            self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+            self.assertEqual("google_books", observation.authority)
+            self.assertEqual(1, len(requests))
+            self.assertEqual(GOOGLE_BOOKS_URL, str(requests[0].url.copy_with(query=None)))
+            self.assertEqual(
+                "isbn:9780306406157", requests[0].url.params["q"]
+            )
+            self.assertEqual("6", requests[0].url.params["maxResults"])
+            self.assertEqual(
+                api_key, requests[0].url.params.get("key")
+            )
+            candidate = observation.candidates[0]
+            self.assertEqual("google-books-volume-volume_1", candidate.identity)
+            self.assertEqual("unresolved", candidate.work_identity)
+            self.assertIn(
+                ProviderEvidence(
+                    ProviderEvidenceKind.EDITION_WORK_RELATION,
+                    "unresolved",
+                    ClaimScope.EDITION,
+                ),
+                candidate.evidence,
+            )
+            self.assertIn(
+                "2026-Spring",
+                {
+                    evidence.value
+                    for evidence in candidate.evidence
+                    if evidence.kind
+                    is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                },
+            )
+            self.assertFalse(
+                any(
+                    claim.kind is ClaimKind.PUBLICATION_DATE
+                    for claim in candidate.claims
+                )
+            )
+            report = MetadataReport.create(
+                target=TargetFacts(
+                    "primary",
+                    "ebooks",
+                    "item-1",
+                    default_target_fields("Example Book"),
+                ),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=_lookup().local_claims,
+                local_reasons=("opening_matter_isbn",),
+                providers=(observation,),
+            )
+            self.assertNotIn("private-api-key", report.to_json())
+
+    def test_work_query_requires_exact_complete_title_and_author_order(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"totalItems": 1, "items": [_volume()]},
+            )
+
+        lookup = MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "Example Book",
+            ("Ada Example",),
+        )
+        observation = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        ).observe(lookup)
+        observation = qualify_provider_observation(observation, lookup)
+        self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
+        self.assertEqual(
+            'intitle:"Example Book" inauthor:"Ada Example"',
+            requests[0].url.params["q"],
+        )
+        self.assertTrue(
+            all(
+                claim.scope is ClaimScope.WORK
+                for claim in observation.candidates[0].claims
+            )
+        )
+
+    def test_work_query_does_not_choose_between_unlinked_matching_volumes(
+        self,
+    ) -> None:
+        lookup = MetadataLookup(
+            ProviderQueryKind.WORK,
+            (),
+            "Example Book",
+            ("Ada Example",),
+        )
+        observation = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={
+                            "totalItems": 2,
+                            "items": [_volume("volume_1"), _volume("volume_2")],
+                        },
+                    )
+                )
+            ),
+            65_536,
+        ).observe(lookup)
+        qualified = qualify_provider_observation(observation, lookup)
+        self.assertEqual(ProviderStatus.NO_MATCH, qualified.status)
+        self.assertEqual((), qualified.candidates)
+
+    def test_no_match_malformed_and_candidate_bound_are_distinct(self) -> None:
+        cases = (
+            (
+                {"totalItems": 0},
+                ProviderStatus.NO_MATCH,
+            ),
+            (
+                {"totalItems": 1, "items": [{"id": "bad"}]},
+                ProviderStatus.MALFORMED,
+            ),
+            (
+                {
+                    "totalItems": 6,
+                    "items": [
+                        _volume(f"volume_{index}") for index in range(6)
+                    ],
+                },
+                ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            ),
+        )
+        for payload, expected in cases:
+            with self.subTest(expected=expected):
+                observation = GoogleBooksMetadataProvider(
+                    "google_books",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda _: httpx.Response(
+                                200,
+                                headers={"content-type": "application/json"},
+                                json=payload,
+                            )
+                        )
+                    ),
+                    65_536,
+                ).observe(_lookup())
+                self.assertEqual(expected, observation.status)
+                self.assertEqual((), observation.candidates)
+
+    def test_declared_quota_and_http_errors_are_typed(self) -> None:
+        cases = (
+            (
+                403,
+                {
+                    "error": {
+                        "errors": [{"reason": "dailyLimitExceeded"}]
+                    }
+                },
+                ProviderStatus.RATE_LIMITED,
+            ),
+            (
+                401,
+                {"error": {"errors": [{"reason": "required"}]}},
+                ProviderStatus.AUTHENTICATION,
+            ),
+            (
+                403,
+                {"error": {"errors": [{"reason": "forbidden"}]}},
+                ProviderStatus.AUTHORIZATION,
+            ),
+            (
+                503,
+                {"error": {"errors": [{"reason": "backendError"}]}},
+                ProviderStatus.UNAVAILABLE,
+            ),
+        )
+        for status_code, payload, expected in cases:
+            with self.subTest(status_code=status_code, expected=expected):
+                observation = GoogleBooksMetadataProvider(
+                    "google_books",
+                    httpx.Client(
+                        transport=httpx.MockTransport(
+                            lambda _: httpx.Response(
+                                status_code,
+                                headers={"content-type": "application/json"},
+                                json=payload,
+                            )
+                        )
+                    ),
+                    65_536,
+                ).observe(_lookup())
+                self.assertEqual(expected, observation.status)
+
+    def test_oversized_timeout_and_expired_deadline_fail_closed(self) -> None:
+        oversized = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={
+                            "content-type": "application/json",
+                            "content-length": "2000",
+                        },
+                        content=b"{}",
+                    )
+                )
+            ),
+            1024,
+        ).observe(_lookup())
+        self.assertEqual(ProviderStatus.OVERSIZED, oversized.status)
+
+        def timeout(_: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("synthetic timeout")
+
+        unavailable = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(timeout)),
+            65_536,
+        ).observe(_lookup())
+        self.assertEqual(ProviderStatus.UNAVAILABLE, unavailable.status)
+
+        requests: list[httpx.Request] = []
+        expired = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: requests.append(request)
+                    or httpx.Response(200, json={})
+                )
+            ),
+            65_536,
+        ).observe(_lookup(), deadline=0.0)
+        self.assertEqual(ProviderStatus.UNAVAILABLE, expired.status)
+        self.assertEqual([], requests)
+
+    def test_malformed_and_duplicate_json_never_escape_as_raw_artifacts(self) -> None:
+        for payload in (
+            b"{",
+            b'{"totalItems":0,"totalItems":1}',
+            json.dumps({"totalItems": "secret-value"}).encode(),
+        ):
+            observation = GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            content=payload,
+                        )
+                    )
+                ),
+                65_536,
+            ).observe(_lookup())
+            self.assertEqual(ProviderStatus.MALFORMED, observation.status)
+            self.assertNotIn("secret-value", repr(observation))
+
+    def test_report_proposal_admission_and_review_packet_replay_google_evidence(
+        self,
+    ) -> None:
+        observation = GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [_volume()]},
+                    )
+                )
+            ),
+            65_536,
+        ).observe(_lookup())
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                "item-1",
+                default_target_fields("Example Book"),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=_lookup().local_claims,
+            local_reasons=("opening_matter_isbn",),
+            providers=(observation,),
+        )
+        proposal = evaluate_report(report)
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            try:
+                repository.publish(report, lambda: True)
+                repository.publish_proposal(proposal)
+                admitted = json.loads(repository.admit_review_case(proposal))
+                case_data = json.loads(
+                    repository.get_review_case(admitted["review_case_id"])
+                )["case"]
+                case = ReviewCase.from_json(
+                    json.dumps(
+                        case_data,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                )
+                packet = ShadowReviewPacket.create(case, proposal, report)
+            finally:
+                repository.close()
+        serialized = packet.to_json()
+        self.assertIn("Example Press", serialized)
+        self.assertNotIn("2026-Spring", serialized)
+        self.assertNotIn("private-api-key", serialized)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -10,6 +10,9 @@ work identities. Open Library may add only its closed finite rich-evidence
 allowlist: bounded upstream identities and provenance, selected identifiers and
 classifications, subjects, edition characteristics, contributor identity and
 role, edition-work relation, first-publication date, and cover IDs.
+Google Books retains only bounded volume IDs, qualified claims, format and
+edition signals, and an explicit unresolved work-link marker. Its
+`publishedDate` value is typed evidence, never a selectable date claim.
 The target projection retains exactly 16 bounded Audiobookshelf destinations.
 Provider cover rows retain only safe opaque source/work/edition identities,
 typed designation, allowlisted edition context, artifact digests, dimensions,
@@ -25,7 +28,8 @@ dependencies, and an optional selected alternative ID. It does not duplicate
 report excerpts, provider evidence records, target current-state storage, or
 cover provenance.
 
-It does not retain credentials, authorization headers, provider cover URLs, the Open Library
+It does not retain credentials, Google Books API keys, authorization headers,
+provider cover URLs, the Open Library
 operational contact email, endpoint paths, private filesystem paths, raw
 target/provider responses, arbitrary upstream properties or links, arbitrary
 EPUB fragments, inventory, cover bytes, raw reviewer streams, reasoning,

@@ -36,7 +36,7 @@ class CatalogueCommandTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory); secret = root / "token"; secret.write_text("token"); secret.chmod(0o600); database = root / "catalogue.sqlite"
-                config = root / "config.json"; config.write_text(json.dumps({"schema_version":"config-v4", "connections":[{"name":"primary","adapter":"audiobookshelf","endpoint":f"http://127.0.0.1:{server.server_port}","secret_file":str(secret)}], "libraries":[{"name":"first","connection":"primary","library_id":"one","mount":None,"provider_connections":[]},{"name":"second","connection":"primary","library_id":"two","mount":None,"provider_connections":[]}], "mounts":[],"providers":[]}))
+                config = root / "config.json"; config.write_text(json.dumps({"schema_version":"config-v5", "connections":[{"name":"primary","adapter":"audiobookshelf","endpoint":f"http://127.0.0.1:{server.server_port}","secret_file":str(secret)}], "libraries":[{"name":"first","connection":"primary","library_id":"one","mount":None,"provider_connections":[]},{"name":"second","connection":"primary","library_id":"two","mount":None,"provider_connections":[]}], "mounts":[],"providers":[]}))
                 base = [shutil.which("mechanical-librarian"), "catalogue", "--config", str(config), "--database", str(database)]
                 refresh = subprocess.run([*base, "refresh"], capture_output=True, text=True, timeout=20)
                 listed = subprocess.run([*base, "list"], capture_output=True, text=True, timeout=20)

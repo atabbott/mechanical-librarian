@@ -22,7 +22,7 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 
 
-REPORT_SCHEMA = "metadata-report-v10"
+REPORT_SCHEMA = "metadata-report-v11"
 COMPARISON_VERSION = "same-kind-v1"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -84,6 +84,7 @@ class ProviderEvidenceKind(StrEnum):
     PAGINATION = "pagination"
     PUBLICATION_PLACE = "publication_place"
     COPYRIGHT_DATE = "copyright_date"
+    PUBLICATION_DATE_TEXT = "publication_date_text"
     EDITION_WORK_RELATION = "edition_work_relation"
     FIRST_PUBLICATION_DATE = "first_publication_date"
     EDITION_COVER_ID = "edition_cover_id"
@@ -967,7 +968,12 @@ class ProviderObservation:
         if (
             type(self.status) is not ProviderStatus
             or type(self.query_kind) is not ProviderQueryKind
-            or self.authority not in {None, "hardcover", "open_library"}
+            or self.authority not in {
+                None,
+                "google_books",
+                "hardcover",
+                "open_library",
+            }
         ):
             raise ReportValueError("provider status is invalid")
         if type(self.input_references) is not tuple or tuple(sorted(set(self.input_references))) != self.input_references or any(
@@ -1056,6 +1062,8 @@ class ProviderObservation:
         lanes_by_work: dict[str, set[str]] = {}
         for lane in self.lanes:
             for candidate in lane.candidates:
+                if candidate.work_identity == "unresolved":
+                    continue
                 lanes_by_work.setdefault(candidate.work_identity, set()).add(
                     lane.identity
                 )
@@ -1336,7 +1344,10 @@ def derive_identifier_evidence(
     ] = {}
     for provider, candidate, claim in provider_isbns:
         family = provider_families.get(claim.reference)
-        if family in accepted_local_families:
+        if (
+            family in accepted_local_families
+            and candidate.work_identity != "unresolved"
+        ):
             accepted_family_works.setdefault(
                 (provider, family), {}
             ).setdefault(candidate.work_identity, []).append(claim.reference)

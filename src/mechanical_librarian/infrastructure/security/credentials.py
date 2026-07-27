@@ -102,6 +102,22 @@ def open_library_client(
     )
 
 
+def google_books_client(
+    timeout_seconds: int,
+    *,
+    transport: httpx.BaseTransport | None = None,
+) -> httpx.Client:
+    """Construct a credential-free client confined by the adapter's fixed URL."""
+    return httpx.Client(
+        follow_redirects=False,
+        trust_env=False,
+        verify=True,
+        timeout=httpx.Timeout(float(timeout_seconds)),
+        limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        transport=transport,
+    )
+
+
 class _TargetAuth(httpx.Auth):
     def __init__(self, origin: str, token: str) -> None:
         self._origin = httpx.URL(origin)
@@ -142,6 +158,7 @@ def _target_origin_allowed(value: str) -> bool:
 __all__ = [
     "hardcover_client",
     "hardcover_client_token",
+    "google_books_client",
     "open_library_client",
     "read_secret",
     "target_client",

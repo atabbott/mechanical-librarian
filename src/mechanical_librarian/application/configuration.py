@@ -61,12 +61,19 @@ class ProviderConnectionConfiguration:
 
     def __post_init__(self) -> None:
         _name(self.name, "provider connection name")
-        if self.adapter not in {"hardcover", "open_library"} or type(self.enabled) is not bool or type(self.cover_enabled) is not bool:
+        if self.adapter not in {"google_books", "hardcover", "open_library"} or type(self.enabled) is not bool or type(self.cover_enabled) is not bool:
             raise ConfigurationError("provider connection is invalid")
         if self.cover_enabled and not self.enabled:
             raise ConfigurationError("cover enablement requires provider enablement")
         if self.adapter == "hardcover":
             if self.contact_email is not None or self.enabled != (self.secret_file is not None):
+                raise ConfigurationError("provider connection is invalid")
+        elif self.adapter == "google_books":
+            if (
+                self.contact_email is not None
+                or self.cover_enabled
+                or (not self.enabled and self.secret_file is not None)
+            ):
                 raise ConfigurationError("provider connection is invalid")
         elif (
             self.secret_file is not None
@@ -80,7 +87,7 @@ class ProviderConnectionConfiguration:
             )
         ):
             raise ConfigurationError("provider connection is invalid")
-        if self.adapter == "hardcover" and self.secret_file is not None:
+        if self.adapter in {"google_books", "hardcover"} and self.secret_file is not None:
             _absolute_path(self.secret_file, "provider secret file")
 
     def __repr__(self) -> str:
@@ -154,10 +161,10 @@ class ApplicationConfiguration:
     mounts: tuple[MediaMountConfiguration, ...]
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
-    schema_version: str = "config-v4"
+    schema_version: str = "config-v5"
 
     def __post_init__(self) -> None:
-        if self.schema_version != "config-v4":
+        if self.schema_version != "config-v5":
             raise ConfigurationError("configuration schema is unsupported")
         typed = (
             (self.connections, TargetConnectionConfiguration, "target connections"),

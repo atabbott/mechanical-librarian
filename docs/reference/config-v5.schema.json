@@ -36,6 +36,51 @@
       "title": "ConnectionInput",
       "type": "object"
     },
+    "DisabledGoogleBooksProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "google_books",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "const": null,
+          "title": "Secret File",
+          "type": "null"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "adapter",
+        "enabled",
+        "secret_file"
+      ],
+      "title": "DisabledGoogleBooksProviderInput",
+      "type": "object"
+    },
     "DisabledHardcoverProviderInput": {
       "additionalProperties": false,
       "properties": {
@@ -124,6 +169,60 @@
         "secret_file"
       ],
       "title": "DisabledOpenLibraryProviderInput",
+      "type": "object"
+    },
+    "EnabledGoogleBooksProviderInput": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "const": "google_books",
+          "title": "Adapter",
+          "type": "string"
+        },
+        "contact_email": {
+          "const": null,
+          "default": null,
+          "title": "Contact Email",
+          "type": "null"
+        },
+        "cover_enabled": {
+          "const": false,
+          "title": "Cover Enabled",
+          "type": "boolean"
+        },
+        "enabled": {
+          "const": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+          "title": "Name",
+          "type": "string"
+        },
+        "secret_file": {
+          "anyOf": [
+            {
+              "maxLength": 1024,
+              "minLength": 1,
+              "pattern": "^/",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Secret File"
+        }
+      },
+      "required": [
+        "name",
+        "cover_enabled",
+        "adapter",
+        "enabled",
+        "secret_file"
+      ],
+      "title": "EnabledGoogleBooksProviderInput",
       "type": "object"
     },
     "EnabledHardcoverProviderInput": {
@@ -354,6 +453,12 @@
         },
         {
           "$ref": "#/$defs/DisabledOpenLibraryProviderInput"
+        },
+        {
+          "$ref": "#/$defs/EnabledGoogleBooksProviderInput"
+        },
+        {
+          "$ref": "#/$defs/DisabledGoogleBooksProviderInput"
         }
       ],
       "title": "ProviderInput"
@@ -405,7 +510,7 @@
       "type": "array"
     },
     "schema_version": {
-      "const": "config-v4",
+      "const": "config-v5",
       "title": "Schema Version",
       "type": "string"
     }
