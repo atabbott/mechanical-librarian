@@ -917,6 +917,27 @@ class EpubPackageExtractorTests(unittest.TestCase):
             },
         )
 
+    def test_explicit_non_isbn_scheme_does_not_infer_an_isbn(self) -> None:
+        package = EPUB2_PACKAGE.replace(
+            b'opf:scheme="ISBN">0-306-40615-2',
+            b'opf:scheme="LCCN">9780306406157',
+        )
+        report = EpubPackageExtractor().extract(request(epub_bytes(version=2, package=package)))
+        identifier = next(
+            item for item in report.observations
+            if item.field is EpubPackageField.IDENTIFIER
+        )
+        self.assertEqual(identifier.normalized_value, "9780306406157")
+        self.assertIs(identifier.applicability, EpubObservationApplicability.UNKNOWN)
+        self.assertNotIn(
+            "ISBN-13",
+            {
+                item.normalized_value
+                for item in report.observations
+                if item.field is EpubPackageField.IDENTIFIER_SCHEME
+            },
+        )
+
     def test_repeated_legacy_cover_declarations_preserve_agreement_and_conflict(self) -> None:
         cover_meta = b'<meta name="cover" content="cover"/>'
         agreeing_package = EPUB2_PACKAGE.replace(

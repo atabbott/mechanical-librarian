@@ -539,6 +539,60 @@ class EpubOpeningTests(unittest.TestCase):
             conflicting_identifier.citation.exact_excerpt,
         )
 
+    def test_isbn_recognition_is_occurrence_local_and_rejects_owned_uri_digits(self) -> None:
+        report = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page"><p>'
+                    'ISBN 9781861972712; eBook ISBN 9780306406157; '
+                    'LCCN: 9780306406157; '
+                    'LCCN https://lccn.loc.gov/9780306406157'
+                    '</p></section>'
+                )
+            )
+        )
+        identifiers = [
+            claim for claim in report.claims if claim.field is OpeningField.IDENTIFIER
+        ]
+        self.assertEqual(
+            [(claim.normalized_value, claim.applicability_label) for claim in identifiers],
+            [("9781861972712", "unlabelled"), ("9780306406157", "ebook")],
+        )
+        forward = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page"><p>'
+                    'ISBN 9781861972712 eBook ISBN 9780306406157'
+                    '</p></section>'
+                )
+            )
+        )
+        self.assertEqual(
+            [
+                claim.applicability_label
+                for claim in forward.claims
+                if claim.field is OpeningField.IDENTIFIER
+            ],
+            ["unlabelled", "ebook"],
+        )
+        backward = _extract(
+            self._single(
+                _xhtml(
+                    '<section epub:type="copyright-page"><p>'
+                    'eBook ISBN 9781861972712 ISBN 9780306406157'
+                    '</p></section>'
+                )
+            )
+        )
+        self.assertEqual(
+            [
+                claim.applicability_label
+                for claim in backward.claims
+                if claim.field is OpeningField.IDENTIFIER
+            ],
+            ["ebook", "unlabelled"],
+        )
+
     def test_canonical_envelope_rejects_forged_versions_lineage_and_usage(self) -> None:
         report = _extract(opening_claims_complete())
         for mutate in (

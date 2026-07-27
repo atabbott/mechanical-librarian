@@ -40,7 +40,9 @@ resume, retry, worker, or background state.
   invocation. The descriptor-bound isolated child has no credentials, network,
   persistence, matching, or decision authority. It hashes and parses one
   bounded immutable byte snapshot, and the parent validates file content and
-  target identity again as the publication transaction's precondition.
+  target identity again as the publication transaction's precondition. Explicit
+  non-ISBN schemes and URIs retain ownership of their digit sequences, so a
+  checksum-valid embedded substring cannot manufacture identifier evidence.
 - A local actor may replace or corrupt configuration, secret, media, manifest,
   or SQLite
   files. No-follow descriptor binding, side-effect-free validation of existing

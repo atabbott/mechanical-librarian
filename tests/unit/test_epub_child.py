@@ -313,6 +313,14 @@ class EpubChildRearSpineTests(unittest.TestCase):
             [("unknown", "unlabelled")],
         )
 
+    def test_package_facts_reject_isbn_shaped_non_isbn_scheme_values(self) -> None:
+        package = EPUB2_PACKAGE.replace(
+            b'opf:scheme="ISBN">0-306-40615-2',
+            b'opf:scheme="LCCN">9780306406157',
+        )
+        facts = self._package_facts(package)
+        self.assertEqual([fact for fact in facts if fact.field.value == "isbn"], [])
+
     def test_package_primary_isbn_is_distinct_from_secondary_isbn(self) -> None:
         package = EPUB3_PACKAGE.replace(
             b"</metadata>",
@@ -533,6 +541,14 @@ class EpubChildRearSpineTests(unittest.TestCase):
             [("title", "Nested Title"), ("creator", "Ada Example"), ("contributor", "Bea Contributor"), ("creator", "Cara Example"), ("isbn", "9780306406157")],
         )
         self.assertEqual(sum(fact.field.value == "isbn" for fact in facts), 1)
+
+    def test_rear_pool_rejects_isbn_shaped_digits_owned_by_a_uri(self) -> None:
+        request, (package, opening, _) = self._bundle(
+            _xhtml('<p>Copyright 2026</p><p>LCCN https://lccn.loc.gov/9780306406157</p>')
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+        self.assertEqual([fact for fact in facts if fact.field.value == "isbn"], [])
 
     def test_rear_pool_does_not_replace_a_tail_slot_without_marker(self) -> None:
         request, (package, opening, _) = self._bundle(_xhtml('<h1 epub:type="fulltitle">Unmarked Tail</h1><p>ISBN 9780306406157</p>'))

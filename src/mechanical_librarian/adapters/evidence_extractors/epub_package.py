@@ -735,6 +735,8 @@ def _normalize_identifier(
         and declared_scheme.upper() in {"ISBN", "ISBN-10", "ISBN-13"}
         else None
     )
+    if declared_scheme is not None and declared_isbn is None:
+        return stripped, EpubObservationApplicability.UNKNOWN, None, False
     match = _ISBN.fullmatch(candidate)
     if not match:
         if (

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep EPUB ISBN recognition occurrence-local and reject checksum-valid
+  ISBN-shaped values explicitly owned by a non-ISBN package scheme or URI.
+  (#372)
+
 - Correct historical documentation attribution: the 0.4 checkpoint had one
   `metadata-report` command and a two-table report store; later 0.5 retrieval,
   richer evidence, and cover-artifact additions remain current-runtime features.

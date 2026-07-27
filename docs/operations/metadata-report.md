@@ -145,7 +145,8 @@ Each ISBN fact keeps its exact observed substring, a directly supporting
 excerpt, checksum result, canonical value only when valid, and an explicit
 ebook, print, unknown, or ambiguous classification with its nonnumeric label
 basis. ISBN-10 remains ISBN-10; print and invalid identifiers are retained as
-evidence but are never sent merely as ebook inputs.
+evidence but are never sent merely as ebook inputs. An explicitly non-ISBN
+scheme or URI cannot contribute an ISBN-shaped substring.
 Every report contains every supported local field in fixed order with one closed
 state: `valid`, `absent`, `malformed`, `oversized`, `unsupported`, `untyped`, or
 `inapplicable`. These field results are independent evidence summaries, not a

@@ -29,7 +29,9 @@ disposable loopback target and synthetic EPUB.
 The suite covers:
 
 - closed reports, canonical serialization, stable claim/report references,
-  title normalization, and ISBN applicability;
+  title normalization, and occurrence-local ISBN applicability, including
+  explicit non-ISBN scheme and URI controls across package, opening, and rear
+  evidence;
 - strict configuration, duplicate/reference rejection, and no implicit inputs;
 - scoped Audiobookshelf item reading, response bounds, root mounts,
   `relPath`/`path` agreement, all 16 destination states/currentness, multiple
