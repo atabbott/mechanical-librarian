@@ -61,6 +61,7 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 [], 0, b"codex-cli 0.146.0-alpha.3.1\n", b""
             )
             success = subprocess.CompletedProcess([], 0, b"", b"")
+            authenticated = subprocess.CompletedProcess([], 0, b"Logged in using ChatGPT\n", b"")
             with (
                 patch.object(parser_probe.sys, "platform", "linux"),
                 patch.object(
@@ -69,7 +70,7 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 patch.object(
                     codex_shadow.subprocess,
                     "run",
-                    side_effect=[version, success, success, success, success],
+                    side_effect=[version, success, success, success, success, version, authenticated, success],
                 ) as run,
             ):
                 self.assertEqual(
@@ -82,7 +83,7 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 )
             commands = [call.args[0] for call in run.call_args_list[1:]]
             self.assertTrue(
-                all(str(profile.auth_store_path) not in command for command in commands)
+                all(str(profile.auth_store_path) not in command for command in commands[:4])
             )
             self.assertTrue(all(command[1] == "--unshare-net" for command in commands[:3]))
             self.assertNotEqual("--unshare-net", commands[3][1])
@@ -112,7 +113,7 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                     if value == "-c"
                 },
             )
-            self.assertTrue(all(call.kwargs["stdout"] is subprocess.DEVNULL for call in run.call_args_list[1:]))
+            self.assertTrue(all(call.kwargs.get("stdout") is subprocess.DEVNULL for call in run.call_args_list[1:5]))
             self.assertFalse(list(profile.job_root_path.glob("reviewer-cli-parser-*")))
             self.assertEqual(b"synthetic-auth-sentinel", sentinel.read_bytes())
             self.assertEqual(sentinel_mode, sentinel.stat().st_mode & 0o777)

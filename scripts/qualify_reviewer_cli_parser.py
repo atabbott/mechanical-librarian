@@ -53,6 +53,7 @@ def qualify_reviewer_cli_parser(profile_path: Path) -> dict[str, object]:
                 profile.identity,
             )
             _qualify_probe_profile(probe_profile)
+            _qualify_synthetic_canary(profile)
     except ShadowReviewerError as error:
         raise ParserProbeError(error.code) from None
     except OSError:
@@ -106,6 +107,23 @@ def _qualify_probe_profile(profile: QualificationProfile) -> None:
                     raise ShadowReviewerError("schema")
                 with prompt.open("rb") as prompt_file:
                     _run(command, (codex.descriptor, sandbox.descriptor), profile.identity.timeout_seconds, prompt_file)
+
+
+def _qualify_synthetic_canary(profile: QualificationProfile) -> None:
+    """Run the ordinary command with owner credentials and synthetic-only input."""
+    reviewer = CodexShadowReviewer(profile)
+    with _bound_artifact(profile.codex_path, profile.identity.executable_sha256) as codex, _bound_artifact(profile.sandbox_path, profile.identity.sandbox_sha256) as sandbox, reviewer._auth_lock():
+        with reviewer._empty_auth_config() as config_fd:
+            reviewer._verify_codex(codex)
+            reviewer._require_chatgpt_auth(reviewer._auth_command(codex, sandbox, config_fd), codex, sandbox, config_fd)
+        with tempfile.TemporaryDirectory(prefix="reviewer-cli-canary-", dir=profile.job_root_path) as directory:
+            job = Path(directory)
+            (job / "output-schema.json").write_text('{"additionalProperties":false,"type":"object"}', encoding="utf-8")
+            prompt = job / "synthetic-prompt.json"
+            prompt.write_bytes(b'{"case":"synthetic-compatibility-canary"}')
+            command = reviewer._sandbox_command(job, job / "result.json", codex.invocation_path, sandbox.invocation_path)
+            with prompt.open("rb") as input_file:
+                _run(command, (codex.descriptor, sandbox.descriptor), profile.identity.timeout_seconds, input_file)
 
 
 def _run(command: list[str], descriptors: tuple[int, ...], limit: int, stdin=subprocess.DEVNULL) -> None:

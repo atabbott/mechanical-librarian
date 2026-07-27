@@ -969,37 +969,45 @@ def _schema_binding(request: ShadowReviewRequest) -> _SchemaBinding:
 def _validate_output_schema(schema: object) -> None:
     """Permit only the pinned structured-output subset and typed bindings."""
     allowed = {"$schema", "additionalProperties", "anyOf", "const", "enum", "items", "maxItems", "maxLength", "minItems", "minLength", "properties", "required", "type"}
+    json_types = {str: "string", int: "integer", float: "number", bool: "boolean", type(None): "null"}
 
     def visit(value: object) -> None:
-        if type(value) is not dict or not set(value) <= allowed:
+        if type(value) is not dict or not value or not set(value) <= allowed:
+            raise ShadowReviewerError("schema")
+        primitive = value.get("type")
+        if primitive is not None and (type(primitive) is not str or primitive not in set(json_types.values()) | {"object", "array"}):
             raise ShadowReviewerError("schema")
         if "const" in value or "enum" in value:
             values = ([value["const"]] if "const" in value else []) + value.get("enum", [])
-            primitive = value.get("type")
-            json_types = {str: "string", int: "integer", float: "number", bool: "boolean", type(None): "null"}
             if (primitive not in set(json_types.values()) or type(values) is not list or not values or any(json_types.get(type(item)) != primitive for item in values)):
                 raise ShadowReviewerError("schema")
         if "const" in value and "enum" in value and value["const"] not in value["enum"]:
             raise ShadowReviewerError("schema")
         if "items" in value:
+            if primitive != "array":
+                raise ShadowReviewerError("schema")
             visit(value["items"])
         for key in ("maxItems", "minItems", "maxLength", "minLength"):
             if key in value and (type(value[key]) is not int or value[key] < 0):
                 raise ShadowReviewerError("schema")
-        if "required" in value and (type(value["required"]) is not list or any(type(item) is not str for item in value["required"])):
+        if "required" in value and (primitive != "object" or type(value["required"]) is not list or any(type(item) is not str for item in value["required"])):
             raise ShadowReviewerError("schema")
         if "additionalProperties" in value and type(value["additionalProperties"]) is not bool:
             raise ShadowReviewerError("schema")
         if "anyOf" in value:
-            if type(value["anyOf"]) is not list:
+            if type(value["anyOf"]) is not list or not value["anyOf"]:
                 raise ShadowReviewerError("schema")
             for child in value["anyOf"]:
                 visit(child)
         if "properties" in value:
-            if type(value["properties"]) is not dict:
+            if primitive != "object" or type(value["properties"]) is not dict or not value["properties"]:
                 raise ShadowReviewerError("schema")
             for child in value["properties"].values():
                 visit(child)
+        if "minItems" in value and "maxItems" in value and value["minItems"] > value["maxItems"]:
+            raise ShadowReviewerError("schema")
+        if "minLength" in value and "maxLength" in value and value["minLength"] > value["maxLength"]:
+            raise ShadowReviewerError("schema")
 
     visit(schema)
 
