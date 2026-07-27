@@ -38,7 +38,7 @@ class ExactArtifactQualificationTests(unittest.TestCase):
                         {member.date_time for member in archive.infolist()},
                     )
                     self.assertIn(
-                        "<dc:creator> \n ＵＮＫＮＯＷＮ \t</dc:creator>",
+                        '<dc:creator opf:role="author"> \n UnKnOwN \t</dc:creator>',
                         archive.read("EPUB/package.opf").decode("utf-8"),
                     )
 
