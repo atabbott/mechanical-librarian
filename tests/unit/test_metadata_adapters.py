@@ -25,6 +25,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     TargetCover,
     TargetSnapshot,
+    metadata_discovery_plan,
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_CONTRIBUTIONS,
@@ -48,6 +49,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     TargetDestination,
     TargetFacts,
+    TargetField,
     TargetFieldState,
     default_target_fields,
 )
@@ -128,7 +130,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v9'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v10'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -136,10 +138,10 @@ def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(metadata_persistence._NO_DELETE_SQL)
 
 
-def _create_v8_schema(connection: sqlite3.Connection) -> None:
+def _create_v9_schema(connection: sqlite3.Connection) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v9'", "= 'metadata-report-v8'"
+            "= 'metadata-report-v10'", "= 'metadata-report-v9'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -150,9 +152,7 @@ def _create_v8_schema(connection: sqlite3.Connection) -> None:
         metadata_persistence._REVIEW_CASES_SQL,
         metadata_persistence._REVIEW_POINTERS_SQL,
         metadata_persistence._REVIEW_TRANSITIONS_SQL,
-        metadata_persistence._SHADOW_REQUESTS_SQL.replace(
-            str(metadata_persistence.MAX_REQUEST_BYTES), "1064960"
-        ),
+        metadata_persistence._SHADOW_REQUESTS_SQL,
         metadata_persistence._SHADOW_ATTEMPTS_SQL,
         metadata_persistence._SHADOW_DISPATCHES_SQL,
         metadata_persistence._SHADOW_OUTCOMES_SQL,
@@ -209,8 +209,8 @@ class MetadataPersistenceTests(unittest.TestCase):
                 _create_legacy_schema,
             ),
             (
-                "previous v8",
-                _create_v8_schema,
+                "previous v9",
+                _create_v9_schema,
             ),
             (
                 "F09k report schema",
@@ -308,7 +308,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v9",))
+            self.assertEqual(schema_version, ("metadata-report-v10",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)
@@ -1343,6 +1343,20 @@ class ProviderAdapterTests(unittest.TestCase):
         contributors = [claim for claim in claims if claim.kind is ClaimKind.CONTRIBUTOR]
         self.assertIn("translator", {claim.role for claim in contributors})
         self.assertTrue(any(claim.state.value == "malformed" for claim in contributors))
+        print_claims = hardcover_metadata._parse_candidates(
+            payload,
+            "catalogue",
+            (self._claim(),),
+            isbn_applicability="print",
+        )[0].claims
+        self.assertEqual(
+            {"print"},
+            {
+                claim.applicability
+                for claim in print_claims
+                if claim.kind is ClaimKind.ISBN
+            },
+        )
 
     def test_response_cap_and_candidate_probe_are_terminal(self) -> None:
         payload = self._envelope([], [])
@@ -1491,6 +1505,66 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertEqual(
             observation.input_references,
             tuple(sorted((second.reference, self._claim().reference))),
+        )
+
+    def test_hardcover_executes_every_family_and_work_lane_in_one_aggregate(self) -> None:
+        title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Current title",
+            canonical="Current title",
+            excerpt="Current title",
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        second = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780140328721",
+            canonical="9780140328721",
+            excerpt="Print ISBN 9780140328721",
+            applicability="print",
+            checksum="valid_isbn_13",
+            applicability_basis="print",
+        )
+        fields = tuple(
+            TargetField(
+                field.destination,
+                TargetFieldState.VALUE,
+                ("Ada Example",),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("Current title")
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Current title", (), fields=fields),
+            (title, self._claim(), second),
+        )
+        operations: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            operations.append(json.loads(request.content)["operationName"])
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"data": {"editions": [], "books": []}},
+            )
+
+        observation = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        ).observe(plan)
+        self.assertEqual(
+            ["MetadataEvidenceByIsbn", "MetadataEvidenceByIsbn", "MetadataEvidenceByWork"],
+            sorted(operations),
+        )
+        self.assertEqual(3, len(observation.lanes))
+        self.assertEqual(
+            {ProviderStatus.NO_MATCH},
+            {lane.status for lane in observation.lanes},
         )
 
         for status_code, expected in (

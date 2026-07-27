@@ -11,6 +11,14 @@
 - Keep EPUB ISBN recognition occurrence-local and reject checksum-valid
   ISBN-shaped values explicitly owned by a non-ISBN package scheme or URI.
   (#372)
+- Search every distinct checksum-valid local ISBN-10/13 family through its own
+  bounded provider lane, alongside one complete-title/author work lane when
+  available. Reports retain exact triggers, lane outcomes, provider-local
+  convergence, conflicts, and typed no-subset overflow without ranking,
+  selection, retry, or write authority. Advance the clean exact-current report
+  contract to `metadata-report-v10` and the truthful foreground request maxima
+  to `batch-manifest-v3`; earlier report databases and manifests are rejected
+  without migration or interpretation. (#373)
 
 - Harden the isolated qualification reviewer schema: typed bound constraints,
   pinned subset validation and request/digest binding, a real one-case

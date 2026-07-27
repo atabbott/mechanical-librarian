@@ -4,6 +4,7 @@ import unittest
 
 import httpx
 
+import mechanical_librarian.adapters.providers.open_library_metadata as open_library_metadata
 from mechanical_librarian.adapters.providers.open_library_metadata import (
     OPEN_LIBRARY_COVERS_ORIGIN,
     OPEN_LIBRARY_SEARCH_URL,
@@ -12,6 +13,8 @@ from mechanical_librarian.adapters.providers.open_library_metadata import (
 )
 from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
+    TargetSnapshot,
+    metadata_discovery_plan,
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -390,6 +393,38 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 )
                 self.assertEqual([], requests)
 
+    def test_discovery_plan_searches_each_valid_family(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={"numFound": 0, "docs": []},
+            )
+
+        claims = (_isbn(), _isbn("9780140328721", applicability="print"))
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()),
+            claims,
+        )
+        observation = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                headers={"User-Agent": "Mechanical-Librarian/test"},
+                transport=httpx.MockTransport(handler),
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        ).observe(plan)
+        self.assertEqual(2, len(requests))
+        self.assertEqual(2, len(observation.lanes))
+        self.assertEqual(
+            {"isbn:9780306406157", "isbn:9780140328721"},
+            {request.url.params["q"] for request in requests},
+        )
+
     def test_isbn_10_and_13_of_one_family_share_one_exact_search(self) -> None:
         requests: list[httpx.Request] = []
 
@@ -415,6 +450,25 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         )
         self.assertEqual("isbn:9780306406157", requests[0].url.params["q"])
         self.assertEqual(1, len(requests))
+
+        print_candidate, _, _ = open_library_metadata._candidate(
+            "open_library",
+            "/books/OL1M",
+            "/works/OL5W",
+            _edition("/books/OL1M", work="/works/OL5W"),
+            _work("/works/OL5W"),
+            (_isbn(applicability="print"),),
+            "9780306406157",
+            isbn_applicability="print",
+        )
+        self.assertEqual(
+            {"print"},
+            {
+                claim.applicability
+                for claim in print_candidate.claims
+                if claim.kind is ClaimKind.ISBN
+            },
+        )
 
     def test_two_distinct_works_use_the_five_request_maximum_in_order(self) -> None:
         requests: list[httpx.Request] = []

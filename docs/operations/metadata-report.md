@@ -161,19 +161,25 @@ replay. Provider comparisons link only claims with the same role; no
 publisher/imprint hierarchy is inferred.
 
 The credential-bearing parent combines those facts with the target projection.
-Exactly one usable edition-applicable ISBN family selects the existing exact
-ISBN flow and forbids fallback. Multiple usable families fail closed. Only
-when no usable family exists may the application make one bounded exact
-title-plus-complete-author lookup; title-only or incomplete authors cause zero
-egress. Candidate admission then requires one exact normalized work title, the
+Every distinct checksum-valid ISBN family across bounded package, front, and
+rear evidence becomes one exact discovery lane. Equivalent ISBN-10/13 values
+share a lane while all original claim references, classification, position,
+and provenance remain retained. When the target has one complete,
+unambiguous title and author set, one work lane runs alongside the ISBN lanes;
+title-only or incomplete authors suppress only that lane. More than eight ISBN
+families is `query_limit_exceeded` and makes no provider request rather than
+selecting a subset. Candidate admission then requires one exact normalized work title, the
 complete ordered author list, one provider-local work identity, and no
 translation, adaptation, or uncertain abridgement marker. Competing works and
 same-title/different-author results are `no_match`.
 
-Every referenced, enabled Hardcover connection makes at most one fresh
-credential-bearing GraphQL metadata request. Every referenced, enabled Open
-Library connection makes one exact ISBN or title/author Search request, at most
-two edition requests, and at most two distinct work requests. Search admission
+Every referenced, enabled Hardcover connection makes at most nine fresh
+credential-bearing GraphQL metadata requests. Every referenced, enabled Open
+Library connection makes at most nine exact Search requests, with at most two
+edition and two distinct work requests per lane, for a 45-request aggregate
+maximum. All lanes share one client, Open Library pacer, response envelope,
+2 MiB aggregate response-byte ceiling, and 60-second aggregate deadline.
+Search admission
 is bounded, deduplicated, and canonical by edition key; a third candidate is
 terminal before detail requests. Open Library request starts are spaced by the
 same fixed one-second pacer and are single-attempt. Disabled references produce
@@ -183,7 +189,7 @@ egress. Unreferenced providers are absent.
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order
 with their distinct edition identity and opaque provider-local work identity.
-Work fallback retains only work title, complete authors, series and sequence,
+The work lane retains only work title, complete authors, series and sequence,
 description, typed taxonomy, same-work first publication, and same-work cover
 evidence. It strips ISBN/ASIN, publisher/imprint, edition language,
 explicit/subtitle, and every other edition claim. Hardcover preserves its
@@ -199,10 +205,17 @@ edition characteristics, contributor identity/role, edition-work relation,
 first-publication date, and cover IDs. It retains no raw payloads, arbitrary
 links or unknown identifiers and performs no author traversal, edition
 enumeration, fuzzy fallback, ranking, voting, or provider fusion.
-The fixed request asks for one row beyond the retained cap so overflow remains
+Each fixed request asks for one row beyond the retained cap so overflow remains
 observable. Malformed or oversized provider fields remain explicit field-local
 claims; structural or join failures make the observation `malformed`. No
 winner, score, merge, fuzzy search, retry, or cache exists.
+
+Each child lane records its opaque identity, kind, matched ISBN family when
+applicable, exact triggering local references, typed status, and
+collision-free candidate references. The provider aggregate deduplicates the
+same edition and records lanes that converge on one provider-local work.
+That convergence is correlation within one source, never another vote or an
+upgrade from work-scoped to edition-scoped authority.
 
 In addition to one ABS and one declared EPUB outcome, cover-enabled providers
 contribute at most eight admitted sources overall and four per provider. Exact

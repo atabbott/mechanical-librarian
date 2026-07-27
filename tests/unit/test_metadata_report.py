@@ -16,6 +16,7 @@ from mechanical_librarian.application.metadata_report import (
     InspectionResult,
     MetadataLookup,
     ProviderBinding,
+    ProviderLaneResult,
     TargetFile,
     TargetCover,
     TargetSnapshot,
@@ -23,6 +24,8 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     _variant_marker,
     metadata_lookup,
+    metadata_discovery_plan,
+    provider_observation,
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.cover_evidence import (
@@ -260,6 +263,159 @@ class MetadataReportTests(unittest.TestCase):
             ProviderQueryKind.NONE,
             metadata_lookup(complete, (isbn, competing)).kind,
         )
+
+        target_title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="The Example",
+            canonical="The Example",
+            excerpt="The Example",
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        plan = metadata_discovery_plan(
+            complete, (target_title, isbn, competing)
+        )
+        self.assertFalse(plan.overflow)
+        self.assertEqual(
+            [ProviderQueryKind.ISBN, ProviderQueryKind.ISBN, ProviderQueryKind.WORK],
+            sorted((lane.kind for lane in plan.lanes), key=lambda value: value.value),
+        )
+        self.assertEqual(
+            {"9780306406157", "9780140328721"},
+            {
+                lane.matched_family
+                for lane in plan.lanes
+                if lane.kind is ProviderQueryKind.ISBN
+            },
+        )
+
+    def test_discovery_plan_deduplicates_families_and_records_convergence(self) -> None:
+        title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="The Example",
+            canonical="The Example",
+            excerpt="The Example",
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        isbn_13 = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="ebook ISBN 9780306406157",
+            applicability="ebook",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+        )
+        isbn_10 = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="0-306-40615-2",
+            canonical="0306406152",
+            excerpt="print ISBN 0-306-40615-2",
+            applicability="print",
+            checksum="valid_isbn_10",
+            applicability_basis="print",
+            basis="opening_matter",
+            rear_provenance=RearClaimProvenance(
+                "a" * 64, 1, 1, "also_by", "rear.xhtml"
+            ),
+        )
+        fields = tuple(
+            TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.VALUE,
+                ("Ada Author",),
+            )
+            if field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields("The Example")
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "The Example", (), fields=fields),
+            (title, isbn_13, isbn_10),
+        )
+        isbn_lane = next(
+            lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN
+        )
+        work_lane = next(
+            lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK
+        )
+        self.assertEqual(
+            tuple(sorted((isbn_13.reference, isbn_10.reference))),
+            isbn_lane.input_references,
+        )
+        candidate = ProviderCandidate("edition-1", "work-1", ())
+        observation = provider_observation(
+            "catalogue",
+            (
+                ProviderLaneResult(
+                    isbn_lane, ProviderStatus.CANDIDATES, (candidate,)
+                ),
+                ProviderLaneResult(
+                    work_lane, ProviderStatus.CANDIDATES, (candidate,)
+                ),
+            ),
+        )
+        self.assertEqual(1, len(observation.candidates))
+        self.assertEqual(2, len(observation.lanes))
+        self.assertEqual(1, len(observation.convergence))
+        self.assertEqual(
+            tuple(sorted(lane.identity for lane in plan.lanes)),
+            observation.convergence[0].lane_identities,
+        )
+        lane_references = {
+            value.reference
+            for lane in observation.lanes
+            for value in lane.candidates
+        }
+        self.assertEqual(2, len(lane_references))
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary", "ebooks", "item-1", fields
+            ),
+            file=FileFacts(0, "b" * 64, "c" * 64),
+            local_claims=(title, isbn_13, isbn_10),
+            local_reasons=("opening_matter_isbn",),
+            providers=(observation,),
+        )
+        self.assertEqual(report, MetadataReport.from_json(report.to_json()))
+        self.assertEqual("metadata-report-v10", report.schema_version)
+
+    def test_discovery_plan_reports_exact_family_overflow_without_subset(self) -> None:
+        claims: list[LocalClaim] = []
+        for index in range(9):
+            prefix = f"97800000000{index}"
+            check = (
+                10
+                - sum(
+                    int(character) * (1 if position % 2 == 0 else 3)
+                    for position, character in enumerate(prefix)
+                )
+                % 10
+            ) % 10
+            value = prefix + str(check)
+            claims.append(
+                LocalClaim.create(
+                    kind=ClaimKind.ISBN,
+                    observed=value,
+                    canonical=value,
+                    excerpt=value,
+                    applicability="unknown",
+                    checksum="valid_isbn_13",
+                    applicability_basis="unlabelled",
+                )
+            )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()), tuple(claims)
+        )
+        self.assertTrue(plan.overflow)
+        self.assertEqual((), plan.lanes)
 
     def test_work_lookup_admits_one_exact_work_and_strips_edition_authority(self) -> None:
         lookup = MetadataLookup(
