@@ -347,6 +347,18 @@ class EpubChildRearSpineTests(unittest.TestCase):
                     [fact for fact in facts if fact.field.value == "isbn"], []
                 )
 
+    def test_package_facts_preserve_punctuated_invalid_declared_isbn(self) -> None:
+        package = EPUB2_PACKAGE.replace(
+            b'opf:scheme="ISBN">0-306-40615-2',
+            b'opf:scheme="ISBN-10">0-306-40615-3',
+        )
+        facts = self._package_facts(package)
+        isbn = next(fact for fact in facts if fact.field.value == "isbn")
+        self.assertEqual(
+            (isbn.observed_value, isbn.canonical_value, isbn.checksum, isbn.state),
+            ("0-306-40615-3", None, "invalid", "malformed"),
+        )
+
     def test_package_primary_isbn_is_distinct_from_secondary_isbn(self) -> None:
         package = EPUB3_PACKAGE.replace(
             b"</metadata>",
