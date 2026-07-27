@@ -17,6 +17,10 @@ from mechanical_librarian.adapters.reviewers.codex_shadow import (
     CodexShadowReviewer,
     QualificationProfile,
 )
+from mechanical_librarian.application.shadow_reviews import (
+    CitationNormalizationMarker,
+    ShadowReviewRunResult,
+)
 from mechanical_librarian.domain.shadow_review import (
     ReviewerProfileIdentity,
     ShadowReviewRequest,
@@ -75,7 +79,7 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                 _reviewer: CodexShadowReviewer,
                 request: ShadowReviewRequest,
                 dispatched,
-            ) -> ShadowReviewResult:
+            ) -> ShadowReviewRunResult:
                 live_requests.append(request)
                 dispatched(1234, 1234, "5678")
                 proposal = request.packet.proposals[0]
@@ -97,7 +101,9 @@ class ReviewerCliParserProbeTests(unittest.TestCase):
                     ),
                 )
                 result.validate_for(request)
-                return result
+                return ShadowReviewRunResult(
+                    result, CitationNormalizationMarker(False, 0)
+                )
 
             with (
                 patch.object(parser_probe.sys, "platform", "linux"),

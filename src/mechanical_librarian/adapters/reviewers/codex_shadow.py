@@ -20,14 +20,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, cast
 
-from mechanical_librarian.application.shadow_reviews import ShadowReviewError
+from mechanical_librarian.application.shadow_reviews import (
+    CitationNormalizationMarker,
+    ShadowReviewError,
+    ShadowReviewRunResult,
+)
 from mechanical_librarian.domain.shadow_review import (
+    MAX_CITATIONS,
     QUALIFICATION_MODE,
     RESULT_SCHEMA,
     ReviewerProfileIdentity,
     ShadowReviewDocumentError,
     ShadowReviewRequest,
     ShadowReviewResult,
+    ShadowReviewSemanticError,
     ShadowReviewValueError,
     canonical_json,
 )
@@ -264,7 +270,7 @@ class CodexShadowReviewer:
         self,
         request: ShadowReviewRequest,
         dispatched: Callable[[int, int, str], None],
-    ) -> ShadowReviewResult:
+    ) -> ShadowReviewRunResult:
         if not sys.platform.startswith("linux"):
             raise ShadowReviewerError("setup")
         job_path: Path | None = None
@@ -925,7 +931,7 @@ def _validated_result(
     request: ShadowReviewRequest,
     *,
     maximum: int,
-) -> ShadowReviewResult:
+) -> ShadowReviewRunResult:
     digest = hashlib.sha256(result_bytes).hexdigest()
     if len(result_bytes) > maximum:
         raise ShadowReviewerError(
@@ -938,15 +944,82 @@ def _validated_result(
             "malformed_output", count=len(result_bytes), digest=digest
         ) from error
     try:
-        return ShadowReviewResult.from_json(serialized, request)
-    except ShadowReviewDocumentError as error:
+        raw = json.loads(
+            serialized,
+            object_pairs_hook=_unique_result_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(value)
+            ),
+        )
+        if type(raw) is not dict or canonical_json(raw) != serialized:
+            raise ShadowReviewDocumentError(
+                "shadow-review result document is malformed"
+            )
+    except (
+        TypeError,
+        ValueError,
+        UnicodeError,
+        RecursionError,
+        json.JSONDecodeError,
+        ShadowReviewDocumentError,
+    ) as error:
         raise ShadowReviewerError(
             "malformed_output", count=len(result_bytes), digest=digest
         ) from error
+    try:
+        marker = _normalize_result_citations(raw, request)
+        result = ShadowReviewResult.from_json(canonical_json(raw), request)
     except ShadowReviewValueError as error:
         raise ShadowReviewerError(
             "semantic_validation", count=len(result_bytes), digest=digest
         ) from error
+    return ShadowReviewRunResult(result, marker)
+
+
+def _normalize_result_citations(
+    raw: dict[str, object], request: ShadowReviewRequest
+) -> CitationNormalizationMarker:
+    """Validate raw citations, then normalize them without retaining their shape."""
+    allowed = {
+        citation["citation_id"] for citation in request.packet.citations
+    }
+    recommendations = raw.get("recommendations")
+    if type(recommendations) is not list:
+        raise ShadowReviewSemanticError("shadow-review result is invalid")
+    changed = False
+    duplicate_count = 0
+    for recommendation in recommendations:
+        if type(recommendation) is not dict:
+            raise ShadowReviewSemanticError("shadow-review result is invalid")
+        citations = recommendation.get("citations")
+        if type(citations) is not list:
+            raise ShadowReviewSemanticError("shadow-review result is invalid")
+        if any(
+            type(citation) is not str or citation not in allowed
+            for citation in citations
+        ):
+            raise ShadowReviewSemanticError("shadow-review result is invalid")
+        if len(citations) > MAX_CITATIONS:
+            raise ShadowReviewSemanticError("shadow-review result is invalid")
+        normalized = sorted(set(citations))
+        duplicate_count += len(citations) - len(normalized)
+        if normalized != citations:
+            changed = True
+            recommendation["citations"] = normalized
+    return CitationNormalizationMarker(changed, duplicate_count)
+
+
+def _unique_result_object(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ShadowReviewDocumentError(
+                "shadow-review result document is malformed"
+            )
+        result[key] = value
+    return result
 
 
 def _prompt(request: ShadowReviewRequest, *, schema_digest: str) -> str:

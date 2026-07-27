@@ -107,8 +107,8 @@ def _qualify_synthetic_canary(profile: QualificationProfile) -> None:
             raise ShadowReviewerError("runtime")
         dispatch.append((pid, pgid, start_token))
 
-    result = reviewer.run(request, record_dispatch)
-    result.validate_for(request)
+    run_result = reviewer.run(request, record_dispatch)
+    run_result.result.validate_for(request)
     if len(dispatch) != 1:
         raise ShadowReviewerError("runtime")
 
