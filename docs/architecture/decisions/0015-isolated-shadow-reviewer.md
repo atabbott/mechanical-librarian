@@ -8,8 +8,9 @@
 The first AI reviewer is one exact maintainer-provisioned Codex CLI artifact,
 authenticated only through a ChatGPT subscription, and invoked only through a
 Linux Bubblewrap boundary. The frozen tuple is `gpt-5.6-sol` with `medium`
-reasoning, `shadow-review-prompt-v1`, `codex-shadow-profile-v1`,
-`shadow-review-packet-v1`, `shadow-review-result-v1`, and
+reasoning, `shadow-review-prompt-v2`, `codex-shadow-profile-v1`,
+`shadow-review-packet-v1`, `shadow-review-request-v2`,
+`shadow-review-result-v1`, and
 `qualification-only-policy-v1`. The declared executable and sandbox identities,
 versions, limits, and tuple are bound into every request. Paths remain local.
 Any drift fails closed; runtime installation, upgrade, fallback, API-key
@@ -43,6 +44,23 @@ shell, execution, web search, apps, agents, hooks, memories, plugins, updates,
 feedback, analytics, history, and approval, uses an empty private job
 directory, bounded resources and output, and discards raw streams, reasoning,
 and malformed output.
+
+The canonical request owns the canonical structured-output schema bytes and
+digest. Its 3,227,648-byte envelope bound covers every constructible bounded
+packet, profile, and generated ASCII schema, including JSON-string escaping;
+the exact-current SQLite column uses the same limit. Reviewer result parsing
+distinguishes malformed bytes/documents from canonical documents that violate
+the request semantics, and persists those value-free failure reasons
+separately.
+Because the report/store schema identity covers this exact DDL, the current
+contract advances from `metadata-report-v8` to `metadata-report-v9`; earlier
+state is rejected without migration under ADR-0013.
+
+Maintainer compatibility qualification runs exactly three isolated no-network
+authentication help probes and then one synthetic production request through
+the same dispatch gate, command, resource limits, parser, semantic validator,
+and child cleanup as ordinary qualification. It adds no holdout or cohort
+dispatch.
 
 The runner opens and verifies the declared Codex and Bubblewrap artifacts once,
 then invokes their bound descriptors so path replacement cannot change the

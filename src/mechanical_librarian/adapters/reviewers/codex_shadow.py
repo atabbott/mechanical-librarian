@@ -25,6 +25,7 @@ from mechanical_librarian.domain.shadow_review import (
     QUALIFICATION_MODE,
     RESULT_SCHEMA,
     ReviewerProfileIdentity,
+    ShadowReviewDocumentError,
     ShadowReviewRequest,
     ShadowReviewResult,
     ShadowReviewValueError,
@@ -338,29 +339,11 @@ class CodexShadowReviewer:
                         result_bytes = result_path.read_bytes()
                     except OSError as error:
                         raise ShadowReviewerError("malformed_output") from error
-                    if len(result_bytes) > self._profile.identity.output_bytes:
-                        raise ShadowReviewerError(
-                            "malformed_output",
-                            count=len(result_bytes),
-                            digest=hashlib.sha256(result_bytes).hexdigest(),
-                        )
-                    try:
-                        serialized = result_bytes.decode("utf-8", errors="strict")
-                        result = ShadowReviewResult.from_json(serialized, request)
-                        result.validate_for(request)
-                        return result
-                    except UnicodeError as error:
-                        raise ShadowReviewerError(
-                            "malformed_output",
-                            count=len(result_bytes),
-                            digest=hashlib.sha256(result_bytes).hexdigest(),
-                        ) from error
-                    except ShadowReviewValueError as error:
-                        raise ShadowReviewerError(
-                            "semantic_validation",
-                            count=len(result_bytes),
-                            digest=hashlib.sha256(result_bytes).hexdigest(),
-                        ) from error
+                    return _validated_result(
+                        result_bytes,
+                        request,
+                        maximum=self._profile.identity.output_bytes,
+                    )
                 finally:
                     if job_path is not None:
                         shutil.rmtree(job_path, ignore_errors=True)
@@ -937,6 +920,35 @@ def _diagnostic(stdout_file, stderr_file) -> tuple[int, str]:
     return count, digest.hexdigest()
 
 
+def _validated_result(
+    result_bytes: bytes,
+    request: ShadowReviewRequest,
+    *,
+    maximum: int,
+) -> ShadowReviewResult:
+    digest = hashlib.sha256(result_bytes).hexdigest()
+    if len(result_bytes) > maximum:
+        raise ShadowReviewerError(
+            "malformed_output", count=len(result_bytes), digest=digest
+        )
+    try:
+        serialized = result_bytes.decode("utf-8", errors="strict")
+    except UnicodeError as error:
+        raise ShadowReviewerError(
+            "malformed_output", count=len(result_bytes), digest=digest
+        ) from error
+    try:
+        return ShadowReviewResult.from_json(serialized, request)
+    except ShadowReviewDocumentError as error:
+        raise ShadowReviewerError(
+            "malformed_output", count=len(result_bytes), digest=digest
+        ) from error
+    except ShadowReviewValueError as error:
+        raise ShadowReviewerError(
+            "semantic_validation", count=len(result_bytes), digest=digest
+        ) from error
+
+
 def _prompt(request: ShadowReviewRequest, *, schema_digest: str) -> str:
     return (
         "Outcome: provide one bounded shadow recommendation for every proposal.\n"
@@ -968,48 +980,126 @@ def _schema_binding(request: ShadowReviewRequest) -> _SchemaBinding:
 
 def _validate_output_schema(schema: object) -> None:
     """Permit only the pinned structured-output subset and typed bindings."""
-    allowed = {"$schema", "additionalProperties", "anyOf", "const", "enum", "items", "maxItems", "maxLength", "minItems", "minLength", "properties", "required", "type"}
-    json_types = {str: "string", int: "integer", float: "number", bool: "boolean", type(None): "null"}
+    allowed = {
+        "$schema",
+        "additionalProperties",
+        "anyOf",
+        "const",
+        "enum",
+        "items",
+        "maxItems",
+        "maxLength",
+        "minItems",
+        "minLength",
+        "properties",
+        "required",
+        "type",
+    }
+    json_types = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        type(None): "null",
+    }
+    primitive_types = set(json_types.values())
+    all_types = primitive_types | {"object", "array"}
 
-    def visit(value: object) -> None:
+    def visit(value: object, *, root: bool = False) -> None:
         if type(value) is not dict or not value or not set(value) <= allowed:
             raise ShadowReviewerError("schema")
+        if root:
+            if value.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
+                raise ShadowReviewerError("schema")
+        elif "$schema" in value:
+            raise ShadowReviewerError("schema")
         primitive = value.get("type")
-        if primitive is not None and (type(primitive) is not str or primitive not in set(json_types.values()) | {"object", "array"}):
+        if primitive is not None and (
+            type(primitive) is not str or primitive not in all_types
+        ):
             raise ShadowReviewerError("schema")
         if "const" in value or "enum" in value:
-            values = ([value["const"]] if "const" in value else []) + value.get("enum", [])
-            if (primitive not in set(json_types.values()) or type(values) is not list or not values or any(json_types.get(type(item)) != primitive for item in values)):
+            enum = value.get("enum", [])
+            if type(enum) is not list:
                 raise ShadowReviewerError("schema")
-        if "const" in value and "enum" in value and value["const"] not in value["enum"]:
+            values = ([value["const"]] if "const" in value else []) + enum
+            if (
+                primitive not in primitive_types
+                or not values
+                or any(json_types.get(type(item)) != primitive for item in values)
+                or (
+                    "enum" in value
+                    and len({canonical_json(item) for item in enum}) != len(enum)
+                )
+            ):
+                raise ShadowReviewerError("schema")
+        if (
+            "const" in value
+            and "enum" in value
+            and value["const"] not in value["enum"]
+        ):
             raise ShadowReviewerError("schema")
         if "items" in value:
             if primitive != "array":
                 raise ShadowReviewerError("schema")
             visit(value["items"])
-        for key in ("maxItems", "minItems", "maxLength", "minLength"):
-            if key in value and (type(value[key]) is not int or value[key] < 0):
+        for key in ("maxItems", "minItems"):
+            if key in value and (
+                primitive != "array"
+                or type(value[key]) is not int
+                or value[key] < 0
+            ):
                 raise ShadowReviewerError("schema")
-        if "required" in value and (primitive != "object" or type(value["required"]) is not list or any(type(item) is not str for item in value["required"])):
+        for key in ("maxLength", "minLength"):
+            if key in value and (
+                primitive != "string"
+                or type(value[key]) is not int
+                or value[key] < 0
+            ):
+                raise ShadowReviewerError("schema")
+        if "required" in value and (
+            primitive != "object"
+            or type(value["required"]) is not list
+            or not value["required"]
+            or any(type(item) is not str for item in value["required"])
+            or len(set(value["required"])) != len(value["required"])
+        ):
             raise ShadowReviewerError("schema")
-        if "additionalProperties" in value and type(value["additionalProperties"]) is not bool:
+        if "additionalProperties" in value and (
+            primitive != "object" or value["additionalProperties"] is not False
+        ):
             raise ShadowReviewerError("schema")
         if "anyOf" in value:
-            if type(value["anyOf"]) is not list or not value["anyOf"]:
+            if (
+                set(value) != {"anyOf"}
+                or type(value["anyOf"]) is not list
+                or not value["anyOf"]
+            ):
                 raise ShadowReviewerError("schema")
             for child in value["anyOf"]:
                 visit(child)
         if "properties" in value:
-            if primitive != "object" or type(value["properties"]) is not dict or not value["properties"]:
+            if (
+                primitive != "object"
+                or type(value["properties"]) is not dict
+                or not value["properties"]
+                or type(value.get("required")) is not list
+                or set(value["required"]) != set(value["properties"])
+                or value.get("additionalProperties") is not False
+            ):
                 raise ShadowReviewerError("schema")
             for child in value["properties"].values():
                 visit(child)
+        if primitive == "array" and "items" not in value:
+            raise ShadowReviewerError("schema")
+        if primitive == "object" and "properties" not in value:
+            raise ShadowReviewerError("schema")
         if "minItems" in value and "maxItems" in value and value["minItems"] > value["maxItems"]:
             raise ShadowReviewerError("schema")
         if "minLength" in value and "maxLength" in value and value["minLength"] > value["maxLength"]:
             raise ShadowReviewerError("schema")
 
-    visit(schema)
+    visit(schema, root=True)
 
 
 def _recommendations() -> set[str]:

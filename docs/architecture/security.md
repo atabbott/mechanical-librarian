@@ -155,7 +155,11 @@ execution, web search, apps, agents, hooks, memories, remote plugins, update,
 feedback, analytics, history, and approval are disabled by exact configuration.
 Resource, time, file, output, and process counts are bounded. The exact
 per-case structured-output schema bytes are subset-validated, digest-bound into
-the untrusted prompt receipt, and raw output failure classes remain value-free.
+the canonical request and untrusted prompt, and raw output failure classes
+remain value-free. Malformed UTF-8/JSON, duplicate-key, noncanonical, and
+truncated documents are distinct from canonical parsed results that violate
+their request semantics; only bounded count/digest diagnostics cross the trust
+boundary.
 Request, attempt,
 dispatch, and outcome facts are append-only. Raw streams and reasoning are
 discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and
@@ -164,7 +168,7 @@ group is absent.
 
 The final report database, `catalogue-v1` database, `config-v4`, artifact
 records, and `batch-manifest-v2` each accept only absent or their exact current
-schema. `metadata-report-v1` through `metadata-report-v7`, prior development schemas, extra objects, altered
+schema. `metadata-report-v1` through `metadata-report-v8`, prior development schemas, extra objects, altered
 SQL, failed foreign-key/integrity checks, and other schemas fail closed before
 mutation. Persisted report content is validated when an exact-ID or
 current-scope read selects it and when a selected current report or exact-ID

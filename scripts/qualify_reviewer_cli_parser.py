@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the profile-pinned reviewer CLI parser without authentication."""
+"""Qualify pinned reviewer CLI shapes and one synthetic production request."""
 
 from __future__ import annotations
 
@@ -17,9 +17,10 @@ from mechanical_librarian.adapters.reviewers.codex_shadow import (
     _bound_artifact,
     load_qualification_profile,
 )
+from mechanical_librarian.domain.shadow_review import ShadowReviewRequest
 
-_SCHEMA = "reviewer-cli-parser-probe-v1"
-_TIMEOUT_SECONDS = 30
+_SCHEMA = "reviewer-cli-parser-probe-v2"
+_PROBE_TIMEOUT_SECONDS = 30
 
 
 class ParserProbeError(RuntimeError):
@@ -31,7 +32,7 @@ class ParserProbeError(RuntimeError):
 
 
 def qualify_reviewer_cli_parser(profile_path: Path) -> dict[str, object]:
-    """Run the four supported parser shapes through pinned wrapper boundaries."""
+    """Run three offline shapes and one live synthetic production request."""
     if not sys.platform.startswith("linux"):
         raise ParserProbeError("setup")
     try:
@@ -87,41 +88,44 @@ def _qualify_probe_profile(profile: QualificationProfile) -> None:
 
 
 def _qualify_synthetic_canary(profile: QualificationProfile) -> None:
-    """Run the ordinary command with owner credentials and synthetic-only input."""
+    """Run one synthetic request through the complete production execution gate."""
     reviewer = CodexShadowReviewer(profile)
-    with _bound_artifact(profile.codex_path, profile.identity.executable_sha256) as codex, _bound_artifact(profile.sandbox_path, profile.identity.sandbox_sha256) as sandbox, reviewer._auth_lock():
-        with reviewer._empty_auth_config() as config_fd:
-            reviewer._verify_codex(codex)
-            reviewer._require_chatgpt_auth(reviewer._auth_command(codex, sandbox, config_fd), codex, sandbox, config_fd)
-        with tempfile.TemporaryDirectory(prefix="reviewer-cli-canary-", dir=profile.job_root_path) as directory:
-            job = Path(directory)
-            schema = job / "output-schema.json"
-            schema.write_text('{"additionalProperties":false,"required":["case"],"properties":{"case":{"const":"synthetic-compatibility-canary","type":"string"}},"type":"object"}', encoding="utf-8")
-            prompt = job / "synthetic-prompt.json"
-            prompt.write_bytes(b'{"case":"synthetic-compatibility-canary"}')
-            command = reviewer._sandbox_command(job, job / "result.json", codex.invocation_path, sandbox.invocation_path)
-            with prompt.open("rb") as input_file:
-                _run(command, (codex.descriptor, sandbox.descriptor), profile.identity.timeout_seconds, input_file)
-            try:
-                result = (job / "result.json").read_bytes()
-                if len(result) > profile.identity.output_bytes:
-                    raise ValueError
-                payload = json.loads(result.decode("utf-8", errors="strict"))
-                if type(payload) is not dict or payload != {"case": "synthetic-compatibility-canary"}:
-                    raise ValueError
-            except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
-                raise ShadowReviewerError("malformed_output") from None
+    request = ShadowReviewRequest.synthetic_canary(profile.identity)
+    dispatch: list[tuple[int, int, str]] = []
+
+    def record_dispatch(pid: int, pgid: int, start_token: str) -> None:
+        if (
+            dispatch
+            or type(pid) is not int
+            or type(pgid) is not int
+            or pid < 2
+            or pgid < 2
+            or type(start_token) is not str
+            or not start_token.isascii()
+            or not start_token.isdigit()
+        ):
+            raise ShadowReviewerError("runtime")
+        dispatch.append((pid, pgid, start_token))
+
+    result = reviewer.run(request, record_dispatch)
+    result.validate_for(request)
+    if len(dispatch) != 1:
+        raise ShadowReviewerError("runtime")
 
 
-def _run(command: list[str], descriptors: tuple[int, ...], limit: int, stdin=subprocess.DEVNULL) -> None:
+def _run(
+    command: list[str],
+    descriptors: tuple[int, ...],
+    limit: int,
+) -> None:
     try:
         completed = subprocess.run(
             command,
-            stdin=stdin,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             pass_fds=descriptors,
-            timeout=min(limit, _TIMEOUT_SECONDS),
+            timeout=min(limit, _PROBE_TIMEOUT_SECONDS),
             check=False,
         )
     except subprocess.TimeoutExpired:

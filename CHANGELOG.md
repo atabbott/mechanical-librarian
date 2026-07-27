@@ -7,8 +7,12 @@
   (#372)
 
 - Harden the isolated qualification reviewer schema: typed bound constraints,
-  pinned subset validation and digest binding, exact empty-job compatibility
-  canary, and value-free response-format/output failure distinctions. (#380)
+  pinned subset validation and request/digest binding, a real one-case
+  empty-job canary through the production execution gate, and durable
+  malformed-document versus semantic-validation failures. Advance the
+  exact-current report/store contract to `metadata-report-v9` and the bounded
+  request envelope to `shadow-review-request-v2`; earlier development state is
+  rejected without migration under ADR-0013. (#380)
 
 - Correct historical documentation attribution: the 0.4 checkpoint had one
   `metadata-report` command and a two-table report store; later 0.5 retrieval,

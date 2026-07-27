@@ -17,6 +17,7 @@ material are never stored in the application database. The tuple is fixed to:
 - prompt `shadow-review-prompt-v2`;
 - profile `codex-shadow-profile-v1`;
 - packet `shadow-review-packet-v1`;
+- request `shadow-review-request-v2`;
 - output `shadow-review-result-v1`;
 - policy `qualification-only-policy-v1`; and
 - sandbox `bubblewrap-v1`.
@@ -111,15 +112,17 @@ preflight. Auth therefore uses only supported
 ChatGPT/file-store/update/telemetry constraints; it never relies on the
 execution-only `--ignore-user-config` option.
 
-During maintainer qualification, invoke the wrapped real-artifact parser probe
-with the already provisioned exact Python environment. Provision the pinned
-Codex CLI and Bubblewrap tuple before freezing the profile; the probe never
+During maintainer qualification, invoke the wrapped real-artifact compatibility
+check with the already provisioned exact Python environment. Provision the pinned
+Codex CLI and Bubblewrap tuple before freezing the profile; the check never
 installs, syncs, or upgrades runtime artifacts. It suppresses raw process
-streams, runs only help shapes (no credential operation, network request,
-prompt, packet, or model invocation), adds a probe-only Bubblewrap network
-namespace, and emits only aggregate value-free evidence. It derives a temporary
-empty auth store under the private job root, so it neither opens nor mounts live
-credentials. Normal device auth retains its network access.
+streams and emits only aggregate value-free evidence. Its first stage runs
+exactly three help shapes with no credential operation, network request,
+prompt, packet, or model invocation. That stage adds a probe-only Bubblewrap
+network namespace and derives a temporary empty auth store under the private
+job root, so it neither opens nor mounts live credentials. Its second stage
+uses the owner subscription for exactly one live synthetic request. Normal
+device auth retains its network access.
 
 ```sh
 python scripts/qualify_reviewer_cli_parser.py \
@@ -134,11 +137,20 @@ malformed content, profile paths, and auth data are discarded.
 Offline parser-help probes remain no-network and use a temporary empty auth
 store. The one-case compatibility canary is a real synthetic,
 subscription-backed ordinary invocation before a larger qualification cohort;
-it uses the exact ordinary wrapped command from empty `/job`, including
-`--skip-git-repo-check`, never sends a holdout, and blocks the cohort on failure.
-Each case binds the canonical structured-output schema bytes and SHA-256 into
-the persisted canonical request and its identity; the executor uses those exact
-bytes. The generated schema is restricted to the pinned
+it creates a complete deterministic production packet/request/schema, uses the
+same dispatch-before-release execution gate, resource limits, timeout, output
+parser, semantic validator, and cleanup as an ordinary request, and therefore
+uses the exact ordinary wrapped command from empty `/job`, including
+`--skip-git-repo-check`. It never sends a holdout and blocks the cohort on
+failure. Each request binds the canonical structured-output schema bytes and
+SHA-256 into `shadow-review-request-v2` and its identity; the executor uses
+those exact bytes. The complete canonical request envelope is bounded at
+3,227,648 bytes, and the exact-current SQLite column has the same byte capacity;
+there is no truncation. The generated schema is restricted to the pinned
 structured-output subset: every `const` and `enum` has its primitive type, and
 citation cardinality remains bounded without `uniqueItems` so later duplicate
 normalization can remain compatible.
+Invalid UTF-8, JSON, duplicate keys, noncanonical JSON, and truncated documents
+are durable `malformed_output` failures. A canonical parsed result that violates
+its bound request is instead durable `semantic_validation`; both retain only
+bounded byte count and digest diagnostics.
