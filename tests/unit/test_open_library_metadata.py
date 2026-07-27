@@ -595,6 +595,155 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             {request.url.params["q"] for request in requests},
         )
 
+    def test_discovery_oversized_lane_stops_remaining_requests_at_exact_bound(
+        self,
+    ) -> None:
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()),
+            (_isbn(), _isbn("9780140328721", applicability="print")),
+        )
+        payload = b'{"docs":[]}'
+
+        for oversized in (False, True):
+            requests: list[httpx.Request] = []
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                requests.append(request)
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    content=payload + (b" " if oversized else b""),
+                )
+
+            observation = OpenLibraryMetadataProvider(
+                "open_library",
+                httpx.Client(
+                    headers={"User-Agent": "Mechanical-Librarian/test"},
+                    transport=httpx.MockTransport(handler),
+                ),
+                len(payload),
+                pacer=OpenLibraryPacer(sleep=lambda _: None),
+            ).observe(plan)
+            with self.subTest(oversized=oversized):
+                self.assertEqual(1 if oversized else 2, len(requests))
+                self.assertEqual(
+                    (
+                        {ProviderStatus.OVERSIZED}
+                        if oversized
+                        else {ProviderStatus.NO_MATCH}
+                    ),
+                    {lane.status for lane in observation.lanes},
+                )
+
+    def test_conflicting_lane_contributes_no_cover_descriptors(self) -> None:
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()),
+            (_isbn(), _isbn("9780140328721", applicability="print")),
+        )
+        search_count = 0
+        shared_work_count = 0
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal search_count, shared_work_count
+            if request.url.path == "/search.json":
+                search_count += 1
+                family = request.url.params["q"].removeprefix("isbn:")
+                if search_count == 1:
+                    value = {
+                        "docs": [
+                            {
+                                "key": "/works/OL5W",
+                                "editions": {
+                                    "docs": [
+                                        {
+                                            "key": "/books/OL9M",
+                                            "isbn": [family],
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                else:
+                    value = {
+                        "docs": [
+                            {
+                                "key": "/works/OL6W",
+                                "editions": {
+                                    "docs": [
+                                        {
+                                            "key": "/books/OL1M",
+                                            "isbn": [family],
+                                        }
+                                    ]
+                                },
+                            },
+                            {
+                                "key": "/works/OL5W",
+                                "editions": {
+                                    "docs": [
+                                        {
+                                            "key": "/books/OL9M",
+                                            "isbn": [family],
+                                        }
+                                    ]
+                                },
+                            },
+                        ]
+                    }
+            elif request.url.path == "/books/OL1M.json":
+                value = _edition(
+                    "/books/OL1M", work="/works/OL6W", cover=200
+                )
+                value["isbn_13"] = ["9780306406157", "9780140328721"]
+            elif request.url.path == "/books/OL9M.json":
+                value = _edition("/books/OL9M", cover=100)
+                value["isbn_13"] = ["9780306406157", "9780140328721"]
+            elif request.url.path == "/works/OL6W.json":
+                value = _work("/works/OL6W", cover=400)
+            else:
+                self.assertEqual("/works/OL5W.json", request.url.path)
+                shared_work_count += 1
+                value = _work(
+                    "/works/OL5W",
+                    cover=300 if shared_work_count == 1 else 301,
+                )
+            return httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=value,
+            )
+
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                headers={"User-Agent": "Mechanical-Librarian/test"},
+                transport=httpx.MockTransport(handler),
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+
+        observation = provider.observe(plan)
+
+        self.assertEqual(
+            {ProviderStatus.CANDIDATES, ProviderStatus.MALFORMED},
+            {lane.status for lane in observation.lanes},
+        )
+        self.assertEqual(
+            {
+                cover_source_id(
+                    CoverSourceKind.OPEN_LIBRARY,
+                    "open_library:edition:/books/OL9M",
+                ),
+                cover_source_id(
+                    CoverSourceKind.OPEN_LIBRARY,
+                    "open_library:work:/works/OL5W",
+                ),
+            },
+            {descriptor.source_id for descriptor in provider.cover_descriptors},
+        )
+
     def test_discovery_converges_differing_isbn_applicability_and_shared_cover(
         self,
     ) -> None:

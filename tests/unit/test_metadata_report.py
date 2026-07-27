@@ -387,6 +387,88 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
         self.assertEqual("metadata-report-v10", report.schema_version)
 
+    def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
+        self,
+    ) -> None:
+        claims = tuple(
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed=value,
+                canonical=value,
+                excerpt=f"ISBN {value}",
+                applicability="unknown",
+                checksum="valid_isbn_13",
+                applicability_basis="unlabelled",
+            )
+            for value in (
+                "9780061120084",
+                "9780140328721",
+                "9780306406157",
+                "9780439554930",
+            )
+        )
+        lanes = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()), claims
+        ).lanes
+        candidates = tuple(
+            ProviderCandidate(f"edition-{index}", f"work-{index}", ())
+            for index in range(MAX_CANDIDATES + 1)
+        )
+        overflow_results = (
+            ProviderLaneResult(
+                lanes[0], ProviderStatus.CANDIDATES, candidates[:3]
+            ),
+            ProviderLaneResult(
+                lanes[1], ProviderStatus.CANDIDATES, candidates[3:]
+            ),
+            ProviderLaneResult(lanes[2], ProviderStatus.RATE_LIMITED),
+            ProviderLaneResult(lanes[3], ProviderStatus.NO_MATCH),
+        )
+        conflict_results = (
+            ProviderLaneResult(
+                lanes[0],
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition-shared", "work-one", ()),),
+            ),
+            ProviderLaneResult(
+                lanes[1],
+                ProviderStatus.CANDIDATES,
+                (ProviderCandidate("edition-shared", "work-two", ()),),
+            ),
+            ProviderLaneResult(lanes[2], ProviderStatus.RATE_LIMITED),
+            ProviderLaneResult(lanes[3], ProviderStatus.NO_MATCH),
+        )
+
+        for label, results, expected in (
+            (
+                "overflow",
+                overflow_results,
+                ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            ),
+            ("conflict", conflict_results, ProviderStatus.MALFORMED),
+        ):
+            observation = provider_observation("catalogue", results)
+            replayed_order = provider_observation(
+                "catalogue", tuple(reversed(results))
+            )
+            by_identity = {
+                lane.identity: lane.status for lane in observation.lanes
+            }
+            with self.subTest(label=label):
+                self.assertEqual(expected, observation.status)
+                self.assertEqual((), observation.candidates)
+                self.assertEqual(expected, by_identity[lanes[0].identity])
+                self.assertEqual(expected, by_identity[lanes[1].identity])
+                self.assertEqual(
+                    ProviderStatus.RATE_LIMITED,
+                    by_identity[lanes[2].identity],
+                )
+                self.assertEqual(
+                    ProviderStatus.NO_MATCH,
+                    by_identity[lanes[3].identity],
+                )
+                self.assertEqual(observation.to_data(), replayed_order.to_data())
+
     def test_discovery_plan_reports_exact_family_overflow_without_subset(self) -> None:
         claims: list[LocalClaim] = []
         for index in range(9):

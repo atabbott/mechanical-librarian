@@ -352,6 +352,7 @@ def provider_observation(
 ) -> ProviderObservation:
     candidates_by_identity: dict[str, ProviderCandidate] = {}
     conflict = False
+    aggregate_failure: ProviderStatus | None = None
     for result in results:
         for candidate in result.candidates:
             previous = candidates_by_identity.get(candidate.identity)
@@ -378,13 +379,18 @@ def provider_observation(
             ):
                 conflict = True
     if conflict or len(candidates_by_identity) > MAX_CANDIDATES:
-        status = (
+        aggregate_failure = (
             ProviderStatus.MALFORMED
             if conflict
             else ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
         )
         results = tuple(
-            ProviderLaneResult(result.lane, status) for result in results
+            (
+                ProviderLaneResult(result.lane, aggregate_failure)
+                if result.status is ProviderStatus.CANDIDATES
+                else result
+            )
+            for result in results
         )
         candidates_by_identity = {}
 
@@ -422,7 +428,9 @@ def provider_observation(
     candidates = tuple(
         sorted(candidates_by_identity.values(), key=lambda value: value.identity)
     )
-    if candidates:
+    if aggregate_failure is not None:
+        aggregate_status = aggregate_failure
+    elif candidates:
         aggregate_status = ProviderStatus.CANDIDATES
     elif results:
         priorities = (
@@ -533,6 +541,26 @@ def merge_provider_cover_descriptor(
             designation=CoverDesignation.EXACT_EDITION,
         ),
     )
+
+
+def merge_provider_cover_descriptors(
+    retained: tuple[ProviderCoverDescriptor, ...],
+    lane: tuple[ProviderCoverDescriptor, ...],
+) -> tuple[ProviderCoverDescriptor, ...] | None:
+    """Atomically admit one lane's cover descriptors into the aggregate."""
+    descriptors = {value.source_id: value for value in retained}
+    if len(descriptors) != len(retained):
+        return None
+    for descriptor in lane:
+        previous = descriptors.get(descriptor.source_id)
+        if previous is None:
+            descriptors[descriptor.source_id] = descriptor
+            continue
+        merged = merge_provider_cover_descriptor(previous, descriptor)
+        if merged is None:
+            return None
+        descriptors[descriptor.source_id] = merged
+    return tuple(descriptors[key] for key in sorted(descriptors))
 
 
 def provider_isbn_applicability(
@@ -1120,7 +1148,8 @@ __all__ = [
     "ProviderLaneResult",
     "ReportRepository", "TargetFile", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
-    "merge_provider_cover_descriptor", "metadata_discovery_plan",
+    "merge_provider_cover_descriptor", "merge_provider_cover_descriptors",
+    "metadata_discovery_plan",
     "metadata_lookup", "provider_isbn_applicability", "provider_observation",
     "qualify_provider_observation", "require_report_current",
 ]

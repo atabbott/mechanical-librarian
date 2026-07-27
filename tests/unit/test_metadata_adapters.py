@@ -1577,6 +1577,151 @@ class ProviderAdapterTests(unittest.TestCase):
             {lane.status for lane in observation.lanes},
         )
 
+    def test_hardcover_oversized_lane_stops_remaining_requests_at_exact_bound(
+        self,
+    ) -> None:
+        claims = (
+            self._claim(),
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed="9780140328721",
+                canonical="9780140328721",
+                excerpt="Print ISBN 9780140328721",
+                applicability="print",
+                checksum="valid_isbn_13",
+                applicability_basis="print",
+            ),
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()), claims
+        )
+        payload = json.dumps(
+            {"data": {"editions": [], "books": []}},
+            separators=(",", ":"),
+        ).encode()
+
+        for oversized in (False, True):
+            requests: list[httpx.Request] = []
+
+            def handler(request: httpx.Request) -> httpx.Response:
+                requests.append(request)
+                return httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    content=payload + (b" " if oversized else b""),
+                )
+
+            observation = HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(transport=httpx.MockTransport(handler)),
+                len(payload),
+            ).observe(plan)
+            with self.subTest(oversized=oversized):
+                self.assertEqual(1 if oversized else 2, len(requests))
+                self.assertEqual(
+                    (
+                        {ProviderStatus.OVERSIZED}
+                        if oversized
+                        else {ProviderStatus.NO_MATCH}
+                    ),
+                    {lane.status for lane in observation.lanes},
+                )
+
+    def test_hardcover_conflicting_lane_contributes_no_cover_descriptors(
+        self,
+    ) -> None:
+        claims = (
+            self._claim(),
+            LocalClaim.create(
+                kind=ClaimKind.ISBN,
+                observed="9780140328721",
+                canonical="9780140328721",
+                excerpt="Print ISBN 9780140328721",
+                applicability="print",
+                checksum="valid_isbn_13",
+                applicability_basis="print",
+            ),
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", None, ()), claims
+        )
+        shared = {
+            "id": 1,
+            "book_id": 10,
+            "isbn_10": "0306406152",
+            "isbn_13": "9780140328721",
+            "image": {"url": "https://images.example/accepted.jpg"},
+        }
+        accepted = self._envelope(
+            [shared],
+            [
+                {
+                    "id": 10,
+                    "title": "Current title",
+                    "image": {"url": "https://images.example/work.jpg"},
+                }
+            ],
+        )
+        conflicting = self._envelope(
+            [
+                {
+                    "id": 2,
+                    "book_id": 20,
+                    "isbn_10": "0306406152",
+                    "isbn_13": "9780140328721",
+                    "image": {"url": "https://images.example/orphan.jpg"},
+                },
+                {
+                    **shared,
+                    "image": {"url": "https://images.example/conflict.jpg"},
+                },
+            ],
+            [
+                {
+                    "id": 20,
+                    "title": "Other title",
+                    "image": {"url": "https://images.example/orphan-work.jpg"},
+                },
+                {
+                    "id": 10,
+                    "title": "Current title",
+                    "image": {"url": "https://images.example/work.jpg"},
+                },
+            ],
+        )
+        responses = iter((accepted, conflicting))
+        provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=next(responses),
+                    )
+                )
+            ),
+            65_536,
+        )
+
+        observation = provider.observe(plan)
+
+        self.assertEqual(
+            {ProviderStatus.CANDIDATES, ProviderStatus.MALFORMED},
+            {lane.status for lane in observation.lanes},
+        )
+        self.assertEqual(
+            {
+                cover_source_id(
+                    CoverSourceKind.HARDCOVER, "catalogue:edition:1"
+                ),
+                cover_source_id(
+                    CoverSourceKind.HARDCOVER, "catalogue:work:10:default"
+                ),
+            },
+            {descriptor.source_id for descriptor in provider.cover_descriptors},
+        )
+
     def test_hardcover_converges_differing_isbn_applicability_and_shared_cover(
         self,
     ) -> None:

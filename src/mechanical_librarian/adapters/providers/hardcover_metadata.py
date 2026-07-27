@@ -16,7 +16,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     ProviderCoverDescriptor,
     ProviderLaneResult,
-    merge_provider_cover_descriptor,
+    merge_provider_cover_descriptors,
     provider_isbn_applicability,
     provider_observation,
     qualify_provider_observation,
@@ -107,9 +107,10 @@ class HardcoverMetadataProvider:
                 self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED
             )
         results: list[ProviderLaneResult] = []
-        descriptors: dict[str, ProviderCoverDescriptor] = {}
+        descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
             for lane in plan.lanes:
+                self.cover_descriptors = ()
                 lookup = MetadataLookup(
                     lane.kind,
                     plan.local_claims,
@@ -126,23 +127,23 @@ class HardcoverMetadataProvider:
                         lane, observation.status, observation.candidates
                     )
                 )
-                for descriptor in self.cover_descriptors:
-                    previous = descriptors.get(descriptor.source_id)
-                    if previous is None:
-                        descriptors[descriptor.source_id] = descriptor
-                        continue
-                    merged = merge_provider_cover_descriptor(previous, descriptor)
-                    if merged is None:
-                        results[-1] = ProviderLaneResult(
-                            lane, ProviderStatus.MALFORMED
-                        )
-                    else:
-                        descriptors[descriptor.source_id] = merged
+                merged = merge_provider_cover_descriptors(
+                    descriptors,
+                    (
+                        self.cover_descriptors
+                        if observation.status is ProviderStatus.CANDIDATES
+                        else ()
+                    ),
+                )
+                if merged is None:
+                    results[-1] = ProviderLaneResult(
+                        lane, ProviderStatus.MALFORMED
+                    )
+                else:
+                    descriptors = merged
         finally:
             self._client.close()
-        self.cover_descriptors = tuple(
-            descriptors[key] for key in sorted(descriptors)
-        )
+        self.cover_descriptors = descriptors
         return provider_observation(self._name, tuple(results))
 
     def _observe_lookup(
@@ -224,6 +225,8 @@ class HardcoverMetadataProvider:
                 candidates,
                 lookup.kind,
             )
+        if self._remaining_response_bytes <= 0:
+            return result(ProviderStatus.OVERSIZED)
         try:
             remaining = self._timeout_seconds if deadline is None else min(self._timeout_seconds, deadline - time.monotonic())
             if remaining <= 0:
@@ -248,6 +251,7 @@ class HardcoverMetadataProvider:
                 )
                 self._remaining_response_bytes -= len(payload)
         except _ResponseOversized:
+            self._remaining_response_bytes = 0
             return result(ProviderStatus.OVERSIZED)
         except (httpx.HTTPError, OSError, ValueError):
             return result(ProviderStatus.UNAVAILABLE)
