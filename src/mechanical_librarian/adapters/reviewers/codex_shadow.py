@@ -333,7 +333,7 @@ class CodexShadowReviewer:
                                 stdout_file, stderr_file
                             )
                             raise ShadowReviewerError(
-                                "response_format", count=count, digest=digest
+                                "runtime", count=count, digest=digest
                             )
                     try:
                         result_bytes = result_path.read_bytes()

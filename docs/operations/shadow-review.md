@@ -133,6 +133,12 @@ Failures are the value-free codes `runtime`, `setup`, `auth`, `profile`,
 `timeout`, `cancel`, `schema`, `response_format`, `malformed_output`,
 `semantic_validation`, or `currentness`. Raw stdout, stderr, reasoning,
 malformed content, profile paths, and auth data are discarded.
+The pinned CLI currently exposes no stable bounded diagnostic that specifically
+proves a live response-format rejection. Every nonzero ordinary-command exit,
+including exec failure, signal termination, resource/network/service failure,
+and an unknown status, is therefore durable `runtime` with only bounded byte
+count and digest diagnostics. `response_format` remains reserved until a pinned
+canonical signal can support that narrower causal claim.
 
 Offline parser-help probes remain no-network and use a temporary empty auth
 store. The one-case compatibility canary is a real synthetic,

@@ -160,6 +160,9 @@ remain value-free. Malformed UTF-8/JSON, duplicate-key, noncanonical, and
 truncated documents are distinct from canonical parsed results that violate
 their request semantics; only bounded count/digest diagnostics cross the trust
 boundary.
+No current pinned CLI diagnostic safely proves response-format rejection, so a
+nonzero ordinary-command exit is conservatively `runtime` whether caused by
+exec, signal, resource, network/service, or an unknown failure.
 Request, attempt,
 dispatch, and outcome facts are append-only. Raw streams and reasoning are
 discarded. Dispatched ambiguity is `unknown`; there is no automatic retry, and

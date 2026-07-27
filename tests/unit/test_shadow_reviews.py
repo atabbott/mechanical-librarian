@@ -4,6 +4,7 @@ import io
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import tempfile
 import threading
@@ -1044,6 +1045,53 @@ class CodexShadowAdapterTests(unittest.TestCase):
             self.assertFalse(
                 list(profile.job_root_path.glob("shadow-review-*"))
             )
+
+    def test_nonzero_execution_statuses_are_runtime_with_bounded_diagnostics(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            codex, sandbox = root / "codex", root / "bwrap"
+            codex.write_bytes(b"codex")
+            sandbox.write_bytes(b"bwrap")
+            os.chmod(codex, 0o700)
+            os.chmod(sandbox, 0o700)
+            profile = self._profile(root, codex, sandbox)
+            request = ShadowReviewRequest.synthetic_canary(profile.identity)
+            stdout, stderr = b"synthetic-out", b"synthetic-err"
+            diagnostic = stdout + stderr
+
+            for returncode in (126, 128 + signal.SIGKILL, 1):
+                reviewer = CodexShadowReviewer(profile)
+
+                def run_gated(*args, code=returncode) -> int:
+                    os.write(args[4], stdout)
+                    os.write(args[5], stderr)
+                    args[6](1234, 1234, "5678")
+                    return code
+
+                with (
+                    self.subTest(returncode=returncode),
+                    patch.object(codex_shadow.sys, "platform", "linux"),
+                    patch.object(reviewer, "_verify_codex"),
+                    patch.object(reviewer, "_require_chatgpt_auth"),
+                    patch.object(
+                        reviewer, "_run_gated", side_effect=run_gated
+                    ),
+                    self.assertRaises(ShadowReviewerError) as raised,
+                ):
+                    reviewer.run(request, lambda *_: None)
+                self.assertEqual("runtime", raised.exception.code)
+                self.assertEqual("runtime", str(raised.exception))
+                self.assertEqual(len(diagnostic), raised.exception.count)
+                self.assertEqual(
+                    hashlib.sha256(diagnostic).hexdigest(),
+                    raised.exception.digest,
+                )
+                self.assertNotIn("synthetic", str(raised.exception))
+                self.assertFalse(
+                    list(profile.job_root_path.glob("shadow-review-*"))
+                )
 
     def test_output_schema_is_typed_bound_and_digest_frozen(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
